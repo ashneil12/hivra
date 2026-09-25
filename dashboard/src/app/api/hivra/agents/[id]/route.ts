@@ -75,9 +75,9 @@ import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-co
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import {
+  parseActivityCollectorMarker,
   recordCollectorInstallResult,
   supportsNativeTracing,
-  type ActivityCollectorInstallStatus,
 } from "@/lib/activity-observability/collectors";
 
 type ProxmoxEnvironment = Record<string, string | undefined>;
@@ -86,19 +86,6 @@ type ProxmoxEnvironment = Record<string, string | undefined>;
 // helper write into the host log (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
 // Closed enum only; anything else is ignored.
 const ACTIVITY_COLLECTOR_MARKER_PATTERN = "^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$";
-
-function parseActivityCollectorMarker(
-  lines: string[],
-): { status: ActivityCollectorInstallStatus; reason?: string } | null {
-  let parsed: { status: ActivityCollectorInstallStatus; reason?: string } | null = null;
-  for (const candidate of lines) {
-    const line = candidate.trim();
-    if (line === "HIVRA_ACTIVITY_COLLECTOR status=installed") parsed = { status: "installed" };
-    const failed = line.match(/^HIVRA_ACTIVITY_COLLECTOR status=failed reason=([a-z_]{1,40})$/);
-    if (failed) parsed = { status: "failed", reason: failed[1] };
-  }
-  return parsed;
-}
 
 function verifiedDestroyHivraVmScript(input: {
   vmid: number;

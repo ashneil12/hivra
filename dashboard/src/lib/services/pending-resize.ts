@@ -11,8 +11,12 @@
  * — it keeps the named webui-state / agent-source volumes, so no data loss),
  * then clears the flag.
  *
- * Two callers: the instant wallet-unlock flow (a user's own instances) and the
- * apply-pending-resizes cron (background sweep).
+ * Two callers: the instant wallet-unlock flow (a user's own instances, which
+ * recreates immediately because the user just asked for the compute) and the
+ * apply-pending-resizes cron (background sweep, a system update: while an agent
+ * turn is running, or the box cannot confirm that none is, it is deferred, keeps
+ * its flag and is retried next tick, for at most six hours or 24 deferrals, per
+ * the in-flight gate's policy).
  */
 
 import "server-only";
@@ -21,10 +25,16 @@ import { clerkClient } from "@clerk/nextjs/server";
 
 import { extractGlobalHermesSettings } from "@/lib/instance-settings";
 import {
+  describeInFlightDeferral,
+  inFlightGateLogFields,
+  type InFlightDeferralReason,
+} from "@/lib/services/inflight-update-gate";
+import {
   applyLiveUpdate,
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
+import type { LiveUpdateInitiator } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { isWebfreeBackend } from "@/lib/types/instance";
@@ -63,13 +73,22 @@ interface PendingResizeResult {
   id: string;
   redeployed: boolean;
   skipped?: boolean;
-  error?: string;
+  /**
+   * A system sweep deferred the box: an agent turn in flight ("deferred_busy")
+   * or no confirmation that none is running ("deferred_unverified"). The flag
+   * stays set for the next tick.
+   */
+  deferred?: boolean;
+  error?: InFlightDeferralReason | string;
 }
 
 export interface PendingResizeSummary {
   redeployed: number;
   failed: number;
   skipped: number;
+  deferred: number;
+  /** Of `deferred`, the boxes that could not confirm no agent turn was running. */
+  deferredUnverified: number;
   results: PendingResizeResult[];
 }
 
@@ -101,6 +120,7 @@ function createSettingsCache(): (userId: string) => Promise<Record<string, unkno
 async function redeployOne(
   row: PendingResizeRow,
   getSettings: (userId: string) => Promise<Record<string, unknown>>,
+  initiator: LiveUpdateInitiator,
 ): Promise<PendingResizeResult> {
   if (!supabaseAdmin) return { id: row.id, redeployed: false, error: "db_unavailable" };
 
@@ -120,7 +140,22 @@ async function redeployOne(
   }
 
   const settings = await getSettings(row.user_id);
-  const update = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin);
+  const update = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin, { initiator });
+  if (update.deferred) {
+    // An agent turn is running, or the box could not confirm that none is
+    // (which may be a failing gateway: worded apart, never as a turn). The new
+    // caps wait (bounded by the gate's cap); tier_change_pending stays set so
+    // the next tick retries.
+    const deferral = describeInFlightDeferral(update.inFlightGate);
+    log.info(`pending resize deferred: ${deferral.summary}`, {
+      source: LOG_SOURCE,
+      instanceId: row.id,
+      userId: row.user_id,
+      failureType: `pending_resize_${deferral.reason}`,
+      ...inFlightGateLogFields(update.inFlightGate),
+    });
+    return { id: row.id, redeployed: false, deferred: true, error: deferral.reason };
+  }
   if (!update.applied) {
     log.warn("pending resize redeploy failed", {
       source: LOG_SOURCE,
@@ -160,7 +195,7 @@ async function redeployOne(
  */
 export async function redeployPendingResizes(
   rows: PendingResizeRow[],
-  opts: { concurrency?: number } = {},
+  opts: { concurrency?: number; initiator: LiveUpdateInitiator },
 ): Promise<PendingResizeSummary> {
   const getSettings = createSettingsCache();
   const concurrency = Math.max(1, opts.concurrency ?? 5);
@@ -181,7 +216,9 @@ export async function redeployPendingResizes(
     // an unreachable box IS idle, so the poison sorts to the FRONT and lands in
     // wave 1, re-poisoning every batch. Paid cap upgrades behind it never land.
     // Turn a rejection into a normal failed result and keep sweeping.
-    const settled = await Promise.allSettled(wave.map((row) => redeployOne(row, getSettings)));
+    const settled = await Promise.allSettled(
+      wave.map((row) => redeployOne(row, getSettings, opts.initiator)),
+    );
     settled.forEach((outcome, index) => {
       if (outcome.status === "fulfilled") {
         results.push(outcome.value);
@@ -200,8 +237,10 @@ export async function redeployPendingResizes(
   }
   return {
     redeployed: results.filter((r) => r.redeployed).length,
-    failed: results.filter((r) => !r.redeployed && !r.skipped).length,
+    failed: results.filter((r) => !r.redeployed && !r.skipped && !r.deferred).length,
     skipped: results.filter((r) => r.skipped).length,
+    deferred: results.filter((r) => r.deferred).length,
+    deferredUnverified: results.filter((r) => r.deferred && r.error === "deferred_unverified").length,
     results,
   };
 }

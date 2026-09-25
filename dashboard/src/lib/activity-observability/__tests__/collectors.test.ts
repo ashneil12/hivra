@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { recordCollectorEvents, recordCollectorHeartbeat, recordCollectorInstallResult, recordCollectorRejected, recordCollectorRenewed } from "../collectors";
+import { parseActivityCollectorMarker, recordCollectorEvents, recordCollectorHeartbeat, recordCollectorInstallResult, recordCollectorRejected, recordCollectorRenewed } from "../collectors";
 
 const A="00000000-0000-4000-8000-000000000001";
 function client(result:unknown={error:null}){
@@ -60,5 +60,16 @@ describe("activity collector state recorders",()=>{
     const {db,upsert}=client();
     await expect(recordCollectorHeartbeat(db,{agentId:A,userId:"u",receivedAt:new Date(),credentialExpiresAt:"not a date"})).resolves.toBe(false);
     expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("activity collector install marker",()=>{
+  it("takes the last closed-enum marker line and ignores anything else",()=>{
+    expect(parseActivityCollectorMarker(["HIVRA_ACTIVITY_CREDENTIAL_STAGED","HIVRA_GUEST_RUNTIME_UPDATED vmid=1090"])).toBeNull();
+    expect(parseActivityCollectorMarker(["HIVRA_ACTIVITY_COLLECTOR status=failed reason=timeout","  HIVRA_ACTIVITY_COLLECTOR status=installed  "])).toEqual({status:"installed"});
+    expect(parseActivityCollectorMarker(["HIVRA_ACTIVITY_COLLECTOR status=installed","HIVRA_ACTIVITY_COLLECTOR status=failed reason=install_failed"])).toEqual({status:"failed",reason:"install_failed"});
+    for(const line of ["HIVRA_ACTIVITY_COLLECTOR status=failed reason=Bad-Reason","HIVRA_ACTIVITY_COLLECTOR status=failed","prefix HIVRA_ACTIVITY_COLLECTOR status=installed","HIVRA_ACTIVITY_COLLECTOR status=installed extra"]){
+      expect(parseActivityCollectorMarker([line])).toBeNull();
+    }
   });
 });

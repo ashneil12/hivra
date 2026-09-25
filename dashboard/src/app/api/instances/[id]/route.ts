@@ -44,6 +44,7 @@ import {
   resolveInstanceIpv4,
   applyLiveUpdate,
 } from "@/lib/services/instance-orchestrator";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import {
   powerOnServer,
   shutdownServer,
@@ -2065,7 +2066,10 @@ export async function PATCH(
         instanceId: id,
       });
       const ipv4 = await resolveInstanceIpv4(updated, supabaseAdmin!);
-      const result = await applyLiveUpdate(updated, ipv4, globalSettings, supabaseAdmin!);
+      // The owner pressed Save & apply: recreate now (no in-flight deferral).
+      const result = await applyLiveUpdate(updated, ipv4, globalSettings, supabaseAdmin!, {
+        initiator: USER_LIVE_UPDATE,
+      });
       applied = result.applied;
       if (result.applied) {
         applyError = null;
@@ -3221,7 +3225,9 @@ export async function POST(
         });
         const ipv4 = await resolveInstanceIpv4(instance!, supabaseAdmin!);
         hostIpForOps = ipv4;
-        const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!);
+        const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!, {
+          initiator: USER_LIVE_UPDATE,
+        });
         if (!result.applied) {
           const retryableSshMessage = normalizeRetryableInstanceActionError(result.error);
           if (retryableSshMessage) {
@@ -3413,18 +3419,14 @@ export async function POST(
             instanceId: id,
           });
           // Only a terminal/access settings apply may replace the native
-          // backend. Routine redeploys and repairs preserve owner edits.
-          const terminalApplyOptions =
-            action === "redeploy" && body.applyTerminalBackend === true
-              ? [{ applyTerminalBackend: true }] as const
-              : [] as const;
-          const result = await applyLiveUpdate(
-            instance!,
-            ipv4,
-            globalSettings,
-            supabaseAdmin!,
-            ...terminalApplyOptions,
-          );
+          // backend. Routine redeploys and repairs preserve owner edits. The
+          // owner asked for this restart, so it recreates now.
+          const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!, {
+            initiator: USER_LIVE_UPDATE,
+            ...(action === "redeploy" && body.applyTerminalBackend === true
+              ? { applyTerminalBackend: true }
+              : {}),
+          });
           if (!result.applied) {
             if (isMissingInstanceHostError(result.error)) {
               await supabaseAdmin!

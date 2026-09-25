@@ -91,6 +91,9 @@ const AGENT_ENV = Object.assign({}, process.env, {
   // desktop owner's home directories.
   PATH: ATTACHED ? String(process.env.PATH || "/usr/bin:/bin") : "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
   HOME: HOME,
+  // Hivra installs and updates the vetted CLI versions (agent-cli-versions.json);
+  // a vendor self-update would swap the binary under the gateway mid-life.
+  DISABLE_AUTOUPDATER: "1",
 });
 // Where new agent sessions start. For an attached agent this is its root-owned,
 // read-only starting folder, which holds the AGENTS.md Hivra wrote and the view
@@ -108,6 +111,72 @@ if (ATTACHED) {
   try { fs.mkdirSync(codexHome, { mode: 0o700 }); } catch (error) { if (error.code !== "EEXIST") throw error; }
 }
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
+
+// The installed agent CLI version, reported on /api/meta so the dashboard can
+// compare it with the release's vetted pin (agent-cli-versions.json). Probed at
+// start and again whenever the binary changes on disk (hivra-agent-cli-update
+// swaps it in place); the field is omitted until the first probe finishes and
+// the version is null when it failed. The updater's progress rides along. Only
+// an authenticated caller (the dashboard's bearer) sees it.
+const AGENT_CLI = AGENT_KIND === "claude" ? { name: "claude-code", bin: CLAUDE }
+  : AGENT_KIND === "codex" ? { name: "codex", bin: CODEX } : null;
+const AGENT_CLI_LOCK = process.env.HIVRA_AGENT_CLI_LOCK || "/run/hivra-agent-cli-update.lock";
+const AGENT_CLI_STATUS = process.env.HIVRA_AGENT_CLI_STATUS || "/var/lib/hivra/agent-cli-update.json";
+const AGENT_CLI_UPDATE_STATES = new Set(["downloading", "waiting", "installing", "done", "deferred", "rolled_back", "failed"]);
+let agentCliVersion;
+let agentCliProbedKey = null;
+let agentCliProbing = false;
+function agentCliBinaryKey() {
+  try { const st = fs.statSync(AGENT_CLI.bin); return st.ino + ":" + st.size + ":" + st.mtimeMs; } catch { return "missing"; }
+}
+function probeAgentCli() {
+  if (!AGENT_CLI || agentCliProbing) return;
+  const key = agentCliBinaryKey();
+  if (key === agentCliProbedKey) return;
+  agentCliProbing = true;
+  const done = (version, detail) => {
+    agentCliProbing = false;
+    agentCliProbedKey = key;
+    agentCliVersion = version;
+    if (!version) console.warn("hivra-chat: " + AGENT_CLI.name + " --version failed: " + detail);
+  };
+  try {
+    execFile(AGENT_CLI.bin, ["--version"], { env: AGENT_ENV, cwd: HOME, timeout: 15000 }, (err, stdout) => {
+      const match = !err && /\b(\d+\.\d+\.\d+)\b/.exec(String(stdout || ""));
+      done(match ? match[1] : null, err ? (err.code || err.message) : "no version in output");
+    });
+  } catch (error) {
+    done(null, (error && error.message) || String(error));
+  }
+}
+probeAgentCli();
+function agentCliReport() {
+  if (!AGENT_CLI) return null;
+  probeAgentCli();
+  if (agentCliVersion === undefined) return null;
+  const report = { name: AGENT_CLI.name, version: agentCliVersion };
+  try {
+    const status = JSON.parse(fs.readFileSync(AGENT_CLI_STATUS, "utf8"));
+    if (status && status.name === AGENT_CLI.name && AGENT_CLI_UPDATE_STATES.has(status.state)
+      && typeof status.to === "string" && /^\d+\.\d+\.\d+$/.test(status.to)) {
+      report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
+        ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
+    }
+  } catch {}
+  return report;
+}
+// While hivra-agent-cli-update swaps the CLI package it holds new chat runs
+// back (a run started mid-swap would find a half-installed binary). A lock left
+// by a crashed updater stops counting after 30 minutes.
+function agentCliUpdateRefusal() {
+  if (!AGENT_CLI) return null;
+  try {
+    if (Date.now() - fs.statSync(AGENT_CLI_LOCK).mtimeMs < 30 * 60 * 1000) {
+      return { code: "agent_updating", status: 503, message: "The agent is being updated to a new version. Send your message again in a minute." };
+    }
+  } catch {}
+  return null;
+}
 
 // Per-box Bankr wallet credentials. The dashboard provisions the wallet LAZILY
 // (user clicks "Create wallet") and SSH-writes ~/.hivra/bankr.env (0600, KEY=VALUE);
@@ -149,7 +218,159 @@ if (!/^[a-f0-9]{64}$/.test(API_TOKEN)) {
 // Secure + Path=/ + no Domain below are required by the prefix contract.
 const AUTH_COOKIE = "__Host-hivra_auth";
 const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const AUTH_SESSION_SECRET = /^[a-f0-9]{64}$/;
+// sha256(session secret) -> expiry (ms). The cookie value itself is never kept.
 const AUTH_SESSIONS = new Map();
+
+// ---- Surface sign-in store ----
+// Surface sign-ins must outlive the gateway process: a runtime update, crash
+// or reboot would otherwise sign every embedded terminal, browser and native
+// interface out, and the computer's own chat page cannot sign itself in again.
+// AUTH_SESSIONS stays the only authority on the request path (the DeepSeek
+// broker re-checks it every second); every change to it is written, before the
+// cookie is handed out, to ~/.hivra/surface-sessions.json: owner-only 0600,
+// replaced atomically, never read or written through a symlink, pruned and
+// bounded. The file holds only digests of the 256-bit secrets and their expiry.
+// It is bound to this computer's API token, so rotating the token signs every
+// surface out. The agent runs as the same user and can read that token anyway,
+// so the file grants it nothing new; its entries are validated regardless.
+//
+// The store's random epoch is the public /api/meta `bootId`. It changes only
+// when sign-ins were lost (no store yet, or one that is unreadable, corrupt,
+// bound to another token or cannot be kept up to date), which is exactly when
+// the dashboard must sign its frames in again. An ordinary restart keeps both
+// the epoch and every live surface.
+const AUTH_STORE_FILE = path.join(HOME, ".hivra", "surface-sessions.json");
+const AUTH_STORE_VERSION = 1;
+const AUTH_STORE_MAX_SESSIONS = 1024;
+const AUTH_STORE_MAX_BYTES = 256 * 1024;
+const AUTH_STORE_EPOCH = /^[a-f0-9]{32}$/;
+const AUTH_STORE_BINDING = crypto.createHmac("sha256", API_TOKEN).update("hivra-surface-sessions-v1").digest("hex");
+function authSessionDigest(session) {
+  return crypto.createHash("sha256").update(session).digest("hex");
+}
+function authStoreWarn(message) {
+  try { console.error("surface sign-in store: " + message); } catch {}
+}
+// The store lives only in a real directory owned by this user that nobody else
+// can write to; anything else keeps sign-ins in memory for this process.
+function authStoreDirectoryTrusted() {
+  if (typeof process.getuid !== "function") return false;
+  try {
+    const stat = fs.lstatSync(path.dirname(AUTH_STORE_FILE));
+    return stat.isDirectory() && stat.uid === process.getuid() && (stat.mode & 0o022) === 0;
+  } catch {
+    return false;
+  }
+}
+// A trustworthy store, or null. Expired entries are dropped; an entry that is
+// malformed, duplicated or outlives a fresh sign-in (with a small allowance for
+// clock steps) makes the whole file untrusted, because a surface signed in with
+// it would otherwise fail without the epoch telling the dashboard.
+function readAuthStore(now) {
+  if (!authStoreDirectoryTrusted()) return null;
+  let fd = null;
+  try {
+    fd = fs.openSync(AUTH_STORE_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > AUTH_STORE_MAX_BYTES) {
+      authStoreWarn("starting a new store: the saved one is not a private regular file of this user, or is too large");
+      return null;
+    }
+    const raw = fs.readFileSync(fd);
+    if (raw.length > AUTH_STORE_MAX_BYTES) throw new Error("store too large");
+    const doc = JSON.parse(raw.toString("utf8"));
+    if (!doc || typeof doc !== "object" || doc.v !== AUTH_STORE_VERSION || typeof doc.epoch !== "string" || !AUTH_STORE_EPOCH.test(doc.epoch)
+      || !Array.isArray(doc.sessions) || doc.sessions.length > AUTH_STORE_MAX_SESSIONS) {
+      throw new Error("unrecognised store");
+    }
+    // Written for another API token: every sign-in in it is revoked.
+    if (typeof doc.binding !== "string" || !safeEq(doc.binding, AUTH_STORE_BINDING)) {
+      authStoreWarn("starting a new store: the API token changed, so every saved sign-in is revoked");
+      return null;
+    }
+    const sessions = new Map();
+    for (const entry of doc.sessions) {
+      const digest = entry && entry.h, expiresAt = entry && entry.e;
+      if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest) || sessions.has(digest)
+        || !Number.isSafeInteger(expiresAt) || expiresAt > now + AUTH_SESSION_TTL_MS + 5 * 60 * 1000) {
+        throw new Error("invalid session entry");
+      }
+      if (expiresAt > now) sessions.set(digest, Math.min(expiresAt, now + AUTH_SESSION_TTL_MS));
+    }
+    return { epoch: doc.epoch, sessions };
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") authStoreWarn("starting a new store: " + ((error && (error.code || error.message)) || "unreadable"));
+    return null;
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+// Replace the store with the current sign-ins: an exclusive owner-only temp
+// file, flushed, renamed over the store (a rename replaces a planted symlink,
+// it never writes through one) and the directory flushed, so the file a later
+// process finds is never older than a cookie already handed out.
+function writeAuthStore() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(AUTH_STORE_FILE);
+  const temp = path.join(directory, ".surface-sessions." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    const sessions = [];
+    for (const [h, e] of AUTH_SESSIONS) sessions.push({ h, e });
+    const body = JSON.stringify({ v: AUTH_STORE_VERSION, binding: AUTH_STORE_BINDING, epoch: authStoreEpoch, sessions });
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, AUTH_STORE_FILE);
+    try {
+      const dirFd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    } catch {}
+    return true;
+  } catch (error) {
+    authStoreWarn("cannot save sign-ins: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+// Whether a later process could load this epoch from disk. While it can, the
+// file must list exactly the sign-ins in memory.
+let authStoreEpochOnDisk = false;
+let authStoreEpoch = crypto.randomBytes(16).toString("hex");
+function persistAuthSessions() {
+  if (writeAuthStore()) { authStoreEpochOnDisk = true; return; }
+  if (!authStoreEpochOnDisk) return;
+  // The file now lists different sign-ins under this epoch. Remove it so the
+  // next process starts a new epoch; failing that, move this process to a new
+  // epoch now so the dashboard signs its frames in again (and again after the
+  // next restart, which finds the old epoch). Never loops: the new epoch is
+  // not on disk.
+  if (authStoreDirectoryTrusted()) {
+    try { fs.unlinkSync(AUTH_STORE_FILE); authStoreEpochOnDisk = false; return; } catch (error) {
+      if (error && error.code === "ENOENT") { authStoreEpochOnDisk = false; return; }
+    }
+  }
+  authStoreWarn("the saved sign-ins are stale and cannot be removed; starting a new sign-in epoch");
+  authStoreEpoch = crypto.randomBytes(16).toString("hex");
+  authStoreEpochOnDisk = false;
+}
+(function loadAuthStore() {
+  const loaded = readAuthStore(Date.now());
+  if (loaded) {
+    authStoreEpoch = loaded.epoch;
+    authStoreEpochOnDisk = true;
+    for (const [digest, expiresAt] of [...loaded.sessions].sort((a, b) => a[1] - b[1])) AUTH_SESSIONS.set(digest, expiresAt);
+  }
+  // Save right away: prunes the file, and a fresh epoch then survives a
+  // restart that happens before the first sign-in.
+  persistAuthSessions();
+  if (!authStoreEpochOnDisk) authStoreWarn("cannot keep sign-ins in " + AUTH_STORE_FILE + "; surfaces sign in again after this gateway restarts");
+})();
 function cookieVal(req, name) {
   const raw = String(req.headers["cookie"] || "");
   for (const part of raw.split(";")) {
@@ -163,22 +384,35 @@ function safeEq(a, b) {
   return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
 }
 function pruneAuthSessions(now) {
-  for (const [session, expiresAt] of AUTH_SESSIONS) {
-    if (expiresAt <= now) AUTH_SESSIONS.delete(session);
+  for (const [digest, expiresAt] of AUTH_SESSIONS) {
+    if (expiresAt <= now) AUTH_SESSIONS.delete(digest);
   }
 }
+// Mints a sign-in and saves it before the caller hands the cookie out. At the
+// bound the sign-in closest to expiry is revoked, and that is saved too.
 function createAuthSession() {
   const now = Date.now();
   pruneAuthSessions(now);
+  while (AUTH_SESSIONS.size >= AUTH_STORE_MAX_SESSIONS) {
+    let oldest = null;
+    for (const [digest, expiresAt] of AUTH_SESSIONS) {
+      if (oldest === null || expiresAt < AUTH_SESSIONS.get(oldest)) oldest = digest;
+    }
+    AUTH_SESSIONS.delete(oldest);
+  }
   const session = crypto.randomBytes(32).toString("hex");
-  AUTH_SESSIONS.set(session, now + AUTH_SESSION_TTL_MS);
+  AUTH_SESSIONS.set(authSessionDigest(session), now + AUTH_SESSION_TTL_MS);
+  persistAuthSessions();
   return session;
 }
+// Hot path (every proxied request, and once a second per live DeepSeek stream):
+// memory only. An expiry dropped here needs no write, since every load prunes it.
 function validAuthSession(session) {
-  if (!session) return false;
-  const expiresAt = AUTH_SESSIONS.get(session);
+  if (!session || !AUTH_SESSION_SECRET.test(session)) return false;
+  const digest = authSessionDigest(session);
+  const expiresAt = AUTH_SESSIONS.get(digest);
   if (!expiresAt) return false;
-  if (expiresAt <= Date.now()) { AUTH_SESSIONS.delete(session); return false; }
+  if (expiresAt <= Date.now()) { AUTH_SESSIONS.delete(digest); return false; }
   return true;
 }
 function sameBoxOrigin(req) {
@@ -1379,7 +1613,7 @@ function handleChat(req, res) {
     let started;
     try {
       started = CHAT_RUNS.start({
-        runId, clientRef, detached: detach, agentKind: AGENT_KIND, title: message.slice(0, 120),
+        runId, clientRef, detached: detach, agentKind: AGENT_KIND, title: message.slice(0, 120), admit: agentCliUpdateRefusal,
         resumeSessionId: typeof sessionId === "string" ? sessionId : null,
         bin, args, cwd: AGENT_WORKDIR, env: spawnEnv, textMode, stdinText: useStdin ? sendMsg : null,
       });
@@ -1395,7 +1629,8 @@ function handleChat(req, res) {
         preface: { type: "_run", runId: run.runId, detached: run.detached },
         // Callers that did not opt into detached runs keep the historical
         // contract: their disconnect stops the turn. Older dashboards abort the
-        // fetch as their Stop button, and the box's own page expects it too.
+        // fetch as their Stop button. The computer's own chat page (app.js)
+        // sends detach and stops a run through POST /api/chat/runs/<id>/stop.
         onClientClose: run.detached ? undefined : () => CHAT_RUNS.stop(run.runId, "disconnect"),
         onError: logChatStreamError,
       });
@@ -1405,6 +1640,43 @@ function handleChat(req, res) {
       res.end();
     }
   });
+}
+
+// ---- persistent terminal sessions -------------------------------------------
+// Terminal tabs run in private tmux servers started by hivra-agent-shell:
+// "agent" is the agent Terminal, "box" the Box Terminal, and each tab's session
+// is "<surface>-<slot>". Closing a tab only detaches, so the dashboard lists live
+// sessions to restore its tabs after a refresh and ends one explicitly.
+const TERMINAL_SOCKETS = { agent: "hivra-agent", box: "hivra-box" };
+function listTerminalSessions(surface, cb) {
+  execFile("tmux", ["-L", TERMINAL_SOCKETS[surface], "list-sessions", "-F", "#{session_name} #{session_attached} #{session_created}"],
+    { env: AGENT_ENV, cwd: HOME, timeout: 5000 }, (err, stdout, stderr) => {
+      // Without a running tmux server there are simply no sessions.
+      if (err && !/no server running|error connecting|No such file/i.test(String(stderr || "") + String(err.message || ""))) {
+        console.error("hivra-chat: listing " + surface + " terminal sessions failed: " + String(stderr || err.message).slice(0, 200));
+      }
+      const pattern = new RegExp("^" + surface + "-([1-8]) (\\d+) (\\d+)$");
+      const sessions = [];
+      for (const line of String(stdout || "").split("\n")) {
+        const m = line.match(pattern);
+        if (m) sessions.push({ slot: Number(m[1]), attached: Number(m[2]) > 0, createdAt: new Date(Number(m[3]) * 1000).toISOString() });
+      }
+      cb(sessions.sort((a, b) => a.slot - b.slot));
+    });
+}
+function handleTerminalSessions(req, res, q) {
+  res.setHeader("Cache-Control", "no-store");
+  const surface = String(q.get("surface") || "");
+  if (!TERMINAL_SOCKETS[surface]) return jsonRes(res, 400, { error: "surface must be agent or box" });
+  listTerminalSessions(surface, (sessions) => jsonRes(res, 200, { surface, sessions }));
+}
+function handleTerminalSessionClose(res, body) {
+  let surface = "", slot = "";
+  try { const j = JSON.parse(body || "{}"); surface = String(j.surface || ""); slot = String(j.slot || ""); } catch {}
+  if (!TERMINAL_SOCKETS[surface] || !/^[1-8]$/.test(slot)) return jsonRes(res, 400, { error: "surface must be agent or box and slot 1-8" });
+  // "=" makes tmux match the exact session name, never a prefix.
+  execFile("tmux", ["-L", TERMINAL_SOCKETS[surface], "kill-session", "-t", "=" + surface + "-" + slot],
+    { env: AGENT_ENV, cwd: HOME, timeout: 5000 }, (err) => jsonRes(res, 200, { ok: true, closed: !err }));
 }
 
 // GET  /api/chat/runs                  recent runs, newest first
@@ -1819,10 +2091,10 @@ function gateProxy(req, res, port, strip) {
 // to a unix socket needs write permission on it). Guests whose
 // terminal units predate the socket release still listen on loopback; the port
 // stays their fallback.
-const TERMINAL_SOCKETS = { 7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock" };
+const TTYD_SOCKETS = { 7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock" };
 const GATEWAY_UID = typeof process.getuid === "function" ? process.getuid() : -1;
 function terminalUpstream(port) {
-  const socketPath = TERMINAL_SOCKETS[port];
+  const socketPath = TTYD_SOCKETS[port];
   try {
     const folder = fs.lstatSync(path.dirname(socketPath));
     const info = fs.lstatSync(socketPath);
@@ -1973,11 +2245,13 @@ function handleLoginStatus(res) {
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
+    // `connect` is the last fork sync outcome (see syncAeonFork): whether the
+    // dashboard's saves reach the fork and which Aeon workflows are running.
     execFile(GH, ["auth", "status"], { env: AGENT_ENV, cwd: HOME, timeout: 8000 }, (err, stdout, stderr) => {
       const out = String(stdout || "") + String(stderr || "");
       const loggedIn = /Logged in to github\.com/i.test(out);
       const m = out.match(/account\s+(\S+)/i);
-      jsonRes(res, 200, { loggedIn, email: m ? m[1] : null, sub: null });
+      jsonRes(res, 200, { loggedIn, email: m ? m[1] : null, sub: null, connect: readAeonConnectStatus() });
     });
     return;
   }
@@ -2128,24 +2402,68 @@ function handleLoginCompleteAeon(res, body) {
     // origin (and thus every `gh secret set` / repository_dispatch) points at a
     // repo the user doesn't own → HTTP 403 on every credential save. Now that gh
     // is authed, repoint origin + the gh default repo at the connected user's own
-    // fork, then confirm the token can actually write secrets there. THEN restart
-    // the dashboard so it serves against the right repo.
+    // fork, then confirm the token can actually write secrets there, then make
+    // the box clone push to that fork (syncAeonFork). THEN restart the
+    // dashboard so it serves against the right repo.
     finalizeAeonConnect(venice, (result) => {
-      const restart = spawn("sudo", ["-n", "/usr/local/bin/hivra-aeon-apply", "restart"], { env: AGENT_ENV });
-      const reply = () => {
-        // Hard-fail (with a clear, actionable message) on the two states that
-        // would otherwise re-surface later as a silent "save does nothing":
-        // the user has no fork, or the token lacks Secrets:write. Auth itself
-        // succeeded, so any other state (incl. a diagnostics hiccup) passes.
-        if (result.status === "no_secrets" || result.status === "no_fork") {
-          return jsonRes(res, 400, { ok: false, error: result.message });
-        }
-        // venice: "ok" | "failed" | "unsupported" (fork's gateway predates the
-        // VENICE_BASE_URL override) | undefined when wiring wasn't requested.
-        return jsonRes(res, 200, { ok: true, repo: result.repo || undefined, venice: result.venice || (venice ? "unknown" : undefined) });
-      };
-      restart.on("close", reply);
-      restart.on("error", reply);
+      // Hard-fail (with a clear, actionable message) on the states that would
+      // otherwise re-surface later as a silent "save does nothing" and that a
+      // reconnect can fix: the user has no fork, the token lacks
+      // Secrets:write, or (after the sync below) GitHub refused this
+      // computer's push or git could not be given the sign-in. Auth itself
+      // succeeded, so any other state passes and is reported as `sync` (a
+      // GitHub outage is retried by the computer on its own).
+      const hardFail = result.status === "no_secrets" || result.status === "no_fork";
+      // A first fetch of a long-lived fork can outlast the request; it keeps
+      // running and its outcome lands in the status /api/login/status returns.
+      let waited = null;
+      const synced = hardFail ? Promise.resolve(null) : Promise.race([
+        syncAeonFork("connect"),
+        new Promise((resolve) => { waited = setTimeout(() => resolve({ status: "syncing" }), AEON_CONNECT_SYNC_WAIT_MS); }),
+      ]);
+      synced.then((sync) => {
+        clearTimeout(waited);
+        const restart = spawn("sudo", ["-n", "/usr/local/bin/hivra-aeon-apply", "restart"], { env: AGENT_ENV });
+        let replied = false;
+        const reply = () => {
+          if (replied) return;
+          replied = true;
+          if (hardFail) return jsonRes(res, 400, { ok: false, error: result.message });
+          // Connect succeeds only when dashboard saves now reach the fork
+          // (ok), the sync is still running (syncing), or the computer
+          // retries the sync on its own (unreachable, fetch_failed). Any other
+          // outcome leaves every save on the computer and does not clear by
+          // itself, so it fails the connect with what went wrong.
+          if (sync && sync.status !== "ok" && sync.status !== "syncing" && !AEON_RETRYABLE_STATUSES.has(sync.status)) {
+            // GitHub refused this computer's push (403, or a token without the
+            // workflow permission): same class as no_secrets, so the same
+            // token fix. Only a refusal from GitHub gets this message.
+            if (sync.status === "push_denied") {
+              return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Edit the token at github.com/settings/tokens?type=beta → Repository permissions → set Contents and Workflows to Read and write, then reconnect." });
+            }
+            // gh could not become git's credential helper (or git still has
+            // no sign-in): nothing about the token to change, so say to reconnect.
+            if (sync.status === "credentials_failed") {
+              return jsonRes(res, 400, { ok: false, sync, error: sync.detail + ". Connect GitHub again to retry." });
+            }
+            // A push GitHub rejected for another reason (repository rules,
+            // push protection, a protected branch), a git operation left
+            // unfinished in the terminal, another branch checked out, or files
+            // in the way: the detail says what happened and what to do.
+            return jsonRes(res, 400, { ok: false, sync, error: sync.detail || "This computer could not sync with " + (sync.repo || "your GitHub fork") + "." });
+          }
+          // venice: "ok" | "failed" | "unsupported" (fork's gateway predates the
+          // VENICE_BASE_URL override) | undefined when wiring wasn't requested.
+          return jsonRes(res, 200, {
+            ok: true,
+            repo: result.repo || undefined,
+            venice: result.venice || (venice ? "unknown" : undefined),
+            sync: sync || undefined,
+          });
+        };
+        restart.on("close", reply);
+        restart.on("error", reply);
+      });
     });
   });
 }
@@ -2169,6 +2487,8 @@ function finalizeAeonConnect(venice, cb) {
     "set +e",
     "AEON_DIR=" + JSON.stringify(AEON_DIR),
     "UPSTREAM=" + JSON.stringify(AEON_UPSTREAM),
+    // The same gh binary as every other gh call here (GH_BIN / /usr/bin/gh).
+    "gh() { " + JSON.stringify(GH) + ' "$@"; }',
     'LOGIN="$(gh api user -q .login 2>/dev/null)"',
     'if [ -z "$LOGIN" ]; then echo "RESULT:auth_user_failed:could not read your GitHub account from the token"; exit 0; fi',
     'REPO="$LOGIN/aeon"',
@@ -2230,6 +2550,762 @@ function finalizeAeonConnect(venice, cb) {
   };
   child.on("close", done);
   child.on("error", () => cb({ status: "unknown", message: "", repo: "", venice: "" }));
+}
+
+// ---- Aeon fork sync: the box clone must push to the user's fork -------------
+// Every Aeon dashboard save writes into ~/aeon and then runs a plain `git
+// commit` + `git push` (upstream apps/dashboard/lib/github.ts commitAndPush),
+// retrying once after `git pull --rebase --autostash`. The provisioner leaves
+// that clone as a detached depth-1 checkout of the pinned template commit with
+// no git identity and no GitHub credentials, so saves never left the computer
+// and the user's GitHub Actions kept running the old configuration.
+// syncAeonFork makes the clone push-capable against the connected fork: gh as
+// the HTTPS credential helper, the GitHub account as commit identity, and a
+// real local branch tracking the fork's default branch with this computer's
+// unpushed dashboard saves carried onto it and pushed. It also enables the
+// fork's Aeon workflows GitHub leaves disabled on new forks, and records the
+// outcome in ~/.hivra/aeon-connect.json for /api/login/status, so the Hivra
+// dashboard can show the truth after a refresh. It runs after GitHub connect
+// and on every gateway start (retried with backoff while GitHub cannot be
+// reached), so a runtime update (which restarts the gateway) repairs computers
+// connected before this existed. Idempotent; never rejects.
+//
+// Nothing on the computer is ever discarded: every move of the clone is a
+// `git rebase --autostash` (git sets the working tree's other edits aside and
+// puts them back, or keeps them in the stash list when they collide with the
+// fork), commits the fork cannot take are kept on a local branch first, and a
+// sync interrupted by a gateway stop is rolled back by the next one. Only a
+// rebase the sync itself started (recorded in AEON_SYNC_REBASE_MARKER) is ever
+// rolled back; a rebase, merge or other git operation started anywhere else
+// (the owner's terminal, a dashboard save stopped part-way) is left exactly as
+// it is and reported, and nothing is written into it.
+const AEON_CONNECT_FILE = path.join(HOME, ".hivra", "aeon-connect.json");
+const AEON_CONNECT_SYNC_WAIT_MS = 45000;
+// Waits before each retry of a sync GitHub could not be reached for (about 7.5
+// minutes in all); a sync that GitHub answered is never retried on its own.
+const AEON_SYNC_RETRY_DELAYS_MS = [30000, 60000, 120000, 240000];
+const AEON_RETRYABLE_STATUSES = new Set(["unreachable", "fetch_failed"]);
+// Scheduled skills, inbound messages, skill chains and the Telegram command menu.
+const AEON_WORKFLOWS = ["aeon.yml", "scheduler.yml", "messages.yml", "chain-runner.yml", "setup-commands.yml"];
+// States GitHub sets by itself (new fork, 60 days without activity). A workflow
+// the user disabled by hand stays disabled: this runs on every gateway start.
+const AEON_AUTO_DISABLED_WORKFLOWS = new Set(["disabled_fork", "disabled_inactivity"]);
+// What the pinned Aeon dashboard saves (every commitAndPush and saveFile call
+// in its apps/dashboard): aeon.yml, skills/<name>/, soul/*.md, STRATEGY.md and
+// .mcp.json. Edits to these tracked paths are carried to the fork, and so is
+// whatever is already staged: the dashboard stages each save before it
+// commits, so a save whose commit failed (including the .github/workflows
+// secret allowlist an MCP save writes) is staged. Anything else changed on the
+// computer (terminal edits, other workflow edits, untracked files) is never
+// committed: a fork of a public repository is public.
+const AEON_SAVED_PATHS = ["aeon.yml", "skills", "soul", "STRATEGY.md", ".mcp.json"];
+// The provisioner rewrites this tracked file so the dashboard serves under
+// /aeon. It is this computer's setting, never an edit to push to the fork.
+const AEON_NEXT_CONFIG = "apps/dashboard/next.config.ts";
+const AEON_NEXT_CONFIG_MARKER = "AEON_BASE_PATH";
+// A durable copy of that file, written before any sync moves the clone, so a
+// sync stopped part-way (a runtime update restarts this gateway) can never
+// lose it: every sync puts it back whenever the working-tree file lacks it.
+const AEON_NEXT_CONFIG_BACKUP = path.join(HOME, ".hivra", "aeon-next.config.ts");
+// Written (fsynced) right before each rebase the sync starts, and removed once
+// no rebase is in progress: { origHead, headName, onto } as git records them in
+// .git/rebase-merge. A rebase in progress that does not match it is not the
+// sync's, so the sync never rolls it back.
+const AEON_SYNC_REBASE_MARKER = path.join(HOME, ".hivra", "aeon-sync-rebase.json");
+// Byte-identical to the file provision-claude-code-box.sh writes (a contract
+// test keeps them together); used only when no durable copy exists yet.
+const AEON_HIVRA_NEXT_CONFIG = [
+  "import type { NextConfig } from 'next'",
+  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.",
+  "const basePath = process.env.AEON_BASE_PATH || undefined",
+  "const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}",
+  "export default nextConfig",
+  "",
+].join("\n");
+// A missing credential helper must fail fast, never wait on a prompt.
+const AEON_GIT_ENV = Object.assign({}, AGENT_ENV, { GIT_TERMINAL_PROMPT: "0" });
+
+function aeonExec(cmd, args, timeout) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { env: AEON_GIT_ENV, cwd: AEON_DIR, timeout: timeout || 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      let detail = String(stderr || (err && err.message) || "").trim();
+      // Killed by the timeout: a stalled connection, not an answer from GitHub.
+      if (err && err.killed) detail = (detail ? detail + "\n" : "") + "timed out";
+      resolve({ ok: !err, out: String(stdout || "").trim(), err: detail });
+    });
+  });
+}
+const aeonGit = (...args) => aeonExec("git", args);
+const aeonGh = (...args) => aeonExec(GH, args, 60000);
+async function aeonRev(ref) {
+  const rev = await aeonGit("rev-parse", "--verify", "--quiet", ref + "^{commit}");
+  return rev.ok && /^[0-9a-f]{40}$/.test(rev.out) ? rev.out : null;
+}
+// Last meaningful line of a git/gh error, bounded, for the status file and the journal.
+function aeonDetail(text) {
+  const lines = String(text || "").split("\n").map((line) => line.trim())
+    .filter((line) => line && !/^(hint:|Created autostash|Applied autostash|Successfully rebased)/.test(line));
+  return (lines[lines.length - 1] || "no detail").slice(0, 300);
+}
+
+// Why the remote rejected a push, from what it said rather than git's closing
+// "failed to push some refs" line: GitHub's `remote: error:` lines (GH013
+// repository rules and push protection, GH006 protected branch), the rule
+// items it lists, and each `! [remote rejected] <ref> (<reason>)`. Empty when
+// the remote did not reject anything (the push never reached it).
+function aeonPushRejection(text) {
+  const reasons = [];
+  const add = (reason) => {
+    const clean = String(reason || "").trim();
+    if (clean && !reasons.includes(clean)) reasons.push(clean);
+  };
+  let rejected = false;
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trim();
+    const refRejected = line.match(/^!\s+\[(?:remote )?rejected\]\s+\S+(?:\s+->\s+\S+)?\s+\((.+)\)$/);
+    if (refRejected) {
+      rejected = true;
+      add(refRejected[1]);
+      continue;
+    }
+    const remote = line.match(/^remote:\s*(.*)$/);
+    if (!remote) continue;
+    const said = remote[1].trim();
+    const error = said.match(/^(?:error|fatal):\s*(.+)$/i);
+    if (error) add(error[1]);
+    else if (/^-\s+\S/.test(said)) add(said.replace(/^-\s+/, ""));
+  }
+  if (!rejected && !reasons.length) return "";
+  return reasons.slice(0, 6).join("; ").slice(0, 500);
+}
+
+// What a failed call to GitHub means. "credentials": git has no usable GitHub
+// credentials on this computer; "denied": GitHub answered and refused
+// (401/403, a token without the permission, the workflow-scope refusal);
+// "transient": GitHub could not be reached or was briefly unavailable;
+// "other": anything else.
+function aeonRemoteFailure(text) {
+  const t = String(text || "");
+  if (/could not read (Username|Password)|terminal prompts disabled/i.test(t)) return "credentials";
+  // GitHub answers a rate limit with 403: checked before the refusals.
+  if (/rate limit/i.test(t)) return "transient";
+  if (/HTTP 40[13]\b|returned error: 40[13]\b|Permission to \S+ denied|permission denied|denied to |Bad credentials|Write access to repository not granted|refusing to allow an? (Personal Access Token|OAuth App|GitHub App)|Authentication failed|requires authentication|gh auth login/i.test(t)) return "denied";
+  // GitHub answered and rejected the ref (a rule, push protection, a moved
+  // branch). Whatever else its message mentions, it was reached.
+  if (/^\s*!\s+\[(remote )?rejected\]/m.test(t)) return "other";
+  if (/timed? ?out|deadline exceeded|could not resolve|no such host|lookup |dial tcp|connection (refused|reset|closed|timed out)|failed to connect|couldn't connect|network is unreachable|temporary failure|\bTLS\b|\bSSL\b|\bEOF\b|remote end hung up|RPC failed|HTTP 5\d\d|returned error: 5\d\d|HTTP 429|returned error: 429|error connecting to|ECONN|EAI_AGAIN|ETIMEDOUT/i.test(t)) return "transient";
+  return "other";
+}
+
+// Why a rebase that stopped short of a conflict failed, in words the owner can
+// act on (git lists the files in the way on tab-indented lines).
+function aeonMoveFailureDetail(text) {
+  const t = String(text || "");
+  const files = t.split("\n").filter((line) => /^\t\S/.test(line)).map((line) => line.trim()).slice(0, 10);
+  if (/untracked working tree files would be overwritten/i.test(t)) {
+    return "Files on this computer that git does not track are in the way of the fork's version: " + files.join(", ") + ". Move or delete them in the terminal; nothing was changed.";
+  }
+  if (/local changes to the following files would be overwritten/i.test(t)) {
+    return "Edits on this computer are in the way of the fork's version: " + files.join(", ") + ". Nothing was changed.";
+  }
+  return aeonDetail(t);
+}
+
+function readAeonConnectStatus() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(AEON_CONNECT_FILE, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Replace `file` with `text` so that a stop at any moment leaves either the
+// old or the new content on disk, never a partial or missing file.
+function writeFileDurably(file, text, mode) {
+  const tmp = file + ".hivra-tmp";
+  try {
+    const fd = fs.openSync(tmp, "w", mode);
+    try {
+      fs.writeFileSync(fd, text);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+    try {
+      const dir = fs.openSync(path.dirname(file), "r");
+      try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+    } catch {}
+    return true;
+  } catch (error) {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+    console.error("hivra-chat: " + file + " could not be written: " + ((error && error.message) || error));
+    return false;
+  }
+}
+
+function writeAeonConnectStatus(state) {
+  const record = Object.assign({}, state, { at: new Date().toISOString() });
+  try {
+    fs.mkdirSync(path.dirname(AEON_CONNECT_FILE), { recursive: true });
+  } catch {}
+  writeFileDurably(AEON_CONNECT_FILE, JSON.stringify(record) + "\n", 0o600);
+  return record;
+}
+
+// Hivra's basePath config: the AEON_BASE_PATH switch setting both basePath and
+// assetPrefix, and no conflict-marker lines (a file git left mid-merge holds
+// both sides, so it names AEON_BASE_PATH and is still a syntax error).
+function aeonNextConfigUsable(text) {
+  return typeof text === "string"
+    && text.includes(AEON_NEXT_CONFIG_MARKER)
+    && /\bbasePath\b/.test(text)
+    && /\bassetPrefix\b/.test(text)
+    && !/^(<{7}|={7}|>{7}|\|{7})(\s|$)/m.test(text);
+}
+
+// Keep the dashboard's /aeon basePath config in place. While the working-tree
+// file is Hivra's version, a durable copy of it is kept; whenever it is not
+// (a sync stopped part-way, an autostash git could not put back, a fork that
+// changed the file, the dashboard's own `pull --rebase --autostash` leaving it
+// conflicted), the durable copy (or the provisioner's text) is put back and
+// an unmerged index entry for it is cleared. Nothing is written while a git
+// operation is unfinished in the clone. The running dashboard keeps serving
+// its build; the file matters for the next build, so it must never be lost.
+async function ensureAeonNextConfig(gitDir) {
+  if (aeonGitOperation(gitDir)) return;
+  const file = path.join(AEON_DIR, AEON_NEXT_CONFIG);
+  if ((await aeonGit("ls-files", "--unmerged", "--", AEON_NEXT_CONFIG)).out) {
+    const cleared = await aeonGit("reset", "--quiet", "--", AEON_NEXT_CONFIG);
+    if (!cleared.ok) {
+      console.error("hivra-chat: aeon clone: the unresolved merge of " + AEON_NEXT_CONFIG + " could not be cleared: " + aeonDetail(cleared.err));
+      return;
+    }
+    console.error("hivra-chat: aeon clone: cleared an unresolved merge of " + AEON_NEXT_CONFIG + " (git stash list keeps what was set aside)");
+  }
+  let current = null;
+  try { current = fs.readFileSync(file, "utf8"); } catch {}
+  if (aeonNextConfigUsable(current)) {
+    let saved = null;
+    try { saved = fs.readFileSync(AEON_NEXT_CONFIG_BACKUP, "utf8"); } catch {}
+    if (saved !== current) {
+      try { fs.mkdirSync(path.dirname(AEON_NEXT_CONFIG_BACKUP), { recursive: true }); } catch {}
+      writeFileDurably(AEON_NEXT_CONFIG_BACKUP, current, 0o600);
+    }
+    return;
+  }
+  let text = null;
+  try { text = fs.readFileSync(AEON_NEXT_CONFIG_BACKUP, "utf8"); } catch {}
+  if (!aeonNextConfigUsable(text)) text = AEON_HIVRA_NEXT_CONFIG;
+  if (!fs.existsSync(path.dirname(file))) {
+    console.error("hivra-chat: aeon dashboard folder is missing; " + AEON_NEXT_CONFIG + " could not be restored");
+    return;
+  }
+  if (writeFileDurably(file, text, 0o644)) {
+    const what = current !== null && current.includes(AEON_NEXT_CONFIG_MARKER) ? "was damaged in " : "was missing from ";
+    console.error("hivra-chat: aeon dashboard basePath config " + what + AEON_NEXT_CONFIG + " and has been restored");
+  }
+}
+
+// owner/name of the connected fork from the clone's origin, or null while the
+// clone still points at the upstream template (GitHub not connected yet).
+async function aeonConnectedRepo() {
+  // The configured URL, not `remote get-url` (which applies url.insteadOf).
+  const origin = await aeonGit("config", "--get", "remote.origin.url");
+  const m = origin.ok && origin.out.match(/^https:\/\/github\.com\/([A-Za-z0-9-]+\/[A-Za-z0-9._-]+?)(?:\.git)?\/?$/);
+  if (!m || m[1].toLowerCase() === AEON_UPSTREAM.toLowerCase()) return null;
+  return m[1];
+}
+
+// Enable the fork's Aeon workflows GitHub disabled by itself. Reports each
+// workflow's resulting state: active | enable_failed | missing | unknown |
+// any other GitHub state (e.g. disabled_manually, left as the user chose).
+// Uses the REST endpoints directly (what `gh workflow list/enable` wrap), so
+// the result does not depend on how a gh version filters workflow states.
+async function enableAeonWorkflows(repo) {
+  const result = {};
+  const listed = await aeonGh("api", "repos/" + repo + "/actions/workflows?per_page=100");
+  let rows = null;
+  try { rows = JSON.parse(listed.out).workflows; } catch {}
+  if (!listed.ok || !Array.isArray(rows)) {
+    console.error("hivra-chat: aeon workflows of " + repo + " could not be listed: " + aeonDetail(listed.err));
+    for (const file of AEON_WORKFLOWS) result[file] = "unknown";
+    return result;
+  }
+  for (const file of AEON_WORKFLOWS) {
+    const row = rows.find((workflow) => workflow && workflow.path === ".github/workflows/" + file);
+    if (!row) { result[file] = "missing"; continue; }
+    if (!AEON_AUTO_DISABLED_WORKFLOWS.has(row.state)) { result[file] = String(row.state || "unknown"); continue; }
+    const enabled = await aeonGh("api", "-X", "PUT", "repos/" + repo + "/actions/workflows/" + file + "/enable");
+    if (!enabled.ok) console.error("hivra-chat: aeon workflow " + file + " could not be enabled on " + repo + ": " + aeonDetail(enabled.err));
+    result[file] = enabled.ok ? "active" : "enable_failed";
+  }
+  return result;
+}
+
+function aeonRebaseInProgress(gitDir) {
+  return fs.existsSync(path.join(gitDir, "rebase-merge")) || fs.existsSync(path.join(gitDir, "rebase-apply"));
+}
+
+// A git operation left unfinished in the clone, with how to finish or cancel
+// it, or null. The sync starts only rebases, so every merge, cherry-pick,
+// revert, am or bisect is someone else's.
+function aeonGitOperation(gitDir) {
+  const has = (name) => fs.existsSync(path.join(gitDir, name));
+  if (has("rebase-apply/applying")) return { name: "git am", how: "Finish it (git am --continue) or cancel it (git am --abort)" };
+  if (aeonRebaseInProgress(gitDir)) return { name: "git rebase", rebase: true, how: "Finish it (git rebase --continue) or cancel it (git rebase --abort)" };
+  if (has("MERGE_HEAD")) return { name: "git merge", how: "Finish it (git commit) or cancel it (git merge --abort)" };
+  if (has("CHERRY_PICK_HEAD")) return { name: "git cherry-pick", how: "Finish it (git cherry-pick --continue) or cancel it (git cherry-pick --abort)" };
+  if (has("REVERT_HEAD")) return { name: "git revert", how: "Finish it (git revert --continue) or cancel it (git revert --abort)" };
+  if (has("sequencer")) return { name: "git cherry-pick or revert", how: "Finish it (git cherry-pick --continue or git revert --continue) or cancel it (--abort)" };
+  if (has("BISECT_LOG")) return { name: "git bisect", how: "End it (git bisect reset)" };
+  return null;
+}
+
+// Record, before the sync starts a rebase, what git will record for it, so a
+// later sync can tell this rebase from one started anywhere else.
+async function recordAeonSyncRebase(onto) {
+  const head = await aeonRev("HEAD");
+  const ref = await aeonGit("symbolic-ref", "--quiet", "HEAD");
+  const record = { origHead: head, headName: ref.ok && ref.out ? ref.out : "detached HEAD", onto: await aeonRev(onto) };
+  if (!head || !record.onto) return false;
+  try { fs.mkdirSync(path.dirname(AEON_SYNC_REBASE_MARKER), { recursive: true }); } catch {}
+  return writeFileDurably(AEON_SYNC_REBASE_MARKER, JSON.stringify(record) + "\n", 0o600);
+}
+
+// The record goes once no rebase is in progress (a rebase the sync could not
+// roll back keeps it, so the next sync can).
+function clearAeonSyncRebase(gitDir) {
+  if (aeonRebaseInProgress(gitDir)) return;
+  try { fs.rmSync(AEON_SYNC_REBASE_MARKER, { force: true }); } catch {}
+}
+
+// Whether the rebase in progress is the one the sync recorded: git's own
+// orig-head, head-name and onto must match the record. A file git had not
+// written yet (it was stopped as the rebase began) does not count against it.
+function aeonSyncOwnsRebase(gitDir) {
+  let record = null;
+  try { record = JSON.parse(fs.readFileSync(AEON_SYNC_REBASE_MARKER, "utf8")); } catch {}
+  if (!record || typeof record !== "object" || typeof record.origHead !== "string") return false;
+  const stateDir = ["rebase-merge", "rebase-apply"].map((name) => path.join(gitDir, name)).find((dir) => fs.existsSync(dir));
+  if (!stateDir || fs.existsSync(path.join(stateDir, "applying"))) return false;
+  const recorded = { "orig-head": record.origHead, "head-name": record.headName, onto: record.onto };
+  return Object.keys(recorded).every((name) => {
+    let actual = null;
+    try { actual = fs.readFileSync(path.join(stateDir, name), "utf8").trim(); } catch {}
+    return actual === null || actual === recorded[name];
+  });
+}
+
+// Before anything else reads the clone. A gateway stopped mid-sync can leave
+// the sync's own rebase half done: roll it back. `rebase --abort` returns HEAD
+// to where it was and puts the autostash back. If git itself was stopped
+// before it wrote its rebase state, `rebase --quit` keeps the autostash in the
+// stash list, and it is put straight back when nothing has moved since it was
+// made. Any other unfinished git operation is left exactly as it is and
+// returned as { busy }; { error } when the sync's own rebase stays.
+async function recoverAeonClone(gitDir) {
+  const operation = aeonGitOperation(gitDir);
+  if (!operation) {
+    clearAeonSyncRebase(gitDir);
+    return {};
+  }
+  if (!operation.rebase || !aeonSyncOwnsRebase(gitDir)) return { busy: operation };
+  const aborted = await aeonGit("rebase", "--abort");
+  if (aborted.ok) {
+    clearAeonSyncRebase(gitDir);
+    console.error("hivra-chat: aeon clone: rolled back a rebase an earlier sync left unfinished");
+    return {};
+  }
+  const stashBefore = await aeonRev("refs/stash");
+  const quit = await aeonGit("rebase", "--quit");
+  if (!quit.ok) {
+    const detail = aeonDetail(aborted.err) + "; " + aeonDetail(quit.err);
+    console.error("hivra-chat: aeon clone: an unfinished rebase could not be rolled back: " + detail);
+    return { error: "A rebase an earlier sync left unfinished in the Aeon folder on this computer could not be rolled back: " + detail };
+  }
+  clearAeonSyncRebase(gitDir);
+  const stashAfter = await aeonRev("refs/stash");
+  if (stashAfter && stashAfter !== stashBefore
+    && (await aeonRev(stashAfter + "^1")) === (await aeonRev("HEAD"))
+    && (await aeonGit("diff", "--quiet", "HEAD")).ok) {
+    const popped = await aeonGit("stash", "pop", "--quiet");
+    if (!popped.ok) console.error("hivra-chat: aeon clone: edits set aside by an unfinished rebase stay in the stash list: " + aeonDetail(popped.err));
+  }
+  console.error("hivra-chat: aeon clone: cleared an unfinished rebase an earlier sync left behind");
+  return {};
+}
+
+// Where this computer's own edits begin. The provisioned clone is a depth-1
+// checkout of the pinned template commit, so its shallow boundary is exactly
+// that point. It is preferred to a merge-base, which for a fork older than the
+// pinned commit would also replay template commits the user never chose.
+async function aeonEditsBase(gitDir, head, upstream) {
+  let boundaries = [];
+  try { boundaries = fs.readFileSync(path.join(gitDir, "shallow"), "utf8").split(/\s+/).filter((sha) => /^[0-9a-f]{40}$/.test(sha)); } catch {}
+  for (const commit of boundaries) {
+    if ((await aeonGit("merge-base", "--is-ancestor", commit, head)).ok) return commit;
+  }
+  const common = await aeonGit("merge-base", head, upstream);
+  return common.ok && /^[0-9a-f]{40}$/.test(common.out) ? common.out : null;
+}
+
+// Commit the dashboard's unpushed saves (never anything else, never apps/) and
+// put the clone on `branch`, tracking origin/<branch>, with those commits
+// replayed on top of the fork. HEAD is either `branch` itself, the branch an
+// earlier sync followed for a previously connected fork, or the provisioned
+// detached checkout (the caller leaves any other checkout alone). Nothing the
+// fork lacks is ever dropped: commits that conflict with the fork (or were made
+// while another fork was connected) are kept on a local
+// hivra/unpushed-edits-<time> branch and the clone follows the fork; every
+// other edit rides through each move in git's autostash. Returns
+// { parked, notes }, { error } or, when a git operation the sync did not start
+// is unfinished in the clone, { busy } with nothing moved around it.
+async function carryAeonEdits({ branch, gitDir, onBranch, switchedRepo }) {
+  const upstream = "refs/remotes/origin/" + branch;
+  const localRef = "refs/heads/" + branch;
+  const parked = [];
+  const notes = [];
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  // Branches already kept aside stay reported with the error.
+  const fail = (error) => ({ error, parked, notes });
+  // Before a ref is moved, keep any commit on it the fork does not have (once).
+  const keep = async (commit) => {
+    if (!commit || (await aeonGit("merge-base", "--is-ancestor", commit, upstream)).ok) return "";
+    const existing = await aeonGit("for-each-ref", "--format=%(refname:short)", "--points-at", commit, "refs/heads/hivra/");
+    const already = existing.out.split("\n").find((name) => /^hivra\/unpushed-edits-/.test(name));
+    if (already) {
+      if (!parked.includes(already)) parked.push(already);
+      return "";
+    }
+    for (let n = 1; n <= 20; n++) {
+      const name = "hivra/unpushed-edits-" + stamp + (n > 1 ? "-" + n : "");
+      if ((await aeonGit("branch", name, commit)).ok) {
+        parked.push(name);
+        return "";
+      }
+    }
+    return "Local Aeon edits could not be kept aside on a branch.";
+  };
+
+  // A git operation someone else started since the sync began: left alone.
+  const busy = aeonGitOperation(gitDir);
+  if (busy) return { busy, parked, notes };
+  // A file git left conflicted (an autostash the dashboard's own pull could
+  // not put back, a `git stash pop` in the terminal) holds conflict markers:
+  // it is never staged, committed or pushed, and nothing is moved around it.
+  const unresolved = (await aeonGit("diff", "--name-only", "--diff-filter=U")).out.split("\n").filter(Boolean);
+  if (unresolved.length) {
+    return fail("Files in the Aeon folder on this computer have unresolved git conflicts: " + unresolved.slice(0, 10).join(", ")
+      + ". Resolve them in the terminal; nothing was committed or pushed.");
+  }
+
+  // The dashboard's saves: tracked edits under the paths it writes, plus what
+  // it already staged. Pathspecs git does not know are skipped (git add fails
+  // on them). A staged file under apps/ is unstaged, never committed.
+  const known = await aeonGit("ls-files", "-z", "--", ...AEON_SAVED_PATHS);
+  const knownFiles = known.out.split("\0").filter(Boolean);
+  const saved = AEON_SAVED_PATHS.filter((spec) => knownFiles.some((file) => file === spec || file.startsWith(spec + "/")));
+  if (saved.length) {
+    const added = await aeonGit("add", "--update", "--", ...saved);
+    if (!added.ok) return fail("Aeon dashboard saves could not be staged: " + aeonDetail(added.err));
+  }
+  if ((await aeonGit("diff", "--cached", "--name-only", "--", "apps")).out) {
+    const unstaged = await aeonGit("reset", "--quiet", "--", "apps");
+    if (!unstaged.ok) return fail("Staged dashboard build files could not be left out: " + aeonDetail(unstaged.err));
+  }
+  if (!(await aeonGit("diff", "--cached", "--quiet")).ok) {
+    const committed = await aeonGit("commit", "--quiet", "--no-verify", "-m", "chore: save Aeon dashboard edits made on this computer");
+    if (!committed.ok) return fail("Aeon dashboard saves could not be committed: " + aeonDetail(committed.err));
+  }
+  const tip = await aeonRev("HEAD");
+  if (!tip) return fail("The Aeon folder on this computer has no commit checked out.");
+
+  // Where this computer's own commits begin: the fork's own history (on the
+  // branch), the provisioned template commit (detached), or nowhere (another
+  // fork's commits are never replayed into this one).
+  let from = upstream;
+  if (switchedRepo) {
+    const failure = await keep(tip);
+    if (failure) return fail(failure);
+    from = tip;
+  } else if (!onBranch) {
+    const base = await aeonEditsBase(gitDir, tip, upstream);
+    if (base) {
+      from = base;
+    } else {
+      const failure = await keep(tip);
+      if (failure) return fail(failure);
+      notes.push("this computer's Aeon folder shares no history with the fork");
+      from = tip;
+    }
+  }
+  // Moving onto `branch`: a local branch of that name keeps its own commits.
+  if (onBranch !== branch) {
+    const failure = await keep(await aeonRev(localRef));
+    if (failure) return fail(failure);
+  }
+  if (onBranch && onBranch !== branch) {
+    // The branch an earlier sync followed for another fork: switch names in place.
+    const renamed = await aeonGit("checkout", "--quiet", "-B", branch);
+    if (!renamed.ok) return fail("The Aeon folder could not switch to " + branch + ": " + aeonDetail(renamed.err));
+  }
+
+  const stashBefore = await aeonRev("refs/stash");
+  // Each rebase is recorded first, so only the sync's own is ever rolled back.
+  const replay = async (start) => {
+    if (!(await recordAeonSyncRebase(upstream))) return { ok: false, unrecorded: true, err: "" };
+    return aeonGit("rebase", "--quiet", "--autostash", "--onto", upstream, start);
+  };
+  const unrecorded = "The Aeon folder on this computer could not follow the fork: the sync could not record its progress in " + AEON_SYNC_REBASE_MARKER + ".";
+  // A rebase in progress that is not the one just recorded was started
+  // elsewhere while this one could not begin: it is never rolled back.
+  const foreignRebase = () => (aeonRebaseInProgress(gitDir) && !aeonSyncOwnsRebase(gitDir) ? { busy: aeonGitOperation(gitDir), parked, notes } : null);
+  let moved = await replay(from);
+  if (moved.unrecorded) return fail(unrecorded);
+  if (!moved.ok && foreignRebase()) return foreignRebase();
+  if (!moved.ok) {
+    const conflicted = aeonRebaseInProgress(gitDir)
+      && Boolean((await aeonGit("diff", "--name-only", "--diff-filter=U")).out);
+    if (!conflicted) {
+      // Not a conflict (an untracked file in the way, a lock held by a
+      // dashboard save): roll back whatever git started, change nothing else
+      // and force nothing.
+      if (aeonRebaseInProgress(gitDir)) await aeonGit("rebase", "--abort");
+      return fail("The Aeon folder on this computer could not follow the fork. " + aeonMoveFailureDetail(moved.err));
+    }
+    // A real conflict between this computer's commits and the fork: roll the
+    // replay back (HEAD returns to the tip and the autostash is put back),
+    // keep those commits on a local branch, then follow the fork.
+    const aborted = await aeonGit("rebase", "--abort");
+    if (!aborted.ok) return fail("A conflicting replay onto the fork could not be rolled back: " + aeonDetail(aborted.err));
+    const failure = await keep(await aeonRev("HEAD"));
+    if (failure) return fail(failure);
+    notes.push(aeonDetail(moved.err));
+    moved = await replay("HEAD");
+    if (moved.unrecorded) return fail(unrecorded);
+    if (!moved.ok && foreignRebase()) return foreignRebase();
+    if (!moved.ok) {
+      if (aeonRebaseInProgress(gitDir)) await aeonGit("rebase", "--abort");
+      return fail("The Aeon folder on this computer could not follow the fork. " + aeonMoveFailureDetail(moved.err));
+    }
+  }
+  // Edits git could not put back after the move are in the stash list: leave
+  // no conflict markers or half-staged files behind (the edits are safe there).
+  const stashAfter = await aeonRev("refs/stash");
+  if (stashAfter && stashAfter !== stashBefore) {
+    const unmerged = (await aeonGit("diff", "--name-only", "--diff-filter=U")).out.split("\n").filter(Boolean);
+    await aeonGit("reset", "--quiet");
+    if (unmerged.length) await aeonGit("checkout", "--quiet", "HEAD", "--", ...unmerged);
+    notes.push("edits on this computer to " + (unmerged.length ? unmerged.join(", ") : "files") + " that the fork also changed were kept in the git stash (git stash list)");
+  }
+  if (!onBranch) {
+    // The replay ran on the detached checkout; attach it (no working-tree change).
+    const attached = await aeonGit("checkout", "--quiet", "-B", branch);
+    if (!attached.ok) return fail("The Aeon folder could not switch to " + branch + ": " + aeonDetail(attached.err));
+  }
+  const tracked = await aeonGit("branch", "--quiet", "--set-upstream-to=origin/" + branch, branch);
+  if (!tracked.ok) return fail("The Aeon clone could not track the fork: " + aeonDetail(tracked.err));
+  if (parked.length) console.error("hivra-chat: aeon edits kept on " + parked.join(", ") + " (" + notes.join("; ") + ")");
+  return { parked, notes };
+}
+
+async function syncAeonForkOnce(reason, attempt) {
+  if (!fs.existsSync(path.join(AEON_DIR, ".git"))) return null;
+  const repo = await aeonConnectedRepo();
+  if (!repo) return null;
+  const previous = readAeonConnectStatus();
+  const state = { status: "syncing", repo, branch: null, pushReady: false, workflows: {}, parkedBranches: [], attempt: attempt + 1 };
+  // Branches kept aside by earlier syncs stay reported while they exist.
+  for (const name of previous && Array.isArray(previous.parkedBranches) ? previous.parkedBranches : []) {
+    if (typeof name === "string" && /^hivra\/unpushed-edits-[0-9TZ-]+$/.test(name) && !state.parkedBranches.includes(name)
+      && (await aeonRev("refs/heads/" + name))) state.parkedBranches.push(name);
+  }
+  writeAeonConnectStatus(state);
+  const finish = (status, detail) => {
+    state.status = status;
+    if (detail) state.detail = detail;
+    if (AEON_RETRYABLE_STATUSES.has(status) && attempt < AEON_SYNC_RETRY_DELAYS_MS.length) {
+      state.retryAt = new Date(Date.now() + AEON_SYNC_RETRY_DELAYS_MS[attempt]).toISOString();
+    }
+    if (status !== "ok") console.error("hivra-chat: aeon fork sync (" + reason + ") " + status + ": " + (detail || "") + (state.retryAt ? " (retrying at " + state.retryAt + ")" : ""));
+    return state;
+  };
+  // The outcome is written only once the clone is settled, so whoever reads
+  // it (the connect reply, /api/login/status, a test) sees the final state.
+  const settle = (status, detail) => writeAeonConnectStatus(finish(status, detail));
+
+  const gitDir = (await aeonGit("rev-parse", "--absolute-git-dir")).out;
+  if (!gitDir) return settle("error", "The Aeon folder on this computer is not a git clone.");
+  // Before anything else: roll back what an interrupted sync left, and make
+  // sure the basePath config is on disk (and durably copied) before any move.
+  // A git operation started anywhere else (the owner's terminal, a dashboard
+  // save stopped part-way) is left exactly as it is: nothing is written into
+  // it, and saves wait until it is finished or cancelled.
+  const busyDetail = (operation) => "A " + operation.name + (operation.rebase ? " that Hivra's sync did not start" : "")
+    + " is unfinished in the Aeon folder on this computer, and the sync left it exactly as it is. " + operation.how
+    + " in the terminal; Aeon dashboard saves are not pushed to " + repo + " until then.";
+  const recovered = await recoverAeonClone(gitDir);
+  if (recovered.busy) return settle("operation_in_progress", busyDetail(recovered.busy));
+  if (recovered.error) return settle("error", recovered.error);
+  await ensureAeonNextConfig(gitDir);
+  const steps = async () => {
+    const account = await aeonGh("api", "user");
+    let user = null;
+    try { user = JSON.parse(account.out); } catch {}
+    const login = user && typeof user.login === "string" ? user.login : "";
+    const id = user && Number.isSafeInteger(user.id) ? user.id : 0;
+    if (!account.ok || !/^[A-Za-z0-9-]{1,39}$/.test(login) || id <= 0) {
+      const kind = account.ok ? "other" : aeonRemoteFailure(account.err);
+      if (kind === "transient") return finish("unreachable", "Could not reach GitHub from this computer: " + aeonDetail(account.err));
+      if (kind === "denied" || kind === "credentials") return finish("auth_failed", "GitHub sign-in on this computer is not working: " + aeonDetail(account.err));
+      return finish("error", "The GitHub account on this computer could not be read: " + aeonDetail(account.err || account.out));
+    }
+    state.workflows = await enableAeonWorkflows(repo);
+    // gh becomes git's HTTPS credential helper for github.com (~/.gitconfig).
+    const helper = await aeonGh("auth", "setup-git", "--hostname", "github.com");
+    if (!helper.ok) {
+      return finish("credentials_failed", "Git on this computer could not be given the GitHub sign-in for " + repo + ": " + aeonDetail(helper.err));
+    }
+    // Commits are made as the connected account, like GitHub's own web editor.
+    const named = await aeonGit("config", "user.name", login);
+    const mailed = await aeonGit("config", "user.email", id + "+" + login + "@users.noreply.github.com");
+    if (!named.ok || !mailed.ok) return finish("error", "The Aeon clone's commit identity could not be set: " + aeonDetail(named.err || mailed.err));
+
+    // A failed read of the fork: unreachable (retried), no credentials, or refused.
+    const readFailure = (result, what) => {
+      const kind = aeonRemoteFailure(result.err);
+      if (kind === "transient") return finish("unreachable", "Could not reach GitHub to " + what + " " + repo + ": " + aeonDetail(result.err));
+      if (kind === "credentials") return finish("credentials_failed", "Git on this computer has no GitHub sign-in for " + repo + ": " + aeonDetail(result.err));
+      return finish("fetch_failed", "Could not " + what + " " + repo + " from GitHub: " + aeonDetail(result.err));
+    };
+    const head = await aeonGit("ls-remote", "--symref", "origin", "HEAD");
+    const symref = head.ok && head.out.match(/^ref: refs\/heads\/(\S+)\s+HEAD$/m);
+    if (!head.ok) return readFailure(head, "read");
+    if (!symref || !(await aeonGit("check-ref-format", "--branch", symref[1])).ok) {
+      return finish("fetch_failed", "Could not read the default branch of " + repo + " from GitHub.");
+    }
+    const branch = symref[1];
+    state.branch = branch;
+
+    // Only the fork's default branch (or the one an earlier sync followed for
+    // another fork, or the untouched provisioned checkout) is ever moved. A
+    // branch or commit the owner checked out by hand is left exactly as it
+    // is, with nothing committed onto it; saves are not pushed until they
+    // switch back.
+    const current = await aeonGit("symbolic-ref", "--quiet", "--short", "HEAD");
+    const onBranch = current.ok ? current.out : null;
+    const followed = (await aeonGit("config", "--get", "hivra.syncedFork")).out;
+    const followedBranch = (await aeonGit("config", "--get", "hivra.syncedBranch")).out;
+    const ours = onBranch ? onBranch === branch || (Boolean(followedBranch) && onBranch === followedBranch) : !followed;
+    if (!ours) {
+      return finish("on_other_branch", "The Aeon folder on this computer is on " + (onBranch ? "the branch " + onBranch : "a commit checked out by hand")
+        + ", not " + branch + ". Aeon dashboard saves are not pushed to " + repo + " until " + branch + " is checked out again; nothing was changed.");
+    }
+
+    const fetchFork = () => aeonExec("git", ["fetch", "--quiet", "--no-tags", "origin", "+refs/heads/" + branch + ":refs/remotes/origin/" + branch], 600000);
+    const fetched = await fetchFork();
+    if (!fetched.ok) return readFailure(fetched, "fetch");
+
+    // Commits from a previously connected fork are never replayed into a different one.
+    const switchedRepo = Boolean(followed) && followed.toLowerCase() !== repo.toLowerCase();
+    // Branches this sync kept aside are reported even if a later step fails.
+    const parked = new Set();
+    const notes = [];
+    const recordCarry = (carry) => {
+      for (const name of carry.parked || []) {
+        parked.add(name);
+        if (!state.parkedBranches.includes(name)) state.parkedBranches.push(name);
+      }
+      notes.push(...(carry.notes || []));
+    };
+    const carried = await carryAeonEdits({ branch, gitDir, onBranch, switchedRepo });
+    recordCarry(carried);
+    if (carried.busy) return finish("operation_in_progress", busyDetail(carried.busy));
+    if (carried.error) return finish("error", carried.error);
+    await aeonGit("config", "hivra.syncedFork", repo);
+    await aeonGit("config", "hivra.syncedBranch", branch);
+
+    // Push the way the dashboard does: a plain `git push` of the tracked
+    // branch. With nothing to push, a dry run still proves the credentials can
+    // write. A push GitHub did not refuse (most often: the fork moved since the
+    // fetch, e.g. an Actions run committed) is retried once after a new fetch
+    // and replay.
+    const pushOnce = async () => {
+      const ahead = await aeonGit("rev-list", "--count", "refs/remotes/origin/" + branch + "..refs/heads/" + branch);
+      return Number(ahead.out) > 0
+        ? await aeonExec("git", ["push", "--quiet"], 300000)
+        : await aeonGit("push", "--quiet", "--dry-run");
+    };
+    let push = await pushOnce();
+    if (!push.ok && !["denied", "credentials"].includes(aeonRemoteFailure(push.err))) {
+      console.error("hivra-chat: aeon fork sync (" + reason + ") push failed, fetching and retrying once: " + aeonDetail(push.err));
+      const refetched = await fetchFork();
+      if (refetched.ok) {
+        const again = await carryAeonEdits({ branch, gitDir, onBranch: branch, switchedRepo: false });
+        recordCarry(again);
+        if (again.busy) return finish("operation_in_progress", busyDetail(again.busy));
+        if (again.error) return finish("error", again.error);
+        push = await pushOnce();
+      } else {
+        push = { ok: false, err: refetched.err };
+      }
+    }
+    state.pushReady = push.ok;
+    if (!push.ok) {
+      const kind = aeonRemoteFailure(push.err);
+      if (kind === "credentials") return finish("credentials_failed", "Git on this computer has no GitHub sign-in to push to " + repo + ": " + aeonDetail(push.err));
+      if (kind === "denied") return finish("push_denied", "GitHub refused this computer's push to " + repo + ": " + aeonDetail(push.err));
+      if (kind === "transient") return finish("unreachable", "Could not reach GitHub to push to " + repo + ": " + aeonDetail(push.err));
+      // What GitHub said (a repository rule, push protection, a protected
+      // branch), not git's closing "failed to push some refs" line.
+      const rejection = aeonPushRejection(push.err);
+      if (rejection) return finish("push_failed", "GitHub rejected this computer's push to " + repo + ": " + rejection);
+      return finish("push_failed", "This computer could not push to " + repo + ": " + aeonDetail(push.err));
+    }
+    const said = [];
+    if (parked.size) said.push("Edits made on this computer could not be applied to " + repo + " and were kept on the local branch " + Array.from(parked).join(", ") + ".");
+    const stashed = notes.filter((note) => /git stash/.test(note));
+    if (stashed.length) said.push(stashed.map((note) => note.charAt(0).toUpperCase() + note.slice(1) + ".").join(" "));
+    return finish("ok", said.join(" "));
+  };
+  let outcome;
+  try {
+    outcome = await steps();
+  } finally {
+    clearAeonSyncRebase(gitDir);
+    await ensureAeonNextConfig(gitDir);
+  }
+  return writeAeonConnectStatus(outcome);
+}
+
+let aeonSyncChain = Promise.resolve();
+let aeonSyncRetry = null;
+let aeonSyncGeneration = 0;
+// Serialized; a sync GitHub could not be reached for is retried with backoff
+// (AEON_SYNC_RETRY_DELAYS_MS). A newer sync (a reconnect) replaces a pending retry.
+function syncAeonFork(reason, attempt) {
+  const tries = attempt || 0;
+  const generation = ++aeonSyncGeneration;
+  if (aeonSyncRetry) {
+    clearTimeout(aeonSyncRetry);
+    aeonSyncRetry = null;
+  }
+  const run = aeonSyncChain.then(() => syncAeonForkOnce(reason, tries)).catch((error) => {
+    console.error("hivra-chat: aeon fork sync (" + reason + ") crashed: " + ((error && error.stack) || error));
+    const previous = readAeonConnectStatus();
+    return writeAeonConnectStatus(Object.assign({}, previous || {}, { status: "error", pushReady: false, retryAt: undefined, detail: "The computer could not finish syncing with GitHub." }));
+  });
+  aeonSyncChain = run.then(() => undefined, () => undefined);
+  void run.then((state) => {
+    if (generation !== aeonSyncGeneration || !state || !state.retryAt || tries >= AEON_SYNC_RETRY_DELAYS_MS.length) return;
+    aeonSyncRetry = setTimeout(() => {
+      aeonSyncRetry = null;
+      void syncAeonFork(reason, tries + 1);
+    }, AEON_SYNC_RETRY_DELAYS_MS[tries]);
+  });
+  return run;
 }
 
 function managementCors(res) {
@@ -2356,7 +3432,12 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
   }
-  if (req.method === "GET" && u === "/api/meta") return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}) });
+  if (req.method === "GET" && u === "/api/meta") {
+    // no-store: bootId (the sign-in epoch) and nativeReady describe the live
+    // gateway, never a copy cached from before a restart.
+    res.setHeader("Cache-Control", "no-store");
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
+  }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
@@ -2387,6 +3468,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/chat") return authed(req)
     ? COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent chat is unavailable for this computer" }) : handleChat(req, res)
     : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/terminal/sessions") return authed(req) ? handleTerminalSessions(req, res, q) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/terminal/sessions/close") return authed(req) ? readBody(req, (b) => handleTerminalSessionClose(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (u === "/api/chat/runs" || u.startsWith("/api/chat/runs/")) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
     if (!CHAT_RUNS) return jsonRes(res, 409, { error: "agent chat is unavailable for this computer" });
@@ -2517,6 +3600,9 @@ if (ATTACHED) {
   }
   server.listen({ fd: 3 }, () => console.log("hivra-chat (attached " + ATTACHED_INSTALLATION_ID + ") listening on its socket"));
 } else server.listen(PORT, "127.0.0.1", () => console.log("hivra-chat listening on 127.0.0.1:" + PORT));
+// Idempotent on every start: an Aeon computer connected to GitHub before the
+// fork sync existed is repaired by the gateway restart of a runtime update.
+if (AGENT_KIND === "aeon") setTimeout(() => { void syncAeonFork("startup"); }, 0);
 if (WORKSPACE_ROUTER) {
   for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => {
     WORKSPACE_ROUTER.close(); server.close(); process.exit(0);

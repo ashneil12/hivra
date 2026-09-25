@@ -17,6 +17,7 @@ import { loadGlobalHermesSettingsForUser } from "@/lib/clerk-hermes-settings";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { log } from "@/lib/logger";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-orchestrator";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWebfreeBackend } from "@/lib/types/instance";
 
@@ -75,7 +76,11 @@ export async function applyBankrWalletChangeToWebfreeInstance(params: {
     if (!ipv4) return skip(instanceId, userId, "no_address");
 
     const settings = await loadGlobalHermesSettingsForUser(userId, { instanceId });
-    const result = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin);
+    // User-initiated: the owner ticked "restart the agent now", accepting that
+    // a chat in progress stops, so this recreates without the in-flight gate.
+    const result = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin, {
+      initiator: USER_LIVE_UPDATE,
+    });
     if (result.applied) {
       log.info("agent wallet change delivered through a runtime update", {
         source: LOG_SOURCE,

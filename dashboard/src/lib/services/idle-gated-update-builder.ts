@@ -1,6 +1,7 @@
 import { gzipSync } from "zlib";
 import { deploymentScopedDefault } from "@/lib/deployment-channel";
 import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime-env";
+import { buildAgentActivityProbeShell } from "@/lib/services/agent-activity-probe";
 
 /**
  * Idle-gated update stack provisioner.
@@ -12,7 +13,11 @@ import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime
  *
  * Three units (all proven in production):
  *   1. idle-sampler (every 3 min): stamps /run/hermes-last-active-<INST> whenever
- *      the agent is processing a turn. Fail-safe: unknown/stale => BUSY.
+ *      the agent is processing a turn: a gateway turn (messaging, cron, scheduled
+ *      tasks: gateway_state.json active_agents) or a web-chat turn running in
+ *      official-dashboard (a fresh turn marker). It runs the same probe as the
+ *      in-flight update gate (agent-activity-probe.ts). Fail-safe: unknown/stale
+ *      => BUSY.
  *   2. roll (hourly): idle-gated recreate of gateway+official-dashboard onto the
  *      latest :stable — only when idle >= 45 min and a new image exists. A
  *      20-hour cooldown suppresses repeat work for the same image, but never
@@ -59,9 +64,14 @@ function renderEmbeddedFileWrite(
   const encoded = (shouldCompress ? compressed : raw).toString("base64");
   const decodePipeline = shouldCompress ? "base64 -d | gunzip" : "base64 -d";
 
-  return `printf '%s' '${encoded}' | ${decodePipeline} > ${path}${
-    options?.chmod ? `\nchmod ${options.chmod} ${path}` : ""
-  }`;
+  // Write-then-rename: the update path rewrites these files on live boxes, and a
+  // running bash reads its script incrementally, so truncating a script mid-run
+  // (the hourly roll, or the 3-minute sampler) would execute garbage. The rename
+  // leaves a running process on the old inode.
+  const staged = `${path}.hermes-new`;
+  return `printf '%s' '${encoded}' | ${decodePipeline} > ${staged}${
+    options?.chmod ? `\nchmod ${options.chmod} ${staged}` : ""
+  }\nmv -f ${staged} ${path}`;
 }
 
 /**
@@ -139,40 +149,32 @@ export function buildIdleGatedUpdateProvisioningScript(params: {
   // hermes-idle-sampler-<INST> — stamp the "last active" marker whenever the
   // agent is processing a turn. Fail-safe: stale/unreadable => ACTIVE so the
   // roller never rolls into an in-flight turn.
+  //
+  // "A turn is running" comes from the shared agent activity probe
+  // (agent-activity-probe.ts), the same code the in-flight update gate runs, so
+  // the roll and system updates can never disagree about what busy means. It
+  // sees gateway turns (messaging, cron, scheduled tasks: gateway_state.json
+  // active_agents) and web-chat turns, which run inside official-dashboard and
+  // are invisible to gateway_state.json (the agent's durable turn markers).
   const samplerScript = `#!/usr/bin/env bash
 # hermes-idle-sampler — stamp the "last active" marker whenever the agent is
-# processing a turn. Fail-safe: stale/unreadable => ACTIVE so the roller never
-# rolls into an in-flight turn.
+# processing a turn (a gateway turn: messaging, cron, scheduled tasks; or a
+# web-chat turn in official-dashboard). Fail-safe: stale/unreadable => ACTIVE so
+# the roller never rolls into an in-flight turn.
 set -uo pipefail
 INST="${INST}"
-G="agent-\${INST}-gateway"
 MARK="/run/hermes-last-active-\${INST}"
-PYV="/home/hermes/.hermes/hermes-agent/.venv/bin/python3"
-verdict="$(docker exec -i "$G" "$PYV" - <<'PY' 2>/dev/null
-import json, glob, sys
-from datetime import datetime, timezone
-now = datetime.now(timezone.utc).timestamp()
-busy = 0
-stale = 0
-# Single-gateway mode runs only the default gateway. Legacy sub-profile state
-# files have no live owner and become stale permanently, so they cannot be
-# treated as activity evidence.
-files = glob.glob("/home/hermes/.hermes/gateway_state.json")
-if not files:
-    print("BUSY"); sys.exit(0)
-for f in files:
-    try:
-        d = json.load(open(f))
-        ts = datetime.fromisoformat(d["updated_at"]).timestamp()
-        if now - ts > 150:
-            stale += 1
-        busy += int(d.get("active_agents", 0) or 0)
-    except Exception:
-        stale += 1
-print("BUSY" if (busy > 0 or stale > 0) else "IDLE")
-PY
-)" || verdict="BUSY"
-if [ "$verdict" != "IDLE" ]; then
+${buildAgentActivityProbeShell()}
+hivra_agent_activity "agent-\${INST}-gateway" "agent-\${INST}-official-dashboard"
+# Only a proven-idle probe with the gateway running counts as idle. A gateway
+# that is not running is never proof of idle: the roll recreates both
+# containers, and this sampler has always refused to call a box it cannot see
+# running idle.
+case "$HIVRA_GATEWAY_STATE" in
+  "true "*) gateway_up=1 ;;
+  *) gateway_up=0 ;;
+esac
+if [ "$HIVRA_ACTIVITY_VERDICT" != idle ] || [ "$gateway_up" != 1 ]; then
   date +%s > "$MARK"
 elif [ ! -e "$MARK" ]; then
   # No prior BUSY sample exists: start the 45-minute proof window now.
@@ -467,6 +469,11 @@ fi
 if [ ! -f "$MARK" ]; then date +%s > "$MARK"; log "no idle marker yet - starting clock, skip"; exit 0; fi
 idle_min=$(( ( $(date +%s) - $(stat -c %Y "$MARK") ) / 60 ))
 [ "$idle_min" -lt "$IDLE_MIN" ] && { log "active \${idle_min}m ago (<\${IDLE_MIN}m idle) - defer"; exit 0; }
+# The sampler runs every 3 minutes, so a turn may have started since its last
+# sample. Take one more sample right before stopping anything.
+/usr/local/bin/hermes-idle-sampler-"\${INST}" >/dev/null 2>&1 || date +%s > "$MARK"
+idle_min=$(( ( $(date +%s) - $(stat -c %Y "$MARK") ) / 60 ))
+[ "$idle_min" -lt "$IDLE_MIN" ] && { log "turn started since the last idle sample - defer"; exit 0; }
 if ! repair_runtime_env_files; then
   log "managed runtime env migration failed - aborting before service stop + PAUSING auto-roll"
   echo "auto-roll paused $(ts): managed runtime env migration failed; cleared by removing this file after repair" > "$PAUSE"

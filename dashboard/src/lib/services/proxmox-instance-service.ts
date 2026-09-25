@@ -71,6 +71,17 @@ import {
 } from "./proxmox/script-builders";
 import type { ProxmoxInstanceMetrics } from "./proxmox/output-parsers";
 import {
+  buildSudoTransportCommand,
+  frameSudoTransportInput,
+  HIVRA_SUDO_LOADER,
+  parseMissingTool,
+  stripSudoSentinel,
+  SUDO_MISSING_TOOLS_PROBE,
+  SUDO_TRUE_PROBE,
+  sudoTransportFailureMessage,
+  type SudoTransportFailure,
+} from "./proxmox-sudo-transport";
+import {
   parseProxmoxInfrastructureDiscoveryOutput,
   parseProxmoxMetricsOutput,
   parseProxmoxProvisionOutput,
@@ -180,6 +191,12 @@ export interface HostScriptResult {
   stdout: string;
   stderr: string;
   error?: string;
+  /** A user connection's server presented a different host key than the
+   * pinned one. Nothing was authenticated or sent. Lowercase SHA-256 hex. */
+  presentedHostFingerprintSha256?: string;
+  /** Sudo transport only: the command never reached the script, and the
+   * fixed diagnosis says why. */
+  sudoFailure?: SudoTransportFailure;
 }
 
 /** Default and absolute host-output limits protect the control plane from a
@@ -221,7 +238,18 @@ export type ProxmoxTemplateAvailability =
 type EnvLike = Record<string, string | undefined>;
 type HostScriptTimeoutOverride =
   | number
-  | { timeoutMs?: number; earlyFinishMarker?: string; maxOutputBytes?: number };
+  | {
+      timeoutMs?: number;
+      earlyFinishMarker?: string;
+      maxOutputBytes?: number;
+      /** Sudo transport only. "bounded" (the default) stops the remote script
+       * with TERM, then KILL, just before Hivra's own deadline. "none" is for
+       * scripts that change packages (gVisor Prepare): a KILL inside apt or
+       * dpkg would leave the package database interrupted, so, exactly as for
+       * a root login, the script finishes on the server even if Hivra stopped
+       * waiting. */
+      remoteLimit?: "bounded" | "none";
+    };
 
 type ProvisionDeps = ProxmoxHostAwareDeps & {
   buildDeployScript?: typeof buildAgentDeployScript;
@@ -1387,9 +1415,10 @@ function spawnWithInput(
   input: string,
   timeoutMs: number,
   maxOutputBytes: number,
+  childEnv?: NodeJS.ProcessEnv,
 ): Promise<HostScriptResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], ...(childEnv ? { env: childEnv } : {}) });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let capturedBytes = 0;
@@ -1458,9 +1487,22 @@ function spawnWithInput(
   });
 }
 
+/** One host script run. `loginCommand`/`loginInput` are today's exact SSH
+ * command and stdin; `script`/`stdin` are what the sudo transport frames
+ * instead, for connections whose privilege is "sudo". */
+type HostInvocation = {
+  loginCommand: string;
+  loginInput: string;
+  script: string;
+  stdin: string;
+};
+
+function withoutSudoSentinel(result: HostScriptResult): HostScriptResult {
+  return { ...result, stderr: stripSudoSentinel(result.stderr).stderr };
+}
+
 async function runProxmoxHostInvocation(
-  command: string,
-  input: string,
+  invocation: HostInvocation,
   env: EnvLike = process.env,
   timeoutMsOverride?: HostScriptTimeoutOverride
 ): Promise<HostScriptResult> {
@@ -1483,8 +1525,30 @@ async function runProxmoxHostInvocation(
     typeof timeoutMsOverride === "object" ? timeoutMsOverride?.earlyFinishMarker : undefined;
   const maxOutputBytes = resolveHostScriptMaxOutputBytes(timeoutMsOverride);
   const mode = envValue(env, "PROXMOX_EXEC_MODE", "ssh");
+  const userInfrastructureConnection =
+    envValue(env, "HIVRA_USER_INFRA_CONNECTION").toLowerCase() === "true";
+  // The managed fleet never sets this; login connections keep today's exact
+  // commands. Only a user connection that recorded sudo uses the transport.
+  const sudoTransport = userInfrastructureConnection
+    && envValue(env, "PROXMOX_SSH_PRIVILEGE") === "sudo";
+  const sudoInput = sudoTransport ? frameSudoTransportInput(invocation.script, invocation.stdin) : null;
+  if (sudoTransport && sudoInput === null) {
+    return { ok: false, stdout: "", stderr: "", error: "Invalid host script for the sudo transport" };
+  }
+  const remoteLimit = typeof timeoutMsOverride === "object" && timeoutMsOverride.remoteLimit === "none" ? "none" : "bounded";
+  const command = sudoTransport ? buildSudoTransportCommand(timeoutMs, remoteLimit) : invocation.loginCommand;
+  const input = sudoTransport ? sudoInput! : invocation.loginInput;
 
   if (mode === "local") {
+    // Local mode runs the same framing without sudo, so the loader's
+    // behaviour can be checked on a development machine. LC_ALL=C as on the
+    // server: the loader counts the script's length in bytes.
+    if (sudoTransport) {
+      return withoutSudoSentinel(
+        await spawnWithInput("bash", ["--noprofile", "--norc", "-c", HIVRA_SUDO_LOADER], input, timeoutMs, maxOutputBytes,
+          { ...process.env, LC_ALL: "C" }),
+      );
+    }
     return command === "bash -s"
       ? spawnWithInput("bash", ["-s"], input, timeoutMs, maxOutputBytes)
       : spawnWithInput("bash", ["-c", command], input, timeoutMs, maxOutputBytes);
@@ -1493,8 +1557,10 @@ async function runProxmoxHostInvocation(
   const host = envValue(env, "PROXMOX_SSH_HOST");
   const user = envValue(env, "PROXMOX_SSH_USER", "root");
   const port = envValue(env, "PROXMOX_SSH_PORT", "22");
-  const userInfrastructureConnection =
-    envValue(env, "HIVRA_USER_INFRA_CONNECTION").toLowerCase() === "true";
+  const hostKeyType = userInfrastructureConnection ? envValue(env, "PROXMOX_SSH_HOST_KEY_TYPE") : "";
+  if (hostKeyType && hostKeyType !== "ssh-ed25519") {
+    return { ok: false, stdout: "", stderr: "", error: "Unsupported pinned SSH host key type." };
+  }
   const configuredHostFingerprint = envValue(env, "PROXMOX_SSH_HOST_FINGERPRINT");
   let expectedHostFingerprint: string | null = null;
   if (configuredHostFingerprint) {
@@ -1556,6 +1622,8 @@ async function runProxmoxHostInvocation(
   return await new Promise<HostScriptResult>((resolve) => {
       const conn = new Ssh2Client();
       let settled = false;
+      // What the server presented, recorded before the verifier refuses it.
+      let presentedFingerprint: string | null = null;
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       let stdoutBytes = 0;
@@ -1580,7 +1648,8 @@ async function runProxmoxHostInvocation(
         } catch {
           // ignore
         }
-        resolve(result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result);
+        const bounded = result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result;
+        resolve(sudoTransport ? withoutSudoSentinel(bounded) : bounded);
       };
 
       const timer = setTimeout(() => {
@@ -1622,11 +1691,16 @@ async function runProxmoxHostInvocation(
         // if PROXMOX_ALLOW_SSH_AGENT=true is configured at runtime.
         ...(privateKeyBuf ? { privateKey: privateKeyBuf } : {}),
         readyTimeout: Math.min(timeoutMs, 60_000),
+        // An enrolled connection recorded its Ed25519 key: offer only that
+        // algorithm, so another key type is refused before authentication.
+        ...(hostKeyType === "ssh-ed25519" ? { algorithms: { serverHostKey: ["ssh-ed25519" as const] } } : {}),
         ...(expectedHostFingerprint
           ? {
               hostHash: "sha256",
-              hostVerifier: (fingerprint: string) =>
-                active() && String(fingerprint).trim().toLowerCase() === expectedHostFingerprint,
+              hostVerifier: (fingerprint: string) => {
+                presentedFingerprint = String(fingerprint).trim().toLowerCase();
+                return active() && presentedFingerprint === expectedHostFingerprint;
+              },
             }
           : {}),
       };
@@ -1674,6 +1748,17 @@ async function runProxmoxHostInvocation(
             const { stdout, stderr } = capturedOutput();
             if (code === 0) {
               finish({ ok: true, stdout, stderr });
+            } else if (sudoTransport && !stripSudoSentinel(stderr).sentinel) {
+              // No sentinel: the command never reached the script. sudo's own
+              // messages follow the server's locale, so run fixed probes
+              // instead of parsing them. Only on this failure path.
+              void diagnoseSudoTransport().then((failure) => finish({
+                ok: false,
+                stdout,
+                stderr,
+                error: sudoTransportFailureMessage(failure),
+                sudoFailure: failure,
+              }));
             } else {
               finish({
                 ok: false,
@@ -1725,11 +1810,48 @@ async function runProxmoxHostInvocation(
         });
       });
 
+      // Up to two fixed commands on the same connection, each bounded by the
+      // same dispatch deadline and a small output cap.
+      const runProbe = (probe: string): Promise<{ code: number | null; stdout: string }> =>
+        new Promise((settle) => {
+          if (!active()) {
+            settle({ code: null, stdout: "" });
+            return;
+          }
+          conn.exec(probe, (err, stream) => {
+            if (err || !active()) {
+              try { stream?.destroy(); } catch { /* Best-effort probe teardown. */ }
+              settle({ code: null, stdout: "" });
+              return;
+            }
+            const chunks: Buffer[] = [];
+            let bytes = 0;
+            stream.on("data", (chunk: Buffer) => {
+              if (bytes < 4_096) chunks.push(chunk.subarray(0, 4_096 - bytes));
+              bytes += chunk.length;
+            });
+            stream.stderr.on("data", () => undefined);
+            stream.on("close", (code: number) => {
+              settle({ code: typeof code === "number" ? code : null, stdout: Buffer.concat(chunks).toString("utf8") });
+            });
+            stream.end();
+          });
+        });
+      const diagnoseSudoTransport = async (): Promise<SudoTransportFailure> => {
+        const missing = parseMissingTool((await runProbe(SUDO_MISSING_TOOLS_PROBE)).stdout);
+        if (missing) return { kind: "missing_tool", path: missing };
+        const sudoTrue = await runProbe(SUDO_TRUE_PROBE);
+        return sudoTrue.code === 0 ? { kind: "command_not_allowed" } : { kind: "password_required" };
+      };
+
       conn.on("error", (err: Error) => {
         finish({
           ok: false,
           ...capturedOutput(),
           error: `SSH connection failed: ${err.message}`,
+          ...(expectedHostFingerprint && presentedFingerprint !== null && presentedFingerprint !== expectedHostFingerprint
+            ? { presentedHostFingerprintSha256: presentedFingerprint }
+            : {}),
         });
       });
 
@@ -1752,7 +1874,11 @@ export async function runProxmoxHostScript(
   env: EnvLike = process.env,
   timeoutMsOverride?: HostScriptTimeoutOverride,
 ): Promise<HostScriptResult> {
-  return runProxmoxHostInvocation("bash -s", script, env, timeoutMsOverride);
+  return runProxmoxHostInvocation(
+    { loginCommand: "bash -s", loginInput: script, script, stdin: "" },
+    env,
+    timeoutMsOverride,
+  );
 }
 
 /**
@@ -1771,7 +1897,11 @@ export async function runProxmoxHostScriptWithStdin(
   }
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const command = `/bin/bash -c "$(printf '%s' '${encoded}' | /usr/bin/base64 --decode)"`;
-  return runProxmoxHostInvocation(command, stdin, env, timeoutMsOverride);
+  return runProxmoxHostInvocation(
+    { loginCommand: command, loginInput: stdin, script, stdin },
+    env,
+    timeoutMsOverride,
+  );
 }
 
 export async function provisionProxmoxInstance(params: {

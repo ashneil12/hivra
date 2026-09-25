@@ -15,6 +15,7 @@ import { readFileSync } from "fs";
 import { createClient } from "@supabase/supabase-js";
 import { clerkClient } from "@clerk/nextjs/server";
 import type { InstanceRowForOrchestration } from "../src/lib/services/instance-orchestrator";
+import { OPERATOR_LIVE_UPDATE } from "../src/lib/services/live-update-initiator";
 
 dotenv.config({ path: path.join(__dirname, "../.env.local"), quiet: true });
 
@@ -215,7 +216,11 @@ async function updateOne(instance: InstanceRow, args: Args): Promise<FleetUpdate
     // update really finished. Otherwise --concurrency 3 can launch the entire
     // fleet in minutes and provide false "updated" results.
     const launchedAt = new Date().toISOString();
-    const result = await applyLiveUpdate(instance, ipv4, globalSettings, supabase);
+    // Operator-run rollout: recreates now, without the in-flight turn gate the
+    // scheduled fleet sync uses.
+    const result = await applyLiveUpdate(instance, ipv4, globalSettings, supabase, {
+      initiator: OPERATOR_LIVE_UPDATE,
+    });
     if (!result.applied) {
       return {
         instanceId: instance.id,

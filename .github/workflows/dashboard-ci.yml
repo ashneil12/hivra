@@ -21,7 +21,9 @@ jobs:
   verify-dashboard:
     name: Verify Dashboard
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The full suite alone takes ~15 min on a hosted runner (2026-09-24), so 20
+    # cancelled green runs during the build that follows it.
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: dashboard

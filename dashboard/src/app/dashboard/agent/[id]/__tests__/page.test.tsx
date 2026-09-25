@@ -1,7 +1,9 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { SURFACE_NATIVE_START_LIMIT_MS } from "@/components/hivra/useSurfaceBootstrap";
 import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBridge";
+import { refreshDesktopCapability, resetDesktopSessionLaneForTests } from "@/lib/remote-computers/desktop-session-lane";
 import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
 import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 
@@ -102,11 +104,18 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ plan, onChanged, onDestroyed }: { plan?: { usage?: { usedCpu: number } } | null; onChanged: () => void; onDestroyed: () => void }) => <>
+  HivraManage: ({ plan, onChanged, onDestroyed, onConnectionServiceRestarted }: {
+    plan?: { usage?: { usedCpu: number } } | null;
+    onChanged: () => void;
+    onDestroyed: () => void;
+    onConnectionServiceRestarted?: () => void;
+  }) => <>
     <div>Manage panel</div>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
     <button onClick={onChanged}>Refresh capacity</button>
     <button onClick={onDestroyed}>Agent deleted</button>
+    {/* Stands in for a finished in-place connection-service update. */}
+    <button onClick={() => { onConnectionServiceRestarted?.(); onChanged(); }}>Finish connection update</button>
   </>,
 }));
 
@@ -156,7 +165,7 @@ const CONNECTED_UBUNTU = {
 const GROUP_OF_LABEL: Record<string, string> = {
   Terminal: "Computer", Files: "Computer", Browser: "Computer", Git: "Computer",
   "Claude Code session": "Agent", "Codex session": "Agent",
-  Skills: "Manage", Tasks: "Manage", Telegram: "Manage",
+  Skills: "Manage", Telegram: "Manage",
 };
 function groupFor(name: string | RegExp): string | null {
   const label = Object.keys(GROUP_OF_LABEL).find((candidate) => typeof name === "string" ? candidate === name : name.test(candidate));
@@ -195,6 +204,8 @@ describe("AgentPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Desktop proofs are shared per tab; each test is a new tab.
+    resetDesktopSessionLaneForTests();
     window.history.replaceState(null, "", "/dashboard/agent/agent_123");
     mockAgentId = "agent_123";
     requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => undefined);
@@ -323,7 +334,7 @@ describe("AgentPage", () => {
     mockChatReadiness.mockResolvedValue("upgrade_required");
     render(<AgentPage />);
     expect(await screen.findByText("This computer needs a Chat update")).toBeInTheDocument();
-    expect(screen.getByText(/Open Manage and choose Update & restart/)).toBeInTheDocument();
+    expect(screen.getByText(/Open Manage and choose Update connection service \(the computer keeps running\)/)).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
   });
@@ -630,7 +641,7 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     // The group is Manage, so its own pane's tab is Settings: no "Manage › Manage".
     expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Settings", "Skills", "Tasks", "Telegram"]);
+      .toEqual(["Settings", "Skills", "Telegram"]);
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     // Retired: "Box Terminal", "<Agent> Terminal", the Desktop tab on an agent, and the Tools overflow.
     expect(document.body).not.toHaveTextContent(/Box Terminal|Codex Terminal/);
@@ -712,7 +723,7 @@ describe("AgentPage", () => {
     expect(frame).not.toHaveAttribute("src");
     expect(form).toHaveAttribute("action", "https://box.example.com/auth/bootstrap");
     expect(form).toHaveAttribute("method", "POST");
-    expect(form?.querySelector('input[name="destination"]')).toHaveValue("/terminal/");
+    expect(form?.querySelector('input[name="destination"]')).toHaveValue("/terminal/?arg=1");
     expect(form?.querySelector('input[name="token"]')).toHaveValue("box-token");
     expect(screen.getByRole("button", { name: /open in new tab/i })).toBeInTheDocument();
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
@@ -745,7 +756,8 @@ describe("AgentPage", () => {
     fireEvent.click(await findSurfaceButton(/claude code session/i));
 
     expect(await screen.findByText("Connection update needed")).toBeInTheDocument();
-    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update & restart");
+    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("Update connection service");
+    expect(screen.getByText(/Open Manage and choose/)).toHaveTextContent("without restarting the computer");
     expect(screen.queryByRole("link", { name: /update the connection service/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open in new tab/i })).toBeDisabled();
     expect(document.querySelector("iframe, form")).toBeNull();
@@ -984,6 +996,36 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: "Close session 1" })).not.toBeInTheDocument();
   });
 
+  it("reopens a tab for every terminal session still running on the computer", async () => {
+    const defaultFetch = (global.fetch as jest.Mock).getMockImplementation();
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => String(url).includes("/api/terminal/sessions")
+      ? Promise.resolve({ ok: true, json: async () => ({ surface: "box", sessions: [{ slot: 1 }, { slot: 3 }] }) })
+      : defaultFetch!(url, init));
+    render(<AgentPage />);
+    await findSurfaceButton(/claude code session/i);
+    fireEvent.click(getSurfaceButton("Terminal"));
+    await screen.findByTitle("Terminal");
+    expect(await screen.findByRole("tab", { name: "Session 3" })).toBeInTheDocument();
+    const sessionsCall = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).includes("/api/terminal/sessions"));
+    expect(sessionsCall![0]).toBe("https://box.example.com/api/terminal/sessions?surface=box");
+    expect(sessionsCall![1]).toMatchObject({ credentials: "omit", headers: { Authorization: "Bearer box-token" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Session 3" }));
+    const third = await screen.findByTitle("Terminal · 3");
+    expect(third.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/box-terminal/?arg=3");
+  });
+
+  it("ends the session on the computer when its tab is closed", async () => {
+    render(<AgentPage />);
+    fireEvent.click(await findSurfaceButton(/claude code session/i));
+    await screen.findByTitle("Claude Code session");
+    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    await screen.findByTitle("Claude Code session · 2");
+    fireEvent.click(screen.getByRole("button", { name: "Close session 2" }));
+    const closeCall = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith("/api/terminal/sessions/close"));
+    expect(closeCall![1]).toMatchObject({ method: "POST", credentials: "omit", headers: { Authorization: "Bearer box-token" } });
+    expect(JSON.parse(String(closeCall![1].body))).toEqual({ surface: "agent", slot: 2 });
+  });
+
   it("caps parallel terminal sessions per surface", async () => {
     render(<AgentPage />);
     await findSurfaceButton(/claude code session/i);
@@ -1090,9 +1132,182 @@ describe("AgentPage", () => {
     expect(requestSubmit).toHaveBeenCalledTimes(2);
   });
 
+  // bootId is the gateway's sign-in epoch: it stays the same across an
+  // ordinary restart (sign-ins are saved) and changes when they were lost.
+  describe("after the computer's gateway restarts", () => {
+    const BOOT_A = "00000000400080000000000000000001";
+    const BOOT_B = "00000000400080000000000000000002";
+    let bootId: string | undefined;
+    let clock: jest.SpyInstance | undefined;
+
+    beforeEach(() => {
+      bootId = BOOT_A;
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "claude", surfaceAuth: "post-cookie-v1", ...(bootId ? { bootId } : {}) }),
+      }));
+    });
+    afterEach(() => clock?.mockRestore());
+
+    // Focus re-checks are throttled to one per couple of seconds.
+    function later() {
+      const now = Date.now();
+      clock = jest.spyOn(Date, "now").mockReturnValue(now + 10_000);
+    }
+
+    it("signs a loaded terminal in again, in a new frame, when the gateway lost its sign-ins (new bootId)", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const frame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+
+      bootId = BOOT_B;
+      later();
+      await act(async () => { fireEvent.focus(window); });
+
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      const form = requestSubmit.mock.instances[1] as HTMLFormElement;
+      expect(form.querySelector('input[name="destination"]')).toHaveValue("/terminal/?arg=1");
+      // A POST into the loaded ttyd frame would add a history entry, so Back
+      // would reload the terminal (a new shell) instead of leaving the page.
+      const next = screen.getByTitle("Claude Code session");
+      expect(next).not.toBe(frame);
+      expect(frame.isConnected).toBe(false);
+      expect(next).toHaveAttribute("name", frame.getAttribute("name"));
+      expect(form).toHaveAttribute("target", next.getAttribute("name"));
+      expect(next).not.toHaveAttribute("src");
+    });
+
+    // Manage's in-place update restarts the gateway. Each retained surface
+    // checks again as soon as the owner returns to it, and signs in again only
+    // when the gateway lost its sign-ins; both terminal sessions keep their place.
+    it.each([
+      ["lost its sign-ins (an older gateway that kept them in memory)", BOOT_B, 4],
+      ["kept its sign-ins", BOOT_A, 2],
+    ])("re-checks retained surfaces after a connection-service update whose gateway %s", async (_case, after, submits) => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+      const metaProbes = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
+
+      fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+      bootId = after;
+      later();
+      fireEvent.click(screen.getByRole("button", { name: "Finish connection update" }));
+      const before = metaProbes();
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await waitFor(() => expect(metaProbes()).toBeGreaterThan(before));
+      clock?.mockReturnValue(Date.now() + 10_000);
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      await waitFor(() => expect(metaProbes()).toBeGreaterThan(before + 1));
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(submits));
+      expect(await screen.findByTitle("Claude Code session")).toBeVisible();
+      expect(screen.getByTitle("Terminal")).toBeInTheDocument();
+    });
+
+    it("leaves a loaded terminal alone after a restart that kept its sign-ins (same bootId)", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const frame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      const probes = (global.fetch as jest.Mock).mock.calls.length;
+
+      later();
+      await act(async () => { fireEvent.focus(window); });
+      await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBe(probes + 1));
+      expect(requestSubmit).toHaveBeenCalledTimes(1);
+      expect(screen.getByTitle("Claude Code session")).toBe(frame);
+    });
+
+    it("keeps a legacy gateway without bootId exactly as before", async () => {
+      bootId = undefined;
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      const probes = (global.fetch as jest.Mock).mock.calls.length;
+
+      later();
+      await act(async () => { fireEvent.focus(window); });
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+      await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.length).toBeGreaterThan(probes));
+      expect(requestSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-checks a retained terminal when its tab is shown again", async () => {
+      render(<AgentPage />);
+      fireEvent.click(await findSurfaceButton(/claude code session/i));
+      const agentFrame = await screen.findByTitle("Claude Code session");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      fireEvent.click(getSurfaceButton("Terminal"));
+      await screen.findByTitle("Terminal");
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
+
+      // Sign-ins were lost while the agent session was out of view; hidden
+      // frames do not poll, so nothing happens until it is shown again.
+      bootId = BOOT_B;
+      later();
+      fireEvent.click(getSurfaceButton(/claude code session/i));
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(3));
+      expect(requestSubmit.mock.instances[2]).toHaveAttribute("target", agentFrame.getAttribute("name"));
+      expect(screen.getByTitle("Claude Code session")).not.toBe(agentFrame);
+    });
+
+    it("shows a DeepSeek start state instead of its 503 until the native interface is ready", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "deepseek-harness", name: "NATIVE_AGENT", status: "running",
+        cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      let nativeReady = false;
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", bootId, nativeSurface: "/", nativeReady }),
+      }));
+      render(<AgentPage />);
+
+      expect(await screen.findByText("Starting DeepSeek…")).toBeInTheDocument();
+      expect(document.querySelector('iframe[title="DeepSeek Harness · dashboard"], form')).toBeNull();
+      expect(requestSubmit).not.toHaveBeenCalled();
+      expect(document.documentElement.outerHTML).not.toContain("box-token");
+
+      nativeReady = true;
+      const frame = await screen.findByTitle("DeepSeek Harness · dashboard", undefined, { timeout: 4_000 });
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+      expect(frame.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/");
+    });
+
+    it("says DeepSeek hasn't started, with Try again, once its start runs past the limit", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "deepseek-harness", name: "NATIVE_AGENT", status: "running",
+        cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      (global.fetch as jest.Mock).mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ agentKind: "deepseek-harness", surfaceAuth: "post-cookie-v1", bootId, nativeSurface: "/", nativeReady: false }),
+      }));
+      render(<AgentPage />);
+      expect(await screen.findByText("Starting DeepSeek…")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+
+      const now = Date.now();
+      clock = jest.spyOn(Date, "now").mockReturnValue(now + SURFACE_NATIVE_START_LIMIT_MS + 1_000);
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+
+      expect(await screen.findByText("DeepSeek hasn’t started")).toBeInTheDocument();
+      expect(screen.queryByText("Starting DeepSeek…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open Manage" })).toBeInTheDocument();
+      expect(requestSubmit).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
-    { tab: "terminal", title: "Claude Code session", destination: "/terminal/" },
-    { tab: "box", title: "Terminal", destination: "/box-terminal/" },
+    { tab: "terminal", title: "Claude Code session", destination: "/terminal/?arg=1" },
+    { tab: "box", title: "Terminal", destination: "/box-terminal/?arg=1" },
     { tab: "browser", title: "Live browser", destination: "/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true" },
   ])("keeps the $tab bootstrap destination local and clean", async ({ tab, title, destination }) => {
     mockSearchGet.mockImplementation((key: string) => key === "tab" ? tab : null);
@@ -1703,6 +1918,28 @@ describe("AgentPage", () => {
     expect(fetchMock.mock.calls.some(([, init]) => String(init?.body || "").includes('"prepare"'))).toBe(false);
   });
 
+  it("starts the one runtime proof the Linux desktop joins, so a first open never inspects the computer twice", async () => {
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    let landProof!: () => void;
+    const proofGate = new Promise<void>(resolve => { landProof = resolve; });
+    const fetchMock = global.fetch as unknown as jest.Mock;
+    fetchMock.mockImplementation((input: unknown) => String(input) === "/api/hivra/agents/agent_123/remote-desktop"
+      ? proofGate.then(() => ({ ok: true, status: 200, json: async () => ({ success: true, data: { prepared: true } }) }))
+      : Promise.resolve({ ok: true, json: async () => ({ success: true, agentKind: "claude", surfaceAuth: "post-cookie-v1" }) }));
+    const proofRequests = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/hivra/agents/agent_123/remote-desktop");
+
+    render(<AgentPage />);
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
+    await waitFor(() => expect(proofRequests()).toHaveLength(1));
+    // The desktop's first session request found the proof expired and asks
+    // for one while the page's is still running: it gets the page's.
+    const joined = refreshDesktopCapability("agent_123");
+    expect(proofRequests()).toHaveLength(1);
+    landProof();
+    await expect(joined).resolves.toEqual({ ok: true, status: 200, payload: { success: true, data: { prepared: true } } });
+    expect(proofRequests()).toHaveLength(1);
+  });
+
   it("shows a gVisor Linux terminal computer only on Manage", async () => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123",
@@ -1811,7 +2048,7 @@ describe("AgentPage", () => {
     expect(await screen.findByText("Files panel")).toHaveAttribute("data-workspace-root", "true");
   });
 
-  it("tells a computer with missing box credentials to update and restart instead of a false connection error", async () => {
+  it("tells a computer with missing box credentials to contact support instead of a false connection error", async () => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123",
       type: "linux-desktop",
@@ -1827,7 +2064,10 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     await screen.findByRole("navigation", { name: "Resource surfaces" });
     fireEvent.click(getSurfaceButton(/^Terminal$/));
-    expect(await screen.findByText(/Secure access credentials for this computer/)).toBeInTheDocument();
+    const guidance = await screen.findByText(/Secure access credentials for this computer/);
+    expect(guidance).toHaveTextContent("Contact support to restore access.");
+    // No Manage action restores the dashboard credential, so none is named.
+    expect(guidance).not.toHaveTextContent(/Update connection service|Update & restart|Restart/);
     expect(screen.queryByText(/connection service isn’t reachable yet/)).not.toBeInTheDocument();
     expect(document.documentElement.outerHTML).not.toContain("box-token");
   });

@@ -313,6 +313,10 @@ function createChatRunStore(options) {
     // Idempotent: repeating a start (a retried request) attaches to the run.
     const existing = readRecord(runId);
     if (existing) return { record: reconcile(existing), created: false };
+    // The caller may hold new runs back (for example while the agent CLI is
+    // being swapped for a new version); re-attaching above is never refused.
+    const refusal = typeof input.admit === "function" ? input.admit() : null;
+    if (refusal) throw new ChatRunError(refusal.code, refusal.status, refusal.message);
     const records = allRecords();
     prune(records);
     const active = records.filter(isActive);

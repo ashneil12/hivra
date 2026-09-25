@@ -25,6 +25,7 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
+import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
 import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
@@ -40,6 +41,7 @@ import { HivraTelegram } from "@/components/hivra/HivraTelegram";
 import { HivraManage } from "@/components/hivra/HivraManage";
 import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
+import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
   SurfaceActionProvider,
   useSurfaceAction,
@@ -275,68 +277,19 @@ function CanonicalizeUnavailableTab({
 }
 
 type SurfacePermission = "clipboard-read" | "clipboard-write" | "fullscreen";
-type SurfaceAccess = "ready" | "upgrade-required" | "unavailable";
+// One shared first check of the computer's gateway for this page: every
+// terminal, session tab and embedded surface opens on it (see
+// createSurfaceMetadataCache), and the page starts it as soon as the
+// computer's address is known.
+const SurfaceMetadataContext = createContext<SurfaceMetadataCache | null>(null);
 
-/** The guest origin and local path of a surface URL, or null when it must fail closed. */
-function parseSurfaceUrl(url: string): { origin: string; destination: string } | null {
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.searchParams.has("token") ||
-      /[\s;*'"]/.test(parsed.origin)
-    ) {
-      throw new Error("A clean HTTPS surface endpoint is required.");
-    }
-    return { origin: parsed.origin, destination: `${parsed.pathname}${parsed.search}` };
-  } catch {
-    // A malformed stored surface URL must fail closed instead of navigating.
-    return null;
-  }
-}
-
-// Provider ownership says nothing about the installed gateway protocol.
-// Probe nonsecret runtime metadata before sending any bearer. An old or
-// unreachable runtime must never fall back to putting it in a URL.
-function probeSurfaceAccess(origin: string): Promise<SurfaceAccess> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10_000);
-  return fetch(`${origin}/api/meta`, { cache: "no-store", credentials: "omit", signal: controller.signal })
-    .then(async (response): Promise<SurfaceAccess> => {
-      if (!response.ok) throw new Error("Runtime metadata is unavailable.");
-      const metadata: unknown = await response.json();
-      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-        throw new Error("Runtime metadata is invalid.");
-      }
-      const record = metadata as Record<string, unknown>;
-      return record.surfaceAuth === "post-cookie-v1"
-        ? "ready"
-        : typeof record.agentKind === "string" ? "upgrade-required" : "unavailable";
-    })
-    .catch((): SurfaceAccess => "unavailable")
-    .finally(() => window.clearTimeout(timeout));
-}
-
-// One check per computer for as long as its page is open: every terminal,
-// session tab and embedded surface reuses a gateway that has already shown it
-// takes the bearer by POST. Only that answer is kept. Any other answer, a
-// changed credential and "Try again" all ask the computer again.
-type SurfaceAccessChecks = { check(origin: string, token: string, fresh?: boolean): Promise<SurfaceAccess> };
-function createSurfaceAccessChecks(): SurfaceAccessChecks {
-  const checks = new Map<string, { token: string; result: Promise<SurfaceAccess> }>();
-  return {
-    check(origin, token, fresh = false) {
-      const known = checks.get(origin);
-      if (known && known.token === token && !fresh) return known.result;
-      const entry = { token, result: probeSurfaceAccess(origin) };
-      checks.set(origin, entry);
-      void entry.result.then((status) => {
-        if (status !== "ready" && checks.get(origin) === entry) checks.delete(origin);
-      });
-      return entry.result;
-    },
-  };
-}
-const SurfaceAccessContext = createContext<SurfaceAccessChecks | null>(null);
+// Bumped when Manage reports a connection-service restart (an in-place update).
+// Every mounted surface then re-checks the gateway at once instead of at its
+// next focus or 30 s check: current gateways keep sign-ins across the restart
+// (same bootId, nothing reloads), while a computer moving off an older gateway
+// that kept them only in memory gets a new bootId and signs in again in its
+// own frame (see useSurfaceBootstrap).
+const SurfaceSignInEpoch = createContext(0);
 
 function AuthenticatedSurface({
   url,
@@ -348,6 +301,7 @@ function AuthenticatedSurface({
   onManage,
   surfaceId,
   active = true,
+  onAccessReady,
 }: {
   url: string;
   token: string;
@@ -359,22 +313,29 @@ function AuthenticatedSurface({
   /** Slot this surface publishes under, and whether it is the visible one. */
   surfaceId?: string;
   active?: boolean;
+  /** Called once the runtime is verified and the surface is being opened. */
+  onAccessReady?: () => void;
 }) {
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
-  const formRef = useRef<HTMLFormElement>(null);
+  const signInEpoch = useContext(SurfaceSignInEpoch);
   const newTabFormRef = useRef<HTMLFormElement>(null);
-  const accessChecks = useContext(SurfaceAccessContext);
-  const [probeVersion, setProbeVersion] = useState(0);
-  const [access, setAccess] = useState<{
-    key: string;
-    token: string;
-    status: SurfaceAccess;
-  } | null>(null);
-  const endpoint = parseSurfaceUrl(url);
-  const surfaceOrigin = endpoint?.origin ?? "";
-  const bootstrapUrl = endpoint ? `${endpoint.origin}/auth/bootstrap` : "";
-  const metadataUrl = endpoint ? `${endpoint.origin}/api/meta` : "";
-  const destination = endpoint?.destination ?? "";
+  // Probes the runtime before any bearer is sent, bootstraps this frame, and
+  // signs in again, into a new frame keyed on the generation, when the
+  // computer's gateway lost its sign-ins (see the hook). The page's shared
+  // check of this computer answers the first probe of every surface.
+  const metadataCache = useContext(SurfaceMetadataContext);
+  const {
+    status: accessStatus,
+    generation,
+    starting,
+    stalled,
+    origin: surfaceOrigin,
+    bootstrapUrl,
+    destination,
+    formRef,
+    retry,
+  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache });
+  const missingToken = !token;
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
   // validated guest origin used for bootstrap, never a wildcard or legacy
@@ -382,30 +343,12 @@ function AuthenticatedSurface({
   const permissionsPolicy = surfaceOrigin && permissions?.length
     ? permissions.map((feature) => `${feature} ${surfaceOrigin}`).join("; ")
     : undefined;
-  const probeKey = `${metadataUrl}:${probeVersion}`;
-  const missingToken = !token;
-  const accessStatus = !metadataUrl || missingToken
-    ? "unavailable"
-    : access?.key === probeKey && access.token === token ? access.status : "checking";
-
+  // Each sign-in of this surface (a new generation) is a verified runtime the
+  // host may now talk to with the bearer, e.g. to list terminal sessions.
   useEffect(() => {
-    if (!surfaceOrigin || !token) return;
-    let cancelled = false;
-    // "Try again" always asks the computer afresh.
-    const fresh = probeVersion > 0;
-    void (accessChecks ? accessChecks.check(surfaceOrigin, token, fresh) : probeSurfaceAccess(surfaceOrigin))
-      .then((status) => {
-        if (!cancelled) setAccess({ key: probeKey, token, status });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accessChecks, probeKey, probeVersion, surfaceOrigin, token]);
-
-  useEffect(() => {
-    if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
-    formRef.current?.requestSubmit();
-  }, [accessStatus, bootstrapUrl, destination, token]);
+    if (accessStatus !== "ready" || generation < 1) return;
+    onAccessReady?.();
+  }, [accessStatus, generation, onAccessReady]);
 
   const openInNewTab = useCallback(() => {
     const form = newTabFormRef.current;
@@ -469,25 +412,29 @@ function AuthenticatedSurface({
         </div>
       ) : null}
       {accessStatus === "ready" ? (
-        <iframe name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
+        <iframe key={generation} name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
       ) : (
         <div className={styles.statusPanel} role="status">
-          {accessStatus === "checking" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
+          {accessStatus === "checking" || accessStatus === "starting" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
           <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 8 }}>
-            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
+            {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "starting" ? starting.title : accessStatus === "stalled" ? stalled.title : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
           </div>
           <p style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
             {accessStatus === "checking"
               ? "Checking this computer’s connection service."
-              : accessStatus === "upgrade-required"
-                ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
-                : missingToken
-                  ? "Secure access credentials for this computer aren’t available in the dashboard yet. Open Manage and choose Update & restart, then try Terminal or Files again. Your computer and its files are unchanged."
-                  : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
+              : accessStatus === "starting"
+                ? starting.detail
+                : accessStatus === "stalled"
+                  ? stalled.detail
+                  : accessStatus === "upgrade-required"
+                    ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
+                    : missingToken
+                      ? "Secure access credentials for this computer aren’t available in the dashboard, so this view can’t open here. Your computer and its files are unchanged. Contact support to restore access."
+                      : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus === "upgrade-required" ? (
             <p style={{ fontSize: 13, maxWidth: 460, margin: "12px auto 0", lineHeight: 1.6 }}>
-              Open Manage and choose <strong>Update &amp; restart</strong>. Hivra refreshes the connection service without deleting your computer, files, or agent login.
+              Open Manage and choose <strong>Update connection service</strong>. Hivra updates it in place, without restarting the computer or deleting its files or agent login.
             </p>
           ) : null}
           {accessStatus !== "checking" ? (
@@ -495,9 +442,11 @@ function AuthenticatedSurface({
               <button type="button" onClick={onManage} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
                 Open Manage
               </button>
-              <button type="button" onClick={() => setProbeVersion((version) => version + 1)} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
-                {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
-              </button>
+              {accessStatus === "starting" ? null : (
+                <button type="button" onClick={retry} className="mono" style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "9px 14px", cursor: "pointer" }}>
+                  {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
+                </button>
+              )}
             </div>
           ) : null}
         </div>
@@ -506,36 +455,93 @@ function AuthenticatedSurface({
   );
 }
 
-function TerminalView({ url, token, label, onManage, surfaceId, active = true }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} />;
+function TerminalView({ url, token, label, onManage, surfaceId, active = true, onAccessReady }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; onAccessReady?: () => void }) {
+  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} onAccessReady={onAccessReady} />;
 }
 
-// Each ttyd websocket spawns its own process on the box, so every extra frame
-// is an independent shell (or agent CLI) running alongside the others. The cap
-// bounds how many CLIs one page can start on a small box.
+// Each terminal tab is one persistent session on the computer: the tab's slot
+// (?arg=N) names a tmux session that keeps running when the tab closes, the
+// page refreshes or the connection drops. The cap bounds how many sessions one
+// terminal can hold on a small computer.
 const MAX_TERMINAL_SESSIONS = 8;
+
+function terminalSurfaceOf(url: string): "agent" | "box" | null {
+  try {
+    const { pathname } = new URL(url);
+    if (pathname === "/box-terminal" || pathname.startsWith("/box-terminal/")) return "box";
+    if (pathname === "/terminal" || pathname.startsWith("/terminal/")) return "agent";
+  } catch { /* malformed surface URL: no session management */ }
+  return null;
+}
+
+function terminalSessionUrl(url: string, slot: number): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("arg", String(slot));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
 
 function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
   const [opened, setOpened] = useState(active);
   const [sessions, setSessions] = useState<number[]>([1]);
   const [current, setCurrent] = useState(1);
-  const nextSessionRef = useRef(2);
+  const terminalSurface = terminalSurfaceOf(surface.url);
+  // The session list carries the bearer, so ask only after a frame has verified
+  // this runtime's secure surface protocol (the same gate as its bootstrap).
+  // Verification belongs to this exact endpoint and credential; a rotated token
+  // is verified again before it is sent anywhere.
+  const accessKey = `${surface.url}\n${surface.token}`;
+  const [verifiedKey, setVerifiedKey] = useState<string | null>(null);
+  const runtimeVerified = verifiedKey === accessKey;
+  const onAccessReady = useCallback(() => setVerifiedKey(accessKey), [accessKey]);
   // Lazily open once, then preserve this browsing context between tab changes.
   // Navigating an active ttyd frame can be cancelled by its beforeunload guard;
   // reusing it would show one shell under the other terminal's heading.
   if (active && !opened) setOpened(true);
+  // Sessions outlive the page: reopen a tab for each one still running.
+  useEffect(() => {
+    if (!runtimeVerified || !terminalSurface || !surface.token) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const origin = new URL(surface.url).origin;
+        const response = await fetch(`${origin}/api/terminal/sessions?surface=${terminalSurface}`, {
+          cache: "no-store", credentials: "omit", headers: { Authorization: `Bearer ${surface.token}` }, signal: controller.signal,
+        });
+        // Older computers have no session list; they keep one fresh tab.
+        if (!response.ok) return;
+        const body = (await response.json()) as { sessions?: Array<{ slot?: unknown }> };
+        const live = (body.sessions ?? []).map((session) => Number(session.slot))
+          .filter((slot) => Number.isInteger(slot) && slot >= 1 && slot <= MAX_TERMINAL_SESSIONS);
+        if (live.length) setSessions((prev) => [...new Set([...prev, ...live])].sort((a, b) => a - b));
+      } catch { /* the first tab still works without the list */ }
+    })();
+    return () => controller.abort();
+  }, [runtimeVerified, terminalSurface, surface.url, surface.token]);
   if (!opened && !active) return null;
   const addSession = () => {
-    if (sessions.length >= MAX_TERMINAL_SESSIONS) return;
-    const n = nextSessionRef.current++;
-    setSessions((prev) => [...prev, n]);
-    setCurrent(n);
+    const free = Array.from({ length: MAX_TERMINAL_SESSIONS }, (_, i) => i + 1).find((slot) => !sessions.includes(slot));
+    if (free === undefined) return;
+    setSessions((prev) => [...prev, free].sort((a, b) => a - b));
+    setCurrent(free);
   };
-  // Removing a frame closes its websocket, which ends that session's process.
+  // Closing a tab only detaches its frame, so end the session on the computer.
   const closeSession = (n: number) => {
     const index = sessions.indexOf(n);
     const next = sessions.filter((s) => s !== n);
     if (!next.length) return;
+    if (runtimeVerified && terminalSurface && surface.token) {
+      try {
+        void fetch(`${new URL(surface.url).origin}/api/terminal/sessions/close`, {
+          method: "POST", credentials: "omit", keepalive: true,
+          headers: { Authorization: `Bearer ${surface.token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ surface: terminalSurface, slot: n }),
+        }).catch(() => undefined);
+      } catch { /* malformed surface URL */ }
+    }
     setSessions(next);
     if (n === current) setCurrent(next[Math.max(0, index - 1)]);
   };
@@ -560,7 +566,7 @@ function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: bo
       </div>
       {sessions.map((n) => (
         <div key={n} id={`${surfaceId || "terminal"}-session-${n}`} role="tabpanel" hidden={n !== current} className={styles.sessionPanel}>
-          <TerminalView {...surface} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} />
+          <TerminalView {...surface} url={terminalSessionUrl(surface.url, n)} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} onAccessReady={onAccessReady} />
         </div>
       ))}
     </div>
@@ -725,7 +731,7 @@ export default function AgentPage() {
   // One registry per agent page. Never a module singleton: a route change or a
   // reused module in a test must not carry another page's actions over.
   const actionStore = useSurfaceActionStoreInstance();
-  const [surfaceAccessChecks] = useState(createSurfaceAccessChecks);
+  const [surfaceMetadataCache] = useState(createSurfaceMetadataCache);
   const id = (params?.id as string) || "";
   const launchWelcome = searchParams?.get("welcome") === "1";
   const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
@@ -761,6 +767,7 @@ export default function AgentPage() {
   const [chatOpened, setChatOpened] = useState(false);
   const [browserOn, setBrowserOn] = useState<boolean | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
   const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
   const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
   const [planResult, setPlanResult] = useState<{ value: PlanInfo | null; agentId: string; version: number } | null>(null);
@@ -915,8 +922,12 @@ export default function AgentPage() {
   const attachedRead = useAttachedAgentChatRead(agent, id);
   const attachedAgent = attachedRead.target;
 
-  // Read-only capability refresh once per computer id/session.
-  // Do not stack page + Desktop double-fire (shared refresh quota ~8/15m).
+  // Read-only capability refresh once per computer id/session, started as
+  // soon as the computer is known so Desktop rarely waits on it. It is the
+  // same in-flight proof the Linux desktop joins when its first session
+  // request finds the proof expired: one guest inspection, one of the
+  // computer's refreshes per 15 minutes, and no second proof racing the
+  // first. Nothing aborts it, since the desktop may be waiting on it.
   // Never prepare — Omarchy autoPrepare stays prepare=1 only.
   useEffect(() => {
     if (!agent || agent.status !== "running" || agent.id !== id) return;
@@ -924,16 +935,7 @@ export default function AgentPage() {
     if (agent.computer_substrate === "gvisor") return;
     if (capabilityPrefetchRef.current === agent.id) return;
     capabilityPrefetchRef.current = agent.id;
-    const controller = new AbortController();
-    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/remote-desktop`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "refresh" }),
-      signal: controller.signal,
-      keepalive: true,
-    }).catch(() => {});
-    return () => controller.abort();
+    void refreshDesktopCapability(agent.id).catch(() => {});
   }, [agent, id]);
 
   // Check the computer's connection service as soon as its address is known,
@@ -945,9 +947,9 @@ export default function AgentPage() {
   const surfaceCheckToken = checksSurfaceAccess ? agent.api_token : null;
   useEffect(() => {
     if (!surfaceCheckUrl || !surfaceCheckToken) return;
-    const endpoint = parseSurfaceUrl(surfaceCheckUrl);
-    if (endpoint) void surfaceAccessChecks.check(endpoint.origin, surfaceCheckToken);
-  }, [surfaceAccessChecks, surfaceCheckToken, surfaceCheckUrl]);
+    const endpoint = surfaceEndpoints(surfaceCheckUrl);
+    if (endpoint) void surfaceMetadataCache.read(endpoint.metadataUrl, surfaceCheckToken);
+  }, [surfaceMetadataCache, surfaceCheckToken, surfaceCheckUrl]);
 
   // Computers open on their desktop (?tab=desktop; open=fast for Windows).
   // Start downloading its code alongside the computer's record instead of
@@ -1062,6 +1064,7 @@ export default function AgentPage() {
       def={def}
       plan={plan}
       onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+      onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
       onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
       browserOn={browserOn}
       onBrowserChange={(e) => setBrowserOn(e)}
@@ -1069,8 +1072,9 @@ export default function AgentPage() {
   );
 
   return (
+    <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
     <SurfaceActionProvider store={actionStore}>
-    <SurfaceAccessContext.Provider value={surfaceAccessChecks}>
+    <SurfaceMetadataContext.Provider value={surfaceMetadataCache}>
     <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
       <CanonicalizeUnavailableTab
         unavailableTab={unavailableTab}
@@ -1254,7 +1258,7 @@ export default function AgentPage() {
           ) : chatReadiness === "upgrade_required" ? (
             <div className={styles.statusPanel} role="status">
               <h3>This computer needs a Chat update</h3>
-              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update &amp; restart; you can still use native sign-in in the Codex terminal.</p>
+              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update connection service (the computer keeps running); you can still use native sign-in in the Codex terminal.</p>
               <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
             </div>
           ) : chatReadiness === "unavailable" ? (
@@ -1318,7 +1322,8 @@ export default function AgentPage() {
         />
       ) : null}
     </div>
-    </SurfaceAccessContext.Provider>
+    </SurfaceMetadataContext.Provider>
     </SurfaceActionProvider>
+    </SurfaceSignInEpoch.Provider>
   );
 }

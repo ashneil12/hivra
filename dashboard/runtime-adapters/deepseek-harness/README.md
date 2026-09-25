@@ -1,19 +1,51 @@
 # DeepSeek Harness native adapter (not enabled)
 
-This directory contains tests and evidence tooling for an **uninstalled
-experimental component**, not a launchable catalog entry. The immutable runtime
-recipe and broker now live in the versioned `provisioner/deepseek-harness/`
+This directory contains tests and evidence tooling for an **experimental
+runtime that no user can launch**. The immutable runtime recipe, broker, service
+owner and guest installer live in the versioned `provisioner/deepseek-harness/`
 source bundle so the guest gateway can be reviewed as one coherent artifact.
-The public catalog, strict guest launch schema and existing installer still do
-not accept this kind. Merely deploying the dashboard or preparing a host cannot
-install or start it.
+The host launcher and guest installer accept a typed v2 DeepSeek launch, which
+only the claim-bound operator harness (`scripts/deepseek-proxmox-canary.ts`) and
+the private provider path use. The public catalog keeps the kind unavailable,
+so deploying the dashboard or preparing a host cannot install or start it.
 
 The staged gateway reserves native root/RPC paths, requires Hivra bearer
 authority for exact computer-management routes, and reports unhealthy until the
 private native-cookie exchange is ready. Descriptor-relative file access blocks
 private state, credential aliases and link/race escapes. Linux and complete
-gateway regressions live beside the broker tests. This is integration progress,
-not real reply, browser, ACP, service-cgroup or public-origin acceptance.
+gateway regressions live beside the broker tests.
+
+## Acceptance so far
+
+- **Live, on a disposable Canary computer, provisioner release `2026.09.02.4`**
+  (recorded in `docs/PRODUCT-ARCHITECTURE.md` and summarized in
+  `docs/release/VERIFICATION-STATUS.md`): native UI through the computer's
+  authenticated Hivra gateway, a real BYOK model reply with the key entered in
+  DeepSeek Harness's own settings, a non-root PTY over the public WebSocket,
+  restart with a new boot identity (old native session rejected, model reply
+  after restart), access revocation and unconditional teardown. The operator
+  harness was later pinned to `2026.09.02.8`; this repository records no live
+  DeepSeek run on any later release, **including the current bundle**. The
+  harness now pins the current Canary release and delivery directory and checks
+  that bundle against its `BUNDLE.sha256`, so it can re-run that acceptance
+  (see [Operator re-acceptance on Canary](#operator-re-acceptance-on-canary)).
+- **Offline systemd fixture** (`scripts/test-deepseek-systemd-vm.py`,
+  GitHub-hosted QEMU, no network): real service stop/restart, detached
+  cgroup-member cleanup, retained replay and worker cancellation. The fixture
+  was pinned to release `2026.08.31.4`, but its last recorded pass is the
+  `.31.3` native worker checkpoint (worker failure, native cancellation and
+  retained-controller recovery), recorded in
+  `docs/superpowers/specs/2026-08-31-hivra-remote-computers.md`. No pass at
+  `.31.4` or any later release is recorded. It now builds its payload from the
+  committed release, so it must be re-dispatched after each sealed bundle. It is
+  not model, browser or public access proof.
+- **Native session renewal** (this broker revision): proactive renewal before
+  cookie expiry and one re-exchange after an upstream 401 are covered by unit
+  tests against a fake upstream that applies dsh's cookie rule
+  (`issuedAt <= now < expiresAt`). The
+  [live check](#session-renewal-check-disposable-computer-only) below was
+  dry-run only on a workstation, against the real gateway and broker with that
+  stand-in upstream. Not yet exercised on a live computer.
 
 ## Artifact and environment
 
@@ -24,10 +56,11 @@ not real reply, browser, ACP, service-cgroup or public-origin acceptance.
   `npm ci --ignore-scripts --no-audit --no-fund` is the tested install. It does
   not execute dependency lifecycle hooks. The staged `install-native.py`
   publishes a root-owned immutable tree, inventories its bytes/modes/links and
-  verifies reuse without reinstalling or overwriting custom state. It is **not
-  yet bundled or called by the guest installer**. The official subprocess shell
-  and interactive PTY passed as uid 1000 against that read-only package. They
-  have not passed under the future service unit or through a model tool call.
+  verifies reuse without reinstalling or overwriting custom state. The guest
+  installer calls it through `service-owner.py`. The official subprocess shell
+  and interactive PTY passed as uid 1000 against that read-only package, and the
+  live Canary run above passed a non-root PTY under the service unit. A
+  model-driven tool call is not separately recorded.
 - The installer can restore only the reviewed Linux-x64 `spawn-helper` execute
   mode after validating its identity. That helper is absent from this Linux
   package; the actual PTY test passes without it or any lifecycle hook. Do not
@@ -70,10 +103,22 @@ reuse native cookies as management authority.
 
 SSE and WebSocket connections are owned and reauthorized once per second.
 Revocation aborts both sides; rejected half-open upgrades are bounded and owned
-too. An upstream 401 clears readiness without replaying the request. Cookie
-expiry remains fail-closed: the lifecycle owner must explicitly reset the broker
-and perform a fresh private exchange; no implicit write replay or token in a
-browser URL. Tests cover explicit expiry recovery.
+too.
+
+Upstream keeps one launch token for its whole process lifetime (its cookies last
+30 days by default). The broker therefore keeps the validated token privately in
+its closure (never logged, forwarded or placed in a browser URL) and re-exchanges
+it at the fixed loopback destination: proactively inside the cookie's last day
+(or the last half of a shorter lifetime), and exactly once after an upstream
+401. A 401 clears readiness and stops live native connections; the rejected
+request is never replayed, and a 401 answered to a request that carried an
+already superseded cookie is ignored. A transient exchange failure retries after
+`renewRetryMs`, measured on the monotonic clock so a guest clock stepped
+backwards cannot postpone it. If upstream refuses its own token, the broker drops it and fails
+closed at expiry until the lifecycle owner resets it for a new child. Only fixed
+codes (`renewed`, `renewal_failed`, `renewal_refused`, `upstream_unauthorized`)
+reach the gateway journal. A long-running computer keeps its native surface
+without the unit restart that would end in-flight agent work.
 
 ## Process ownership and limits
 
@@ -99,9 +144,9 @@ alone as a standalone launch/lifecycle API. The smoke runner proves complete
 teardown by deleting and inventory-checking its exact owner-labelled container.
 
 The `service-owner.py`, `install-guest.py` and DeepSeek-specific
-`bux-hivra-chat.service` template are bundled in `.31.2` and composed by the
-private typed provider-VM guest path, **not enabled in the catalog or installed
-on an accepted live guest**. They verify the exact disk
+`bux-hivra-chat.service` template are bundled since `.31.2` and composed by the
+typed v2 guest path (operator harness and private provider path), **not enabled
+in the catalog**. They verify the exact disk
 and loaded definition (including `NeedDaemonReload=no`), finite control-group
 stop settings, non-root supervisor membership and stable invocation identity.
 Stop acceptance requires idle jobs, zero unit PIDs, empty cgroup v2 and closed
@@ -149,14 +194,129 @@ identity, verifies immutable install/reuse, actual shell/PTY, native HTML, write
 unconditionally removes the exact owned container. No real model key is used.
 `PASS` means this **local component smoke** passed, never public enablement.
 
+## Operator re-acceptance on Canary
+
+Not yet run on the current release. `scripts/deepseek-proxmox-canary.ts` is
+operator-only: it refuses anything but the Canary origin
+(`NEXT_PUBLIC_APP_URL=https://canary.hermesos.cloud`), a target named in
+`HIVRA_DEEPSEEK_LAB_TARGETS` with its own
+`HIVRA_DEEPSEEK_LAB_TARGET_<TARGET>_VMID_START/_END` range, and pinned SSH
+(`PROXMOX_SSH_HOST_FINGERPRINT`). From `dashboard/`, every operation takes
+`--target <t> --expected-hostname <t> --ledger <private file>`:
+
+```sh
+npm run lab:deepseek-proxmox -- --inspect  ...   # free VMID/IP and capacity, no mutation
+npm run lab:deepseek-proxmox -- --launch --vmid <n> --octet <n> ...
+npm run lab:deepseek-proxmox -- --read-access --token-file <new private file> ...
+npm run lab:deepseek-proxmox -- --restart ...    # new boot identity, then native readiness
+npm run lab:deepseek-proxmox -- --teardown ...   # VM, volumes, host artifacts and tunnel
+```
+
+The pinned release is the `provisioner/` bundle of the checkout you run the
+harness from, sealed exactly as managed bundle sync seals the Canary directory,
+so run it from the commit Canary serves. A VERSION string alone does not
+identify a release: a bundle rebuilt without a release bump still verifies
+against the manifest its delivery wrote. Inspect and launch therefore refuse a
+host unless `/root/hivra-provisioner-canary` is at the current release, its
+`BUNDLE.sha256` is byte-identical to the pinned manifest, and every file still
+matches it. They check once before the allocation lock, to fail fast, and again
+once the lock is held, because bundle sync swaps the directory under that same
+lock; only the second check binds what is inventoried or dispatched. A refusal
+exits 4 with `HIVRA_DEEPSEEK_VERSION_MISMATCH`,
+`HIVRA_DEEPSEEK_BUNDLE_MANIFEST_MISSING`,
+`HIVRA_DEEPSEEK_BUNDLE_RELEASE_MISMATCH` or
+`HIVRA_DEEPSEEK_BUNDLE_INTEGRITY_MISMATCH`, before any claim, secret file or
+dispatch. The provisioner releases the lock once the guest is running and
+copies the bundle into it afterwards, so launch checks the directory again after
+the provisioner returns. If the bundle changed in that window, the harness
+tears the computer and its tunnel down instead of recording the launch. The
+checks cover the files the manifest lists. They do not detect extra, unlisted
+files in the directory.
+
+### Session renewal check (disposable computer only)
+
+This skews the guest clock, so run it only on a harness computer that is torn
+down afterwards. Run it as root on the Proxmox host, in one shell, between
+`--launch` and `--teardown`, with the native UI tab closed (its own requests
+would otherwise trip the 401 first). `VMID` and `IP` come from the ledger.
+
+1. Attest the guest's SSH identity exactly as the harness restart does:
+
+   ```sh
+   VMID=<ledger vmid>; IP=<ledger ip>
+   D=$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX"); chmod 0700 "$D"
+   /root/hivra-provisioner-canary/hivra-guest-ssh-known-hosts "$VMID" "$IP" "$D"
+   g() { ssh -i /etc/hivra/keys/vm-orchestrator -o BatchMode=yes -o IdentitiesOnly=yes \
+     -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
+     -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$D/known_hosts" \
+     -o HostKeyAlias="hivra-vmid-$VMID" -o ConnectTimeout=3 "ubuntu@$IP" "$@"; }
+   journal() { g "sudo -n journalctl -u bux-hivra-chat.service -o cat --no-pager | grep 'DeepSeek native session:' | tail -n 5"; }
+   health() { g 'curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/healthz'; }
+   ```
+
+2. Proactive renewal. Upstream cookies last 30 days; move the guest clock into
+   the last day:
+
+   ```sh
+   g 'sudo -n timedatectl set-ntp false && sudo -n date -s "@$(( $(date +%s) + 29*86400 + 43200 ))"'
+   sleep 5; journal; health
+   ```
+
+   Expect a new `DeepSeek native session: renewed` line and `200`. The cookie
+   was renewed before it expired, so readiness never dropped.
+
+3. Upstream 401. Restore the clock. The cookie renewed in step 2 now carries a
+   future `issuedAt`, which upstream refuses (dsh accepts a cookie only while
+   `issuedAt <= now`). Send one native request through the broker with a Hivra
+   session minted after the restore (a session minted during the skew would
+   outlive its 12-hour lifetime):
+
+   ```sh
+   g 'sudo -n date -s "@$(( $(date +%s) - 29*86400 - 43200 ))" && sudo -n timedatectl set-ntp true'
+   g 'bash -s' <<'PROBE'
+   set -eu
+   origin=$(python3 -c 'import json; print(json.load(open("/etc/hivra/deepseek-native.json"))["publicOrigin"])')
+   host=${origin#https://}
+   cookie=$(sudo -n cat /home/bux/.hivra/api-token | curl -sS -o /dev/null -D - -H "Host: $host" \
+       --data-urlencode token@- --data-urlencode destination=/ http://127.0.0.1:8080/auth/bootstrap \
+     | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-hivra_auth=[^;]*\);.*/\1/p')
+   [ -n "$cookie" ]
+   for attempt in 1 2; do
+     curl -sS -o /dev/null -w '%{http_code}\n' -H "Host: $host" -H "Cookie: $cookie" http://127.0.0.1:8080/
+     sleep 2
+   done
+   PROBE
+   journal; health
+   ```
+
+   Expect `503` then `200`, and the journal to end with exactly one
+   `upstream_unauthorized` followed by `renewed`. The rejected request is not
+   replayed.
+
+4. Re-check from outside: `curl -fsS <ledger launch url>/healthz` prints `ok`,
+   and the native UI opens through that URL with a fresh bootstrap (an HTML form
+   POST of the `--read-access` token and `destination=/` to
+   `<url>/auth/bootstrap`; never put the token in a URL) and still answers a
+   model prompt. Then `rm -rf -- "$D"` and run `--teardown`.
+
 ## Remaining public-enable gates
 
-1. Versioned guest bundle, pinned worker/receipt compatibility and cgroup lifecycle.
-2. Existing Hivra native bootstrap + root routing in a real authenticated browser.
-3. Typed runtime-bound BYOK delivery, actual model reply and native tool execution.
-4. ACP handshake/operation/revocation inside the same computer boundary.
-5. Restart, cancellation, failed install, expired access and full cgroup/VM teardown
-   through the public connection path on the exact deployed revision.
+1. **ACP lane.** Handshake, operation and revocation inside the same computer
+   boundary. Not accepted; this is the gate the public catalog waits on.
+2. **Typed BYOK delivery.** Hivra's launch accepts no model credentials for this
+   kind, so neither a saved key nor Hivra credits reach it. Today the key is added
+   in DeepSeek Harness's own settings on the computer.
+3. **Owned runtime updater.** `hivra-update-guest-runtime.sh` refuses DeepSeek
+   computers. A bundle fix, including the session renewal above, reaches only
+   newly launched DeepSeek computers.
+4. **Gateway/runtime unit split.** The gateway spawns the runtime inside one
+   `bux-hivra-chat.service` control group (`KillMode=control-group`), and an
+   unexpected runtime exit stops the gateway. Any gateway restart therefore ends
+   in-flight agent work. The detached chat-run lane does not apply: DeepSeek's
+   native routes are not the Hivra chat surface.
+5. **Re-acceptance on the current release** through the public connection path:
+   native UI, model reply, restart, cancellation, failed install, expired access
+   and full cgroup/VM teardown, then public catalog and provider dispatch.
 
 Buzz connection, Omarchy image and remote-desktop latency acceptance are separate
 work; none is implemented or proven by this adapter.

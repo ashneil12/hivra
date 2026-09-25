@@ -134,7 +134,7 @@ const after = (value: string, reference: string | undefined): boolean => !refere
 const lifecycleTitles: Record<string,string> = {
   launch_requested:"Launch requested", provisioned:"Computer provisioned", failed:"Computer action failed",
   resized:"Computer resized", stopped:"Computer stopped", started:"Computer started",
-  restarted:"Computer restarted", deleted:"Computer deleted",
+  restarted:"Computer restarted", runtime_updated:"Connection service updated", deleted:"Computer deleted",
 };
 
 /**

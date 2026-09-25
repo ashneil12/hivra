@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import currentRelease from "../../../provisioner-releases/2026.09.24.3.json";
+import persistentSessionsRelease from "../../../provisioner-releases/2026.09.24.2.json";
 import detachedRunsRelease from "../../../provisioner-releases/2026.09.24.1.json";
 import desktopPlannerRelease from "../../../provisioner-releases/2026.09.22.2.json";
 import activityTracingRelease from "../../../provisioner-releases/2026.09.22.1.json";
@@ -82,8 +83,10 @@ function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
   const release = identity.bundle.provisionerVersion === "2026.09.24.3"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.09.24.2"
+      ? persistentSessionsRelease
     : identity.bundle.provisionerVersion === "2026.09.24.1"
-    ? detachedRunsRelease
+      ? detachedRunsRelease
     : identity.bundle.provisionerVersion === "2026.09.22.2"
       ? desktopPlannerRelease
     : identity.bundle.provisionerVersion === "2026.09.22.1"

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { buildReadOnlyHostDiscoveryScript, parseHostDiscoveryOutput, parseProviderGuestDiscoveryOutput } from "../host-discovery";
 import { HostDiscoverySnapshotSchema, ProviderGuestDiscoverySnapshotSchema, MAX_HOST_DISCOVERY_OUTPUT_BYTES } from "../host-discovery-contracts";
-import { guestDiscoveryOutput } from "./provider-guest-discovery.fixtures";
+import { guestDiscoveryOutput, hostLaneDiscoveryOutput } from "./provider-guest-discovery.fixtures";
 
 const input={discoveryId:"11111111-1111-4111-8111-111111111111",connectionId:"22222222-2222-4222-8222-222222222222",
   connectionRevision:7,providerServerId:"42",capacityOrderId:"33333333-3333-4333-8333-333333333333",
@@ -14,9 +14,9 @@ it("uses the enrolled SSH-key digest required by provider publication without ch
   const discovery={...input,output:guestDiscoveryOutput(),normalizedHostFingerprint:`SHA256:${Buffer.from(digest,"hex").toString("base64").replace(/=+$/,"")}`};
   expect(parseProviderGuestDiscoveryOutput(discovery).hostIdentityDigest).toBe(digest);
   expect(parseProviderGuestDiscoveryOutput({...discovery,normalizedHostFingerprint:"cd".repeat(32)}).hostIdentityDigest).toBe("cd".repeat(32));
-  const generic=parseHostDiscoveryOutput({...discovery,connectionProvider:"host"});
+  const generic=parseHostDiscoveryOutput({...discovery,connectionProvider:"host",output:hostLaneDiscoveryOutput()});
   expect(generic.hostIdentityDigest).not.toBe(digest);
-  expect(parseHostDiscoveryOutput({...discovery,connectionProvider:"host",output:guestDiscoveryOutput({MACHINE_ID_DIGEST:"d".repeat(64)})}).hostIdentityDigest)
+  expect(parseHostDiscoveryOutput({...discovery,connectionProvider:"host",output:hostLaneDiscoveryOutput({MACHINE_ID_DIGEST:"d".repeat(64)})}).hostIdentityDigest)
     .not.toBe(generic.hostIdentityDigest);
 });
 
@@ -53,8 +53,25 @@ it("preserves the bounded TTL and strict provider/identity contract",()=>{
   snapshot.engines[0].supported=true;
   expect(ProviderGuestDiscoverySnapshotSchema.safeParse(snapshot).success).toBe(false);
 });
+// Slice 13 gave host connections a version 2 script with a sudo question.
+// The provider lane's first-boot recipe must not change with it: its script
+// stays the version 1 bytes, its snapshot stays contractVersion 1 (the only
+// one publish_prepared_provider_computer accepts), and a host-lane output is
+// refused here. scripts/test-provider-computer-ownership.cjs publishes this
+// parser's snapshot through the actual SQL with every migration applied.
+it("keeps the provider lane's version 1 script byte for byte and refuses the host lane's version 2 output",()=>{
+  const script=buildReadOnlyHostDiscoveryScript("11111111-1111-4111-8111-111111111111","provider-guest");
+  expect(createHash("sha256").update(script).digest("hex")).toBe("df1d7e31f09d6af08213083f99740b5352c423d74432e5cb14ddb6ea8c9fa413");
+  expect(script).toContain("emit PROTOCOL '1'");
+  expect(script).not.toContain("PASSWORDLESS_SUDO");
+  expect(buildReadOnlyHostDiscoveryScript("11111111-1111-4111-8111-111111111111")).toContain("emit PASSWORDLESS_SUDO");
+  expect(parseProviderGuestDiscoveryOutput({...input,output:guestDiscoveryOutput()}).contractVersion).toBe(1);
+  expect(()=>parseProviderGuestDiscoveryOutput({...input,output:hostLaneDiscoveryOutput()})).toThrow();
+  // And the other way round: the host lane refuses version 1 output.
+  expect(()=>parseHostDiscoveryOutput({...input,connectionProvider:"host",output:guestDiscoveryOutput()})).toThrow();
+});
 it("runs the real read-only probe locally, parses it without pretending this machine is a supported provider guest",()=>{
-  const script=buildReadOnlyHostDiscoveryScript(input.connectionId);
+  const script=buildReadOnlyHostDiscoveryScript(input.connectionId,"provider-guest");
   const run=spawnSync("bash",["--noprofile","--norc","-s"],{input:script,encoding:"utf8",timeout:10_000,maxBuffer:MAX_HOST_DISCOVERY_OUTPUT_BYTES,
     env:{PATH:"/usr/sbin:/usr/bin:/sbin:/bin",LC_ALL:"C",NODE_ENV:"test"}});
   expect(run.status).toBe(0);expect(run.error).toBeUndefined();

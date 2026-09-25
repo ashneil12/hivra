@@ -46,11 +46,24 @@ decoder/input session. This does not yet prove optical latency, a native client,
 Sunshine/Moonlight, Omarchy capture or regional daily-driver performance.
 An owner preparation checkpoint
 adds the missing in-product install action for current identity-bound Proxmox
-computers. The Desktop surface first attempts one owner-scoped, read-only
-capability refresh and issues a fresh session when the guest is already ready;
-only an explicit owner action may install missing capability. Legacy unbound
-computers fail closed with a current-launch message; the path does not silently
-rebind or mutate them. An exchanged Selkies controller now uses rolling
+computers. The Desktop surface asks for a session first. When the eight-minute
+capability proof has lapsed, it gets one owner-scoped, read-only refresh and
+asks again. A tab never runs two refreshes of one computer at once: Desktop
+joins the agent page's refresh while that is still running, or uses its result
+when it succeeded while the session request was on its way; otherwise it runs
+its own (Desktop opened minutes after the page loaded, or the workspace
+desktop surface, which starts no refresh of its own). Current behaviour: an
+open that is not a reconnect of a desktop already shown runs desktop
+preparation on its own, once per page, when its refresh still cannot verify
+the desktop or when it ends unavailable (on the workspace desktop surface, for
+any unavailable outcome), and preparation can install or repair the desktop;
+Retry after a failed preparation runs it again without asking. Reconnect after
+a stream drop, the automatic reconnect and Try again after it never install
+anything, and Update runtime, Update desktop and Repair desktop ask first.
+Target behaviour, pending the owner's decision on automatic preparation: only
+an explicit owner action installs missing capability. Legacy unbound computers
+fail closed with a current-launch message; the path does not silently rebind
+or mutate them. An exchanged Selkies controller now uses rolling
 server-side leases: the guest-held bearer is renewed in four-minute increments,
 the browser keeps the owner/capability proof current, and every renewal rechecks
 the exact owner, computer, capability generation, transport and controller
@@ -436,6 +449,18 @@ This is managed-guest update evidence only: provider computers, self-managed
 targets, other catalog runtimes and the full 20-run reliability campaign remain
 unaccepted.
 
+**Target: in-place runtime update (2026-09-24, not yet accepted).** The code on
+this branch changes `update_runtime` from update-then-reboot to an in-place
+update: the same restart-kind operation lease, FD8 held only for the host-side
+checks, the guest updater restarts only the chat gateway, the reporter
+credential is re-issued and the agent-run reporter reinstalled without a boot
+when it fits the request deadline, and the operation completes as `running` on
+the updater's `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt instead of
+passing through `provisioning`. The page that ran the update signs its open
+terminals in again; DeepSeek computers are refused before any lease. The
+2026-08-29 evidence above covers the reboot flow only; this change has no live
+Canary evidence yet.
+
 The current portable code can inspect a generic Linux host, inventory an owner's
 Hetzner Cloud project, create a policy-bounded provider VM after explicit billing
 confirmation, prepare it and admit supported agents through the existing flow.
@@ -467,7 +492,7 @@ acceptance are not yet one implementation. The Ubuntu Computer path still uses
 the Hivra-agent storage lane, and attaching an agent to an existing Computer is
 target behavior rather than a completed current path.
 
-Hivra guest terminal, browser, and native-dashboard surfaces now probe the selected HTTPS origin's public `/api/meta` without credentials and require `surfaceAuth: "post-cookie-v1"` before sending the bearer in a POST body to `/auth/bootstrap`. The guest returns an opaque HttpOnly cookie and a clean local redirect; the dashboard no longer falls back to bearer-bearing URLs. Older guests without the capability show an explicit connection-update notice with support/admin guidance, and unreachable metadata produces a retry state. Header-authenticated APIs are unchanged. This transport fix is not the target access-grant model: current guest sessions last 12 hours and are box-wide, and the separate legacy Hermes WebUI handoff still needs bearer-URL hardening. Surface/user/audience binding, short expiry, revocation, and the full access-isolation matrix remain release gates.
+Hivra guest terminal, browser, and native-dashboard surfaces now probe the selected HTTPS origin's public `/api/meta` without credentials and require `surfaceAuth: "post-cookie-v1"` before sending the bearer in a POST body to `/auth/bootstrap`. The guest returns an opaque HttpOnly cookie and a clean local redirect; the dashboard no longer falls back to bearer-bearing URLs. Older guests without the capability show an explicit connection-update notice with support/admin guidance, and unreachable metadata produces a retry state that also recovers by itself once a later check succeeds (failures are logged once per reason as a client diagnostic). Gateways built from this bundle save each guest sign-in (a SHA-256 of the session secret and its expiry, bound to the computer's API token) in an owner-only file under `~/.hivra`, so an ordinary gateway restart (runtime update, crash, reboot) keeps every surface's cookie valid; rotating the API token signs every surface out. They advertise the saved store's random epoch as `bootId` in `/api/meta`, which changes only when sign-ins were actually lost (first start with a store, token rotation, an untrusted or corrupt store, or one that cannot be kept current). While a surface is on screen and active, the dashboard re-checks the metadata on window focus, `online`, the page becoming visible and every 30 seconds; when the `bootId` changes, appears or disappears it signs in again by posting the bootstrap into a newly mounted frame, so lost sign-ins do not leave the surface on a dead session and no browser history entry is added. An unchanged `bootId`, a failed check, or a gateway that never advertised one never reloads a loaded surface. Existing computers keep sign-ins in memory only, and lose them on every gateway restart, until their gateway is replaced (DeepSeek computers only through a fresh DeepSeek install, because Update & restart refuses DeepSeek). The restart behaviour is covered by tests that run the real gateway process; it has not yet been verified on a live computer. A DeepSeek native surface waits for `nativeReady: true` before it signs in and whenever a loaded one reports it false; that wait is bounded to 3 minutes (20 seconds if the gateway itself is unreachable), after which the dashboard says DeepSeek has not started and offers Try again. Header-authenticated APIs are unchanged. This transport fix is not the target access-grant model: current guest sessions last 12 hours and are box-wide, and the separate legacy Hermes WebUI handoff still needs bearer-URL hardening. Surface/user/audience binding, short expiry, revocation, and the full access-isolation matrix remain release gates.
 
 ### Current presentation unification
 

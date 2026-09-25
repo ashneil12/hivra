@@ -47,8 +47,6 @@ set -euo pipefail
 AGENT_USER="${AGENT_USER:-bux}"                 # bux's installer hardcodes this user
 BUX_DIR="${BUX_DIR:-/opt/bux}"                  # MUST be /opt/bux: unit ExecStart paths are hardcoded
 BUX_REF="${BUX_REF:-f17c1b31d6688dd92e745ade650e00d46b4dc4da}" # reviewed upstream commit
-CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.246}"
-CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.149.1}"
 CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2026.8.2}"
 CLOUDFLARED_LINUX_AMD64_SHA256="${CLOUDFLARED_LINUX_AMD64_SHA256:-fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2}"
 CADDY_VERSION="${CADDY_VERSION:-2.11.4}"
@@ -130,6 +128,21 @@ ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
+# The vetted Claude Code / Codex versions ship with the bundle as data, so the
+# runtime updater and the dashboard read the same pins this installer uses.
+read_agent_cli_pin() {
+  python3 -I -c 'import json, re, sys
+value = json.load(open(sys.argv[1])).get(sys.argv[2])
+if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
+print(value)' "$SRC_DIR/agent-cli-versions.json" "$1" 2>/dev/null
+}
+if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then
+  CLAUDE_CODE_VERSION="$(read_agent_cli_pin claude-code)" || die "agent-cli-versions.json has no valid claude-code pin"
+fi
+if [ -z "${CODEX_CLI_VERSION:-}" ]; then
+  CODEX_CLI_VERSION="$(read_agent_cli_pin codex)" || die "agent-cli-versions.json has no valid codex pin"
+fi
+
 [ "$(id -u)" -eq 0 ] || die 'must run as root (use sudo)'
 [ -f /etc/debian_version ] || die 'only debian/ubuntu is supported'
 
@@ -160,7 +173,7 @@ fi
 say "agent kind: ${c_bold}${AGENT_KIND}${c_reset} (browser overlay: $([ "$WANT_BROWSER" = 1 ] && echo yes || echo no))"
 
 # Chat + prompt artifacts are always required; browser artifacts only for claude.
-for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell \
+for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent-cli-versions.json hivra-codex-config-pin.py \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
          hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
@@ -450,6 +463,9 @@ if [ "$AGENT_KIND" = "codex" ]; then
   fi
   sudo -iu "${AGENT_USER}" bash -lc 'codex --version' 2>/dev/null | grep -Fq "$CODEX_CLI_VERSION" \
     || die "Codex CLI version does not match ${CODEX_CLI_VERSION}"
+  sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py" >/dev/null \
+    || die "could not turn off the Codex startup update check"
+  ok "codex stays on the vetted ${CODEX_CLI_VERSION} (startup update check off)"
 fi
 install -d -o root -g root -m 0755 /var/log/bux
 
@@ -1055,6 +1071,13 @@ docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
   || die "Agent Zero image digest is unavailable after pull"
 
 # --- systemd unit: run the pinned image loopback-bound, env + state mounted ---
+# Stop grace: `docker stop` defaults to 10 s before SIGKILL; give Agent Zero 25 s
+# to finish and save. It is capped so the whole guest shutdown fits inside the
+# shortest host budget that stops a Hivra computer (`qm shutdown --timeout 40`
+# on restart, resize and idle parking; past it the host hard-stops the VM, which
+# is no grace at all). systemd waits 30 s for `docker stop` itself, so it never
+# kills it before the grace ends, and the other 10 s are left for the rest of
+# the guest to power off. A contract test keeps these numbers together.
 cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT
 [Unit]
 Description=Hivra Agent Zero (agent0ai/agent-zero on 127.0.0.1:${A0_PORT}, mounted at /agent-zero)
@@ -1062,11 +1085,12 @@ After=network-online.target docker.service
 Requires=docker.service
 [Service]
 TimeoutStartSec=0
+TimeoutStopSec=30
 Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f hivra-agent-zero
 ExecStart=/usr/bin/docker run --rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
-ExecStop=/usr/bin/docker stop hivra-agent-zero
+ExecStop=/usr/bin/docker stop -t 25 hivra-agent-zero
 [Install]
 WantedBy=multi-user.target
 UNIT
