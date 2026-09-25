@@ -188,6 +188,140 @@ describe('/api/ops/events', () => {
     expect(logLine).toContain('browser_req_456');
   });
 
+  function postEvent(body: Record<string, unknown>) {
+    return POST(new NextRequest('http://localhost/api/ops/events', {
+      method: 'POST',
+      body: JSON.stringify({ source: 'client-runtime', title: 'Client failure', message: 'Exploded', ...body }),
+    }));
+  }
+
+  function reportedEvent(): Record<string, unknown> {
+    expect(reportOpsEvent).toHaveBeenCalledTimes(1);
+    return (reportOpsEvent as jest.Mock).mock.calls[0][0];
+  }
+
+  function mockInstanceOwnership(owned: { table: string; id: string; userId: string } | null) {
+    const lookups: Array<{ table: string; filters: Record<string, unknown> }> = [];
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      const filters: Record<string, unknown> = {};
+      lookups.push({ table, filters });
+      const chain: Record<string, jest.Mock> = {
+        select: jest.fn(() => chain),
+        eq: jest.fn((column: string, value: unknown) => {
+          filters[column] = value;
+          return chain;
+        }),
+        limit: jest.fn(() => chain),
+        maybeSingle: jest.fn(async () => ({
+          data: owned && owned.table === table && filters.id === owned.id && filters.user_id === owned.userId
+            ? { id: owned.id }
+            : null,
+          error: null,
+        })),
+      };
+      return chain;
+    });
+    return lookups;
+  }
+
+  it('never forwards a client-reported fatal as fatal, so a signed-in user cannot page the admin', async () => {
+    const res = await postEvent({ severity: 'fatal' });
+
+    expect(res.status).toBe(202);
+    const event = reportedEvent();
+    expect(event.severity).toBe('error');
+    expect(event.metadata).toEqual(expect.objectContaining({ clientRequestedSeverity: 'fatal' }));
+  });
+
+  it('clamps client fatals for ops admins too: every POST here is browser-sourced', async () => {
+    (isOpsAdminUser as jest.Mock).mockReturnValue(true);
+
+    await postEvent({ source: 'admin.force_delete', severity: 'fatal' });
+
+    expect(reportedEvent().severity).toBe('error');
+  });
+
+  it('keeps non-fatal client severities as reported', async () => {
+    await postEvent({ severity: 'warn' });
+    expect(reportedEvent().severity).toBe('warn');
+  });
+
+  it('flattens the title to one plain line and clamps the title and message', async () => {
+    const title = `Checkout broken\r\nBcc: victim@example.com\u0007\u202Egnp.exe\u200B ${'x'.repeat(120)}`;
+    const message = `line one\r\nline two\u0000\u001B[31m\u2066hidden\u2069 ${'y'.repeat(3900)}`;
+
+    await postEvent({ title, message });
+
+    const event = reportedEvent();
+    const reportedTitle = String(event.title);
+    const reportedMessage = String(event.message);
+    expect(reportedTitle.startsWith('Checkout broken Bcc: victim@example.com gnp.exe x')).toBe(true);
+    expect(reportedTitle).not.toMatch(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069]/);
+    expect(Array.from(reportedTitle).length).toBeLessThanOrEqual(160);
+    expect(reportedMessage.startsWith('line one\nline two[31mhidden y')).toBe(true);
+    expect(reportedMessage).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069]/);
+    expect(Array.from(reportedMessage).length).toBeLessThanOrEqual(1000);
+
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).toContain('Checkout broken Bcc: victim@example.com gnp.exe');
+  });
+
+  it('drops an instanceId the caller does not own and strips banner-driving metadata', async () => {
+    const lookups = mockInstanceOwnership({ table: 'hermes_instances', id: '33333333-3333-4333-8333-333333333333', userId: 'someone-else' });
+
+    await postEvent({
+      instanceId: '33333333-3333-4333-8333-333333333333',
+      metadata: {
+        failureOwner: 'hermes',
+        failurePhase: 'runtime',
+        recoveryAction: 'contact_support',
+        component: 'HermesChat',
+      },
+    });
+
+    const event = reportedEvent();
+    expect(event.instanceId).toBeUndefined();
+    expect(event.metadata).toEqual(expect.objectContaining({ component: 'HermesChat' }));
+    expect(event.metadata).not.toHaveProperty('failureOwner');
+    expect(event.metadata).not.toHaveProperty('failurePhase');
+    expect(event.metadata).not.toHaveProperty('recoveryAction');
+    expect(lookups.every((lookup) => lookup.filters.user_id === 'user_123')).toBe(true);
+  });
+
+  it('keeps an instanceId the caller owns (Hermes instance or Hivra agent)', async () => {
+    mockInstanceOwnership({ table: 'hivra_agents', id: '44444444-4444-4444-8444-444444444444', userId: 'user_123' });
+
+    await postEvent({ instanceId: '44444444-4444-4444-8444-444444444444' });
+
+    expect(reportedEvent().instanceId).toBe('44444444-4444-4444-8444-444444444444');
+  });
+
+  it('drops a malformed instanceId without querying for it', async () => {
+    const lookups = mockInstanceOwnership(null);
+
+    await postEvent({ instanceId: "x' or 1=1" });
+
+    expect(reportedEvent().instanceId).toBeUndefined();
+    expect(lookups).toHaveLength(0);
+  });
+
+  it('rate-limits each signed-in user', async () => {
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: `user_flood_${Date.now()}` });
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 31; i += 1) {
+      const res = await POST(new NextRequest('http://localhost/api/ops/events', {
+        method: 'POST',
+        headers: { 'cf-connecting-ip': `198.51.100.${i + 1}` },
+        body: JSON.stringify({ source: 'client-runtime', title: `Flood ${i}`, message: 'x' }),
+      }));
+      statuses.push(res.status);
+    }
+
+    expect(statuses.slice(0, 30).every((status) => status === 202)).toBe(true);
+    expect(statuses[30]).toBe(429);
+    expect(reportOpsEvent).toHaveBeenCalledTimes(30);
+  });
+
   it('rejects bulk archive requests from non-admin users', async () => {
     const req = new NextRequest('http://localhost/api/ops/events', {
       method: 'PATCH',
