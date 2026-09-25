@@ -7,10 +7,13 @@ import { BillingDialog, billingDialogStyles as dlg } from '@/components/billing/
 import { CopyButton, DepositAddressField, touchStyles } from '@/components/billing/TransferDetails';
 import { useLocale } from '@/components/i18n/LocaleProvider';
 import { clientLog } from '@/lib/client/logger';
+import { withdrawDestinationCooldownHours } from '@/lib/billing/withdraw-destination-policy';
+import { STEP_UP_CANCELLED_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import {
   agentBaseEthBalance,
   agentWalletWithdrawableBalances,
   defaultWithdrawAmountForBalance,
+  heldUntilLabel,
   isEvmAddressInput,
   isNonZeroAmountDisplay,
   primaryAgentWalletRecipient,
@@ -28,7 +31,6 @@ import {
   agentWalletApiBase,
   type AgentWalletBalance,
   type AgentWalletCardData,
-  type AgentWalletRecipient,
   type AgentWalletsState,
   type InstanceBankrWalletPublicSummary,
 } from '@/app/dashboard/wallet/agent-wallet-data';
@@ -204,6 +206,9 @@ export function WithdrawalDestinationModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const invalid = touched && destination.trim().length > 0 && !isEvmAddressInput(destination);
+  // A change needs a fresh sign-in check: Clerk asks the user to confirm it's
+  // them, then the save is retried.
+  const stepUpRequest = useStepUpJsonRequest();
 
   const handleSave = useCallback(async () => {
     setTouched(true);
@@ -219,7 +224,7 @@ export function WithdrawalDestinationModal({
       // { evmAddress }. Both return { wallet }.
       const isHivra = card.instance.lane === 'hivra';
       const trimmedDestination = destination.trim();
-      const response = await fetch(
+      const result = await stepUpRequest(
         `${agentWalletApiBase(card.instance)}/${isHivra ? 'set-destination' : 'withdraw-destination'}`,
         {
           method: isHivra ? 'POST' : 'PUT',
@@ -229,9 +234,13 @@ export function WithdrawalDestinationModal({
           ),
         },
       );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body?.success) {
-        setError(body?.error || `Save failed (${response.status})`);
+      if (!result) {
+        setError(STEP_UP_CANCELLED_MESSAGE);
+        return;
+      }
+      const { ok, status, body } = result;
+      if (!ok || !body?.success) {
+        setError(body?.error || `Save failed (${status})`);
         return;
       }
       const wallet = (body.data?.wallet ?? null) as InstanceBankrWalletPublicSummary | null;
@@ -242,14 +251,14 @@ export function WithdrawalDestinationModal({
     } finally {
       setSaving(false);
     }
-  }, [card.instance.id, destination, onClose, onSaved]);
+  }, [card.instance, destination, onClose, onSaved, stepUpRequest]);
 
   // A backdrop tap must not throw away an address the user has typed.
   const destinationEdited = destination.trim() !== (card.wallet?.withdrawalDestinationEvm ?? '').trim();
 
   return (
     <AgentWalletModalFrame
-      title="Set primary recipient."
+      title="Set withdrawal destination."
       onClose={onClose}
       dismissOnBackdrop={!destinationEdited}
       closeDisabled={saving}
@@ -276,11 +285,14 @@ export function WithdrawalDestinationModal({
       }
     >
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-        This address appears first in recent recipients and is prefilled for Base withdrawals. You can still choose a different recipient at withdrawal time. {AGENT_WITHDRAWAL_GAS_NOTICE}
+        Withdrawals from this agent wallet go only to this address. {AGENT_WITHDRAWAL_GAS_NOTICE}
+      </p>
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+        For your safety, you&apos;ll confirm it&apos;s you before saving, we email you whenever it changes, and a new address can receive withdrawals {withdrawDestinationCooldownHours()} hours after you save it.
       </p>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-          Primary recipient
+          Withdrawal destination
         </span>
         <input
           value={destination}
@@ -331,38 +343,19 @@ export function AgentWalletWithdrawModal({
   const [selectedTokenKey, setSelectedTokenKey] = useState(() => initialBalance ? tokenBalanceKey(initialBalance) : '');
   const selectedBalance = withdrawableBalances.find((balance) => tokenBalanceKey(balance) === selectedTokenKey)
     ?? initialBalance;
-  const primaryRecipient = primaryAgentWalletRecipient(card);
+  // Withdrawals go only to the saved destination (the server refuses any
+  // other address), and a newly saved one is held for the cooldown.
+  const destination = primaryAgentWalletRecipient(card);
+  const heldUntil = destination ? heldUntilLabel(card.wallet?.withdrawalDestinationAvailableAt) : null;
   const [submitting, setSubmitting] = useState(false);
   const [amount, setAmount] = useState(() => initialBalance ? defaultWithdrawAmountForBalance(initialBalance) : '');
-  const [recipientAddress, setRecipientAddress] = useState(() => primaryRecipient ?? '');
-  const [setPrimaryRecipient, setSetPrimaryRecipient] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<AgentWalletWithdrawSuccess | null>(null);
   const normalizedAmount = amount.replace(/,/g, '').trim();
-  const normalizedRecipient = recipientAddress.trim();
-  const canSubmit = Boolean(selectedBalance && isEvmAddressInput(normalizedRecipient) && isNonZeroAmountDisplay(normalizedAmount));
-  const recentRecipients = (() => {
-    const seen = new Set<string>();
-    const recipients: AgentWalletRecipient[] = [];
-    for (const recipient of card.withdrawalRecipients ?? []) {
-      const normalized = recipient.normalizedAddress || recipient.address.toLowerCase();
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      recipients.push(recipient);
-    }
-    if (primaryRecipient && !seen.has(primaryRecipient.toLowerCase())) {
-      recipients.unshift({
-        id: 'primary',
-        address: primaryRecipient,
-        normalizedAddress: primaryRecipient.toLowerCase(),
-        label: null,
-        isPrimary: true,
-        useCount: 0,
-        lastUsedAt: '',
-      });
-    }
-    return recipients;
-  })();
+  const normalizedRecipient = (destination ?? '').trim();
+  const canSubmit = Boolean(
+    selectedBalance && isEvmAddressInput(normalizedRecipient) && !heldUntil && isNonZeroAmountDisplay(normalizedAmount)
+  );
 
   const handleWithdraw = useCallback(async () => {
     if (!selectedBalance) {
@@ -370,7 +363,7 @@ export function AgentWalletWithdrawModal({
       return;
     }
     if (!isEvmAddressInput(normalizedRecipient)) {
-      setError('Enter a valid 0x recipient address.');
+      setError('Save a withdrawal destination for this wallet first.');
       return;
     }
     if (!isNonZeroAmountDisplay(normalizedAmount)) {
@@ -396,7 +389,6 @@ export function AgentWalletWithdrawModal({
           amount: normalizedAmount,
           recipientAddress: normalizedRecipient,
           token,
-          setPrimaryRecipient,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -423,7 +415,7 @@ export function AgentWalletWithdrawModal({
     } finally {
       setSubmitting(false);
     }
-  }, [card.instance.id, normalizedAmount, normalizedRecipient, onSubmitted, selectedBalance, setPrimaryRecipient]);
+  }, [card.instance, normalizedAmount, normalizedRecipient, onSubmitted, selectedBalance]);
 
   const handleTokenChange = useCallback((nextKey: string) => {
     setSelectedTokenKey(nextKey);
@@ -500,7 +492,7 @@ export function AgentWalletWithdrawModal({
       }
     >
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-        Base network only for now. Choose the token, amount, and recipient address for {card.instance.name}&apos;s agent wallet; the server re-reads the live Base balance before submitting.
+        Base network only for now. Choose the token and amount to send from {card.instance.name}&apos;s agent wallet to its saved withdrawal destination; the server re-reads the live Base balance before submitting.
       </p>
       <div
         style={{
@@ -566,74 +558,30 @@ export function AgentWalletWithdrawModal({
             }}
           />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-            Recipient address
+            Sends to
           </span>
-          <input
-            className="mono"
-            value={recipientAddress}
-            onChange={(event) => setRecipientAddress(event.target.value)}
-            autoComplete="off"
-            placeholder="0x..."
-            disabled={submitting}
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              border: `1px solid ${recipientAddress && !isEvmAddressInput(recipientAddress) ? 'var(--gold-leaf)' : 'var(--etched-border)'}`,
-              background: 'var(--bg-canvas)',
-              color: 'var(--ink-black)',
-              padding: '10px 11px',
-              fontSize: 13,
-              outline: 'none',
-            }}
-          />
-        </label>
-        {recentRecipients.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-              Recent recipients
+          {destination ? (
+            <code className="mono notranslate" translate="no" style={{ fontSize: 12, wordBreak: 'break-all', color: 'var(--ink-black)' }}>
+              {destination}
+            </code>
+          ) : (
+            <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              No withdrawal destination saved. Close this and set one on the wallet card first.
             </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {recentRecipients.map((recipient) => (
-                <button
-                  key={recipient.id}
-                  type="button"
-                  onClick={() => setRecipientAddress(recipient.address)}
-                  disabled={submitting}
-                  style={{
-                    border: '1px solid var(--etched-border)',
-                    background: recipient.address.toLowerCase() === normalizedRecipient.toLowerCase() ? 'color-mix(in srgb, var(--gold-leaf) 9%, var(--bg-surface))' : 'transparent',
-                    color: 'var(--ink-black)',
-                    padding: '7px 9px',
-                    cursor: submitting ? 'wait' : 'pointer',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    alignItems: 'center',
-                    textAlign: 'left',
-                  }}
-                >
-                  <code className="mono notranslate" translate="no" style={{ fontSize: 11, wordBreak: 'break-all' }}>{recipient.address}</code>
-                  {recipient.isPrimary && (
-                    <span className="mono" style={{ fontSize: 8, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-leaf)', fontWeight: 900 }}>
-                      Primary
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-          <input
-            type="checkbox"
-            checked={setPrimaryRecipient}
-            onChange={(event) => setSetPrimaryRecipient(event.target.checked)}
-            disabled={submitting}
-          />
-          Set as primary
-        </label>
+          )}
+          {heldUntil && (
+            <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              This destination was saved recently. For your safety, withdrawals to it open {heldUntil}.
+            </span>
+          )}
+          {destination && !heldUntil && (
+            <span style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--text-muted)' }}>
+              To send somewhere else, change the withdrawal destination on the wallet card.
+            </span>
+          )}
+        </div>
       </div>
       <div
         style={{
@@ -1210,6 +1158,7 @@ export function AgentWalletCard({
   const wallet = card.wallet;
   const address = wallet?.evmAddress;
   const primaryRecipient = primaryAgentWalletRecipient(card);
+  const destinationHeldUntil = primaryRecipient ? heldUntilLabel(wallet?.withdrawalDestinationAvailableAt) : null;
   const needsWallet = !address;
   const connected = isUserConnected(wallet);
   const hivraCreated = Boolean(address) && !connected;
@@ -1463,7 +1412,7 @@ export function AgentWalletCard({
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-            Primary withdrawal recipient
+            Withdrawal destination
           </span>
           {primaryRecipient ? (
             <>
@@ -1471,14 +1420,17 @@ export function AgentWalletCard({
                 {primaryRecipient}
               </code>
               <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                Recent recipients appear in the withdraw modal. {AGENT_WITHDRAWAL_GAS_NOTICE}
+                {destinationHeldUntil
+                  ? `New destination. For your safety, withdrawals to it open ${destinationHeldUntil}.`
+                  : 'Withdrawals from this wallet go only here.'}{' '}
+                {AGENT_WITHDRAWAL_GAS_NOTICE}
               </span>
             </>
           ) : (
             <>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No primary recipient set</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No withdrawal destination set</span>
               <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                You can enter a recipient during withdrawal and optionally make it primary. {AGENT_WITHDRAWAL_GAS_NOTICE}
+                Set one before withdrawing. A new destination can receive withdrawals {withdrawDestinationCooldownHours()} hours after you save it. {AGENT_WITHDRAWAL_GAS_NOTICE}
               </span>
             </>
           )}
@@ -1502,7 +1454,7 @@ export function AgentWalletCard({
             textTransform: 'uppercase',
           }}
         >
-          {primaryRecipient ? 'Change' : 'Set primary'}
+          {primaryRecipient ? 'Change' : 'Set destination'}
         </button>
       </div>
       )}

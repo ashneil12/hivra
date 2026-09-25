@@ -187,7 +187,11 @@ conclusions. Custody and regulatory treatment are under legal review.
   they processed; they no longer do.
 - **Who can move:** the user, by asking Hivra: `POST
   /api/billing/bankr/wallet/withdraw` moves the full $HermesOS balance to the
-  user's saved withdraw address using a row-5 key that Hivra mints and submits.
+  user's saved withdraw address (or, as a move, to their signature-verified
+  primary wallet) using a row-5 key that Hivra mints and submits. Saving a
+  withdraw address needs a fresh sign-in check (Clerk reverification), emails
+  the owner, and the new address cannot receive anything for 24 hours; a newly
+  verified wallet is held the same way (`withdraw-destination-policy.ts`).
   Hivra can also mint keys through the partner key. The stored credential rows
   hold no key.
 - **How long:** until the user withdraws; there is no expiry.
@@ -218,10 +222,13 @@ conclusions. Custody and regulatory treatment are under legal review.
   never clear them, and the Hivra-box boot reconcile described in row 10 does
   not touch these rows.
 - **Funds:** whatever the user deposits. They stay until withdrawn.
-- **Who can move:** the agent (with the key, to any address); Hivra, through
-  `POST …/bankr-wallet/withdraw` on the user's request (any recipient the user
-  enters) or through the partner key; anyone who can read the key file or
-  config on the box.
+- **Who can move:** the agent (with the key, to any address: the key has no
+  recipient allowlist, by design, so the agent can pay and trade); Hivra,
+  through `POST …/bankr-wallet/withdraw` on the user's request (only to the
+  wallet's saved withdrawal destination, and only once it has been saved for
+  24 hours; changing it needs a fresh sign-in check and emails the owner) or
+  through the partner key; anyone who can read the key file or config on the
+  box.
 - **Counts (production, 2026-09-23):** 79 active wallets with a stored key (all
   Hermes-lane), plus 324 `pending` rows whose partner call never succeeded
   (placeholder id `pending:…`, zero address, no Bankr wallet). Canary: none.

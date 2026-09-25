@@ -329,7 +329,7 @@ describe("WalletPage custody migration", () => {
     expect(tokenGrid).toHaveClass("notranslate");
   });
 
-  it("lets users withdraw a selected Base token to a recent recipient", async () => {
+  it("lets users withdraw a selected Base token to the saved destination, and nowhere else", async () => {
     const primaryDestination = "0x1111111111111111111111111111111111111111";
     const recentRecipient = "0x2222222222222222222222222222222222222222";
     const usdcAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
@@ -389,12 +389,12 @@ describe("WalletPage custody migration", () => {
             txHash: "0xwithdraw",
             asset: "USDC",
             amountDisplay: "2.5",
-            recipientAddress: recentRecipient,
+            recipientAddress: primaryDestination,
             wallet: {
               evmAddress: "0x000000000000000000000000000000000000ba5e",
               bankrWalletId: "wlt_instance",
               status: "active",
-              withdrawalDestinationEvm: recentRecipient,
+              withdrawalDestinationEvm: primaryDestination,
               apiKeyStatus: "active",
             },
           },
@@ -410,15 +410,16 @@ describe("WalletPage custody migration", () => {
     expect(dialog).toHaveTextContent(/base network only/i);
     expect(dialog).toHaveTextContent(/gas sponsorship covers/i);
     expect(dialog).toHaveTextContent(primaryDestination);
-    expect(dialog).toHaveTextContent(recentRecipient);
+    // An earlier recipient from history is no longer offered: funds go only
+    // to the saved destination.
+    expect(dialog).not.toHaveTextContent(recentRecipient);
+    expect(within(dialog).queryByLabelText(/set as primary/i)).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText(/amount to withdraw/i)).toHaveValue("0.010000");
 
     fireEvent.change(within(dialog).getByLabelText(/token/i), { target: { value: usdcAddress } });
     const amountInput = within(dialog).getByLabelText(/amount to withdraw/i);
     expect(amountInput).toHaveValue("12.5");
     fireEvent.change(amountInput, { target: { value: "2.5" } });
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(recentRecipient, "i") }));
-    fireEvent.click(screen.getByLabelText(/set as primary/i));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /yes, withdraw/i }));
@@ -432,14 +433,13 @@ describe("WalletPage custody migration", () => {
           method: "POST",
           body: JSON.stringify({
             amount: "2.5",
-            recipientAddress: recentRecipient,
+            recipientAddress: primaryDestination,
             token: {
               symbol: "USDC",
               tokenAddress: usdcAddress,
               decimals: 6,
               chain: "Base",
             },
-            setPrimaryRecipient: true,
           }),
         })
       );

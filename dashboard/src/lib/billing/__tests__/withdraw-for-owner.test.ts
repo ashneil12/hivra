@@ -264,14 +264,12 @@ describe("withdrawForOwner (Hivra lane)", () => {
     expect(mockSubmitTransfer).not.toHaveBeenCalled();
   });
 
-  it("withdraws an explicit Base ERC-20 token and persists the destination via the OWNER-agnostic setter (not the recipients table)", async () => {
-    mockGetWalletForOwner.mockResolvedValue({ ...HIVRA_WALLET, withdrawalDestinationEvm: null });
-
+  it("withdraws an explicit Base ERC-20 token to the saved destination and never changes the destination or touches the recipients table", async () => {
     const db = makeOrderedClaimDb([]);
     const result = await withdrawForOwner({
       owner: { hivraAgentId: "hivra_agent_42" },
       userId: "user_777",
-      recipientAddress: "0x2222222222222222222222222222222222222222",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
       amountDisplay: "2.5",
       token: {
         symbol: "USDC",
@@ -286,25 +284,20 @@ describe("withdrawForOwner (Hivra lane)", () => {
       txHash: "0xhivrawithdraw",
       amountRaw: "2500000",
       amountDisplay: "2.5",
-      recipientAddress: "0x2222222222222222222222222222222222222222",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
     });
     expect(mockSubmitTransfer).toHaveBeenCalledWith({
       apiKey: "bk_hivra_secret",
       tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-      recipientAddress: "0x2222222222222222222222222222222222222222",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
       amountDisplay: "2.5",
       env: undefined,
       fetchImpl: undefined,
     });
-    // Destination persistence must use the OWNER-agnostic setter, never the
-    // instance-only recipients table (which would FK-fail for a Hivra box).
-    expect(mockSetDestinationForOwner).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner: { hivraAgentId: "hivra_agent_42" },
-        userId: "user_777",
-        destinationEvm: "0x2222222222222222222222222222222222222222",
-      })
-    );
+    // A withdrawal never changes the saved destination, and the Hivra lane
+    // never writes the instance-only recipients table (its FK would reject a
+    // Hivra box).
+    expect(mockSetDestinationForOwner).not.toHaveBeenCalled();
     expect(mockUpsertWithdrawalRecipient).not.toHaveBeenCalled();
   });
 

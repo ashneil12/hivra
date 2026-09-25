@@ -125,6 +125,8 @@ interface WithdrawAddressPayload {
   normalizedAddress?: string | null;
   setAt?: string;
   updatedAt?: string;
+  /** When a newly saved address can first receive a withdrawal; null once it can. */
+  availableAt?: string | null;
 }
 
 
@@ -335,6 +337,8 @@ export default function WalletPage() {
   const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
   const [walletConnectSuccess, setWalletConnectSuccess] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState<string | null>(null);
+  // When a newly saved withdraw address can first receive a withdrawal.
+  const [withdrawAvailableAt, setWithdrawAvailableAt] = useState<string | null>(null);
   const [withdrawAddressLoading, setWithdrawAddressLoading] = useState(true);
   const [withdrawAddressFormOpen, setWithdrawAddressFormOpen] = useState(false);
   const [quotes, setQuotes] = useState<QuotesResponse>({ pro: null, power: null });
@@ -412,13 +416,16 @@ export default function WalletPage() {
         // 404 → billing v2 disabled; 401 → not signed in. Treat as "no
         // address set" and let the rest of the page render.
         setWithdrawAddress(null);
+        setWithdrawAvailableAt(null);
         return;
       }
       const body = await response.json().catch(() => ({}));
-      const addr = (body?.data as WithdrawAddressPayload | undefined)?.address ?? null;
-      setWithdrawAddress(addr);
+      const payload = body?.data as WithdrawAddressPayload | undefined;
+      setWithdrawAddress(payload?.address ?? null);
+      setWithdrawAvailableAt(payload?.availableAt ?? null);
     } catch {
       setWithdrawAddress(null);
+      setWithdrawAvailableAt(null);
     } finally {
       setWithdrawAddressLoading(false);
     }
@@ -1053,6 +1060,7 @@ export default function WalletPage() {
         <section aria-label="Wallet actions" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.5rem' }}>
           <WithdrawDestinationCard
             address={withdrawAddress}
+            availableAt={withdrawAvailableAt}
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
@@ -1065,6 +1073,7 @@ export default function WalletPage() {
             tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
             balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
             withdrawAddress={withdrawAddress}
+            withdrawAvailableAt={withdrawAvailableAt}
             onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
             onWithdrew={() => {
               // Refresh once now (the post-withdraw eligibility re-check
@@ -1084,8 +1093,9 @@ export default function WalletPage() {
         <WithdrawAddressForm
           initialAddress={withdrawAddress}
           onCancel={() => setWithdrawAddressFormOpen(false)}
-          onSaved={(addr) => {
+          onSaved={(addr, availableAt) => {
             setWithdrawAddress(addr);
+            setWithdrawAvailableAt(availableAt);
             setWithdrawAddressFormOpen(false);
           }}
         />

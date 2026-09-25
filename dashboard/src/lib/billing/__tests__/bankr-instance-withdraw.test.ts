@@ -350,14 +350,12 @@ describe("withdrawHermesTokensForInstance", () => {
     });
   });
 
-  it("withdraws an explicit Base ERC-20 token to the requested recipient without a saved destination", async () => {
-    mockGetWallet.mockResolvedValueOnce({ ...record, withdrawalDestinationEvm: null });
-
+  it("withdraws an explicit Base ERC-20 token to the saved destination", async () => {
     const db = makeClaimDb();
     const result = await withdrawBaseTokenForInstance({
       instanceId: "inst_123",
       userId: "user_123",
-      recipientAddress: "0x2222222222222222222222222222222222222222",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
       amountDisplay: "2.5",
       token: {
         symbol: "USDC",
@@ -373,7 +371,7 @@ describe("withdrawHermesTokensForInstance", () => {
       txHash: "0xwithdraw",
       amountRaw: "2500000",
       amountDisplay: "2.5",
-      recipientAddress: "0x2222222222222222222222222222222222222222",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
     });
     expect(mockFetchTokenBalance).toHaveBeenCalledWith({
       walletAddress: record.evmAddress,
@@ -390,16 +388,18 @@ describe("withdrawHermesTokensForInstance", () => {
     expect(mockSubmitTransfer).toHaveBeenCalledWith({
       apiKey: "bk_agent_secret",
       tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-      recipientAddress: "0x2222222222222222222222222222222222222222",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
       amountDisplay: "2.5",
       env: { HERMES_BASE_RPC_URL: "https://base.example.test" },
       fetchImpl: undefined,
     });
+    // The use is counted in recipient history; the saved destination never
+    // changes from a withdrawal.
     expect(mockUpsertWithdrawalRecipient).toHaveBeenCalledWith({
       instanceId: "inst_123",
       userId: "user_123",
-      address: "0x2222222222222222222222222222222222222222",
-      setPrimary: true,
+      address: "0x1111111111111111111111111111111111111111",
+      setPrimary: false,
       db,
     });
   });
