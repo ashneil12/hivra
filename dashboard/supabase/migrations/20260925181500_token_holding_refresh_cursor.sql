@@ -36,6 +36,9 @@ create table if not exists public.token_holding_refresh_cursors (
 
 alter table public.token_holding_refresh_cursors enable row level security;
 revoke all on table public.token_holding_refresh_cursors from public, anon, authenticated;
+-- The claim function runs as its caller, so grant service_role what it needs
+-- here instead of relying on the project's default privileges.
+grant select, insert, update on table public.token_holding_refresh_cursors to service_role;
 
 create or replace function public.claim_token_holding_refresh_batch(
   p_lane text,

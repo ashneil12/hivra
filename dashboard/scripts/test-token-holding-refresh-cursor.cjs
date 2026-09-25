@@ -26,13 +26,16 @@ const REPAIR = "20260925181600_bankr_deposit_wallet_primary_repair.sql";
 const read = (name) => fs.readFileSync(path.join(MIGRATIONS, name), "utf8");
 
 // Supabase roles, default privileges (so a missing revoke shows up) and the
-// auth helpers the prerequisite policies reference.
-async function supabaseLike() {
+// auth helpers the prerequisite policies reference. `serviceRoleDefaults:
+// false` leaves service_role out of the default privileges, so a grant the
+// migration relies on but never makes shows up too.
+async function supabaseLike({ serviceRoleDefaults = true } = {}) {
   const db = new PGlite();
+  const grantees = serviceRoleDefaults ? "anon, authenticated, service_role" : "anon, authenticated";
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
-    alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
-    alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+    alter default privileges in schema public grant execute on functions to ${grantees};
+    alter default privileges in schema public grant all on tables to ${grantees};
     create schema auth;
     create function auth.jwt() returns jsonb language sql stable as $$ select '{}'::jsonb $$;
     create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
@@ -246,6 +249,28 @@ async function main() {
       true,
       "RLS enabled"
     );
+
+    // The claim function runs as its caller, so service_role needs the cursor
+    // table itself, not only through a project's default privileges.
+    const bareDb = await supabaseLike({ serviceRoleDefaults: false });
+    try {
+      await bareDb.exec(read(CURSOR));
+      for (const privilege of ["SELECT", "INSERT", "UPDATE"]) {
+        const { granted } = (
+          await bareDb.query(
+            "select has_table_privilege('service_role', 'public.token_holding_refresh_cursors', $1) as granted",
+            [privilege]
+          )
+        ).rows[0];
+        assert.equal(granted, true, `service_role has ${privilege} on the cursor table without default privileges`);
+      }
+      const { allowed } = (
+        await bareDb.query("select has_function_privilege('service_role', $1, 'EXECUTE') as allowed", [fn])
+      ).rows[0];
+      assert.equal(allowed, true, "service_role can claim a refresh batch without default privileges");
+    } finally {
+      await bareDb.close();
+    }
 
     console.log("PASS token holding refresh cursor");
   } finally {
