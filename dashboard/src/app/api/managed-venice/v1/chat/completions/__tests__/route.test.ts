@@ -47,6 +47,7 @@ import { MissingVeniceUsageError } from "@/lib/venice/cost-estimator";
 import { UnsupportedVeniceModelError } from "@/lib/venice/pricing";
 import { POST } from "../route";
 import { authorizeManagedVeniceChat } from "@/lib/venice/proxy-chat-core";
+import { SWEEPABLE_RECONCILIATION_REASONS } from "@/lib/venice/reservation-sweep";
 
 function makeReq(body: unknown, key = "hven_live_test") {
   return new Request("http://localhost/api/managed-venice/v1/chat/completions", {
@@ -57,6 +58,26 @@ function makeReq(body: unknown, key = "hven_live_test") {
     },
     body: JSON.stringify(body),
   }) as unknown as NextRequest;
+}
+
+// An upstream SSE body that stays open after its chunks, like Venice mid-
+// generation, and records whether the proxy cancelled it.
+function openUpstreamStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { stream, wasCancelled: () => cancelled };
+}
+
+async function settleMicrotasks() {
+  for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
 const body = {
@@ -375,6 +396,142 @@ describe("/api/managed-venice/v1/chat/completions", () => {
         reason: "managed_venice_missing_stream_usage",
         proxyKeyId: "key_1",
         // Reservation is held + invoice cron settles offline — keep the key live.
+        pauseKey: false,
+      })
+    );
+  });
+
+  // Security review 2026-09 (HIGH): once Venice has answered 200 it is
+  // generating, and billing Hivra, for this request. A client that closes the
+  // connection before the final usage frame used to get the whole hold
+  // released, so every streamed completion was free. A disconnect must keep
+  // the hold and settle from what was observed, or leave a reconciliation
+  // item the stale-hold sweep cannot release.
+  it("keeps the hold and files a non-sweepable reconciliation item when the client disconnects mid-stream after upstream answered 200", async () => {
+    const upstream = openUpstreamStream([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    expect(response.status).toBe(200);
+    const client = response.body!.getReader();
+    const first = await client.read();
+    expect(new TextDecoder().decode(first.value)).toContain('"content":"hi"');
+    await client.cancel();
+    await settleMicrotasks();
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockCapture).not.toHaveBeenCalled();
+    expect(mockReconcile).toHaveBeenCalledTimes(1);
+    const reservedRef = mockReserve.mock.calls[0][0].referenceId;
+    const filed = mockReconcile.mock.calls[0][0];
+    expect(filed).toMatchObject({
+      userId: "user_1",
+      proxyKeyId: "key_1",
+      referenceId: reservedRef,
+      reason: "managed_venice_chat_stream_cancelled",
+      pauseKey: false,
+      metadata: expect.objectContaining({ cause: "client_cancelled", upstreamStatus: 200 }),
+    });
+    expect(SWEEPABLE_RECONCILIATION_REASONS).not.toContain(filed.reason);
+    // Stop Venice generating (and billing) for a reader that has gone away.
+    expect(upstream.wasCancelled()).toBe(true);
+  });
+
+  it("settles from the observed usage frame when the client disconnects after it arrived", async () => {
+    const upstream = openUpstreamStream([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":10}}\n\n',
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    const client = response.body!.getReader();
+    let seen = "";
+    while (!seen.includes('"usage"')) {
+      const next = await client.read();
+      if (next.done) break;
+      seen += new TextDecoder().decode(next.value);
+    }
+    await client.cancel();
+    await settleMicrotasks();
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(mockCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceId: mockReserve.mock.calls[0][0].referenceId,
+        usage: { prompt_tokens: 4, completion_tokens: 10 },
+        upstreamStatus: 200,
+      })
+    );
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hold under the cancel reason when capture fails after a client disconnect", async () => {
+    mockCapture.mockRejectedValueOnce(new Error("ledger write failed"));
+    const upstream = openUpstreamStream([
+      'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":10}}\n\n',
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    const client = response.body!.getReader();
+    await client.read();
+    await client.cancel();
+    await settleMicrotasks();
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockReconcile).toHaveBeenCalledTimes(1);
+    expect(mockReconcile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "managed_venice_chat_stream_cancelled",
+        pauseKey: false,
+        metadata: expect.objectContaining({ cause: "settlement_failed" }),
+      })
+    );
+  });
+
+  it("keeps the hold and files one reconciliation item when Venice drops the stream mid-generation", async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+            );
+            controller.error(new Error("upstream socket reset"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    await expect(response.text()).rejects.toThrow("upstream socket reset");
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockReconcile).toHaveBeenCalledTimes(1);
+    expect(mockReconcile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "managed_venice_stream_settlement_failed",
         pauseKey: false,
       })
     );
