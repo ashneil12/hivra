@@ -2434,6 +2434,42 @@ describe("PATCH /api/instances/[id]", () => {
     expect(instanceUpdateMock).not.toHaveBeenCalled();
   });
 
+  it("looks up the host for a backup toggle only among the caller's own hosts", async () => {
+    instanceRow = { ...instanceRow, hetzner_server_id: null, host_id: "host-9" };
+    instanceUpdateMock = jest.fn().mockReturnValue({
+      eq: jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            single: jest.fn().mockResolvedValue({ data: { ...instanceRow, config: {} }, error: null }),
+          }),
+        }),
+      }),
+    });
+    const hostUserEq = jest.fn().mockReturnValue({
+      single: jest.fn().mockResolvedValue({ data: { hetzner_server_id: 77 }, error: null }),
+    });
+    const hostIdEq = jest.fn().mockReturnValue({ eq: hostUserEq });
+    const previousFrom = (supabaseAdmin!.from as jest.Mock).getMockImplementation()!;
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) =>
+      table === "hermes_hosts"
+        ? { select: jest.fn().mockReturnValue({ eq: hostIdEq }) }
+        : previousFrom(table)
+    );
+
+    const response = await PATCH(
+      new NextRequest("http://localhost/api/instances/inst-123", {
+        method: "PATCH",
+        body: JSON.stringify({ backupsEnabled: false }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(hostIdEq).toHaveBeenCalledWith("id", "host-9");
+    expect(hostUserEq).toHaveBeenCalledWith("user_id", "user_123");
+    expect(disableServerBackup).toHaveBeenCalledWith(77);
+  });
+
   it("passes auto-approve chat preference through the settings save schema", async () => {
     const response = await PATCH(
       new NextRequest("http://localhost/api/instances/inst-123", {

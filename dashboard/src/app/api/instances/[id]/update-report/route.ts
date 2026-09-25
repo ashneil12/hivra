@@ -131,7 +131,10 @@ async function recordUpdateReport(params: {
       .from("hermes_instances")
       .update({ status: nextInstanceStatus, updated_at: new Date().toISOString() })
       .eq("id", instance.id)
-      .not("status", "in", NON_RESURRECTABLE_STATUS_FILTER);
+      .not("status", "in", NON_RESURRECTABLE_STATUS_FILTER)
+      // Soft-delete paths (e.g. cold-storage purge) set deleted_at without
+      // changing status, so the write re-checks it too.
+      .is("deleted_at", null);
 
     if (statusError) {
       return apiError("Failed to update instance status", 500);

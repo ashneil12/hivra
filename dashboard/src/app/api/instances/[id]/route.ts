@@ -1997,7 +1997,8 @@ export async function PATCH(
       return apiError("Failed to save settings", 500, updateError);
     }
 
-    if (backupsEnabled !== undefined) {
+    // Only disabling can reach here: enabling was refused above.
+    if (backupsEnabled === false) {
       let serverIdToBackup = updated.hetzner_server_id;
       if (updated.host_id) {
          const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).eq("user_id", userId).single();
@@ -2005,13 +2006,8 @@ export async function PATCH(
       }
       if (serverIdToBackup) {
           try {
-              if (backupsEnabled) {
-                  const { enableServerBackup } = await import("@/lib/hetzner/client");
-                  await enableServerBackup(serverIdToBackup);
-              } else {
-                  const { disableServerBackup } = await import("@/lib/hetzner/client");
-                  await disableServerBackup(serverIdToBackup);
-              }
+              const { disableServerBackup } = await import("@/lib/hetzner/client");
+              await disableServerBackup(serverIdToBackup);
           } catch (error) {
              log.error("failed to toggle backups on Hetzner", error, {
                source: "instances",

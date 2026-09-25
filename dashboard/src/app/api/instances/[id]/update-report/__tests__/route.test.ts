@@ -28,6 +28,7 @@ describe("POST /api/instances/[id]/update-report", () => {
   let instanceUpdate: jest.Mock;
   let instanceUpdateEq: jest.Mock;
   let instanceUpdateNot: jest.Mock;
+  let instanceUpdateIs: jest.Mock;
 
   // The lookup row returned by the select chain. Tests mutate this to exercise
   // soft-deleted / terminal-status cases. The route's query chains
@@ -37,7 +38,8 @@ describe("POST /api/instances/[id]/update-report", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    instanceUpdateNot = jest.fn().mockResolvedValue({ error: null });
+    instanceUpdateIs = jest.fn().mockResolvedValue({ error: null });
+    instanceUpdateNot = jest.fn().mockReturnValue({ is: instanceUpdateIs });
     instanceUpdateEq = jest.fn().mockReturnValue({ not: instanceUpdateNot });
     instanceUpdate = jest.fn().mockReturnValue({ eq: instanceUpdateEq });
 
@@ -170,6 +172,7 @@ describe("POST /api/instances/[id]/update-report", () => {
       "in",
       expect.stringContaining('"scheduled_for_deletion"')
     );
+    expect(instanceUpdateIs).toHaveBeenCalledWith("deleted_at", null);
   });
 
   it("does not revive an instance scheduled for deletion on a succeeded callback", async () => {
