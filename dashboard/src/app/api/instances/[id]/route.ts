@@ -399,7 +399,6 @@ const LEGACY_CREDIT_SUSPENSION_REASON = "insufficient_credits";
 const LEGACY_CREDIT_SUSPENSION_CLEARED_REASON = "credit_compute_gate_disabled";
 const ENTITLEMENT_GATED_INSTANCE_ACTIONS = new Set([
   "start",
-  "restore_backup",
   "reboot",
   "update",
   "restart",
@@ -1597,6 +1596,18 @@ export async function PATCH(
       context,
     } = parsed.data;
 
+    // Hetzner native backups are a paid add-on. Turning them on only goes
+    // through POST /api/billing/backup-addon, which checks the subscription
+    // and adds the Stripe line item; this settings PATCH must not enable them
+    // for free. Turning them off stays allowed here.
+    if (backupsEnabled === true) {
+      return apiError(
+        "Backups are a paid add-on. Enable them from Billing.",
+        403,
+        { failureType: "backups_require_addon" }
+      );
+    }
+
     // Root plus the Docker socket is intentionally an owner-controlled escape
     // hatch, but it must never be offered on a layout where that socket could
     // see sibling tenants. Disabling is always allowed; enabling fails closed
@@ -1986,21 +1997,17 @@ export async function PATCH(
       return apiError("Failed to save settings", 500, updateError);
     }
 
-    if (backupsEnabled !== undefined) {
+    // Only disabling can reach here: enabling was refused above.
+    if (backupsEnabled === false) {
       let serverIdToBackup = updated.hetzner_server_id;
       if (updated.host_id) {
-         const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).single();
+         const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).eq("user_id", userId).single();
          if (host?.hetzner_server_id) serverIdToBackup = host.hetzner_server_id;
       }
       if (serverIdToBackup) {
           try {
-              if (backupsEnabled) {
-                  const { enableServerBackup } = await import("@/lib/hetzner/client");
-                  await enableServerBackup(serverIdToBackup);
-              } else {
-                  const { disableServerBackup } = await import("@/lib/hetzner/client");
-                  await disableServerBackup(serverIdToBackup);
-              }
+              const { disableServerBackup } = await import("@/lib/hetzner/client");
+              await disableServerBackup(serverIdToBackup);
           } catch (error) {
              log.error("failed to toggle backups on Hetzner", error, {
                source: "instances",
@@ -2577,7 +2584,6 @@ export async function POST(
     const body = await req.json();
     const action = body.action as string;
     actionForOps = action;
-    const backupId = body.backupId as number | undefined;
     const safeSshActionFailure = {
       failureType: "ssh_exec_failed",
       retryable: false,
@@ -3165,19 +3171,6 @@ export async function POST(
         await updateInstanceAndHostStatus({
           instanceId: id,
           instanceStatus: "provisioning",
-          hostId: instance!.host_id,
-          hostStatus: "provisioning",
-        });
-        break;
-
-      case "restore_backup":
-        if (!serverId) return apiError("No server attached", 400);
-        if (!backupId) return apiError("No backupId provided", 400);
-        const { rebuildServer } = await import("@/lib/hetzner/client");
-        await rebuildServer(serverId, { image: String(backupId) });
-        await updateInstanceAndHostStatus({
-          instanceId: id,
-          instanceStatus: "redeploying",
           hostId: instance!.host_id,
           hostStatus: "provisioning",
         });
