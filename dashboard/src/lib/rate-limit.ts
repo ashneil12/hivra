@@ -1,6 +1,8 @@
 import net from "node:net";
 import { NextRequest } from "next/server";
 
+import { trustedClientAddressHeader } from "@/lib/infrastructure/trusted-client-address";
+
 type RateLimitRecord = {
   count: number;
   lastReset: number;
@@ -153,14 +155,19 @@ export function reserveRateLimit(identifier: string, config: ReservationRateLimi
 }
 
 /**
- * Gets the IP address from headers
+ * Parses the RIGHTMOST entry of an address header. A proxy appends the address
+ * it saw to the end of the list, so only the last entry was written by the
+ * proxy nearest to us; everything to its left came from further out, and a
+ * client can put anything there. An invalid last entry is "no address": we
+ * never walk left to a client-supplied one.
  */
-function parseCandidateIp(rawValue: string | null): string | null {
+function parseRightmostIp(rawValue: string | null): string | null {
   if (!rawValue) {
     return null;
   }
 
-  let candidate = rawValue.split(",")[0]?.trim() ?? "";
+  const entries = rawValue.split(",");
+  let candidate = entries[entries.length - 1]?.trim() ?? "";
   if (!candidate) {
     return null;
   }
@@ -182,18 +189,49 @@ function parseCandidateIp(rawValue: string | null): string | null {
     }
   }
 
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(candidate);
+  if (mapped && net.isIP(mapped[1]) === 4) {
+    candidate = mapped[1];
+  }
+
   return net.isIP(candidate) ? candidate : null;
 }
 
-export function getIP(req: NextRequest | Request): string {
-  const directIp =
-    parseCandidateIp(req.headers.get("cf-connecting-ip")) ??
-    parseCandidateIp(req.headers.get("x-real-ip"));
-  if (directIp) {
-    return directIp;
+const NO_ADDRESS = "127.0.0.1";
+
+/**
+ * The calling machine's address, for rate-limit keys and checkout metadata.
+ *
+ * Reads only headers the hosting platform writes, never one a client can
+ * choose:
+ * - On Vercel: `x-vercel-forwarded-for`, then `x-real-ip`, then
+ *   `x-forwarded-for`. Vercel overwrites all three on every request with the
+ *   address that connected to it.
+ * - Self-hosted with HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER: that header only
+ *   (the same setting the server-enrollment card trusts).
+ * - Otherwise: the rightmost `x-forwarded-for` hop, the one the nearest
+ *   proxy (or Next's own server, from the socket) appended.
+ * A list keeps only its rightmost hop. With no usable address the key is the
+ * shared NO_ADDRESS bucket, never a guess from another header.
+ *
+ * `cf-connecting-ip` is never read. Neither Canary nor production is behind
+ * Cloudflare, and on a direct request anyone can send it, which let a caller
+ * pick a fresh rate-limit key per request. If a deployment is ever put behind
+ * a Cloudflare proxy, name the header in HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER
+ * only if the origin accepts nothing but Cloudflare's edges.
+ */
+export function getIP(req: NextRequest | Request, env: Record<string, string | undefined> = process.env): string {
+  if (env.VERCEL === "1") {
+    return (
+      parseRightmostIp(req.headers.get("x-vercel-forwarded-for")) ??
+      parseRightmostIp(req.headers.get("x-real-ip")) ??
+      parseRightmostIp(req.headers.get("x-forwarded-for")) ??
+      NO_ADDRESS
+    );
   }
 
-  return parseCandidateIp(req.headers.get("x-forwarded-for")) ?? "127.0.0.1";
+  const configuredHeader = trustedClientAddressHeader(env);
+  return parseRightmostIp(req.headers.get(configuredHeader ?? "x-forwarded-for")) ?? NO_ADDRESS;
 }
 
 // Periodic cleanup to prevent Memory Leaks in longer-living Node containers

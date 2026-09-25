@@ -4,19 +4,21 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import {
   refreshVerifiedHermesTokenHoldings,
+  type TokenHoldingJudgePage,
 } from "@/lib/billing/token-holdings";
 import {
   fetchLatestPlatformTokenBalancesByUser,
   fetchLatestVvvSnapshotsByUser,
 } from "@/lib/billing/token-holding-snapshots";
 import { resolveTokenAccessForUsers } from "@/lib/billing/token-access";
+import { PLATFORM_TOKEN_KEYS, type PlatformTokenKey } from "@/lib/billing/token-registry";
 import {
   evaluateAndRecordTokenTierEligibility,
   type EligibilityResult,
   type EligibilityTransition,
   type TierKey,
 } from "@/lib/billing/token-tier-eligibility";
-import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
+import { fetchVvvPriceUsd, type HermesPriceQuote } from "@/lib/billing/price-feed";
 import {
   evaluateAndRecordVeniceComputeBoost,
   type VeniceBoostTransition,
@@ -24,6 +26,26 @@ import {
 import { sendTierEligibilityNotification } from "@/lib/email/tier-eligibility-notifications";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
+
+/**
+ * The balance of an account whose token standing has no verification wallet
+ * behind it: zero in every platform token. Judging it (rather than skipping
+ * it) is what breaches a qualification whose wallet is gone; skipping it left
+ * `currently_eligible` true forever.
+ */
+function zeroPlatformTokenBalances(): Partial<Record<PlatformTokenKey, bigint>> {
+  return Object.fromEntries(PLATFORM_TOKEN_KEYS.map((key) => [key, 0n]));
+}
+
+// Reads, evaluations and emails all happen inside the refresh run, page by
+// page. The run stops starting reads after the budget; the page in hand is
+// still judged, then the run closes, well inside maxDuration.
+export const maxDuration = 300;
+const REFRESH_TIME_BUDGET_MS = 180_000;
+// Eligibility writes are independent per user and email is best-effort, so
+// each page is evaluated in bounded-concurrency batches. Sequential processing
+// had email sends (~200-500ms each via Resend) dominating wall time.
+const BATCH_SIZE = 10;
 
 function parseLimit(req: NextRequest) {
   const raw = new URL(req.url).searchParams.get("limit");
@@ -49,50 +71,79 @@ function summariseEligibility(userId: string, evaluation: EligibilityResult): El
   return out;
 }
 
-export async function GET(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
+interface VeniceBoostSummary {
+  userId: string;
+  transition: VeniceBoostTransition;
+}
 
-  if (!cronSecret) {
-    log.error("CRON_SECRET is not configured; refusing to run", new Error("missing CRON_SECRET"), {
-      source: "refresh-token-holdings",
-      route: "/api/cron/refresh-token-holdings",
-      method: "GET",
-      failureType: "cron_secret_missing",
+/**
+ * Judges each page of reads the refresh run hands over: Pro/Power eligibility
+ * and the Venice compute boost, for every account whose read gave a balance.
+ * An account counts as judged only when its eligibility evaluation ran and its
+ * boost evaluation did not fail; the run records exactly those, and the next
+ * run reads the rest ahead of every account judged since.
+ */
+function createHoldingsJudge() {
+  const eligibility = {
+    evaluated: 0,
+    evaluationFailures: 0,
+    transitions: [] as EligibilitySummary[],
+    warnings: [] as string[],
+  };
+  const veniceBoost = {
+    evaluated: 0,
+    eligible: 0,
+    failures: 0,
+    transitions: [] as VeniceBoostSummary[],
+    warning: undefined as string | undefined,
+  };
+
+  // The VVV/USD price is fetched once per run. If the feed is down the boost
+  // step is skipped for the whole run, so a transient oracle outage never flips
+  // existing holders off: their qualification rows are untouched and the next
+  // run re-evaluates. That skip does not stop an account being judged.
+  let vvvPrice: Promise<HermesPriceQuote | null> | null = null;
+  const loadVvvPrice = () => {
+    vvvPrice ??= fetchVvvPriceUsd().catch((err: unknown) => {
+      veniceBoost.warning = `VVV price feed unavailable; compute-boost evaluation skipped: ${
+        err instanceof Error ? err.message : String(err)
+      }`;
+      log.warn(
+        "venice compute boost step skipped",
+        {
+          source: "refresh-token-holdings",
+          route: "/api/cron/refresh-token-holdings",
+          method: "GET",
+          failureType: "venice_boost_step_skipped",
+        },
+        err
+      );
+      return null;
     });
-    return apiError("Cron secret is not configured", 500);
-  }
+    return vvvPrice;
+  };
 
-  if (!verifyBearerHeader(req, cronSecret)) {
-    return apiError("Unauthorized", 401);
-  }
+  const judgePage: TokenHoldingJudgePage = async (reads) => {
+    // Accounts whose read succeeded are judged on their latest snapshot.
+    // Accounts with standing but no verification wallet are judged at a zero
+    // balance. Accounts whose read failed (transient RPC error) are not judged
+    // at all: a failed read is not a zero balance, and the next run reads
+    // them again.
+    const refreshedUserIds = reads.filter((r) => r.status === "refreshed").map((r) => r.userId);
+    const unbackedUserIds = reads.filter((r) => r.status === "no_verified_wallet").map((r) => r.userId);
+    const evaluatedUserIds = [...refreshedUserIds, ...unbackedUserIds];
+    if (evaluatedUserIds.length === 0) return [];
 
-  try {
-    const refreshResult = await refreshVerifiedHermesTokenHoldings({ limit: parseLimit(req) });
-
-    // Refresh has run; now drive eligibility evaluation off the freshest
-    // balance per user. Only evaluate users whose refresh succeeded — others
-    // either had no verified wallet or hit a transient RPC error.
-    const refreshedUserIds = (refreshResult.results ?? [])
-      .filter((r) => r.status === "refreshed")
-      .map((r) => r.userId);
-
+    // A failure loading balances or token access throws: the page is not
+    // recorded as judged and the run fails loudly.
     const balancesByUser = await fetchLatestPlatformTokenBalancesByUser(refreshedUserIds);
-    const accessByUser = await resolveTokenAccessForUsers(refreshedUserIds);
+    for (const userId of unbackedUserIds) balancesByUser.set(userId, zeroPlatformTokenBalances());
+    const accessByUser = await resolveTokenAccessForUsers(evaluatedUserIds);
 
-    const transitions: EligibilitySummary[] = [];
-    const eligibilityWarnings: string[] = [];
-    let evaluated = 0;
-    let evaluationFailures = 0;
-
-    // Process users in bounded-concurrency batches. Sequential processing
-    // had email-send (~200-500ms each via Resend) dominating wall time; at
-    // limit=100 users that's potentially 10-50s just on emails. Eligibility
-    // writes are independent per user, and email send is best-effort, so
-    // batching is safe.
-    const BATCH_SIZE = 10;
-    const allEmailPromises: Promise<unknown>[] = [];
-    for (let i = 0; i < refreshedUserIds.length; i += BATCH_SIZE) {
-      const batch = refreshedUserIds.slice(i, i + BATCH_SIZE);
+    const eligibilityJudged = new Set<string>();
+    const emailPromises: Promise<unknown>[] = [];
+    for (let i = 0; i < evaluatedUserIds.length; i += BATCH_SIZE) {
+      const batch = evaluatedUserIds.slice(i, i + BATCH_SIZE);
       const evalResults = await Promise.allSettled(
         batch.map(async (userId) => {
           const balances = balancesByUser.get(userId);
@@ -110,7 +161,7 @@ export async function GET(req: NextRequest) {
         const r = evalResults[j];
         const userId = batch[j];
         if (r.status === "rejected") {
-          evaluationFailures += 1;
+          eligibility.evaluationFailures += 1;
           log.warn("token holding eligibility evaluation failed", {
             source: "refresh-token-holdings",
             route: "/api/cron/refresh-token-holdings",
@@ -122,22 +173,23 @@ export async function GET(req: NextRequest) {
         }
         if (!r.value) continue;
         const { evaluation } = r.value;
-        evaluated += 1;
+        eligibility.evaluated += 1;
+        eligibilityJudged.add(userId);
         // Surface each distinct warning (e.g. a price outage that skipped new
-        // thresholds) once per cron tick rather than once per user.
+        // thresholds) once per cron run rather than once per user.
         for (const warning of evaluation.warnings) {
-          if (warning.startsWith("Live ") && !eligibilityWarnings.includes(warning)) {
-            eligibilityWarnings.push(warning);
+          if (warning.startsWith("Live ") && !eligibility.warnings.includes(warning)) {
+            eligibility.warnings.push(warning);
           }
         }
         const userTransitions = summariseEligibility(userId, evaluation);
-        transitions.push(...userTransitions);
+        eligibility.transitions.push(...userTransitions);
 
-        // Fire emails as background promises and collect them; we'll await
-        // them all at the end with allSettled. Errors are logged per email
-        // so one Resend hiccup doesn't block the cron.
+        // Fire emails as background promises and await them all at the end of
+        // the page with allSettled. Errors are logged per email so one Resend
+        // hiccup doesn't block the cron.
         for (const t of userTransitions) {
-          allEmailPromises.push(
+          emailPromises.push(
             sendTierEligibilityNotification({
               userId: t.userId,
               tier: t.tier,
@@ -160,30 +212,18 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+    await Promise.allSettled(emailPromises);
 
-    // Await all email dispatches (best-effort) so they actually run before
-    // the function returns. If a few are slow they finish in parallel, not
-    // serially.
-    await Promise.allSettled(allEmailPromises);
-
-    // Venice compute boost: value each refreshed user's VVV holding against
-    // the $199 threshold and persist eligibility. The DEX price is fetched
-    // once per tick; if the feed is down we skip the whole step so a
-    // transient oracle outage never flips existing holders off — their
-    // qualification rows are untouched and the next tick re-evaluates.
-    const veniceBoostTransitions: Array<{
-      userId: string;
-      transition: VeniceBoostTransition;
-    }> = [];
-    let veniceBoostEvaluated = 0;
-    let veniceBoostEligible = 0;
-    let veniceBoostFailures = 0;
-    let veniceBoostWarning: string | undefined;
-    try {
-      const priceQuote = await fetchVvvPriceUsd();
+    // Venice compute boost: value each account's VVV holding against the $199
+    // threshold and persist eligibility.
+    const boostFailed = new Set<string>();
+    const priceQuote = await loadVvvPrice();
+    if (priceQuote) {
       const vvvByUser = await fetchLatestVvvSnapshotsByUser(refreshedUserIds);
-      for (let i = 0; i < refreshedUserIds.length; i += BATCH_SIZE) {
-        const batch = refreshedUserIds.slice(i, i + BATCH_SIZE);
+      // No verification wallet: the boost's VVV holding is zero too.
+      for (const userId of unbackedUserIds) vvvByUser.set(userId, 0n);
+      for (let i = 0; i < evaluatedUserIds.length; i += BATCH_SIZE) {
+        const batch = evaluatedUserIds.slice(i, i + BATCH_SIZE);
         const boostResults = await Promise.allSettled(
           batch.map(async (userId) => {
             const balance = vvvByUser.get(userId);
@@ -196,15 +236,18 @@ export async function GET(req: NextRequest) {
             return { userId, result };
           })
         );
-        for (const r of boostResults) {
+        for (let j = 0; j < boostResults.length; j++) {
+          const r = boostResults[j];
           if (r.status === "rejected") {
-            veniceBoostFailures += 1;
+            veniceBoost.failures += 1;
+            boostFailed.add(batch[j]);
             log.warn(
               "venice compute boost evaluation failed",
               {
                 source: "refresh-token-holdings",
                 route: "/api/cron/refresh-token-holdings",
                 method: "GET",
+                userId: batch[j],
                 failureType: "venice_boost_evaluation_failed",
               },
               r.reason
@@ -212,31 +255,55 @@ export async function GET(req: NextRequest) {
             continue;
           }
           if (!r.value) continue;
-          veniceBoostEvaluated += 1;
-          if (r.value.result.eligible) veniceBoostEligible += 1;
+          veniceBoost.evaluated += 1;
+          if (r.value.result.eligible) veniceBoost.eligible += 1;
           if (r.value.result.transition !== "unchanged") {
-            veniceBoostTransitions.push({
+            veniceBoost.transitions.push({
               userId: r.value.userId,
               transition: r.value.result.transition,
             });
           }
         }
       }
-    } catch (err) {
-      veniceBoostWarning = `VVV price feed unavailable; compute-boost evaluation skipped: ${
-        err instanceof Error ? err.message : String(err)
-      }`;
-      log.warn(
-        "venice compute boost step skipped",
-        {
-          source: "refresh-token-holdings",
-          route: "/api/cron/refresh-token-holdings",
-          method: "GET",
-          failureType: "venice_boost_step_skipped",
-        },
-        err
-      );
     }
+
+    return evaluatedUserIds.filter((userId) => eligibilityJudged.has(userId) && !boostFailed.has(userId));
+  };
+
+  return { judgePage, eligibility, veniceBoost };
+}
+
+export async function GET(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!cronSecret) {
+    log.error("CRON_SECRET is not configured; refusing to run", new Error("missing CRON_SECRET"), {
+      source: "refresh-token-holdings",
+      route: "/api/cron/refresh-token-holdings",
+      method: "GET",
+      failureType: "cron_secret_missing",
+    });
+    return apiError("Cron secret is not configured", 500);
+  }
+
+  if (!verifyBearerHeader(req, cronSecret)) {
+    return apiError("Unauthorized", 401);
+  }
+
+  try {
+    const judge = createHoldingsJudge();
+    // Accounts with Pro/Power, Venice boost or lock-wallet standing are all
+    // read and judged on every run; plain verified wallets get what capacity
+    // is left (at most `limit`). Only accounts actually judged are recorded,
+    // so the next run retries a failed read or evaluation ahead of every
+    // account judged since.
+    const refreshResult = await refreshVerifiedHermesTokenHoldings({
+      lane: "token_holdings",
+      limit: parseLimit(req),
+      timeBudgetMs: REFRESH_TIME_BUDGET_MS,
+      judgePage: judge.judgePage,
+    });
+    const { eligibility, veniceBoost } = judge;
 
     // Surface systemic eligibility / boost write failures on the ops feed.
     // Per-user failures are isolated + counted, but a count buried in the JSON
@@ -244,24 +311,24 @@ export async function GET(req: NextRequest) {
     // Fire only when something was attempted AND everything failed (systemic),
     // so the odd flaky user doesn't spam the feed.
     if (
-      (evaluated === 0 && evaluationFailures > 0) ||
-      (veniceBoostEvaluated === 0 && veniceBoostFailures > 0)
+      (eligibility.evaluated === 0 && eligibility.evaluationFailures > 0) ||
+      (veniceBoost.evaluated === 0 && veniceBoost.failures > 0)
     ) {
       await reportOpsEvent({
         source: "cron.refresh-token-holdings",
         severity: "warn",
         title: "Token-holding eligibility/boost evaluation failing systemically",
         message:
-          `refresh-token-holdings recorded ${evaluationFailures} eligibility failure(s) ` +
-          `(0 succeeded) and ${veniceBoostFailures} venice-boost failure(s) this tick. ` +
+          `refresh-token-holdings recorded ${eligibility.evaluationFailures} eligibility failure(s) ` +
+          `(0 succeeded) and ${veniceBoost.failures} venice-boost failure(s) this tick. ` +
           `Token holders may not be getting the entitlements their balance earns until this clears.`,
         route: "/api/cron/refresh-token-holdings",
         metadata: {
           failureType: "token_holding_eligibility_systemic_failure",
-          evaluated,
-          evaluationFailures,
-          veniceBoostEvaluated,
-          veniceBoostFailures,
+          evaluated: eligibility.evaluated,
+          evaluationFailures: eligibility.evaluationFailures,
+          veniceBoostEvaluated: veniceBoost.evaluated,
+          veniceBoostFailures: veniceBoost.failures,
         },
       });
     }
@@ -269,17 +336,17 @@ export async function GET(req: NextRequest) {
     return apiSuccess({
       ...refreshResult,
       eligibility: {
-        evaluated,
-        evaluationFailures,
-        transitions,
-        warnings: eligibilityWarnings,
+        evaluated: eligibility.evaluated,
+        evaluationFailures: eligibility.evaluationFailures,
+        transitions: eligibility.transitions,
+        warnings: eligibility.warnings,
       },
       veniceBoost: {
-        evaluated: veniceBoostEvaluated,
-        eligible: veniceBoostEligible,
-        failures: veniceBoostFailures,
-        transitions: veniceBoostTransitions,
-        ...(veniceBoostWarning ? { warning: veniceBoostWarning } : {}),
+        evaluated: veniceBoost.evaluated,
+        eligible: veniceBoost.eligible,
+        failures: veniceBoost.failures,
+        transitions: veniceBoost.transitions,
+        ...(veniceBoost.warning ? { warning: veniceBoost.warning } : {}),
       },
     });
   } catch (error) {
