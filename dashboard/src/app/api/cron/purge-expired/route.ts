@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { isPlatformAccountId } from "@/lib/account-owner-id";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
@@ -101,7 +102,8 @@ function inferDeletionReason(instance: PurgeCandidate): string {
  *   - status = "scheduled_for_deletion"
  *   - scheduled_deletion_at <= now
  * Then permanently destroys the Hetzner server and marks the
- * Supabase record as "deleted".
+ * Supabase record as "deleted". Rows whose user_id is not an account id the
+ * app issues are refused and reported instead (see isPlatformAccountId).
  *
  * Protected by CRON_SECRET — Vercel automatically sends this in the
  * Authorization header when invoking cron routes.
@@ -261,6 +263,50 @@ export async function GET(req: NextRequest) {
 
   for (const instance of purgeCandidates) {
     try {
+      // Every application path writes user_id from a Clerk user id (or the
+      // self-host operator). Any other owner means the row did not come from
+      // the app (for example one written with a Supabase Auth JWT, whose `sub`
+      // is a UUID), so the server or VM it names may belong to someone else.
+      // Refuse before anything is archived, torn down or marked deleted.
+      if (!isPlatformAccountId(instance.user_id)) {
+        log.error(
+          "refusing to purge instance: owner is not a platform account",
+          new Error("purge_blocked_unknown_owner"),
+          {
+            ...ctx,
+            instanceId: instance.id,
+            failureType: "purge_blocked_unknown_owner",
+          },
+        );
+        await reportOpsEvent({
+          source: "instance.purge_blocked_unknown_owner",
+          severity: "error",
+          title: `Purge blocked: ${instance.name} has no known owner`,
+          message:
+            `purge-expired refused to tear down instance ${instance.id} because its user_id ` +
+            `is not an account id the app issues. No application path writes such a row, so ` +
+            `do not delete the server or VM it names until someone has checked who owns it.`,
+          route: "/api/cron/purge-expired",
+          instanceId: instance.id,
+          metadata: {
+            owner_user_id: instance.user_id,
+            instance_status: instance.status,
+            lifecycle_state: instance.lifecycle_state,
+            hetzner_server_id: instance.hetzner_server_id,
+            host_id: instance.host_id,
+            proxmox_node: instance.proxmox_node,
+            proxmox_vmid: instance.proxmox_vmid,
+          },
+        });
+        results.push({
+          id: instance.id,
+          name: instance.name,
+          success: false,
+          error: "skipped: owner is not a known account",
+        });
+        continue;
+      }
+
       // Fail-closed companion to the active-subscription guard: if the
       // subscription allow-list could not be resolved this run, refuse to
       // destroy ANY stranded-deleted row (we can't prove the owner doesn't pay).
