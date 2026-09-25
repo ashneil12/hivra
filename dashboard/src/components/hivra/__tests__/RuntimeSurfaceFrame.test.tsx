@@ -197,7 +197,7 @@ describe("RuntimeSurfaceFrame gateway restart recovery", () => {
     renderFrame();
     await settle();
     expect(screen.getByText("Connection update needed")).toBeInTheDocument();
-    // Not transient: no fast retries while it waits for Update & restart.
+    // Not transient: no fast retries while it waits for Update connection service.
     await settle(15_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
