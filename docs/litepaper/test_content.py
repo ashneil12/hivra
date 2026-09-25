@@ -27,7 +27,14 @@ PAGE = REPO / "docs/litepaper/index.html"
 SITE_ROOT_FILES = {
     "/favicon.ico": REPO / "dashboard/src/app/favicon.ico",
     "/apple-icon.png": REPO / "dashboard/src/app/apple-icon.png",
+    "/brand/hivra-icon-192.png": REPO / "dashboard/public/brand/hivra-icon-192.png",
+    "/images/home/monolith-900.webp": REPO / "dashboard/public/images/home/monolith-900.webp",
+    "/images/home/monolith-1600.webp": REPO / "dashboard/public/images/home/monolith-1600.webp",
 }
+# App pages, not files: Launch is a route the app serves.
+SITE_ROUTES = {"/dashboard/launch"}
+AGENT_LAUNCH = "/dashboard/launch?kind=agent&start=1"
+COMPUTER_LAUNCH = "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop"
 VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
     "meta", "param", "source", "track", "wbr",
@@ -217,6 +224,41 @@ class LitepaperContentTests(unittest.TestCase):
         missing = missing_blocks(blocks, element.text())
         self.assertFalse(missing, label + " lost source copy:\n" + "\n".join(missing))
 
+    def test_the_reader_can_launch_from_the_dock_and_the_finale(self):
+        def links(element):
+            found = [element] if element.tag == "a" else []
+            for child in element.children:
+                if isinstance(child, Element):
+                    found += links(child)
+            return found
+        dock = next(node for node in self.page.elements if "chapter-dock" in node.attrs.get("class", "").split())
+        finale = self.by_id["somewhere-better"]
+        self.assertIn((AGENT_LAUNCH, "Launch an agent"), [(a.attrs.get("href"), a.text().strip()) for a in links(dock)])
+        finale_links = [(a.attrs.get("href"), a.text().strip()) for a in links(finale)]
+        self.assertEqual(finale_links[:2], [(AGENT_LAUNCH, "Launch an agent"), (COMPUTER_LAUNCH, "Start with a computer")])
+        # The approved closing links stay, after the launch actions.
+        self.assertIn("Visit Hivra", [text for _href, text in finale_links[2:]])
+
+    def test_the_brand_mark_is_the_approved_logo(self):
+        marks = [node for node in self.page.elements if "brand-mark" in node.attrs.get("class", "").split()]
+        self.assertEqual(len(marks), 5)
+        for mark in marks:
+            self.assertEqual((mark.tag, mark.attrs.get("src"), mark.attrs.get("alt")), ("img", "/brand/hivra-icon-192.png", ""))
+
+    def test_the_monolith_is_served_as_webp_with_the_png_as_fallback(self):
+        pictures = [node for node in self.page.elements if node.tag == "picture"]
+        self.assertEqual(len(pictures), 3, "hero, gallery and finale")
+        for picture in pictures:
+            source, image = [child for child in picture.children if isinstance(child, Element)]
+            self.assertEqual((source.tag, source.attrs.get("type")), ("source", "image/webp"))
+            self.assertEqual(
+                [candidate.split()[0] for candidate in source.attrs["srcset"].split(",")],
+                ["/images/home/monolith-900.webp", "/images/home/monolith-1600.webp"],
+            )
+            self.assertEqual((image.tag, image.attrs.get("src")), ("img", "assets/boundary-monolith-v5.png"))
+        preload = next(node for node in self.page.elements if node.tag == "link" and node.attrs.get("rel") == "preload" and node.attrs.get("as") == "image")
+        self.assertEqual(preload.attrs.get("imagesrcset"), pictures[0].children[0].attrs["srcset"])
+
     def test_every_reader_block_survives(self):
         mains = [node for node in self.page.elements if node.tag == "main"]
         self.assertEqual(len(mains), 1, "The experience must have one main reading area")
@@ -250,11 +292,16 @@ class LitepaperContentTests(unittest.TestCase):
         ids = [node.attrs["id"] for node in self.page.elements if "id" in node.attrs]
         duplicates = [value for value, count in Counter(ids).items() if count > 1]
         self.assertFalse(duplicates, "Duplicate navigation targets: " + repr(duplicates))
-        for node in self.page.elements:
+        def urls(node):
             for attribute in ("href", "src", "poster"):
-                value = node.attrs.get(attribute)
-                if not value:
-                    continue
+                if node.attrs.get(attribute):
+                    yield attribute, node.attrs[attribute]
+            for attribute in ("srcset", "imagesrcset"):
+                for candidate in (node.attrs.get(attribute) or "").split(","):
+                    if candidate.strip():
+                        yield attribute, candidate.split()[0]
+        for node in self.page.elements:
+            for attribute, value in urls(node):
                 if value == "/":
                     continue
                 target = urlsplit(value)
@@ -263,6 +310,8 @@ class LitepaperContentTests(unittest.TestCase):
                 if target.path in SITE_ROOT_FILES:
                     with self.subTest(tag=node.tag, attribute=attribute, url=value):
                         self.assertTrue(SITE_ROOT_FILES[target.path].is_file(), "Missing app file: " + value)
+                    continue
+                if target.path in SITE_ROUTES:
                     continue
                 with self.subTest(tag=node.tag, attribute=attribute, url=value):
                     resolved = (PAGE.parent / unquote(target.path)).resolve() if target.path else PAGE

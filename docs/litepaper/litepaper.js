@@ -890,6 +890,36 @@
     link.addEventListener("click", scheduleChapterUpdate),
   );
 
+  // The dock steps aside while the reader moves down the page, so it never
+  // sits on a line they are reading, and returns as soon as they scroll back
+  // up, reach the end or move keyboard focus into it.
+  const dock = query(".chapter-dock");
+  let dockLastY = window.scrollY;
+  let dockTravel = 0;
+  let dockFrame = 0;
+  function updateDock() {
+    dockFrame = 0;
+    const y = window.scrollY;
+    const delta = y - dockLastY;
+    dockLastY = y;
+    if (!delta) return;
+    dockTravel =
+      Math.sign(delta) === Math.sign(dockTravel) ? dockTravel + delta : delta;
+    const atEnd = y + innerHeight >= root.scrollHeight - 200;
+    if (atEnd || dockTravel < -40) body.classList.remove("dock-tucked");
+    else if (dockTravel > 90) body.classList.add("dock-tucked");
+  }
+  if (dock) {
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (!dockFrame) dockFrame = requestAnimationFrame(updateDock);
+      },
+      { passive: true },
+    );
+    dock.addEventListener("focusin", () => body.classList.remove("dock-tucked"));
+  }
+
   root.classList.add("js-enhanced");
   renderProducts();
   if (motionAvailable) {

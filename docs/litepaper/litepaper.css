@@ -266,10 +266,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 }
 .brand-mark {
   display:block;
-  width:18px;
-  height:23px;
-  background:var(--accent);
-  transform:skew(-12deg);
+  width:27px;
+  height:27px;
+  border-radius:6px;
   flex:none
 }
 .site-header nav {
@@ -392,7 +391,11 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   visibility:hidden
 }
 .chapter-dock {
-  transition:opacity .3s,visibility .3s
+  transition:opacity .3s,visibility .3s,translate .45s var(--ease)
+}
+.dock-tucked .chapter-dock:not(:focus-within) {
+  translate:0 calc(100% + 34px);
+  opacity:0
 }
 /* Cinematic cover: the type and object occupy independent planes. */
 .hero {
@@ -1426,8 +1429,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   color:var(--muted)
 }
 .atlas-core .brand-mark {
-  width:13px;
-  height:17px
+  width:26px;
+  height:26px;
+  border-radius:5px
 }
 .atlas-node {
   position:absolute;
@@ -1655,11 +1659,10 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   border-radius:50%
 }
 .economy-token .brand-mark {
-  height:82px;
-  width:65px;
-  background:linear-gradient(120deg,#ff9c88,var(--accent) 60%,#b82d29);
-  box-shadow:3px 3px 0 #521a1a;
-  transform:skew(-12deg)
+  width:62%;
+  height:62%;
+  border-radius:50%;
+  box-shadow:0 0 0 1px #ffffff26,0 8px 22px #0009
 }
 .economy-visual-caption {
   position:absolute;
@@ -2314,10 +2317,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     width:170px;
     height:170px
   }
-  .economy-token .brand-mark {
-    height:65px;
-    width:52px
-  }
   .token-utility {
     grid-template-columns:.8fr 1.2fr;
     gap:6%;
@@ -2402,8 +2401,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     gap:8px
   }
   .brand-mark {
-    width:16px;
-    height:21px
+    width:24px;
+    height:24px;
+    border-radius:5px
   }
   .reader-tools {
     gap:1px
@@ -2899,10 +2899,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   .economy-token:before {
     inset:15px
   }
-  .economy-token .brand-mark {
-    width:40px;
-    height:50px
-  }
   .economy-wordmark {
     font-size:27vw
   }
@@ -3183,6 +3179,91 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   }
   .hero-answer {
     font-size:25px
+  }
+}
+/* One ask: launch from the dock or the closing scene. */
+picture {
+  display:contents
+}
+.chapter-dock a.dock-launch {
+  gap:9px;
+  margin-left:4px;
+  padding-inline:15px;
+  background:var(--accent);
+  color:var(--accent-ink);
+  border-radius:3px;
+  transition:filter .2s
+}
+.chapter-dock a.dock-launch:hover {
+  color:var(--accent-ink);
+  filter:brightness(1.08)
+}
+.dock-launch .action-arrow {
+  width:14px;
+  height:14px;
+  flex:none
+}
+.finale-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:14px;
+  margin-top:44px
+}
+.finale-launch,.finale-computer {
+  display:inline-flex;
+  align-items:center;
+  gap:16px;
+  min-height:56px;
+  padding-inline:24px;
+  border-radius:3px;
+  font-size:16px;
+  font-weight:650;
+  letter-spacing:-.025em;
+  transition:transform .35s var(--ease),border-color .25s,background .25s
+}
+.finale-launch {
+  background:var(--accent);
+  color:var(--accent-ink);
+  box-shadow:0 14px 40px color-mix(in srgb,var(--accent) 28%,transparent)
+}
+.finale-computer {
+  border:1px solid color-mix(in srgb,var(--text) 30%,transparent);
+  background:color-mix(in srgb,var(--bg) 55%,transparent);
+  backdrop-filter:blur(8px)
+}
+.finale-launch:hover,.finale-computer:hover {
+  transform:translateY(-2px)
+}
+.finale-computer:hover {
+  border-color:var(--text)
+}
+.finale-actions .action-arrow {
+  width:18px;
+  height:18px
+}
+@media(max-width:680px) {
+  .experience-enhanced .chapter-dock>a.dock-launch {
+    display:flex;
+    flex:none;
+    margin:5px;
+    padding-inline:13px;
+    font-size:9px
+  }
+  .experience-enhanced .dock-index-toggle {
+    width:auto;
+    flex:1 1 auto;
+    min-width:0
+  }
+  .dock-current {
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    min-width:0
+  }
+  .finale-launch,.finale-computer {
+    width:100%;
+    justify-content:space-between;
+    font-size:15px
   }
 }
 /* Preferences and fallbacks have final say over decorative layout. */
