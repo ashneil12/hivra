@@ -41,6 +41,9 @@ import { validateAgentResources, isActiveComputeStatus } from "@/lib/hivra/resou
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
+import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
+import { agentSoftwareSummaryFor, type AgentSoftwareAgentRow } from "@/lib/hivra/agent-software-service";
 import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
 import { getTemplateForLaunch, type TemplateIdentity } from "@/lib/hivra/agent-templates";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
@@ -2209,9 +2212,21 @@ export async function GET(request: NextRequest) {
       .neq("status", "deleted")
       .order("created_at", { ascending: false });
     if (error) return apiError("Failed to list agents", 500);
-    const agents = (Array.isArray(data) ? data : [])
-      .filter((row) => isActiveComputeStatus((row as { status?: unknown }).status))
-      .map((row) => sanitizeHivraAgentRow(row as Record<string, unknown>));
+    const rows = (Array.isArray(data) ? data : [])
+      .filter((row) => isActiveComputeStatus((row as { status?: unknown }).status)) as Record<string, unknown>[];
+    // One read of the stored software observations, never the computers
+    // themselves: the list tags agents whose Claude Code / Codex is behind.
+    const covered = new Set(rows.filter((row) => agentSoftwareSubject(row) !== null).map((row) => String(row.id)));
+    const software = await readAgentSoftwareRecords(userId, [...covered]);
+    const now = Date.now();
+    const agents = rows.map((row) => {
+      const agent = sanitizeHivraAgentRow(row);
+      // Only what Hivra has read: an agent never read yet gets no summary.
+      const record = covered.has(String(row.id)) ? software.get(String(row.id)) : undefined;
+      if (!record) return agent;
+      const summary = agentSoftwareSummaryFor(row as unknown as AgentSoftwareAgentRow, record, now);
+      return summary ? { ...agent, agent_software: summary } : agent;
+    });
     return apiSuccess({ agents });
   } catch (err) {
     return handleApiError(err);

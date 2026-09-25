@@ -28,6 +28,9 @@ type HivraAgentEvent =
   | "started"
   | "restarted"
   | "runtime_updated"
+  | "agent_cli_updated"
+  | "agent_cli_update_failed"
+  | "agent_cli_auto_update_changed"
   | "snapshot_created"
   | "snapshot_restored"
   | "deleted";
