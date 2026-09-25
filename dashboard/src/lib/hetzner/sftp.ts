@@ -1,5 +1,5 @@
 import { Client, type SFTPWrapper, type Stats } from "ssh2";
-import { isProxmoxPrivateGuestIp, resolveSshConnectConfig, sshExec } from "./ssh";
+import { isProxmoxPrivateGuestIp, resolveSshConnectConfig, sshExec, type ProxmoxSshHostConfig } from "./ssh";
 
 export interface FileItem {
     name: string;
@@ -210,10 +210,15 @@ function throwProxmoxSftpError(response: Extract<ProxmoxSftpResponse, { ok: fals
     throw err;
 }
 
-async function runProxmoxSftpOperation(ip: string, payload: ProxmoxSftpPayload): Promise<ProxmoxSftpResponse> {
+async function runProxmoxSftpOperation(
+    ip: string,
+    payload: ProxmoxSftpPayload,
+    guestTarget: ProxmoxSshHostConfig | null | undefined
+): Promise<ProxmoxSftpResponse> {
     const result = await sshExec(ip, `python3 -c ${shellQuote(PROXMOX_SFTP_HELPER_SCRIPT)}`, {
         timeoutMs: PROXMOX_SFTP_TIMEOUT_MS,
         stdin: JSON.stringify(payload),
+        ...(guestTarget ? { proxmoxHostConfig: guestTarget } : {}),
     });
 
     if (!result.ok) {
@@ -403,9 +408,13 @@ async function withSftpChannel<T>(
     }
 }
 
-export async function sftpList(ip: string, targetPath: string): Promise<FileItem[]> {
-    if (isProxmoxPrivateGuestIp(ip)) {
-        const response = await runProxmoxSftpOperation(ip, { action: "list", path: targetPath });
+export async function sftpList(
+    ip: string,
+    targetPath: string,
+    guestTarget?: ProxmoxSshHostConfig | null
+): Promise<FileItem[]> {
+    if (guestTarget || isProxmoxPrivateGuestIp(ip)) {
+        const response = await runProxmoxSftpOperation(ip, { action: "list", path: targetPath }, guestTarget);
         if (!response.ok) {
             throwProxmoxSftpError(response);
         }
@@ -435,9 +444,13 @@ export async function sftpList(ip: string, targetPath: string): Promise<FileItem
     );
 }
 
-export async function sftpRealpath(ip: string, targetPath: string): Promise<string> {
-    if (isProxmoxPrivateGuestIp(ip)) {
-        const response = await runProxmoxSftpOperation(ip, { action: "realpath", path: targetPath });
+export async function sftpRealpath(
+    ip: string,
+    targetPath: string,
+    guestTarget?: ProxmoxSshHostConfig | null
+): Promise<string> {
+    if (guestTarget || isProxmoxPrivateGuestIp(ip)) {
+        const response = await runProxmoxSftpOperation(ip, { action: "realpath", path: targetPath }, guestTarget);
         if (!response.ok) {
             throwProxmoxSftpError(response);
         }
@@ -454,13 +467,17 @@ export async function sftpRealpath(ip: string, targetPath: string): Promise<stri
     );
 }
 
-export async function sftpRead(ip: string, filePath: string): Promise<string> {
-    if (isProxmoxPrivateGuestIp(ip)) {
+export async function sftpRead(
+    ip: string,
+    filePath: string,
+    guestTarget?: ProxmoxSshHostConfig | null
+): Promise<string> {
+    if (guestTarget || isProxmoxPrivateGuestIp(ip)) {
         const response = await runProxmoxSftpOperation(ip, {
             action: "read",
             path: filePath,
             maxBytes: 2 * 1024 * 1024,
-        });
+        }, guestTarget);
         if (!response.ok) {
             throwProxmoxSftpError(response);
         }
@@ -487,13 +504,18 @@ export async function sftpRead(ip: string, filePath: string): Promise<string> {
     );
 }
 
-export async function sftpReadBinary(ip: string, filePath: string, maxBytes = 8 * 1024 * 1024): Promise<Buffer> {
-    if (isProxmoxPrivateGuestIp(ip)) {
+export async function sftpReadBinary(
+    ip: string,
+    filePath: string,
+    maxBytes = 8 * 1024 * 1024,
+    guestTarget?: ProxmoxSshHostConfig | null
+): Promise<Buffer> {
+    if (guestTarget || isProxmoxPrivateGuestIp(ip)) {
         const response = await runProxmoxSftpOperation(ip, {
             action: "readBinary",
             path: filePath,
             maxBytes,
-        });
+        }, guestTarget);
         if (!response.ok) {
             if (response.code === "EFBIG") {
                 throw new SftpPreviewLimitError(maxBytes);
@@ -522,13 +544,18 @@ export async function sftpReadBinary(ip: string, filePath: string, maxBytes = 8 
     );
 }
 
-export async function sftpWrite(ip: string, filePath: string, content: string): Promise<void> {
-    if (isProxmoxPrivateGuestIp(ip)) {
+export async function sftpWrite(
+    ip: string,
+    filePath: string,
+    content: string,
+    guestTarget?: ProxmoxSshHostConfig | null
+): Promise<void> {
+    if (guestTarget || isProxmoxPrivateGuestIp(ip)) {
         const response = await runProxmoxSftpOperation(ip, {
             action: "write",
             path: filePath,
             content,
-        });
+        }, guestTarget);
         if (!response.ok) {
             throwProxmoxSftpError(response);
         }

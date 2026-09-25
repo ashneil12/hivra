@@ -74,7 +74,7 @@ async function webUIProviderCatalog(instanceId: string) {
     const result = await sshExec(
       access.hostIp,
       buildNousStatusCommand(instanceId, WEBUI_EXEC_USER, WEBUI_HERMES_HOME),
-      { timeoutMs: 15_000 }
+      { timeoutMs: 15_000, proxmoxHostConfig: access.proxmoxHostConfig ?? null }
     );
     if (result.ok && result.stdout?.trim()) {
       const payload = parseNousCommandJson(result.stdout);

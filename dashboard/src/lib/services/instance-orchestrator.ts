@@ -62,6 +62,7 @@ import { isIpv4Literal } from "@/lib/network-address";
 import {
   GUEST_SSH_REFUSED_MARKER,
   buildHermesVmidBoundGuestSshPrelude,
+  isHermesInstanceId,
   buildPinnedGuestSshReadinessWait,
   isValidGuestSshUser,
 } from "@/lib/proxmox/hermes-guest-ssh";
@@ -842,6 +843,8 @@ fi
     const invalidTarget =
       !Number.isSafeInteger(proxmoxInfrastructure.vmid) || proxmoxInfrastructure.vmid < 100
         ? "stored vmid is not a Proxmox VMID"
+        : !isHermesInstanceId(instance.id)
+          ? "instance id is not a UUID"
         : !isIpv4Literal(proxmoxInfrastructure.privateIpv4)
           ? "stored guest ip is not an IPv4 address"
           : !isValidGuestSshUser(guestSshUser)
@@ -879,7 +882,14 @@ fi
       // 3*5s connect + 2*5s sleep = 25s; 70s plus a few seconds of qm calls,
       // under the 90s cap. A booting VM's agent answers inside the first wait
       // and sshd with it; a healthy one answers both on the first attempt.
-      buildHermesVmidBoundGuestSshPrelude({ sshUser: guestSshUser, agentAttempts: 5, connectTimeoutSeconds: 5 }),
+      // The stored VMID can be recycled to another instance's VM after a
+      // delete; the VM name must still be this instance's.
+      buildHermesVmidBoundGuestSshPrelude({
+        sshUser: guestSshUser,
+        agentAttempts: 5,
+        connectTimeoutSeconds: 5,
+        expectedInstanceId: instance.id,
+      }),
       buildPinnedGuestSshReadinessWait({ attempts: 3, sleepSeconds: 5 }),
       `printf '%s' '${Buffer.from(innerScript).toString("base64")}' | base64 -d | "\${GUEST_SSH[@]}" "sudo bash -s"`,
     ].join("\n");

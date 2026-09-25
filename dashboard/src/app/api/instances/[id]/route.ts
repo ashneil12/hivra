@@ -28,7 +28,11 @@ import {
   shutdownProxmoxInstance,
   rebootProxmoxInstance,
 } from "@/lib/services/proxmox-instance-service";
-import { isProxmoxReleaseSafeForDbOnlyDelete } from "@/lib/services/proxmox-infrastructure";
+import {
+  getHermesGuestSshTarget,
+  isProxmoxReleaseSafeForDbOnlyDelete,
+  type ProxmoxHostRoutingConfig,
+} from "@/lib/services/proxmox-infrastructure";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
 import {
   acquireHostWakeSlot,
@@ -51,7 +55,7 @@ import {
   getServer,
   type HetznerServer,
 } from "@/lib/hetzner/client";
-import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
+import { ensureManagedHostFingerprint, sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { isSshWarmupError, SSH_WARMUP_MESSAGE } from "@/lib/ssh-warmup";
 import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
@@ -865,6 +869,20 @@ async function buildRuntimeDeployScript(params: {
   return { gatewayUrl, script };
 }
 
+/**
+ * The sshExec target for a guest command in an action handler: the routed
+ * host plus the VMID being acted on and this instance's id, so the host binds
+ * SSH to that VM and checks it is still this instance's.
+ */
+function guestSshTargetFor(
+  proxmoxInfra: { vmid: number } | null | undefined,
+  hostConfig: ProxmoxHostRoutingConfig | null | undefined,
+  instanceId: string,
+): ProxmoxSshHostConfig | null {
+  if (!proxmoxInfra) return null;
+  return { ...(hostConfig ?? { failClosed: true }), vmid: proxmoxInfra.vmid, instanceId };
+}
+
 async function syncAutoUpdateSchedule(params: {
   instance: HermesInstanceRow;
 }): Promise<{ applied: boolean; error: string | null }> {
@@ -910,7 +928,8 @@ async function syncAutoUpdateSchedule(params: {
     // "webui" the webfree provisioning path passes (hetzner-instance-service.ts).
     backend: isWebfreeBackend(instance.backend) ? "webui" : "gateway",
   });
-  const result = await sshExec(ipv4, script);
+  const guestTarget = getHermesGuestSshTarget(instance);
+  const result = await sshExec(ipv4, script, guestTarget ? { proxmoxHostConfig: guestTarget } : {});
 
   if (!result.ok) {
     const detail = result.stderr?.trim() || result.error?.trim() || "";
@@ -3283,8 +3302,9 @@ export async function POST(
             `if [ -z "$AGENT_CONTAINER" ]; then echo "no running agent container for agent-${id}" >&2; exit 1; fi`,
             `docker restart "$AGENT_CONTAINER"`,
         ].join("\n");
-        const res = proxmoxHostConfig
-          ? await sshExec(ipv4, restartScript, { proxmoxHostConfig })
+        const guestTarget = guestSshTargetFor(proxmoxInfra, proxmoxHostConfig, id);
+        const res = guestTarget
+          ? await sshExec(ipv4, restartScript, { proxmoxHostConfig: guestTarget })
           : await sshExec(ipv4, restartScript);
 
         if (!res.ok) {
@@ -3350,13 +3370,14 @@ export async function POST(
         const restartCommand = isWebUIBackend
           ? buildWebUIRuntimeRestartCommand(id, instance!.backend)
           : buildGatewayRestartCommand(containerName, instance!.config);
+        const guestTarget = guestSshTargetFor(proxmoxInfra, proxmoxHostConfig, id);
         const res = isWebUIBackend
           ? await sshExec(ipv4, restartCommand, {
               timeoutMs: GATEWAY_RESTART_SSH_TIMEOUT_MS,
-              ...(proxmoxHostConfig ? { proxmoxHostConfig } : {}),
+              ...(guestTarget ? { proxmoxHostConfig: guestTarget } : {}),
             })
-          : proxmoxHostConfig
-            ? await sshExec(ipv4, restartCommand, { proxmoxHostConfig })
+          : guestTarget
+            ? await sshExec(ipv4, restartCommand, { proxmoxHostConfig: guestTarget })
             : await sshExec(ipv4, restartCommand);
 
         if (!res.ok) {

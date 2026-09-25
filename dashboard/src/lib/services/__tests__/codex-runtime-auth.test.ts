@@ -72,7 +72,7 @@ describe("codex-runtime-auth", () => {
 
     const result = await syncCodexRuntimeAuthStore(
       "inst-123",
-      "192.0.2.40",
+      "192.0.2.40", null,
       bundle,
       "/opt/data"
     );
@@ -96,7 +96,7 @@ describe("codex-runtime-auth", () => {
       stderr: "",
     });
 
-    await syncCodexRuntimeAuthStore("inst-123", "192.0.2.40", bundle, "/home/hermes/.hermes");
+    await syncCodexRuntimeAuthStore("inst-123", "192.0.2.40", null, bundle, "/home/hermes/.hermes");
 
     const command = mockedSshExec.mock.calls[0]?.[1];
     expect(command).toContain(
@@ -115,7 +115,7 @@ describe("codex-runtime-auth", () => {
     try {
       const result = await syncCodexRuntimeAuthStore(
         "inst-123",
-        "192.0.2.40",
+        "192.0.2.40", null,
         bundle,
         "/home/hermes/.hermes"
       );
@@ -156,6 +156,7 @@ describe("codex-runtime-auth", () => {
     const result = await repairCodexRuntimeAuthFromStoredSession({
       instanceId: "inst-123",
       hostIp: "192.0.2.40",
+      guestTarget: null,
       hermesHomeDir: "/root/.hermes",
       encryptedInstanceSecret: encryptedBundle,
       provider: "codex",
@@ -193,6 +194,7 @@ describe("codex-runtime-auth", () => {
     const result = await repairCodexRuntimeAuthFromStoredSession({
       instanceId: "inst-123",
       hostIp: "192.0.2.40",
+      guestTarget: null,
       hermesHomeDir: "/home/hermes/.hermes",
       encryptedInstanceSecret: encryptedBundle,
       provider: "openai-codex",

@@ -6,6 +6,8 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { type HermesInstanceRow } from "@/app/api/instances/[id]/route";
 import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
+import type { ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import {
   sftpList,
   sftpRead,
@@ -92,11 +94,12 @@ function isMissingPathError(err: unknown): boolean {
 
 async function resolveAllowedRemotePath(
   ip: string,
+  guestTarget: ProxmoxSshHostConfig | null,
   requestedPath: string,
   options?: { allowMissingLeaf?: boolean }
 ): Promise<string | null> {
   try {
-    const resolvedPath = path.posix.normalize(await sftpRealpath(ip, requestedPath));
+    const resolvedPath = path.posix.normalize(await sftpRealpath(ip, requestedPath, guestTarget));
     return isWithinAllowedRoot(resolvedPath) ? resolvedPath : null;
   } catch (err) {
     if (!options?.allowMissingLeaf || !isMissingPathError(err)) {
@@ -104,7 +107,7 @@ async function resolveAllowedRemotePath(
     }
 
     const parentPath = path.posix.dirname(requestedPath);
-    const resolvedParent = path.posix.normalize(await sftpRealpath(ip, parentPath));
+    const resolvedParent = path.posix.normalize(await sftpRealpath(ip, parentPath, guestTarget));
     const resolvedLeafPath = path.posix.join(resolvedParent, path.posix.basename(requestedPath));
     return isWithinAllowedRoot(resolvedLeafPath) ? resolvedLeafPath : null;
   }
@@ -223,7 +226,7 @@ async function resolveAuthorizedInstanceIpv4(instanceId: string, clerkId: string
     };
   }
 
-  return { ip };
+  return { ip, guestTarget: getHermesGuestSshTarget(instance as HermesInstanceRow) };
 }
 
 export async function GET(
@@ -263,14 +266,14 @@ export async function GET(
       return instance.error;
     }
 
-    const allowedRemotePath = await resolveAllowedRemotePath(instance.ip, normalizedPath);
+    const allowedRemotePath = await resolveAllowedRemotePath(instance.ip, instance.guestTarget, normalizedPath);
     if (!allowedRemotePath) {
       return NextResponse.json({ error: ALLOWED_SFTP_ROOTS_ERROR }, { status: 403 });
     }
 
     const buffer = downloadRequested
-      ? await sftpReadBinary(instance.ip, allowedRemotePath)
-      : await sftpReadBinary(instance.ip, allowedRemotePath, PREVIEW_MAX_BYTES);
+      ? await sftpReadBinary(instance.ip, allowedRemotePath, undefined, instance.guestTarget)
+      : await sftpReadBinary(instance.ip, allowedRemotePath, PREVIEW_MAX_BYTES, instance.guestTarget);
     const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
     const body = new Blob([arrayBuffer], { type: contentType });
     return new NextResponse(body, {
@@ -326,7 +329,7 @@ export async function POST(
       return instance.error;
     }
 
-    const allowedRemotePath = await resolveAllowedRemotePath(instance.ip, normalizedPath, {
+    const allowedRemotePath = await resolveAllowedRemotePath(instance.ip, instance.guestTarget, normalizedPath, {
       allowMissingLeaf: body.action === "write",
     });
     if (!allowedRemotePath) {
@@ -340,17 +343,17 @@ export async function POST(
     }
 
     if (body.action === "list") {
-      const files = await sftpList(instance.ip, allowedRemotePath);
+      const files = await sftpList(instance.ip, allowedRemotePath, instance.guestTarget);
       return NextResponse.json({ ok: true, files });
     }
 
     if (body.action === "read") {
-      const content = await sftpRead(instance.ip, allowedRemotePath);
+      const content = await sftpRead(instance.ip, allowedRemotePath, instance.guestTarget);
       return NextResponse.json({ ok: true, content });
     }
 
     if (body.action === "write") {
-      await sftpWrite(instance.ip, allowedRemotePath, body.content);
+      await sftpWrite(instance.ip, allowedRemotePath, body.content, instance.guestTarget);
       return NextResponse.json({ ok: true });
     }
 

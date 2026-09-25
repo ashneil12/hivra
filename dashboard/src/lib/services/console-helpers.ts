@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/supabase';
 import { apiError } from '@/lib/api-response';
 import { resolveInstanceIpv4 } from '@/lib/instance-resolvers';
-import { sshExec } from '@/lib/hetzner/ssh';
+import { sshExec, type ProxmoxSshHostConfig } from '@/lib/hetzner/ssh';
 import {
+  getHermesGuestSshTarget,
   getProxmoxHostRoutingConfigFromInfrastructure,
   getProxmoxInfrastructure,
 } from '@/lib/services/proxmox-infrastructure';
@@ -33,10 +34,12 @@ export async function validateConsoleAccess(params: Promise<{ id: string }>) {
 
   let hostIp: string | null = null;
   const proxmoxInfrastructure = getProxmoxInfrastructure((instance as { config?: unknown }).config);
-  const proxmoxHostConfig = getProxmoxHostRoutingConfigFromInfrastructure(
-    proxmoxInfrastructure,
-    { host_id: (instance as { host_id?: string | null }).host_id ?? null },
-  );
+  const proxmoxHostConfig: ProxmoxSshHostConfig | null =
+    getHermesGuestSshTarget(instance as Parameters<typeof getHermesGuestSshTarget>[0]) ??
+    getProxmoxHostRoutingConfigFromInfrastructure(
+      proxmoxInfrastructure,
+      { host_id: (instance as { host_id?: string | null }).host_id ?? null },
+    );
   try {
     hostIp = await resolveInstanceIpv4(instance as unknown as import('@/app/api/instances/[id]/route').HermesInstanceRow);
   } catch (e) {
@@ -55,6 +58,9 @@ export async function validateConsoleAccess(params: Promise<{ id: string }>) {
     userId,
     instance,
     hostIp,
+    // Pass to sshExec for every guest command. It carries the instance's
+    // host, stored VMID and id; the guest IP alone names a VM on every host
+    // that shares the private prefix.
     ...(proxmoxHostConfig ? { proxmoxHostConfig } : {}),
     errorResponse: null,
   };
@@ -63,7 +69,7 @@ export async function validateConsoleAccess(params: Promise<{ id: string }>) {
 export async function discoverContainerName(
   ip: string,
   id: string,
-  proxmoxHostConfig?: ReturnType<typeof getProxmoxHostRoutingConfigFromInfrastructure>
+  proxmoxHostConfig?: ProxmoxSshHostConfig | null
 ): Promise<string> {
   // Exact-match this instance's container only. The previous fuzzy
   // `grep -E "agent-${id}|hermes-agent|agent"` had a bare `agent` alternative
