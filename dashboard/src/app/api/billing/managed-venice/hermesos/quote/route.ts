@@ -182,7 +182,6 @@ export async function POST(req: NextRequest) {
         provisioned = await ensureBankrDepositWalletForUser({
           userId,
           purpose: MANAGED_VENICE_DEPOSIT_WALLET_PURPOSE,
-          makePrimary: false,
         });
       } catch (error) {
         return topUpFailure(

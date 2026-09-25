@@ -179,7 +179,6 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
     expect(mockEnsureWallet).toHaveBeenCalledWith({
       userId: "user_a",
       purpose: "credit_deposit",
-      makePrimary: false,
     });
     expect(mockCreateQuote).toHaveBeenCalledWith({
       userId: "user_a",

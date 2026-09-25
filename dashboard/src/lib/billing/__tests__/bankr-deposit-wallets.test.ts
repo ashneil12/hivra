@@ -262,7 +262,6 @@ describe("Bankr deposit wallets", () => {
       },
       fetchImpl,
       now,
-      makePrimary: true,
     });
 
     expect(fetchImpl).toHaveBeenCalledWith("https://api.example.test/partner/wallets", expect.objectContaining({
@@ -341,7 +340,6 @@ describe("Bankr deposit wallets", () => {
       },
       fetchImpl,
       now,
-      makePrimary: false,
     });
 
     expect(fetchImpl).toHaveBeenCalledWith("https://api.example.test/partner/wallets", expect.objectContaining({
@@ -463,6 +461,82 @@ describe("Bankr deposit wallets", () => {
       expect(result.status).toBe("existing");
       expect(wallets.find((row) => row.id === "wallet_signed")?.is_primary).toBe(true);
       expect(wallets.find((row) => row.id === "wallet_deposit")?.is_primary).toBe(false);
+    });
+
+    // The operator backfill scripts asked for the deposit wallet to be
+    // primary, so one run after the repair migration would have demoted every
+    // provisioned user's verified wallet again. No caller gets to ask: a stale
+    // or untyped one that still sends the flag changes nothing.
+    describe("even when a caller asks for the deposit wallet to be primary", () => {
+      type Params = Parameters<typeof ensureBankrDepositWalletForUser>[0];
+      const askForPrimary = (params: Params) =>
+        ensureBankrDepositWalletForUser({ ...params, makePrimary: true } as Params);
+
+      it("when a new deposit wallet is provisioned", async () => {
+        const { db, wallets } = createMemoryDb();
+        wallets.push(signedWallet());
+        const fetchImpl = jest.fn(async () => ({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: "wlt_New",
+            evmAddress: depositAddress,
+            solAddress: null,
+            status: "active",
+            createdAt: now.toISOString(),
+            apiKey: "bk_usr_secret_for_sweeping",
+          }),
+        }));
+
+        const result = await askForPrimary({
+          userId: "user_123",
+          purpose: "credit_deposit",
+          db,
+          env,
+          fetchImpl,
+          now,
+        });
+
+        expect(result.status).toBe("provisioned");
+        expect(wallets.find((row) => row.id === "wallet_signed")?.is_primary).toBe(true);
+        const deposit = wallets.find((row) => row.normalized_address === normalizedDepositAddress);
+        expect(deposit?.is_primary).toBe(false);
+      });
+
+      it("when an existing deposit wallet without a sweep credential is re-used", async () => {
+        const { db, wallets } = createMemoryDb();
+        wallets.push(signedWallet(), {
+          id: "wallet_deposit",
+          user_id: "user_123",
+          chain_type: "evm",
+          chain_id: 8453,
+          address: normalizedDepositAddress,
+          normalized_address: normalizedDepositAddress,
+          is_primary: false,
+          verified_at: "2026-04-21T12:00:00.000Z",
+          verification_method: "bankr",
+          verification_reference: "wlt_Existing",
+          metadata: { bankr: { walletId: "wlt_Existing", purpose: "credit_deposit" } },
+        });
+        const fetchImpl = jest.fn(async () => ({
+          ok: true,
+          status: 201,
+          json: async () => ({ apiKey: "bk_usr_secret_for_sweeping" }),
+        }));
+
+        const result = await askForPrimary({
+          userId: "user_123",
+          purpose: "credit_deposit",
+          db,
+          env,
+          fetchImpl,
+          now,
+        });
+
+        expect(result.status).toBe("existing");
+        expect(wallets.find((row) => row.id === "wallet_signed")?.is_primary).toBe(true);
+        expect(wallets.find((row) => row.id === "wallet_deposit")?.is_primary).toBe(false);
+      });
     });
   });
 });

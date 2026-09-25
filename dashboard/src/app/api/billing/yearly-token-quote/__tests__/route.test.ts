@@ -259,7 +259,6 @@ describe("/api/billing/yearly-token-quote", () => {
       expect(mockEnsureWallet).toHaveBeenCalledWith({
         userId: "user_a",
         purpose: "credit_deposit",
-        makePrimary: false,
       });
       expect(mockCreateYearlyQuote).toHaveBeenCalledWith({
         userId: "user_a",
