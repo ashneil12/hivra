@@ -29,6 +29,7 @@ import {
   buildSslipPlaceholderResolutionScript,
 } from "@/lib/services/hetzner-instance-builders";
 import { SIDECAR_SERVER_CODE, WEBUI_HANDOFF_APPENDAGE } from "@/lib/services/sidecar-script";
+import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
 import {
   buildWebUISignalDaemonScript,
   WEBUI_SIGNAL_DAEMON_CONTAINER_PATH,
@@ -4092,11 +4093,7 @@ ${heredoc("hermes.env", artifacts.hermesEnvFile)}
 ${artifacts.authStoreFile ? heredoc("auth.json.inject", artifacts.authStoreFile) : "rm -f auth.json.inject\n"}
 ${gatewayDockerSocketPreparation}
 
-GHCR_TOKEN="${process.env.GHCR_TOKEN || ""}"
-if [ -n "$GHCR_TOKEN" ]; then
-echo "$GHCR_TOKEN" | docker login ghcr.io -u __token__ --password-stdin 2>/dev/null || true
-fi
-
+${buildPlatformRegistryCredentialScrubScript()}
 ${buildSslipPlaceholderResolutionScript(p.fqdn)}
 
 docker network create hermes_net >/dev/null 2>&1 || true

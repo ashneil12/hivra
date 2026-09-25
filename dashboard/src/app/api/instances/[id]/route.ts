@@ -860,7 +860,6 @@ async function buildRuntimeDeployScript(params: {
     globalSettings,
     profileRoutes,
     profilesToRestore,
-    ghcrToken: process.env.GHCR_TOKEN ?? null,
   });
 
   return { gatewayUrl, script };

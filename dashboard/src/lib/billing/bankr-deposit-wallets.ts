@@ -427,6 +427,16 @@ async function createBankrWalletApiKey(params: {
   return parseBankrWalletApiKeySecret(await response.json());
 }
 
+/**
+ * Provision (or re-use) the user's platform deposit wallet for `purpose`.
+ *
+ * The deposit wallet is never made the account's primary EVM wallet, and no
+ * caller can ask for it. It can never back token-tier standing
+ * (getTokenVerificationWallet skips it), so making it primary demotes the
+ * wallet the user verified and leaves their tier with no wallet the holdings
+ * cron can re-read. The operator backfill scripts used to ask for it, which
+ * would have undone the primary repair migration on every run.
+ */
 export async function ensureBankrDepositWalletForUser(params: {
   userId: string;
   purpose?: BankrDepositWalletPurpose;
@@ -434,7 +444,6 @@ export async function ensureBankrDepositWalletForUser(params: {
   env?: Record<string, string | undefined>;
   fetchImpl?: BankrPartnerFetch;
   now?: Date;
-  makePrimary?: boolean;
 }): Promise<BankrDepositWalletResult | { status: "not_configured" }> {
   const admin = requireDb(params.db ?? supabaseAdmin);
   const purpose = params.purpose ?? "credit_deposit";
@@ -468,7 +477,7 @@ export async function ensureBankrDepositWalletForUser(params: {
     env: params.env,
     fetchImpl: params.fetchImpl,
     now: params.now,
-    makePrimary: params.makePrimary ?? true,
+    makePrimary: false,
     walletPurpose: purpose,
     apiKey: existingWallet ? null : apiKeyRequest,
   });

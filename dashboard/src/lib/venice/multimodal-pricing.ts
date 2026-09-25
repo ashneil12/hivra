@@ -6,8 +6,10 @@
 // `settleManagedVeniceMultimodalUsage` (proxy-settlement.ts) now prices rows
 // against this catalog when — and only when — the flag is on.
 //
-// PRICES ARE VENICE LIST PRICES, snapshot from https://docs.venice.ai/overview/pricing
-// on VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT. Same discipline as the chat
+// PRICES ARE VENICE LIST PRICES, checked against https://docs.venice.ai/overview/pricing
+// and Venice's GET /models pricing on VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT.
+// Where the two disagree the catalog takes the higher price, so Venice can
+// never bill Hivra more than Hivra charges. Same discipline as the chat
 // catalog in pricing.ts: keep in lockstep with Venice, re-pull on any re-price.
 // What we charge users is `list price × markup` (markup defaults to 1.0 —
 // pass-through at cost — and is operator-tunable via
@@ -22,11 +24,15 @@
 //     row's metadata (e.g. TTS with no recorded character count) returns
 //     { priced: false, reason: "missing_quantity" } — skipped, never floored
 //     to a guessed quantity.
-//   * Tier-priced entries (image resolution, upscale factor) DO fall back to
-//     their cheapest published tier when the tier is unrecorded: that is a
-//     conservative floor of a published price, not a guess.
+//   * Tier-priced entries (image resolution, upscale factor) fall back to
+//     their cheapest published tier only when the tier field is ABSENT, which
+//     is what Venice runs by default (1K, 2x). A tier value that is present
+//     but isn't a published tier is `invalid_tier`: the managed proxy refuses
+//     the request before it reaches Venice, and settlement skips such a row
+//     instead of charging a floor Venice may not have run
+//     (resolveVeniceMultimodalTier).
 
-export const VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT = "2026-07-08";
+export const VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT = "2026-09-25";
 
 // Mirror of the chat catalog's staleness window (pricing.ts). Venice re-prices
 // multimodal models more often than chat; anything older than this should be
@@ -80,10 +86,11 @@ export interface VeniceMultimodalPrice {
   /** Venice LIST price per unit, in micro-USD (before markup). */
   microUsdPerUnit: number;
   /**
-   * Published tier overrides keyed by a normalized tier token (lower-cased,
-   * trailing "x" stripped): image resolution ("1k"/"2k"/"4k") or upscale
-   * factor ("2"/"4"). `microUsdPerUnit` MUST be the cheapest tier so an
-   * unrecorded tier floors conservatively.
+   * Published tiers keyed by a normalized tier token: image resolution
+   * ("1k"/"2k"/"4k", lower-cased) or upscale factor ("2"/"4"). See
+   * resolveVeniceMultimodalTier for how a request value maps to a tier.
+   * `microUsdPerUnit` MUST be the cheapest tier: it is what an absent tier
+   * field (Venice's default) settles at.
    */
   tiers?: Readonly<Record<string, number>>;
   /** Which metadata field carries the tier token. */
@@ -96,10 +103,12 @@ function usd(value: number): number {
   return Math.round(value * 1_000_000);
 }
 
-// Source for every number: https://docs.venice.ai/overview/pricing
-// (snapshot 2026-07-08). Model ids are the exact strings observed in prod
-// `managed_venice_usage_events.model` (verified against real usage rows) or,
-// for not-yet-observed operations, the id our own proxy route records.
+// Source for every number: https://docs.venice.ai/overview/pricing, re-checked
+// 2026-09-25 (every entry below still matches it), plus Venice's GET /models
+// pricing where that is higher (nano-banana-2-edit). Model ids are the exact
+// strings observed in prod `managed_venice_usage_events.model` (verified
+// against real usage rows) or, for not-yet-observed operations, the id our own
+// proxy route records.
 export const VENICE_MULTIMODAL_PRICES: readonly VeniceMultimodalPrice[] = [
   // ── Image generation (per image) ────────────────────────────────────────
   {
@@ -143,6 +152,12 @@ export const VENICE_MULTIMODAL_PRICES: readonly VeniceMultimodalPrice[] = [
     displayName: "Nano Banana 2 Edit",
     unit: "per_image",
     microUsdPerUnit: usd(0.1),
+    tiers: { "1k": usd(0.1), "2k": usd(0.14), "4k": usd(0.19) },
+    tierMetadataKey: "resolution",
+    notes:
+      "Venice's GET /models prices it by output resolution like Nano Banana 2 " +
+      "(1K/2K/4K); the docs pricing page still lists a flat $0.10, which is the " +
+      "1K tier. Venice's default resolution for edits is 1K.",
   },
   {
     endpoint: "/api/v1/image/edit",
@@ -162,7 +177,9 @@ export const VENICE_MULTIMODAL_PRICES: readonly VeniceMultimodalPrice[] = [
     microUsdPerUnit: usd(0.02),
     tiers: { "2": usd(0.02), "4": usd(0.08) },
     tierMetadataKey: "scale",
-    notes: "2x $0.02 / 4x $0.08; unrecorded scale floors to 2x.",
+    notes:
+      "2x $0.02 / 4x $0.08. Venice accepts a scale from 2 to 4 and defaults to 2x; " +
+      "a factor between tiers is billed (and sent) as the next tier up.",
   },
 
   // ── TTS (per 1M input characters) ────────────────────────────────────────
@@ -240,7 +257,83 @@ export function resolveVeniceMultimodalPrice(
   );
 }
 
-export type VeniceMultimodalSkipReason = "unpriced_operation" | "missing_quantity";
+export type VeniceMultimodalSkipReason = "unpriced_operation" | "missing_quantity" | "invalid_tier";
+
+/**
+ * How a request's tier field maps onto an entry's published tiers.
+ *   absent  - the field wasn't sent (or is empty): Venice runs its default,
+ *             which is the cheapest tier (1K, 2x).
+ *   tier    - a published tier, as the normalized key into `price.tiers`.
+ *   invalid - sent, but not a value Hivra can price. Never floored: the
+ *             managed proxy refuses it, and settlement skips such a row.
+ */
+export type VeniceMultimodalTierResolution =
+  | { kind: "absent" }
+  | { kind: "tier"; tier: string }
+  | { kind: "invalid" };
+
+function publishedScaleTiers(price: VeniceMultimodalPrice): number[] {
+  return Object.keys(price.tiers ?? {})
+    .map(Number)
+    .filter((factor) => Number.isFinite(factor))
+    .sort((a, b) => a - b);
+}
+
+/**
+ * Map a request value (resolution or scale) onto one of `price`'s published
+ * tiers.
+ *   * resolution: a string, compared case-insensitively ("4K", "4k", " 4K ").
+ *   * scale: a number or numeric string ("3", "4.0", "04", "4x"). Venice
+ *     accepts any factor from its lowest to its highest tier (2 to 4) and
+ *     bills per published tier, so a factor between tiers maps UP to the next
+ *     published tier; the managed proxy then sends that tier to Venice, so
+ *     what runs is what was charged.
+ * An entry without tiers always resolves to `absent`.
+ */
+export function resolveVeniceMultimodalTier(
+  price: VeniceMultimodalPrice,
+  value: unknown
+): VeniceMultimodalTierResolution {
+  const tiers = price.tiers;
+  if (!tiers || !price.tierMetadataKey) return { kind: "absent" };
+  if (value === null || value === undefined) return { kind: "absent" };
+  if (typeof value === "string" && !value.trim()) return { kind: "absent" };
+
+  if (price.tierMetadataKey === "resolution") {
+    if (typeof value !== "string") return { kind: "invalid" };
+    const token = value.trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(tiers, token) ? { kind: "tier", tier: token } : { kind: "invalid" };
+  }
+
+  const factor =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value.trim().replace(/x$/i, ""))
+        : Number.NaN;
+  const published = publishedScaleTiers(price);
+  if (!Number.isFinite(factor) || published.length === 0 || factor < published[0]) {
+    return { kind: "invalid" };
+  }
+  const tier = published.find((candidate) => candidate >= factor);
+  return tier === undefined ? { kind: "invalid" } : { kind: "tier", tier: String(tier) };
+}
+
+/** The published tier names of an entry, as Venice spells them ("1K, 2K, 4K"). */
+export function describeVeniceMultimodalTiers(price: VeniceMultimodalPrice): string {
+  if (price.tierMetadataKey === "scale") return publishedScaleTiers(price).join(" or ");
+  return Object.keys(price.tiers ?? {})
+    .map((tier) => tier.toUpperCase())
+    .join(", ");
+}
+
+/**
+ * The value to send Venice for a resolved tier: resolution as Venice spells
+ * it ("4K"), scale as a number.
+ */
+export function veniceMultimodalTierRequestValue(price: VeniceMultimodalPrice, tier: string): string | number {
+  return price.tierMetadataKey === "scale" ? Number(tier) : tier.toUpperCase();
+}
 
 export type VeniceMultimodalCostResult =
   | {
@@ -264,29 +357,24 @@ function readPositiveNumber(value: unknown): number | null {
     : null;
 }
 
-function normalizeTierToken(value: unknown): string | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  if (typeof value !== "string") return null;
-  const token = value.trim().toLowerCase().replace(/x$/, "");
-  return token || null;
-}
-
+/**
+ * The per-unit rate for a row: its tier's price, or `whenAbsent` when the
+ * tier field wasn't sent. Null for a tier value that isn't published.
+ */
 function resolveUnitRate(
   price: VeniceMultimodalPrice,
-  metadata: Record<string, unknown>
-): { microUsdPerUnit: number; tier: string | null } {
+  metadata: Record<string, unknown>,
+  whenAbsent: number
+): { microUsdPerUnit: number; tier: string | null } | null {
   if (!price.tiers || !price.tierMetadataKey) {
     return { microUsdPerUnit: price.microUsdPerUnit, tier: null };
   }
-  const token = normalizeTierToken(metadata[price.tierMetadataKey]);
-  if (token && price.tiers[token] !== undefined) {
-    return { microUsdPerUnit: price.tiers[token], tier: token };
+  const resolved = resolveVeniceMultimodalTier(price, metadata[price.tierMetadataKey]);
+  if (resolved.kind === "invalid") return null;
+  if (resolved.kind === "tier") {
+    return { microUsdPerUnit: price.tiers[resolved.tier], tier: resolved.tier };
   }
-  // Unrecorded/unknown tier → the base rate, which the catalog contract pins
-  // to the cheapest published tier (conservative floor, not a guess).
-  return { microUsdPerUnit: price.microUsdPerUnit, tier: null };
+  return { microUsdPerUnit: whenAbsent, tier: null };
 }
 
 /**
@@ -302,7 +390,10 @@ export function computeVeniceMultimodalCost(row: {
   if (!price) return { priced: false, reason: "unpriced_operation" };
 
   const metadata = row.metadata ?? {};
-  const { microUsdPerUnit, tier } = resolveUnitRate(price, metadata);
+  // An absent tier settles at the cheapest tier: that is what Venice runs.
+  const rate = resolveUnitRate(price, metadata, price.microUsdPerUnit);
+  if (!rate) return { priced: false, reason: "invalid_tier" };
+  const { microUsdPerUnit, tier } = rate;
 
   switch (price.unit) {
     case "per_image": {
@@ -338,6 +429,84 @@ export function computeVeniceMultimodalCost(row: {
           1,
           Math.ceil((Math.ceil(characters) * microUsdPerUnit) / 1_000_000)
         ),
+      };
+    }
+    case "per_request":
+      return {
+        priced: true,
+        displayName: price.displayName,
+        unit: price.unit,
+        quantity: 1,
+        tier,
+        microUsdPerUnit,
+        listCostMicroUsd: Math.max(1, microUsdPerUnit),
+      };
+  }
+}
+
+function readPositiveQuantity(value: unknown): number | null {
+  if (typeof value === "string" && value.trim()) {
+    return readPositiveNumber(Number(value.trim()));
+  }
+  return readPositiveNumber(value);
+}
+
+/**
+ * Conservative CEILING for a request that has not run yet: what the managed
+ * proxy holds on the wallet BEFORE it forwards to Venice (see
+ * media-spend-gate.ts). Same catalog and the same fail-safe contract as
+ * `computeVeniceMultimodalCost` — an operation the catalog can't price is
+ * never guessed at — but the rounding runs the other way:
+ *   * an absent tier field holds at the MOST expensive published tier
+ *     (settlement charges Venice's default, the cheapest); a tier value that
+ *     isn't published is `invalid_tier`, never held or forwarded;
+ *   * a variant count is rounded up, and numeric strings count (Venice
+ *     coerces them), so a hold is never smaller than what Venice can bill.
+ * The hold is released or captured down to the settlement price afterwards.
+ */
+export function computeVeniceMultimodalHoldCost(row: {
+  endpoint: string;
+  model: string;
+  metadata?: Record<string, unknown> | null;
+}): VeniceMultimodalCostResult {
+  const price = resolveVeniceMultimodalPrice(row.endpoint, row.model);
+  if (!price) return { priced: false, reason: "unpriced_operation" };
+
+  const metadata = row.metadata ?? {};
+  const rate = resolveUnitRate(
+    price,
+    metadata,
+    Math.max(price.microUsdPerUnit, ...Object.values(price.tiers ?? {}))
+  );
+  if (!rate) return { priced: false, reason: "invalid_tier" };
+  const { microUsdPerUnit, tier } = rate;
+
+  switch (price.unit) {
+    case "per_image": {
+      const variants = readPositiveQuantity(metadata.variants);
+      const quantity = variants ? Math.ceil(variants) : 1;
+      return {
+        priced: true,
+        displayName: price.displayName,
+        unit: price.unit,
+        quantity,
+        tier,
+        microUsdPerUnit,
+        listCostMicroUsd: Math.max(1, quantity * microUsdPerUnit),
+      };
+    }
+    case "per_million_characters": {
+      const characters = readPositiveNumber(metadata.inputLength);
+      if (characters === null) return { priced: false, reason: "missing_quantity" };
+      const quantity = Math.ceil(characters);
+      return {
+        priced: true,
+        displayName: price.displayName,
+        unit: price.unit,
+        quantity,
+        tier,
+        microUsdPerUnit,
+        listCostMicroUsd: Math.max(1, Math.ceil((quantity * microUsdPerUnit) / 1_000_000)),
       };
     }
     case "per_request":
