@@ -22,9 +22,10 @@ import { posthogClient } from "@/lib/posthog";
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
   DEFAULT_PROXMOX_VM_DISK_GB,
-  getReservedProxmoxVmidsForNode,
+  buildProxmoxVmidReferenceLedger,
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
+import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { selectAvailableProxmoxProvisionTarget } from "@/lib/services/instance-service";
 import { BoxTunnelProvisionError, deleteBoxTunnel, isTunnelConfigured } from "@/lib/services/cloudflare-tunnel";
@@ -262,6 +263,8 @@ function phase1Script(params: {
   vmidStart: number;
   vmidEnd: number;
   reservedVmids: ReadonlyArray<number>;
+  /** Managed hosts only: the cross-plane host VMID reference ledger. */
+  vmidLedger?: VmidReferenceLedger | null;
   ipLastOctetStart: number;
   operationId: string;
   infrastructureBindingTag: string;
@@ -513,13 +516,18 @@ claimed_vmids="$(printf '%s\\n%s\\n' "$cluster_vmids" "$intent_vmids" | sed '/^$
 if [ -n "$RESERVED_VMIDS" ]; then
   claimed_vmids="$(printf '%s\\n%s\\n' "$claimed_vmids" "$RESERVED_VMIDS" | sed '/^$/d' | sort -un)"
 fi
+${params.vmidLedger ? `${buildVmidReferenceLedgerScript(params.vmidLedger)}hivra_vmid_reference_sync
+if [ -n "$HIVRA_FOREIGN_VMIDS" ]; then
+  claimed_vmids="$(printf '%s\\n%s\\n' "$claimed_vmids" "$HIVRA_FOREIGN_VMIDS" | sed '/^$/d' | sort -un)"
+fi` : ""}
 for c in $(seq ${params.vmidStart} ${params.vmidEnd}); do
   if printf '%s\\n' "$claimed_vmids" | grep -qx "$c"; then continue; fi
   exec 9>"/run/lock/hivra-vmids/$c.lock"
   if flock -n 9; then VMID="$c"; break; fi
   exec 9>&-
 done
-[ -n "$VMID" ] || { echo "no free vmid in ${params.vmidStart}-${params.vmidEnd}" >&2; exit 1; }
+[ -n "$VMID" ] || { echo "no free vmid in ${params.vmidStart}-${params.vmidEnd}" >&2; exit 1; }${params.vmidLedger ? `
+hivra_vmid_reference_record "$VMID"` : ""}
 # Last octets already configured on this host's private subnet, read from every
 # VM's cloud-init ipconfig0. The octet MUST avoid these: a VMID-derived octet is
 # not collision-safe because out-of-band VMs (an older vmid->octet scheme, manual
@@ -1797,12 +1805,13 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // user-owned target. Managed reservations still include in-flight database
     // rows because those launches share Hivra's allocator. A target-scoped DB
     // uniqueness constraint protects the final self-managed write.
-    const reservedVmids = deployment.mode === "hivra-managed"
-      ? await getReservedProxmoxVmidsForNode({
+    const { reservedVmids, vmidLedger } = deployment.mode === "hivra-managed"
+      ? await buildProxmoxVmidReferenceLedger({
           proxmoxNode: host,
           excludeInstanceId: agent.id,
+          lane: "hivra",
         })
-      : [];
+      : { reservedVmids: [] as number[], vmidLedger: null };
 
     // The out-of-repo Hivra provisioner accepts a guest-visible core count.
     // Fractional free-tier CPU is a Proxmox scheduler cap, not a fractional
@@ -1865,6 +1874,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       vmidStart,
       vmidEnd,
       reservedVmids,
+      vmidLedger,
       ipLastOctetStart,
       operationId: provisionOperationId,
       infrastructureBindingTag,

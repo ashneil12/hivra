@@ -17,6 +17,7 @@ import {
   buildHermesTaggedImageCleanupFunctions,
 } from "@/lib/services/webui-instance-builder";
 import { isWebfreeBackend } from "@/lib/types/instance";
+import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
 
 /**
  * Pure host-side bash/Python script generators for Proxmox guests.
@@ -535,6 +536,8 @@ export function buildProxmoxProvisionScript(params: {
    *  level — that race surfaced as `post_provision_proxmox_metadata_conflict_active`
    *  for ~25 users before this guard. */
   reservedVmids?: ReadonlyArray<number>;
+  /** Cross-plane host ledger: publish this plane's references, skip other planes'. */
+  vmidLedger?: VmidReferenceLedger | null;
   /** Require the host's active and persistent tenant firewall before this VM
    * receives root-equivalent control of its own Docker daemon. */
   requireTenantIsolation?: boolean;
@@ -820,6 +823,12 @@ claimed_vmids="$existing_vmids"
 if [ -n "$RESERVED_VMIDS" ]; then
   claimed_vmids="$(printf '%s\n%s\n' "$existing_vmids" "$RESERVED_VMIDS")"
 fi
+# VMIDs other control planes on this host still reference (their rows may
+# outlive an out-of-band destroy), published to the shared host ledger.
+${buildVmidReferenceLedgerScript(params.vmidLedger)}hivra_vmid_reference_sync
+if [ -n "$HIVRA_FOREIGN_VMIDS" ]; then
+  claimed_vmids="$(printf '%s\n%s\n' "$claimed_vmids" "$HIVRA_FOREIGN_VMIDS")"
+fi
 if [ -n "$orphan_lv_vmids" ]; then
   claimed_vmids="$(printf '%s\n%s\n' "$claimed_vmids" "$orphan_lv_vmids")"
 fi
@@ -847,6 +856,7 @@ if [ -z "$VMID" ]; then
   echo "No free Proxmox VMID in range \${VMID_START}-\${VMID_END}" >&2
   exit 1
 fi
+hivra_vmid_reference_record "$VMID"
 
 # Stamp the VMID claim BEFORE the clone so the Phase 1 cleanup trap can tear
 # down a clone that dies mid-way. Writing it only after \`qm start\` (as it was)
@@ -1139,6 +1149,7 @@ HERMES_PROXMOX_LOCKED
 export function buildProxmoxVmidAvailabilityScript(params: {
   vmidStart: number;
   vmidEnd: number;
+  vmidLedger?: VmidReferenceLedger | null;
 }): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -1151,7 +1162,8 @@ existing_vmids="$(qm list | awk 'NR>1 {print $1}')"
 # dashboard preflight honest about an LV-landmined VMID (mirrors the
 # provisioner's allocator — see the doom-loop incident 2026-06-13, fixturenodea).
 orphan_lv_vmids="$(${PROXMOX_ORPHAN_LV_VMID_SCAN} || true)"
-occupied_vmids="$(printf '%s\\n%s\\n' "$existing_vmids" "$orphan_lv_vmids")"
+${buildVmidReferenceLedgerScript(params.vmidLedger)}hivra_vmid_reference_sync
+occupied_vmids="$(printf '%s\\n%s\\n%s\\n' "$existing_vmids" "$orphan_lv_vmids" "$HIVRA_FOREIGN_VMIDS")"
 for candidate in $(seq "$VMID_START" "$VMID_END"); do
   if printf '%s\\n' "$occupied_vmids" | grep -qx "$candidate"; then
     echo "HERMES_PROXMOX_VMID_OCCUPIED $candidate"
