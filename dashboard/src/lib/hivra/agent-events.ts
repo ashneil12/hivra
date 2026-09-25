@@ -27,6 +27,8 @@ type HivraAgentEvent =
   | "stopped"
   | "started"
   | "restarted"
+  | "force_stopped"
+  | "force_restarted"
   | "runtime_updated"
   | "agent_cli_updated"
   | "agent_cli_update_failed"

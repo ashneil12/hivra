@@ -105,7 +105,7 @@ export type HivraLifecycleTargetFailure = {
  * The exact host, VM and guest address an owner-scoped lifecycle action on
  * this agent may touch, or why it can't run. Managed hosts must carry an
  * admitted provisioner (the exact current release for an in-place update);
- * stop never calls the helper and stays available on stale hosts. Throws only
+ * stop and force_stop never call the helper and stay available on stale hosts. Throws only
  * for an unexpected execution-context error.
  */
 export async function resolveHivraLifecycleTarget(input: {
@@ -141,8 +141,9 @@ export async function resolveHivraLifecycleTarget(input: {
   // and persisted channel have an admitted VERSION, intact manifest, and
   // exact-result-path capability before claiming an operation lease or issuing
   // any VM command. Explicit runtime updates require the current version. Stop
-  // does not call the helper and deliberately remains available for stale hosts.
-  if (executionContext.kind === "managed" && action !== "stop") {
+  // and Force off do not call the helper and deliberately remain available for
+  // stale hosts.
+  if (executionContext.kind === "managed" && action !== "stop" && action !== "force_stop") {
     const readiness = await checkManagedHivraHostReadiness({
       targetId: executionContext.host,
       env,

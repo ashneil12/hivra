@@ -23,6 +23,8 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   getAgentEvents: (...args: unknown[]) => mockGetAgentEvents(...args),
   startAgent: (...args: unknown[]) => mockStartAgent(...args),
   getProviderResizeState: () => new Promise(() => undefined),
+  // Overview reads live usage; these tests are about sections, so it stays pending.
+  getComputerUsage: () => new Promise(() => undefined),
   getBoxModel: async () => ({ model: null }),
   getBoxRestrict: async () => ({ restrict: "" }),
   listBoxMcp: async () => ({ servers: [] }),
