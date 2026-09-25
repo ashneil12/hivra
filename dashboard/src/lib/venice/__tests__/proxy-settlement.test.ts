@@ -425,11 +425,13 @@ describe("managed Venice proxy settlement", () => {
         proxyKeyId: "key_1",
         walletType: "hermesos",
         referenceId: "req_overage",
-        // No max_completion_tokens — reservation lands on the defensive
-        // default (4096) but the response will pretend to run longer.
+        // The hold covers 4,096 output tokens; the response pretends to run
+        // longer (as it could if input were under-estimated) to exercise the
+        // overage debit.
         requestBody: {
           model: "venice-uncensored-1-2",
           messages: [{ role: "user", content: "hi" }],
+          max_completion_tokens: 4_096,
         },
       },
       memory.db

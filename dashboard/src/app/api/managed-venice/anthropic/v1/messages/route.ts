@@ -20,14 +20,21 @@ import { NextRequest } from "next/server";
 
 import { log } from "@/lib/logger";
 import { type ManagedVeniceWalletType } from "@/lib/billing/managed-venice-wallets";
-import { estimateChatCompletionCost } from "@/lib/venice/cost-estimator";
+import {
+  InvalidVeniceChatRequestError,
+  estimateChatCompletionCost,
+  type VeniceChatEstimateRequest,
+} from "@/lib/venice/cost-estimator";
+import {
+  managedVeniceBalanceHeldMessage,
+  reserveManagedVeniceChatWithinBalance,
+} from "@/lib/venice/chat-output-budget";
 import { UnsupportedVeniceModelError } from "@/lib/venice/pricing";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
-  reserveManagedVeniceChatRequest,
   captureManagedVeniceChatUsage,
   captureManagedVeniceObservedOutput,
   managedVeniceUsageCostMicroUsd,
@@ -42,7 +49,10 @@ import {
   managedVeniceStreamDeadline,
   settleAfterResponse,
 } from "@/lib/venice/stream-settlement";
-import { ManagedVeniceInsufficientBalanceError } from "@/lib/billing/managed-venice-wallets";
+import {
+  ManagedVeniceBalanceHeldError,
+  ManagedVeniceInsufficientBalanceError,
+} from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import {
   anthropicRequestToOpenAi,
@@ -109,7 +119,7 @@ export async function POST(req: NextRequest) {
   const livePricing = await getVenicePricingMap();
   const pricingMap = livePricing.map;
   try {
-    estimateChatCompletionCost(openAiBody as { model: string; [key: string]: unknown }, pricingMap);
+    estimateChatCompletionCost(openAiBody as VeniceChatEstimateRequest, pricingMap);
   } catch (error) {
     if (error instanceof UnsupportedVeniceModelError) {
       return anthropicError({
@@ -117,6 +127,9 @@ export async function POST(req: NextRequest) {
         type: "invalid_request_error",
         message: `Unsupported Venice model "${model}". Pick a Venice model in the box's Inference settings.`,
       });
+    }
+    if (error instanceof InvalidVeniceChatRequestError) {
+      return anthropicError({ status: 400, type: "invalid_request_error", message: error.message });
     }
     throw error;
   }
@@ -134,21 +147,45 @@ export async function POST(req: NextRequest) {
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
 
+  // The hold covers the translated request's worst case. Claude Code sends a
+  // large max_tokens; above the model maximum it is written down to it, and
+  // below what the wallet covers it is lowered to that (chat-output-budget.ts).
+  let bodyPatch: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>["bodyPatch"];
   try {
-    await reserveManagedVeniceChatRequest({
+    ({ bodyPatch } = await reserveManagedVeniceChatWithinBalance({
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
       walletType,
       referenceId,
-      requestBody: openAiBody as { model: string; [key: string]: unknown },
+      protocol: "chat",
+      body: openAiBody,
       pricingMap,
-    });
+      allowBodyRewrite: true,
+      route: "/api/managed-venice/anthropic/v1/messages",
+    }));
   } catch (error) {
     if (error instanceof ManagedVeniceSpendCapError) {
       return anthropicError({
         status: 402,
         type: "billing_error",
         message: `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ${managedVeniceTopUpUrl(walletType)}`,
+      });
+    }
+    if (error instanceof ManagedVeniceBalanceHeldError) {
+      log.warn("Managed Venice request refused: the wallet balance is held by requests still running", {
+        source: "managed-venice-anthropic",
+        route: ANTHROPIC_ROUTE,
+        failureType: "managed_venice_balance_held",
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        walletType,
+        heldMicroUsd: error.heldMicroUsd,
+        availableMicroUsd: error.balance?.availableMicroUsd ?? null,
+      });
+      return anthropicError({
+        status: 402,
+        type: "billing_error",
+        message: managedVeniceBalanceHeldMessage(error, managedVeniceTopUpUrl(walletType)),
       });
     }
     if (error instanceof ManagedVeniceInsufficientBalanceError) {
@@ -162,8 +199,8 @@ export async function POST(req: NextRequest) {
   }
 
   const upstreamBody = isStream
-    ? { ...openAiBody, stream: true, stream_options: { include_usage: true } }
-    : { ...openAiBody, stream: false };
+    ? { ...openAiBody, ...bodyPatch, stream: true, stream_options: { include_usage: true } }
+    : { ...openAiBody, ...bodyPatch, stream: false };
 
   // A refused request (or one that never reached Venice) gets its hold back.
   // If that release fails, an item is filed and the hourly sweep releases it:

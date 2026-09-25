@@ -102,7 +102,13 @@ function liftLiveModel(
 
   const cacheInputUsd = readNumber(cacheInputBlock.usd);
   const contextWindow = readNumber(spec.availableContextTokens) ?? readNumber(spec.context_length);
-  const maxOutputTokens = readNumber(spec.maxCompletionTokens);
+  // A maximum Venice publishes becomes the output cap the proxy may write into
+  // a request, so only a positive whole number counts.
+  const liveMaxOutputTokens = readNumber(spec.maxCompletionTokens);
+  const maxOutputTokens =
+    liveMaxOutputTokens != null && Number.isSafeInteger(liveMaxOutputTokens) && liveMaxOutputTokens > 0
+      ? liveMaxOutputTokens
+      : null;
   const privacy = normalisePrivacy(spec.privacy, id);
 
   const fallback = staticEntries.get(id);
@@ -119,6 +125,9 @@ function liftLiveModel(
     cacheWriteMicroUsdPerMillion: fallback?.cacheWriteMicroUsdPerMillion ?? null,
     contextWindow: resolvedContextWindow,
     maxOutputTokens: resolvedMaxOutputTokens,
+    // Only a maximum Venice published counts as confirmed; a fallback to the
+    // catalog stays a guess (chat-output-budget.ts writes the held cap then).
+    maxOutputTokensSource: maxOutputTokens != null ? "venice_live" : "catalog",
     privacy,
   };
 }

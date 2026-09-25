@@ -51,6 +51,9 @@ async function handlePost(req: NextRequest) {
   const auth = await authorizeManagedVeniceChat({ plaintextKey: bearer, body, protocol: "responses" });
   if (!auth.ok) return auth.response;
   const context = auth.value;
+  // The body goes to Venice byte for byte, unless the output cap had to be
+  // written down to what the wallet holds (chat-output-budget.ts).
+  const upstreamText = Object.keys(context.bodyPatch).length ? JSON.stringify({ ...body, ...context.bodyPatch }) : text;
   const identity = { userId: context.userId, proxyKeyId: context.proxyKeyId, referenceId: context.referenceId };
   let finalizing: Promise<void> | null = null;
   // Only an unknown upstream outcome (the dispatch threw) waits, briefly, for
@@ -100,7 +103,7 @@ async function handlePost(req: NextRequest) {
   let upstream: Response;
   try {
     upstream = await fetch(context.upstreamUrl, { method: "POST", redirect: "error", signal,
-      headers: { Authorization: `Bearer ${context.upstreamKey}`, "Content-Type": "application/json", Accept: body.stream === true ? "text/event-stream" : "application/json" }, body: text });
+      headers: { Authorization: `Bearer ${context.upstreamKey}`, "Content-Type": "application/json", Accept: body.stream === true ? "text/event-stream" : "application/json" }, body: upstreamText });
   } catch {
     await finish(null, "dispatch_outcome_unknown");
     return apiError("Model request could not be confirmed. Usage is awaiting reconciliation.", 502);

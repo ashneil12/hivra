@@ -40,6 +40,10 @@ interface LiveModelPricing {
   inputUsd: number;
   outputUsd: number;
   cacheReadUsd: number | null;
+  /** `model_spec.maxCompletionTokens`, when Venice publishes it. */
+  maxOutputTokens: number | null;
+  /** `model_spec.availableContextTokens`, when Venice publishes it. */
+  contextWindow: number | null;
 }
 
 interface PriceDrift {
@@ -50,8 +54,23 @@ interface PriceDrift {
   deltaUsdPerMillion: number | null;
 }
 
+// The catalog's output maximum and context window are what the chat proxy
+// holds for while live pricing is down (chat-output-budget.ts writes the cap
+// it held, so an under-stated maximum truncates answers, and an over-stated
+// one can send Venice a cap it refuses). Review of #166: the catalog listed
+// zai-org-glm-5-1 at 24,000 output tokens against Venice's 80,000 and the
+// rate-only diff never noticed.
+interface LimitDrift {
+  model: string;
+  field: "max_output_tokens" | "context_window";
+  catalog: number;
+  live: number;
+  catalogBelowVenice: boolean;
+}
+
 interface DriftReport {
   driftedModels: PriceDrift[];
+  driftedLimits: LimitDrift[];
   catalogModelsRemovedFromVenice: string[];
   newModelsOnVeniceNotInCatalog: string[];
 }
@@ -59,6 +78,14 @@ interface DriftReport {
 function readUsdNumber(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
   return value;
+}
+
+// Venice has sent token limits as numbers and as numeric strings
+// (live-pricing.ts accepts both).
+function readTokenLimit(value: unknown): number | null {
+  const parsed = typeof value === "string" && value.trim() ? Number(value) : value;
+  if (typeof parsed !== "number" || !Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function parseLiveEntry(entry: unknown): { id: string; pricing: LiveModelPricing } | null {
@@ -85,6 +112,8 @@ function parseLiveEntry(entry: unknown): { id: string; pricing: LiveModelPricing
       inputUsd,
       outputUsd,
       cacheReadUsd: readUsdNumber(cacheInputBlock.usd),
+      maxOutputTokens: readTokenLimit(spec.maxCompletionTokens),
+      contextWindow: readTokenLimit(spec.availableContextTokens) ?? readTokenLimit(spec.context_length),
     },
   };
 }
@@ -148,6 +177,7 @@ function buildDriftReport(
   liveMap: Map<string, LiveModelPricing>,
 ): DriftReport {
   const driftedModels: PriceDrift[] = [];
+  const driftedLimits: LimitDrift[] = [];
   const catalogModelsRemovedFromVenice: string[] = [];
 
   // Catalog stores prices as microdollars-per-million (integers). Live API
@@ -198,6 +228,14 @@ function buildDriftReport(
             : live.cacheReadUsd - entry.cacheReadMicroUsdPerMillion / 1_000_000,
       });
     }
+    const limits = [
+      ["max_output_tokens", entry.maxOutputTokens, live.maxOutputTokens],
+      ["context_window", entry.contextWindow, live.contextWindow],
+    ] as const;
+    for (const [field, catalog, liveLimit] of limits) {
+      if (liveLimit === null || liveLimit === catalog) continue;
+      driftedLimits.push({ model: entry.model, field, catalog, live: liveLimit, catalogBelowVenice: catalog < liveLimit });
+    }
   }
 
   const catalogIds = new Set(VENICE_CHAT_MODEL_PRICES.map((p) => p.model));
@@ -206,7 +244,20 @@ function buildDriftReport(
     if (!catalogIds.has(liveId)) newModelsOnVeniceNotInCatalog.push(liveId);
   }
 
-  return { driftedModels, catalogModelsRemovedFromVenice, newModelsOnVeniceNotInCatalog };
+  return { driftedModels, driftedLimits, catalogModelsRemovedFromVenice, newModelsOnVeniceNotInCatalog };
+}
+
+// What the difference does while live pricing is down and the proxy prices
+// from the catalog.
+function limitDriftEffect(d: LimitDrift): string {
+  if (d.field === "max_output_tokens") {
+    return d.catalogBelowVenice
+      ? "answers are cut short at the catalog maximum"
+      : "the proxy can send Venice an output cap above the model's limit";
+  }
+  return d.catalogBelowVenice
+    ? "a prompt longer than the catalog window is held short"
+    : "large prompts are over-held";
 }
 
 function formatDriftSummary(report: DriftReport): string {
@@ -220,6 +271,15 @@ function formatDriftSummary(report: DriftReport): string {
     }
     if (report.driftedModels.length > 25) {
       lines.push(`  ... ${report.driftedModels.length - 25} more`);
+    }
+  }
+  if (report.driftedLimits.length > 0) {
+    lines.push(`${report.driftedLimits.length} token limit(s) differ from Venice's live /v1/models:`);
+    for (const d of report.driftedLimits.slice(0, 25)) {
+      lines.push(`  - ${d.model}.${d.field}: catalog ${d.catalog} → live ${d.live} (${limitDriftEffect(d)})`);
+    }
+    if (report.driftedLimits.length > 25) {
+      lines.push(`  ... ${report.driftedLimits.length - 25} more`);
     }
   }
   if (report.catalogModelsRemovedFromVenice.length > 0) {
@@ -327,6 +387,7 @@ export async function GET(req: NextRequest) {
     driftReport = buildDriftReport(liveMap);
     const hasDrift =
       driftReport.driftedModels.length > 0 ||
+      driftReport.driftedLimits.length > 0 ||
       driftReport.catalogModelsRemovedFromVenice.length > 0 ||
       // New models live on Venice but absent from our catalog 503 in managed
       // Venice until added, so they're actionable drift — include them in the
@@ -340,6 +401,7 @@ export async function GET(req: NextRequest) {
           severity: "warn",
           title:
             `Venice pricing drift: ${driftReport.driftedModels.length} rate change(s), ` +
+            `${driftReport.driftedLimits.length} token limit change(s), ` +
             `${driftReport.catalogModelsRemovedFromVenice.length} model(s) removed`,
           message:
             `${formatDriftSummary(driftReport)}\n\n` +
@@ -351,6 +413,8 @@ export async function GET(req: NextRequest) {
             failureType: "venice_pricing_live_drift",
             recoveryAction: "resync_venice_pricing_catalog",
             driftedRateCount: driftReport.driftedModels.length,
+            driftedLimitCount: driftReport.driftedLimits.length,
+            driftedLimits: driftReport.driftedLimits.slice(0, 50),
             removedModelCount: driftReport.catalogModelsRemovedFromVenice.length,
             newModelCount: driftReport.newModelsOnVeniceNotInCatalog.length,
             driftedModels: driftReport.driftedModels.slice(0, 50),
@@ -376,6 +440,8 @@ export async function GET(req: NextRequest) {
     liveCheckRan: liveMap !== null,
     liveModelCount: liveMap?.size ?? 0,
     driftedRateCount: driftReport?.driftedModels.length ?? 0,
+    driftedLimitCount: driftReport?.driftedLimits.length ?? 0,
+    driftedLimits: driftReport?.driftedLimits ?? [],
     catalogModelsRemovedFromVenice: driftReport?.catalogModelsRemovedFromVenice ?? [],
     newModelsOnVeniceNotInCatalog: driftReport?.newModelsOnVeniceNotInCatalog ?? [],
     driftedModels: driftReport?.driftedModels ?? [],
