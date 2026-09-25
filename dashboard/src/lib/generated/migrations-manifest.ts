@@ -375,5 +375,7 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260925174500", name: "hermes_instances_api_role_writes" },
   { version: "20260925181500", name: "token_holding_refresh_cursor" },
   { version: "20260925181600", name: "bankr_deposit_wallet_primary_repair" },
+  { version: "20260925193000", name: "crypto_topup_reconcile_queue" },
+  { version: "20260925193100", name: "managed_venice_token_sweep_claim" },
   { version: "20260925194500", name: "token_holding_refresh_standing_first" },
 ];

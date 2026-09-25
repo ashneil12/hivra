@@ -26,11 +26,14 @@
  *      pump-quote-dump profitable.
  *   2. Median cross-check: the reference is the median price over the last
  *      PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES of wall-clock time, from the
- *      pool's 5-minute candles on GeckoTerminal (an independent indexer).
- *      Each 5-minute bucket carries the last traded close forward, so a quiet
- *      pool still has a reference (its last price). Both sides are compared
- *      in the pool's paired token (WETH), so an ETH move while the pool is
- *      quiet is not mistaken for a token move.
+ *      pool's completed 5-minute candles on GeckoTerminal (an independent
+ *      indexer). Each 5-minute bucket carries the last traded close forward,
+ *      so a quiet pool still has a reference (its last price). Both sides are
+ *      compared in the pool's paired token (WETH), so an ETH move while the
+ *      pool is quiet is not mistaken for a token move. The median is only
+ *      trusted once the pool has a full window of history and at least
+ *      PLATFORM_PRICE_MIN_TRADED_CANDLES traded 5-minute periods: a young
+ *      pool's "median" is its last few candles, which a pump sets.
  *
  * Every flow gains from a higher token price (fewer tokens to hold or pay,
  * more credit per token), so a quote is priced at min(spot, median): a pump
@@ -38,8 +41,8 @@
  * above the median is refused outright; a spot below it is simply used.
  *
  * Each refusal is a PlatformTokenPriceGateError that names the token, the
- * reason (liquidity_floor, median_deviation, no_candle or feed_error) and the
- * observed values, so the quote routes can log and alert on it
+ * reason (liquidity_floor, median_deviation, insufficient_history, no_candle
+ * or feed_error) and the observed values, so the quote routes can log and alert on it
  * (price-gate-alerts.ts) without re-deriving why.
  */
 
@@ -103,6 +106,17 @@ const GECKOTERMINAL_BASE_URL = "https://api.geckoterminal.com/api/v2";
 export const PLATFORM_PRICE_MAX_DEVIATION_BPS = 1_000;
 /** The wall-clock window the reference median covers, in 5-minute buckets. */
 export const PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES = 4 * 60;
+/**
+ * A pool's first completed candle must be at least this old before its median
+ * is trusted: the whole median window, so every bucket holds a real price and
+ * a pump has to hold for half the window to move the median.
+ */
+export const PLATFORM_PRICE_MIN_HISTORY_MINUTES = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES;
+/**
+ * ...and it must have traded in at least this many completed 5-minute
+ * periods (two hours' worth), so a handful of trades cannot set the reference.
+ */
+export const PLATFORM_PRICE_MIN_TRADED_CANDLES = 24;
 const BUCKET_SEC = 5 * 60;
 /**
  * Candles fetched per reference read. Candles exist only for 5-minute periods
@@ -114,16 +128,25 @@ const REFERENCE_CACHE_MS = 60_000;
 /** A failed reference read is reused this long, so an outage does not become a request storm (and a 429). */
 const REFERENCE_FAILURE_CACHE_MS = 30_000;
 
-export type PlatformTokenPriceGate = "liquidity" | "spot_unavailable" | "reference_unavailable" | "deviation" | "pool_missing";
+export type PlatformTokenPriceGate =
+  | "liquidity"
+  | "spot_unavailable"
+  | "reference_unavailable"
+  | "deviation"
+  | "history"
+  | "pool_missing";
 
 /**
  * Why a price gate refused, for logs and ops alerts:
- *   liquidity_floor   the pricing pool holds less than the token's floor
- *   median_deviation  the spot is too far above the recent median
- *   no_candle         the median source has no candle for the pool
- *   feed_error        a price source failed, or named the wrong pool
+ *   liquidity_floor       the pricing pool holds less than the token's floor
+ *   median_deviation      the spot is too far above the recent median
+ *   insufficient_history  the pool is too young, or has traded too little, for
+ *                         its median to be trusted (a market condition, not an
+ *                         outage: no cached price is served in its place)
+ *   no_candle             the median source has no candle for the pool
+ *   feed_error            a price source failed, or named the wrong pool
  */
-export type PriceGateReason = "liquidity_floor" | "median_deviation" | "no_candle" | "feed_error";
+export type PriceGateReason = "liquidity_floor" | "median_deviation" | "insufficient_history" | "no_candle" | "feed_error";
 
 /** Numbers and ids a gate observed when it refused (never user data). */
 export type PriceGateObserved = Record<string, number | string | null>;
@@ -142,6 +165,7 @@ export interface PriceGateRefusal {
 function reasonForGate(gate: PlatformTokenPriceGate): PriceGateReason {
   if (gate === "liquidity") return "liquidity_floor";
   if (gate === "deviation") return "median_deviation";
+  if (gate === "history") return "insufficient_history";
   return "feed_error";
 }
 
@@ -330,7 +354,7 @@ interface GeckoOhlcvResponse {
 interface PoolReference {
   /** Median price in the pool's paired token (WETH). */
   priceNative: number;
-  /** Candles with trades inside the window (the rest carry a close forward). */
+  /** Completed candles with trades inside the window (the rest carry a close forward). */
   candles: number;
   fetchedAtMs: number;
 }
@@ -353,10 +377,14 @@ function median(values: number[]) {
 /**
  * Median price of the pool over the last PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES
  * of wall-clock time, from GeckoTerminal 5-minute candles priced in the
- * pool's paired token. Each 5-minute bucket holds the close of the latest candle at
- * or before it, so buckets with no trades carry the last price forward: a
- * quiet pool keeps a reference, and a burst of trades cannot outvote hours of
- * earlier price. Throws only when the pool has no candle at all.
+ * pool's paired token. Only completed candles count: the in-progress one's
+ * "close" is simply the latest trade, which is the spot being checked. Each
+ * 5-minute bucket holds the close of the latest completed candle at or before
+ * it, so buckets with no trades carry the last price forward: a quiet pool
+ * keeps a reference, and a burst of trades cannot outvote hours of earlier
+ * price. Throws NoCandleError when the pool has no completed candle, and a
+ * `history` gate error while the pool is younger than the window or has traded
+ * in fewer than PLATFORM_PRICE_MIN_TRADED_CANDLES periods.
  */
 async function fetchPoolMedianCloseNative(
   poolId: string,
@@ -425,22 +453,41 @@ async function readPoolMedianCloseNative(
   const candles = list
     .filter((c): c is number[] => Array.isArray(c) && c.length >= 5)
     .map((c) => ({ at: Number(c[0]), close: Number(c[4]) }))
-    .filter((c) => Number.isFinite(c.at) && c.at <= nowSec && Number.isFinite(c.close) && c.close > 0)
+    // A candle is complete once its 5-minute period has ended.
+    .filter((c) => Number.isFinite(c.at) && c.at + BUCKET_SEC <= nowSec && Number.isFinite(c.close) && c.close > 0)
     .sort((a, b) => a.at - b.at);
-  if (candles.length === 0) throw new NoCandleError(`GeckoTerminal has no candles for pool ${poolId}`);
+  if (candles.length === 0) throw new NoCandleError(`GeckoTerminal has no completed candles for pool ${poolId}`);
 
   const lastBucket = nowSec - (nowSec % BUCKET_SEC);
   const buckets = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES / 5;
   const firstBucket = lastBucket - (buckets - 1) * BUCKET_SEC;
+  const historyMinutes = Math.floor((nowSec - candles[0].at) / 60);
+  if (historyMinutes < PLATFORM_PRICE_MIN_HISTORY_MINUTES || candles.length < PLATFORM_PRICE_MIN_TRADED_CANDLES) {
+    throw new PlatformTokenPriceGateError(
+      "history",
+      `Pool ${poolId} has ${historyMinutes} minutes of candle history in ${candles.length} traded periods; ` +
+        `its median is trusted from ${PLATFORM_PRICE_MIN_HISTORY_MINUTES} minutes and ${PLATFORM_PRICE_MIN_TRADED_CANDLES} periods`,
+      {
+        observed: {
+          stage: "reference",
+          poolId,
+          historyMinutes,
+          minHistoryMinutes: PLATFORM_PRICE_MIN_HISTORY_MINUTES,
+          tradedCandles: candles.length,
+          minTradedCandles: PLATFORM_PRICE_MIN_TRADED_CANDLES,
+        },
+      }
+    );
+  }
   const closes: number[] = [];
   let next = 0;
   let carried: number | null = null;
   for (let bucket = firstBucket; bucket <= lastBucket; bucket += BUCKET_SEC) {
     while (next < candles.length && candles[next].at <= bucket) carried = candles[next++].close;
-    // Before the pool's first candle there is no price to carry: skip.
+    // The history check puts the first candle before the first bucket, so
+    // every bucket carries a price.
     if (carried !== null) closes.push(carried);
   }
-  if (closes.length === 0) throw new NoCandleError(`GeckoTerminal has no candles for pool ${poolId} before now`);
   return {
     priceNative: median(closes),
     candles: candles.filter((c) => c.at >= firstBucket).length,
