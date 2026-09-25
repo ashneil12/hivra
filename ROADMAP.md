@@ -133,6 +133,16 @@ remain available until migration, parity, rollback, and acceptance gates pass.
 A new shell, managed path, Ubuntu path, mock, or contract test cannot close the
 portable reference or public-release gates.
 
+**Open discrepancy (noted 2026-09-25):** #104, merged to Canary on 2026-09-24
+and not yet in `main`, retired the original Welcome launcher and made Launch
+the only way in before these gates passed. This paragraph, the Phase 1 item
+"Keep the existing agent catalog, launch flow…" below,
+[VISION.md](VISION.md) and
+[the product architecture](docs/PRODUCT-ARCHITECTURE.md) still say the original
+launch path stays until then. The owner has not yet decided whether this is
+documentation drift (change the text) or a code change to undo (restore the
+original launcher). Until that decision, none of these passages is changed.
+
 ### Responsibility vocabulary
 
 The UI selects **Hivra-hosted** or **Self-hosted Hivra** for the control plane
