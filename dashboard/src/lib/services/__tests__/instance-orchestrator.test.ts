@@ -688,7 +688,7 @@ describe("applyLiveUpdate", () => {
     // VM, so a misrouted deploy aborts before it can drop a peer Caddyfile alongside
     // the legitimate tenant's. Decode bastion → inner → wrapper to inspect.
     const bastionScript = String((runProxmoxHostScript as jest.Mock).mock.calls[0][0]);
-    const innerB64 = bastionScript.match(/printf '%s' '([^']+)' \| base64 -d \| ssh/)?.[1];
+    const innerB64 = bastionScript.match(/printf '%s' '([^']+)' \| base64 -d \| "\$\{GUEST_SSH\[@\]\}"/)?.[1];
     const innerScript = innerB64 ? Buffer.from(innerB64, "base64").toString("utf8") : "";
     const wrapperScript = extractEmbeddedScript(
       innerScript,
@@ -762,10 +762,20 @@ describe("applyLiveUpdate", () => {
     expect(attempts).toBeGreaterThan(0);
     expect(connectTimeoutS).toBeGreaterThan(0);
     expect(sleepS).toBeGreaterThan(0);
+    // Before any SSH the host waits for the VM's guest agent, which attests the
+    // host key the connection is pinned to; that wait shares the same cap.
+    const agentAttempts = Number(script.match(/HERMES_GUEST_AGENT_ATTEMPTS=(\d+)/)?.[1]);
+    const agentPingS = Number(script.match(/timeout (\d+) qm guest cmd "\$VMID" ping/)?.[1]);
+    const agentSleepS = Number(script.match(/-lt "\$HERMES_GUEST_AGENT_ATTEMPTS" \]; then sleep (\d+)/)?.[1]);
+    expect(agentAttempts).toBeGreaterThan(0);
+    expect(agentPingS).toBeGreaterThan(0);
+    expect(agentSleepS).toBeGreaterThan(0);
 
     // No sleep after the final attempt — it would only delay the diagnostic.
-    const worstCaseMs = (attempts * connectTimeoutS + (attempts - 1) * sleepS) * 1000;
-    expect(worstCaseMs).toBeLessThan(timeoutMs);
+    // 10s is left for the qm config/status/guest exec calls between the waits.
+    const agentWorstCaseS = agentAttempts * agentPingS + (agentAttempts - 1) * agentSleepS;
+    const sshWorstCaseS = attempts * connectTimeoutS + (attempts - 1) * sleepS;
+    expect((agentWorstCaseS + sshWorstCaseS + 10) * 1000).toBeLessThan(timeoutMs);
 
     // The diagnostic the budget exists to protect must still be emitted, and must
     // name the VM and IP rather than leaving the caller with a bare timeout.

@@ -18,6 +18,11 @@ import {
 } from "@/lib/services/webui-instance-builder";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
+import {
+  buildEnsureQemuGuestAgentChannelScript,
+  buildHermesVmidBoundGuestSshPrelude,
+  buildPinnedGuestSshReadinessWait,
+} from "@/lib/proxmox/hermes-guest-ssh";
 
 /**
  * Pure host-side bash/Python script generators for Proxmox guests.
@@ -576,6 +581,16 @@ export function buildProxmoxProvisionScript(params: {
     isWebfreeBackend(backend) ? "2[0-9][0-9]|3[0-9][0-9]|401|403" : "200";
   const readinessAttempts = isWebfreeBackend(backend) ? 300 : 60;
   const readinessIntervalSeconds = 2;
+  // The deploy and every later guest SSH call are bound to the new VMID: the
+  // host reads the guest's SSH host key through the QEMU Guest Agent (which the
+  // bootstrap installs) and pins SSH to it. Phase 2 has no request deadline, so
+  // it waits up to ~2 min (12 x 5s ping + 5s sleep) for the agent to answer.
+  const phase2GuestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: params.vmSshUser,
+    agentAttempts: 12,
+    callerOwnsExitTrap: true,
+  });
+  const phase2PinnedSshReadiness = buildPinnedGuestSshReadinessWait({ attempts: 6, sleepSeconds: 5 });
   assertSupportedProxmoxGatewayHost(params.gatewayHost);
   const gatewayCaddySite = buildProxmoxGatewayCaddySite({
     gatewayHost: "\${GATEWAY_SITE_LABEL}",
@@ -900,6 +915,11 @@ if [ -n "$SCSI0_DISK" ]; then
 fi
 qm set "$VMID" --cores "$CORES" --cpulimit "$CPU_LIMIT" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"
 qm set "$VMID" --ipconfig0 "ip=\${PRIVATE_IP}/\${PRIVATE_CIDR},gw=\${PRIVATE_GATEWAY}" --nameserver "$NAMESERVER" --onboot 1
+# Phase 2 attests this VM's SSH host key through the QEMU Guest Agent before
+# the deploy (which carries the box's secrets) goes over SSH. The agent's
+# virtio channel only exists if it is configured before boot, so set it here
+# whatever the template carries.
+${buildEnsureQemuGuestAgentChannelScript()}
 qm start "$VMID"
 
 # (The VMID claim file was stamped right after allocation, before the clone,
@@ -1006,7 +1026,11 @@ chmod 600 "$PHASE2_BOOTSTRAP_B64_FILE" "$PHASE2_DEPLOY_B64_FILE"
 cat > "$PHASE2_SCRIPT_FILE" <<'PHASE2_BOOTSTRAP'
 set -euo pipefail
 
-GUEST_SSH_OPTS=(-i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE")
+# Trust-on-first-use SSH, only for what runs before the guest agent can attest
+# the guest's host key: the SSH-ready wait (sudo -n true) and the bootstrap,
+# which is the fixed buildProxmoxGuestBootstrapScript with no secrets in it.
+# Anything carrying this box's secrets goes through GUEST_SSH, set up below.
+UNATTESTED_GUEST_SSH_OPTS=(-i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE")
 
 ${PROXMOX_REMOVE_VMID_LVS_FN}
 
@@ -1030,6 +1054,11 @@ cleanup_phase2_payloads() {
 # only destroy when the claim still names this provision.
 cleanup_phase2() {
   exit_code="$1"
+  # The guest identity prelude leaves its EXIT trap to this one, so a refusal
+  # inside it still tears the VM down and removes the staged payloads.
+  if declare -F cleanup_hivra_guest_ssh_identity >/dev/null; then
+    cleanup_hivra_guest_ssh_identity || true
+  fi
   if [ "$exit_code" != "0" ] && [ -n "$VMID" ]; then
     claim=$(cat "/run/hermes-vm-claims/$VMID.claim" 2>/dev/null || true)
     if [ "$claim" = "$INSTANCE_ID" ]; then
@@ -1065,7 +1094,7 @@ trap 'cleanup_phase2 "$?"' EXIT
 
 ssh_ready=0
 for _attempt in $(seq 1 72); do
-  if ssh -n "\${GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5 "$VM_SSH_USER@$PRIVATE_IP" "sudo -n true" >/dev/null 2>&1; then
+  if ssh -n "\${UNATTESTED_GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5 "$VM_SSH_USER@$PRIVATE_IP" "sudo -n true" >/dev/null 2>&1; then
     ssh_ready=1
     break
   fi
@@ -1086,14 +1115,17 @@ fi
 # script is re-run verbatim on every fleet redeploy), so a retry is safe.
 # Only a PERSISTENT failure exhausts the attempts and tears the VM down —
 # this is what distinguishes a transient hiccup from a real, fatal failure.
+# Arguments: label, payload file, then the ssh command up to and including
+# its destination, so each call site shows which connection it trusts.
 run_guest_script() {
   local label="$1"
   local b64_file="$2"
+  shift 2
   local attempt=1
   local rc=0
   while [ "$attempt" -le 3 ]; do
     rc=0
-    base64 -d < "$b64_file" | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -s" && return 0 || rc=$?
+    base64 -d < "$b64_file" | "$@" "sudo bash -s" && return 0 || rc=$?
     if [ "$attempt" -ge 3 ]; then
       echo "guest $label failed after $attempt attempts (rc=$rc) — tearing VM down" >&2
       return "$rc"
@@ -1105,8 +1137,28 @@ run_guest_script() {
   return "$rc"
 }
 
-run_guest_script bootstrap "$BOOTSTRAP_B64_FILE"
-run_guest_script deploy "$DEPLOY_B64_FILE"
+run_guest_script bootstrap "$BOOTSTRAP_B64_FILE" ssh "\${UNATTESTED_GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP"
+
+# The deploy carries this box's secrets (hermes.env with the LLM key and the
+# WebUI bearer, the Bankr config), and the private IP is not an identity: a
+# neighbour on the bridge can answer for it. From here on every connection is
+# bound to VM $VMID. The host checks the VM's config names this IP, reads the
+# guest's SSH host key through the guest agent over the VMID's virtio channel,
+# and pins SSH to that key; any mismatch exits before a byte is sent and the
+# EXIT trap tears the VM down.
+#
+# A provision that wakes late can find its VMID recycled for another instance.
+# The claim file then names that instance, and even a pinned connection would
+# reach its VM, so check ownership first. The EXIT trap leaves a VM alone when
+# the claim names someone else.
+deploy_claim="$(cat "/run/hermes-vm-claims/$VMID.claim" 2>/dev/null || true)"
+if [ "$deploy_claim" != "$INSTANCE_ID" ]; then
+  echo "VM $VMID is no longer claimed by instance $INSTANCE_ID; nothing was sent to it" >&2
+  exit 1
+fi
+${phase2GuestSshPrelude}
+${phase2PinnedSshReadiness}
+run_guest_script deploy "$DEPLOY_B64_FILE" "\${GUEST_SSH[@]}"
 
 backend_ready=0
 last_readiness_code=""
@@ -1129,7 +1181,7 @@ if [ "$backend_ready" != "1" ]; then
 fi
 ${isWebfreeBackend(backend) ? `
 echo "[phase2] running Hermes disk cleanup after WebUI readiness"
-if ssh -n "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "if [ -x /usr/local/bin/hermes-disk-cleanup ]; then sudo -n /usr/local/bin/hermes-disk-cleanup; else echo '[phase2] WARN: /usr/local/bin/hermes-disk-cleanup missing' >&2; exit 42; fi; printf 'PHASE2_DISK_AFTER_CLEANUP '; sudo -n df -h / | tail -1"; then
+if "\${GUEST_SSH[@]}" "if [ -x /usr/local/bin/hermes-disk-cleanup ]; then sudo -n /usr/local/bin/hermes-disk-cleanup; else echo '[phase2] WARN: /usr/local/bin/hermes-disk-cleanup missing' >&2; exit 42; fi; printf 'PHASE2_DISK_AFTER_CLEANUP '; sudo -n df -h / | tail -1" </dev/null; then
   :
 else
   echo "[phase2] WARN: Hermes disk cleanup after readiness failed" >&2

@@ -59,6 +59,12 @@ import { isWebfreeBackend } from "@/lib/types/instance";
 import { validateProviderApiKey } from "@/lib/services/provider-validation";
 import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { isIpv4Literal } from "@/lib/network-address";
+import {
+  GUEST_SSH_REFUSED_MARKER,
+  buildHermesVmidBoundGuestSshPrelude,
+  buildPinnedGuestSshReadinessWait,
+  isValidGuestSshUser,
+} from "@/lib/proxmox/hermes-guest-ssh";
 import { buildInstanceUpdateReporterShell } from "@/lib/services/update-status-reporting";
 import {
   BROWSER_SIDECAR_DEPLOY_ENABLED_ENV,
@@ -825,63 +831,77 @@ fi
     return { applied: false as const, error: message, initiator };
   }
 
-  const launchResult = proxmoxInfrastructure
-    ? await runProxmoxHostScript(
-        [
-          `#!/usr/bin/env bash`,
-          `set -euo pipefail`,
-          ...(gatewayDockerAccess ? [buildProxmoxTenantIsolationGuard()] : []),
-          `VMID=${shQuote(proxmoxInfrastructure.vmid)}`,
-          `PRIVATE_IP=${shQuote(proxmoxInfrastructure.privateIpv4)}`,
-          `VM_SSH_USER=${shQuote(proxmoxScriptEnv.PROXMOX_VM_SSH_USER || "hermes")}`,
-          `VM_SSH_KEY_PATH=${shQuote(proxmoxScriptEnv.PROXMOX_VM_SSH_KEY_PATH || "/etc/hivra/keys/vm-orchestrator")}`,
-          `SSH_KNOWN_HOSTS_FILE="/tmp/hermes-proxmox-known-hosts-update-$VMID"`,
-          `rm -f "$SSH_KNOWN_HOSTS_FILE"`,
-          `GUEST_SSH_OPTS=(-i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE")`,
-          // The readiness wait MUST fit inside the runProxmoxHostScript cap below,
-          // or the "not reachable over SSH" diagnostic underneath is dead code. A
-          // powered-off VM drops packets rather than sending RST, so every attempt
-          // burns the full ConnectTimeout: the old `seq 1 12` cost 12*(5s connect +
-          // 5s sleep) = 120s and the 90s cap always fired first, reporting the
-          // useless "Proxmox SSH operation timed out after 90000ms" instead of
-          // naming the VM and IP. That mis-attribution cost hours on 2026-07-16,
-          // when the inactivity sweep's 42703 (#593) left VMs powered off under
-          // active rows and the fleet-sync redeploy walked into them.
-          // 8 attempts with no trailing sleep = 8*5s connect + 7*5s sleep = 75s
-          // worst case, leaving ~15s of headroom under the cap. A booting VM
-          // answers well inside that; a healthy one answers on the first attempt.
-          `SSH_READY_ATTEMPTS=8`,
-          `ssh_ready=0`,
-          `for _attempt in $(seq 1 "$SSH_READY_ATTEMPTS"); do`,
-          `  if ssh -n "\${GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5 "$VM_SSH_USER@$PRIVATE_IP" "sudo -n true" >/dev/null 2>&1; then`,
-          `    ssh_ready=1`,
-          `    break`,
-          `  fi`,
-          // Explicit `if` rather than `[ … ] && sleep 5`: under `set -e` a false
-          // test as the loop body's last command makes the body exit non-zero.
-          `  if [ "$_attempt" -lt "$SSH_READY_ATTEMPTS" ]; then sleep 5; fi`,
-          `done`,
-          `if [ "$ssh_ready" != "1" ]; then`,
-          `  echo "VM $VMID is not reachable over SSH at $PRIVATE_IP" >&2`,
-          `  exit 1`,
-          `fi`,
-          `printf '%s' '${Buffer.from(innerScript).toString("base64")}' | base64 -d | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -s"`,
-        ].join("\n"),
-        proxmoxScriptEnv,
-        launchTimeoutMs(90_000)
-      )
+  // The update stream carries the box's secrets (LLM key, WebUI bearer, Bankr
+  // wallet key), so it only goes to the guest the host can prove is this VMID:
+  // see hermes-guest-ssh.ts. A target that can't be expressed safely never
+  // reaches the host.
+  let proxmoxLaunchScript: string | null = null;
+  if (proxmoxInfrastructure) {
+    const guestSshUser = (proxmoxScriptEnv.PROXMOX_VM_SSH_USER || "hermes").trim();
+    const guestSshKeyPath = (proxmoxScriptEnv.PROXMOX_VM_SSH_KEY_PATH || "/etc/hivra/keys/vm-orchestrator").trim();
+    const invalidTarget =
+      !Number.isSafeInteger(proxmoxInfrastructure.vmid) || proxmoxInfrastructure.vmid < 100
+        ? "stored vmid is not a Proxmox VMID"
+        : !isIpv4Literal(proxmoxInfrastructure.privateIpv4)
+          ? "stored guest ip is not an IPv4 address"
+          : !isValidGuestSshUser(guestSshUser)
+            ? "guest ssh user is not a plain login name"
+            : !guestSshKeyPath.startsWith("/")
+              ? "guest ssh key path is not absolute"
+              : null;
+    if (invalidTarget) {
+      log.error("update guest target invalid", new Error("update_guest_target_invalid"), {
+        source: LOG_SOURCE,
+        failureType: "update_guest_target_invalid",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        reason: invalidTarget,
+      });
+      return { applied: false as const, error: `Refusing to update: ${invalidTarget}`, initiator };
+    }
+    proxmoxLaunchScript = [
+      `#!/usr/bin/env bash`,
+      `set -euo pipefail`,
+      ...(gatewayDockerAccess ? [buildProxmoxTenantIsolationGuard()] : []),
+      `VMID=${shQuote(proxmoxInfrastructure.vmid)}`,
+      `PRIVATE_IP=${shQuote(proxmoxInfrastructure.privateIpv4)}`,
+      `VM_SSH_KEY_PATH=${shQuote(guestSshKeyPath)}`,
+      // The waits below MUST fit inside the runProxmoxHostScript cap, or the
+      // "not reachable over SSH" diagnostic is dead code. A powered-off VM drops
+      // packets rather than sending RST, so every SSH attempt burns the full
+      // ConnectTimeout: the old `seq 1 12` cost 12*(5s connect + 5s sleep) =
+      // 120s and the 90s cap always fired first, reporting the useless "Proxmox
+      // SSH operation timed out after 90000ms" instead of naming the VM and IP.
+      // That mis-attribution cost hours on 2026-07-16, when the inactivity
+      // sweep's 42703 (#593) left VMs powered off under active rows and the
+      // fleet-sync redeploy walked into them.
+      // Worst case: guest agent 5*(5s ping) + 4*5s sleep = 45s, then SSH
+      // 3*5s connect + 2*5s sleep = 25s; 70s plus a few seconds of qm calls,
+      // under the 90s cap. A booting VM's agent answers inside the first wait
+      // and sshd with it; a healthy one answers both on the first attempt.
+      buildHermesVmidBoundGuestSshPrelude({ sshUser: guestSshUser, agentAttempts: 5, connectTimeoutSeconds: 5 }),
+      buildPinnedGuestSshReadinessWait({ attempts: 3, sleepSeconds: 5 }),
+      `printf '%s' '${Buffer.from(innerScript).toString("base64")}' | base64 -d | "\${GUEST_SSH[@]}" "sudo bash -s"`,
+    ].join("\n");
+  }
+
+  const launchResult = proxmoxLaunchScript
+    ? await runProxmoxHostScript(proxmoxLaunchScript, proxmoxScriptEnv, launchTimeoutMs(90_000))
     : await sshExec(ipv4, "bash -s", {
       timeoutMs: launchTimeoutMs(30_000),
       stdin: innerScript,
     });
 
   if (!launchResult.ok) {
+    const launchFailure = launchResult.stderr || launchResult.error || "";
     log.error("update launch failed", new Error("update launch failed"), {
       source: LOG_SOURCE,
-      failureType: "update_launch_failed",
+      failureType: launchFailure.includes(GUEST_SSH_REFUSED_MARKER)
+        ? "update_guest_identity_refused"
+        : "update_launch_failed",
       instanceId: instance.id,
       userId: instance.user_id,
-      redactedMessage: redactSensitiveCommandOutput(launchResult.stderr || launchResult.error || "", 600),
+      redactedMessage: redactSensitiveCommandOutput(launchFailure, 600),
     });
     // Stamp lifecycle_state='failed' so recover-stuck-instances (which selects
     // lifecycle_state IN ('failed','provisioning')) re-drives this row. Without
