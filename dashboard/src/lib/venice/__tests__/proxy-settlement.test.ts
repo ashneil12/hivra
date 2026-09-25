@@ -56,27 +56,32 @@ function createUpdate(rows: Row[], patch: Row) {
   const filters: Array<[string, unknown]> = [];
   const query: {
     eq: (column: string, value: unknown) => typeof query;
-    select: () => { single: () => Promise<{ data: Row | null; error: null }> };
+    select: () => {
+      single: () => Promise<{ data: Row | null; error: null }>;
+      then: Promise<{ data: Row[]; error: null }>["then"];
+    };
     then: Promise<{ error: null }>["then"];
   } = {} as typeof query;
 
   function applyPatch() {
-    let last: Row | null = null;
+    const changed: Row[] = [];
     for (const row of rows) {
       if (filters.every(([column, value]) => row[column] === value)) {
         Object.assign(row, patch);
-        last = row;
+        changed.push(row);
       }
     }
-    return last;
+    return changed;
   }
 
   query.eq = (column, value) => {
     filters.push([column, value]);
     return query;
   };
+  // Like PostgREST: update(...).select() resolves to the rows it changed.
   query.select = () => ({
-    single: async () => ({ data: applyPatch(), error: null }),
+    single: async () => ({ data: applyPatch().at(-1) ?? null, error: null }),
+    then: (resolve, reject) => Promise.resolve({ data: applyPatch(), error: null as null }).then(resolve, reject),
   });
   query.then = (resolve, reject) => {
     applyPatch();
