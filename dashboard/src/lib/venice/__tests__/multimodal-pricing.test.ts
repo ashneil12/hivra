@@ -2,8 +2,11 @@ import {
   VENICE_MULTIMODAL_PRICES,
   applyVeniceMultimodalMarkup,
   computeVeniceMultimodalCost,
+  computeVeniceMultimodalHoldCost,
   resolveVeniceMultimodalMarkup,
   resolveVeniceMultimodalPrice,
+  resolveVeniceMultimodalTier,
+  veniceMultimodalTierRequestValue,
 } from "@/lib/venice/multimodal-pricing";
 
 // Ground truth: every distinct (endpoint, model) pair observed in prod
@@ -162,7 +165,7 @@ describe("Venice multimodal price catalog", () => {
     expect(multi).toMatchObject({ priced: true, quantity: 3, listCostMicroUsd: 150_000 });
   });
 
-  it("prices resolution tiers and floors to the cheapest published tier", () => {
+  it("prices resolution tiers; an absent tier is Venice's default (the cheapest)", () => {
     const at4k = computeVeniceMultimodalCost({
       endpoint: "/api/v1/image/generate",
       model: "nano-banana-2",
@@ -177,8 +180,8 @@ describe("Venice multimodal price catalog", () => {
     });
     expect(at2k).toMatchObject({ priced: true, tier: "2k", listCostMicroUsd: 140_000 });
 
-    // Passthrough rows record no resolution; unknown tiers behave the same.
-    for (const metadata of [{}, { resolution: "8K" }]) {
+    // No resolution sent: Venice runs its 1K default.
+    for (const metadata of [{}, { resolution: null }, { resolution: " " }]) {
       const floored = computeVeniceMultimodalCost({
         endpoint: "/api/v1/image/generate",
         model: "nano-banana-2",
@@ -186,9 +189,64 @@ describe("Venice multimodal price catalog", () => {
       });
       expect(floored).toMatchObject({ priced: true, tier: null, listCostMicroUsd: 100_000 });
     }
+
+    // A resolution that isn't a published tier is never floored: Venice may
+    // have run something dearer than the cheapest tier.
+    expect(
+      computeVeniceMultimodalCost({
+        endpoint: "/api/v1/image/generate",
+        model: "nano-banana-2",
+        metadata: { resolution: "8K" },
+      })
+    ).toEqual({ priced: false, reason: "invalid_tier" });
   });
 
-  it("prices upscales by scale factor, flooring to 2x", () => {
+  // Second review: Venice's GET /models prices nano-banana-2-edit by
+  // resolution; the catalog charged a flat $0.10 for a $0.19 4K edit.
+  it("prices nano-banana-2-edit by resolution tier", () => {
+    const edit = (metadata: Record<string, unknown>) =>
+      computeVeniceMultimodalCost({ endpoint: "/api/v1/image/edit", model: "nano-banana-2-edit", metadata });
+    expect(edit({ resolution: "4K" })).toMatchObject({ priced: true, tier: "4k", listCostMicroUsd: 190_000 });
+    expect(edit({ resolution: "2K" })).toMatchObject({ priced: true, tier: "2k", listCostMicroUsd: 140_000 });
+    expect(edit({ resolution: "1K" })).toMatchObject({ priced: true, tier: "1k", listCostMicroUsd: 100_000 });
+    expect(edit({})).toMatchObject({ priced: true, tier: null, listCostMicroUsd: 100_000 });
+  });
+
+  // Second review: an unrecognised scale ("3", "4.0", "04") was held at 4x
+  // but charged at 2x while Venice ran it as sent.
+  it("maps an upscale factor to the published tier Venice bills, rounding up between tiers", () => {
+    const upscale = (scale: unknown) =>
+      computeVeniceMultimodalCost({ endpoint: "/api/v1/image/upscale", model: "venice-upscaler", metadata: { scale } });
+    for (const scale of ["4", "4.0", "04", "4x", "4X", 4, "3", 3, 2.5, " 3 "]) {
+      expect(upscale(scale)).toMatchObject({ priced: true, tier: "4", listCostMicroUsd: 80_000 });
+    }
+    for (const scale of ["2", "2.0", 2, "2x"]) {
+      expect(upscale(scale)).toMatchObject({ priced: true, tier: "2", listCostMicroUsd: 20_000 });
+    }
+    for (const scale of ["1", 1, 0, -4, "5", 4.5, "banana", "Infinity", "NaN", true, ["4"], { v: 4 }]) {
+      expect(upscale(scale)).toEqual({ priced: false, reason: "invalid_tier" });
+    }
+  });
+
+  it("resolves tier request values the way Venice spells them", () => {
+    const nano = resolveVeniceMultimodalPrice("/api/v1/image/generate", "nano-banana-2")!;
+    const upscaler = resolveVeniceMultimodalPrice("/api/v1/image/upscale", "venice-upscaler")!;
+    const qwen = resolveVeniceMultimodalPrice("/api/v1/image/generate", "qwen-image-2")!;
+
+    expect(resolveVeniceMultimodalTier(nano, " 4k ")).toEqual({ kind: "tier", tier: "4k" });
+    expect(resolveVeniceMultimodalTier(nano, 4)).toEqual({ kind: "invalid" });
+    expect(resolveVeniceMultimodalTier(nano, "")).toEqual({ kind: "absent" });
+    expect(resolveVeniceMultimodalTier(nano, undefined)).toEqual({ kind: "absent" });
+    expect(veniceMultimodalTierRequestValue(nano, "4k")).toBe("4K");
+
+    expect(resolveVeniceMultimodalTier(upscaler, "3")).toEqual({ kind: "tier", tier: "4" });
+    expect(veniceMultimodalTierRequestValue(upscaler, "4")).toBe(4);
+
+    // An entry without tiers ignores the field entirely.
+    expect(resolveVeniceMultimodalTier(qwen, "8K")).toEqual({ kind: "absent" });
+  });
+
+  it("prices upscales by scale factor; no scale is Venice's 2x default", () => {
     // The upscale route records scale as a string form field.
     const fourX = computeVeniceMultimodalCost({
       endpoint: "/api/v1/image/upscale",
@@ -258,5 +316,61 @@ describe("Venice multimodal price catalog", () => {
     expect(resolveVeniceMultimodalMarkup({ MANAGED_VENICE_MULTIMODAL_MARKUP: "0" })).toBe(1.0);
     expect(resolveVeniceMultimodalMarkup({ MANAGED_VENICE_MULTIMODAL_MARKUP: "-2" })).toBe(1.0);
     expect(resolveVeniceMultimodalMarkup({ MANAGED_VENICE_MULTIMODAL_MARKUP: "banana" })).toBe(1.0);
+  });
+});
+
+describe("computeVeniceMultimodalHoldCost (pre-forward ceiling)", () => {
+  const cost = (endpoint: string, model: string, metadata?: Record<string, unknown>) => {
+    const result = computeVeniceMultimodalHoldCost({ endpoint, model, metadata });
+    return result.priced ? result.listCostMicroUsd : result.reason;
+  };
+
+  it("never guesses an unpriced operation", () => {
+    expect(cost("/api/v1/video/queue", "wan-2-7-image-to-video")).toBe("unpriced_operation");
+    expect(cost("/api/v1/image/generate", "not-in-catalog")).toBe("unpriced_operation");
+    expect(cost("/api/v1/crypto/rpc/base-mainnet", "passthrough:crypto/rpc")).toBe("unpriced_operation");
+    expect(cost("/api/v1/audio/speech", "tts-kokoro", {})).toBe("missing_quantity");
+  });
+
+  it("holds an absent tier at the most expensive published tier and refuses an unpublished one", () => {
+    expect(cost("/api/v1/image/generate", "nano-banana-2")).toBe(190_000);
+    expect(cost("/api/v1/image/edit", "nano-banana-2-edit")).toBe(190_000);
+    expect(cost("/api/v1/image/generate", "nano-banana-2", { resolution: "2K" })).toBe(140_000);
+    expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: "3" })).toBe(80_000);
+    expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: 2 })).toBe(20_000);
+    expect(cost("/api/v1/image/generate", "nano-banana-2", { resolution: "8K" })).toBe("invalid_tier");
+    expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: "1" })).toBe("invalid_tier");
+  });
+
+  it("rounds variant counts up and counts numeric strings", () => {
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: 3 })).toBe(150_000);
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: "4" })).toBe(200_000);
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: 1.2 })).toBe(100_000);
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: "lots" })).toBe(50_000);
+  });
+
+  it("is never below what settlement charges for the same request", () => {
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ["/api/v1/image/generate", "nano-banana-2", {}],
+      ["/api/v1/image/generate", "nano-banana-2", { resolution: "4k", variants: 2 }],
+      ["/api/v1/image/upscale", "venice-upscaler", { scale: "4x" }],
+      ["/api/v1/image/upscale", "venice-upscaler", { scale: "3" }],
+      ["/api/v1/image/upscale", "venice-upscaler", { scale: "4.0" }],
+      ["/api/v1/image/upscale", "venice-upscaler", {}],
+      ["/api/v1/image/edit", "nano-banana-2-edit", {}],
+      ["/api/v1/image/edit", "nano-banana-2-edit", { resolution: "4K" }],
+      ["/api/v1/audio/speech", "tts-kokoro", { inputLength: 12_345 }],
+      ["/api/v1/augment/search", "venice-search-brave", {}],
+    ];
+    for (const [endpoint, model, metadata] of cases) {
+      const hold = computeVeniceMultimodalHoldCost({ endpoint, model, metadata });
+      const settled = computeVeniceMultimodalCost({ endpoint, model, metadata });
+      expect(hold.priced && settled.priced).toBe(true);
+      if (hold.priced && settled.priced) {
+        expect(hold.listCostMicroUsd).toBeGreaterThanOrEqual(settled.listCostMicroUsd);
+        // A tier that was sent is held and charged at the same tier.
+        if (hold.tier !== null) expect(settled.tier).toBe(hold.tier);
+      }
+    }
   });
 });
