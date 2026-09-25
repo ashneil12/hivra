@@ -12,6 +12,7 @@ import {
   markManagedVeniceReconciliationRequired,
   releaseManagedVeniceChatReservation,
 } from "@/lib/venice/proxy-settlement";
+import { CHAT_STREAM_CANCELLED_RECONCILIATION_REASON } from "@/lib/venice/chat-stream-reconciliation";
 // Shared authorize/settle core — keeps the in-Vercel route and the off-Vercel
 // Cloudflare Worker (internal/{authorize,settle}) from drifting on billing
 // semantics. See docs/PRODUCT-ARCHITECTURE.md.
@@ -41,6 +42,8 @@ function safeJsonParse(text: string) {
   }
 }
 
+type StreamOutcome = "completed" | "upstream_failed" | "client_cancelled";
+
 function createSettlingStream(params: {
   upstream: ReadableStream<Uint8Array>;
   verifiedKey: { id: string; userId: string };
@@ -52,77 +55,159 @@ function createSettlingStream(params: {
 }) {
   const decoder = new TextDecoder();
   const reader = params.upstream.getReader();
+  const identity = {
+    userId: params.verifiedKey.userId,
+    proxyKeyId: params.verifiedKey.id,
+    referenceId: params.referenceId,
+  };
   let buffer = "";
   let finalUsage: unknown = null;
+  let forwardedBytes = 0;
+  let cancelled = false;
+  let settlement: Promise<unknown> | null = null;
 
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            controller.enqueue(value);
-            buffer += decoder.decode(value, { stream: true });
-            const frames = buffer.split(/\r?\n\r?\n/);
-            buffer = frames.pop() ?? "";
-            for (const frame of frames) {
-              finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
-            }
-          }
-        }
+  function observe(chunk: Uint8Array) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
+    }
+  }
 
-        buffer += decoder.decode();
-        if (buffer) {
-          finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
-        }
+  async function fileReconciliation(reason: string, metadata: Record<string, unknown> = {}) {
+    try {
+      await markManagedVeniceReconciliationRequired({
+        ...identity,
+        reason,
+        metadata: { model: params.model, upstreamStatus: params.upstreamStatus, ...metadata },
+        // Every item here follows a 200 whose reservation is still held, so
+        // the spend is covered. Keep the key usable while it is reconciled.
+        pauseKey: false,
+      });
+    } catch (error) {
+      log.error("Managed Venice chat stream could not file its reconciliation item", error, {
+        source: "managed-venice-chat",
+        route: "/api/managed-venice/v1/chat/completions",
+        failureType: "managed_venice_stream_reconciliation_write_failed",
+        userId: identity.userId,
+        proxyKeyId: identity.proxyKeyId,
+        referenceId: identity.referenceId,
+        reason,
+      });
+    }
+  }
 
-        if (finalUsage) {
+  // Venice answered 200 before this stream was built, so it is generating,
+  // and billing Hivra, for this request. Settle exactly once, and never by
+  // releasing the hold: a client that closed the connection before the final
+  // usage frame used to get the whole hold back, which made every streamed
+  // completion free (security review 2026-09). Resolves to the settlement
+  // error, if any, so the completed path can still fail the stream.
+  function settle(outcome: StreamOutcome): Promise<unknown> {
+    settlement ??= (async () => {
+      const byClient = outcome === "client_cancelled";
+      if (finalUsage) {
+        try {
           await captureManagedVeniceChatUsage({
-            userId: params.verifiedKey.userId,
-            proxyKeyId: params.verifiedKey.id,
+            ...identity,
             walletType: params.walletType,
-            referenceId: params.referenceId,
             model: params.model,
             upstreamStatus: params.upstreamStatus,
             usage: finalUsage,
             pricingMap: params.pricingMap,
           });
-        } else {
-          await markManagedVeniceReconciliationRequired({
-            userId: params.verifiedKey.userId,
-            proxyKeyId: params.verifiedKey.id,
-            referenceId: params.referenceId,
-            reason: "managed_venice_missing_stream_usage",
-            metadata: { model: params.model, upstreamStatus: params.upstreamStatus },
-            // Upstream succeeded; we just couldn't read a usage frame. The
-            // reservation is still held and the invoice cron settles offline —
-            // don't brick the key over a telemetry gap.
-            pauseKey: false,
-          });
+          return null;
+        } catch (error) {
+          // Our settlement code threw on an otherwise-successful stream. That
+          // is ours to reconcile, not the user's to be denied service over.
+          await (byClient
+            ? fileReconciliation(CHAT_STREAM_CANCELLED_RECONCILIATION_REASON, {
+                cause: "settlement_failed",
+                forwardedBytes,
+              })
+            : fileReconciliation("managed_venice_stream_settlement_failed"));
+          return error;
         }
-
-        controller.close();
-      } catch (error) {
-        await markManagedVeniceReconciliationRequired({
-          userId: params.verifiedKey.userId,
-          proxyKeyId: params.verifiedKey.id,
-          referenceId: params.referenceId,
-          reason: "managed_venice_stream_settlement_failed",
-          metadata: { model: params.model, upstreamStatus: params.upstreamStatus },
-          // Our settlement code threw on an otherwise-successful stream. That's
-          // our bug to reconcile, not the user's to be denied service over.
-          pauseKey: false,
-        });
-        controller.error(error);
       }
+      if (byClient) {
+        // No usage frame yet, so there is nothing exact to charge. Keep the
+        // hold and leave an item the stale-hold sweep will not release.
+        log.warn("Managed Venice chat stream closed by the client before usage arrived", {
+          source: "managed-venice-chat",
+          route: "/api/managed-venice/v1/chat/completions",
+          failureType: "managed_venice_chat_stream_client_cancelled",
+          userId: identity.userId,
+          proxyKeyId: identity.proxyKeyId,
+          referenceId: identity.referenceId,
+          model: params.model,
+          forwardedBytes,
+        });
+        await fileReconciliation(CHAT_STREAM_CANCELLED_RECONCILIATION_REASON, {
+          cause: "client_cancelled",
+          forwardedBytes,
+        });
+        return null;
+      }
+      // Upstream finished (or dropped) without a usage frame. The reservation
+      // is still held and the invoice cron settles offline: don't brick the
+      // key over a telemetry gap.
+      await fileReconciliation(
+        outcome === "completed"
+          ? "managed_venice_missing_stream_usage"
+          : "managed_venice_stream_settlement_failed"
+      );
+      return null;
+    })();
+    return settlement;
+  }
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let upstreamError: unknown = null;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done || cancelled) break;
+          if (!value) continue;
+          observe(value);
+          controller.enqueue(value);
+          forwardedBytes += value.byteLength;
+        }
+        buffer += decoder.decode();
+        if (buffer) {
+          finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
+        }
+      } catch (error) {
+        upstreamError = error;
+      }
+
+      // Once the client has gone, cancel() owns settlement; the controller is
+      // already closed, so there is nothing left to close or error here.
+      if (cancelled) {
+        await settlement;
+        return;
+      }
+      if (upstreamError) {
+        await settle("upstream_failed");
+        controller.error(upstreamError);
+        return;
+      }
+      const settlementError = await settle("completed");
+      if (settlementError) {
+        controller.error(settlementError);
+        return;
+      }
+      controller.close();
     },
     async cancel() {
-      await releaseManagedVeniceChatReservation({
-        userId: params.verifiedKey.userId,
-        referenceId: params.referenceId,
-      });
-      await reader.cancel();
+      cancelled = true;
+      // A usage frame that arrived without its trailing blank line still counts.
+      finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
+      const settled = settle("client_cancelled");
+      // Stop reading so Venice stops generating for a reader that has gone.
+      await reader.cancel().catch(() => undefined);
+      await settled;
     },
   });
 }
