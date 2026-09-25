@@ -57,6 +57,18 @@ export function resolveVeniceChatPrice(
 // symbol runs) can still reach about one token per character, three times
 // this estimate; that residual is bounded by the context window and is
 // debited as overage at capture.
+//
+// Some content parts stand for an amount of input their bytes do not bound
+// (review of #166, required fix 2): a `video_url` (Venice lists video input on
+// the Gemini, Qwen, GLM, Gemma, Seed, MiniMax and Xiaomi models) can point at
+// an hour of video; a `file` can be a public URL, an uploaded file id, or a
+// data URL whose few compressed KB hold a hundred PDF pages; audio sent by URL
+// is the same; and a part type this estimator does not know could be any of
+// these. Priced by their length, a $0.05 wallet held $0.0002 for a request
+// Venice could bill $6. Any such part holds the model's whole context window,
+// the most prompt the request can bill. Text, images (bounded per image by
+// the model's resize limits, and floored above) and inline base64 audio keep
+// their size-based estimate.
 
 /** Visual-token allowance per image part. 16,384 is Qwen-VL's default
  * per-image maximum, the largest default we know of among the vision families
@@ -117,6 +129,12 @@ interface InputTally {
   asciiUnits: number;
   otherUnits: number;
   imageTokens: number;
+  /** Parts whose billed size the request does not show (held at the context window). */
+  unsizedParts: number;
+}
+
+function emptyTally(): InputTally {
+  return { characters: 0, asciiUnits: 0, otherUnits: 0, imageTokens: 0, unsizedParts: 0 };
 }
 
 function tallyString(text: string, tally: InputTally) {
@@ -132,6 +150,53 @@ function textTokens(tally: Pick<InputTally, "asciiUnits" | "otherUnits">) {
 }
 
 const IMAGE_PART_TYPES = new Set(["image_url", "input_image", "image"]);
+// Content parts priced by their size. Any other part type in a message's
+// content is unsized.
+const SIZED_CONTENT_PART_TYPES = new Set(["text", "refusal", "input_audio", ...IMAGE_PART_TYPES]);
+// Unsized wherever they appear.
+const UNSIZED_PART_TYPES = new Set(["video_url", "file"]);
+
+// A remote reference (https://, gs://, ...) rather than inline data.
+const REMOTE_REFERENCE = /^\s*[a-z][a-z0-9+.-]*:\/\//i;
+
+/** Audio is sized by its inline base64 data; audio by reference is not. */
+function isInlineAudioPart(record: Record<string, unknown>) {
+  const audio = record.input_audio;
+  if (!audio || typeof audio !== "object" || Array.isArray(audio)) return false;
+  const data = (audio as Record<string, unknown>).data;
+  return typeof data === "string" && !REMOTE_REFERENCE.test(data);
+}
+
+function isUnsizedPart(record: Record<string, unknown>) {
+  if (typeof record.type !== "string") return false;
+  if (UNSIZED_PART_TYPES.has(record.type)) return true;
+  return record.type === "input_audio" && !isInlineAudioPart(record);
+}
+
+function tallyUnsizedPart(value: unknown, tally: InputTally) {
+  tally.characters += JSON.stringify(value).length;
+  tally.unsizedParts += 1;
+}
+
+/** One element of a message's `content` array. */
+function tallyContentPart(part: unknown, tally: InputTally) {
+  if (part && typeof part === "object" && !Array.isArray(part)) {
+    const type = (part as Record<string, unknown>).type;
+    if (typeof type === "string" && !SIZED_CONTENT_PART_TYPES.has(type)) {
+      tallyUnsizedPart(part, tally);
+      return;
+    }
+  }
+  tallyValue(part, tally);
+}
+
+function tallyContent(content: unknown, tally: InputTally) {
+  if (Array.isArray(content)) {
+    for (const part of content) tallyContentPart(part, tally);
+    return;
+  }
+  tallyValue(content, tally);
+}
 
 function tallyValue(value: unknown, tally: InputTally) {
   if (typeof value === "string") {
@@ -147,8 +212,12 @@ function tallyValue(value: unknown, tally: InputTally) {
 
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
+    if (isUnsizedPart(record)) {
+      tallyUnsizedPart(value, tally);
+      return;
+    }
     if (typeof record.type === "string" && IMAGE_PART_TYPES.has(record.type)) {
-      const part: InputTally = { characters: 0, asciiUnits: 0, otherUnits: 0, imageTokens: 0 };
+      const part = emptyTally();
       tallyString(JSON.stringify(value), part);
       tally.characters += part.characters;
       tally.imageTokens += Math.max(textTokens(part), IMAGE_INPUT_TOKEN_FLOOR);
@@ -180,11 +249,11 @@ function estimateInput(request: {
   functions?: unknown;
   response_format?: unknown;
 }): InputTally {
-  const tally: InputTally = { characters: 0, asciiUnits: 0, otherUnits: 0, imageTokens: 0 };
+  const tally = emptyTally();
   if (Array.isArray(request.messages)) {
     for (const message of request.messages) {
       if (!message || typeof message !== "object") continue;
-      tallyValue(message.content, tally);
+      tallyContent(message.content, tally);
       tallyValue(message.tool_calls, tally);
       tallyValue(message.function_call, tally);
       tallyValue(message.reasoning_content, tally);
@@ -231,7 +300,10 @@ export function estimateChatCompletionCost(
 ) {
   const price = resolvePrice(request.model, pricingMap);
   const input = estimateInput(request);
-  const inputTokens = Math.min(textTokens(input) + input.imageTokens, price.contextWindow);
+  const inputTokens =
+    input.unsizedParts > 0
+      ? price.contextWindow
+      : Math.min(textTokens(input) + input.imageTokens, price.contextWindow);
   const outputCap = worstCaseVeniceChatOutputCap(request, price);
   const outputChoices = readVeniceChatPositiveInteger(request.n, "n") ?? 1;
   const outputTokens = outputCap * outputChoices;
@@ -255,6 +327,8 @@ export function estimateChatCompletionCost(
     model: price.model,
     inputCharacters: input.characters,
     inputTokens,
+    /** Parts held at the context window because their size is not in the request. */
+    unsizedInputParts: input.unsizedParts,
     outputCap,
     outputTokens,
     outputChoices,

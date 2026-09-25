@@ -15,7 +15,11 @@
  *     (`veniceMaxOutputTokens`), the drift the catalog has had before
  *     (zai-org-glm-5-1: 24,000 in the catalog, 80,000 on Venice).
  *   - `n` choices each generate that many tokens.
- * Prompt tokens are a realistic ~4 characters per token of the forwarded body.
+ * Prompt tokens are a realistic ~4 characters per token of the forwarded body,
+ * except that a video or file part, or any content part type other than text,
+ * image or inline audio, bills the model's whole context window: nothing in
+ * the request bounds what such a part stands for (the #166 review probed
+ * exactly this, a file or video URL billed at the context window).
  *
  * Every forwarded body is recorded so a test can check what reached Venice.
  */
@@ -55,6 +59,26 @@ function json(value: unknown, status = 200) {
   });
 }
 
+const SIZED_PART_TYPES = new Set(["text", "refusal", "image_url", "input_image", "image"]);
+
+/** True when a message carries a part whose billed size the request does not show. */
+function hasUnsizedPart(body: Record<string, unknown>) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  return messages.some((message) => {
+    const content = (message as { content?: unknown } | null)?.content;
+    const parts = Array.isArray(content) ? content : content && typeof content === "object" ? [content] : [];
+    return parts.some((part) => {
+      const record = part as { type?: unknown; input_audio?: { data?: unknown } } | null;
+      if (!record || typeof record.type !== "string") return false;
+      if (record.type === "input_audio") {
+        const data = record.input_audio?.data;
+        return typeof data !== "string" || /^[a-z][a-z0-9+.-]*:\/\//i.test(data);
+      }
+      return !SIZED_PART_TYPES.has(record.type);
+    });
+  });
+}
+
 export function createWorstCaseVenice(
   options: {
     /** Venice's real per-model output maximum, where it is not the catalog's. */
@@ -75,7 +99,9 @@ export function createWorstCaseVenice(
     const model = String(body.model);
     const modelMax =
       options.veniceMaxOutputTokens?.[model] ?? getVeniceChatModelPrice(model).maxOutputTokens;
-    const promptTokens = Math.ceil(rawBody.length / 4);
+    const promptTokens = hasUnsizedPart(body)
+      ? getVeniceChatModelPrice(model).contextWindow
+      : Math.ceil(rawBody.length / 4);
 
     if (url.endsWith("/api/v1/responses")) {
       const completionTokens = responsesOutputTokens(body, modelMax);

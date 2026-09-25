@@ -154,6 +154,37 @@ describe("the stale-hold sweep on #166 worst-case holds", () => {
     expect(mockWorld.cardBalanceMicroUsd(USER)).toBe(50 * USD - charged);
   });
 
+  // Review of #166 (required fix 2): a video or file part is held at the
+  // model's whole context window, because nothing in the request bounds what
+  // it stands for. Its input estimate is that same bound, so a request that
+  // never reports usage is charged it: charging the length of the URL would
+  // let a video request that drops its usage run free.
+  it("a hold for a request with a video part records, and is charged, its context-window input", async () => {
+    mockWorld.fundCard(USER, 20 * USD);
+    const { row, input } = await worstCaseHold("ref_video", {
+      extra: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Describe this." },
+              { type: "video_url", video_url: { url: "https://example.com/v.mp4" } },
+            ],
+          },
+        ],
+      },
+    });
+    // claude-opus-4-8: 1,000,000-token context at $6 per 1M input.
+    expect(input).toBe(6 * USD);
+    row.expires_at = hoursAgo(1);
+
+    await sweepStaleManagedVeniceReservations({});
+
+    const charged = input + MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE * OPUS_OUTPUT_MICRO_USD_PER_TOKEN;
+    expect(row).toMatchObject({ status: "captured", captured_micro_usd: charged });
+    expect(mockWorld.cardBalanceMicroUsd(USER)).toBe(20 * USD - charged);
+  });
+
   it("a cancelled stream's item is charged the input plus the output it observed", async () => {
     mockWorld.fundCard(USER, 20 * USD);
     const { row, held, input } = await worstCaseHold("ref_cancelled");

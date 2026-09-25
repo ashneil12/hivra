@@ -166,6 +166,72 @@ describe("Venice chat cost estimator", () => {
     expect(estimate.inputTokens).toBeGreaterThanOrEqual(IMAGE_INPUT_TOKEN_FLOOR);
   });
 
+  // Review of #166 (required fix 2): the estimator only floored image parts,
+  // so a video or file part was held at the length of its URL. Probe: 20
+  // parallel requests from a $0.05 wallet each held $0.0002 (Opus, file URL)
+  // or $0.00009 (Gemini, video URL) while Venice could bill the whole context
+  // window. Nothing bounds what such a part stands for from its bytes: a short
+  // URL can point at an hour of video, and a few KB of PDF can hold a hundred
+  // pages, so these parts are held at the model's whole context window.
+  describe("parts whose size the request does not show", () => {
+    const opus = getVeniceChatModelPrice("claude-opus-4-8");
+    const gemini = getVeniceChatModelPrice("gemini-3-1-pro-preview");
+    const withPart = (model: string, part: Record<string, unknown>) =>
+      estimateChatCompletionCost({
+        model,
+        messages: [{ role: "user", content: [{ type: "text", text: "summarise this" }, part] }],
+        max_completion_tokens: 1,
+      });
+
+    it.each([
+      ["a video URL", { type: "video_url", video_url: { url: "https://example.com/v.mp4" } }],
+      ["a video data URL", { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAA" } }],
+      ["a file URL", { type: "file", file: { file_data: "https://example.com/a.pdf", filename: "a.pdf" } }],
+      ["a PDF data URL", { type: "file", file: { file_data: "data:application/pdf;base64,JVBERi0xLjQK", filename: "a.pdf" } }],
+      ["an uploaded file id", { type: "file", file: { file_id: "file_123" } }],
+      ["audio by URL", { type: "input_audio", input_audio: { data: "https://example.com/a.mp3", format: "mp3" } }],
+      ["a part type the estimator does not know", { type: "audio_url", audio_url: { url: "https://example.com/a.mp3" } }],
+    ])("holds %s at the model's whole context window", (_label, part) => {
+      expect(withPart("gemini-3-1-pro-preview", part).inputTokens).toBe(gemini.contextWindow);
+      expect(withPart("claude-opus-4-8", part).inputTokens).toBe(opus.contextWindow);
+    });
+
+    it("also finds such a part when content is a single part object", () => {
+      const estimate = estimateChatCompletionCost({
+        model: "claude-opus-4-8",
+        messages: [{ role: "user", content: { type: "video_url", video_url: { url: "https://e.x/v" } } as never }],
+        max_completion_tokens: 1,
+      });
+      expect(estimate.inputTokens).toBe(opus.contextWindow);
+    });
+
+    it("keeps pricing text, images, inline audio and tool calls by their size", () => {
+      const estimate = estimateChatCompletionCost({
+        model: "claude-opus-4-8",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what is this?" },
+              { type: "image_url", image_url: { url: "https://example.com/a.png" } },
+              { type: "input_audio", input_audio: { data: "UklGRiQAAABXQVZF", format: "wav" } },
+            ],
+          },
+          {
+            role: "assistant",
+            content: [{ type: "refusal", refusal: "no" }],
+            tool_calls: [{ id: "call_1", type: "function", function: { name: "f", arguments: "{}" } }],
+          },
+          { role: "tool", content: [{ type: "text", text: "done" }] },
+        ],
+        max_completion_tokens: 1,
+      });
+
+      expect(estimate.inputTokens).toBeGreaterThanOrEqual(IMAGE_INPUT_TOKEN_FLOOR);
+      expect(estimate.inputTokens).toBeLessThan(IMAGE_INPUT_TOKEN_FLOOR + 200);
+    });
+  });
+
   it("never holds more input than the model's context window", () => {
     const estimate = estimateChatCompletionCost({
       model: "venice-uncensored-1-2",

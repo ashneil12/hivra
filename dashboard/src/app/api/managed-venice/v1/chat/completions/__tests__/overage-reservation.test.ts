@@ -333,6 +333,115 @@ describe("managed-Venice chat: the hold covers everything the request can spend"
     });
   });
 
+  // Review of #166 (required fix 2): video and file parts were held at the
+  // length of their URL. Probe (canary identical): 20 parallel requests from a
+  // $0.05 wallet with max_completion_tokens 1, Venice billing the context
+  // window: Opus + file URL held $0.0002 each against a $120 bill; Gemini 3.1
+  // Pro + video URL held $0.00009 each against a $50 bill.
+  describe("parts whose billed size the request does not show", () => {
+    const filePart = { type: "file", file: { file_data: "https://example.com/a.pdf", filename: "a.pdf" } };
+    const videoPart = { type: "video_url", video_url: { url: "https://example.com/v.mp4" } };
+    const withPart = (model: string, part: Record<string, unknown>) => ({
+      model,
+      max_completion_tokens: 1,
+      messages: [{ role: "user", content: [{ type: "text", text: "Describe this." }, part] }],
+    });
+
+    it.each([
+      ["a file URL on claude-opus-4-8", withPart(PREMIUM, filePart)],
+      ["a video URL on gemini-3-1-pro-preview", withPart("gemini-3-1-pro-preview", videoPart)],
+      ["an unknown part type", withPart(PREMIUM, { type: "audio_url", audio_url: { url: "https://e.x/a" } })],
+    ])("%s from a $0.05 wallet: 402, and Venice is never called", async (_label, request) => {
+      mockMemory.fundCard(USER_ID, 50_000);
+
+      const results = await Promise.all(Array.from({ length: 5 }, () => POST(chatReq(request))));
+
+      expect(results.map((res) => res.status)).toEqual([402, 402, 402, 402, 402]);
+      expect(venice.calls).toHaveLength(0);
+      expect(mockMemory.reservations()).toHaveLength(0);
+      const body = (await results[0].json()) as { error?: { message?: string } };
+      expect(body.error?.message).toContain("whole context window");
+    });
+
+    it("a funded wallet sending a video is held for the whole context window, which covers the bill", async () => {
+      // gemini-3-1-pro-preview: 1,000,000-token context at $2.50 per 1M input.
+      mockMemory.fundCard(USER_ID, 10 * USD);
+
+      const res = await POST(chatReq(withPart("gemini-3-1-pro-preview", videoPart)));
+      await drain(res);
+
+      expect(res.status).toBe(200);
+      expect(venice.calls[0].promptTokens).toBe(1_000_000);
+      expectSpendCoveredByHold();
+    });
+  });
+
+  it("a small wallet can still run a short answer on a cheap model (legit agent traffic)", async () => {
+    // The starter credit on the default Hermes model, with a 30 KB context.
+    mockMemory.fundCard(USER_ID, 500_000);
+
+    const res = await POST(
+      chatReq({
+        model: "deepseek-v4-pro",
+        messages: [
+          { role: "system", content: "You are Hermes. ".repeat(1_000) },
+          { role: "user", content: "Summarise the plan. ".repeat(700) },
+        ],
+        tools: [{ type: "function", function: { name: "terminal", parameters: { type: "object" } } }],
+        stream: true,
+      })
+    );
+    await drain(res);
+
+    expect(res.status).toBe(200);
+    // The whole 32,768-token worst case fits, so nothing about the request changes.
+    expect(venice.calls[0].body).not.toHaveProperty("max_completion_tokens");
+    expect(venice.calls[0].body).not.toHaveProperty("max_tokens");
+    expectSpendCoveredByHold();
+  });
+
+  it.each([
+    ["web search on", { venice_parameters: { enable_web_search: "on" } }],
+    ["web search auto", { venice_parameters: { enable_web_search: "auto" } }],
+    ["web scraping", { venice_parameters: { enable_web_scraping: true } }],
+    ["X search", { venice_parameters: { enable_x_search: true } }],
+    ["model fallbacks", { fallbacks: [{ model: "claude-fable-5" }] }],
+  ])("refuses %s (billed by Venice outside token usage) before any hold", async (_label, extra) => {
+    mockMemory.fundCard(USER_ID, 10 * USD);
+
+    const res = await POST(chatReq(shortChat({ max_tokens: 100, ...extra })));
+
+    expect(res.status).toBe(400);
+    expect(venice.calls).toHaveLength(0);
+    expect(mockMemory.reservations()).toHaveLength(0);
+  });
+
+  it("keeps free Venice parameters such as a character persona", async () => {
+    mockMemory.fundCard(USER_ID, 10 * USD);
+
+    const res = await POST(
+      chatReq(
+        shortChat({
+          max_tokens: 100,
+          venice_parameters: {
+            character_slug: "alan-watts",
+            include_venice_system_prompt: false,
+            enable_web_search: "off",
+          },
+        })
+      )
+    );
+    await drain(res);
+
+    expect(res.status).toBe(200);
+    expect(venice.calls[0].body.venice_parameters).toEqual({
+      character_slug: "alan-watts",
+      include_venice_system_prompt: false,
+      enable_web_search: "off",
+    });
+    expectSpendCoveredByHold();
+  });
+
   it.each([
     ["zero", 0],
     ["negative", -1],

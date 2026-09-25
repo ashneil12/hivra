@@ -200,8 +200,9 @@ export async function authorizeManagedVeniceChat(params: {
   const livePricing = await getVenicePricingMap();
   const pricingMap = livePricing.map;
 
+  let unsizedInputParts = 0;
   try {
-    estimateChatCompletionCost(managedVeniceChatEstimateBody(protocol, body), pricingMap);
+    ({ unsizedInputParts } = estimateChatCompletionCost(managedVeniceChatEstimateBody(protocol, body), pricingMap));
   } catch (error) {
     if (error instanceof UnsupportedVeniceModelError) {
       return {
@@ -350,7 +351,14 @@ export async function authorizeManagedVeniceChat(params: {
         userId: verifiedKey.userId,
         proxyKeyId: verifiedKey.id,
         walletType,
+        unsizedInputParts,
       });
+      // A video or file part holds the model's whole context window
+      // (cost-estimator.ts), which can be far more than the text around it.
+      const unsizedNote = unsizedInputParts
+        ? ` This request includes a video, file or other part whose size Hivra cannot see, ` +
+          `so it needs credits for the model's whole context window.`
+        : "";
       return {
         ok: false,
         response: openAiCompatibleError({
@@ -358,7 +366,7 @@ export async function authorizeManagedVeniceChat(params: {
           code: "managed_venice_insufficient_balance",
           type: "billing_error",
           message:
-            `Insufficient managed Venice LLM credits. Top up LLM credits in Hivra ` +
+            `Insufficient managed Venice LLM credits.${unsizedNote} Top up LLM credits in Hivra ` +
             `to keep this proxy key active: ${topUpUrl}`,
         }),
       };
