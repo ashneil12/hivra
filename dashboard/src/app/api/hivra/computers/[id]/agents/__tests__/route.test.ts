@@ -72,11 +72,11 @@ beforeEach(() => {
   jest.mocked(readAttachedGatewayProtocol).mockResolvedValue("current");
 });
 
-it("refuses a computer whose gateway predates attached agents at the gate and the claim, pointing at Update & restart", async () => {
+it("refuses a computer whose gateway predates attached agents at the gate and the claim, pointing at Update connection service", async () => {
   jest.mocked(readAttachedGatewayProtocol).mockResolvedValue("update_required");
   const gate = (await (await get()).json()).data;
   expect(gate).toMatchObject({ available: false, reason: "computer_update_required", reviews: null,
-    message: "This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex." });
+    message: "This computer's Hivra service is older than Codex needs. In Manage, choose Update connection service, then add Codex." });
   expect(readAttachedGatewayProtocol).toHaveBeenCalledWith("https://box.test");
   const response = await post({ grants: { workspace: true }, reviewSha256: review(true), requestId: REQUEST });
   expect(response.status).toBe(409);
