@@ -347,4 +347,126 @@ describe("GET /api/ops/managed-venice/subsidy", () => {
       })
     );
   });
+  // #160: the media spend gate captures every 2xx in-request and records the
+  // row as 'recorded'. The report still treated media as 'reconciliation_required'
+  // only, so captured media usage vanished from multimodalUsage.
+  it("counts media usage captured in-request, not only the unsettled backlog", async () => {
+    const usageRows = [
+      {
+        user_id: "user_chat",
+        model: "deepseek-v4-flash",
+        endpoint: "/api/v1/chat/completions",
+        wallet_type: "card",
+        reference_id: "ref_chat",
+        actual_cost_micro_usd: 2_000,
+        charged_micro_usd: 2_000,
+        discount_micro_usd: 0,
+        status: "recorded",
+        created_at: "2026-05-12T08:00:00.000Z",
+      },
+      {
+        user_id: "user_media",
+        model: "qwen-image-2",
+        endpoint: "/api/v1/image/generate",
+        wallet_type: "hermesos",
+        reference_id: "ref_image_1",
+        actual_cost_micro_usd: 50_000,
+        charged_micro_usd: 50_000,
+        discount_micro_usd: 0,
+        status: "recorded",
+        created_at: "2026-05-12T08:01:00.000Z",
+      },
+      {
+        user_id: "user_media",
+        model: "qwen-image-2",
+        endpoint: "/api/v1/image/generate",
+        wallet_type: "hermesos",
+        reference_id: "ref_image_2",
+        actual_cost_micro_usd: 50_000,
+        charged_micro_usd: 50_000,
+        discount_micro_usd: 0,
+        status: "recorded",
+        created_at: "2026-05-12T08:02:00.000Z",
+      },
+      {
+        user_id: "user_legacy",
+        model: "brave",
+        endpoint: "/api/v1/augment/search",
+        wallet_type: "hermesos",
+        reference_id: "ref_search_legacy",
+        actual_cost_micro_usd: 0,
+        charged_micro_usd: 0,
+        discount_micro_usd: 0,
+        status: "reconciliation_required",
+        created_at: "2026-05-12T08:03:00.000Z",
+      },
+      {
+        user_id: "user_responses",
+        model: "zai-org-glm-4.7",
+        endpoint: "/api/v1/responses",
+        wallet_type: "card",
+        reference_id: "ref_responses",
+        actual_cost_micro_usd: 3_000,
+        charged_micro_usd: 3_000,
+        discount_micro_usd: 0,
+        status: "recorded",
+        created_at: "2026-05-12T08:04:00.000Z",
+      },
+    ];
+    mockedSupabaseAdmin.from.mockImplementation((table: string) => {
+      if (table === "managed_venice_financial_events") return selectChain([]);
+      if (table === "managed_venice_usage_events") return selectChain(usageRows);
+      if (table === "managed_venice_reconciliation_items") return selectChain([]);
+      if (table === "managed_venice_platform_state") return selectChain(null);
+      throw new Error(`unexpected table ${table}`);
+    });
+
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.multimodalUsage).toEqual({
+      rowCount: 3,
+      capturedCount: 2,
+      capturedActualCostMicroUsd: 100_000,
+      capturedChargedMicroUsd: 100_000,
+      awaitingSettlementCount: 1,
+      byEndpoint: [
+        {
+          endpoint: "/api/v1/image/generate",
+          count: 2,
+          capturedCount: 2,
+          awaitingSettlementCount: 0,
+          actualCostMicroUsd: 100_000,
+          chargedMicroUsd: 100_000,
+        },
+        {
+          endpoint: "/api/v1/augment/search",
+          count: 1,
+          capturedCount: 0,
+          awaitingSettlementCount: 1,
+          actualCostMicroUsd: 0,
+          chargedMicroUsd: 0,
+        },
+      ],
+      byModel: [
+        {
+          model: "qwen-image-2",
+          count: 2,
+          capturedCount: 2,
+          awaitingSettlementCount: 0,
+          actualCostMicroUsd: 100_000,
+          chargedMicroUsd: 100_000,
+        },
+        {
+          model: "brave",
+          count: 1,
+          capturedCount: 0,
+          awaitingSettlementCount: 1,
+          actualCostMicroUsd: 0,
+          chargedMicroUsd: 0,
+        },
+      ],
+    });
+  });
 });

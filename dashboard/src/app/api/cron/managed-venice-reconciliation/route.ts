@@ -8,10 +8,9 @@ import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import { calculateActualChatCost } from "@/lib/venice/cost-estimator";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
+import { isManagedVeniceEstimatedCapture } from "@/lib/venice/hold-lifecycle";
 import {
-  sweepStaleManagedVeniceReservations,
   pruneTerminalManagedVeniceReservations,
-  type ReservationSweepSummary,
   type ReservationPruneSummary,
 } from "@/lib/venice/reservation-sweep";
 
@@ -152,9 +151,18 @@ export async function GET(req: NextRequest) {
   let unpriceableCount = 0;
   let refundedCount = 0;
   let refundFailedCount = 0;
+  let sweepEstimateRowsSkipped = 0;
   const driftedModels = new Map<string, { overcharge: number; undercharge: number; count: number }>();
 
   for (const row of usageEvents) {
+    // Venice never reported this chat's usage, so it was charged the output
+    // the request observed, or the stale-hold sweep's estimate. There are no
+    // token counts to re-cost, and re-costing zero tokens would refund the
+    // whole charge.
+    if (isManagedVeniceEstimatedCapture(row.metadata)) {
+      sweepEstimateRowsSkipped += 1;
+      continue;
+    }
     const promptTokens = readNumber(row.prompt_tokens);
     const completionTokens = readNumber(row.completion_tokens);
     const meta = readMetadata(row.metadata);
@@ -363,36 +371,9 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Release stranded reservation holds left behind when Venice 200'd but its
-  // usage telemetry was missing/garbled. Those file an open reconciliation
-  // item without pausing the key (the right call — see proxy-settlement), but
-  // nothing else ever releases the hold, so available balance silently
-  // shrinks. Run it here in its own try/catch so a sweep failure can't break
-  // the pricing-drift reconciliation above (or vice versa).
-  let reservationSweep: ReservationSweepSummary | { error: string };
-  try {
-    reservationSweep = await sweepStaleManagedVeniceReservations();
-    if (reservationSweep.releasedReservations > 0 || reservationSweep.scanned > 0) {
-      log.info("managed-venice-reconciliation swept stale reservation holds", {
-        source: SOURCE,
-        route: ROUTE,
-        scanned: reservationSweep.scanned,
-        releasedReservations: reservationSweep.releasedReservations,
-        totalReleasedMicroUsd: reservationSweep.totalReleasedMicroUsd,
-      });
-    }
-  } catch (error) {
-    reservationSweep = { error: error instanceof Error ? error.message : String(error) };
-    log.error(
-      "managed-venice-reconciliation reservation sweep failed",
-      error as Error,
-      {
-        source: SOURCE,
-        route: ROUTE,
-        failureType: "reservation_sweep_failed",
-      },
-    );
-  }
+  // Wallet holds the request path left active are settled hourly by
+  // /api/cron/managed-venice-hold-sweep (lib/venice/reservation-sweep.ts), not
+  // here: a daily run held a user's balance for up to two days.
 
   // Prune long-settled (released/captured) reservations so the table — and the
   // per-request balance reads that scan it — stay bounded. Own try/catch so a
@@ -431,9 +412,9 @@ export async function GET(req: NextRequest) {
     refundedCount,
     refundFailedCount,
     unpriceableCount,
+    sweepEstimateRowsSkipped,
     pricingSource: livePricing.source,
     liveModelCount: livePricing.liveModelCount,
-    reservationSweep,
     breachedAlertThreshold: breachedOvercharge || breachedUndercharge || hadRefundFailures || hadUnpriceable,
     // Trim per-chat detail in the response so the JSON stays small for ad-hoc
     // ops curls. The full per-chat report is reachable via the writeable

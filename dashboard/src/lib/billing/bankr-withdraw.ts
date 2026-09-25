@@ -16,6 +16,10 @@
  *      via `allowedRecipients.evm = [originatingWallet]`. Even if the
  *      key leaks, it can only move funds to the rightful owner's
  *      address.
+ *   2b. The destination (saved withdraw address, or the verified wallet
+ *      for a move) must have been set at least
+ *      WITHDRAW_DESTINATION_COOLDOWN_MS ago (withdraw-destination-policy.ts),
+ *      so a session that has just changed it cannot empty the wallet.
  *   3. We transfer the FULL on-chain balance — partial withdraws are
  *      out of scope for V1; the spec is "all-or-nothing exit."
  *   4. After the Bankr transfer submits, we record a withdraw event so
@@ -40,6 +44,10 @@ import { getBankrPartnerConfig } from "./bankr-wallets";
 import { getBankrDepositWalletCredentialForUser } from "./bankr-deposit-wallets";
 import { getUserWithdrawAddress } from "./withdraw-address";
 import {
+  withdrawDestinationHeldMessage,
+  withdrawDestinationHeldUntil,
+} from "./withdraw-destination-policy";
+import {
   ensureWalletHasGas,
   type EnsureWalletGasResult,
   type TreasuryGasClients,
@@ -62,6 +70,13 @@ export interface WithdrawResult {
     | "already_in_flight"
     | "no_verified_wallet";
   txHash?: string | null;
+  /**
+   * Set when the destination is still inside its cooldown: when it can first
+   * receive funds. The status is then no_withdraw_address (or
+   * no_verified_wallet for a move) with an errorMessage saying so, which the
+   * route already answers with 422 and that message.
+   */
+  availableAt?: string;
   amountRaw?: string;
   amountDisplay?: string;
   recipientAddress?: string;
@@ -279,8 +294,17 @@ export async function getSelfCustodyPrimaryWallet(userId: string) {
     .limit(1)
     .maybeSingle();
   if (error) throw new Error(`Failed to load the verified wallet: ${error.message}`);
-  const row = data as { id: string; address: string; normalized_address: string } | null;
-  return row ? { id: row.id, address: row.address, normalizedAddress: row.normalized_address } : null;
+  const row = data as
+    | { id: string; address: string; normalized_address: string; verified_at?: string | null }
+    | null;
+  return row
+    ? {
+        id: row.id,
+        address: row.address,
+        normalizedAddress: row.normalized_address,
+        verifiedAt: row.verified_at ?? null,
+      }
+    : null;
 }
 
 export async function withdrawAllHermesTokensForUser(
@@ -308,6 +332,9 @@ export async function withdrawAllHermesTokensForUser(
   }
 
   let recipient: string;
+  // When the destination was set: a destination set within the cooldown
+  // cannot receive anything yet.
+  let destinationSetAt: string | null;
   if (params.destination === "verified_wallet") {
     // A move to the wallet the user proved they control by signature.
     const verified = await getSelfCustodyPrimaryWallet(params.userId);
@@ -318,6 +345,7 @@ export async function withdrawAllHermesTokensForUser(
       };
     }
     recipient = verified.normalizedAddress;
+    destinationSetAt = verified.verifiedAt;
   } else {
     // The user must have explicitly set a withdraw destination. We do
     // NOT auto-detect from chain history — bundlers, exchanges, MEV
@@ -329,6 +357,7 @@ export async function withdrawAllHermesTokensForUser(
       return { status: "no_withdraw_address" };
     }
     recipient = stored.normalizedAddress;
+    destinationSetAt = stored.setAt;
   }
 
   if (
@@ -339,6 +368,23 @@ export async function withdrawAllHermesTokensForUser(
       status: params.destination === "verified_wallet" ? "no_verified_wallet" : "no_withdraw_address",
       errorMessage:
         "Confirmation address does not match your saved withdraw address. Refresh the page and try again.",
+    };
+  }
+
+  // A destination set within the cooldown is held: nothing is claimed,
+  // minted or sent until it has been in place long enough for the owner to
+  // see the change email.
+  const heldUntil = withdrawDestinationHeldUntil(destinationSetAt);
+  if (heldUntil) {
+    return {
+      status: params.destination === "verified_wallet" ? "no_verified_wallet" : "no_withdraw_address",
+      availableAt: heldUntil.toISOString(),
+      recipientAddress: recipient,
+      errorMessage: withdrawDestinationHeldMessage(
+        heldUntil,
+        params.destination === "verified_wallet" ? "Your wallet" : "Your withdraw address",
+        params.destination === "verified_wallet" ? "verified" : "saved"
+      ),
     };
   }
 

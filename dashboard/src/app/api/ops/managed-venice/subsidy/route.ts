@@ -215,34 +215,72 @@ function billableUsageRows(rows: UsageRow[]) {
   });
 }
 
-// Multi-modal (image/video/audio/embeddings/search) usage lands as
-// status='reconciliation_required' with cost=0 (settled offline — see F176), so
-// it never shows up in the cost-bearing 'recorded' aggregates. That made the
-// entire multimodal stream INVISIBLE on this report — a media-only fleet looked
-// like it had no usage at all. Surface it explicitly (counts only, no invented
-// cost) so operators can see multimodal volume and how much usage is still
-// awaiting settlement.
+// Chat-shaped endpoints; every other usage row is multimodal (image, video,
+// audio, embeddings, web search and the paid passthrough paths).
+const CHAT_ENDPOINTS = new Set(["/api/v1/chat/completions", "/api/v1/responses"]);
+
+type MultimodalTotals = {
+  count: number;
+  capturedCount: number;
+  awaitingSettlementCount: number;
+  actualCostMicroUsd: number;
+  chargedMicroUsd: number;
+};
+
+// Multimodal usage is charged in the request since the media spend gate
+// (#160): the gate captures the hold and writes a 'recorded' row with its
+// cost, as does the stale-hold sweep for a hold it captured. Rows from before
+// the gate are still 'reconciliation_required' with cost 0 until the backlog
+// settlement pass prices them. Count both, so captured media usage is visible
+// here and the unsettled backlog stays visible too.
 function buildMultimodalUsage(rows: UsageRow[]) {
-  const reconciliationRequired = rows.filter(
-    (row) => stringValue(row.status) === "reconciliation_required"
-  );
-  const byEndpoint = new Map<string, number>();
-  const byModel = new Map<string, number>();
-  for (const row of reconciliationRequired) {
-    const endpoint = stringValue(row.endpoint, "unknown");
-    const model = stringValue(row.model, "unknown");
-    byEndpoint.set(endpoint, (byEndpoint.get(endpoint) || 0) + 1);
-    byModel.set(model, (byModel.get(model) || 0) + 1);
+  const multimodal = rows.filter((row) => !CHAT_ENDPOINTS.has(stringValue(row.endpoint)));
+  const byEndpoint = new Map<string, MultimodalTotals>();
+  const byModel = new Map<string, MultimodalTotals>();
+  const totals: MultimodalTotals = {
+    count: 0,
+    capturedCount: 0,
+    awaitingSettlementCount: 0,
+    actualCostMicroUsd: 0,
+    chargedMicroUsd: 0,
+  };
+  const add = (target: MultimodalTotals, row: UsageRow) => {
+    const status = stringValue(row.status, "recorded");
+    target.count += 1;
+    if (status === "recorded") {
+      target.capturedCount += 1;
+      target.actualCostMicroUsd += numberValue(row.actual_cost_micro_usd);
+      target.chargedMicroUsd += numberValue(row.charged_micro_usd);
+    } else if (status === "reconciliation_required") {
+      target.awaitingSettlementCount += 1;
+    }
+  };
+  const bucket = (map: Map<string, MultimodalTotals>, key: string) => {
+    let entry = map.get(key);
+    if (!entry) {
+      entry = { count: 0, capturedCount: 0, awaitingSettlementCount: 0, actualCostMicroUsd: 0, chargedMicroUsd: 0 };
+      map.set(key, entry);
+    }
+    return entry;
+  };
+  for (const row of multimodal) {
+    add(totals, row);
+    add(bucket(byEndpoint, stringValue(row.endpoint, "unknown")), row);
+    add(bucket(byModel, stringValue(row.model, "unknown")), row);
   }
+  const ranked = <K extends string>(map: Map<string, MultimodalTotals>, name: K) =>
+    Array.from(map.entries())
+      .sort(([leftKey, left], [rightKey, right]) => right.count - left.count || leftKey.localeCompare(rightKey))
+      .map(([key, entry]) => ({ [name]: key, ...entry }) as Record<K, string> & MultimodalTotals);
+
   return {
-    awaitingSettlementCount: reconciliationRequired.length,
-    byEndpoint: Array.from(byEndpoint.entries())
-      .map(([endpoint, count]) => ({ endpoint, count }))
-      .sort((a, b) => b.count - a.count),
-    byModel: Array.from(byModel.entries())
-      .map(([model, count]) => ({ model, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 25),
+    rowCount: totals.count,
+    capturedCount: totals.capturedCount,
+    capturedActualCostMicroUsd: totals.actualCostMicroUsd,
+    capturedChargedMicroUsd: totals.chargedMicroUsd,
+    awaitingSettlementCount: totals.awaitingSettlementCount,
+    byEndpoint: ranked(byEndpoint, "endpoint"),
+    byModel: ranked(byModel, "model").slice(0, 25),
   };
 }
 
@@ -654,8 +692,8 @@ export async function GET(req: NextRequest) {
         (entry) => entry.subsidyMicroUsd >= PER_USER_WEEKLY_ALERT_MICRO_USD
       ),
       modelSpend: buildModelSpend(usageRows),
-      // Multimodal usage is cost=0 / reconciliation_required and therefore
-      // absent from modelSpend; surface it so it's no longer invisible.
+      // Captured multimodal usage (also in modelSpend) and the unsettled
+      // pre-gate backlog, per endpoint and model.
       multimodalUsage: buildMultimodalUsage(usageRows),
       reconciliation: {
         openItemCount: openReconciliationRows.length,

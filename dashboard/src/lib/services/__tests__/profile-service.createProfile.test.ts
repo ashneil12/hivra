@@ -42,7 +42,7 @@ describe('ProfileService.createProfile', () => {
 
   it('injects symlink logic when linkUserMd is true', async () => {
     // Mock getHostIpForInstance
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);
@@ -86,7 +86,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it('injects isolated files logic when linkUserMd is false', async () => {
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);
@@ -126,7 +126,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it('patches the real profile env path when cloning with overrides', async () => {
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);
@@ -171,7 +171,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it('creates profiles using the resolved Hermes binary instead of assuming PATH', async () => {
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);
@@ -221,7 +221,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it("clears stale provider env vars when cloning with a different provider", async () => {
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);
@@ -271,7 +271,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it("keeps auth-store provider runtime env when cloning without an API key", async () => {
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);
@@ -309,7 +309,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it("surfaces rollback failures when profile creation cleanup cannot delete the record", async () => {
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, "allocatePort").mockResolvedValue(8001);
@@ -346,7 +346,7 @@ describe('ProfileService.createProfile', () => {
   });
 
   it("stops gateways using the resolved Hermes binary instead of assuming PATH", async () => {
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
     jest.spyOn(ProfileService, "updateAgentCaddyRouting").mockResolvedValue(undefined);
 
@@ -385,7 +385,7 @@ describe('ProfileService.createProfile', () => {
   it('redacts secrets when profile config injection writes fail', async () => {
     const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
     // @ts-expect-error - Mocking private method allocatePort
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8001);

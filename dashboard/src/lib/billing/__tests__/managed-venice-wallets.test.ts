@@ -1,5 +1,4 @@
 import {
-  MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS,
   ManagedVeniceInsufficientBalanceError,
   captureManagedVeniceReservation,
   createManagedVeniceReservation,
@@ -10,6 +9,7 @@ import {
   releaseManagedVeniceReservation,
 } from "@/lib/billing/managed-venice-wallets";
 import { createManagedVeniceSpendWorld } from "@/test-utils/managed-venice-spend-world";
+import { createManagedVeniceWalletRpc } from "@/test-utils/managed-venice-wallet-rpc";
 
 type Row = Record<string, unknown>;
 
@@ -147,7 +147,8 @@ function createMemoryDb() {
   }
 
   return {
-    db: { from: table },
+    // The wallet debit functions run against the same tables.
+    db: { from: table, rpc: createManagedVeniceWalletRpc((name) => tables[name]) },
     tables,
     insertRow,
   };
@@ -229,7 +230,7 @@ describe("managed Venice wallet accounting", () => {
         if (name !== "managed_venice_reservations") return base;
         return {
           ...base,
-          upsert: () => ({
+          insert: () => ({
             select: () => ({
               single: async () => ({
                 data: null,
@@ -507,16 +508,13 @@ describe("managed Venice wallet accounting", () => {
 // debit wrote the lot's new remaining value filtered by id alone, so debits
 // that read the lot at the same time overwrote each other. Ten $0.05 media
 // captures on a $1.00 lot left $0.95, and every hold still closed as captured.
-// These run the real wallet code against the in-memory DB, whose
-// update(...).select() returns only the rows the filters still matched.
+// Every debit is now one database function under the per-user wallet lock
+// (20260925201500_managed_venice_atomic_wallet_debits.sql; PGlite and
+// real-PostgreSQL proofs in scripts/test-managed-venice-*-wallet-debit*.cjs).
+// These run the real wallet code against the in-memory twin of those
+// functions.
 describe("token lot debits under concurrency", () => {
   const USER = "user_lot_race";
-
-  function lotWrites(world: ReturnType<typeof createManagedVeniceSpendWorld>) {
-    return world.calls
-      .filter((call) => call.table === "managed_venice_token_lots" && call.kind === "update")
-      .map((call) => call.filters?.find((filter) => filter.column === "remaining_value_micro_usd")?.value);
-  }
 
   it("ten captures of one lot at the same time each debit it", async () => {
     const world = createManagedVeniceSpendWorld();
@@ -545,15 +543,13 @@ describe("token lot debits under concurrency", () => {
     });
   });
 
-  it("a debit whose read was overtaken by another debit re-reads the lot instead of overwriting it", async () => {
+  it("a debit that started from a stale read still lands on the lot's current value", async () => {
     const world = createManagedVeniceSpendWorld();
     world.fundHermesos(USER, 1_000_000);
-    // This debit reads the lot at $1.00, then another debit of $0.40 commits.
-    const racing = world.withStaleReads(
-      "managed_venice_token_lots",
-      world.tables.managed_venice_token_lots,
-      { untilWrite: true }
-    );
+    // This client read the lot at $1.00; another debit of $0.40 then commits.
+    const racing = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots, {
+      untilWrite: true,
+    });
     await debitManagedVeniceWallet(
       { userId: USER, walletType: "hermesos", amountMicroUsd: 400_000, referenceId: "other_debit" },
       world.db
@@ -564,25 +560,20 @@ describe("token lot debits under concurrency", () => {
       racing
     );
 
-    // $1.00 - $0.40 - $0.05, not the $0.95 a blind write of its stale read would leave.
+    // $1.00 - $0.40 - $0.05, not the $0.95 a write of its stale read would leave.
     expect(world.tables.managed_venice_token_lots[0]).toMatchObject({
       remaining_value_micro_usd: 550_000,
       remaining_token_amount_raw: "550000",
     });
-    // The other debit's write, the racing debit's lost compare-and-set on the
-    // $1.00 it read, then its write against the $0.60 it re-read.
-    expect(lotWrites(world)).toEqual([1_000_000, 1_000_000, 600_000]);
   });
 
   it("skips a lot that was voided after it was read", async () => {
     const world = createManagedVeniceSpendWorld();
     world.fundHermesos(USER, 300_000);
     world.fundHermesos(USER, 300_000);
-    const racing = world.withStaleReads(
-      "managed_venice_token_lots",
-      world.tables.managed_venice_token_lots,
-      { untilWrite: true }
-    );
+    const racing = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots, {
+      untilWrite: true,
+    });
     world.tables.managed_venice_token_lots[0].status = "voided";
 
     await debitManagedVeniceWallet(
@@ -596,29 +587,64 @@ describe("token lot debits under concurrency", () => {
     ]);
   });
 
-  it("gives up with an error after losing every attempt, leaving the lot and the hold as they were", async () => {
+  // A debit spanning two lots used to write the first lot, then fail on the
+  // second (a voided lot, a lost race, a dropped connection) with the first
+  // write already made: the user paid part of a charge that was never recorded.
+  it("a debit the lots can no longer cover changes no lot and leaves the hold active", async () => {
+    const world = createManagedVeniceSpendWorld();
+    world.fundHermesos(USER, 300_000);
+    world.fundHermesos(USER, 300_000);
+    await createManagedVeniceReservation(
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 600_000, referenceId: "two_lots" },
+      world.db
+    );
+    // This capture read both lots as active; the second was voided since.
+    const stale = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots, {
+      untilWrite: true,
+    });
+    world.tables.managed_venice_token_lots[1].status = "voided";
+
+    await expect(
+      captureManagedVeniceReservation({ userId: USER, referenceId: "two_lots", captureMicroUsd: 600_000 }, stale)
+    ).rejects.toBeInstanceOf(ManagedVeniceInsufficientBalanceError);
+
+    expect(world.tables.managed_venice_token_lots.map((lot) => [lot.status, lot.remaining_value_micro_usd])).toEqual([
+      ["active", 300_000],
+      ["voided", 300_000],
+    ]);
+    expect(world.reservations()[0]).toMatchObject({ reference_id: "two_lots", status: "active" });
+  });
+
+  // The stale-hold sweep retries captures that failed in-request. A capture
+  // whose money moved but whose caller saw an error must not be charged again.
+  it("a capture retried after its outcome was lost is charged once", async () => {
     const world = createManagedVeniceSpendWorld();
     world.fundHermesos(USER, 1_000_000);
     await createManagedVeniceReservation(
-      { userId: USER, walletType: "hermesos", amountMicroUsd: 50_000, referenceId: "starved" },
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 100_000, referenceId: "lost_reply" },
       world.db
     );
-    // Every read this capture makes still shows $1.00; the lot really holds $0.60.
-    const alwaysStale = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots);
-    await debitManagedVeniceWallet(
-      { userId: USER, walletType: "hermesos", amountMicroUsd: 400_000, referenceId: "other_debit" },
-      world.db
-    );
+    // The debit commits, then the caller sees an error: a dropped connection
+    // after the function ran, or (before) a failed write of the hold's status.
+    world.failNext({ table: "managed_venice_reservations", op: "update" });
+    const lossy = {
+      ...world.db,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        await world.db.rpc(fn, args);
+        return { data: null, error: { code: "08006", message: "connection to server was lost" } };
+      },
+    };
 
     await expect(
-      captureManagedVeniceReservation({ userId: USER, referenceId: "starved", captureMicroUsd: 50_000 }, alwaysStale)
-    ).rejects.toThrow(`lost ${MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS} races`);
-
-    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(600_000);
-    expect(lotWrites(world).filter((value) => value === 1_000_000)).toHaveLength(
-      1 + MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS
+      captureManagedVeniceReservation({ userId: USER, referenceId: "lost_reply", captureMicroUsd: 100_000 }, lossy)
+    ).rejects.toThrow();
+    const retry = await captureManagedVeniceReservation(
+      { userId: USER, referenceId: "lost_reply", captureMicroUsd: 100_000 },
+      world.db
     );
-    // The hold still backs the debt; the caller files it for reconciliation.
-    expect(world.reservations()[0]).toMatchObject({ reference_id: "starved", status: "active" });
+
+    expect(retry).toMatchObject({ captured: false, capturedMicroUsd: 100_000 });
+    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(900_000);
+    expect(world.reservations()[0]).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
   });
 });

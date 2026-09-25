@@ -61,7 +61,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    const hostIp = await ProfileService.getHostIpForInstance(instanceId, userId);
+    const { ip: hostIp, guestTarget } = await ProfileService.getGuestSshForInstance(instanceId, userId);
     const baseContainerName = `agent-${sanitizeDockerName(instanceId)}`;
     const uploaded: Array<{ name: string; path: string; size: number }> = [];
 
@@ -84,7 +84,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           // re-owning every pre-existing file on each upload was a side effect
           // that could clobber ownership the agent had intentionally set.
           `printf "%s" "$FILE_B64" | base64 -d | docker exec -u root -i "$CONTAINER_NAME" sh -c 'target_dir="$1"; filename="$2"; mkdir -p "$target_dir"; chown 1024:1024 "$target_dir" 2>/dev/null || true; cat > "$target_dir/$filename"; chown 1024:1024 "$target_dir/$filename" 2>/dev/null || true' sh "$TARGET_DIR" "$FILENAME"`,
-        ].join("\n")
+        ].join("\n"),
+        { proxmoxHostConfig: guestTarget }
       );
 
       if (!result.ok) {

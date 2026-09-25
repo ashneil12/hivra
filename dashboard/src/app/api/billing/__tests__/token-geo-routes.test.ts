@@ -66,6 +66,9 @@ const mockRefreshHolding = jest.fn();
 jest.mock("@/lib/billing/token-holdings", () => ({
   ...jest.requireActual("@/lib/billing/token-holdings"),
   getTokenVerificationWallet: jest.fn(async () => ({ address: "0xabc" })),
+  // No legacy lock wallet, so verifying a wallet changes no withdrawal
+  // destination and needs no fresh sign-in check (wallet/verify route tests).
+  getHermesLockWallet: jest.fn(async () => null),
   refreshPrimaryHermesTokenHolding: (...args: unknown[]) => mockRefreshHolding(...args),
 }));
 const mockEvaluate = jest.fn();
@@ -90,6 +93,7 @@ const mockVerifyChallenge = jest.fn();
 jest.mock("@/lib/billing/wallet-verification", () => ({
   createWalletVerificationChallenge: (...args: unknown[]) => mockCreateChallenge(...args),
   isWalletClaimedByAnotherAccount: jest.fn(async () => false),
+  getPendingWalletChallengeAddress: jest.fn(async () => "0x000000000000000000000000000000000000dead"),
   verifyWalletChallenge: (...args: unknown[]) => mockVerifyChallenge(...args),
 }));
 

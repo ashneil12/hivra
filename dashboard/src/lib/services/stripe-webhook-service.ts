@@ -1772,7 +1772,7 @@ export class StripeWebhookService {
         subscriptionPlan,
       });
     } else if (boundRow) {
-      await supabaseAdmin
+      const activation = supabaseAdmin
         .from("hermes_subscriptions")
         .update({
           status: "active",
@@ -1790,8 +1790,46 @@ export class StripeWebhookService {
         // between the read above and this write is never overwritten.
         .eq("stripe_subscription_id", subscriptionId);
 
-      await this.restoreScheduledDeletions(userId);
-      await this.resumeBillingSuspendedInstances(userId);
+      // The plan check above and this write are one compare-and-set: the
+      // write also requires the plan the read saw, which is the paid plan
+      // whenever the subscription names one. /api/billing/subscribe rewrites
+      // plan + limits on a pending row but keeps its subscription id, so a
+      // subscribe for another plan landing between the read and this write
+      // would otherwise have that plan switched on by this payment.
+      const { data: activated, error: activationError } = await (
+        boundRow.plan === null
+          ? activation.is("plan", null)
+          : activation.eq("plan", boundRow.plan)
+      ).select("user_id");
+
+      if (activationError) {
+        log.error("failed to activate the subscription row for a paid invoice", new Error(activationError.message), {
+          source: LOG_SOURCE,
+          failureType: "invoice_paid_activation_failed",
+          subscriptionId,
+          userId,
+        });
+        // Throw so the webhook answers 500 and Stripe redelivers; resuming
+        // computers for a row that was never activated would be wrong.
+        throw new Error(activationError.message || "failed to activate hermes_subscriptions for invoice.paid");
+      }
+
+      if ((activated?.length ?? 0) === 0) {
+        // Rebound or re-planned since the read. Whatever wrote the row owns
+        // it now; nothing was activated, so nothing is restored or resumed.
+        log.warn("invoice.paid row changed between read and write; not activating", {
+          source: LOG_SOURCE,
+          failureType: "invoice_paid_row_changed",
+          subscriptionId,
+          userId,
+          rowPlan: boundRow.plan,
+          rowStatus: boundRow.status,
+          subscriptionPlan,
+        });
+      } else {
+        await this.restoreScheduledDeletions(userId);
+        await this.resumeBillingSuspendedInstances(userId);
+      }
     }
 
     // Cycle credits follow the paid Hivra subscription itself (idempotent per

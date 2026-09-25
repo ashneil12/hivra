@@ -10,6 +10,10 @@
 // the catalog until this is validated against a real Claude Code session.
 
 export const runtime = "nodejs";
+// The stream stops at MANAGED_VENICE_STREAM_DEADLINE_MS (270 s) and settles
+// what it read, so the platform never kills a request with its hold
+// unsettled (security review 2026-09).
+export const maxDuration = 300;
 
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -29,9 +33,19 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
   captureManagedVeniceChatUsage,
-  releaseManagedVeniceChatReservation,
+  captureManagedVeniceObservedOutput,
+  managedVeniceUsageCostMicroUsd,
   markManagedVeniceReconciliationRequired,
+  releaseManagedVeniceChatReservationOrFile,
 } from "@/lib/venice/proxy-settlement";
+import { MissingVeniceUsageError } from "@/lib/venice/cost-estimator";
+import { MANAGED_VENICE_STREAM_DEADLINE_MS } from "@/lib/venice/hold-lifecycle";
+import { createManagedVeniceOutputMeter } from "@/lib/venice/stream-output-meter";
+import {
+  createManagedVeniceStreamSettlement,
+  managedVeniceStreamDeadline,
+  settleAfterResponse,
+} from "@/lib/venice/stream-settlement";
 import { ManagedVeniceInsufficientBalanceError } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import {
@@ -41,6 +55,7 @@ import {
 } from "@/lib/venice/anthropic-openai-translate";
 
 const VENICE_CHAT_COMPLETIONS_URL = "https://api.venice.ai/api/v1/chat/completions";
+const ANTHROPIC_ROUTE = "/api/managed-venice/anthropic/v1/messages";
 
 // Claude Code authenticates with `x-api-key`; also accept Bearer for parity
 // with the rest of the gateway.
@@ -164,23 +179,53 @@ export async function POST(req: NextRequest) {
     ? { ...openAiBody, ...bodyPatch, stream: true, stream_options: { include_usage: true } }
     : { ...openAiBody, ...bodyPatch, stream: false };
 
+  // A refused request (or one that never reached Venice) gets its hold back.
+  // If that release fails, an item is filed and the hourly sweep releases it:
+  // the hold is never left to expire and be charged (security review 2026-09).
+  const release = (cause: string, upstreamStatus: number | null = null) =>
+    releaseManagedVeniceChatReservationOrFile({
+      userId: verifiedKey.userId,
+      proxyKeyId: verifiedKey.id,
+      referenceId,
+      cause,
+      upstreamStatus,
+      model,
+      source: "managed-venice-anthropic",
+    });
+  // Venice answered 2xx but its usage never arrived: charge the input
+  // estimate plus the output observed (past the hold, as an overage).
+  const chargeObserved = (observedOutputTokens: number, cause: string) =>
+    captureManagedVeniceObservedOutput({
+      userId: verifiedKey.userId,
+      proxyKeyId: verifiedKey.id,
+      referenceId,
+      model,
+      upstreamStatus: upstreamResponse.status,
+      observedOutputTokens,
+      cause,
+      reconciliationReason: "managed_venice_anthropic_missing_usage",
+      source: "managed-venice-anthropic",
+    });
+  const deadline = managedVeniceStreamDeadline(MANAGED_VENICE_STREAM_DEADLINE_MS);
+
   let upstreamResponse: Response;
   try {
     upstreamResponse = await fetch(VENICE_CHAT_COMPLETIONS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${serverKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(upstreamBody),
+      signal: deadline,
     });
   } catch (error) {
-    await releaseManagedVeniceChatReservation({ userId: verifiedKey.userId, referenceId });
+    await release(deadline.aborted ? "upstream_deadline" : "upstream_fetch_failed");
     return anthropicError({ status: 502, type: "api_error", message: `Venice upstream request failed: ${(error as Error).message}` });
   }
 
   // Upstream error: release the hold and surface a translated error. The user
   // isn't charged for a failed Venice call.
   if (!upstreamResponse.ok) {
-    await releaseManagedVeniceChatReservation({ userId: verifiedKey.userId, referenceId });
-    const text = await upstreamResponse.text();
+    await release("upstream_non_2xx", upstreamResponse.status);
+    const text = await upstreamResponse.text().catch(() => "");
     const parsed = safeJsonParse(text);
     const message =
       (parsed?.error && typeof parsed.error === "object" && "message" in (parsed.error as object)
@@ -191,10 +236,14 @@ export async function POST(req: NextRequest) {
 
   // ---- non-streaming ----
   if (!isStream) {
-    const text = await upstreamResponse.text();
-    const openAiJson = safeJsonParse(text);
+    const text = await upstreamResponse.text().catch(() => null);
+    const openAiJson = text === null ? null : safeJsonParse(text);
     if (!openAiJson) {
-      await releaseManagedVeniceChatReservation({ userId: verifiedKey.userId, referenceId });
+      // Venice answered 2xx, so it ran (and billed) the request, but the body
+      // can't be read. Charge what was observed; never release a 2xx.
+      const meter = createManagedVeniceOutputMeter();
+      if (text) meter.observeUnparsedText(text);
+      await chargeObserved(meter.outputTokens(), text === null ? "body_unreadable" : "unparseable_response");
       return anthropicError({ status: 502, type: "api_error", message: "Venice returned an unparseable response" });
     }
     try {
@@ -209,17 +258,28 @@ export async function POST(req: NextRequest) {
         pricingMap,
       });
     } catch (error) {
-      // 200 already paid for at Venice — file reconciliation, keep the key live.
-      await markManagedVeniceReconciliationRequired(
-        {
-          userId: verifiedKey.userId,
-          proxyKeyId: verifiedKey.id,
-          referenceId,
-          reason: "managed_venice_anthropic_capture_failed",
-          metadata: { model, error: (error as Error).message },
-          pauseKey: false,
-        }
-      ).catch(() => {});
+      if (error instanceof MissingVeniceUsageError) {
+        const meter = createManagedVeniceOutputMeter();
+        meter.observeChatChunk(openAiJson);
+        await chargeObserved(meter.outputTokens(), "missing_usage");
+      } else {
+        // 200 already paid for at Venice — file reconciliation with the
+        // reported usage (the sweep charges it), keep the key live.
+        await markManagedVeniceReconciliationRequired(
+          {
+            userId: verifiedKey.userId,
+            proxyKeyId: verifiedKey.id,
+            referenceId,
+            reason: "managed_venice_anthropic_capture_failed",
+            metadata: {
+              model,
+              error: (error as Error).message,
+              usageCostMicroUsd: managedVeniceUsageCostMicroUsd({ model, usage: openAiJson.usage, pricingMap }),
+            },
+            pauseKey: false,
+          }
+        ).catch(() => {});
+      }
     }
     const anthropicJson = openAiResponseToAnthropic(openAiJson, model);
     return new Response(JSON.stringify(anthropicJson), {
@@ -232,7 +292,8 @@ export async function POST(req: NextRequest) {
   const translator = new AnthropicStreamTranslator(model, `msg_${referenceId.replace(/-/g, "").slice(0, 24)}`);
   const upstream = upstreamResponse.body;
   if (!upstream) {
-    await releaseManagedVeniceChatReservation({ userId: verifiedKey.userId, referenceId });
+    // A 2xx with no body: nothing was generated that anyone can see.
+    await chargeObserved(0, "stream_missing_body");
     return anthropicError({ status: 502, type: "api_error", message: "Venice returned an empty stream" });
   }
 
@@ -240,87 +301,119 @@ export async function POST(req: NextRequest) {
   const decoder = new TextDecoder();
   const reader = upstream.getReader();
   let buffer = "";
-  let finalUsage: unknown = null;
-  let captured = false;
+  // The client disconnected. Forwarding stops; reading Venice does not.
+  let clientGone = false;
+  // Venice answered 200, so the hold is never released. The stream is read to
+  // Venice's usage frame even after the client leaves, so the exact usage is
+  // charged, hidden reasoning included (security review 2026-09, #167 second
+  // review). Only a stream whose usage never arrives (the deadline, a broken
+  // stream, Venice leaving it out) is charged its input estimate plus the
+  // output read (stream-settlement.ts).
+  const settlement = createManagedVeniceStreamSettlement({
+    userId: verifiedKey.userId,
+    proxyKeyId: verifiedKey.id,
+    referenceId,
+    walletType,
+    model,
+    upstreamStatus: upstreamResponse.status,
+    pricingMap,
+    source: "managed-venice-anthropic",
+    route: ANTHROPIC_ROUTE,
+    reasons: {
+      usageMissing: () => "managed_venice_anthropic_missing_usage",
+      captureFailed: () => "managed_venice_anthropic_stream_capture_failed",
+    },
+  });
 
-  const captureOnce = async () => {
-    if (captured) return;
-    captured = true;
-    if (!finalUsage) {
-      // A 200 with no usage frame: don't pause (reservation already holds the
-      // spend); reconcile offline. Mirrors the chat route's behavior.
-      await markManagedVeniceReconciliationRequired({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        referenceId,
-        reason: "managed_venice_anthropic_missing_usage",
-        metadata: { model },
-        pauseKey: false,
-      }).catch(() => {});
-      return;
-    }
-    await captureManagedVeniceChatUsage({
-      userId: verifiedKey.userId,
-      proxyKeyId: verifiedKey.id,
-      walletType,
-      referenceId,
-      model,
-      upstreamStatus: upstreamResponse.status,
-      usage: finalUsage,
-      pricingMap,
-    }).catch(async (error) => {
-      await markManagedVeniceReconciliationRequired({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        referenceId,
-        reason: "managed_venice_anthropic_stream_capture_failed",
-        metadata: { model, error: (error as Error).message },
-        pauseKey: false,
-      }).catch(() => {});
-    });
-  };
+  let markSettled!: () => void;
+  const settled = new Promise<void>((resolve) => (markSettled = resolve));
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      controller.enqueue(encoder.encode(translator.start()));
+      const send = (text: string) => {
+        if (clientGone || !text) return;
+        try {
+          controller.enqueue(encoder.encode(text));
+        } catch {
+          clientGone = true;
+        }
+      };
+      const translate = (frame: string) => {
+        for (const line of frame.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          const chunk = safeJsonParse(data);
+          if (!chunk) continue;
+          settlement.meter.observeChatChunk(chunk);
+          if (chunk.usage) settlement.observeUsage(chunk.usage);
+          send(translator.chunk(chunk) ?? "");
+        }
+      };
+      const onDeadline = () => void reader.cancel().catch(() => undefined);
+      deadline.addEventListener("abort", onDeadline, { once: true });
+      if (deadline.aborted) onDeadline();
+      let failed = false;
       try {
+        send(translator.start());
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done || deadline.aborted) break;
           buffer += decoder.decode(value, { stream: true });
           const frames = buffer.split(/\r?\n\r?\n/);
           buffer = frames.pop() ?? "";
-          for (const frame of frames) {
-            for (const line of frame.split(/\r?\n/)) {
-              const trimmed = line.trim();
-              if (!trimmed.startsWith("data:")) continue;
-              const data = trimmed.slice(5).trim();
-              if (!data || data === "[DONE]") continue;
-              const chunk = safeJsonParse(data);
-              if (!chunk) continue;
-              if (chunk.usage) finalUsage = chunk.usage;
-              const out = translator.chunk(chunk);
-              if (out) controller.enqueue(encoder.encode(out));
-            }
+          for (const frame of frames) translate(frame);
+          // The client has gone and Venice's usage is in hand: nothing is
+          // left to forward or to charge.
+          if (clientGone && settlement.hasUsage()) {
+            void reader.cancel().catch(() => undefined);
+            break;
           }
         }
-        controller.enqueue(encoder.encode(translator.finish()));
+        if (!deadline.aborted) {
+          buffer += decoder.decode();
+          if (buffer) translate(buffer);
+          buffer = "";
+          send(translator.finish());
+        }
       } catch (error) {
+        failed = true;
         log.warn("managed Venice anthropic stream transform failed mid-stream", {
           source: "managed-venice-anthropic",
-          route: "/api/managed-venice/anthropic/v1/messages",
+          route: ANTHROPIC_ROUTE,
           failureType: "managed_venice_anthropic_stream_error",
           userId: verifiedKey.userId,
           proxyKeyId: verifiedKey.id,
           referenceId,
+          clientGone,
           errorMessage: error instanceof Error ? error.message : String(error),
         });
       } finally {
-        await captureOnce();
-        controller.close();
+        deadline.removeEventListener("abort", onDeadline);
+      }
+      try {
+        await settlement.settle(
+          clientGone ? "client_cancelled" : deadline.aborted ? "deadline" : failed ? "upstream_failed" : "completed"
+        );
+        if (!clientGone) controller.close();
+      } catch {
+        // The client went away while settlement ran.
+      } finally {
+        markSettled();
       }
     },
+    cancel() {
+      // The client has gone. Keep reading Venice to its usage frame (or the
+      // deadline) and charge what it billed; start() settles when it ends.
+      clientGone = true;
+      // Venice's usage is already in hand: stop reading now.
+      if (settlement.hasUsage()) void reader.cancel().catch(() => undefined);
+    },
   });
+  // Settlement can outlast the response: a client that disconnects leaves
+  // the route reading Venice to its usage frame.
+  settleAfterResponse(settled, { source: "managed-venice-anthropic", route: ANTHROPIC_ROUTE, referenceId });
 
   return new Response(stream, {
     status: 200,

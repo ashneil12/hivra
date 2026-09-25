@@ -405,7 +405,8 @@ describe("POST /api/instances/[id]", () => {
     expect(sshExec).toHaveBeenCalledWith(
       "10.250.20.98",
       expect.stringContaining('docker restart "$AGENT_CONTAINER"'),
-      { proxmoxHostConfig }
+      // Bound to the VMID being restarted and this instance, not just the host.
+      { proxmoxHostConfig: { ...proxmoxHostConfig, vmid: 1148, instanceId: "inst-123" } }
     );
   });
 
@@ -720,7 +721,7 @@ describe("POST /api/instances/[id]", () => {
     expect(sshExec).toHaveBeenCalledWith(
       "10.250.20.52",
       expect.stringContaining("docker compose restart gateway"),
-      { timeoutMs: 300_000, proxmoxHostConfig }
+      { timeoutMs: 300_000, proxmoxHostConfig: { ...proxmoxHostConfig, vmid: 1302, instanceId: "inst-123" } }
     );
   });
 
@@ -2841,7 +2842,8 @@ describe("PATCH /api/instances/[id]", () => {
     );
     expect(sshExec).toHaveBeenCalledWith(
       "203.0.113.10",
-      "#!/usr/bin/env bash\necho auto-update"
+      "#!/usr/bin/env bash\necho auto-update",
+      {}
     );
     expect(json.data.autoUpdateApplied).toBe(true);
     expect(json.data.autoUpdateError).toBeNull();

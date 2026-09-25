@@ -25,6 +25,8 @@ export interface StubGuestVm {
   /** Whether the guest agent answers. Defaults to true for a running VM. */
   agentUp?: boolean;
   tags?: string;
+  /** The `name:` config value. Defaults to `hermes-fixture-<vmid>`. */
+  name?: string;
   /** Base64 Ed25519 key blob the guest agent reports. Defaults to the genuine key. */
   attestedHostKey?: string;
   /** Raw `out-data` the guest agent returns for the host key file, overriding the key. */
@@ -184,7 +186,7 @@ export function createStubProxmoxGuestHost(): StubProxmoxGuestHost {
         ...(vm.agent === null ? [] : [`agent: ${vm.agent ?? "1"}`]),
         "cores: 2",
         `ipconfig0: ip=${vm.ip}/24,gw=10.250.20.1`,
-        `name: hermes-fixture-${vm.vmid}`,
+        `name: ${vm.name ?? `hermes-fixture-${vm.vmid}`}`,
         ...(vm.tags ? [`tags: ${vm.tags}`] : []),
         "",
         // Snapshot sections carry their own (stale) ipconfig0; only the main section counts.

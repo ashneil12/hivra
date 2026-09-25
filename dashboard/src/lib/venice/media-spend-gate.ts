@@ -18,7 +18,13 @@
 //        - error / no answer -> release the hold, charge nothing;
 //        - 2xx               -> capture the settlement price (the catalog's
 //          published floor) from the hold and write a 'recorded' usage row +
-//          financial event, so the offline settlement pass skips it.
+//          financial event, so the offline settlement pass skips it. That
+//          includes a 2xx whose body could not be read: Venice ran it.
+//   4. whatever this request could not settle, the stale-hold sweep
+//      (reservation-sweep.ts) does: every hold expires after
+//      MANAGED_VENICE_MEDIA_HOLD_TTL_MS and records what a success costs, a
+//      failed capture or release files a reconciliation item, and the sweep
+//      captures (or, for a refused request, releases) the hold.
 //
 // A 2xx is ALWAYS charged. MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED does not
 // apply here: it only switches the retroactive settlement of old
@@ -53,6 +59,12 @@ import {
   resolveVeniceMultimodalMarkup,
   resolveVeniceMultimodalPrice,
 } from "./multimodal-pricing";
+import {
+  MANAGED_VENICE_MEDIA_HOLD_TTL_MS,
+  MEDIA_CAPTURE_FAILED_RECONCILIATION_REASON,
+  MEDIA_RELEASE_FAILED_RECONCILIATION_REASON,
+  managedVeniceHoldExpiresAt,
+} from "./hold-lifecycle";
 import { managedVeniceTopUpUrl } from "./proxy-chat-core";
 import { markManagedVeniceReconciliationRequired } from "./proxy-settlement";
 
@@ -92,7 +104,7 @@ export interface ManagedVeniceMediaHold {
   /** Settle (2xx) or release (anything else). Never throws. */
   complete(outcome: ManagedVeniceMediaOutcome): Promise<void>;
   /** Release without an upstream answer (fetch threw). Never throws. */
-  release(reason: string): Promise<void>;
+  release(reason: string, detail?: { upstreamStatus?: number }): Promise<void>;
 }
 
 export type ManagedVeniceMediaHoldResult =
@@ -206,6 +218,13 @@ export async function holdManagedVeniceMediaSpend(
     };
   }
 
+  // What a success is charged, fixed now so the stale-hold sweep can settle
+  // this hold without re-pricing it: the catalog price of the tier sent
+  // (Venice's default, the cheapest, when none was), bounded by the hold.
+  const successCost = computeVeniceMultimodalCost({ endpoint: operation.endpoint, model: operation.model, metadata });
+  const successListMicroUsd = successCost.priced ? successCost.listCostMicroUsd : estimate.listCostMicroUsd;
+  const captureOnSuccessMicroUsd = Math.min(heldMicroUsd, applyVeniceMultimodalMarkup(successListMicroUsd, markup));
+
   try {
     await assertManagedVeniceWithinSpendCap({ userId: key.userId, addMicroUsd: heldMicroUsd }, db);
     await createManagedVeniceReservation(
@@ -217,12 +236,15 @@ export async function holdManagedVeniceMediaSpend(
         referenceId,
         model: operation.model,
         endpoint: operation.endpoint,
+        expiresAt: managedVeniceHoldExpiresAt(MANAGED_VENICE_MEDIA_HOLD_TTL_MS),
         metadata: {
           proxyKeyId: key.id,
           pricingPolicy: "multimodal_hold_before_forward",
           holdListCostMicroUsd: estimate.listCostMicroUsd,
           holdQuantity: estimate.quantity,
           holdTier: estimate.tier,
+          captureOnSuccessMicroUsd,
+          captureOnSuccessListMicroUsd: successListMicroUsd,
           markupFactor: markup,
           catalogUpdatedAt: VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT,
         },
@@ -277,7 +299,7 @@ export async function holdManagedVeniceMediaSpend(
     };
   }
 
-  const release = async (reason: string) => {
+  const release = async (reason: string, detail: { upstreamStatus?: number } = {}) => {
     try {
       await releaseManagedVeniceReservation({ userId: key.userId, referenceId }, db);
     } catch (error) {
@@ -286,6 +308,35 @@ export async function holdManagedVeniceMediaSpend(
         failureType: "managed_venice_media_release_failed",
         reason,
       });
+      // The request failed upstream, so the hold must be released, not left
+      // to expire (an expired hold with no item is captured). File it for the
+      // stale-hold sweep, which releases it.
+      try {
+        await markManagedVeniceReconciliationRequired(
+          {
+            userId: key.userId,
+            proxyKeyId: key.id,
+            referenceId,
+            reason: MEDIA_RELEASE_FAILED_RECONCILIATION_REASON,
+            pauseKey: false,
+            metadata: {
+              endpoint: operation.endpoint,
+              model: operation.model,
+              heldMicroUsd,
+              walletType,
+              releaseReason: reason,
+              upstreamStatus: detail.upstreamStatus ?? null,
+            },
+          },
+          db
+        );
+      } catch (itemError) {
+        log.error("Managed Venice media reconciliation item failed", itemError, {
+          ...logContext,
+          failureType: "managed_venice_media_reconciliation_item_failed",
+          reason,
+        });
+      }
     }
   };
 
@@ -305,8 +356,9 @@ export async function holdManagedVeniceMediaSpend(
         db
       );
     } catch (error) {
-      // Keep the hold (it still backs the debt) and file it for ops instead
-      // of guessing whether a partial debit landed. Not auto-swept.
+      // Keep the hold (it still backs the debt) and file it. The stale-hold
+      // sweep captures it at this same price. The capture debits and closes
+      // the hold in one transaction, so a retry can never charge twice.
       log.error("Managed Venice media capture failed", error, {
         ...logContext,
         failureType: "managed_venice_media_capture_failed",
@@ -318,12 +370,13 @@ export async function holdManagedVeniceMediaSpend(
             userId: key.userId,
             proxyKeyId: key.id,
             referenceId,
-            reason: "managed_venice_media_capture_failed",
+            reason: MEDIA_CAPTURE_FAILED_RECONCILIATION_REASON,
             pauseKey: false,
             metadata: {
               endpoint: operation.endpoint,
               model: operation.model,
               chargeMicroUsd,
+              listCostMicroUsd,
               heldMicroUsd,
               walletType,
               upstreamStatus: outcome.upstreamStatus,
@@ -421,7 +474,7 @@ export async function holdManagedVeniceMediaSpend(
         if (outcome.ok) {
           await settle(outcome);
         } else {
-          await release("upstream_non_2xx");
+          await release("upstream_non_2xx", { upstreamStatus: outcome.upstreamStatus });
         }
       },
     },
@@ -435,8 +488,10 @@ export type ManagedVeniceMediaSendResult =
 /**
  * Send one held request to Venice and settle the hold on the answer.
  *
- *   - Venice unreachable (fetch threw) or its body unreadable -> release, 502.
- *   - otherwise `hold.complete` settles a 2xx and releases anything else.
+ *   - Venice unreachable (fetch threw) -> release, 502.
+ *   - otherwise `hold.complete` settles a 2xx and releases anything else. A
+ *     2xx whose body can't be read is still settled (Venice ran and billed
+ *     it); the caller gets a 502 because there is no body to hand back.
  *
  * `mode: "buffer"` reads the whole body (and Venice's request id from JSON);
  * `mode: "stream"` settles on the status alone and hands back the unread
@@ -473,11 +528,21 @@ export async function sendManagedVeniceMediaRequest(params: {
     try {
       body = await upstream.arrayBuffer();
     } catch (error) {
-      await params.hold.release("upstream_body_read_failed");
+      // Venice answered. A 2xx means it ran the request and billed Hivra even
+      // though the body never reached us, so charge it like any success; only
+      // a non-2xx is a failure to release (security review 2026-09).
+      await params.hold.complete({
+        ok: upstream.ok,
+        upstreamStatus: upstream.status,
+        upstreamRequestId: null,
+        metadata: { upstreamBodyUnreadable: true },
+      });
       return {
         ok: false,
         response: apiError(
-          "Venice upstream response could not be read.",
+          upstream.ok
+            ? "Venice ran the request, but its response could not be read. The request was charged."
+            : "Venice upstream response could not be read.",
           502,
           { failureType: `${params.fetchFailureType}_body` },
           undefined,

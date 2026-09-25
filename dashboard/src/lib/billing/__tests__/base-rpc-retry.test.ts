@@ -176,10 +176,23 @@ describe("token-holdings: balance read recovers from a transient 429", () => {
 });
 
 describe("refreshVerifiedHermesTokenHoldings: inter-user throttle", () => {
-  // The batch comes from the refresh cursor RPC; each claimed user id is then
-  // refreshed in turn.
+  // The run claims one page of accounts with standing (these ids), then finds
+  // nothing more in either class; each claimed id is then refreshed in turn.
+  // Recording judgments and closing the run succeed.
   function claimRpc(userIds: string[]) {
-    return async () => ({ data: userIds.map((user_id) => ({ user_id })), error: null });
+    let claimed = false;
+    return async (name: string) => {
+      if (name === "claim_token_holding_refresh_page") {
+        const page = claimed ? [] : userIds;
+        claimed = true;
+        return { data: page.map((user_id) => ({ user_id })), error: null };
+      }
+      if (name === "record_token_holding_refresh_judgments") return { data: 0, error: null };
+      return {
+        data: [{ standing: 0, unjudged: 0, cycle_started_at: null, cycle_seconds: 0, cycle_completed: true }],
+        error: null,
+      };
+    };
   }
 
   // Self-referential mock query that is ALSO thenable. Every chainable method
@@ -240,7 +253,7 @@ describe("refreshVerifiedHermesTokenHoldings: inter-user throttle", () => {
   });
 
   it("paces the DEFAULT refresher between users (throttle active on the cron path)", async () => {
-    // Minimal DB: the cursor RPC claims two users, then per-user
+    // Minimal DB: the claim RPC hands out two users, then per-user
     // getTokenVerificationWallet returns null (no primary verified wallet), so
     // the default refresher short-circuits to "no_verified_wallet" WITHOUT any
     // RPC — keeping this test focused purely on the inter-user throttle.

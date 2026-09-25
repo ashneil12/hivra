@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import http from 'node:http';
 import test from 'node:test';
 import * as runtime from 'miniflare';
 import { createWorkerHarness } from '../../../scripts/release/worker-test-harness.mjs';
@@ -20,6 +21,15 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), {
   status, headers: { 'content-type': 'application/json' },
 });
 const create = (t, handle, env = bindings) => createWorkerHarness(t, import.meta.url, runtime, env, handle);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// The Worker chooses each hold's reference (a fresh UUID) before authorizing,
+// and declares that it forwards `{ ...body, ...bodyPatch }` (acceptsBodyPatch).
+function assertAuthorizeBody(call, expectedBody) {
+  const { referenceId, ...rest } = JSON.parse(call.body);
+  assert.match(referenceId, UUID);
+  assert.deepEqual(rest, { plaintextKey: 'test-client-key', body: expectedBody, acceptsBodyPatch: true });
+  return referenceId;
+}
 const chat = (mf, value = body) => mf.dispatchFetch('https://proxy.example.test/v1/chat/completions', {
   method: 'POST', headers: { authorization: 'Bearer test-client-key', 'content-type': 'application/json' },
   body: JSON.stringify(value),
@@ -32,15 +42,13 @@ test('keeps the Worker toolchain on the reviewed sharp security floor', () => {
   assert.equal(lock.packages['node_modules/wrangler']?.version, '4.135.0');
 });
 
-function chatUpstream(upstream, expectedBody = body, bodyPatch = undefined) {
+function chatUpstream(upstream, expectedBody = body, { checkReference = true, bodyPatch = undefined } = {}) {
   return (call) => {
     assert.equal(call.method, 'POST');
     if (call.url === authorize) {
       assert.equal(call.headers['x-managed-venice-internal-secret'], 'test-internal-secret');
       assert.equal(call.headers.authorization, undefined);
-      assert.deepEqual(JSON.parse(call.body), {
-        plaintextKey: 'test-client-key', body: expectedBody, acceptsBodyPatch: true,
-      });
+      if (checkReference) assertAuthorizeBody(call, expectedBody);
       return json(bodyPatch === undefined ? auth : { ...auth, bodyPatch });
     }
     if (call.url === auth.upstreamUrl) {
@@ -121,7 +129,7 @@ test('non-stream chat returns model output and sends exact usage and reservation
   assert.deepEqual(JSON.parse(settlement.body), {
     outcome: 'settle', userId: auth.userId, proxyKeyId: auth.proxyKeyId,
     walletType: auth.walletType, referenceId: auth.referenceId, model: auth.model,
-    upstreamStatus: 200, usage,
+    upstreamStatus: 200, usage, cause: 'completed',
   });
   assert.deepEqual(harness.calls.map((call) => call.url), [authorize, auth.upstreamUrl, settle]);
 });
@@ -151,7 +159,8 @@ for (const streaming of [false, true]) {
     assert.deepEqual(await response.json(), { error: 'unavailable' });
     const release = await harness.waitForCall((call) => call.url === settle);
     assert.deepEqual(JSON.parse(release.body), {
-      outcome: 'release', userId: auth.userId, referenceId: auth.referenceId,
+      outcome: 'release', userId: auth.userId, proxyKeyId: auth.proxyKeyId, referenceId: auth.referenceId,
+      cause: 'upstream_non_2xx', upstreamStatus: 503,
     });
     assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
   });
@@ -164,7 +173,7 @@ for (const streaming of [false, true]) {
     const sse = `data: ${JSON.stringify({ usage })}\n\ndata: [DONE]\n\n`;
     const harness = await create(t, chatUpstream(() => (streaming
       ? new Response(sse, { headers: { 'content-type': 'text/event-stream' } })
-      : json({ choices: [], usage })), requestBody, bodyPatch));
+      : json({ choices: [], usage })), requestBody, { bodyPatch }));
     const response = await chat(harness.mf, requestBody);
     assert.equal(response.status, 200);
     await response.text();
@@ -175,5 +184,181 @@ for (const streaming of [false, true]) {
     assert.equal('max_completion_tokens' in forwarded, false);
     assert.equal('max_output_tokens' in forwarded, false);
     await harness.waitForCall((call) => call.url === settle);
+  });
+}
+
+const sseFrame = (value) => `data: ${JSON.stringify(value)}\n\n`;
+const contentFrame = (text) => sseFrame({ choices: [{ delta: { content: text } }] });
+
+// Venice sends one frame every `everyMs`, then ends.
+function pacedSse(frames, everyMs = 20) {
+  let sent = 0;
+  const stream = new ReadableStream({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, everyMs));
+      if (sent < frames.length) controller.enqueue(new TextEncoder().encode(frames[sent++]));
+      else controller.close();
+    },
+  });
+  return { response: new Response(stream, { headers: { 'content-type': 'text/event-stream' } }), sent: () => sent };
+}
+
+// A box on a raw socket (a fetch client may keep reading the body to reuse its
+// connection), which disconnects once `leave(seen)` says so.
+function boxThatLeaves(url, streamBody, leave) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, {
+      method: 'POST', headers: { authorization: 'Bearer test-client-key', 'content-type': 'application/json' },
+    }, (response) => {
+      let seen = '';
+      response.on('data', (chunk) => {
+        seen += chunk.toString();
+        if (leave(seen)) {
+          request.destroy();
+          resolve();
+        }
+      });
+      response.on('error', () => undefined);
+    });
+    request.on('error', (error) => (error.code === 'ECONNRESET' ? undefined : reject(error)));
+    request.end(JSON.stringify(streamBody));
+  });
+}
+
+// Security review 2026-09 (#167 second review, HIGH): the Worker stopped
+// reading Venice when the box disconnected and charged the output it had
+// forwarded, so a reasoning model's hidden thinking was never paid for. It now
+// keeps reading Venice, without forwarding, to the usage frame.
+test('a box that disconnects mid-stream: the Worker reads Venice to its usage frame and settles the exact usage', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const finalUsage = { prompt_tokens: 12, completion_tokens: 20_003, total_tokens: 20_015 };
+  const upstream = pacedSse([
+    ...Array.from({ length: 20 }, () => contentFrame('abcd')),
+    sseFrame({ choices: [], usage: finalUsage }),
+    'data: [DONE]\n\n',
+  ]);
+  const harness = await create(t, chatUpstream(() => upstream.response, streamBody, { checkReference: false }));
+  const url = new URL('/v1/chat/completions', await harness.mf.ready);
+  await boxThatLeaves(url, streamBody, (seen) => (seen.match(/"content"/g) ?? []).length >= 3);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.outcome, 'settle');
+  assert.equal(settlement.referenceId, auth.referenceId);
+  assert.deepEqual(settlement.usage, finalUsage);
+  assert.equal(settlement.cause, 'client_cancelled');
+  assert.equal(settlement.observedOutputTokens, undefined);
+  assert.ok(upstream.sent() >= 21, `Venice sent ${upstream.sent()} frames`);
+  assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
+});
+
+test('a box that disconnects from a stream Venice ends without usage is settled with every token read', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const upstream = pacedSse(Array.from({ length: 30 }, () => contentFrame('abcd')), 10);
+  const harness = await create(t, chatUpstream(() => upstream.response, streamBody, { checkReference: false }));
+  const url = new URL('/v1/chat/completions', await harness.mf.ready);
+  await boxThatLeaves(url, streamBody, (seen) => (seen.match(/"content"/g) ?? []).length >= 3);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.usage, null);
+  assert.equal(settlement.cause, 'client_cancelled');
+  assert.equal(settlement.observedOutputTokens, 30);
+  assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
+});
+
+// #167 second review: the wait for Venice's headers ran in the request
+// context, so a box that left before Venice answered could leave the hold for
+// the sweep's day-late estimate.
+test('a box that disconnects before Venice answers still has its hold settled with the exact usage', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const finalUsage = { prompt_tokens: 12, completion_tokens: 40, total_tokens: 52 };
+  const upstream = chatUpstream(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return new Response(`${contentFrame('late')}${sseFrame({ choices: [], usage: finalUsage })}data: [DONE]\n\n`, {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  }, streamBody, { checkReference: false });
+  let upstreamCalled;
+  const reached = new Promise((resolve) => (upstreamCalled = resolve));
+  const harness = await create(t, (call) => {
+    if (call.url === auth.upstreamUrl) upstreamCalled();
+    return upstream(call);
+  });
+  const url = new URL('/v1/chat/completions', await harness.mf.ready);
+  const request = http.request(url, {
+    method: 'POST', headers: { authorization: 'Bearer test-client-key', 'content-type': 'application/json' },
+  });
+  request.on('error', () => undefined);
+  request.end(JSON.stringify(streamBody));
+  await reached;
+  request.destroy();
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.outcome, 'settle');
+  assert.deepEqual(settlement.usage, finalUsage);
+});
+
+test('a stream that ends without a usage frame is settled with the output it forwarded', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const sse = `data: {"choices":[{"delta":{"content":"abcdabcd"}}]}\n\ndata: [DONE]\n\n`;
+  const harness = await create(t, chatUpstream(() => new Response(sse, {
+    headers: { 'content-type': 'text/event-stream' },
+  }), streamBody, { checkReference: false }));
+  assert.equal(await (await chat(harness.mf, streamBody)).text(), sse);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.usage, null);
+  assert.equal(settlement.cause, 'completed');
+  assert.equal(settlement.observedOutputTokens, 2);
+});
+
+// #167 second review: UTF-8 size / 4 counted batched CJK at 0.75 of a token.
+test('a usage-less stream counts every non-ASCII character as a token', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const sse = `${contentFrame('日本語の文章です')}${contentFrame('abcdabcd')}data: [DONE]\n\n`;
+  const harness = await create(t, chatUpstream(() => new Response(sse, {
+    headers: { 'content-type': 'text/event-stream' },
+  }), streamBody, { checkReference: false }));
+  assert.equal(await (await chat(harness.mf, streamBody)).text(), sse);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.usage, null);
+  assert.equal(settlement.observedOutputTokens, 10);
+});
+
+// #167 review: callSettle ignored a non-2xx settle and never retried, so the
+// hold waited a day for the sweep.
+test('a settle Vercel fails is retried until it lands', async (t) => {
+  const completion = { choices: [{ message: { content: 'hello' } }], usage };
+  let settles = 0;
+  const upstream = chatUpstream(() => json(completion), body, { checkReference: false });
+  const harness = await create(t, (call) => {
+    if (call.url !== settle) return upstream(call);
+    settles += 1;
+    return settles === 1 ? json({ error: 'busy' }, 503) : json({ ok: true });
+  });
+  assert.deepEqual(await (await chat(harness.mf)).json(), completion);
+  await harness.waitForCall((call) => call.url === settle && settles === 2);
+  const attempts = harness.calls.filter((call) => call.url === settle).map((call) => JSON.parse(call.body));
+  assert.equal(attempts.length, 2);
+  assert.deepEqual(attempts[0], attempts[1]);
+});
+
+// #167 review: a Worker that lost the authorize response left a hold for a
+// request it never sent, and the sweep charged it once the hold expired.
+for (const [label, respond] of [
+  ['a 5xx', () => json({ error: 'function timed out' }, 504)],
+  ['an unreadable body', () => new Response('not json', { status: 200 })],
+]) {
+  test(`authorize answering ${label} releases the hold by the Worker's own reference`, async (t) => {
+    let chosen;
+    const harness = await create(t, (call) => {
+      if (call.url === authorize) {
+        chosen = assertAuthorizeBody(call, body);
+        return respond();
+      }
+      assert.equal(call.url, settle, 'No model call after a failed authorize');
+      return json({ ok: true, released: true });
+    });
+    const response = await chat(harness.mf);
+    assert.equal(response.status, 502);
+    const release = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+    assert.equal(release.outcome, 'release');
+    assert.equal(release.referenceId, chosen);
+    assert.equal(release.userId, undefined);
   });
 }

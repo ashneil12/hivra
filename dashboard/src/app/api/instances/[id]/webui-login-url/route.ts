@@ -28,6 +28,7 @@ import {
   normalizeWebUIAppearanceTheme,
   type WebUIAppearance,
 } from "@/lib/webui-appearance";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
 
 export const dynamic = "force-dynamic";
 
@@ -295,10 +296,12 @@ async function repairWebuiCaddyPublicShell(params: {
     instanceId: params.instance.id,
     caddyfile,
   });
-  const proxmoxHostConfig = getProxmoxHostRoutingConfigFromInfrastructure(
-    getProxmoxInfrastructure(params.instance.config),
-    { host_id: params.instance.host_id ?? null },
-  );
+  const proxmoxHostConfig =
+    getHermesGuestSshTarget(params.instance) ??
+    getProxmoxHostRoutingConfigFromInfrastructure(
+      getProxmoxInfrastructure(params.instance.config),
+      { host_id: params.instance.host_id ?? null },
+    );
   const result = await sshExec(params.instanceIpv4, script, {
     timeoutMs: WEBUI_CADDY_REPAIR_TIMEOUT_MS,
     ...(proxmoxHostConfig ? { proxmoxHostConfig } : {}),

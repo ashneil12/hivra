@@ -1,5 +1,5 @@
 import { decryptApiKey } from "@/lib/crypto";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import {
   buildNousHermesAuthStore,
   NOUS_VAULT_KEY_NAME,
@@ -9,6 +9,7 @@ import {
 import { isNousAuthProvider } from "@/lib/provider-auth";
 import { buildHostTimeSyncRepairScript } from "@/lib/services/hetzner-instance-builders";
 import { supabaseAdmin } from "@/lib/supabase";
+import { GUEST_SSH_REFUSED_MARKER } from "@/lib/proxmox/hermes-guest-ssh";
 
 const NOUS_RUNTIME_POST_RESTART_SYNC_DELAY_MS = process.env.NODE_ENV === "test" ? 0 : 2_500;
 const NOUS_RUNTIME_POST_RESTART_SYNC_RETRY_COUNT = process.env.NODE_ENV === "test" ? 1 : 3;
@@ -70,7 +71,11 @@ function buildNousRuntimeAuthSyncInnerScript(): string {
 }
 
 function isTransientNousRuntimeSyncError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  // A refused guest identity check is not a restart race, even when a guest
+  // agent "is not running" line precedes it.
+  if (rawMessage.includes(GUEST_SSH_REFUSED_MARKER)) return false;
+  const message = rawMessage.toLowerCase();
   return (
     message.includes("received 409") ||
     message.includes("container is restarting") ||
@@ -131,7 +136,8 @@ export async function loadUserNousVaultBundle(userId: string): Promise<{
 
 async function restartNousGateway(
   instanceId: string,
-  hostIp: string
+  hostIp: string,
+  guestTarget: ProxmoxSshHostConfig | null
 ): Promise<boolean> {
   const containerNames = getNousRuntimeContainerNames(instanceId);
   const restartResult = await sshExec(
@@ -152,7 +158,8 @@ async function restartNousGateway(
       `else`,
       `  printf "{\\"restarted\\":false}\\n"`,
       `fi`,
-    ].join("\n")
+    ].join("\n"),
+    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
   );
 
   if (!restartResult.ok) {
@@ -172,13 +179,14 @@ async function restartNousGateway(
   }
 }
 
-async function repairNousHostTimeSync(hostIp: string): Promise<void> {
+async function repairNousHostTimeSync(hostIp: string, guestTarget: ProxmoxSshHostConfig | null): Promise<void> {
   const repairResult = await sshExec(
     hostIp,
     [
       `set -e`,
       buildHostTimeSyncRepairScript(),
-    ].join("\n")
+    ].join("\n"),
+    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
   );
 
   if (!repairResult.ok) {
@@ -191,6 +199,7 @@ async function repairNousHostTimeSync(hostIp: string): Promise<void> {
 export async function syncNousRuntimeAuthStore(
   instanceId: string,
   hostIp: string,
+  guestTarget: ProxmoxSshHostConfig | null,
   bundle: NousVaultBundle,
   hermesHomeDir: string
 ): Promise<{ changed: boolean }> {
@@ -221,7 +230,8 @@ export async function syncNousRuntimeAuthStore(
       `  fi`,
       `done`,
       `printf "{\\"changed\\":%s,\\"synced\\":%s}\\n" "$changed" "$synced"`,
-    ].join("\n")
+    ].join("\n"),
+    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
   );
 
   if (!syncResult.ok) {
@@ -246,22 +256,24 @@ export async function syncNousRuntimeAuthStore(
 async function repairNousRuntimeAuthFromBundle(params: {
   instanceId: string;
   hostIp: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   hermesHomeDir: string;
   bundle: NousVaultBundle;
 }): Promise<{ attempted: boolean; changed: boolean; restarted: boolean }> {
   const runtimeSync = await syncNousRuntimeAuthStore(
     params.instanceId,
     params.hostIp,
+    params.guestTarget,
     params.bundle,
     params.hermesHomeDir
   );
 
   const restarted = runtimeSync.changed
-    ? await restartNousGateway(params.instanceId, params.hostIp)
+    ? await restartNousGateway(params.instanceId, params.hostIp, params.guestTarget)
     : false;
 
   if (!runtimeSync.changed) {
-    await repairNousHostTimeSync(params.hostIp);
+    await repairNousHostTimeSync(params.hostIp, params.guestTarget);
   }
 
   if (restarted) {
@@ -274,6 +286,7 @@ async function repairNousRuntimeAuthFromBundle(params: {
         await syncNousRuntimeAuthStore(
           params.instanceId,
           params.hostIp,
+          params.guestTarget,
           params.bundle,
           params.hermesHomeDir
         );
@@ -297,6 +310,7 @@ async function repairNousRuntimeAuthFromBundle(params: {
 export async function repairNousRuntimeAuthFromStoredSession(params: {
   instanceId: string;
   hostIp: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   hermesHomeDir: string;
   encryptedInstanceSecret: string | null | undefined;
   provider: string | null | undefined;
@@ -313,6 +327,7 @@ export async function repairNousRuntimeAuthFromStoredSession(params: {
   return repairNousRuntimeAuthFromBundle({
     instanceId: params.instanceId,
     hostIp: params.hostIp,
+    guestTarget: params.guestTarget,
     hermesHomeDir: params.hermesHomeDir,
     bundle,
   });

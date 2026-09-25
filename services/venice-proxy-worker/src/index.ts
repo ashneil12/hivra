@@ -12,6 +12,18 @@
  *   3. POST {VERCEL_BASE_URL}/api/managed-venice/internal/settle
  *        -> capture actual usage against the reservation (or release on failure)
  *
+ * The Worker chooses each hold's reference before authorizing, so it can
+ * release the hold after ANY failure that follows authorize, even a lost
+ * authorize response. Settle and release calls are retried until Vercel
+ * answers 2xx: a hold nobody settles is charged an estimate a day later, and a
+ * refused request must never be. When the box disconnects mid-stream the
+ * Worker stops forwarding but keeps reading Venice to its usage frame (within
+ * DRAIN_AFTER_DISCONNECT_MS), so the exact usage is charged, hidden reasoning
+ * included. A stream that ends without a usage frame is settled with the
+ * output that was read, counted as it streamed. Everything after the hold is
+ * made runs under waitUntil, so a box that disconnects cannot cut the Worker
+ * off before the hold is settled.
+ *
  * Only POST /v1/chat/completions is intercepted. Every other /v1/* path
  * (embeddings, images, models, audio, augment, ...) is transparently reverse-
  * proxied back to Vercel — those are short request/response calls and cheap to
@@ -83,83 +95,149 @@ function safeJsonParse(text: string): Record<string, unknown> | null {
   }
 }
 
-/** Mirror of dashboard readUsageFromSseFrame — keep in lockstep. */
-function readUsageFromSseFrame(frame: string): unknown {
-  const dataLines = frame
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim());
+// Mirror of dashboard/src/lib/venice/stream-output-meter.ts (chat parts):
+// keep in lockstep. Estimates the output tokens read as the larger of the
+// frames that carried text and a floor for batched frames: a token per 4
+// ASCII characters plus a token per other character.
+const OBSERVED_OUTPUT_ASCII_CHARS_PER_TOKEN = 4;
 
-  for (const data of dataLines) {
-    if (!data || data === "[DONE]") continue;
-    try {
-      const parsed = JSON.parse(data) as Record<string, unknown>;
-      if (parsed?.usage) return parsed.usage;
-    } catch {
-      // non-JSON keep-alive / comment frame
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+// The floor's weight of a text, in quarter tokens: 1 per ASCII character, 4
+// (a whole token) per other character.
+function quarterTokens(text: string): number {
+  let units = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) {
+      units += 1;
+      continue;
     }
+    units += OBSERVED_OUTPUT_ASCII_CHARS_PER_TOKEN;
+    // A surrogate pair is one character.
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) index += 1;
   }
-  return null;
+  return units;
 }
 
-async function callSettle(env: Env, payload: Record<string, unknown>): Promise<void> {
-  try {
-    await fetch(`${env.VERCEL_BASE_URL}/api/managed-venice/internal/settle`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        [INTERNAL_SECRET_HEADER]: env.MANAGED_VENICE_INTERNAL_SECRET,
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (err) {
-    // Settle endpoint unreachable. The managed-venice-token-reconciliation cron
-    // is the backstop: it settles/releases the orphaned referenceId offline.
-    console.error("managed-venice settle call failed", String(err));
-  }
+function textOf(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(textOf).join("");
+  if (isRecord(value) && typeof value.text === "string") return value.text;
+  return "";
 }
 
-async function sniffAndSettle(
-  stream: ReadableStream<Uint8Array>,
-  env: Env,
-  auth: AuthorizedChat,
-  upstreamStatus: number
-): Promise<void> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalUsage: unknown = null;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split(/\r?\n\r?\n/);
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
+function chatChoiceText(part: unknown): string {
+  if (!isRecord(part)) return "";
+  let text =
+    textOf(part.content) + textOf(part.reasoning_content) + textOf(part.reasoning) + textOf(part.refusal);
+  const calls = Array.isArray(part.tool_calls) ? part.tool_calls : [];
+  for (const call of calls) {
+    if (!isRecord(call) || !isRecord(call.function)) continue;
+    text += textOf(call.function.name) + textOf(call.function.arguments);
+  }
+  if (isRecord(part.function_call)) {
+    text += textOf(part.function_call.name) + textOf(part.function_call.arguments);
+  }
+  return text;
+}
+
+function createOutputMeter() {
+  let textFrames = 0;
+  let textQuarterTokens = 0;
+  const observeChatChunk = (chunk: unknown) => {
+    if (!isRecord(chunk) || !Array.isArray(chunk.choices)) return;
+    for (const choice of chunk.choices) {
+      if (!isRecord(choice)) continue;
+      const text = chatChoiceText(choice.delta) + chatChoiceText(choice.message);
+      if (!text) continue;
+      textFrames += 1;
+      textQuarterTokens += quarterTokens(text);
+    }
+  };
+  return {
+    observeChatChunk,
+    /** Counts one SSE frame's output and returns the usage block it carried, if any. */
+    observeChatSseFrame(frame: string): unknown {
+      let usage: unknown = null;
+      for (const line of frame.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          continue; // non-JSON keep-alive / comment frame
         }
+        observeChatChunk(parsed);
+        if (isRecord(parsed) && parsed.usage) usage = parsed.usage;
       }
+      return usage;
+    },
+    observeUnparsedText(text: string) {
+      if (text) textQuarterTokens += quarterTokens(text);
+    },
+    outputTokens(): number {
+      return Math.max(textFrames, Math.ceil(textQuarterTokens / OBSERVED_OUTPUT_ASCII_CHARS_PER_TOKEN));
+    },
+  };
+}
+
+const SETTLE_ATTEMPTS = 5;
+const SETTLE_RETRY_BASE_MS = 250;
+
+/**
+ * How long the Worker keeps reading Venice after the box disconnects, waiting
+ * for the usage frame. Cloudflare keeps a Worker alive for 30 s of waitUntil
+ * work after its client leaves; this leaves the rest for the settle call and
+ * its retries.
+ */
+const DRAIN_AFTER_DISCONNECT_MS = 20_000;
+
+/**
+ * POST to /internal/settle until it answers 2xx (at most SETTLE_ATTEMPTS
+ * tries, backing off from SETTLE_RETRY_BASE_MS). Settle and release are both
+ * safe to repeat: a hold that is already settled is never charged or released
+ * again. A 4xx other than 408/429 is a request the route will never accept,
+ * so it is not retried.
+ */
+async function callSettle(env: Env, payload: Record<string, unknown>): Promise<boolean> {
+  for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt += 1) {
+    try {
+      const res = await fetch(`${env.VERCEL_BASE_URL}/api/managed-venice/internal/settle`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [INTERNAL_SECRET_HEADER]: env.MANAGED_VENICE_INTERNAL_SECRET,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) return true;
+      if (res.status < 500 && res.status !== 408 && res.status !== 429) {
+        console.error("managed-venice settle call rejected", res.status, String(payload.outcome));
+        return false;
+      }
+      console.error("managed-venice settle call failed", res.status, `attempt ${attempt}`);
+    } catch (err) {
+      console.error("managed-venice settle call failed", String(err), `attempt ${attempt}`);
     }
-    buffer += decoder.decode();
-    if (buffer) finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
-  } catch (err) {
-    console.error("managed-venice usage sniff failed", String(err));
+    if (attempt < SETTLE_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_RETRY_BASE_MS * 2 ** (attempt - 1)));
+    }
   }
-  // usage present -> capture; usage null -> settle endpoint files reconciliation
-  // (keeps the key live; cron settles offline).
-  await callSettle(env, {
-    outcome: "settle",
-    userId: auth.userId,
-    proxyKeyId: auth.proxyKeyId,
-    walletType: auth.walletType,
-    referenceId: auth.referenceId,
-    model: auth.model,
-    upstreamStatus,
-    usage: finalUsage,
-  });
+  // Retries exhausted. The hold is left to the stale-hold sweep.
+  console.error("managed-venice settle call gave up", String(payload.outcome), String(payload.referenceId));
+  return false;
+}
+
+interface ProxiedChat {
+  response: Response;
+  /** Resolves once the request's hold is settled or released. */
+  settled?: Promise<unknown>;
 }
 
 async function handleChatCompletions(
@@ -167,14 +245,36 @@ async function handleChatCompletions(
   env: Env,
   ctx: ExecutionContext
 ): Promise<Response> {
+  // Everything after the hold is made, the wait for Venice's answer included,
+  // runs under waitUntil, so a box that disconnects cannot cut the Worker off
+  // before the hold is settled or released (#167 second review).
+  let done!: () => void;
+  ctx.waitUntil(new Promise<void>((resolve) => (done = resolve)));
+  try {
+    const { response, settled } = await proxyChatCompletion(request, env);
+    if (settled) void settled.catch(() => undefined).finally(done);
+    else done();
+    return response;
+  } catch (error) {
+    done();
+    throw error;
+  }
+}
+
+async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedChat> {
   const plaintextKey = readBearer(request);
 
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return jsonError(400, "Invalid JSON body.", "invalid_request_error", "invalid_request_error");
+    return { response: jsonError(400, "Invalid JSON body.", "invalid_request_error", "invalid_request_error") };
   }
+
+  // The hold's reference, chosen here so the hold can be released after any
+  // failure below, even when the authorize response itself is lost.
+  const referenceId = crypto.randomUUID();
+  const releaseByReference = (cause: string) => callSettle(env, { outcome: "release", referenceId, cause });
 
   // 1. Authorize on Vercel (verify key + reserve funds + resolve upstream key).
   let authRes: Response;
@@ -188,34 +288,86 @@ async function handleChatCompletions(
       // acceptsBodyPatch: this Worker forwards `{ ...body, ...bodyPatch }`, so
       // authorize may lower the output cap to what the wallet covers instead
       // of refusing the request outright.
-      body: JSON.stringify({ plaintextKey, body, acceptsBodyPatch: true }),
+      body: JSON.stringify({ plaintextKey, body, referenceId, acceptsBodyPatch: true }),
     });
   } catch (err) {
     console.error("managed-venice authorize call failed", String(err));
-    return jsonError(502, "Proxy authorization upstream failed.", "proxy_upstream_error");
+    // Vercel may have reserved before the connection broke.
+    return {
+      response: jsonError(502, "Proxy authorization upstream failed.", "proxy_upstream_error"),
+      settled: releaseByReference("authorize_unreachable"),
+    };
   }
 
   // 403 == our shared-secret is wrong (Worker misconfig), NOT the box's key.
   // Don't relay it as a key/billing error — surface a generic 502.
   if (authRes.status === 403) {
     console.error("managed-venice authorize rejected the internal secret (worker misconfigured)");
-    return jsonError(502, "Proxy authorization misconfigured.", "proxy_misconfigured");
+    return { response: jsonError(502, "Proxy authorization misconfigured.", "proxy_misconfigured") };
+  }
+  // A 5xx may follow a reservation (the function failed after reserving, or
+  // the platform cut it off): release by reference and fail the request.
+  if (authRes.status >= 500) {
+    console.error("managed-venice authorize failed", authRes.status);
+    return {
+      response: jsonError(502, "Proxy authorization upstream failed.", "proxy_upstream_error"),
+      settled: releaseByReference("authorize_failed"),
+    };
   }
   // Any other non-2xx is a relay-able client error (401 bad key, 402 no balance,
-  // 400 bad model, 503 not configured) — forward to the box verbatim.
+  // 400 bad model) — forward to the box verbatim. Nothing was reserved.
   if (!authRes.ok) {
     const text = await authRes.text();
-    return new Response(text, {
-      status: authRes.status,
-      headers: {
-        "Content-Type": authRes.headers.get("Content-Type") || "application/json",
-      },
-    });
+    return {
+      response: new Response(text, {
+        status: authRes.status,
+        headers: {
+          "Content-Type": authRes.headers.get("Content-Type") || "application/json",
+        },
+      }),
+    };
   }
 
-  const auth = (await authRes.json()) as AuthorizedChat;
+  let auth: AuthorizedChat;
+  try {
+    auth = (await authRes.json()) as AuthorizedChat;
+    if (!auth || typeof auth.upstreamUrl !== "string" || typeof auth.upstreamKey !== "string") {
+      throw new Error("authorize response is missing its upstream");
+    }
+  } catch (err) {
+    console.error("managed-venice authorize response unreadable", String(err));
+    return {
+      response: jsonError(502, "Proxy authorization upstream failed.", "proxy_upstream_error"),
+      settled: releaseByReference("authorize_response_unreadable"),
+    };
+  }
   const streaming = body.stream === true;
   const cappedBody = applyBodyPatch(body, auth.bodyPatch);
+  // An older control plane chooses its own reference and returns it.
+  const holdReference = typeof auth.referenceId === "string" && auth.referenceId ? auth.referenceId : referenceId;
+  const release = (cause: string, upstreamStatus: number | null = null) =>
+    callSettle(env, {
+      outcome: "release",
+      userId: auth.userId,
+      proxyKeyId: auth.proxyKeyId,
+      referenceId: holdReference,
+      cause,
+      upstreamStatus,
+    });
+  const settle = (usage: unknown, upstreamStatus: number, cause: string, observedOutputTokens: number | null) =>
+    callSettle(env, {
+      outcome: "settle",
+      userId: auth.userId,
+      proxyKeyId: auth.proxyKeyId,
+      walletType: auth.walletType,
+      referenceId: holdReference,
+      model: auth.model,
+      upstreamStatus,
+      usage,
+      cause,
+      // Only a usage-less response is charged by the output it delivered.
+      ...(usage == null && observedOutputTokens !== null ? { observedOutputTokens } : {}),
+    });
 
   const upstreamBody = streaming
     ? {
@@ -242,70 +394,163 @@ async function handleChatCompletions(
     });
   } catch (err) {
     console.error("managed-venice venice upstream fetch failed", String(err));
-    await callSettle(env, { outcome: "release", userId: auth.userId, referenceId: auth.referenceId });
-    return jsonError(502, "Venice upstream request failed.", "venice_upstream_error");
+    await release("upstream_fetch_failed");
+    return { response: jsonError(502, "Venice upstream request failed.", "venice_upstream_error") };
   }
 
   if (streaming) {
     if (!upstream.ok || !upstream.body) {
       // Upstream error before any billable stream — release the hold and relay
       // the error to the box so the agent can retry. Key stays live.
-      await callSettle(env, { outcome: "release", userId: auth.userId, referenceId: auth.referenceId });
+      await release(upstream.ok ? "stream_missing_body" : "upstream_non_2xx", upstream.status);
       const text = await upstream.text().catch(() => "");
-      return new Response(text || JSON.stringify({ error: { message: "Venice stream unavailable." } }), {
-        status: upstream.ok ? 502 : upstream.status,
-        headers: { "Content-Type": "application/json" },
-      });
+      return {
+        response: new Response(text || JSON.stringify({ error: { message: "Venice stream unavailable." } }), {
+          status: upstream.ok ? 502 : upstream.status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      };
     }
+    return streamToBox(upstream, upstream.body, settle);
+  }
 
-    // Tee the stream: one branch goes straight to the box, the other is drained
-    // to sniff the final usage frame and settle. waitUntil keeps the Worker
-    // alive to finish settling after the response is returned.
-    const [toClient, toSniff] = upstream.body.tee();
-    ctx.waitUntil(sniffAndSettle(toSniff, env, auth, upstream.status));
+  // Non-streaming: read the full body, settle on usage, return JSON.
+  let text: string;
+  try {
+    text = await upstream.text();
+  } catch (err) {
+    console.error("managed-venice venice response unreadable", String(err));
+    const response = jsonError(502, "Venice response could not be read.", "venice_upstream_error");
+    if (upstream.ok) return { response, settled: settle(null, upstream.status, "body_unreadable", 0) };
+    await release("upstream_non_2xx", upstream.status);
+    return { response };
+  }
+  const json = safeJsonParse(text);
+  const usage = json?.usage ?? null;
 
-    return new Response(toClient, {
+  if (!upstream.ok && !usage) {
+    await release("upstream_non_2xx", upstream.status);
+    return {
+      response: new Response(text, {
+        status: upstream.status,
+        headers: { "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  const meter = createOutputMeter();
+  if (json) meter.observeChatChunk(json);
+  else meter.observeUnparsedText(text);
+  return {
+    response: new Response(text, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": upstream.headers.get("Content-Type") || "application/json",
+      },
+    }),
+    // Settled after the response, so the box isn't blocked on the round-trip.
+    settled: settle(usage, upstream.status, usage ? "completed" : "missing_usage", meter.outputTokens()),
+  };
+}
+
+/**
+ * Forward Venice's stream to the box, counting the output and keeping the
+ * usage frame, and settle once, however the stream ends. When the box
+ * disconnects, stop forwarding but keep reading Venice to its usage frame (or
+ * the end of the stream, or DRAIN_AFTER_DISCONNECT_MS), so the exact usage is
+ * charged: a reasoning model's hidden thinking never appears in the stream,
+ * and a box that left after the first line used to pay for that line only
+ * (security review 2026-09, #167 second review).
+ */
+function streamToBox(
+  upstream: Response,
+  body: ReadableStream<Uint8Array>,
+  settle: (usage: unknown, upstreamStatus: number, cause: string, observedOutputTokens: number | null) => Promise<boolean>
+): ProxiedChat {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const meter = createOutputMeter();
+  let buffer = "";
+  let finalUsage: unknown = null;
+  let boxGone = false;
+  // The pull in progress, which a drain after disconnect waits for.
+  let reading: Promise<void> = Promise.resolve();
+  let settlement: Promise<void> | null = null;
+  let markSettled!: () => void;
+  const settled = new Promise<void>((resolve) => (markSettled = resolve));
+  const finish = (cause: string) => {
+    settlement ??= settle(finalUsage, upstream.status, cause, meter.outputTokens())
+      .then(() => undefined)
+      .finally(() => markSettled());
+    return settlement;
+  };
+  const observe = (text: string, flush: boolean) => {
+    buffer += text;
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = flush ? "" : frames.pop() ?? "";
+    for (const frame of frames) finalUsage = meter.observeChatSseFrame(frame) ?? finalUsage;
+  };
+  const drainAfterDisconnect = async () => {
+    const stop = setTimeout(() => void reader.cancel().catch(() => undefined), DRAIN_AFTER_DISCONNECT_MS);
+    try {
+      await reading.catch(() => undefined);
+      while (!finalUsage) {
+        const { done, value } = await reader.read();
+        if (done) {
+          observe(decoder.decode(), true);
+          break;
+        }
+        if (value) observe(decoder.decode(value, { stream: true }), false);
+      }
+    } catch (err) {
+      console.error("managed-venice stream read after disconnect ended", String(err));
+    } finally {
+      clearTimeout(stop);
+      void reader.cancel().catch(() => undefined);
+    }
+    await finish("client_cancelled");
+  };
+
+  const toClient = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      reading = (async () => {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            observe(decoder.decode(), true);
+            if (!boxGone) controller.close();
+            void finish("completed");
+            return;
+          }
+          if (!value) return;
+          observe(decoder.decode(value, { stream: true }), false);
+          if (!boxGone) controller.enqueue(value);
+        } catch (err) {
+          // Once the box has gone the drain owns the read and the settlement.
+          if (boxGone) return;
+          console.error("managed-venice upstream stream failed", String(err));
+          controller.error(err);
+          void finish("upstream_failed");
+        }
+      })();
+      return reading;
+    },
+    cancel() {
+      boxGone = true;
+      void drainAfterDisconnect();
+    },
+  });
+
+  return {
+    response: new Response(toClient, {
       status: upstream.status,
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
       },
-    });
-  }
-
-  // Non-streaming: read the full body, settle on usage, return JSON.
-  const text = await upstream.text();
-  const json = safeJsonParse(text);
-  const usage = json?.usage ?? null;
-
-  if (!upstream.ok && !usage) {
-    await callSettle(env, { outcome: "release", userId: auth.userId, referenceId: auth.referenceId });
-    return new Response(text, {
-      status: upstream.status,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // settle in the background so the box isn't blocked on the settle round-trip.
-  ctx.waitUntil(
-    callSettle(env, {
-      outcome: "settle",
-      userId: auth.userId,
-      proxyKeyId: auth.proxyKeyId,
-      walletType: auth.walletType,
-      referenceId: auth.referenceId,
-      model: auth.model,
-      upstreamStatus: upstream.status,
-      usage,
-    })
-  );
-
-  return new Response(text, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("Content-Type") || "application/json",
-    },
-  });
+    }),
+    settled,
+  };
 }
 
 async function reverseProxyToVercel(

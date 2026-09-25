@@ -9,6 +9,7 @@ import { isSshWarmupError, SSH_WARMUP_MESSAGE } from '@/lib/ssh-warmup';
 import { validateConsoleAccess } from '@/lib/services/console-helpers';
 import { log } from '@/lib/logger';
 import { isWebfreeBackend } from '@/lib/types/instance';
+import { GUEST_IDENTITY_REFUSED_MESSAGE, GUEST_SSH_REFUSED_MARKER } from "@/lib/proxmox/hermes-guest-ssh";
 
 const CODEX_OAUTH_SSH_READY_TIMEOUT_MS = 8_000;
 const CODEX_OAUTH_START_TIMEOUT_MS = 30_000;
@@ -51,7 +52,11 @@ function buildCodexStartCommandFailureDetails(result: {
   const commandExitMatch = rawMessage.match(/command exited with code\s+(\d+)/i);
   let failureCategory = 'unknown';
 
-  if (normalized.includes('no such container') || normalized.includes('is not running')) {
+  // Checked first: a refused guest identity check can follow a guest agent
+  // error such as "QEMU guest agent is not running", which is not the runtime.
+  if (`${result.stderr || ''}\n${result.error || ''}`.includes(GUEST_SSH_REFUSED_MARKER)) {
+    failureCategory = 'guest_identity_refused';
+  } else if (normalized.includes('no such container') || normalized.includes('is not running')) {
     failureCategory = 'container_unavailable';
   } else if (
     normalized.includes("no module named 'hermes_cli'") ||
@@ -91,6 +96,10 @@ function classifyCodexStartFailure(result: {
   error?: string;
 }) {
   const details = buildCodexStartCommandFailureDetails(result);
+
+  if (details.failureCategory === 'guest_identity_refused') {
+    return { status: 503, message: GUEST_IDENTITY_REFUSED_MESSAGE, details };
+  }
 
   if (details.failureCategory === 'container_unavailable') {
     return {
@@ -201,6 +210,7 @@ export async function POST(
 
     const sshReadyResult = await sshExec(hostIp, 'true', {
       timeoutMs: CODEX_OAUTH_SSH_READY_TIMEOUT_MS,
+      proxmoxHostConfig: access.proxmoxHostConfig ?? null,
     });
 
     if (!sshReadyResult.ok) {
@@ -226,6 +236,7 @@ export async function POST(
       buildCodexStartCommand(instanceId, hermesExecUser, targetHermesHomeDir),
       {
       timeoutMs: CODEX_OAUTH_START_TIMEOUT_MS,
+      proxmoxHostConfig: access.proxmoxHostConfig ?? null,
       }
     );
     if (!pollResult.ok && isSshWarmupError(pollResult.error || pollResult.stderr || '')) {

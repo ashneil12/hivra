@@ -19,7 +19,13 @@ import {
   readInstanceBankrWalletBalances,
   upsertWithdrawalRecipient,
   setWithdrawalDestination,
+  setWithdrawalDestinationForOwner,
 } from "@/lib/billing/bankr-instance-wallets";
+
+const mockNotifyDestinationChange = jest.fn();
+jest.mock("@/lib/email/withdraw-destination-changed", () => ({
+  sendWithdrawDestinationChangedEmail: (...args: unknown[]) => mockNotifyDestinationChange(...args),
+}));
 
 // Public Base token contracts, named so the secret scan reads them as addresses.
 const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
@@ -513,6 +519,7 @@ describe("Bankr instance wallets", () => {
       bankrWalletId: "wlt_instance_123",
       status: "active",
       withdrawalDestinationEvm: null,
+      withdrawalDestinationAvailableAt: null,
       apiKeyStatus: "active",
       custody: "hivra_provisioned",
       apiKeyPreview: null,
@@ -1353,5 +1360,121 @@ describe("user-connected wallet predicates (drive the webfree BANKR_* clear)", (
     expect(
       isUserConnectedWalletRecord({ id: "wallet-row", metadata: null } as unknown as InstanceBankrWalletRecord)
     ).toBe(false);
+  });
+});
+
+describe("withdrawal destination changes", () => {
+  const OLD_DESTINATION = "0x1111111111111111111111111111111111111111";
+  const NEW_DESTINATION = "0x2222222222222222222222222222222222222222";
+  const savedAt = "2026-04-01T00:00:00.000Z";
+
+  function seedWallet(rows: Row[], owner: { instance_id: string | null; hivra_agent_id: string | null }) {
+    rows.push({
+      id: "wallet_row_1",
+      ...owner,
+      user_id: userId,
+      bankr_wallet_id: "wlt_1",
+      evm_address: normalizedWalletAddress,
+      normalized_evm_address: normalizedWalletAddress,
+      api_key_encrypted: "encrypted",
+      api_key_preview: null,
+      api_key_status: "active",
+      withdrawal_destination_evm: OLD_DESTINATION,
+      withdrawal_destination_set_at: savedAt,
+      status: "active",
+      metadata: { custodyModel: "bankr_custodied_agent_wallet" },
+      created_at: savedAt,
+      updated_at: savedAt,
+    });
+  }
+
+  beforeEach(() => {
+    mockNotifyDestinationChange.mockReset();
+    mockNotifyDestinationChange.mockResolvedValue({ sent: true });
+  });
+
+  it("emails the owner and restarts the cooldown when a Hermes agent wallet's destination changes", async () => {
+    const { db, rows } = createMemoryDb();
+    seedWallet(rows, { instance_id: instanceId, hivra_agent_id: null });
+
+    const record = await setWithdrawalDestination({ instanceId, userId, destinationEvm: NEW_DESTINATION, db, now });
+
+    expect(record.withdrawalDestinationEvm).toBe(NEW_DESTINATION);
+    expect(record.withdrawalDestinationSetAt).toBe(now.toISOString());
+    expect(mockNotifyDestinationChange).toHaveBeenCalledWith({
+      userId,
+      kind: "agent_wallet",
+      walletAddress: normalizedWalletAddress,
+      previousAddress: OLD_DESTINATION,
+      newAddress: NEW_DESTINATION,
+      changedAt: now,
+      availableAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    });
+  });
+
+  it("tells the dashboard when a newly saved destination can first receive a withdrawal", () => {
+    const hour = 60 * 60 * 1000;
+    const base = {
+      id: "wallet_row_1",
+      instanceId,
+      hivraAgentId: null,
+      userId,
+      bankrWalletId: "wlt_1",
+      evmAddress: normalizedWalletAddress,
+      normalizedEvmAddress: normalizedWalletAddress,
+      apiKeyPreview: null,
+      apiKeyStatus: "active" as const,
+      withdrawalDestinationEvm: NEW_DESTINATION,
+      status: "active" as const,
+      metadata: {},
+      createdAt: savedAt,
+      updatedAt: savedAt,
+    };
+    const setAt = new Date(Date.now() - hour);
+
+    expect(
+      instanceBankrWalletPublicSummary({ ...base, withdrawalDestinationSetAt: setAt.toISOString() })
+        ?.withdrawalDestinationAvailableAt
+    ).toBe(new Date(setAt.getTime() + 24 * hour).toISOString());
+    expect(
+      instanceBankrWalletPublicSummary({ ...base, withdrawalDestinationSetAt: savedAt })?.withdrawalDestinationAvailableAt
+    ).toBeNull();
+    expect(
+      instanceBankrWalletPublicSummary({ ...base, withdrawalDestinationSetAt: null })?.withdrawalDestinationAvailableAt
+    ).toBeNull();
+  });
+
+  it("emails the owner and restarts the cooldown when a Hivra agent wallet's destination changes", async () => {
+    const { db, rows } = createMemoryDb();
+    seedWallet(rows, { instance_id: null, hivra_agent_id: "agent_1" });
+
+    const record = await setWithdrawalDestinationForOwner({
+      owner: { hivraAgentId: "agent_1" },
+      userId,
+      destinationEvm: NEW_DESTINATION,
+      db,
+      now,
+    });
+
+    expect(record.withdrawalDestinationSetAt).toBe(now.toISOString());
+    expect(mockNotifyDestinationChange).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "agent_wallet", previousAddress: OLD_DESTINATION, newAddress: NEW_DESTINATION })
+    );
+  });
+
+  it("changes nothing and emails nobody when the same destination is saved again", async () => {
+    const { db, rows } = createMemoryDb();
+    seedWallet(rows, { instance_id: null, hivra_agent_id: "agent_1" });
+
+    const record = await setWithdrawalDestinationForOwner({
+      owner: { hivraAgentId: "agent_1" },
+      userId,
+      destinationEvm: OLD_DESTINATION,
+      db,
+      now,
+    });
+
+    expect(record.withdrawalDestinationSetAt).toBe(savedAt);
+    expect(mockNotifyDestinationChange).not.toHaveBeenCalled();
   });
 });

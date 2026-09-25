@@ -863,7 +863,7 @@ describe("GET /api/instances", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "cf-connecting-ip": "198.51.100.42",
+          "x-forwarded-for": "198.51.100.42",
         },
         body: JSON.stringify({
           name: "Gate Test",
@@ -907,7 +907,7 @@ describe("GET /api/instances", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "cf-connecting-ip": "198.51.100.43",
+          "x-forwarded-for": "198.51.100.43",
         },
         body: JSON.stringify({
           name: "Blocked Test",
@@ -958,7 +958,7 @@ describe("GET /api/instances", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "cf-connecting-ip": "198.51.100.44",
+          "x-forwarded-for": "198.51.100.44",
         },
         body: JSON.stringify({
           name: "Host Failure Test",
@@ -1002,7 +1002,7 @@ describe("GET /api/instances", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "cf-connecting-ip": "198.51.100.45",
+          "x-forwarded-for": "198.51.100.45",
         },
         body: JSON.stringify({
           name: "Budget Test",
