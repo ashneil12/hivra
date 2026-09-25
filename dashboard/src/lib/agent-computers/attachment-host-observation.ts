@@ -35,6 +35,7 @@ print(json.dumps(dict(version=1,target=target,bootId=boot),separators=(',',':'))
 // a writable /run/lock is acceptable only with the sticky bit set. The step
 // gets the lock on fd 9 and releases it itself (see attachmentHostStepBody).
 export const ATTACHMENT_HOST_LOCK_FD = 9;
+const ATTACHMENT_HOST_STDIN_FD = 8;
 export const ATTACHMENT_HOST_LOCK_PROGRAM = String.raw`import fcntl,os,stat,sys,time
 run=os.open('/run',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
 info=os.fstat(run)
@@ -113,7 +114,14 @@ export function parseGuestStepRefusal<T extends string>(stdout: unknown, names: 
   return (names as readonly string[]).includes(reason) ? reason as T : null;
 }
 
+/** Linux refuses to exec with any one argument of 128 KiB or more
+ * (MAX_ARG_STRLEN, counting its NUL): `Argument list too long`, before the VM
+ * is ever checked. The step body is one argument (to python3, then bash), so
+ * a guest program's stdin never travels inside it. */
+export const HOST_ARGUMENT_MAX_BYTES = 128 * 1024 - 1;
+
 function underHostLock(body: string): string {
+  if (Buffer.byteLength(body, "utf8") > HOST_ARGUMENT_MAX_BYTES) throw new Error("Attachment host step exceeds the host argument limit.");
   return `#!/usr/bin/env bash\nset -Eeuo pipefail\nexec /usr/bin/python3 -I -B -c ${shellQuote(ATTACHMENT_HOST_LOCK_PROGRAM)} ${shellQuote(body)}\n`;
 }
 
@@ -123,16 +131,23 @@ function underHostLock(body: string): string {
  * the program is handed to its guest agent; it is released before the wait,
  * so launches, starts, restarts and snapshots on the same host never queue
  * behind an attach step. Only the wait gets the step's deadline.
+ *
+ * The program's stdin is the host script's own stdin: run the script with
+ * runProxmoxHostScriptWithStdin. An attached agent's bundle (about 150 KB) is
+ * over the host's argument limit, so it never goes inside the script.
  */
-export function buildAttachmentHostStepScript(input: AttachmentObservationTarget, program: string, stdin: string,
+export function buildAttachmentHostStepScript(input: AttachmentObservationTarget, program: string,
   guestSeconds: number): string {
   const target = Target.parse(input);
   if (!Number.isSafeInteger(guestSeconds) || guestSeconds < 1 || guestSeconds > 900) throw new Error("Invalid guest step deadline.");
   return underHostLock(`#!/usr/bin/env bash
 set -Eeuo pipefail
+# Keep the program's stdin aside on fd ${ATTACHMENT_HOST_STDIN_FD} so no check before the start reads it.
+exec ${ATTACHMENT_HOST_STDIN_FD}<&0 </dev/null
 ${attachmentHostTargetCheck(target)}
 ${buildDetachedVmidBoundGuestExecPrelude()}
-HIVRA_GUEST_PID="$(printf '%s' ${shellQuote(stdin)} | dispatch_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)})"
+HIVRA_GUEST_PID="$(dispatch_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} <&${ATTACHMENT_HOST_STDIN_FD})"
+exec ${ATTACHMENT_HOST_STDIN_FD}<&-
 # The program now runs in this exact VM. Nothing below needs the host lock.
 flock -u ${ATTACHMENT_HOST_LOCK_FD}
 exec ${ATTACHMENT_HOST_LOCK_FD}>&-
