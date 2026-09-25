@@ -942,8 +942,12 @@ export class StripeWebhookService {
         status: 'active',
       });
       
-      // Filter subs that belong to this user (in case the customer is shared, which shouldn't happen, but just to be safe)
-      const hermesSubs = activeSubs.data.filter(s => s.metadata?.user_id === userId);
+      // Filter subs that belong to this user (in case the customer is shared, which shouldn't happen, but just to be safe).
+      // Workspace Cloud checkout reuses the same Stripe customer and user_id
+      // metadata; its subscriptions are another lane, never a Hivra duplicate.
+      const hermesSubs = activeSubs.data.filter(
+        (s) => s.metadata?.user_id === userId && !isWorkspaceCloudSubscription(s)
+      );
       
       if (hermesSubs.length > 1) {
         // Sort oldest first

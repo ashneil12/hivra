@@ -1135,6 +1135,60 @@ describe("StripeWebhookService", () => {
       expect(refunds).not.toHaveBeenCalled();
     });
 
+    it("does not count an older Workspace Cloud subscription as a duplicate of a Hivra one", async () => {
+      // Workspace Cloud checkout reuses the user's Stripe customer and stamps
+      // the same metadata.user_id. Counting its subscription as a Hivra
+      // duplicate made every event for a newer Hivra subscription wait for a
+      // "survivor" Hivra row that can never exist, so the paid Hivra plan was
+      // never applied (and Stripe redelivered the event until it gave up).
+      const stripe = getStripe();
+      const cancelSubscription = stripe.subscriptions.cancel as jest.Mock;
+      const refunds = stripe.refunds.create as jest.Mock;
+      (stripe.subscriptions.list as jest.Mock).mockResolvedValue({
+        data: [
+          {
+            id: "sub_wc_older",
+            created: 1,
+            metadata: { user_id: "user_1", plan: "ws_cloud_pro", surface: "workspace_cloud" },
+          },
+          { id: "sub_hivra_newer", created: 2, metadata: { user_id: "user_1", plan: "operator" } },
+        ],
+      });
+
+      const upserts: Array<Record<string, unknown>> = [];
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = createMockBuilder();
+        if (table === "hermes_subscriptions") {
+          builder.maybeSingle.mockResolvedValue({ data: null, error: null });
+          builder.upsert.mockImplementation((payload: Record<string, unknown>) => {
+            upserts.push(payload);
+            return builder;
+          });
+        }
+        return builder;
+      });
+
+      await StripeWebhookService.handleSubscriptionChange({
+        id: "sub_hivra_newer",
+        customer: "cus_1",
+        status: "active",
+        start_date: 1000,
+        metadata: { user_id: "user_1", plan: "operator" },
+        items: { data: [{ current_period_start: 1000, current_period_end: 2000 }] },
+      } as unknown as Stripe.Subscription);
+
+      expect(cancelSubscription).not.toHaveBeenCalled();
+      expect(refunds).not.toHaveBeenCalled();
+      expect(upserts).toEqual([
+        expect.objectContaining({
+          user_id: "user_1",
+          stripe_subscription_id: "sub_hivra_newer",
+          plan: "operator",
+          status: "active",
+        }),
+      ]);
+    });
+
     it("redacts subscription upsert errors before logging them", async () => {
       (log.error as jest.Mock).mockClear();
 
