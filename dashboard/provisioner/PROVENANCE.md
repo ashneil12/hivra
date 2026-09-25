@@ -538,6 +538,19 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.09.24.4` builds on `2026.09.24.3` and fixes two terminal
+follow-ups from the socket move. The runtime updater's "is anyone on this
+terminal" check now counts clients on the owner-only unix sockets as well as on
+the loopback ports (a computer updating from an older release still runs its
+terminals on the ports when the check runs), so Update & restart no longer
+restarts a terminal someone is using. The gateway falls back to a terminal's
+loopback port only while its installed unit is still the port-bound one; a unit
+from the socket release answers "restarting" (503) until its socket is back,
+so no other local process that bound the port during a restart can receive the
+owner's terminal traffic. Remote-desktop assets are unchanged, so the
+remote-desktop bundle revision and every session revision are preserved. This
+source release does not deploy, install, or establish Canary acceptance.
+
 Release `2026.09.24.3` builds on `2026.09.24.2` and hardens the computer for
 agents added to it. Both terminals keep their persistent tmux session slots
 and `KillMode=process`, and now listen on unix sockets in bux-owned `0700`

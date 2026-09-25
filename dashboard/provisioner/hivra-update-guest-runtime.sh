@@ -232,14 +232,23 @@ else : > "$BACKUP/bux-box-ttyd.service.absent"; fi
 # A ttyd restart ends every plain shell it serves, so restart a terminal only
 # when nobody is connected to it; otherwise its new settings apply on its next
 # start. Decide before the gateway restart below drops proxied connections.
+# The running terminal is either an older unit on its loopback port or a unit
+# from the socket release on its owner-only unix socket (the gateway connects
+# to whichever is live), so a client on either counts. A check that cannot run
+# counts as busy.
 terminal_idle() {
-  local out
-  out="$(ss -Htn state established "( sport = :$1 )" 2>/dev/null)" || return 1
-  [ -z "$out" ]
+  local port="$1" socket="$2" out
+  out="$(ss -Htn state established "( sport = :$port )" 2>/dev/null)" || return 1
+  [ -z "$out" ] || return 1
+  if [ -e "$socket" ]; then
+    out="$(ss -Hx state established src "$socket" 2>/dev/null)" || return 1
+    [ -z "$out" ] || return 1
+  fi
+  return 0
 }
 RESTART_AGENT_TTYD=0; RESTART_BOX_TTYD=0; TTYD_RESTARTED=0
-terminal_idle 7681 && RESTART_AGENT_TTYD=1
-terminal_idle 7682 && RESTART_BOX_TTYD=1
+terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1
+terminal_idle 7682 /run/hivra-box-terminal/ttyd.sock && RESTART_BOX_TTYD=1
 
 node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null

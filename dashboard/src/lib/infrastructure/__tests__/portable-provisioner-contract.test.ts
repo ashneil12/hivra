@@ -104,7 +104,7 @@ describe("portable provisioner source contract", () => {
   it("keeps the immediately prior releases compatible after a version bump", () => {
     // Regression: the lists end with the current-version constant, so bumping it
     // to 2026.09.21.1 silently dropped installed 2026.09.15.2 computers.
-    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1"]) {
+    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3"]) {
       expect(isCompatibleProviderVmProvisionerVersion(prior)).toBe(true);
       expect(supportsModelSettingsProvisionerVersion(prior)).toBe(true);
     }
@@ -414,7 +414,8 @@ describe("portable provisioner source contract", () => {
     expect(updater).toContain('"$BACKUP/bux-box-ttyd.service"');
     expect(updater).toContain('"$BACKUP/bux-ttyd-base-path.conf"');
     // A terminal is restarted only when idle, decided before the gateway restart drops proxied sockets.
-    expect(updater.indexOf("terminal_idle 7681 && RESTART_AGENT_TTYD=1")).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater.indexOf("terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1")).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain("terminal_idle 7682 /run/hivra-box-terminal/ttyd.sock && RESTART_BOX_TTYD=1");
     expect(updater).toContain("systemctl try-restart bux-box-ttyd.service; then rollback");
     expect(updater).toContain("HIVRA_TERMINAL_RESTART_DEFERRED");
     // The update fails unless systemd loaded the session-keeping terminal settings.
