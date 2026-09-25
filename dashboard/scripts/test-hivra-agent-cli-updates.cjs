@@ -5,9 +5,12 @@
 //   request, pause and update fields present together or not at all, removed
 //   with its agent, and closed to anon and authenticated with RLS on;
 // - claim_hivra_agent_cli_update_request: one claim per (agent, target) every
-//   20 hours, a new target claimable at once, a request that never reached the
-//   computer not holding the cooldown, only for the agent's owner, and
-//   executable by the service role only.
+//   20 hours, a new target claimable at once, a request the host wasn't ready
+//   for or another operation blocked not holding the cooldown (any other
+//   refusal does), only for the agent's owner, and executable by the service
+//   role only. An automatic claim is refused when the owner turned automatic
+//   updates off, on the owner's own server unless they turned them on, and for
+//   a target paused after a failed automatic update, whatever the sweep read.
 // Entirely in memory: no credentials or live database.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -109,13 +112,60 @@ async function main() {
     await db.query("update public.hivra_agent_cli_updates set request_result = 'scheduled' where agent_id = $1", [owned]);
     assert.equal(await claim(owned, "owner", "0.149.1"), false, "a request that reached the computer holds the cooldown");
     await db.query("update public.hivra_agent_cli_updates set request_result = 'busy' where agent_id = $1", [owned]);
-    assert.equal(await claim(owned, "owner", "0.149.1"), true, "a request that never reached the computer does not");
+    assert.equal(await claim(owned, "owner", "0.149.1"), true, "a request another operation blocked does not");
+    await db.query("update public.hivra_agent_cli_updates set request_result = 'host_not_ready' where agent_id = $1", [owned]);
+    assert.equal(await claim(owned, "owner", "0.149.1"), true, "nor one the host wasn't ready for");
+    await db.query("update public.hivra_agent_cli_updates set request_result = 'refused' where agent_id = $1", [owned]);
+    assert.equal(await claim(owned, "owner", "0.149.1"), false, "a refusal that won't clear by itself holds the cooldown");
     await db.query("update public.hivra_agent_cli_updates set request_result = 'unverified', requested_at = now() - interval '21 hours' where agent_id = $1", [owned]);
     assert.equal(await claim(owned, "owner", "0.149.1"), true, "after 20 hours");
     assert.equal(await claim(owned, "owner", "0.150.0"), true, "a new target at once");
     assert.equal(await claim(other, "owner", "0.149.1"), false, "not the owner's agent");
     assert.equal(Number((await one("select count(*) n from public.hivra_agent_cli_updates where agent_id = $1", [other])).n), 0, "no row for someone else's agent");
     assert.equal(await claim(other, "someone-else", "0.149.1"), true, "a first claim creates the row");
+
+    // The owner's automatic-update choice, whatever the sweep read.
+    const fresh = async (userId) => {
+      const id = await agent(userId);
+      await db.query("insert into public.hivra_agent_cli_updates (agent_id, user_id, cli_name) values ($1, $2, 'codex')", [id, userId]);
+      return id;
+    };
+    const optedOut = await fresh("owner");
+    await db.query("update public.hivra_agent_cli_updates set auto_update = false where agent_id = $1", [optedOut]);
+    assert.equal(await claim(optedOut, "owner", "0.149.1"), false, "automatic updates turned off");
+    const optedOutClaim = await one("select requested_at from public.hivra_agent_cli_updates where agent_id = $1", [optedOut]);
+    assert.equal(optedOutClaim.requested_at, null, "a refused automatic claim writes nothing");
+    assert.equal(await claim(optedOut, "owner", "0.149.1", "owner"), true, "the owner's own request still goes through");
+    const defaultOn = await fresh("owner");
+    assert.equal(await claim(defaultOn, "owner", "0.149.1"), true, "Hivra Cloud with no choice: on by default");
+    const paused = await fresh("owner");
+    await db.query("update public.hivra_agent_cli_updates set auto_paused_target = '0.149.1', auto_paused_reason = 'rolled_back' where agent_id = $1", [paused]);
+    assert.equal(await claim(paused, "owner", "0.149.1"), false, "paused for this target");
+    assert.equal(await claim(paused, "owner", "0.150.0"), true, "a newer target isn't paused");
+
+    // My server: off until the owner turns it on, with or without a stored row.
+    // Only deployment_mode matters here, so the fixture skips the connection
+    // binding a real self-managed agent carries (its check and trigger).
+    await db.exec("alter table public.hivra_agents drop constraint hivra_agents_deployment_authority_matrix_check");
+    const ownServer = async () => {
+      await db.exec("set session_replication_role = replica");
+      try {
+        return (await one(
+          `insert into public.hivra_agents (user_id, type, name, status, deployment_mode, proxmox_host)
+           values ('owner', 'codex', 'Codex agent', 'running', 'self-managed', '__hivra_self_managed_no_ambient_authority__') returning id`,
+        )).id;
+      } finally {
+        await db.exec("set session_replication_role = origin");
+      }
+    };
+    const noRow = await ownServer();
+    assert.equal(await claim(noRow, "owner", "0.149.1"), false, "My server with no row: off by default");
+    assert.equal(Number((await one("select count(*) n from public.hivra_agent_cli_updates where agent_id = $1", [noRow])).n), 0, "and no row is created");
+    const noChoice = await ownServer();
+    await db.query("insert into public.hivra_agent_cli_updates (agent_id, user_id, cli_name) values ($1, 'owner', 'codex')", [noChoice]);
+    assert.equal(await claim(noChoice, "owner", "0.149.1"), false, "My server with no choice: off by default");
+    await db.query("update public.hivra_agent_cli_updates set auto_update = true where agent_id = $1", [noChoice]);
+    assert.equal(await claim(noChoice, "owner", "0.149.1"), true, "My server once its owner turned it on");
 
     // Removed with its agent.
     await db.query("delete from public.hivra_agents where id = $1", [owned]);

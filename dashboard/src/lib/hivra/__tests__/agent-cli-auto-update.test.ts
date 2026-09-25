@@ -1,5 +1,6 @@
 /** @jest-environment node */
-import { runAgentCliAutoUpdateSweep } from "../agent-cli-auto-update";
+import { runAgentCliAutoUpdateSweep, UPDATE_START_BUDGET_MS, AUTO_UPDATE_FUNCTION_LIMIT_MS } from "../agent-cli-auto-update";
+import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "../lifecycle-timeouts";
 import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 
 const TESTED = AGENT_CLI_VERSIONS.codex;
@@ -202,4 +203,31 @@ it("doesn't count a host that hasn't taken this release as a failure, and report
   const summary = await run("on");
   expect(summary).toMatchObject({ updated: 0, failed: 1, skipped: { host_not_ready: 1 } });
   expect(summary.results).toContainEqual({ agentId: expect.any(String), action: "failed", reason: "unverified", target: TESTED });
+});
+
+describe("time", () => {
+  it("claims an update only while its readiness check and host script can still finish inside the function", () => {
+    expect(UPDATE_START_BUDGET_MS + HOST_READINESS_TIMEOUT_MS + RUNTIME_UPDATE_TIMEOUT_MS).toBeLessThan(AUTO_UPDATE_FUNCTION_LIMIT_MS);
+    expect(UPDATE_START_BUDGET_MS).toBeLessThanOrEqual(25_000);
+  });
+
+  it("claims nothing once reading the computer and whether it's idle has used up the start budget", async () => {
+    let clock = NOW;
+    // A slow first read (15 s) leaves time to start; the idle read (8 s at most, plus the
+    // query) then takes it past the budget, before anything is claimed.
+    mockObserve.mockImplementation(async (agent: Row) => { clock += 15_000; return { agent_id: agent.id, user_id: "owner", ...(records.get(agent.id) ?? {}) }; });
+    mockIdle.mockImplementation(async () => { clock += 11_000; return idle; });
+    const summary = await runAgentCliAutoUpdateSweep({ env: { HIVRA_AGENT_CLI_AUTO_UPDATE: "on" }, now: () => clock });
+    expect(summary.skipped).toEqual({ out_of_time: 1 });
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("doesn't read whether an agent is idle once the start budget is gone", async () => {
+    let clock = NOW;
+    mockObserve.mockImplementation(async (agent: Row) => { clock += UPDATE_START_BUDGET_MS + 1; return { agent_id: agent.id, user_id: "owner", ...(records.get(agent.id) ?? {}) }; });
+    const summary = await runAgentCliAutoUpdateSweep({ env: { HIVRA_AGENT_CLI_AUTO_UPDATE: "on" }, now: () => clock });
+    expect(summary.skipped).toEqual({ out_of_time: 1 });
+    expect(mockIdle).not.toHaveBeenCalled();
+  });
 });

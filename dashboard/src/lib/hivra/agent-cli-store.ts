@@ -79,20 +79,26 @@ export async function readAgentSoftwareRecords(userId: string, agentIds: string[
 /**
  * Stored rows for agents the caller already loaded (the automatic-update
  * sweep, across owners), keyed by agent id. A row is used only when it belongs
- * to the agent's own owner. Empty when unreadable.
+ * to the agent's own owner. null when the rows couldn't be read: they hold the
+ * owners' automatic-update choices, so the sweep must not guess them.
  */
-export async function readAgentSoftwareRecordsForAgents(agents: Array<{ id: string; user_id: string }>): Promise<Map<string, StoredAgentSoftware>> {
+export async function readAgentSoftwareRecordsForAgents(agents: Array<{ id: string; user_id: string }>): Promise<Map<string, StoredAgentSoftware> | null> {
   const rows = new Map<string, StoredAgentSoftware>();
-  if (!supabaseAdmin || agents.length === 0) return rows;
+  if (agents.length === 0) return rows;
+  if (!supabaseAdmin) return null;
   const owners = new Map(agents.map((agent) => [agent.id, agent.user_id]));
   try {
     const { data, error } = await supabaseAdmin.from(TABLE).select(AGENT_SOFTWARE_COLUMNS).in("agent_id", [...owners.keys()]);
-    if (error || !Array.isArray(data)) return rows;
+    if (error || !Array.isArray(data)) {
+      warn("agent software records could not be read", { failureType: "hivra_agent_cli_records_read_failed", count: owners.size, error: error?.message ?? "no rows" });
+      return null;
+    }
     for (const row of data as unknown as StoredAgentSoftware[]) {
       if (owners.get(row.agent_id) === row.user_id) rows.set(row.agent_id, row);
     }
-  } catch {
-    /* the sweep reads every candidate instead */
+  } catch (error) {
+    warn("agent software records could not be read", { failureType: "hivra_agent_cli_records_read_failed", count: owners.size, error: error instanceof Error ? error.message : String(error) });
+    return null;
   }
   return rows;
 }
@@ -109,6 +115,10 @@ function observationOf(reading: AgentSoftwareReading): AgentSoftwareObservation 
  * event for it, and after an automatic update that didn't install it pauses
  * automatic updates for that target. Written with a compare on updated_at, so
  * two readers seeing the same ending record it once.
+ *
+ * When `previous` is null but another reader saved the first row meanwhile,
+ * that row is read and this reading saved over it, so what is returned always
+ * carries the owner's stored choices. Throws if that row can't be read.
  */
 export async function saveAgentSoftwareObservation(input: {
   agent: AgentSoftwareAgentRef;
@@ -117,7 +127,7 @@ export async function saveAgentSoftwareObservation(input: {
   reading: AgentSoftwareReading;
   previous: StoredAgentSoftware | null;
   now: Date;
-}): Promise<StoredAgentSoftware> {
+}, attempt = 0): Promise<StoredAgentSoftware> {
   const { agent, subject, tested, reading, previous, now } = input;
   const at = now.toISOString();
   const patch: Record<string, unknown> = {
@@ -156,6 +166,7 @@ export async function saveAgentSoftwareObservation(input: {
   if (!supabaseAdmin) return merged;
 
   let written = false;
+  let duplicate = false;
   try {
     if (previous) {
       let query = supabaseAdmin.from(TABLE).update(patch).eq("agent_id", agent.id).eq("user_id", agent.user_id);
@@ -165,12 +176,20 @@ export async function saveAgentSoftwareObservation(input: {
       written = !error && Array.isArray(data) && data.length === 1;
     } else {
       const { error } = await supabaseAdmin.from(TABLE).insert({ agent_id: agent.id, user_id: agent.user_id, ...patch }).select("agent_id");
-      // 23505: another reader saved the first observation at the same moment.
-      if (error && error.code !== "23505") warn("agent software observation could not be saved", { failureType: "hivra_agent_cli_observation_save_failed", agentId: agent.id, error: error.message });
+      // 23505: the row exists after all (another reader, the owner's choice or
+      // an update request saved it first). Save over that row instead of
+      // answering without the owner's choices.
+      if (error?.code === "23505") duplicate = true;
+      else if (error) warn("agent software observation could not be saved", { failureType: "hivra_agent_cli_observation_save_failed", agentId: agent.id, error: error.message });
       written = !error;
     }
   } catch (error) {
     warn("agent software observation could not be saved", { failureType: "hivra_agent_cli_observation_save_failed", agentId: agent.id, error: error instanceof Error ? error.message : String(error) });
+  }
+  if (duplicate) {
+    const current = attempt === 0 ? await readAgentSoftwareRecord(agent.id, agent.user_id) : null;
+    if (!current) throw new Error("The agent's stored software record exists but could not be read.");
+    return saveAgentSoftwareObservation({ ...input, previous: current }, attempt + 1);
   }
 
   // Only the writer that saved the change records the update's end.
@@ -195,8 +214,10 @@ export async function saveAgentSoftwareObservation(input: {
 /**
  * How the update_runtime outcome is recorded against the request. An update
  * that ran but whose CLI step can't be confirmed (no report, or a completion
- * another request superseded) counts as unverified, which starts the
- * cooldown, so the sweep never repeats it every run.
+ * another request superseded) counts as unverified, and any other refusal as
+ * refused; both hold the 20-hour cooldown, so the sweep never repeats them
+ * every run. Only host_not_ready and busy, which clear by themselves, leave it
+ * open (claim_hivra_agent_cli_update_request).
  */
 export function requestResultOf(outcome: { ok: true; agentCli: AgentCliUpdateReport | null } | { ok: false; code: string }): AgentCliRequestResult {
   if (outcome.ok) return outcome.agentCli ? outcome.agentCli.state : "unverified";

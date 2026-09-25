@@ -20,7 +20,11 @@ import "server-only";
 //   - that target isn't paused after an automatic update to it failed;
 //   - no reply is being written, no agent terminal is attached, and nothing
 //     was used for 30 minutes (anything unreadable counts as in use);
-//   - the claim for this target succeeds: one per target every 20 hours.
+//   - the claim for this target succeeds: one per target every 20 hours, and
+//     the database refuses it on its own when the owner's stored choice (or
+//     Hivra's default for My server) is off or the target is paused, so a
+//     stale read here can never override the owner.
+// If the stored choices can't be read, the run ends without reading anyone.
 // The update is the owner's own path (runHivraAgentRuntimeUpdate): the same
 // host checks, operation lease and receipt. On the computer the swap still
 // waits for replies to finish and puts the previous version back if the new
@@ -44,6 +48,7 @@ import {
 } from "./agent-cli-store";
 import { configuredAgentCliAutoUpdateMode, observeAgentSoftware, type AgentSoftwareAgentRow } from "./agent-software-service";
 import { runHivraAgentRuntimeUpdate } from "./agent-runtime-update";
+import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "./lifecycle-timeouts";
 
 const SOURCE = "cron/update-hivra-agent-clis";
 const CANDIDATE_SCAN_LIMIT = 500;
@@ -52,8 +57,17 @@ export const AUTO_UPDATE_UPDATES_PER_RUN = 5;
 const READ_CONCURRENCY = 4;
 /** No new computer read after this. */
 const READ_BUDGET_MS = 150_000;
-/** No update starts after this, so its 240 s host deadline ends inside the function's 300 s. */
-const UPDATE_START_BUDGET_MS = 45_000;
+/** The cron function's limit: maxDuration in app/api/cron/update-hivra-agent-clis. */
+export const AUTO_UPDATE_FUNCTION_LIMIT_MS = 300_000;
+/** The claim, the operation lease and the records around the host work. */
+const UPDATE_OVERHEAD_MS = 15_000;
+/**
+ * No update is claimed after this. Once claimed, the update still runs its
+ * host readiness check and then its host script, each with its own deadline;
+ * both must end inside the function's limit, or the function is stopped with
+ * the lease and the claim left behind and nothing recorded. 25 s.
+ */
+export const UPDATE_START_BUDGET_MS = AUTO_UPDATE_FUNCTION_LIMIT_MS - RUNTIME_UPDATE_TIMEOUT_MS - HOST_READINESS_TIMEOUT_MS - UPDATE_OVERHEAD_MS;
 export const AUTO_UPDATE_IDLE_MS = 30 * 60_000;
 
 type Row = AgentSoftwareAgentRow & Record<string, unknown>;
@@ -165,6 +179,13 @@ export async function runAgentCliAutoUpdateSweep(options: AgentCliAutoUpdateOpti
   }
   const rows = ((data ?? []) as Row[]).filter((row) => agentSoftwareSubject(row)?.cli);
   const stored = await readAgentSoftwareRecordsForAgents(rows);
+  // The stored rows hold every owner's choice; without them nobody is read or updated.
+  if (!stored) {
+    log.error("agent software records unreadable; no agent read or updated this run", new Error("hivra_agent_cli_updates unreadable"), {
+      source: SOURCE, failureType: "agent_cli_records_unreadable", candidates: rows.length,
+    });
+    return summary;
+  }
   // Only agents whose automatic updates are on are read; the others are just counted.
   const enabled = rows.filter((row) => effectiveAgentCliAutoUpdate(stored.get(row.id) ?? null, row.deployment_mode).enabled);
   const disabled = rows.length - enabled.length;
@@ -229,6 +250,8 @@ export async function runAgentCliAutoUpdateSweep(options: AgentCliAutoUpdateOpti
     }
     const subject = agentSoftwareSubject(row);
     if (!subject?.cli) { skip(row.id, "not_supported"); return; }
+    // Checked again after the (up to 8 s) idle read: past this, a claimed update could outlive the function.
+    if (now() - started > UPDATE_START_BUDGET_MS) { skip(row.id, "out_of_time", target); return; }
     if (!await claimAutomaticAgentSoftwareUpdate({ id: row.id, user_id: row.user_id, type: row.type }, subject, target)) {
       skip(row.id, "cooldown", target);
       return;

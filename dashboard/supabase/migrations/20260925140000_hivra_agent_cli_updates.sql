@@ -12,7 +12,8 @@
 --   * the version Hivra itself confirmed on the computer, so an owner's own
 --     newer install is never downgraded automatically;
 --   * the last update request (owner or automatic) and its immediate result,
---     with a claim function that allows one request per target every 20 hours;
+--     with a claim function that allows one request per target every 20 hours
+--     and refuses an automatic one the owner hasn't allowed;
 --   * the owner's automatic-update choice: null follows Hivra's default (on
 --     for Hivra Cloud, off on the owner's own server), and the pause after an
 --     automatic update to a target failed.
@@ -74,8 +75,19 @@ comment on table public.hivra_agent_cli_updates is
 -- Claims one update request for (agent, target). Refuses when the agent isn't
 -- the owner's, or when the same target was already requested in the cooldown
 -- window, so overlapping sweeps and a failing target can't repeat an update.
--- A request that never reached the computer (the host wasn't ready, another
--- operation held it, or it was refused) doesn't start the cooldown.
+-- Only a request that never reached the computer because the host hadn't
+-- taken the current release yet or another operation held the agent
+-- (host_not_ready, busy) leaves the cooldown open: those clear by themselves.
+-- Any other refusal (a credential to replace, no computer, a bad address)
+-- holds it, so an automatic update isn't retried every run for a reason that
+-- won't change.
+--
+-- For an automatic request this function is the authority on the owner's
+-- choice, checked against the row it locks: it refuses when the owner turned
+-- automatic updates off, when they never chose and the agent is on their own
+-- server (off by default), and when the target is paused after an automatic
+-- update to it failed. A sweep that read a stale or missing row can't
+-- override the owner.
 -- Returns true when this caller holds the request.
 create or replace function public.claim_hivra_agent_cli_update_request(
   p_agent_id uuid,
@@ -90,10 +102,19 @@ set search_path = public, pg_temp
 as $$
 declare
   claimed boolean;
+  agent_mode text;
 begin
-  if not exists (
-    select 1 from public.hivra_agents a
-    where a.id = p_agent_id and a.user_id = p_user_id and a.status <> 'deleted'
+  select a.deployment_mode into agent_mode
+  from public.hivra_agents a
+  where a.id = p_agent_id and a.user_id = p_user_id and a.status <> 'deleted';
+  if not found then
+    return false;
+  end if;
+  -- On the owner's own server automatic updates are off until the owner
+  -- turns them on, so with no stored choice there is nothing to claim.
+  if p_requested_by = 'auto' and agent_mode = 'self-managed' and not exists (
+    select 1 from public.hivra_agent_cli_updates r
+    where r.agent_id = p_agent_id and r.auto_update is true
   ) then
     return false;
   end if;
@@ -109,10 +130,13 @@ begin
         request_result = null,
         updated_at = excluded.updated_at
     where current_row.user_id = excluded.user_id
+      and (p_requested_by <> 'auto' or (
+        coalesce(current_row.auto_update, agent_mode is distinct from 'self-managed')
+        and current_row.auto_paused_target is distinct from excluded.requested_target))
       and (current_row.requested_target is distinct from excluded.requested_target
         or current_row.requested_at is null
         or current_row.requested_at < now() - p_cooldown
-        or current_row.request_result in ('host_not_ready', 'busy', 'refused'))
+        or current_row.request_result in ('host_not_ready', 'busy'))
   returning true into claimed;
   return coalesce(claimed, false);
 end

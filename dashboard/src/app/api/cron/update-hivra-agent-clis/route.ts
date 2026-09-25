@@ -19,7 +19,9 @@ import { runAgentCliAutoUpdateSweep } from "@/lib/hivra/agent-cli-auto-update";
 export const dynamic = "force-dynamic";
 
 // Reads up to 40 computers, then runs at most 5 in-place updates of up to
-// 240 s each, started early enough to finish inside this limit.
+// 240 s each, claimed early enough to finish inside this limit. Must equal
+// AUTO_UPDATE_FUNCTION_LIMIT_MS, which that timing is computed from (a
+// literal here, as Next.js reads it statically).
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {

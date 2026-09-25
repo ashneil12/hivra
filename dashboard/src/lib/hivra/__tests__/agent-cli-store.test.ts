@@ -18,6 +18,7 @@ const calls: Call[] = [];
 let updateRows: unknown[] = [{ agent_id: "agent-1" }];
 let insertError: { code?: string; message: string } | null = null;
 let listed: unknown[] = [];
+let listError: { message: string } | null = null;
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: () => {
@@ -28,7 +29,7 @@ jest.mock("@/lib/supabase", () => ({
         insert(payload: unknown) { call.op = "insert"; call.payload = payload; return chain; },
         upsert(payload: unknown, options: unknown) { call.op = "upsert"; call.payload = payload; call.options = options; return Promise.resolve({ error: null }); },
         eq(column: string, value: unknown) { call.filters.push([column, value]); return chain; },
-        in(column: string, value: unknown) { call.op = "list"; call.filters.push([column, value]); return Promise.resolve({ data: listed, error: null }); },
+        in(column: string, value: unknown) { call.op = "list"; call.filters.push([column, value]); return Promise.resolve({ data: listError ? null : listed, error: listError }); },
         select() {
           if (call.op === "insert") return Promise.resolve({ data: insertError ? null : [{ agent_id: "agent-1" }], error: insertError });
           if (call.op === "update") return Promise.resolve({ data: updateRows, error: null });
@@ -55,6 +56,7 @@ beforeEach(() => {
   calls.length = 0;
   updateRows = [{ agent_id: "agent-1" }];
   insertError = null;
+  listError = null;
   mockLogEvent.mockClear();
 });
 
@@ -133,8 +135,15 @@ describe("readAgentSoftwareRecordsForAgents", () => {
       { agent_id: "agent-2", user_id: "someone-else", observation: "reported" },
     ];
     const rows = await readAgentSoftwareRecordsForAgents([{ id: "agent-1", user_id: "owner" }, { id: "agent-2", user_id: "owner" }]);
-    expect([...rows.keys()]).toEqual(["agent-1"]);
+    expect([...(rows?.keys() ?? [])]).toEqual(["agent-1"]);
     expect(calls).toEqual([expect.objectContaining({ op: "list", filters: [["agent_id", ["agent-1", "agent-2"]]] })]);
+  });
+
+  it("says the rows couldn't be read instead of answering that there are none", async () => {
+    // They hold the owners' automatic-update choices: an empty answer would read as "never chose".
+    listError = { message: "statement timeout" };
+    expect(await readAgentSoftwareRecordsForAgents([{ id: "agent-1", user_id: "owner" }])).toBeNull();
+    expect(await readAgentSoftwareRecordsForAgents([])).toEqual(new Map());
   });
 });
 

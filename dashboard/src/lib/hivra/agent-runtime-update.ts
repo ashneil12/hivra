@@ -33,6 +33,7 @@ import {
   type HivraLifecycleAgentRow,
 } from "./agent-lifecycle-host";
 import { agentSoftwareSubject, parseAgentCliReport, type AgentCliUpdateReport } from "./agent-cli-status";
+import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "./lifecycle-timeouts";
 import {
   readAgentSoftwareRecord,
   recordAutomaticAgentSoftwareResult,
@@ -40,11 +41,10 @@ import {
   requestResultOf,
 } from "./agent-cli-store";
 
-// The in-place runtime update runs synchronously inside its request. Bound the
-// host script below the route's maxDuration so a stalled guest yields a
-// recorded unknown outcome for the reconciler instead of a killed function
-// with nothing saved.
-export const RUNTIME_UPDATE_TIMEOUT_MS = 240_000;
+// The host script's bound (RUNTIME_UPDATE_TIMEOUT_MS) and the readiness
+// check's live in lifecycle-timeouts.ts, which the automatic-update cron
+// budgets around.
+//
 // The updater's own deadline, counted on the host from the first line of the
 // script (so it includes the FD8 wait). The margin covers the SSH connection
 // and the result's trip back before RUNTIME_UPDATE_TIMEOUT_MS; the updater
@@ -137,7 +137,7 @@ test -x "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"
 bash -n "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"
 printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
       env,
-      { timeoutMs: 20_000 },
+      { timeoutMs: HOST_READINESS_TIMEOUT_MS },
     );
     if (!readiness.ok || !readiness.stdout.includes("HIVRA_RUNTIME_UPDATE_READY")) {
       return failure("host_not_ready", 503, "Prepare this infrastructure target with the current Hivra runtime bundle before updating the computer.");

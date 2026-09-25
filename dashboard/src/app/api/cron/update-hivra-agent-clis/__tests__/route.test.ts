@@ -2,11 +2,14 @@
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { GET } from "../route";
+import { GET, maxDuration } from "../route";
 
 const mockSweep = jest.fn();
 const mockOpsEvent = jest.fn();
-jest.mock("@/lib/hivra/agent-cli-auto-update", () => ({ runAgentCliAutoUpdateSweep: (...args: unknown[]) => mockSweep(...args) }));
+jest.mock("@/lib/hivra/agent-cli-auto-update", () => ({
+  AUTO_UPDATE_FUNCTION_LIMIT_MS: jest.requireActual("@/lib/hivra/agent-cli-auto-update").AUTO_UPDATE_FUNCTION_LIMIT_MS,
+  runAgentCliAutoUpdateSweep: (...args: unknown[]) => mockSweep(...args),
+}));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: (...args: unknown[]) => mockOpsEvent(...args) }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
@@ -27,6 +30,11 @@ describe("GET /api/cron/update-hivra-agent-clis", () => {
   afterAll(() => {
     if (prior === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = prior;
+  });
+
+  it("gives the sweep the time its update budget is computed from", async () => {
+    const { AUTO_UPDATE_FUNCTION_LIMIT_MS } = jest.requireMock("@/lib/hivra/agent-cli-auto-update") as { AUTO_UPDATE_FUNCTION_LIMIT_MS: number };
+    expect(maxDuration * 1000).toBe(AUTO_UPDATE_FUNCTION_LIMIT_MS);
   });
 
   it("refuses to run without a configured secret", async () => {

@@ -529,7 +529,13 @@ new one doesn't install. What an owner sees:
   is behind (or ahead only because Hivra lowered its tested version after
   installing it), the target isn't paused after an automatic failure, no reply
   is being written, no agent terminal is attached, nothing was used for 30
-  minutes, and the per-target claim allows one request every 20 hours.
+  minutes, and the per-target claim allows one request every 20 hours. The
+  claim function is the authority on the owner's choice and the pause, so a
+  stale read can't override them, and a run that can't read the stored
+  choices reads and updates nobody. Only `host_not_ready` and `busy` leave
+  the 20-hour cooldown open; any other refusal holds it. No update is claimed
+  after 25 s into a run, so its host readiness check and 240 s host script
+  end inside the function's 300 s.
 - *Target / not built.* A `release` field and per-kind software versions in
   authenticated meta (box side), updaters for Aeon, OpenClaw and Agent Zero, a
   Home card, and a separate operation kind so an automatic update doesn't hold
