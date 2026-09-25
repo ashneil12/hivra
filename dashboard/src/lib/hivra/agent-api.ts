@@ -248,7 +248,9 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
         typeof j?.code === "string" ? j.code : null,
       );
     }
-    if (r.status >= 400 && r.status < 500) {
+    // Refused before anything was created (no host could take it right now):
+    // back to Review with the reason, never "couldn't confirm".
+    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable") {
       throw new HivraLaunchCorrectableError(
         message,
         r.status,

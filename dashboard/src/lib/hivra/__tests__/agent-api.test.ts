@@ -216,6 +216,25 @@ describe("createAgent receipt handling", () => {
     expect(outcome).toMatchObject({ status: 409, code: "target_revision_changed" });
   });
 
+  // Live on Canary, a launch refused because no host had the current
+  // provisioner read as "We couldn't confirm the launch yet": nothing had
+  // been created, and the launch only needed trying again.
+  it("returns a refusal made before anything was created to Review, even as a 503", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        success: false,
+        error: "Deployment target is temporarily unavailable while the Hivra provisioner is being prepared. Please try again shortly.",
+        code: "placement_unavailable",
+      }),
+    } as Response);
+
+    const outcome = await createAgent(input).catch(error => error);
+    expect(outcome).toBeInstanceOf(HivraLaunchCorrectableError);
+    expect(outcome).toMatchObject({ status: 503, code: "placement_unavailable" });
+  });
+
   it("requires a new receipt when the server reports request identity conflict", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
