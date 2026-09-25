@@ -1,4 +1,4 @@
-import { holdManagedVeniceMediaSpend } from "@/lib/venice/media-spend-gate";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 import {
   createManagedVeniceSpendWorld,
   type ManagedVeniceSpendWorld,
@@ -12,6 +12,7 @@ jest.mock("@/lib/ops-events", () => ({
 const USER_ID = "user_gate_fixture";
 const KEY = { id: "11111111-1111-4111-8111-111111111111", userId: USER_ID, defaultWalletType: "card" as const };
 const QWEN = { endpoint: "/api/v1/image/generate", model: "qwen-image-2", metadata: {} };
+const NANO = { endpoint: "/api/v1/image/generate", model: "nano-banana-2", metadata: {} };
 
 describe("holdManagedVeniceMediaSpend", () => {
   const envBefore = { ...process.env };
@@ -160,5 +161,96 @@ describe("holdManagedVeniceMediaSpend", () => {
 
     expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(10_000);
     expect(world.usageEvents()[0]).toMatchObject({ status: "recorded", charged_micro_usd: 50_000, wallet_type: "hermesos" });
+  });
+  // #160 review: media holds had no expiry. A hold now says when it goes stale
+  // and what a success costs, so the stale-hold sweep can settle it without
+  // re-pricing (lib/venice/reservation-sweep.ts).
+  it("gives the hold an expiry and records the price a success is charged", async () => {
+    world.fundCard(USER_ID, 1_000_000);
+    const before = Date.now();
+    const result = await holdManagedVeniceMediaSpend({ key: KEY, operation: NANO, source: "test" }, world.db);
+    if (!result.ok) throw new Error("expected a hold");
+
+    const row = world.reservations()[0];
+    // Held at the 4K ceiling; a success is charged Venice's 1K default.
+    expect(row).toMatchObject({
+      reserved_micro_usd: 190_000,
+      metadata: expect.objectContaining({ captureOnSuccessMicroUsd: 100_000, captureOnSuccessListMicroUsd: 100_000 }),
+    });
+    const expiresAt = Date.parse(String(row.expires_at));
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 60 * 60 * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 60 * 60 * 1000);
+  });
+
+  // #160 review: a 2xx whose body could not be read released the hold, though
+  // Venice had already run (and billed) the request.
+  it("captures the priced amount when Venice answered 2xx but its body could not be read", async () => {
+    world.fundCard(USER_ID, 1_000_000);
+    const result = await holdManagedVeniceMediaSpend({ key: KEY, operation: NANO, source: "test" }, world.db);
+    if (!result.ok) throw new Error("expected a hold");
+    const broken = new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    jest.spyOn(broken, "arrayBuffer").mockRejectedValue(new TypeError("terminated"));
+
+    const sent = await sendManagedVeniceMediaRequest({
+      hold: result.hold,
+      mode: "buffer",
+      fetchFailureType: "managed_venice_image_upstream_fetch_failed",
+      send: async () => broken,
+    });
+
+    expect(sent.ok).toBe(false);
+    if (sent.ok) return;
+    expect(sent.response.status).toBe(502);
+    expect(world.reservations()[0]).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
+    expect(world.cardBalanceMicroUsd(USER_ID)).toBe(900_000);
+    expect(world.usageEvents()).toEqual([
+      expect.objectContaining({
+        status: "recorded",
+        charged_micro_usd: 100_000,
+        upstream_status: 200,
+        metadata: expect.objectContaining({ upstreamBodyUnreadable: true }),
+      }),
+    ]);
+  });
+
+  it("still releases when a non-2xx body could not be read", async () => {
+    world.fundCard(USER_ID, 1_000_000);
+    const result = await holdManagedVeniceMediaSpend({ key: KEY, operation: NANO, source: "test" }, world.db);
+    if (!result.ok) throw new Error("expected a hold");
+    const broken = new Response("{}", { status: 503 });
+    jest.spyOn(broken, "arrayBuffer").mockRejectedValue(new TypeError("terminated"));
+
+    const sent = await sendManagedVeniceMediaRequest({
+      hold: result.hold,
+      mode: "buffer",
+      fetchFailureType: "managed_venice_image_upstream_fetch_failed",
+      send: async () => broken,
+    });
+
+    expect(sent.ok).toBe(false);
+    expect(world.reservations()[0].status).toBe("released");
+    expect(world.cardBalanceMicroUsd(USER_ID)).toBe(1_000_000);
+  });
+
+  it("files a reconciliation item when the release itself fails, so the sweep can release it", async () => {
+    world.fundCard(USER_ID, 1_000_000);
+    const result = await holdManagedVeniceMediaSpend({ key: KEY, operation: NANO, source: "test" }, world.db);
+    if (!result.ok) throw new Error("expected a hold");
+    world.failNext({ table: "managed_venice_reservations", op: "update" });
+
+    await result.hold.complete({ ok: false, upstreamStatus: 400 });
+
+    expect(world.reservations()[0].status).toBe("active");
+    expect(world.tables.managed_venice_reconciliation_items).toEqual([
+      expect.objectContaining({
+        reason: "managed_venice_media_release_failed",
+        status: "open",
+        metadata: expect.objectContaining({
+          referenceId: result.hold.referenceId,
+          releaseReason: "upstream_non_2xx",
+          upstreamStatus: 400,
+        }),
+      }),
+    ]);
   });
 });

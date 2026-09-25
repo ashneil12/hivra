@@ -1,193 +1,408 @@
 /**
  * @jest-environment node
+ *
+ * The stale-hold sweep runs the real wallet, reservation and media-gate code
+ * against the in-memory ledger (security review 2026-09 follow-ups to #150 and
+ * #160). A hold is captured when Venice answered 2xx, released only when the
+ * request provably failed upstream, and never left to sit forever.
  */
 
-const mockLoadReservation = jest.fn();
-const mockReleaseReservation = jest.fn();
-
-jest.mock("@/lib/billing/managed-venice-wallets", () => ({
-  loadManagedVeniceReservation: (...args: unknown[]) => mockLoadReservation(...args),
-  releaseManagedVeniceReservation: (...args: unknown[]) => mockReleaseReservation(...args),
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
+jest.mock("@/lib/ops-events", () => ({
+  ...jest.requireActual("@/lib/ops-events"),
+  reportOpsEvent: jest.fn(),
 }));
 
-jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
-
+import {
+  createManagedVeniceReservation,
+  getManagedVeniceWalletSummary,
+} from "@/lib/billing/managed-venice-wallets";
+import { holdManagedVeniceMediaSpend } from "@/lib/venice/media-spend-gate";
+import { markManagedVeniceReconciliationRequired } from "@/lib/venice/proxy-settlement";
+import {
+  createManagedVeniceSpendWorld,
+  type ManagedVeniceSpendWorld,
+} from "@/test-utils/managed-venice-spend-world";
 import {
   SWEEPABLE_RECONCILIATION_REASONS,
-  sweepStaleManagedVeniceReservations,
   pruneTerminalManagedVeniceReservations,
+  sweepStaleManagedVeniceReservations,
 } from "../reservation-sweep";
 
-type Item = {
-  id: string;
-  user_id: string;
-  reason: string;
-  status: string;
-  metadata: Record<string, unknown> | null;
-  created_at: string;
-  // populated by closeItem updates
-  resolved_at?: string;
-  operator_notes?: string;
-};
+const USER = "user_sweep";
+const KEY_ID = "11111111-1111-4111-8111-111111111111";
+const HOUR_MS = 60 * 60 * 1000;
+const hoursAgo = (hours: number) => new Date(Date.now() - hours * HOUR_MS).toISOString();
 
-function createFakeDb(items: Item[]) {
-  function selectChain() {
-    const predicates: Array<(row: Item) => boolean> = [];
-    const chain = {
-      select: (_cols?: string) => chain,
-      eq: (col: string, val: string) => {
-        predicates.push((row) => (row as Record<string, unknown>)[col] === val);
-        return chain;
-      },
-      in: (col: string, vals: readonly string[]) => {
-        predicates.push((row) => vals.includes((row as Record<string, unknown>)[col] as string));
-        return chain;
-      },
-      lt: (col: string, val: string) => {
-        predicates.push((row) => String((row as Record<string, unknown>)[col]) < val);
-        return chain;
-      },
-      order: () => chain,
-      limit: async (n: number) => ({
-        data: items.filter((row) => predicates.every((p) => p(row))).slice(0, n),
-        error: null,
-      }),
-    };
-    return chain;
-  }
-
-  function updateChain(patch: Record<string, unknown>) {
-    return {
-      eq: async (col: string, val: string) => {
-        for (const row of items) {
-          if ((row as Record<string, unknown>)[col] === val) {
-            Object.assign(row, patch);
-          }
-        }
-        return { error: null };
-      },
-    };
-  }
-
-  return {
-    from: () => ({
-      select: (cols?: string) => selectChain().select(cols),
-      update: (patch: Record<string, unknown>) => updateChain(patch),
-    }),
-  };
-}
-
-function openItem(overrides: Partial<Item> = {}): Item {
-  return {
-    id: "item_1",
-    user_id: "user_1",
-    reason: "managed_venice_missing_stream_usage",
-    status: "open",
-    metadata: { referenceId: "ref_1" },
-    created_at: "2026-05-20T00:00:00.000Z",
-    ...overrides,
-  };
-}
+let world: ManagedVeniceSpendWorld;
 
 beforeEach(() => {
-  mockLoadReservation.mockReset();
-  mockReleaseReservation.mockReset();
+  world = createManagedVeniceSpendWorld();
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  jest.spyOn(console, "error").mockImplementation(() => {});
+  jest.spyOn(console, "log").mockImplementation(() => {});
 });
 
-describe("sweepStaleManagedVeniceReservations", () => {
-  it("releases an active held reservation and closes the item as ignored", async () => {
-    const items = [openItem()];
-    mockLoadReservation.mockResolvedValue({ status: "active", reserved_micro_usd: 250 });
-    mockReleaseReservation.mockResolvedValue({ released: true, releasedMicroUsd: 250 });
+afterEach(() => {
+  jest.restoreAllMocks();
+  delete process.env.MANAGED_VENICE_MULTIMODAL_MARKUP;
+});
 
-    const summary = await sweepStaleManagedVeniceReservations({}, createFakeDb(items));
+// A chat hold as reserveManagedVeniceChatRequest makes it: the estimate plus a
+// 10% buffer is reserved, the bare estimate is recorded.
+async function chatHold(
+  referenceId: string,
+  walletType: "card" | "hermesos",
+  options: { estimate?: number; sweepEstimate?: number; expiresAt?: string | null; endpoint?: string } = {}
+) {
+  const estimate = options.estimate ?? 100_000;
+  await createManagedVeniceReservation(
+    {
+      userId: USER,
+      walletType,
+      amountMicroUsd: (estimate * 11) / 10,
+      estimatedCostMicroUsd: estimate,
+      referenceId,
+      model: "deepseek-v4-flash",
+      endpoint: options.endpoint ?? "/api/v1/chat/completions",
+      metadata: {
+        proxyKeyId: KEY_ID,
+        ...(options.sweepEstimate === undefined ? {} : { sweepEstimateMicroUsd: options.sweepEstimate }),
+      },
+      expiresAt: options.expiresAt ?? null,
+    },
+    world.db
+  );
+}
 
-    expect(mockReleaseReservation).toHaveBeenCalledWith(
-      { userId: "user_1", referenceId: "ref_1" },
-      expect.anything()
-    );
-    expect(summary.releasedReservations).toBe(1);
-    expect(summary.totalReleasedMicroUsd).toBe(250);
-    expect(summary.results[0].disposition).toBe("released_stale_reservation");
+async function fileItem(
+  referenceId: string,
+  reason: string,
+  options: { createdAt?: string; metadata?: Record<string, unknown> } = {}
+) {
+  await markManagedVeniceReconciliationRequired(
+    {
+      userId: USER,
+      proxyKeyId: KEY_ID,
+      referenceId,
+      reason,
+      pauseKey: false,
+      metadata: { model: "deepseek-v4-flash", upstreamStatus: 200, ...options.metadata },
+    },
+    world.db
+  );
+  const items = world.tables.managed_venice_reconciliation_items;
+  const item = items[items.length - 1];
+  if (options.createdAt) item.created_at = options.createdAt;
+  return item;
+}
 
-    expect(items[0].status).toBe("ignored");
-    expect(items[0].resolved_at).toBeDefined();
-    expect((items[0].metadata as Record<string, unknown>).sweep).toMatchObject({
-      disposition: "released_stale_reservation",
-      releasedMicroUsd: 250,
-      referenceId: "ref_1",
+function hold(referenceId: string) {
+  const row = world.reservations().find((reservation) => reservation.reference_id === referenceId);
+  if (!row) throw new Error(`no hold ${referenceId}`);
+  return row;
+}
+
+function captureEvents() {
+  return world.tables.managed_venice_financial_events.filter((event) => event.event_type === "usage_capture");
+}
+
+describe("sweepStaleManagedVeniceReservations: holds after Venice answered 200", () => {
+  // #150 review: a 200 stream that finished without a usage frame had its hold
+  // released six hours later, so a client that could make Venice leave out the
+  // usage frame got free inference.
+  it.each([
+    "managed_venice_missing_stream_usage",
+    "managed_venice_stream_settlement_failed",
+    "managed_venice_missing_usage",
+    "managed_venice_anthropic_missing_usage",
+    "managed_venice_anthropic_capture_failed",
+    "managed_venice_anthropic_stream_capture_failed",
+  ])("captures the pre-request estimate for %s instead of releasing the hold", async (reason) => {
+    world.fundCard(USER, 1_000_000);
+    await chatHold("ref_chat", "card");
+    const item = await fileItem("ref_chat", reason, { metadata: { forwardedBytes: 4_096 } });
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold("ref_chat")).toMatchObject({ status: "captured", captured_micro_usd: 100_000, released_micro_usd: 10_000 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(900_000);
+    expect(summary).toMatchObject({ capturedReservations: 1, totalCapturedMicroUsd: 100_000, releasedReservations: 0 });
+    expect(item).toMatchObject({ status: "resolved" });
+    expect(item.metadata).toMatchObject({
+      referenceId: "ref_chat",
+      sweep: expect.objectContaining({ disposition: "captured_hold", basis: "pre_request_estimate", capturedMicroUsd: 100_000 }),
     });
-    // Original metadata is preserved.
-    expect((items[0].metadata as Record<string, unknown>).referenceId).toBe("ref_1");
+    // The capture is on the books: a usage row and an immutable financial event.
+    expect(world.usageEvents()).toEqual([
+      expect.objectContaining({
+        reference_id: "ref_chat",
+        status: "recorded",
+        endpoint: "/api/v1/chat/completions",
+        model: "deepseek-v4-flash",
+        wallet_type: "card",
+        proxy_key_id: KEY_ID,
+        charged_micro_usd: 100_000,
+        actual_cost_micro_usd: 100_000,
+        upstream_status: 200,
+        metadata: expect.objectContaining({ pricingPolicy: "managed_venice_hold_sweep_capture" }),
+      }),
+    ]);
+    expect(captureEvents()).toEqual([
+      expect.objectContaining({
+        reference_id: "ref_chat",
+        amount_micro_usd: 100_000,
+        idempotency_key: "managed_venice_hold_sweep_capture:ref_chat",
+      }),
+    ]);
   });
 
-  it("does not release a reservation that was already captured", async () => {
-    const items = [openItem()];
-    mockLoadReservation.mockResolvedValue({ status: "captured", reserved_micro_usd: 250 });
+  it("captures a cancelled stream's hold once the hold expires, not before", async () => {
+    world.fundCard(USER, 1_000_000);
+    await chatHold("ref_kept", "card", { expiresAt: new Date(Date.now() + HOUR_MS).toISOString() });
+    const item = await fileItem("ref_kept", "managed_venice_chat_stream_cancelled", {
+      createdAt: hoursAgo(40),
+      metadata: { cause: "client_cancelled", forwardedBytes: 12 },
+    });
 
-    const summary = await sweepStaleManagedVeniceReservations({}, createFakeDb(items));
+    const early = await sweepStaleManagedVeniceReservations({ ageHours: 0, keptHoldAgeHours: 0 }, world.db);
+    expect(early.results).toEqual([expect.objectContaining({ disposition: "kept_until_hold_expires" })]);
+    expect(hold("ref_kept").status).toBe("active");
+    expect(item.status).toBe("open");
 
-    expect(mockReleaseReservation).not.toHaveBeenCalled();
-    expect(summary.releasedReservations).toBe(0);
-    expect(summary.results[0].disposition).toBe("reservation_already_captured");
-    expect(items[0].status).toBe("ignored");
+    hold("ref_kept").expires_at = hoursAgo(0.1);
+    await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold("ref_kept")).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(900_000);
+    expect(item.status).toBe("resolved");
   });
 
-  it("closes an item whose reservation no longer exists", async () => {
-    const items = [openItem()];
-    mockLoadReservation.mockResolvedValue(null);
+  // A hold sized for the request's whole output cap is charged the bounded
+  // sweep estimate recorded with it, not the worst case.
+  it("charges the sweep estimate the hold recorded, not the whole output cap it covers", async () => {
+    world.fundCard(USER, 10_000_000);
+    await chatHold("ref_big", "card", { estimate: 5_000_000, sweepEstimate: 120_000 });
+    await fileItem("ref_big", "managed_venice_missing_stream_usage");
 
-    const summary = await sweepStaleManagedVeniceReservations({}, createFakeDb(items));
+    await sweepStaleManagedVeniceReservations({}, world.db);
 
-    expect(mockReleaseReservation).not.toHaveBeenCalled();
-    expect(summary.results[0].disposition).toBe("reservation_not_found");
-    expect(items[0].status).toBe("ignored");
+    expect(hold("ref_big")).toMatchObject({ status: "captured", captured_micro_usd: 120_000 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(9_880_000);
   });
 
-  it("closes an item with no referenceId without touching reservations", async () => {
-    const items = [openItem({ metadata: { model: "deepseek-v4-flash" } })];
+  it("leaves a cancelled stream without an expiry for a day, then captures the estimate", async () => {
+    world.fundHermesos(USER, 1_000_000);
+    await chatHold("ref_cancel", "hermesos");
+    const item = await fileItem("ref_cancel", "managed_venice_chat_stream_cancelled", {
+      createdAt: hoursAgo(2),
+      metadata: { cause: "client_cancelled", forwardedBytes: 12 },
+    });
 
-    const summary = await sweepStaleManagedVeniceReservations({}, createFakeDb(items));
+    // Even with the telemetry window at zero, a kept hold waits its own day.
+    await sweepStaleManagedVeniceReservations({ ageHours: 0 }, world.db);
+    expect(hold("ref_cancel").status).toBe("active");
+    expect(item.status).toBe("open");
 
-    expect(mockLoadReservation).not.toHaveBeenCalled();
-    expect(summary.results[0].disposition).toBe("missing_reference_id");
-    expect(items[0].status).toBe("ignored");
+    item.created_at = hoursAgo(25);
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold("ref_cancel")).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
+    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(900_000);
+    expect(summary.capturedReservations).toBe(1);
+    expect(item.status).toBe("resolved");
   });
 
-  it("treats a lost release race as already released", async () => {
-    const items = [openItem()];
-    mockLoadReservation.mockResolvedValue({ status: "active", reserved_micro_usd: 250 });
-    mockReleaseReservation.mockResolvedValue({ released: false });
+  it("captures an interrupted Responses stream after a day, and leaves an unknown upstream outcome to an operator", async () => {
+    world.fundCard(USER, 1_000_000);
+    await chatHold("ref_aborted", "card", { endpoint: "/api/v1/responses" });
+    await chatHold("ref_unknown", "card", { endpoint: "/api/v1/responses" });
+    const aborted = await fileItem("ref_aborted", "managed_venice_responses_ambiguous_usage", {
+      createdAt: hoursAgo(30),
+      metadata: { cause: "stream_aborted" },
+    });
+    const unknown = await fileItem("ref_unknown", "managed_venice_responses_ambiguous_usage", {
+      createdAt: hoursAgo(30),
+      metadata: { cause: "upstream_outcome_unknown" },
+    });
 
-    const summary = await sweepStaleManagedVeniceReservations({}, createFakeDb(items));
+    await sweepStaleManagedVeniceReservations({}, world.db);
 
-    expect(summary.releasedReservations).toBe(0);
-    expect(summary.results[0].disposition).toBe("reservation_already_released");
-    expect(items[0].status).toBe("ignored");
+    expect(hold("ref_aborted").status).toBe("captured");
+    expect(aborted.status).toBe("resolved");
+    expect(hold("ref_unknown").status).toBe("active");
+    expect(unknown.status).toBe("open");
+    expect(world.cardBalanceMicroUsd(USER)).toBe(900_000);
   });
 
-  it("ignores items that are not stale, not open, or have an out-of-scope reason", async () => {
-    const items = [
-      openItem({ id: "fresh", created_at: new Date().toISOString() }),
-      openItem({ id: "closed", status: "ignored" }),
-      openItem({ id: "overage", reason: "managed_venice_overage_uncovered" }),
-    ];
-    mockLoadReservation.mockResolvedValue({ status: "active", reserved_micro_usd: 250 });
-    mockReleaseReservation.mockResolvedValue({ released: true, releasedMicroUsd: 250 });
+  it("charges a sweep retry once, even when two sweeps run at the same time", async () => {
+    world.fundCard(USER, 1_000_000);
+    await chatHold("ref_twice", "card");
+    await fileItem("ref_twice", "managed_venice_missing_stream_usage");
 
-    const summary = await sweepStaleManagedVeniceReservations({}, createFakeDb(items));
+    const [first, second] = await Promise.all([
+      sweepStaleManagedVeniceReservations({}, world.db),
+      sweepStaleManagedVeniceReservations({}, world.db),
+    ]);
+    await sweepStaleManagedVeniceReservations({}, world.db);
 
-    expect(summary.scanned).toBe(0);
-    expect(mockLoadReservation).not.toHaveBeenCalled();
+    expect(first.capturedReservations + second.capturedReservations).toBe(1);
+    expect(world.cardBalanceMicroUsd(USER)).toBe(900_000);
+    expect(world.usageEvents()).toHaveLength(1);
+    expect(captureEvents()).toHaveLength(1);
   });
 
-  it("scopes the sweep to the missing-usage / settlement-failure reasons", () => {
+  it("leaves the item open when the wallet can no longer cover the capture", async () => {
+    world.fundHermesos(USER, 1_000_000);
+    await chatHold("ref_void", "hermesos");
+    const item = await fileItem("ref_void", "managed_venice_missing_stream_usage");
+    world.tables.managed_venice_token_lots[0].status = "voided";
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(summary).toMatchObject({ capturedReservations: 0, failed: 1 });
+    expect(hold("ref_void").status).toBe("active");
+    expect(item.status).toBe("open");
+    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(1_000_000);
+  });
+});
+
+describe("sweepStaleManagedVeniceReservations: media holds", () => {
+  const NANO = { endpoint: "/api/v1/image/generate", model: "nano-banana-2", metadata: {} };
+  const key = (walletType: "card" | "hermesos") => ({ id: KEY_ID, userId: USER, defaultWalletType: walletType });
+
+  // #160 review: holds kept after a failed capture were never swept.
+  it("captures a hold whose in-request capture failed, at the price Venice charged", async () => {
+    world.fundCard(USER, 1_000_000);
+    const gate = await holdManagedVeniceMediaSpend({ key: key("card"), operation: NANO, source: "test" }, world.db);
+    if (!gate.ok) throw new Error("expected a hold");
+    world.failNext({ table: "managed_venice_card_ledger_entries", op: "insert" });
+    await gate.hold.complete({ ok: true, upstreamStatus: 200, upstreamRequestId: "req_img" });
+    expect(hold(gate.hold.referenceId).status).toBe("active");
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    // Held at the 4K ceiling ($0.19), charged Venice's 1K default ($0.10).
+    expect(hold(gate.hold.referenceId)).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(900_000);
+    expect(summary.capturedReservations).toBe(1);
+    expect(world.usageEvents()).toEqual([
+      expect.objectContaining({
+        endpoint: "/api/v1/image/generate",
+        model: "nano-banana-2",
+        charged_micro_usd: 100_000,
+        upstream_status: 200,
+        status: "recorded",
+      }),
+    ]);
+    expect(world.tables.managed_venice_reconciliation_items[0]).toMatchObject({
+      reason: "managed_venice_media_capture_failed",
+      status: "resolved",
+    });
+  });
+
+  it("releases a hold whose in-request release failed after Venice refused the request", async () => {
+    world.fundCard(USER, 1_000_000);
+    const gate = await holdManagedVeniceMediaSpend({ key: key("card"), operation: NANO, source: "test" }, world.db);
+    if (!gate.ok) throw new Error("expected a hold");
+    world.failNext({ table: "managed_venice_reservations", op: "update" });
+    await gate.hold.complete({ ok: false, upstreamStatus: 429 });
+    expect(hold(gate.hold.referenceId).status).toBe("active");
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold(gate.hold.referenceId).status).toBe("released");
+    expect(summary).toMatchObject({ releasedReservations: 1, capturedReservations: 0 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(1_000_000);
+    expect(world.usageEvents()).toHaveLength(0);
+    expect(world.tables.managed_venice_reconciliation_items[0]).toMatchObject({
+      reason: "managed_venice_media_release_failed",
+      status: "resolved",
+      metadata: expect.objectContaining({ upstreamStatus: 429 }),
+    });
+  });
+
+  // #160 review: media holds had no expiry, so a function killed between the
+  // hold and Venice's answer left the hold active for good.
+  it("captures an expired media hold that has no outcome on record, at the price of the tier sent", async () => {
+    world.fundHermesos(USER, 1_000_000);
+    const gate = await holdManagedVeniceMediaSpend({ key: key("hermesos"), operation: NANO, source: "test" }, world.db);
+    if (!gate.ok) throw new Error("expected a hold");
+    expect(hold(gate.hold.referenceId).reserved_micro_usd).toBe(190_000);
+    hold(gate.hold.referenceId).expires_at = hoursAgo(1);
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold(gate.hold.referenceId)).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
+    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(900_000);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ disposition: "captured_expired_hold", basis: "catalog_price", capturedMicroUsd: 100_000 }),
+    ]);
+    const summaryAfter = await getManagedVeniceWalletSummary(USER, world.db);
+    expect(summaryAfter.hermesos).toMatchObject({ totalValueMicroUsd: 900_000, reservedMicroUsd: 0 });
+  });
+
+  it("never captures an expired hold that an open item says to release or leave, nor a hold without an expiry", async () => {
+    world.fundCard(USER, 1_000_000);
+    // Venice refused this image and the in-request release failed; the item
+    // is younger than the six-hour window, and the one-hour hold has expired.
+    const gate = await holdManagedVeniceMediaSpend({ key: key("card"), operation: NANO, source: "test" }, world.db);
+    if (!gate.ok) throw new Error("expected a hold");
+    world.failNext({ table: "managed_venice_reservations", op: "update" });
+    await gate.hold.complete({ ok: false, upstreamStatus: 400 });
+    world.tables.managed_venice_reconciliation_items[0].created_at = new Date().toISOString();
+    hold(gate.hold.referenceId).expires_at = hoursAgo(0.5);
+    // A Responses hold whose upstream outcome only an operator can judge.
+    await chatHold("ref_unknown", "card", { endpoint: "/api/v1/responses", expiresAt: hoursAgo(1) });
+    await fileItem("ref_unknown", "managed_venice_responses_ambiguous_usage", {
+      createdAt: hoursAgo(30),
+      metadata: { cause: "dispatch_outcome_unknown" },
+    });
+    // A hold from before holds expired.
+    await chatHold("ref_legacy", "card", { expiresAt: null });
+    hold("ref_legacy").created_at = hoursAgo(24 * 90);
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold(gate.hold.referenceId).status).toBe("active");
+    expect(hold("ref_unknown").status).toBe("active");
+    expect(hold("ref_legacy").status).toBe("active");
+    expect(summary).toMatchObject({ capturedReservations: 0, releasedReservations: 0, heldForOpenItem: 2 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(1_000_000);
+  });
+});
+
+describe("sweep scope", () => {
+  it("settles the post-200 telemetry gaps and media holds, never the kept or overage reasons", () => {
     expect([...SWEEPABLE_RECONCILIATION_REASONS]).toEqual([
       "managed_venice_missing_stream_usage",
       "managed_venice_stream_settlement_failed",
       "managed_venice_missing_usage",
+      "managed_venice_anthropic_missing_usage",
+      "managed_venice_anthropic_capture_failed",
+      "managed_venice_anthropic_stream_capture_failed",
+      "managed_venice_media_capture_failed",
+      "managed_venice_media_release_failed",
     ]);
     expect(SWEEPABLE_RECONCILIATION_REASONS).not.toContain("managed_venice_overage_uncovered");
+    expect(SWEEPABLE_RECONCILIATION_REASONS).not.toContain("managed_venice_chat_stream_cancelled");
+    expect(SWEEPABLE_RECONCILIATION_REASONS).not.toContain("managed_venice_responses_ambiguous_usage");
+  });
+
+  it("closes an item whose hold is gone or already settled without moving money", async () => {
+    world.fundCard(USER, 1_000_000);
+    await fileItem("ref_missing", "managed_venice_missing_stream_usage");
+    const noReference = await fileItem("", "managed_venice_missing_usage");
+    noReference.metadata = { model: "deepseek-v4-flash" };
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(summary.results.map((result) => result.disposition).sort()).toEqual([
+      "missing_reference_id",
+      "reservation_not_found",
+    ]);
+    expect(world.tables.managed_venice_reconciliation_items.map((item) => item.status)).toEqual(["ignored", "ignored"]);
+    expect(world.cardBalanceMicroUsd(USER)).toBe(1_000_000);
   });
 });
 

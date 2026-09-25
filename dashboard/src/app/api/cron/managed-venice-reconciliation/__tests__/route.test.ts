@@ -297,4 +297,36 @@ describe("GET /api/cron/managed-venice-reconciliation", () => {
     expect(body.data.breachedAlertThreshold).toBe(true);
     expect(mockReportOpsEvent).toHaveBeenCalledTimes(1);
   });
+  // The stale-hold sweep captures a pre-request estimate for a 200 chat that
+  // never reported usage. That row has no token counts, so re-costing it would
+  // "find" the whole charge as an overcharge and refund it.
+  it("does not re-cost or refund a chat the stale-hold sweep captured at an estimate", async () => {
+    usageRowsForRun = [
+      usage({
+        id: "ue_swept",
+        reference_id: "ref_swept",
+        prompt_tokens: null,
+        completion_tokens: null,
+        actual_cost_micro_usd: 100_000,
+        charged_micro_usd: 100_000,
+        metadata: { pricingPolicy: "managed_venice_hold_sweep_capture", sweep: { basis: "pre_request_estimate" } },
+      }),
+      usage({ id: "ue_normal", reference_id: "ref_normal", charged_micro_usd: 2_500 }),
+    ];
+    mockCalculateActualChatCost.mockImplementation(({ promptTokens }: { promptTokens: number }) => ({
+      actualCostMicroUsd: promptTokens ? 2_500 : 0,
+    }));
+
+    const response = await GET(req());
+    const body = (await response.json()) as {
+      data: { refundedCount: number; totalOverchargeMicroUsd: number; sweepEstimateRowsSkipped: number };
+    };
+
+    expect(response.status).toBe(200);
+    expect(mockRefund).not.toHaveBeenCalled();
+    expect(mockCalculateActualChatCost).toHaveBeenCalledTimes(1);
+    expect(body.data.refundedCount).toBe(0);
+    expect(body.data.totalOverchargeMicroUsd).toBe(0);
+    expect(body.data.sweepEstimateRowsSkipped).toBe(1);
+  });
 });

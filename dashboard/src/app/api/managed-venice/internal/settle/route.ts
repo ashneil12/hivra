@@ -14,8 +14,9 @@ export const runtime = "nodejs";
  * After the Worker finishes streaming a completion to the box, it POSTs the
  * `usage` frame here (or `usage:null` if none was seen). This captures the
  * actual cost against the reservation, or files a reconciliation item while
- * keeping the proxy key live. The orphaned-reservation backstop remains the
- * `managed-venice-token-reconciliation` cron if the Worker never reaches here.
+ * keeping the proxy key live. If the Worker never reaches here, the hold
+ * expires a day after the request and the stale-hold sweep captures its
+ * estimate (lib/venice/reservation-sweep.ts).
  * See docs/PRODUCT-ARCHITECTURE.md.
  */
 export async function POST(req: NextRequest) {

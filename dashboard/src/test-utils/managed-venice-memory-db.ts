@@ -17,7 +17,11 @@
  *   - managed_venice_financial_events is append-only (update fails);
  *   - NOT NULL column defaults the code relies on (quotes'
  *     transfer_surfacing_pending = false) are applied on insert;
- *   - one-shot failure injection and stale-read views for crash/race tests.
+ *   - one-shot failure injection and stale-read views for crash/race tests;
+ *   - `rpc` runs the wallet debit functions (capture_managed_venice_reservation,
+ *     debit_managed_venice_wallet) atomically, like the SQL under its lock
+ *     (see managed-venice-wallet-rpc.ts). Failures inject with
+ *     { table: <function name>, op: "rpc" }.
  *
  * The RPC fake models Base: per-block timestamps (2 s blocks by default),
  * eth_getLogs honouring fromBlock/toBlock/address/topics, the public
@@ -26,6 +30,8 @@
  */
 
 import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
+
+import { runManagedVeniceWalletRpc } from "./managed-venice-wallet-rpc";
 
 export type MemoryRow = Record<string, unknown>;
 
@@ -47,7 +53,7 @@ interface Order {
   ascending: boolean;
 }
 
-type MutationKind = "insert" | "update" | "upsert" | "select";
+type MutationKind = "insert" | "update" | "upsert" | "select" | "rpc";
 
 export interface MemoryDbCall {
   table: string;
@@ -504,6 +510,24 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
             onWrite();
             return buildUpdate(tableName, patch);
           },
+        };
+      },
+      rpc(fn: string, args: Record<string, unknown> = {}) {
+        onWrite();
+        return {
+          then: thenable(() => {
+            const failure = takeFailure(fn, "rpc", args);
+            if (failure) return { data: null, error: failure };
+            calls.push({ table: fn, kind: "rpc", payload: clone(args) });
+            return runManagedVeniceWalletRpc(
+              {
+                rows: requireTable,
+                insert: (tableName, row) => ({ error: insertRows(tableName, row).error }),
+              },
+              fn,
+              args
+            );
+          }),
         };
       },
     };

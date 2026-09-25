@@ -67,6 +67,11 @@
       "reason": "Needs an existing local Docker image by digest (--image sha256:...). Its argument refusals run in public-release-safety via test-deepseek-native-runtime.test.mjs."
     },
     {
+      "path": "dashboard/scripts/test-managed-venice-wallet-debit-concurrency.cjs",
+      "category": "needs-artifact",
+      "reason": "Opt-in real PostgreSQL sessions racing wallet debits, against an already-pulled postgres:17-alpine image (HIVRA_TEST_POSTGRES_IMAGE overrides). The same functions run in PGlite on every CI run through test-managed-venice-atomic-wallet-debits.cjs."
+    },
+    {
       "path": "dashboard/scripts/test-hivra-canonical-authority-concurrency.cjs",
       "category": "needs-artifact",
       "reason": "Opt-in real PostgreSQL sessions against an already-pulled postgres:17-alpine image. Its cleanup and lost-acknowledgement paths run with a fake docker via test-hivra-canonical-authority-cleanup.cjs."

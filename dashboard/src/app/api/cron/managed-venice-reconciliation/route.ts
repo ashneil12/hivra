@@ -8,6 +8,7 @@ import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import { calculateActualChatCost } from "@/lib/venice/cost-estimator";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
+import { isManagedVeniceSweepCapture } from "@/lib/venice/hold-lifecycle";
 import {
   sweepStaleManagedVeniceReservations,
   pruneTerminalManagedVeniceReservations,
@@ -152,9 +153,17 @@ export async function GET(req: NextRequest) {
   let unpriceableCount = 0;
   let refundedCount = 0;
   let refundFailedCount = 0;
+  let sweepEstimateRowsSkipped = 0;
   const driftedModels = new Map<string, { overcharge: number; undercharge: number; count: number }>();
 
   for (const row of usageEvents) {
+    // The stale-hold sweep captured this chat at its pre-request estimate
+    // because Venice never reported usage. There are no token counts to
+    // re-cost, and re-costing zero tokens would refund the whole charge.
+    if (isManagedVeniceSweepCapture(row.metadata)) {
+      sweepEstimateRowsSkipped += 1;
+      continue;
+    }
     const promptTokens = readNumber(row.prompt_tokens);
     const completionTokens = readNumber(row.completion_tokens);
     const meta = readMetadata(row.metadata);
@@ -363,22 +372,26 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Release stranded reservation holds left behind when Venice 200'd but its
-  // usage telemetry was missing/garbled. Those file an open reconciliation
-  // item without pausing the key (the right call — see proxy-settlement), but
-  // nothing else ever releases the hold, so available balance silently
-  // shrinks. Run it here in its own try/catch so a sweep failure can't break
-  // the pricing-drift reconciliation above (or vice versa).
+  // Settle wallet holds the request path left active: capture the ones
+  // Venice answered 2xx for (or that simply expired), release the ones Venice
+  // refused (lib/venice/reservation-sweep.ts). Without this, those holds
+  // shrink the user's available balance for good. Run it here in its own
+  // try/catch so a sweep failure can't break the pricing-drift
+  // reconciliation above (or vice versa).
   let reservationSweep: ReservationSweepSummary | { error: string };
   try {
     reservationSweep = await sweepStaleManagedVeniceReservations();
-    if (reservationSweep.releasedReservations > 0 || reservationSweep.scanned > 0) {
+    if (reservationSweep.scanned > 0) {
       log.info("managed-venice-reconciliation swept stale reservation holds", {
         source: SOURCE,
         route: ROUTE,
         scanned: reservationSweep.scanned,
+        capturedReservations: reservationSweep.capturedReservations,
+        totalCapturedMicroUsd: reservationSweep.totalCapturedMicroUsd,
         releasedReservations: reservationSweep.releasedReservations,
         totalReleasedMicroUsd: reservationSweep.totalReleasedMicroUsd,
+        heldForOpenItem: reservationSweep.heldForOpenItem,
+        failed: reservationSweep.failed,
       });
     }
   } catch (error) {
@@ -431,6 +444,7 @@ export async function GET(req: NextRequest) {
     refundedCount,
     refundFailedCount,
     unpriceableCount,
+    sweepEstimateRowsSkipped,
     pricingSource: livePricing.source,
     liveModelCount: livePricing.liveModelCount,
     reservationSweep,

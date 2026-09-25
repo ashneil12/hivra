@@ -15,6 +15,11 @@ import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { responsesUsageTokens, VENICE_RESPONSES_ENDPOINT } from "./responses-protocol";
 import {
+  MANAGED_VENICE_CHAT_HOLD_TTL_MS,
+  MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE,
+  managedVeniceHoldExpiresAt,
+} from "./hold-lifecycle";
+import {
   MissingVeniceUsageError,
   calculateActualChatCost,
   estimateChatCompletionCost,
@@ -134,6 +139,20 @@ export async function reserveManagedVeniceChatRequest(
     client
   );
   const subsidyState = params.subsidyState ?? DEFAULT_SUBSIDY_STATE;
+  // What the stale-hold sweep charges this hold if Venice answers but the
+  // exact usage never arrives: the input estimate plus a bounded share of the
+  // output, never more than the estimate itself (hold-lifecycle.ts).
+  const sweepOutputTokens = Math.min(
+    estimate.outputTokens,
+    MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE * estimate.outputChoices
+  );
+  const sweepEstimateMicroUsd = Math.min(
+    estimate.estimatedCostMicroUsd,
+    estimate.inputCostMicroUsd +
+      (estimate.outputTokens > 0
+        ? Math.ceil((estimate.outputCostMicroUsd * sweepOutputTokens) / estimate.outputTokens)
+        : 0)
+  );
   const reservation = await createManagedVeniceReservation(
     {
       userId: params.userId,
@@ -145,10 +164,15 @@ export async function reserveManagedVeniceChatRequest(
       discountMicroUsd: 0,
       model: params.requestBody.model,
       endpoint: params.endpoint ?? "/api/v1/chat/completions",
+      // A hold whose settlement never arrives (the function died mid-stream,
+      // the Worker never called back) is captured at its estimate once this
+      // passes (reservation-sweep.ts).
+      expiresAt: managedVeniceHoldExpiresAt(MANAGED_VENICE_CHAT_HOLD_TTL_MS),
       metadata: {
         proxyKeyId: params.proxyKeyId,
         estimatedCostMicroUsd: estimate.estimatedCostMicroUsd,
         reservedCostMicroUsd: estimate.reservedCostMicroUsd,
+        sweepEstimateMicroUsd,
         subsidyState,
         pricingPolicy: "provider_rate_credits_no_usage_discount",
       },
