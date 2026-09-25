@@ -1,6 +1,7 @@
 import {
   buildWalletVerificationMessage,
   createWalletVerificationChallenge,
+  getPendingWalletChallengeAddress,
   revokeDisplacedTokenEntitlements,
   verifyWalletChallenge,
 } from "@/lib/billing/wallet-verification";
@@ -585,5 +586,40 @@ describe("wallet verification", () => {
       status: "expired",
       failure_reason: "expired",
     }));
+  });
+
+  describe("getPendingWalletChallengeAddress", () => {
+    it("returns the wallet a pending challenge of this user would verify", async () => {
+      const select = buildSelectTable(challengeRow());
+      const db = { from: jest.fn(() => select) };
+
+      await expect(
+        getPendingWalletChallengeAddress({ userId: "user_1", challengeId: "challenge_1", db, now })
+      ).resolves.toBe(normalizedAddress);
+      expect(db.from).toHaveBeenCalledWith("wallet_verification_challenges");
+      expect(select.eq).toHaveBeenCalledWith("id", "challenge_1");
+      expect(select.eq).toHaveBeenCalledWith("user_id", "user_1");
+    });
+
+    it("returns null for a challenge that is missing, already used or expired", async () => {
+      for (const row of [
+        null,
+        challengeRow({ status: "verified" }),
+        challengeRow({ status: "failed" }),
+        challengeRow({ expires_at: new Date(now.getTime() - 1000).toISOString() }),
+      ]) {
+        const db = { from: jest.fn(() => buildSelectTable(row)) };
+        await expect(
+          getPendingWalletChallengeAddress({ userId: "user_1", challengeId: "challenge_1", db, now })
+        ).resolves.toBeNull();
+      }
+    });
+
+    it("throws when the challenge can't be read", async () => {
+      const db = { from: jest.fn(() => buildSelectTable(null, { message: "boom" })) };
+      await expect(
+        getPendingWalletChallengeAddress({ userId: "user_1", challengeId: "challenge_1", db, now })
+      ).rejects.toThrow("Failed to load wallet verification challenge");
+    });
   });
 });

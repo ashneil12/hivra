@@ -93,10 +93,23 @@ export function agentWalletWithdrawableBalances(card: AgentWalletCardData): Agen
     (balance.tokenAddress === null || isEvmAddressInput(balance.tokenAddress ?? ''))
   ));
 }
+/**
+ * The local unlock time of a withdrawal destination still in its cooldown
+ * (`availableAt` from the server), or null once it can receive withdrawals.
+ */
+export function heldUntilLabel(availableAt: string | null | undefined, now: number = Date.now()): string | null {
+  if (!availableAt) return null;
+  const time = Date.parse(availableAt);
+  if (!Number.isFinite(time) || time <= now) return null;
+  return new Date(time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/**
+ * The agent wallet's saved withdrawal destination: the only address its
+ * withdrawals can go to (the server refuses any other).
+ */
 export function primaryAgentWalletRecipient(card: AgentWalletCardData): string | null {
-  return card.withdrawalRecipients?.find((recipient) => recipient.isPrimary)?.address
-    ?? card.wallet?.withdrawalDestinationEvm
-    ?? null;
+  return card.wallet?.withdrawalDestinationEvm ?? null;
 }
 export function agentBaseEthBalance(card: AgentWalletCardData): AgentWalletBalance | null {
   return card.balances.find((balance) => balance.tokenSymbol === 'ETH') ?? (

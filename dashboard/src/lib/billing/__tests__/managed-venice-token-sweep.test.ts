@@ -3,9 +3,18 @@ import {
   HERMESOS_TOKEN_DECIMALS,
 } from "@/lib/billing/token-holdings";
 import {
+  MANAGED_VENICE_SWEEP_CLAIM_STALE_MS,
   sweepManagedVeniceTokenQuote,
   sweepPendingManagedVeniceTokenQuotes,
 } from "@/lib/billing/managed-venice-token-sweep";
+import { BankrTransferHttpError } from "@/lib/billing/bankr-withdraw";
+import { reportOpsEvent } from "@/lib/ops-events";
+import { createBillingMemoryDb } from "@/test-utils/billing-memory-db";
+
+jest.mock("@/lib/ops-events", () => ({
+  ...jest.requireActual("@/lib/ops-events"),
+  reportOpsEvent: jest.fn(async () => null),
+}));
 
 type Row = Record<string, unknown>;
 
@@ -16,110 +25,10 @@ const normalizedDepositAddress = "0x000000000000000000000000000000000000ba5e";
 const normalizedSharedCreditDepositAddress = "0x000000000000000000000000000000000000c0de";
 const tokenAmountRaw = "1000000000000000000000";
 
-function createQuery(rows: Row[]) {
-  const filters: Array<{ column: string; operator: "eq" | "in"; value: unknown }> = [];
-  let orderedBy: { column: string; ascending: boolean } | null = null;
-  let rowLimit: number | null = null;
-
-  const query: {
-    select: () => typeof query;
-    eq: (column: string, value: unknown) => typeof query;
-    in: (column: string, value: unknown[]) => typeof query;
-    order: (column: string, options?: { ascending?: boolean }) => typeof query;
-    limit: (count: number) => typeof query;
-    maybeSingle: () => Promise<{ data: Row | null; error: null }>;
-    single: () => Promise<{ data: Row | null; error: null }>;
-    then: Promise<{ data: Row[]; error: null }>["then"];
-  } = {} as typeof query;
-
-  function filtered() {
-    let result = rows.filter((row) =>
-      filters.every((filter) => {
-        if (filter.operator === "eq") return row[filter.column] === filter.value;
-        return Array.isArray(filter.value) && filter.value.includes(row[filter.column]);
-      })
-    );
-    if (orderedBy) {
-      const order = orderedBy;
-      result = [...result].sort((left, right) => {
-        const leftValue = String(left[order.column] ?? "");
-        const rightValue = String(right[order.column] ?? "");
-        const comparison = leftValue.localeCompare(rightValue);
-        return order.ascending ? comparison : -comparison;
-      });
-    }
-    return rowLimit === null ? result : result.slice(0, rowLimit);
-  }
-
-  query.select = () => query;
-  query.eq = (column, value) => {
-    filters.push({ column, operator: "eq", value });
-    return query;
-  };
-  query.in = (column, value) => {
-    filters.push({ column, operator: "in", value });
-    return query;
-  };
-  query.order = (column, options) => {
-    orderedBy = { column, ascending: options?.ascending ?? true };
-    return query;
-  };
-  query.limit = (count) => {
-    rowLimit = count;
-    return query;
-  };
-  query.maybeSingle = async () => ({ data: filtered()[0] ?? null, error: null });
-  query.single = async () => ({ data: filtered()[0] ?? null, error: null });
-  query.then = (resolve, reject) =>
-    Promise.resolve({ data: filtered(), error: null }).then(resolve, reject);
-
-  return query;
-}
-
-function createUpdate(rows: Row[], patch: Row) {
-  const filters: Array<{ column: string; operator: "eq" | "in"; value: unknown }> = [];
-  const query: {
-    eq: (column: string, value: unknown) => typeof query;
-    in: (column: string, value: unknown[]) => typeof query;
-    then: Promise<{ error: null }>["then"];
-  } = {} as typeof query;
-
-  query.eq = (column, value) => {
-    filters.push({ column, operator: "eq", value });
-    return query;
-  };
-  query.in = (column, value) => {
-    filters.push({ column, operator: "in", value });
-    return query;
-  };
-  query.then = (resolve, reject) => {
-    for (const row of rows) {
-      const match = filters.every((filter) => {
-        if (filter.operator === "eq") return row[filter.column] === filter.value;
-        return Array.isArray(filter.value) && filter.value.includes(row[filter.column]);
-      });
-      if (match) Object.assign(row, patch);
-    }
-    return Promise.resolve({ error: null }).then(resolve, reject);
-  };
-
-  return query;
-}
-
-function createInsert(rows: Row[]) {
-  return (row: Row) => {
-    const stored = {
-      id: row.id ?? `row_${rows.length + 1}`,
-      created_at: row.created_at ?? now.toISOString(),
-      ...row,
-    };
-    rows.push(stored);
-    return Promise.resolve({ error: null, data: stored });
-  };
-}
-
 function createMemoryDb(initialQuotes: Row[] = [], initialLots: Row[] = []) {
-  const tables: Record<string, Row[]> = {
+  // Real filter/order/compare-and-set semantics (update().select() returns the
+  // affected rows), so overlapping sweeps race the way they do in Postgres.
+  return createBillingMemoryDb({
     managed_venice_token_quotes: initialQuotes,
     // Deposit lots hold the RECEIVED token amount the sweep moves. Quotes with
     // no lot row (legacy settlements) fall back to the quoted amount.
@@ -153,22 +62,7 @@ function createMemoryDb(initialQuotes: Row[] = [], initialLots: Row[] = []) {
         permissions: {},
       },
     ],
-  };
-
-  return {
-    tables,
-    db: {
-      from: (name: string) => {
-        const rows = tables[name];
-        if (!rows) throw new Error(`Unexpected table ${name}`);
-        return {
-          select: () => createQuery(rows),
-          update: (patch: Row) => createUpdate(rows, patch),
-          insert: createInsert(rows),
-        };
-      },
-    },
-  };
+  });
 }
 
 const baseQuote = {
@@ -380,7 +274,7 @@ describe("managed Venice token treasury sweeps", () => {
     });
   });
 
-  it("records transfer failures so the cron can retry", async () => {
+  it("records a transfer Bankr refused so the cron can retry", async () => {
     const { db, tables } = createMemoryDb([{ ...baseQuote }]);
 
     const result = await sweepManagedVeniceTokenQuote(baseQuote, {
@@ -391,7 +285,7 @@ describe("managed Venice token treasury sweeps", () => {
       ensureGas: jest.fn(async () => ({ status: "already_funded" as const })),
       mintApiKey: jest.fn(async () => "bk_scoped"),
       submitTransfer: jest.fn(async () => {
-        throw new Error("bankr transfer rejected");
+        throw new BankrTransferHttpError(400, "bankr transfer rejected");
       }),
     });
 
@@ -399,6 +293,7 @@ describe("managed Venice token treasury sweeps", () => {
     expect(tables.managed_venice_token_quotes[0]).toMatchObject({
       sweep_status: "failed",
       sweep_attempted_at: now.toISOString(),
+      sweep_submitted_at: null,
     });
     expect(String(tables.managed_venice_token_quotes[0].sweep_error)).toContain(
       "bankr transfer rejected"
@@ -430,5 +325,104 @@ describe("managed Venice token treasury sweeps", () => {
       "quote_failed",
     ]);
     expect(HERMESOS_TOKEN_DECIMALS).toBe(18);
+  });
+});
+
+describe("managed Venice token sweep claim", () => {
+  const env = { MANAGED_VENICE_TREASURY_BASE_ADDRESS: treasuryAddress };
+  const minutesAfter = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
+
+  function sweepDeps(submitTransfer: jest.Mock) {
+    return {
+      env,
+      readHermesBalance: jest.fn(async () => ({ balanceRaw: tokenAmountRaw })),
+      ensureGas: jest.fn(async () => ({ status: "already_funded" as const })),
+      mintApiKey: jest.fn(async () => "bk_scoped"),
+      submitTransfer,
+    };
+  }
+
+  beforeEach(() => (reportOpsEvent as jest.Mock).mockClear());
+
+  it("lets only one of two overlapping runs transfer a quote", async () => {
+    const { db, tables } = createMemoryDb([{ ...baseQuote }]);
+    const submitTransfer = jest.fn(async () => "0xsweep");
+
+    const [first, second] = await Promise.all([
+      sweepPendingManagedVeniceTokenQuotes({ db, now, ...sweepDeps(submitTransfer) }),
+      sweepPendingManagedVeniceTokenQuotes({ db, now, ...sweepDeps(submitTransfer) }),
+    ]);
+
+    expect(submitTransfer).toHaveBeenCalledTimes(1);
+    expect(first.swept + second.swept).toBe(1);
+    expect(first.claimedElsewhere + second.claimedElsewhere).toBe(1);
+    expect(tables.managed_venice_token_quotes[0]).toMatchObject({ sweep_status: "swept", sweep_tx_hash: "0xsweep" });
+    expect(tables.managed_venice_financial_events.filter((event) => event.event_type === "treasury_sweep")).toHaveLength(1);
+  });
+
+  it("parks a transfer whose outcome is unknown and never sends it again", async () => {
+    const { db, tables } = createMemoryDb([{ ...baseQuote }]);
+    // The request reached Bankr, then the response was lost.
+    const submitTransfer = jest.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+
+    const first = await sweepPendingManagedVeniceTokenQuotes({ db, now, ...sweepDeps(submitTransfer) });
+    const later = await sweepPendingManagedVeniceTokenQuotes({ db, now: minutesAfter(now, 10), ...sweepDeps(submitTransfer) });
+
+    expect(submitTransfer).toHaveBeenCalledTimes(1);
+    expect(first.needsOperator).toBe(1);
+    expect(later.checked).toBe(0);
+    expect(tables.managed_venice_token_quotes[0]).toMatchObject({ sweep_status: "needs_operator" });
+    expect(String(tables.managed_venice_token_quotes[0].sweep_error)).toContain("outcome unknown");
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ failureType: "managed_venice_sweep_needs_operator", quoteId: "quote_1" }) })
+    );
+  });
+
+  it("retries a stale claim that never asked Bankr to transfer, and parks one that did", async () => {
+    const staleAt = new Date(now.getTime() - MANAGED_VENICE_SWEEP_CLAIM_STALE_MS - 60_000).toISOString();
+    const { db, tables } = createMemoryDb([
+      { ...baseQuote, id: "quote_unsent", sweep_status: "sweeping", sweep_attempted_at: staleAt },
+      { ...baseQuote, id: "quote_sent", sweep_status: "sweeping", sweep_attempted_at: staleAt, sweep_submitted_at: staleAt },
+      // A live claim held by another run right now.
+      { ...baseQuote, id: "quote_live", sweep_status: "sweeping", sweep_attempted_at: minutesAfter(now, -1).toISOString() },
+    ]);
+    const submitTransfer = jest.fn(async () => "0xretry");
+
+    const result = await sweepPendingManagedVeniceTokenQuotes({ db, now, ...sweepDeps(submitTransfer) });
+
+    expect(result).toMatchObject({ staleClaimsReleased: 1, staleClaimsParked: 1, swept: 1 });
+    expect(submitTransfer).toHaveBeenCalledTimes(1);
+    const byId = (id: string) => tables.managed_venice_token_quotes.find((row) => row.id === id);
+    expect(byId("quote_unsent")).toMatchObject({ sweep_status: "swept", sweep_tx_hash: "0xretry" });
+    expect(byId("quote_sent")).toMatchObject({ sweep_status: "needs_operator" });
+    expect(byId("quote_live")).toMatchObject({ sweep_status: "sweeping" });
+  });
+
+  it("never retries a failed quote that carries a submitted transfer", async () => {
+    const { db, tables } = createMemoryDb([
+      { ...baseQuote, sweep_status: "failed", sweep_attempted_at: minutesAfter(now, -30).toISOString(), sweep_submitted_at: minutesAfter(now, -30).toISOString() },
+    ]);
+    const submitTransfer = jest.fn(async () => "0xsweep");
+
+    const result = await sweepPendingManagedVeniceTokenQuotes({ db, now, ...sweepDeps(submitTransfer) });
+
+    expect(submitTransfer).not.toHaveBeenCalled();
+    expect(result.needsOperator).toBe(1);
+    expect(tables.managed_venice_token_quotes[0]).toMatchObject({ sweep_status: "needs_operator" });
+  });
+
+  it("does not let persistently failing quotes starve a pending one", async () => {
+    const { db, tables } = createMemoryDb([
+      { ...baseQuote, id: "quote_failing_1", sweep_status: "failed", settled_at: "2026-05-16T09:00:00.000Z", sweep_attempted_at: "2026-05-16T11:50:00.000Z" },
+      { ...baseQuote, id: "quote_failing_2", sweep_status: "failed", settled_at: "2026-05-16T09:01:00.000Z", sweep_attempted_at: "2026-05-16T11:50:00.000Z" },
+      { ...baseQuote, id: "quote_new", sweep_status: "pending", settled_at: "2026-05-16T11:59:00.000Z" },
+    ]);
+
+    const result = await sweepPendingManagedVeniceTokenQuotes({ db, now, limit: 2, ...sweepDeps(jest.fn(async () => "0xsweep")) });
+
+    expect(result.results.map((entry) => entry.quoteId)).toContain("quote_new");
+    expect(tables.managed_venice_token_quotes.find((row) => row.id === "quote_new")).toMatchObject({ sweep_status: "swept" });
   });
 });

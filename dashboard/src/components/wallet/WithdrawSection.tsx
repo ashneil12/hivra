@@ -4,8 +4,10 @@ import { useCallback, useState } from 'react';
 import { ArrowUpFromLine, Loader2, ShieldCheck, X, Zap } from 'lucide-react';
 import { BillingDialog, billingDialogStyles as dlg } from '@/components/billing/BillingDialog';
 import { CopyButton, touchStyles } from '@/components/billing/TransferDetails';
-import { shorten } from '@/lib/wallet/format';
+import { heldUntilLabel, shorten } from '@/lib/wallet/format';
 import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
+import { withdrawDestinationCooldownHours } from '@/lib/billing/withdraw-destination-policy';
+import { STEP_UP_CANCELLED_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 
 /**
  * The wallet dashboard's withdraw lane: the destination card, the address form,
@@ -57,13 +59,17 @@ export interface WithdrawSuccessPayload {
 }
 export function WithdrawDestinationCard({
   address,
+  availableAt = null,
   loading,
   onEdit,
 }: {
   address: string | null;
+  /** When a newly saved address can first receive a withdrawal. */
+  availableAt?: string | null;
   loading: boolean;
   onEdit: () => void;
 }) {
+  const heldUntil = address ? heldUntilLabel(availableAt) : null;
   return (
     <div
       style={{
@@ -125,6 +131,11 @@ export function WithdrawDestinationCard({
           {address ? 'Change' : 'Set address'}
         </button>
       </div>
+      {heldUntil && (
+        <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+          New address. For your safety, withdrawals to it open {heldUntil}.
+        </span>
+      )}
     </div>
   );
 }
@@ -135,12 +146,15 @@ export function WithdrawAddressForm({
 }: {
   initialAddress: string | null;
   onCancel: () => void;
-  onSaved: (address: string) => void;
+  onSaved: (address: string, availableAt: string | null) => void;
 }) {
   const [address, setAddress] = useState(initialAddress ?? '');
   const [acknowledged, setAcknowledged] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A change needs a fresh sign-in check: Clerk asks the user to confirm it's
+  // them, then the save is retried.
+  const stepUpRequest = useStepUpJsonRequest();
 
   const isFormatValid = /^0x[a-fA-F0-9]{40}$/.test(address.trim());
 
@@ -148,23 +162,29 @@ export function WithdrawAddressForm({
     setSubmitting(true);
     setError(null);
     try {
-      const response = await fetch('/api/billing/bankr/wallet/withdraw-address', {
+      const result = await stepUpRequest('/api/billing/bankr/wallet/withdraw-address', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address: address.trim(), acknowledged }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body?.success) {
-        setError(body?.error || `Save failed (${response.status})`);
+      if (!result) {
+        setError(STEP_UP_CANCELLED_MESSAGE);
         return;
       }
-      onSaved(body.data?.address ?? address.trim());
+      const { ok, status, body } = result;
+      if (!ok || !body?.success) {
+        setError(body?.error || `Save failed (${status})`);
+        return;
+      }
+      const saved = typeof body.data?.address === 'string' ? body.data.address : address.trim();
+      const availableAt = typeof body.data?.availableAt === 'string' ? body.data.availableAt : null;
+      onSaved(saved, availableAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.');
     } finally {
       setSubmitting(false);
     }
-  }, [address, acknowledged, onSaved]);
+  }, [address, acknowledged, onSaved, stepUpRequest]);
 
   return (
     <ConfirmDialog
@@ -174,6 +194,11 @@ export function WithdrawAddressForm({
           <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55 }}>
             All future withdraws will send your full $HERMESOS balance to the address below.
             You can change it any time.
+          </p>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+            For your safety, you&apos;ll confirm it&apos;s you before saving, we email you whenever this
+            address changes, and a new address can receive withdrawals {withdrawDestinationCooldownHours()} hours
+            after you save it.
           </p>
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -260,12 +285,15 @@ export function WithdrawSection({
   tokenSymbol,
   balanceDisplay,
   withdrawAddress,
+  withdrawAvailableAt = null,
   onWithdrew,
   onRequestSetAddress,
 }: {
   tokenSymbol: string;
   balanceDisplay: string;
   withdrawAddress: string | null;
+  /** When a newly saved withdraw address can first receive a withdrawal. */
+  withdrawAvailableAt?: string | null;
   onWithdrew: () => void;
   onRequestSetAddress: () => void;
 }) {
@@ -342,7 +370,8 @@ export function WithdrawSection({
 
   const noBalance = balanceDisplay === '—' || balanceDisplay === '0';
   const hasAddress = Boolean(withdrawAddress);
-  const buttonDisabled = submitting || noBalance || !hasAddress;
+  const heldUntil = hasAddress ? heldUntilLabel(withdrawAvailableAt) : null;
+  const buttonDisabled = submitting || noBalance || !hasAddress || Boolean(heldUntil);
 
   return (
     <>
@@ -350,7 +379,9 @@ export function WithdrawSection({
         icon={<ArrowUpFromLine size={14} />}
         label="Withdraw"
         description={
-          hasAddress
+          heldUntil
+            ? `Your withdraw address was saved recently. For your safety, withdrawals to it open ${heldUntil}.`
+            : hasAddress
             ? 'Withdraw your full $HERMESOS balance to your saved withdraw address. Your tier eligibility runs a 24-hour grace clock from breach detection before ending.'
             : 'Set a withdraw destination first — withdraws send your tokens there, and you cannot withdraw without one set.'
         }

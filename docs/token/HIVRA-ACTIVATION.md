@@ -34,9 +34,10 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    - DEXScreener lists the canonical pool with at least
      `HIVRA_MIN_PRICE_LIQUIDITY_USD` of liquidity (default $25,000; see
      `dashboard/src/lib/billing/token-registry.ts`).
-   - GeckoTerminal has indexed the pool (it has at least one five-minute
-     candle), and the price has not risen more than 10% in the last two
-     hours. Until then the median check refuses quotes (section 5).
+   - GeckoTerminal has indexed the pool, its first completed five-minute
+     candle is at least four hours old, it has traded in at least 24
+     five-minute periods, and the price has not risen more than 10% in the
+     last two hours. Until then the median check refuses quotes (section 5).
 4. **Token surfaces are switched on.** The wallet, token-holding, token-access
    and token quote routes answer 404 unless crypto billing is enabled on the
    target (`CRYPTO_BILLING_ENABLED=true` or
@@ -115,10 +116,9 @@ It checks, and `--write` refuses unless every FAIL-level check passes:
 
 It also warns (WARN, does not block) when `activatesAt` is less than two hours
 away, when there is more than one HIVRA/WETH pool, when the pool has less than
-four hours of candle history (the median gate is weak for a young pool: see
-`docs/security/PRE-LAUNCH-REVIEW-2026-09.md`), and when the spot is more than
-10% above the four-hour median (quotes pause until the median catches up;
-section 5).
+four hours of candle history (quotes stay closed with `insufficient_history`
+until it has; section 5), and when the spot is more than 10% above the
+four-hour median (quotes pause until the median catches up; section 5).
 
 `--write` fills in only the four fields, with the checksummed address, the
 on-chain decimals and the lowercase pool id, and changes nothing else in the
@@ -258,7 +258,7 @@ by hand, and then resolves the item.
 
 ## 5. Price gates (both tokens, all the time)
 
-Every price used for a quote or a new tier threshold passes two gates, or the
+Every price used for a quote or a new tier threshold passes these gates, or the
 quote fails closed with a 503 "try again later":
 
 1. **Liquidity floor:** the canonical pool holds at least the token's
@@ -268,9 +268,17 @@ quote fails closed with a 503 "try again later":
    from GeckoTerminal, compared with the DEXScreener spot in the pool's
    paired token (WETH), so an ETH move is not read as a token move. A bucket
    with no trades carries the last close forward, so a quiet pool is still
-   quotable at its last price. The check fails closed only when the pool has
-   no candle at all or a source is down.
-3. **Pricing:** a quote is priced at the lower of spot and the median, so a
+   quotable at its last price. Only completed candles count (the one still
+   forming is just the latest trade). The check fails closed when the pool
+   has no candle at all or a source is down.
+3. **Minimum history:** the median is trusted only once the pool's first
+   completed candle is at least `PLATFORM_PRICE_MIN_HISTORY_MINUTES` old (the
+   whole four-hour window) and the pool has traded in at least
+   `PLATFORM_PRICE_MIN_TRADED_CANDLES` (24) five-minute periods. A young
+   pool's median is only its last few candles, which a pump sets, so until
+   then every quote fails closed with the reason `insufficient_history`. This
+   is a market condition, not an outage: no cached price is served instead.
+4. **Pricing:** a quote is priced at the lower of spot and the median, so a
    pump never buys a cheaper quote. A spot more than
    `PLATFORM_PRICE_MAX_DEVIATION_BPS` (10%) above the median is refused
    outright until the median catches up (about two hours); a spot below it
@@ -284,7 +292,8 @@ quote fails closed with a 503 "try again later":
 
 - a warn log line, `Price gate refused a token quote`, with the route
   (`source`), the token (`asset`, `assetKey`), the reason (`gateReason`:
-  `liquidity_floor`, `median_deviation`, `no_candle` or `feed_error`), the
+  `liquidity_floor`, `median_deviation`, `insufficient_history`, `no_candle`
+  or `feed_error`), the
   underlying `gate` and the `observed` values (for example `liquidityUsd` and
   `minLiquidityUsd`, `aboveMedianBps` and `maxDeviationBps`, or the price
   source's `httpStatus`: a pool GeckoTerminal has not indexed yet answers 404

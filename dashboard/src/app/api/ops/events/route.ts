@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { auth, currentUser } from '@clerk/nextjs/server';
 
 import { apiError, apiSuccess, handleApiError } from '@/lib/api-response';
+import { enforceAuthenticatedRouteRateLimit } from '@/lib/authenticated-rate-limit';
 import { log } from '@/lib/logger';
 import { isOpsAdminUser } from '@/lib/ops-access';
 import { archiveOpsEvents, deleteOpsEvents, reportOpsEvent, type OpsEventSeverity } from '@/lib/ops-events';
@@ -63,6 +64,128 @@ const ROUTE = '/api/ops/events';
 const SOURCE = 'ops-events';
 
 type ClientOpsEvent = z.infer<typeof PostBodySchema>;
+
+// Everything POSTed here comes from a browser, so it is telemetry, never an
+// incident: it can be recorded up to `error`, but never as `fatal`, because a
+// first-sighting fatal pages the admin (email + Telegram) with the event's
+// title and message. Anyone signed in could otherwise page the admin with
+// their own text. Server code that needs to page calls reportOpsEvent()
+// directly.
+const CLIENT_SEVERITY_CEILING: Record<OpsEventSeverity, OpsEventSeverity> = {
+  info: 'info',
+  warn: 'warn',
+  error: 'error',
+  fatal: 'error',
+};
+
+// Per signed-in user, admins included. Telemetry dedupes by fingerprint, so
+// this only bounds a flood of distinct events.
+const CLIENT_EVENT_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const;
+
+const CLIENT_TITLE_MAX_CHARS = 160;
+// reportOpsEvent stores at most 1000 characters of a message anyway.
+const CLIENT_MESSAGE_MAX_CHARS = 1000;
+
+// Metadata keys that turn an ops event into a failure banner on the
+// instance's owner's dashboard (buildInstanceFailureAlertFromOpsEvent). Only
+// server code decides that an instance has failed.
+const BANNER_METADATA_KEYS = ['failureOwner', 'failurePhase', 'recoveryAction'] as const;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Characters that are invisible or reverse the reading direction, so text
+// would read differently from what it is (e.g. a disguised file name).
+const INVISIBLE_FORMAT_CHARS = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
+const CONTROL_CHARS_EXCEPT_TAB_AND_NEWLINE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+
+function clampChars(value: string, max: number): string {
+  const chars = Array.from(value);
+  return chars.length <= max ? value : `${chars.slice(0, max - 1).join('')}\u2026`;
+}
+
+/** One plain line: no line breaks (a title becomes an email subject), no control or invisible characters. */
+function plainTitle(value: string): string {
+  const flattened = value
+    .replace(INVISIBLE_FORMAT_CHARS, '')
+    .replace(CONTROL_CHARS, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clampChars(flattened || 'Client event', CLIENT_TITLE_MAX_CHARS);
+}
+
+/** Plain text that keeps its line breaks and tabs and drops every other control or invisible character. */
+function plainMessage(value: string): string {
+  const cleaned = value
+    .replace(INVISIBLE_FORMAT_CHARS, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(CONTROL_CHARS_EXCEPT_TAB_AND_NEWLINE, '')
+    .trim();
+  return clampChars(cleaned || 'Client event', CLIENT_MESSAGE_MAX_CHARS);
+}
+
+/**
+ * Whether the signed-in user owns this Hermes instance or Hivra agent. An
+ * event's instance_id decides whose dashboard reads it, so a caller may only
+ * attach events to their own.
+ */
+async function callerOwnsInstance(userId: string, instanceId: string, ctx: RequestContext): Promise<boolean> {
+  if (!supabaseAdmin || !UUID_PATTERN.test(instanceId)) return false;
+  const db = supabaseAdmin;
+  const owned = await Promise.all(['hermes_instances', 'hivra_agents'].map(async (table) => {
+    const { data, error } = await db
+      .from(table)
+      .select('id')
+      .eq('id', instanceId)
+      .eq('user_id', userId)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      log.warn('client ops event instance ownership lookup failed; dropping the instance id', {
+        ...ctx,
+        failureType: 'ops_events_instance_lookup_failed',
+        table,
+        reportOpsEvent: false,
+      });
+      return false;
+    }
+    return Boolean(data);
+  }));
+  return owned.some(Boolean);
+}
+
+/**
+ * The event as it may be stored from a browser: severity at most `error`,
+ * title and message as clamped plain text, banner keys removed, and an
+ * instance id only when the caller owns it (ops admins may name any).
+ */
+async function toStorableClientEvent(
+  event: ClientOpsEvent,
+  caller: { userId: string; isOpsAdmin: boolean },
+  ctx: RequestContext,
+): Promise<ClientOpsEvent> {
+  const requestedSeverity = event.severity ?? 'error';
+  const metadata: Record<string, unknown> = { ...(event.metadata ?? {}) };
+  for (const key of BANNER_METADATA_KEYS) delete metadata[key];
+  if (CLIENT_SEVERITY_CEILING[requestedSeverity] !== requestedSeverity) {
+    metadata.clientRequestedSeverity = requestedSeverity;
+  }
+
+  let instanceId = event.instanceId;
+  if (instanceId && !caller.isOpsAdmin && !(await callerOwnsInstance(caller.userId, instanceId, ctx))) {
+    instanceId = undefined;
+    metadata.instanceIdDropped = true;
+  }
+
+  return {
+    ...event,
+    title: plainTitle(event.title),
+    message: plainMessage(event.message),
+    severity: CLIENT_SEVERITY_CEILING[requestedSeverity],
+    instanceId,
+    metadata,
+  };
+}
 
 function logAcceptedClientOpsEvent(event: ClientOpsEvent, ctx: RequestContext): void {
   const severity = event.severity || 'error';
@@ -161,6 +284,13 @@ export async function POST(request: NextRequest) {
     ctx.userId = userId ?? null;
     if (!userId) return apiError('Unauthorized', 401, undefined, undefined, { ctx });
 
+    const limited = enforceAuthenticatedRouteRateLimit(request, {
+      routeKey: 'ops_events_post',
+      userId,
+      ...CLIENT_EVENT_RATE_LIMIT,
+    });
+    if (limited) return limited;
+
     let body: unknown;
     try {
       body = await request.json();
@@ -189,12 +319,14 @@ export async function POST(request: NextRequest) {
       }, undefined, { ctx, failureType: 'ops_events_source_not_allowed' });
     }
 
+    const event = await toStorableClientEvent(parsed.data, { userId, isOpsAdmin }, ctx);
+
     await reportOpsEvent({
-      ...parsed.data,
+      ...event,
       userId,
     });
 
-    logAcceptedClientOpsEvent(parsed.data, ctx);
+    logAcceptedClientOpsEvent(event, ctx);
 
     return apiSuccess({ accepted: true }, 202, ctx);
   } catch (err) {
