@@ -351,6 +351,8 @@ describe("withdrawHermesTokensForInstance", () => {
   });
 
   it("withdraws an explicit Base ERC-20 token to the saved destination", async () => {
+    // `record`'s destination was saved long before the cooldown, so a token
+    // withdrawal to it goes straight through.
     const db = makeClaimDb();
     const result = await withdrawBaseTokenForInstance({
       instanceId: "inst_123",

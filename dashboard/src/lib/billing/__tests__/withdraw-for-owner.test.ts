@@ -265,6 +265,8 @@ describe("withdrawForOwner (Hivra lane)", () => {
   });
 
   it("withdraws an explicit Base ERC-20 token to the saved destination and never changes the destination or touches the recipients table", async () => {
+    // HIVRA_WALLET's destination was saved long before the cooldown, so a
+    // token withdrawal to it goes straight through.
     const db = makeOrderedClaimDb([]);
     const result = await withdrawForOwner({
       owner: { hivraAgentId: "hivra_agent_42" },
@@ -299,6 +301,11 @@ describe("withdrawForOwner (Hivra lane)", () => {
     // Hivra box).
     expect(mockSetDestinationForOwner).not.toHaveBeenCalled();
     expect(mockUpsertWithdrawalRecipient).not.toHaveBeenCalled();
+
+    // Nothing about the wallet changed, so it is loaded once and never
+    // reloaded after the transfer.
+    expect(mockGetWalletForOwner).toHaveBeenCalledTimes(1);
+    expect(result.wallet).toEqual(mockSummary.mock.results[0]?.value);
   });
 
   it("returns invalid_token when a token withdraw is missing the recipient address", async () => {

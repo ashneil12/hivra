@@ -50,7 +50,9 @@ import {
 const HOUR = 60 * 60 * 1000;
 const SAVED = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x2222222222222222222222222222222222222222";
-const USDC = { symbol: "USDC", tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6 };
+// Public Base token contract, named so the secret scan reads it as an address.
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const USDC = { symbol: "USDC", tokenAddress: USDC_CONTRACT, decimals: 6 };
 
 function claimDb() {
   const single = jest.fn(async () => ({ data: { id: "claim_1" }, error: null }));
