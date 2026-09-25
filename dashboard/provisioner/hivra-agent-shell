@@ -1,7 +1,66 @@
 #!/usr/bin/env bash
 # Native terminal entrypoint. Its systemd unit supplies the agent's HOME/PATH.
 # Never replace a missing or unconfigured runtime with a different agent.
+#
+#   hivra-agent-shell --agent-terminal [SLOT]   the agent Terminal (ttyd :7681)
+#   hivra-agent-shell --box-terminal [SLOT]     the Box Terminal (ttyd :7682)
+#   hivra-agent-shell                           same as --agent-terminal 1
+#   hivra-agent-shell ARG...                    runs the agent CLI with ARG...
+#
+# SLOT (1-8) names one of the dashboard's terminal session tabs; ttyd passes it
+# from the tab's ?arg=N. Nothing else is accepted from the URL.
 set -euo pipefail
+
+# Interactive terminals run inside a persistent tmux session: closing the tab
+# or losing the connection detaches instead of ending the work, and reopening
+# the tab re-attaches to the same session. Each terminal has a private socket
+# and inline options (-f /dev/null), so the owner's own tmux setup is untouched.
+# Mouse mode lets the wheel scroll the session history; Shift+drag still
+# selects. Only an interactive terminal (what ttyd starts) is wrapped;
+# otherwise persist returns and the caller runs its command directly.
+persist() {
+  local socket="$1" session="$2" command="$3"
+  if [ -t 0 ] && command -v tmux >/dev/null 2>&1; then
+    local term=tmux-256color
+    infocmp "$term" >/dev/null 2>&1 || term=screen-256color
+    # An empty command starts tmux's default: the owner's login shell.
+    exec tmux -L "$socket" -f /dev/null \
+      start-server \; \
+      set-option -g status off \; \
+      set-option -g mouse on \; \
+      set-option -g escape-time 10 \; \
+      set-option -g history-limit 50000 \; \
+      set-option -g set-clipboard on \; \
+      set-option -g focus-events on \; \
+      set-option -g default-terminal "$term" \; \
+      set-option -ga terminal-overrides ',xterm-256color:Tc' \; \
+      new-session -A -s "$session" ${command:+"$command"}
+  fi
+}
+
+surface=""
+slot=1
+case "${1:-}" in
+  --box-terminal|--agent-terminal)
+    surface="${1#--}"; surface="${surface%-terminal}"
+    shift
+    if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && ! [[ "$1" =~ ^[1-8]$ ]]; }; then
+      printf '%s\n' 'This terminal session is not valid. Open a new session from the dashboard.' >&2
+      exit 64
+    fi
+    [ "$#" -eq 1 ] && slot="$1"
+    set --
+    ;;
+  "")
+    surface=agent
+    ;;
+esac
+
+# The Box Terminal: the owner's general shell, kept alive the same way.
+if [ "$surface" = box ]; then
+  persist hivra-box "box-$slot" ""
+  exec /bin/bash -l
+fi
 
 kind_file="${HOME:?HOME is required}/.hivra/agent-kind"
 if [ ! -f "$kind_file" ] || [ ! -r "$kind_file" ] || ! kind="$(< "$kind_file")"; then
@@ -10,43 +69,32 @@ if [ ! -f "$kind_file" ] || [ ! -r "$kind_file" ] || ! kind="$(< "$kind_file")";
 fi
 case "$kind" in
   claude|codex)
-    if ! command -v "$kind" >/dev/null 2>&1; then
+    # The exact binary the chat gateway runs (server.js CLAUDE_BIN/CODEX_BIN),
+    # so Terminal and Chat never run different versions and a CLI that happens
+    # to be earlier on PATH (a vendor self-install, another agent) never stands
+    # in for the selected one.
+    if [ "$kind" = claude ]; then cli="${CLAUDE_BIN:-/usr/bin/claude}"
+    else cli="${CODEX_BIN:-$HOME/.npm-global/bin/codex}"; fi
+    if [ ! -f "$cli" ] || [ ! -x "$cli" ]; then
       printf '%s\n' 'The selected agent runtime is unavailable. Open the box terminal to repair its installation.' >&2
       exit 127
     fi
-    # The agent runs inside a persistent tmux session: closing the Terminal tab
-    # or losing the connection detaches instead of ending the agent, and the
-    # next tab re-attaches to the same session. A private socket and inline
-    # options (-f /dev/null) leave the owner's own tmux setup untouched. Mouse
-    # mode lets the wheel scroll the session history; Shift+drag still selects.
-    # Only an interactive terminal with no arguments (what ttyd starts) is
-    # wrapped; anything else runs the CLI directly with its literal arguments.
-    if [ -t 0 ] && [ "$#" -eq 0 ] && command -v tmux >/dev/null 2>&1; then
-      term=tmux-256color
-      infocmp "$term" >/dev/null 2>&1 || term=screen-256color
-      exec tmux -L hivra-agent -f /dev/null \
-        start-server \; \
-        set-option -g status off \; \
-        set-option -g mouse on \; \
-        set-option -g escape-time 10 \; \
-        set-option -g history-limit 50000 \; \
-        set-option -g set-clipboard on \; \
-        set-option -g focus-events on \; \
-        set-option -g default-terminal "$term" \; \
-        set-option -ga terminal-overrides ',xterm-256color:Tc' \; \
-        new-session -A -s "$kind" "$kind"
-    fi
-    exec "$kind" "$@"
+    # With arguments the CLI runs directly with them, never through a shell.
+    if [ "$surface" = agent ]; then persist hivra-agent "agent-$slot" "$cli"; fi
+    exec "$cli" "$@"
     ;;
   aeon|openclaw|agent-zero|linux-desktop)
     # Dashboard runtimes and Linux computers do not impersonate a coding-agent
     # CLI. Their agent terminal is an ordinary owner shell.
+    persist hivra-agent "agent-$slot" ""
     exec /bin/bash -l
     ;;
   deepseek-harness)
     # The native web profile owns the active session. Opening a second CLI
     # owner of its private state is not an attach operation.
-    printf '%s\n' 'Use the DeepSeek native desktop for sessions. This is your computer shell.'
+    notice='Use the DeepSeek native desktop for sessions. This is your computer shell.'
+    persist hivra-agent "agent-$slot" "printf '%s\\n' '$notice'; exec /bin/bash -l"
+    printf '%s\n' "$notice"
     exec /bin/bash -l
     ;;
   *)

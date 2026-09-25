@@ -166,6 +166,24 @@ export type ActivityCollectorInstallStatus = "installed" | "failed";
 const INSTALL_REASON = /^[a-z_]{1,40}$/;
 
 /**
+ * The last `HIVRA_ACTIVITY_COLLECTOR` marker among host output lines: the one
+ * reporter install line the launch installer, the start helper and the
+ * in-place runtime updater write. Closed enum only; anything else is ignored.
+ */
+export function parseActivityCollectorMarker(
+  lines: readonly string[],
+): { status: ActivityCollectorInstallStatus; reason?: string } | null {
+  let parsed: { status: ActivityCollectorInstallStatus; reason?: string } | null = null;
+  for (const candidate of lines) {
+    const line = candidate.trim();
+    if (line === "HIVRA_ACTIVITY_COLLECTOR status=installed") parsed = { status: "installed" };
+    const failed = line.match(/^HIVRA_ACTIVITY_COLLECTOR status=failed reason=([a-z_]{1,40})$/);
+    if (failed) parsed = { status: "failed", reason: failed[1] };
+  }
+  return parsed;
+}
+
+/**
  * Record the outcome of the most recent guest reporter installation, taken
  * from the host's `HIVRA_ACTIVITY_COLLECTOR` marker. An installed result
  * clears any earlier failure reason; a failure must carry a closed-enum reason.

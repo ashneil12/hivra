@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.09.24.1.json";
+import release from "../../../provisioner-releases/2026.09.24.2.json";
 import type { PortableProvisionerBundleAsset } from "./connection-preparation";
 import type { FirstBootOperationScope } from "./first-boot-operations";
 import { parseProviderGuestClock, providerGuestBundleManifest, providerGuestBundleReceipt,
@@ -14,7 +14,7 @@ import { providerGuestWorkerRecipe } from "./provider-guest-worker-recipes";
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.09.24.1";
+const VERSION = "2026.09.24.2";
 const PROFILE = "deepseek-owned-service-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -26,13 +26,14 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.08.31.3" | "2026.08.31.4" | "2026.09.01.1" | "2026.09.01.2" | "2026.09.01.3" | "2026.09.01.4" | "2026.09.01.5" | "2026.09.01.6" | "2026.09.01.7" | "2026.09.01.8" | "2026.09.01.9" | "2026.09.02.1" | "2026.09.02.2" | "2026.09.02.3" | "2026.09.02.4" | "2026.09.02.5" | "2026.09.02.6" | "2026.09.02.7" | "2026.09.02.8" | "2026.09.03.1" | "2026.09.03.2" | "2026.09.04.1" | "2026.09.04.2" | "2026.09.04.3" | "2026.09.04.4" | "2026.09.05.1" | "2026.09.05.2" | "2026.09.05.3" | "2026.09.05.4" | "2026.09.05.5" | "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1", bundle: string) { return z.object({ version: z.literal(2), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.08.31.3" | "2026.08.31.4" | "2026.09.01.1" | "2026.09.01.2" | "2026.09.01.3" | "2026.09.01.4" | "2026.09.01.5" | "2026.09.01.6" | "2026.09.01.7" | "2026.09.01.8" | "2026.09.01.9" | "2026.09.02.1" | "2026.09.02.2" | "2026.09.02.3" | "2026.09.02.4" | "2026.09.02.5" | "2026.09.02.6" | "2026.09.02.7" | "2026.09.02.8" | "2026.09.03.1" | "2026.09.03.2" | "2026.09.04.1" | "2026.09.04.2" | "2026.09.04.3" | "2026.09.04.4" | "2026.09.05.1" | "2026.09.05.2" | "2026.09.05.3" | "2026.09.05.4" | "2026.09.05.5" | "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2", bundle: string) { return z.object({ version: z.literal(2), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   nativeCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
 }).strict(); }
 const CurrentIdentity = identity(VERSION, bundleSha256);
 const Identity = z.union([
+  identity("2026.09.24.1", "23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04"),
   identity("2026.09.22.2", "1569888d0f18186e8291c9752a3b2823028afb044c8596e129924ce05dfc147a"),
   identity("2026.09.22.1", "bff286ca0eb95e56f27ff1c8f5ee26e0f759032f892d46a1106c57296e4e4850"),
   identity("2026.09.21.1", "ff60ff578397dbb49f3405762b4733adc0187b9912e8340671678351295a1469"),

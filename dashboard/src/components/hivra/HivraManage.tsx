@@ -1,7 +1,8 @@
 "use client";
 
 // HivraManage — the agent's settings surface (Manage tab).
-// Overview (with inline rename + endpoint copy), Power (start/stop/restart),
+// Overview (with inline rename + endpoint copy), Power (start/stop/restart and
+// an in-place connection-service update),
 // Resize (floor-aware, per agent type), and a Danger Zone with a two-step,
 // type-the-name destroy confirmation. Command Center vocabulary throughout.
 
@@ -20,8 +21,8 @@ import { ComputerAgentSlot, ComputerContractPanel } from "./ComputerContractPane
 
 import {
   stopAgent, startAgent, restartAgent, updateAgentRuntime, resizeAgent, renameAgent, deleteAgent, browserToggle,
-  getBoxModel, setBoxModel, getBoxRestrict, setBoxRestrict, listBoxMcp, addBoxMcp, removeBoxMcp,
-  listAgentSnapshots, snapshotAgent, restoreAgentSnapshot,
+  listBoxChatRuns, getBoxModel, setBoxModel, getBoxRestrict, setBoxRestrict, listBoxMcp, addBoxMcp, removeBoxMcp,
+  listAgentSnapshots, snapshotAgent, restoreAgentSnapshot, AgentActionError,
   type HivraAgent, type HivraAgentSnapshot, type PlanInfo, type BoxRestrict, type McpServer,
 } from "@/lib/hivra/agent-api";
 import { resizeFloor, hostingDisclaimer, MAX_CPU, MAX_RAM, type AgentDef } from "@/lib/hivra/agent-catalog";
@@ -101,10 +102,29 @@ const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string }> = {
     detail: "The desktop will disconnect briefly while Hivra confirms the reboot.",
   },
   "runtime-update": {
-    title: "Updating and restarting…",
-    detail: "Hivra is refreshing the connection service, rebooting, and waiting for it to return.",
+    title: "Updating the connection service…",
+    detail: "Hivra is updating it in place. The computer keeps running, and this page reconnects to it when the update finishes.",
   },
 };
+
+// Stop, Restart, Resize and Restore each power the computer off, which ends the
+// chat replies a Claude Code / Codex computer is still writing, so Manage asks
+// the computer first. A computer that does not answer within this window (or
+// predates the run API) is not asked about.
+const CHAT_RUNS_CHECK_MS = 4_000;
+type RunEndingAction = "stop" | "restart" | "resize" | "restore";
+const RUN_ENDING: Record<RunEndingAction, { effect: string; proceed: string }> = {
+  stop: { effect: "Stopping the computer ends", proceed: "Stop anyway" },
+  restart: { effect: "Restarting the computer ends", proceed: "Restart anyway" },
+  resize: { effect: "Resizing restarts the computer, which ends", proceed: "Resize anyway" },
+  restore: { effect: "Restoring stops the computer, which ends", proceed: "Restore anyway" },
+};
+
+function repliesInProgress(count: number): string {
+  return count === 1
+    ? "1 reply is still being written and will stop."
+    : `${count} replies are still being written and will stop.`;
+}
 
 function fmtNum(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
@@ -200,12 +220,18 @@ function Row({ icon, k, children }: { icon: React.ReactNode; k: string; children
 }
 
 export function HivraManage({
-  agent, def, onChanged, onDestroyed, browserOn, onBrowserChange, plan,
+  agent, def, onChanged, onDestroyed, browserOn, onBrowserChange, plan, onConnectionServiceRestarted,
 }: {
   agent: HivraAgent;
   def?: AgentDef;
   onChanged: () => void;
   onDestroyed: () => void;
+  /**
+   * The computer's connection service restarted (a completed or unverified
+   * in-place update). Its gateway keeps surface sign-ins only in memory, so the
+   * page signs its embedded surfaces in again.
+   */
+  onConnectionServiceRestarted?: () => void;
   /** Live browser-automation state (from the box). null = unknown/loading. */
   browserOn?: boolean | null;
   onBrowserChange?: (enabled: boolean) => void;
@@ -361,6 +387,12 @@ export function HivraManage({
   const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
   const [snapshotMaximum, setSnapshotMaximum] = useState(5);
   const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null);
+  // Stop/Restart/Resize/Restore on a chat computer: which action is asking the
+  // computer about replies in progress, and the confirmation when some are.
+  const [repliesCheck, setRepliesCheck] = useState<RunEndingAction | null>(null);
+  const [repliesConfirm, setRepliesConfirm] = useState<{ action: RunEndingAction; running: number; snapshotId?: string } | null>(null);
+  // A confirmation belongs to the computer state it was asked about.
+  useEffect(() => { setRepliesConfirm(null); }, [agent.id, agent.status]);
 
   const refreshSnapshots = useCallback(async () => {
     if (agent.computer_substrate !== "proxmox-kvm") {
@@ -398,6 +430,38 @@ export function HivraManage({
     }
     finally { setActing(null); }
   }, [onChanged]);
+
+  // Only a running Claude Code / Codex computer writes chat replies.
+  const repliesMayRun = isChatCli && Boolean(agent.chat_url) && agent.status === "running";
+  // How many replies that computer is still writing, asked before an action
+  // that powers it off. Any failure to answer (older runtime without the run
+  // API, unreachable, slow) counts as none, so the action proceeds as before.
+  const countRunningReplies = useCallback(async (action: RunEndingAction): Promise<number> => {
+    if (!agent.chat_url) return 0;
+    setRepliesCheck(action);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CHAT_RUNS_CHECK_MS);
+    try {
+      const runs = await listBoxChatRuns(agent.chat_url, agent.api_token, controller.signal);
+      return runs ? runs.filter((r) => r.state === "running").length : 0;
+    } finally {
+      clearTimeout(timer);
+      setRepliesCheck(null);
+    }
+  }, [agent.chat_url, agent.api_token]);
+
+  // The update restarts only the computer's gateway, which drops the embedded
+  // surfaces' sign-ins, so the page signs them in again once it is back. An
+  // unverified outcome (502) may also have restarted it, or rolled it back.
+  const updateConnectionService = useCallback(async () => {
+    try {
+      await updateAgentRuntime(agent.id);
+    } catch (error) {
+      if (error instanceof AgentActionError && error.status === 502) onConnectionServiceRestarted?.();
+      throw error;
+    }
+    onConnectionServiceRestarted?.();
+  }, [agent.id, onConnectionServiceRestarted]);
 
   const copyEndpoint = useCallback(async () => {
     if (!agent.chat_url) return;
@@ -485,13 +549,16 @@ export function HivraManage({
   const savedMaximumRam = agent.ram_max ?? agent.ram;
   const dirty = rcpu !== agent.cpu || rram !== agent.ram
     || maximumCpu !== savedMaximumCpu || maximumRam !== savedMaximumRam;
-  const busy = acting !== null;
+  const busy = acting !== null || repliesCheck !== null;
   const lifecyclePending = agent.status === "provisioning";
   const providerComputer = agent.computer_substrate === "provider-vm";
   const gvisorComputer = agent.computer_substrate === "gvisor";
   const computerTemplate = agent.computer_profile && agent.computer_profile !== "linux-terminal" ? getComputerTemplate(agent.computer_profile) : undefined;
   const preparedComputer = computerTemplate?.launchMode === "prepared-canary";
   const snapshotComputer = agent.computer_substrate === "proxmox-kvm" && !preparedComputer;
+  // DeepSeek also runs a native service generation the in-place updater cannot
+  // replace yet; the server refuses it, so the action is not offered.
+  const connectionServiceUpdatable = !providerComputer && !preparedComputer && agent.type !== "deepseek-harness";
   const isComputerOnly = agent.type === "linux-desktop" || Boolean(agent.computer_profile);
   const maximumCapCpu = budget.selfManaged
     ? MAX_CPU
@@ -504,6 +571,43 @@ export function HivraManage({
     && maximumCpu >= rcpu && maximumRam >= rram
     && maximumCpu <= maximumCapCpu && maximumRam <= maximumCapRam;
 
+  // Sends an action that powers the computer off, with the values current when
+  // it is sent (a confirmed resize uses the size selected at that moment).
+  const sendRunEnding = (action: RunEndingAction, snapshotId?: string) => {
+    if (action === "stop") void run("stop", () => stopAgent(agent.id));
+    else if (action === "restart") void run("restart", () => restartAgent(agent.id));
+    else if (action === "resize") {
+      if (canResize) void run("resize", () => resizeAgent(agent.id, rcpu, rram, maximumCpu, maximumRam));
+    } else if (snapshotId) {
+      void run("restore", async () => {
+        await restoreAgentSnapshot(agent.id, snapshotId);
+        setRestoreConfirmId(null);
+        await refreshSnapshots();
+      });
+    }
+  };
+  // Asks about replies in progress first and confirms only when some are.
+  // Computers that cannot have any send straight away, as before.
+  const requestRunEnding = async (action: RunEndingAction, snapshotId?: string) => {
+    setRepliesConfirm(null);
+    if (!repliesMayRun) {
+      sendRunEnding(action, snapshotId);
+      return;
+    }
+    const running = await countRunningReplies(action);
+    if (running > 0) {
+      setRepliesConfirm({ action, running, snapshotId });
+      return;
+    }
+    sendRunEnding(action, snapshotId);
+  };
+  const confirmRunEnding = () => {
+    if (!repliesConfirm) return;
+    const { action, snapshotId } = repliesConfirm;
+    setRepliesConfirm(null);
+    sendRunEnding(action, snapshotId);
+  };
+
   const btnDark: React.CSSProperties = {
     border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)",
     fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800,
@@ -515,6 +619,28 @@ export function HivraManage({
     padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 7, minHeight: 40,
   };
   const errorFor = (section: ManageSection) => (err && err.section === section ? <SectionError message={err.message} /> : null);
+  // The replies-in-progress confirmation, shown next to the control that asked.
+  const repliesDialog = (actions: readonly RunEndingAction[], snapshotId?: string) => {
+    if (!repliesConfirm || !actions.includes(repliesConfirm.action)) return null;
+    if (repliesConfirm.action === "restore" && repliesConfirm.snapshotId !== snapshotId) return null;
+    const { action, running } = repliesConfirm;
+    const them = running === 1 ? "it" : "them";
+    const id = `hm-replies-${action}`;
+    return (
+      <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-detail`} style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.025)" }}>
+        <div id={`${id}-title`} style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{repliesInProgress(running)}</div>
+        <div id={`${id}-detail`} style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+          {RUN_ENDING[action].effect} {them} now. To keep {them}, cancel and wait until the chat finishes.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" disabled={busy} onClick={confirmRunEnding} style={{ ...btnDark, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+            {RUN_ENDING[action].proceed}
+          </button>
+          <button type="button" onClick={() => setRepliesConfirm(null)} style={{ ...btnGhost, cursor: "pointer" }}>Cancel</button>
+        </div>
+      </div>
+    );
+  };
 
   const chatModelSection = isChatCli && Boolean(agent.chat_url) && modelSupported;
   const veniceModelSection = Boolean(def?.llm?.providers.includes("venice"));
@@ -639,23 +765,24 @@ export function HivraManage({
               {acting === "start" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Start
             </button>
           ) : (
-            <button type="button" disabled={busy || lifecyclePending} onClick={() => void run("stop", () => stopAgent(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending ? "default" : "pointer", opacity: busy || lifecyclePending ? 0.6 : 1 }}>
-              {acting === "stop" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Stop
+            <button type="button" disabled={busy || lifecyclePending} onClick={() => void requestRunEnding("stop")} style={{ ...btnGhost, cursor: busy || lifecyclePending ? "default" : "pointer", opacity: busy || lifecyclePending ? 0.6 : 1 }}>
+              {acting === "stop" || repliesCheck === "stop" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Stop
             </button>
           )}
-          <button type="button" disabled={busy || lifecyclePending || agent.status === "stopped"} onClick={() => void run("restart", () => restartAgent(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status === "stopped" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status === "stopped" ? 0.5 : 1 }} title={agent.status === "stopped" ? "The computer is stopped. Use Start" : "Reboot the computer"}>
-            {acting === "restart" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Restart
+          <button type="button" disabled={busy || lifecyclePending || agent.status === "stopped"} onClick={() => void requestRunEnding("restart")} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status === "stopped" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status === "stopped" ? 0.5 : 1 }} title={agent.status === "stopped" ? "The computer is stopped. Use Start" : "Reboot the computer"}>
+            {acting === "restart" || repliesCheck === "restart" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Restart
           </button>
-          {!providerComputer && !preparedComputer ? <button type="button" disabled={busy || lifecyclePending || agent.status !== "running"} onClick={() => void run("runtime-update", () => updateAgentRuntime(agent.id))} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status !== "running" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status !== "running" ? 0.5 : 1 }} title="Refresh the Hivra connection service and reboot the computer">
-            {acting === "runtime-update" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Update &amp; restart
+          {connectionServiceUpdatable ? <button type="button" disabled={busy || lifecyclePending || agent.status !== "running"} onClick={() => { setRepliesConfirm(null); void run("runtime-update", updateConnectionService); }} style={{ ...btnGhost, cursor: busy || lifecyclePending || agent.status !== "running" ? "default" : "pointer", opacity: busy || lifecyclePending || agent.status !== "running" ? 0.5 : 1 }} title="Refresh the Hivra connection service without restarting the computer">
+            {acting === "runtime-update" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Update connection service
           </button> : null}
         </div>
+        {repliesDialog(["stop", "restart"])}
         {errorFor("power")}
         <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          Stop shuts down the computer; Start brings it back. Restart reboots in place. {!providerComputer && !preparedComputer
+          Stop shuts down the computer; Start brings it back. Restart reboots in place. {connectionServiceUpdatable
             ? isComputerOnly
-              ? "Update & restart refreshes Hivra’s connection service, then reboots; your files and local logins remain on the computer."
-              : "Update & restart refreshes Hivra’s connection service, then reboots; your agent login, chats, model credentials, and files remain on the computer."
+              ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
+              : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."
             : ""} Stopping does not cancel your plan or any provider billing.
         </div>
         {acting && LIFECYCLE_PROGRESS[acting] ? (
@@ -739,18 +866,15 @@ export function HivraManage({
                           <button
                             type="button"
                             disabled={busy || lifecyclePending}
-                            onClick={() => void run("restore", async () => {
-                              await restoreAgentSnapshot(agent.id, snapshot.id);
-                              setRestoreConfirmId(null);
-                              await refreshSnapshots();
-                            })}
+                            onClick={() => void requestRunEnding("restore", snapshot.id)}
                             style={{ ...btnDark, cursor: busy || lifecyclePending ? "default" : "pointer" }}
                           >
-                            {acting === "restore" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />}
+                            {acting === "restore" || repliesCheck === "restore" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />}
                             Confirm restore
                           </button>
-                          <button type="button" disabled={busy} onClick={() => setRestoreConfirmId(null)} style={{ ...btnGhost, cursor: busy ? "default" : "pointer" }}>Cancel</button>
+                          <button type="button" disabled={busy} onClick={() => { setRestoreConfirmId(null); setRepliesConfirm(null); }} style={{ ...btnGhost, cursor: busy ? "default" : "pointer" }}>Cancel</button>
                         </div>
+                        {repliesDialog(["restore"], snapshot.id)}
                       </div>
                     ) : null}
                   </div>
@@ -1158,8 +1282,8 @@ export function HivraManage({
           </fieldset>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <button type="button" disabled={busy || !canResize} onClick={() => { if (canResize) void run("resize", () => resizeAgent(agent.id, rcpu, rram, maximumCpu, maximumRam)); }} style={{ ...btnDark, background: canResize ? "var(--ink-black)" : "transparent", color: canResize ? "var(--bg-surface)" : "var(--text-muted)", cursor: busy || !canResize ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
-            {acting === "resize" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : null}
+          <button type="button" disabled={busy || !canResize} onClick={() => { if (canResize) void requestRunEnding("resize"); }} style={{ ...btnDark, background: canResize ? "var(--ink-black)" : "transparent", color: canResize ? "var(--bg-surface)" : "var(--text-muted)", cursor: busy || !canResize ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+            {acting === "resize" || repliesCheck === "resize" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : null}
             {dirty ? `Apply · ${fmtNum(rcpu)} CPU / ${fmtNum(rram)} GB reserved · ${fmtNum(maximumCpu)} CPU / ${fmtNum(maximumRam)} GB max` : "Apply"}
           </button>
           <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
@@ -1175,6 +1299,7 @@ export function HivraManage({
           </span>
           {!budget.ready ? <button type="button" style={btnGhost} onClick={onChanged}>Refresh capacity</button> : null}
         </div>
+        {repliesDialog(["resize"])}
         {errorFor("resources")}
         {!providerComputer ? <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Resizing reboots the computer (a brief reconnect; the chat reattaches automatically).</div> : null}
       </div>
