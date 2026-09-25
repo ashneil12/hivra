@@ -744,11 +744,11 @@ describe("compute billing worker", () => {
 
     expect(shutdownProxmoxInstance).toHaveBeenCalledWith(
       { vmid: 209, node: "fixturenode2" },
-      { hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
+      { expectedInstanceId: "inst_1", hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
     );
     expect(startProxmoxInstance).toHaveBeenCalledWith(
       { vmid: 209, node: "fixturenode2" },
-      { hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
+      { expectedInstanceId: "inst_1", hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
     );
   });
 });

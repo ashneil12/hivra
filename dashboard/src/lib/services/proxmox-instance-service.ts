@@ -65,6 +65,7 @@ import {
   buildProxmoxStatusBatchScript,
   buildProxmoxStatusScript,
   buildProxmoxTemplateAvailabilityScript,
+  buildProxmoxVmIdentityGuardScript,
   buildProxmoxVmidAvailabilityScript,
   resolveProxmoxBalloonFloorMb,
   shQuote,
@@ -91,6 +92,7 @@ import {
 
 export {
   DEFAULT_PROXMOX_VM_DISK_GB,
+  PROXMOX_VM_IDENTITY_MISMATCH_MARKER,
   PROXMOX_VM_MISSING_MARKER,
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxCaddySiteCleanupScript,
@@ -2533,17 +2535,20 @@ export async function deleteProxmoxInstance(
 export async function shutdownProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   deps: ProxmoxHostAwareDeps & {
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
     shutdownTimeoutSeconds?: number;
     /** Pass 0 when pausing for inactivity/capacity so a host reboot doesn't
      * auto-start the paused VM. Undefined leaves onboot untouched. */
     setOnboot?: 0 | 1;
-  } = {}
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "shutdown",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
     setOnboot: deps.setOnboot,
@@ -2555,17 +2560,20 @@ export async function shutdownProxmoxInstance(
 export async function startProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   deps: ProxmoxHostAwareDeps & {
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
     /** Pass 1 when resuming an agent so it survives host reboots while active
      * (the inverse of the inactivity-pause onboot:0). Undefined leaves onboot
      * untouched. */
     setOnboot?: 0 | 1;
-  } = {}
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "start",
     setOnboot: deps.setOnboot,
   });
@@ -2575,13 +2583,14 @@ export async function startProxmoxInstance(
 
 export async function rebootProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
-  deps: ProxmoxHostAwareDeps & { shutdownTimeoutSeconds?: number } = {}
+  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string; shutdownTimeoutSeconds?: number }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "reboot",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
   });
@@ -2593,13 +2602,14 @@ export async function rebootProxmoxInstance(
 export async function resizeProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   resources: { cpuLimit: number; ramLimit: number },
-  deps: ProxmoxHostAwareDeps = {}
+  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxResizeScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     cores: resources.cpuLimit,
     memoryMb: resources.ramLimit,
     balloonFloorMb: envInt(env, "PROXMOX_VM_BALLOON_FLOOR_MB", 0) || undefined,
@@ -2719,7 +2729,15 @@ echo "[resize] container cgroup reapply: $updated container(s) set to \${MEM_MB}
  * to a running VM with no chat interruption.
  */
 export async function resizeProxmoxVm(
-  params: { vmid: number; node?: string; cpuLimit: number; memoryMb: number; cpuUnits?: number },
+  params: {
+    vmid: number;
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
+    node?: string;
+    cpuLimit: number;
+    memoryMb: number;
+    cpuUnits?: number;
+  },
   deps: ProxmoxHostAwareDeps = {}
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
@@ -2785,7 +2803,7 @@ if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "VM $VMID not found" >&2
   exit 1
 fi
-
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}
 # Same ipconfig0 parse the metrics script uses — the guest's private IP is the
 # only route from the Proxmox host into the VM.
 PRIVATE_IP="$(qm config "$VMID" 2>/dev/null | sed -n 's/^ipconfig0: .*ip=\\([^,\\/]*\\).*/\\1/p' | head -n1)"

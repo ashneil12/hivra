@@ -321,6 +321,7 @@ export async function applyTierChange(
       try {
         const result = await resizeProxmoxVm({
           vmid,
+          expectedInstanceId: row.id,
           node: row.config?.infrastructure?.node,
           cpuLimit: target.cpu,
           memoryMb: target.ramMb,

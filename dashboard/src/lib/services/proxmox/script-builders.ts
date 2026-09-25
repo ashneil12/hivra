@@ -1348,6 +1348,45 @@ for vmid in "\${TEMPLATE_VMIDS[@]}"; do
 done
 `;
 }
+const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Stdout marker for a VMID that exists but is not this instance's VM. Hosts are
+// shared (prod Hermes, Canary Hivra, operator placeholders), so a stale row can
+// name a VMID that was destroyed and reused by another control plane. The guard
+// also prints PROXMOX_VM_MISSING_MARKER: for every caller this instance has no
+// VM at that VMID, which is exactly what the missing-VM handling expects.
+export const PROXMOX_VM_IDENTITY_MISMATCH_MARKER = "HERMES_VM_IDENTITY_MISMATCH";
+
+/**
+ * Shell predicate: the VM name carries this instance's identity. Hermes VMs are
+ * named `hermes-<slug>-<id8>` (current) or `hermes-<full uuid>` (older clones);
+ * both forms are accepted, nothing else is.
+ */
+export function buildProxmoxVmOwnedByInstanceCheck(vmid: number, expectedInstanceId: string): string {
+  if (!INSTANCE_ID_PATTERN.test(expectedInstanceId)) {
+    throw new Error("Proxmox lifecycle instance identity is invalid.");
+  }
+  const id = expectedInstanceId.toLowerCase();
+  return `hermes_vm_owned_by_instance() {
+  local actual_name
+  actual_name="$(qm config ${vmid} 2>/dev/null | sed -n 's/^name:[[:space:]]*//p' | head -1)"
+  case "$actual_name" in
+    *-${id.slice(0, 8)}|*${id}*) return 0 ;;
+    *) return 1 ;;
+  esac
+}`;
+}
+
+export function buildProxmoxVmIdentityGuardScript(vmid: number, expectedInstanceId: string): string {
+  return `${buildProxmoxVmOwnedByInstanceCheck(vmid, expectedInstanceId)}
+if ! hermes_vm_owned_by_instance; then
+  echo "${PROXMOX_VM_IDENTITY_MISMATCH_MARKER} ${vmid}"
+  echo "${PROXMOX_VM_MISSING_MARKER}"
+  exit 64
+fi
+`;
+}
+
 export function buildProxmoxDeleteScript(params: {
   vmid: number;
   expectedInstanceId: string;
@@ -1367,14 +1406,13 @@ export function buildProxmoxDeleteScript(params: {
   return `#!/usr/bin/env bash
 set -euo pipefail
 expected_instance_id=${shQuote(params.expectedInstanceId)}
-expected_name_suffix="-${params.expectedInstanceId.slice(0, 8)}"
+${buildProxmoxVmOwnedByInstanceCheck(params.vmid, params.expectedInstanceId)}
 if [ -e ${shQuote(siteFile)} ] && ! grep -Fq "$expected_instance_id" ${shQuote(siteFile)} 2>/dev/null; then
   echo "HERMES_PROXMOX_DELETE_SITE_IDENTITY_MISMATCH ${params.vmid}" >&2
   exit 42
 fi
 if qm status ${params.vmid} >/dev/null 2>&1; then
-  actual_name="$(qm config ${params.vmid} 2>/dev/null | sed -n 's/^name:[[:space:]]*//p' | head -1)"
-  if [[ "$actual_name" != *"$expected_name_suffix" ]] || ! grep -Fq "$expected_instance_id" ${shQuote(siteFile)} 2>/dev/null; then
+  if ! hermes_vm_owned_by_instance || ! grep -Fq "$expected_instance_id" ${shQuote(siteFile)} 2>/dev/null; then
     echo "HERMES_PROXMOX_DELETE_IDENTITY_MISMATCH ${params.vmid}" >&2
     exit 42
   fi
@@ -1511,6 +1549,8 @@ export const PROXMOX_VM_MISSING_MARKER = "HERMES_VM_MISSING";
 export const PROXMOX_VM_STILL_RUNNING_MARKER = "HERMES_STILL_RUNNING";
 export function buildProxmoxPowerScript(params: {
   vmid: number;
+  /** The row's instance id. A VMID holding any other VM is never touched. */
+  expectedInstanceId: string;
   action: "start" | "shutdown" | "reboot";
   shutdownTimeoutSeconds?: number;
   /**
@@ -1594,7 +1634,7 @@ if ! qm status ${params.vmid} >/dev/null 2>&1; then
   echo "${PROXMOX_VM_MISSING_MARKER}"
   exit 64
 fi
-${onbootScript}${actionScript}`;
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}${onbootScript}${actionScript}`;
 }
 /**
  * Best-effort orphan-VM cleanup script for malformed Phase-1 output.
@@ -1676,6 +1716,8 @@ echo "HERMES_DORMANT_ARCHIVE_SIZE_BYTES=$archive_size_bytes"
 }
 export function buildProxmoxResizeScript(params: {
   vmid: number;
+  /** The row's instance id. A VMID holding any other VM is never resized. */
+  expectedInstanceId: string;
   cores: number;
   memoryMb: number;
   /** Optional --balloon floor (MB). See `buildProxmoxProvisionScript` for
@@ -1699,7 +1741,7 @@ if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "VM $VMID not found" >&2
   exit 1
 fi
-
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}
 qm set "$VMID" --cores "$CORES" --cpulimit "$CPU_LIMIT" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"
 `;
 }

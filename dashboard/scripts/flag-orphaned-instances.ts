@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   ): Promise<InstanceShutdownResult> => {
     const proxmox = getProxmoxInfrastructure(row.config);
     if (proxmox) {
-      const result = await shutdownProxmoxInstance(proxmox);
+      const result = await shutdownProxmoxInstance(proxmox, { expectedInstanceId: row.id });
       if (result.ok) return { ok: true };
       return {
         ok: false,

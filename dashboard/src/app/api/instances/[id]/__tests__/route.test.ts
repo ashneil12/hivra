@@ -1957,6 +1957,7 @@ describe("POST /api/instances/[id]", () => {
       // setOnboot:1 restores boot-on-host-reboot for the resumed agent (inverse
       // of the inactivity-pause onboot:0).
       expect(startProxmoxInstance).toHaveBeenCalledWith(infrastructure, {
+        expectedInstanceId: "inst-123",
         hostConfig: null,
         setOnboot: 1,
       });
@@ -1998,6 +1999,7 @@ describe("POST /api/instances/[id]", () => {
       expect(startProxmoxInstance).toHaveBeenCalledWith(
         { vmid: 201, node: "fixturenode1" },
         {
+          expectedInstanceId: "inst-123",
           hostConfig: { hostId: null, hostSlug: "fixturenode1", envPrefix: null, failClosed: true },
           setOnboot: 1,
         }
@@ -2211,7 +2213,7 @@ describe("POST /api/instances/[id]", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(shutdownProxmoxInstance).toHaveBeenCalledWith(infrastructure, { hostConfig: null });
+      expect(shutdownProxmoxInstance).toHaveBeenCalledWith(infrastructure, { expectedInstanceId: "inst-123", hostConfig: null });
       expect(shutdownServer).not.toHaveBeenCalled();
       expect(updateMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2236,7 +2238,7 @@ describe("POST /api/instances/[id]", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(rebootProxmoxInstance).toHaveBeenCalledWith(infrastructure, { hostConfig: null });
+      expect(rebootProxmoxInstance).toHaveBeenCalledWith(infrastructure, { expectedInstanceId: "inst-123", hostConfig: null });
       expect(updateMock).toHaveBeenCalledWith(
         expect.objectContaining({ status: "running" })
       );

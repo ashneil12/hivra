@@ -424,6 +424,7 @@ async function pauseInstance(
   }
 
   const result = await shutdownProxmoxInstance(infra, {
+    expectedInstanceId: candidate.id,
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
       host_id: candidate.host_id,
     }),
