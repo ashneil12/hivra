@@ -1289,7 +1289,9 @@ async function launchAgent(request: NextRequest) {
           placementMessage: placement.message,
           placementError: placement.error ?? null,
         });
-        return apiError(placement.message, placement.status);
+        // Refused before anything was created: the launch can be tried again
+        // as it is, and the client must not treat it as possibly created.
+        return apiError(placement.message, placement.status, undefined, { code: "placement_unavailable" });
       }
       env = placement.env;
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();

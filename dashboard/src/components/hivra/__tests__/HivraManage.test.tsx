@@ -6,6 +6,7 @@ import { HivraManage as RealHivraManage } from "../HivraManage";
 import { AgentActionError, ProviderResizeApiError, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { manageCapabilitiesFor, type ManageCapabilitiesContext } from "@/lib/hivra/manage-capabilities";
+import { ATTACH_UPDATE_RUNTIME_COPY } from "@/lib/agent-computers/attach-copy";
 
 /**
  * The agent as GET /api/hivra/agents/[id] returns it: with the server's
@@ -297,6 +298,9 @@ describe("HivraManage lifecycle guidance", () => {
     openSection("Updates");
     expect(screen.queryByRole("button", { name: /Update & restart/ })).not.toBeInTheDocument();
     const update = screen.getByRole("button", { name: "Update connection service" });
+    // The attach gate sends the owner here by this button's name. It used to
+    // say "choose Update & restart", a button Manage doesn't have.
+    expect(ATTACH_UPDATE_RUNTIME_COPY).toContain(`choose ${update.textContent?.trim()},`);
     expect(update).toHaveAttribute("title", expect.stringMatching(/without restarting the computer/));
     const guidance = screen.getByText(/brings Hivra’s connection service up to date/);
     expect(guidance).toHaveTextContent("without restarting the computer");
