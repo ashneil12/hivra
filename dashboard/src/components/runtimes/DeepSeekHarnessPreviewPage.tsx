@@ -95,7 +95,7 @@ export function DeepSeekHarnessPreviewPage() {
               <span className={styles.sectionKicker}>Where it stands</span>
               <ol>
                 <li><Check size={13} /><span><strong>Its own interface</strong> Opens from Hivra, signed in, with a real model answering.</span></li>
-                <li><Check size={13} /><span><strong>Your model key</strong> Delivered to its computer, never shown back in your browser.</span></li>
+                <li><Check size={13} /><span><strong>Your model key</strong> Added in its own settings on its computer, never shown back in your browser.</span></li>
                 <li><Check size={13} /><span><strong>Restart and remove</strong> Comes back after a restart, and removes cleanly.</span></li>
                 <li data-pending="true"><span className={styles.pendingRing} /><span><strong>Working with other agents</strong> Still being finished.</span></li>
               </ol>

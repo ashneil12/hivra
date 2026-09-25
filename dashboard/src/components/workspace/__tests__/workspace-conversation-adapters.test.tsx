@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import { HivraChat } from "@/components/hivra/HivraChat";
 import { WebuiIframe } from "@/components/webui/WebuiIframe";
@@ -222,6 +222,36 @@ describe("workspace conversation adapters", () => {
     // The bootstrap token must never reach a URL or the accessible name.
     expect(document.body.innerHTML).not.toContain(SECRET_TOKEN);
     (globalThis as { fetch?: unknown }).fetch = originalFetch;
+  });
+
+  it.each([
+    { type: "agent-zero" as const, destination: "/agent-zero/" },
+    { type: "openclaw" as const, destination: "/openclaw/" },
+    { type: "aeon" as const, destination: "/aeon/" },
+  ])("embeds $type at its native mount $destination", async ({ type, destination }) => {
+    const originalFetch = (globalThis as { fetch?: unknown }).fetch;
+    const requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => undefined);
+    (globalThis as { fetch?: unknown }).fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({ agentKind: type, surfaceAuth: "post-cookie-v1" }),
+    }));
+    try {
+      const adapter = resolveWorkspaceConversation({
+        ...hivraSource,
+        agent: { ...hivraSource.agent, type, chat_url: "https://box.example.com" },
+      });
+      render(<WorkspaceConversation adapter={adapter!} />);
+      const form = await waitFor(() => {
+        const found = document.querySelector('form[target^="hivra-runtime-"]');
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      expect(form.querySelector('input[name="destination"]')).toHaveValue(destination);
+      await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
+    } finally {
+      requestSubmit.mockRestore();
+      (globalThis as { fetch?: unknown }).fetch = originalFetch;
+    }
   });
 
   it.each(["omarchy", "windows", "ubuntu-desktop", null] as const)(

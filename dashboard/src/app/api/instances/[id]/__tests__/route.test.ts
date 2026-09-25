@@ -7,6 +7,7 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { enableServerBackup, getServer, powerOnServer, rebuildServer, shutdownServer } from "@/lib/hetzner/client";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-orchestrator";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
 import { apiError } from "@/lib/api-response";
 import {
@@ -1125,11 +1126,12 @@ describe("POST /api/instances/[id]", () => {
     );
 
     expect(response.status).toBe(200);
-    const expectedArguments: unknown[] = [webuiInstance, "10.250.20.55", {}, supabaseAdmin];
-    if (action === "redeploy" && applyTerminalBackend === true) {
-      expectedArguments.push({ applyTerminalBackend: true });
-    }
-    expect(applyLiveUpdate).toHaveBeenCalledWith(...expectedArguments);
+    // The owner asked for this restart: user-initiated, so no in-flight deferral.
+    const expectedOptions =
+      action === "redeploy" && applyTerminalBackend === true
+        ? { initiator: USER_LIVE_UPDATE, applyTerminalBackend: true }
+        : { initiator: USER_LIVE_UPDATE };
+    expect(applyLiveUpdate).toHaveBeenCalledWith(webuiInstance, "10.250.20.55", {}, supabaseAdmin, expectedOptions);
     expect(buildAgentDeployScript).not.toHaveBeenCalled();
     expect(sshExec).not.toHaveBeenCalled();
   });
@@ -2769,7 +2771,8 @@ describe("PATCH /api/instances/[id]", () => {
       }),
       "203.0.113.10",
       {},
-      supabaseAdmin
+      supabaseAdmin,
+      { initiator: USER_LIVE_UPDATE }
     );
     expect(json.data.applied).toBe(true);
     expect(json.data.instance.config).toEqual(nextConfig);

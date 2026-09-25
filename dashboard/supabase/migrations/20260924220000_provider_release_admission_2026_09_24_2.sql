@@ -1,0 +1,29 @@
+-- Admit the reviewed 2026.09.24.2 provider bundle (persistent work: terminal
+-- sessions, surfaces that recover after a gateway restart, in-place runtime
+-- updates) without invalidating existing computers. The TypeScript identities
+-- and manifest ship with the release; this keeps SQL admission and the
+-- identity gates in step. The bundle digest is the manifest digest recorded in
+-- provider-desktop-worker.ts and provider-native-worker.ts.
+do $migration$
+declare signature text; definition text; anchor text; addition text;
+begin
+  for signature, anchor, addition in select * from (values
+    ('public.admit_prepared_provider_computer(text,uuid,bigint,uuid,uuid,text,uuid,uuid,jsonb)',
+     '''2026.09.22.2'',''2026.09.24.1''',
+     '''2026.09.22.2'',''2026.09.24.1'',''2026.09.24.2'''),
+    ('public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)',
+     '(p_identity->''bundle''->>''bundleSha256''=''23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.09.24.1'')',
+     '(p_identity->''bundle''->>''bundleSha256''=''23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.09.24.1'') or (p_identity->''bundle''->>''bundleSha256''=''54898f145b981d4933bb32f09cdfa06e2e75a5c4916fe9a204f86fce6d8d5624'' and p_identity->''bundle''->>''provisionerVersion''=''2026.09.24.2'')'),
+    ('public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)',
+     '(p_identity->''bundle''->>''bundleSha256''=''23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.09.24.1'')',
+     '(p_identity->''bundle''->>''bundleSha256''=''23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.09.24.1'') or (p_identity->''bundle''->>''bundleSha256''=''54898f145b981d4933bb32f09cdfa06e2e75a5c4916fe9a204f86fce6d8d5624'' and p_identity->''bundle''->>''provisionerVersion''=''2026.09.24.2'')')
+  ) as patches(signature, anchor, addition)
+  loop
+    definition := pg_get_functiondef(signature::regprocedure);
+    if (length(definition) - length(replace(definition, anchor, ''))) / length(anchor) <> 1 then
+      raise exception 'Provider release admission anchor mismatch: %', signature;
+    end if;
+    execute replace(definition, anchor, addition);
+  end loop;
+end;
+$migration$;

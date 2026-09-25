@@ -33,8 +33,8 @@ verified producer exists.
 | `/var/lib/hivra-agent-trace/credential.json` | 0600 | root | `{endpoint, resourceId, token, expiresAt}` |
 | `/var/lib/hivra-agent-trace/state.json` | 0600 | root | File offsets and bounded parser state |
 
-Installation is one idempotent entry point, used by the launch installer and
-by the start path:
+Installation is one idempotent entry point, used by the launch installer, by
+the start path and by the in-place runtime update:
 
 ```
 python3 -I -B <dir>/hivra-agent-trace.py install --source-dir <dir>
@@ -48,8 +48,9 @@ token.
 
 Reporter installation is fail-open everywhere: a malformed credential document
 is refused, but a failure to install or start the reporter never fails a
-launch or a start. The launch installer and the start helper each emit exactly
-one marker line into the host log,
+launch, a start or a runtime update. The launch installer and the start helper each emit exactly
+one marker line into the host log (the in-place runtime updater emits the same
+line on its host-authored stdout),
 `HIVRA_ACTIVITY_COLLECTOR status=installed` or
 `HIVRA_ACTIVITY_COLLECTOR status=failed reason=<enum>`, which the control plane
 records as the computer's install status. Issuance is recorded only when the

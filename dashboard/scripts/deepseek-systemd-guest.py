@@ -91,7 +91,9 @@ def provider_cancellation(receipt, lifecycle_lock, native):
         with os.fdopen(descriptor, "wb") as output:
             output.write(raw)
         manifest.append({"path": name, "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw), "mode": 0o600})
-    checked(len(manifest) == 37, "fixture_source_count")
+    release = json.loads(Path("/opt/hivra-test/source-release.json").read_text())
+    checked(sorted((entry["path"], entry["sha256"], entry["bytes"]) for entry in release["files"])
+            == sorted((entry["path"], entry["sha256"], entry["size"]) for entry in manifest), "fixture_source_count")
     rows = [[entry[key] for key in ("path", "sha256", "size", "mode")] for entry in manifest]
     bundle = {"version": 1, "state": "bundle_installed", "scopeSha256": "c" * 64,
               "bundleSha256": hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode("ascii")).hexdigest(),

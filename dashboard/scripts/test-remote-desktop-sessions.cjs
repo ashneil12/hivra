@@ -296,6 +296,15 @@ async function main() {
       controllerToken,
       inputReceipt("agent-input-resumed", controller.sessionId),
     )).status, "denied");
+    // A lost answer: this controller lease was issued, but its one-time code
+    // never reached anyone. It still fences the next controller until the
+    // broker retires it as handoff_abandoned, which releases it at once
+    // because it never held input; the next controller then issues.
+    const unanswered = await issue({ inputRole: "controller" });
+    eq(unanswered.response.status, "issued");
+    eq((await issue({ inputRole: "controller" })).response.status, "controller_conflict");
+    eq((await revoke(unanswered.sessionId, owner, "handoff_abandoned")).inputState, "released");
+    eq((await exchange(unanswered.code, verifier, "unanswered-token")).status, "revoked");
     const nextController = await issue({ inputRole: "controller" });
     eq(nextController.response.status, "issued");
     const nextControllerToken = "next-controller-token";

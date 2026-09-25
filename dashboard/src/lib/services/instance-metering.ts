@@ -109,6 +109,30 @@ function toNumber(value: unknown): number {
 }
 
 /**
+ * Increase of a cumulative per-VM counter across time-ordered samples.
+ *
+ * - Samples <= 0 are "no reading" and are skipped. Every metering row written
+ *   on PVE 9 before the kvm /proc CPU source landed has cpu_seconds_total = 0,
+ *   and a running VM never has a real 0; treating that 0 as a baseline would
+ *   turn the first real reading (CPU since VM start) into a fake spike.
+ * - A drop means the VM restarted and the counter began again from 0, so the
+ *   new value itself is the increase since the restart.
+ */
+export function cumulativeCounterIncrease(values: readonly unknown[]): number {
+  let total = 0;
+  let previous: number | null = null;
+  for (const value of values) {
+    const current = toNumber(value);
+    if (current <= 0) continue;
+    if (previous !== null) {
+      total += current >= previous ? current - previous : current;
+    }
+    previous = current;
+  }
+  return total;
+}
+
+/**
  * Coerce a JSONB metadata field — which Supabase may hand back as an object,
  * a JSON string, or null — into a plain record. Returns {} on anything else.
  */
@@ -271,7 +295,7 @@ export async function getInstanceMeteringRollup(
     sample_count: rows.length,
     first_sampled_at: first.sampled_at,
     last_sampled_at: last.sampled_at,
-    cpu_seconds_total: Math.max(0, toNumber(last.cpu_seconds_total) - toNumber(first.cpu_seconds_total)),
+    cpu_seconds_total: cumulativeCounterIncrease(rows.map((row) => row.cpu_seconds_total)),
     net_out_bytes: Math.max(0, toNumber(last.net_out_bytes) - toNumber(first.net_out_bytes)),
     runtime_seconds: Math.max(0, toNumber(last.runtime_seconds) - toNumber(first.runtime_seconds)),
     ram_peak_bytes: ramPeak,
