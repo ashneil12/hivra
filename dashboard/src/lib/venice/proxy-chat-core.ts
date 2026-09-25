@@ -16,7 +16,11 @@ import {
   estimateChatCompletionCost,
   type VenicePricingMap,
 } from "@/lib/venice/cost-estimator";
-import { managedChatBilledOptionError } from "@/lib/venice/chat-request-options";
+import {
+  planManagedChatSurcharges,
+  type ManagedChatSurchargeEvidence,
+  type ManagedChatSurchargePlan,
+} from "@/lib/venice/chat-surcharges";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
@@ -113,22 +117,25 @@ export async function authorizeManagedVeniceChat(params: {
   if (typeof body.model !== "string" || !body.model.trim()) {
     return { ok: false, response: apiError("Model is required.", 400) };
   }
+  // Options Venice bills on top of tokens (web search, scraping, X search) are
+  // held here and charged at capture. One this can't price is refused before
+  // any hold: the Worker forwards its own copy of the body, so refusing here
+  // is the only control on that path. Responses has its own allowlist.
+  let surcharge: ManagedChatSurchargePlan | null = null;
   if (params.protocol !== "responses") {
-    // Options Venice bills on top of tokens (web search, scraping, X search,
-    // provider-side tools) aren't in the hold or the settlement. Refuse them
-    // here, before any hold: the Worker forwards its own copy of the body.
-    const optionError = managedChatBilledOptionError(body);
-    if (optionError) {
+    const planned = planManagedChatSurcharges(body);
+    if (!planned.ok) {
       return {
         ok: false,
         response: openAiCompatibleError({
           status: 400,
           code: "managed_venice_unpriced_option",
           type: "invalid_request_error",
-          message: optionError,
+          message: planned.error,
         }),
       };
     }
+    surcharge = planned.plan;
   }
   const endpoint = params.protocol === "responses" ? VENICE_RESPONSES_ENDPOINT : "/api/v1/chat/completions";
   const estimateBody = params.protocol === "responses" ? responsesEstimateRequest(body) : body as { model: string; [key: string]: unknown };
@@ -208,6 +215,7 @@ export async function authorizeManagedVeniceChat(params: {
       requestBody: estimateBody,
       ...(params.protocol === "responses" ? { endpoint: VENICE_RESPONSES_ENDPOINT } : {}),
       pricingMap,
+      surcharge,
     });
   } catch (error) {
     if (error instanceof ManagedVeniceSpendCapError) {
@@ -302,6 +310,7 @@ export async function settleManagedVeniceChatUsage(params: {
   upstreamStatus: number;
   usage: unknown;
   pricingMap?: VenicePricingMap;
+  surchargeEvidence?: ManagedChatSurchargeEvidence;
 }): Promise<{ settled: boolean; reconciled: boolean }> {
   const pricingMap =
     params.pricingMap ?? (await getVenicePricingMap()).map;
@@ -317,6 +326,7 @@ export async function settleManagedVeniceChatUsage(params: {
         upstreamStatus: params.upstreamStatus,
         usage: params.usage,
         pricingMap,
+        surchargeEvidence: params.surchargeEvidence,
       });
       return { settled: true, reconciled: false };
     }

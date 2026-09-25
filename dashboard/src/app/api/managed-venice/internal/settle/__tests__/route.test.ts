@@ -84,7 +84,16 @@ describe("/api/managed-venice/internal/settle", () => {
       model: "venice-uncensored-1-2",
       upstreamStatus: 200,
       usage: { prompt_tokens: 4, completion_tokens: 10 },
+      // An older Worker sends no evidence: settle falls back to published rates.
+      surchargeEvidence: { veniceCostMicroUsd: null, webSearchCitations: null },
     });
+  });
+
+  it("passes Venice's cost and citation count through for surcharge settlement", async () => {
+    await POST(makeReq({ ...fullPayload, surchargeEvidence: { veniceCostMicroUsd: 12_345, webSearchCitations: 3 } }));
+    expect(mockSettle).toHaveBeenCalledWith(
+      expect.objectContaining({ surchargeEvidence: { veniceCostMicroUsd: 12_345, webSearchCitations: 3 } })
+    );
   });
 
   it("settles with usage:null when no usage frame was seen", async () => {

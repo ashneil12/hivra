@@ -78,6 +78,64 @@ function readUsageFromSseFrame(frame: string): unknown {
   return null;
 }
 
+interface SurchargeEvidence {
+  veniceCostMicroUsd: number | null;
+  webSearchCitations: number | null;
+}
+
+const NO_SURCHARGE_EVIDENCE: SurchargeEvidence = { veniceCostMicroUsd: null, webSearchCitations: null };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/**
+ * Mirror of dashboard readSurchargeEvidence (lib/venice/chat-surcharges.ts) —
+ * keep in lockstep. Venice's per-request `cost` (usd + diem) and the web
+ * search citation count, so settle can charge web search / scraping / X search
+ * from Venice's own figure. Without it settle charges published rates.
+ */
+function readSurchargeEvidence(payload: unknown): SurchargeEvidence {
+  if (!isRecord(payload)) return NO_SURCHARGE_EVIDENCE;
+  const cost = payload.cost;
+  let veniceCostMicroUsd: number | null = null;
+  if (isRecord(cost) && (cost.usd !== undefined || cost.diem !== undefined)) {
+    const usd = cost.usd ?? 0;
+    const diem = cost.diem ?? 0;
+    if (typeof usd === "number" && typeof diem === "number" && Number.isFinite(usd) && Number.isFinite(diem) && usd >= 0 && diem >= 0) {
+      veniceCostMicroUsd = Math.round((usd + diem) * 1_000_000);
+    }
+  }
+  const citations = isRecord(payload.venice_parameters) ? payload.venice_parameters.web_search_citations : undefined;
+  return { veniceCostMicroUsd, webSearchCitations: Array.isArray(citations) ? citations.length : null };
+}
+
+function mergeSurchargeEvidence(seen: SurchargeEvidence, next: SurchargeEvidence): SurchargeEvidence {
+  return {
+    veniceCostMicroUsd: next.veniceCostMicroUsd ?? seen.veniceCostMicroUsd,
+    webSearchCitations:
+      seen.webSearchCitations === null && next.webSearchCitations === null
+        ? null
+        : Math.max(seen.webSearchCitations ?? 0, next.webSearchCitations ?? 0),
+  };
+}
+
+function readSurchargeEvidenceFromSseFrame(frame: string): SurchargeEvidence {
+  let evidence = NO_SURCHARGE_EVIDENCE;
+  for (const line of frame.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      evidence = mergeSurchargeEvidence(evidence, readSurchargeEvidence(JSON.parse(data)));
+    } catch {
+      // non-JSON keep-alive / comment frame
+    }
+  }
+  return evidence;
+}
+
 async function callSettle(env: Env, payload: Record<string, unknown>): Promise<void> {
   try {
     await fetch(`${env.VERCEL_BASE_URL}/api/managed-venice/internal/settle`, {
@@ -105,6 +163,11 @@ async function sniffAndSettle(
   const decoder = new TextDecoder();
   let buffer = "";
   let finalUsage: unknown = null;
+  let surchargeEvidence = NO_SURCHARGE_EVIDENCE;
+  const readFrame = (frame: string) => {
+    finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
+    surchargeEvidence = mergeSurchargeEvidence(surchargeEvidence, readSurchargeEvidenceFromSseFrame(frame));
+  };
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -113,13 +176,11 @@ async function sniffAndSettle(
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split(/\r?\n\r?\n/);
         buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
-        }
+        for (const frame of frames) readFrame(frame);
       }
     }
     buffer += decoder.decode();
-    if (buffer) finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
+    if (buffer) readFrame(buffer);
   } catch (err) {
     console.error("managed-venice usage sniff failed", String(err));
   }
@@ -134,6 +195,7 @@ async function sniffAndSettle(
     model: auth.model,
     upstreamStatus,
     usage: finalUsage,
+    surchargeEvidence,
   });
 }
 
@@ -268,6 +330,7 @@ async function handleChatCompletions(
       model: auth.model,
       upstreamStatus: upstream.status,
       usage,
+      surchargeEvidence: readSurchargeEvidence(json),
     })
   );
 
