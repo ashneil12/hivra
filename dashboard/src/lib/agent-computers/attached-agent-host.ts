@@ -8,6 +8,7 @@ import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-c
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { ATTACHED_HELPERS } from "./attachment-service-units";
+import { logAttachmentTransportFailure } from "./attachment-transport-diagnostic";
 import { buildAttachmentHostStepScript, parseAttachmentTargetRefusal, parseGuestStepRefusal, snapshotAttachmentObservationTarget,
   type AttachmentTargetRefusal } from "./attachment-host-observation";
 
@@ -175,9 +176,14 @@ export async function executeAttachedAgentStep(
       const refused = parseAttachmentTargetRefusal(result.stdout);
       if (refused) return { ok: false, code: "target_refused", reason: refused };
       const named = parseGuestStepRefusal(result.stdout, ATTACHED_AGENT_REFUSALS);
-      return named ? { ok: false, code: "guest_refused", reason: named } : { ok: false, code: "transport_failed" };
+      if (named) return { ok: false, code: "guest_refused", reason: named };
+      logAttachmentTransportFailure(action, { sourceId: target.sourceId, vmid: target.vmid }, result);
+      return { ok: false, code: "transport_failed" };
     }
     const parsed = parseAttachedAgentResult(action, result.stdout);
     return parsed ? { ok: true, result: parsed } : { ok: false, code: "invalid_result" };
-  } catch { return { ok: false, code: "transport_failed" }; }
+  } catch (error) {
+    logAttachmentTransportFailure(action, { sourceId: target.sourceId, vmid: target.vmid }, error);
+    return { ok: false, code: "transport_failed" };
+  }
 }

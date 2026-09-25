@@ -6,6 +6,7 @@
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -95,6 +96,28 @@ describe("executing a step", () => {
     expect(await executeAttachedAgentStep(OWNER, agent as never, "remove", target, packet, d)).toEqual({ ok: false, code: "transport_failed" });
     d.runHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_ATTACHED_AGENT_V1 ${JSON.stringify(removed)}` });
     expect(await executeAttachedAgentStep(OWNER, agent as never, "state", target, packet, d)).toEqual({ ok: false, code: "invalid_result" });
+  });
+
+  // Live on Canary an activation and then every observation were held as
+  // transport_failed with nothing to say why. The host's own words now reach
+  // the logs, bounded and with token-shaped values masked.
+  it("logs what the host said when a step fails without a named refusal, masking tokens", async () => {
+    const d = deps();
+    const secret = "a".repeat(40);
+    d.runHostScript.mockResolvedValue({ ok: false, stdout: `partial ${secret}\n`, stderr: `qm guest exec: VM 1113 qmp command 'guest-exec-status' failed - got timeout ${"x".repeat(900)}`, error: "exit 255" });
+    expect(await executeAttachedAgentStep(OWNER, agent as never, "activate", target, packet, d)).toEqual({ ok: false, code: "transport_failed" });
+    const { log } = jest.requireMock("@/lib/logger") as { log: { warn: jest.Mock } };
+    const [message, fields] = log.warn.mock.calls.at(-1)!;
+    expect(message).toBe("attach host step failed without a named refusal");
+    expect(fields).toMatchObject({ step: "activate", vmid: target.vmid, error: "exit 255", failureType: "attachment_transport_failed" });
+    expect(fields.stderrTail.length).toBeLessThanOrEqual(600);
+    expect(fields.stdoutTail).toBe("partial [masked]\n");
+    expect(JSON.stringify(fields)).not.toContain(secret);
+
+    log.warn.mockClear();
+    d.runHostScript.mockRejectedValue(new Error("ssh: connect to host timed out"));
+    expect(await executeAttachedAgentStep(OWNER, agent as never, "state", target, packet, d)).toEqual({ ok: false, code: "transport_failed" });
+    expect(log.warn).toHaveBeenCalledWith("attach host step failed without a named refusal", expect.objectContaining({ step: "state", error: "ssh: connect to host timed out" }));
   });
 
   it("reads the refusal the runner named when the program raised in the VM, and only a name it knows (T3)", async () => {

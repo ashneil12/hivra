@@ -3,6 +3,7 @@ import "server-only";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
+import { logAttachmentTransportFailure } from "./attachment-transport-diagnostic";
 import { buildAttachmentHostObservationScript, parseAttachmentHostObservation, parseAttachmentTargetRefusal,
   type AttachmentHostObservation, type AttachmentObservationTarget, type AttachmentTargetRefusal } from "./attachment-host-observation";
 
@@ -47,9 +48,14 @@ export async function observeAttachmentGuestBoot(
     if (!result.ok) {
       // The host refused the VM before anything ran in it: say why.
       const refused = parseAttachmentTargetRefusal(result.stdout);
-      return refused ? { ok: false, code: "target_refused", reason: refused } : { ok: false, code: "transport_failed" };
+      if (refused) return { ok: false, code: "target_refused", reason: refused };
+      logAttachmentTransportFailure("stage-observe", { sourceId: agent.id, vmid: agent.vmid }, result);
+      return { ok: false, code: "transport_failed" };
     }
     const observation = parseAttachmentHostObservation(result.stdout, target);
     return observation ? { ok: true, observation } : { ok: false, code: "invalid_observation" };
-  } catch { return { ok: false, code: "transport_failed" }; }
+  } catch (error) {
+    logAttachmentTransportFailure("stage-observe", { sourceId: agent.id, vmid: agent.vmid }, error);
+    return { ok: false, code: "transport_failed" };
+  }
 }
