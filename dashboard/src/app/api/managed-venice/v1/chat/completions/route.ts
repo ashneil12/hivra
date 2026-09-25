@@ -13,6 +13,12 @@ import {
   releaseManagedVeniceChatReservation,
 } from "@/lib/venice/proxy-settlement";
 import { CHAT_STREAM_CANCELLED_RECONCILIATION_REASON } from "@/lib/venice/chat-stream-reconciliation";
+import {
+  NO_SURCHARGE_EVIDENCE,
+  mergeSurchargeEvidence,
+  readSurchargeEvidence,
+  readSurchargeEvidenceFromSseFrame,
+} from "@/lib/venice/chat-surcharges";
 // Shared authorize/settle core — keeps the in-Vercel route and the off-Vercel
 // Cloudflare Worker (internal/{authorize,settle}) from drifting on billing
 // semantics. See docs/PRODUCT-ARCHITECTURE.md.
@@ -62,6 +68,9 @@ function createSettlingStream(params: {
   };
   let buffer = "";
   let finalUsage: unknown = null;
+  // Venice's `cost` and web-search citations, for web search / scraping /
+  // X search charges (chat-surcharges.ts).
+  let surchargeEvidence = NO_SURCHARGE_EVIDENCE;
   let forwardedBytes = 0;
   let cancelled = false;
   let settlement: Promise<unknown> | null = null;
@@ -70,9 +79,12 @@ function createSettlingStream(params: {
     buffer += decoder.decode(chunk, { stream: true });
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = frames.pop() ?? "";
-    for (const frame of frames) {
-      finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
-    }
+    for (const frame of frames) readFrame(frame);
+  }
+
+  function readFrame(frame: string) {
+    finalUsage = readUsageFromSseFrame(frame) ?? finalUsage;
+    surchargeEvidence = mergeSurchargeEvidence(surchargeEvidence, readSurchargeEvidenceFromSseFrame(frame));
   }
 
   async function fileReconciliation(reason: string, metadata: Record<string, unknown> = {}) {
@@ -116,6 +128,7 @@ function createSettlingStream(params: {
             upstreamStatus: params.upstreamStatus,
             usage: finalUsage,
             pricingMap: params.pricingMap,
+            surchargeEvidence,
           });
           return null;
         } catch (error) {
@@ -175,9 +188,7 @@ function createSettlingStream(params: {
           forwardedBytes += value.byteLength;
         }
         buffer += decoder.decode();
-        if (buffer) {
-          finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
-        }
+        if (buffer) readFrame(buffer);
       } catch (error) {
         upstreamError = error;
       }
@@ -203,7 +214,7 @@ function createSettlingStream(params: {
     async cancel() {
       cancelled = true;
       // A usage frame that arrived without its trailing blank line still counts.
-      finalUsage = readUsageFromSseFrame(buffer) ?? finalUsage;
+      readFrame(buffer);
       const settled = settle("client_cancelled");
       // Stop reading so Venice stops generating for a reader that has gone.
       await reader.cancel().catch(() => undefined);
@@ -353,6 +364,7 @@ export async function POST(req: NextRequest) {
       upstreamStatus: upstreamResponse.status,
       usage,
       pricingMap,
+      surchargeEvidence: readSurchargeEvidence(upstreamJson),
     });
   } catch (error) {
     if (error instanceof MissingVeniceUsageError) {

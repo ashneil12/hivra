@@ -17,7 +17,10 @@ box → Worker /v1/chat/completions
         2. fetch(api.venice.ai, Bearer upstreamKey)   ← Worker holds this stream
         3. tee → client gets tokens; sniff branch extracts usage
         4. POST {VERCEL_BASE_URL}/api/managed-venice/internal/settle
-             {outcome:"settle", referenceId, usage, ...}   (or {outcome:"release"} on upstream failure)
+             {outcome:"settle", referenceId, usage, surchargeEvidence, ...}   (or {outcome:"release"} on upstream failure)
+             surchargeEvidence = Venice's per-request `cost` and web-search citation count, so
+             web search / scraping / X search are charged from Venice's own figure (optional:
+             without it settle charges published rates from the plan held on the reservation)
 
 box → Worker /v1/embeddings (and all other /v1/*)  →  reverse-proxied to Vercel verbatim
 ```

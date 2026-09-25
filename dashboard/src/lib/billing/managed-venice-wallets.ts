@@ -66,6 +66,7 @@ interface ReservationRow {
   reference_id: string;
   reserved_micro_usd: number;
   captured_micro_usd?: number | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export class ManagedVeniceInsufficientBalanceError extends Error {

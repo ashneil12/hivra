@@ -4,6 +4,7 @@ import { apiError } from "@/lib/api-response";
 import type { ManagedVeniceWalletType } from "@/lib/billing/managed-venice-wallets";
 import { releaseManagedVeniceChatReservation } from "@/lib/venice/proxy-settlement";
 import { assertManagedVeniceInternalSecret } from "@/lib/venice/internal-secret";
+import { parseSurchargeEvidence } from "@/lib/venice/chat-surcharges";
 import { settleManagedVeniceChatUsage } from "@/lib/venice/proxy-chat-core";
 
 export const runtime = "nodejs";
@@ -56,6 +57,10 @@ export async function POST(req: NextRequest) {
   // `usage` is intentionally optional: null/absent means the stream finished
   // without a usage frame, which settle handles via reconciliation.
   const usage = "usage" in payload ? payload.usage : null;
+  // What Venice's response said about web search / scraping / X search
+  // (its `cost`, the citation count). Optional: without it the surcharge is
+  // charged at Venice's published rates from the plan on the reservation.
+  const surchargeEvidence = parseSurchargeEvidence(payload.surchargeEvidence);
 
   if (!userId || !proxyKeyId || !referenceId || !model) {
     return apiError("Missing settlement fields.", 400, {
@@ -71,6 +76,7 @@ export async function POST(req: NextRequest) {
     model,
     upstreamStatus,
     usage,
+    surchargeEvidence,
   });
 
   return Response.json({ ok: true, ...result });
