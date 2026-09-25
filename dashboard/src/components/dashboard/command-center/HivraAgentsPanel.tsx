@@ -254,7 +254,7 @@ export function HivraAgentsPanel({
               TOOL_CAPABLE_TYPES.has(agent.agentType || "")
                 ? () =>
                     go(
-                      `/dashboard/agent/${encodeURIComponent(agent.id)}?tab=manage&tools=1`,
+                      `/dashboard/agent/${encodeURIComponent(agent.id)}?tab=manage&section=model&tools=1`,
                     )
                 : undefined
             }

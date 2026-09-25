@@ -2169,7 +2169,7 @@ describe("LaunchPage", () => {
     expect(screen.queryByText(/haven't launched/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Nothing has started/)).not.toBeInTheDocument();
     expect(screen.getByText("Starting a new launch doesn't delete what was created.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open it to delete" })).toHaveAttribute("href", `/dashboard/agent/${partialId}?tab=manage`);
+    expect(screen.getByRole("link", { name: "Open it to delete" })).toHaveAttribute("href", `/dashboard/agent/${partialId}?tab=manage&section=advanced#danger`);
   });
 
   it("mentions a Windows ISO download still running when asking to resume", async () => {

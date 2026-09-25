@@ -9,6 +9,7 @@ import {
   reviewProviderResize,
   type HivraAgent,
 } from "@/lib/hivra/agent-api";
+import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
 import {
   type ProviderResizeCatalog,
   type ProviderResizeOperationView,
@@ -45,14 +46,20 @@ function operationNeedsObservation(operation: ProviderResizeOperationView): bool
   return ["request_uncertain", "action_pending", "provider_pending"].includes(operation.stage);
 }
 
-export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; onChanged: () => void }) {
+export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
+  agent: HivraAgent;
+  onChanged: () => void;
+  /** A saved resize in progress or a failure, for Manage to show while Resources is closed. */
+  onFeedbackChange?: (feedback: ManageFeedback) => void;
+}) {
   const [catalog, setCatalog] = useState<ProviderResizeCatalog | null>(null);
   const [operation, setOperation] = useState<ProviderResizeOperationView | null>(null);
   const [quote, setQuote] = useState<ProviderResizeQuote | null>(null);
   const [target, setTarget] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [unsupported, setUnsupported] = useState(false);
+  // The server's reason this computer's server type can't change here, or null.
+  const [unsupported, setUnsupported] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +72,7 @@ export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; o
       const state = await getProviderResizeState(agent.id);
       setCatalog(state.catalog);
       setOperation(state.operation);
-      setUnsupported(false);
+      setUnsupported(null);
       setError(null);
       if (state.operation?.shutdownRequired && shutdownContinuation.current !== state.operation.operationId) {
         // Resume only this persisted, already-confirmed operation. A failed
@@ -103,7 +110,7 @@ export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; o
       }
     } catch (cause) {
       if (cause instanceof ProviderResizeApiError && ["not_found", "not_supported"].includes(String(cause.code))) {
-        setUnsupported(true);
+        setUnsupported(cause.message || "Hetzner didn't confirm a resize for this server.");
         setCatalog(null);
         setOperation(null);
         return;
@@ -196,7 +203,25 @@ export function ProviderResizePanel({ agent, onChanged }: { agent: HivraAgent; o
     } finally { setBusy(false); }
   };
 
-  if (loading || unsupported) return null;
+  useReportManageFeedback(onFeedbackChange, error ? { kind: "alert", message: error }
+    : operation && operationNeedsObservation(operation) ? { kind: "status", message: operation.message } : null);
+
+  const size = `${agent.cpu} CPU / ${agent.ram} GB`;
+  // Resources is never empty: while the server is asked, say so; when it
+  // can't change this server type, show the fixed size and the server's reason.
+  if (loading) {
+    return <div role="status" style={{ ...card, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>Checking Hetzner resize options…</div>;
+  }
+  if (unsupported) {
+    return (
+      <div style={card} data-testid="provider-resize-fixed">
+        <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Fixed size · {size}</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
+          Hivra can&apos;t change this Hetzner server type from here. {unsupported}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

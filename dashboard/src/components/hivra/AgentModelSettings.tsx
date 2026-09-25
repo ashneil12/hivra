@@ -6,6 +6,7 @@ import type { AgentLlmInput } from "@/lib/hivra/agent-api";
 import { AgentModelSettingsError, cancelAgentLaunchModel, continueAgentLaunchModel, getAgentModelSettings, resumeAgentModelSettings, setAgentModelSettings,
   type AgentModelSettings as Settings } from "@/lib/hivra/agent-model-settings-api";
 import styles from "./AgentModelSettings.module.css";
+import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
 function description(config: Settings["llm"]) {
@@ -15,9 +16,11 @@ function description(config: Settings["llm"]) {
 
 /** Key this component by agent ID: drafts and in-flight response handlers must
  * never move between computers when the owner switches selection. */
-export function AgentModelSettings({ agentId, agentName, ready, disabled, onChanged, onBusyChange }: {
+export function AgentModelSettings({ agentId, agentName, ready, disabled, onChanged, onBusyChange, onFeedbackChange }: {
   agentId: string; agentName: string; ready: boolean; disabled: boolean; onChanged: () => void;
   onBusyChange: (busy: boolean) => void;
+  /** A pending or failed model change, for Manage to show while this section is closed. */
+  onFeedbackChange?: (feedback: ManageFeedback) => void;
 }) {
   const allowManaged = !isLocalAuthMode();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -130,6 +133,10 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
       busyRef.current = false;
     }
   };
+
+  useReportManageFeedback(onFeedbackChange, acting ? { kind: "status", message: "Changing the model connection…" }
+    : settings?.pending ? { kind: "status", message: "A model connection change is pending." }
+      : error ? { kind: "alert", message: error } : null);
 
   const blocked = disabled || !ready || loading || acting || !settings || !!settings.pending || !!settings.launch || upgradeRequired;
   const launch = settings?.launch;

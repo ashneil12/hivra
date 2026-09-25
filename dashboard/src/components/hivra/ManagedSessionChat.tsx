@@ -162,12 +162,18 @@ function RunView({
 
 export function ManagedSessionChat({
   initialSession,
+  session: observedSession,
+  onSessionChange,
   onDeleted,
   onCredentialProblem,
   firstTask,
   historyVersion = 0,
 }: {
   initialSession: ManagedSessionDto;
+  /** The workspace's latest view of this session, e.g. after Manage paused or renamed it. */
+  session?: ManagedSessionDto;
+  /** Called with each new view of the session this chat learns about, so Manage shows it too. */
+  onSessionChange?: (session: ManagedSessionDto) => void;
   onDeleted?: () => void;
   /** Called when a request fails because Hivra's DigitalOcean token cannot manage this agent. */
   onCredentialProblem?: (error: ManagedSessionApiError) => void;
@@ -181,7 +187,19 @@ export function ManagedSessionChat({
   historyVersion?: number;
 }) {
   const agentId = initialSession.agentId;
-  const [session, setSession] = useState(initialSession);
+  const [session, setOwnSession] = useState(initialSession);
+  // Adopt a newer view from the workspace (Manage), without echoing it back.
+  const [seenObserved, setSeenObserved] = useState(observedSession);
+  if (observedSession && observedSession !== seenObserved) {
+    setSeenObserved(observedSession);
+    setOwnSession(observedSession);
+  }
+  const onSessionChangeRef = useRef(onSessionChange);
+  useEffect(() => { onSessionChangeRef.current = onSessionChange; }, [onSessionChange]);
+  const setSession = useCallback((next: ManagedSessionDto) => {
+    setOwnSession(next);
+    onSessionChangeRef.current?.(next);
+  }, []);
   const [transcript, setTranscript] = useState<ManagedTranscript>(emptyManagedTranscript);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [streamState, setStreamState] = useState<StreamState>("idle");
@@ -230,7 +248,7 @@ export function ManagedSessionChat({
         .catch(() => undefined);
     }, 2_500);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [agentId, session.status]);
+  }, [agentId, session.status, setSession]);
 
   // Stored history first, then the live tail from the last event it held.
   useEffect(() => {
@@ -308,14 +326,14 @@ export function ManagedSessionChat({
       setDraft("");
       if (runId) setTranscript((current) => addManagedPrompt(current, runId, text));
       else setOrphanPrompts((current) => [...current, text]);
-      if (session.status === "paused") setSession((current) => ({ ...current, status: "ready" }));
+      if (session.status === "paused") setSession({ ...session, status: "ready" });
     } catch (error) {
       noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : "The message was not delivered." });
     } finally {
       setSending(false);
     }
-  }, [agentId, draft, noteFailure, sending, session.status]);
+  }, [agentId, draft, noteFailure, sending, session, setSession]);
 
   const answer = useCallback(async (requestId: string, outcome: "approve" | "reject") => {
     setSubmitting((current) => ({ ...current, [requestId]: outcome }));
@@ -346,7 +364,7 @@ export function ManagedSessionChat({
       setLifecycleBusy(null);
       setConfirmDelete(false);
     }
-  }, [agentId, noteFailure]);
+  }, [agentId, noteFailure, setSession]);
 
   const status = statusCopy(session, transcript);
   const paused = status.label === "Paused";

@@ -261,7 +261,7 @@ describe("every catalog agent launches in the Launch journey", () => {
       llm: { provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VENICE_KEY.id },
     });
     expect(createAgentMock.mock.calls[0][0].llm).not.toHaveProperty("apiKey");
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage#model-settings`));
+    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`));
   });
 
   it("keeps a pasted key out of the saved draft", async () => {
