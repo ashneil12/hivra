@@ -57,6 +57,41 @@ function runGuard(args: string[] = []) {
   return spawnSync(process.execPath, [guard, ...args], { cwd: dashboardRoot, encoding: "utf8", timeout: 60_000 });
 }
 
+/**
+ * The settings nested under one trigger of a workflow's block-form `on:` map,
+ * keyed by setting name (paths, branches, ...), or null when the workflow
+ * lacks that trigger. A trigger with nothing under it has no filters: {}.
+ */
+function triggerSettings(workflowText: string, trigger: string): Record<string, string> | null {
+  if (!workflowTriggers(workflowText).includes(trigger)) return null;
+  const lines = workflowText.split("\n").filter((line) => line.trim() && !/^\s*#/.test(line));
+  const start = lines.findIndex((line) => /^(?:on|"on"|'on')\s*:/.test(line));
+  const settings: Record<string, string> = {};
+  if (lines[start].replace(/^[^:]+:\s*/, "").trim()) return settings;
+  const indentOf = (line: string) => line.length - line.trimStart().length;
+  let triggerIndent: number | null = null;
+  let settingIndent: number | null = null;
+  let current: string | null = null;
+  for (const line of lines.slice(start + 1)) {
+    if (!/^\s/.test(line)) break;
+    const indent = indentOf(line);
+    if (triggerIndent === null) {
+      if (new RegExp(`^\\s+${trigger}\\s*:`).test(line)) triggerIndent = indent;
+      continue;
+    }
+    if (indent <= triggerIndent) break;
+    settingIndent ??= indent;
+    const match = /^\s+([A-Za-z_-]+)\s*:\s*(.*)$/.exec(line);
+    if (match && indent === settingIndent) {
+      current = match[1];
+      settings[current] = match[2];
+    } else if (current) {
+      settings[current] = `${settings[current]} ${line.trim()}`.trim();
+    }
+  }
+  return settings;
+}
+
 describe("test wiring guard on this repository", () => {
   it("every test file is run by jest, an automatic workflow or a package script CI runs, or is exempted with a reason", () => {
     const result = runGuard();
@@ -109,6 +144,37 @@ describe("test wiring guard on this repository", () => {
   it("models the jest config it is given", () => {
     expect(jestConfig.roots).toEqual(JEST_CONFIG.roots);
     expect(jestConfig.testMatch).toEqual(JEST_CONFIG.testMatch);
+  });
+
+  // The guard covers the whole repository, so it must run on every pull request
+  // and every canary push. Running only in path-filtered Dashboard CI let a
+  // PR that adds an unrun test outside dashboard/** pass, and the next
+  // dashboard PR inherit the failure.
+  it("runs in a workflow that no path filter skips, on every pull request and canary push", () => {
+    const workflowsDir = path.resolve(dashboardRoot, "..", ".github/workflows");
+    const invokers = fs.readdirSync(workflowsDir)
+      .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => ({ workflow: name, text: fs.readFileSync(path.join(workflowsDir, name), "utf8") }))
+      .filter(({ text }) => text.split("\n").some((line) => (
+        !/^\s*#/.test(line) && /^\s*(?:-\s+)?run:\s*node\s+(?:dashboard\/)?scripts\/check-test-wiring\.cjs(?:\s|$)/.test(line)
+      )))
+      .map(({ workflow, text }) => ({
+        workflow,
+        pullRequest: triggerSettings(text, "pull_request"),
+        push: triggerSettings(text, "push"),
+      }));
+    expect(invokers.length).toBeGreaterThan(0);
+    const unfiltered = invokers.filter(({ pullRequest, push }) => (
+      pullRequest !== null
+      && Object.keys(pullRequest).length === 0
+      && push !== null
+      && !("paths" in push)
+      && !("paths-ignore" in push)
+      && !("branches-ignore" in push)
+      && (!("branches" in push) || /(?<![\w.-])canary(?![\w.-])/.test(push.branches))
+    ));
+    expect({ invokers, unfiltered: unfiltered.map(({ workflow }) => workflow) })
+      .toEqual(expect.objectContaining({ unfiltered: expect.arrayContaining([expect.any(String)]) }));
   });
 });
 
@@ -261,6 +327,17 @@ describe("test wiring rules", () => {
       ["stale", "dashboard/scripts/test-forgotten-helper.cjs"],
       ["invalid", "dashboard/scripts/test-unwired-parent.cjs"],
     ]);
+  });
+
+  it("reads the filters under a trigger, so a path-filtered workflow does not count as unfiltered", () => {
+    const filtered = PR_WORKFLOW("      - run: node scripts/check-test-wiring.cjs");
+    expect(triggerSettings(filtered, "pull_request")).toEqual({ paths: "- 'dashboard/**'" });
+    expect(triggerSettings(filtered, "push")).toEqual({ branches: "[canary]" });
+    expect(triggerSettings(filtered, "merge_group")).toBeNull();
+    const everyChange = "on:\n  push:\n    branches: [main, canary]\n  # pull_request:\n  #   paths: ['a']\n  pull_request:\n  workflow_dispatch:\njobs: {}\n";
+    expect(triggerSettings(everyChange, "pull_request")).toEqual({});
+    expect(triggerSettings(everyChange, "push")).toEqual({ branches: "[main, canary]" });
+    expect(triggerSettings("on: [push, pull_request]\njobs: {}\n", "pull_request")).toEqual({});
   });
 
   it("reads workflow triggers in block and inline form, ignoring comments", () => {
