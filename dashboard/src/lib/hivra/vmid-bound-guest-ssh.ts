@@ -5,6 +5,14 @@ export interface VmidBoundGuestSshOptions {
   connectTimeoutSeconds?: number;
   /** Add LogLevel=ERROR so ssh notices never mix into a caller's parsed stderr. */
   quiet?: boolean;
+  /**
+   * Leave the EXIT trap to the caller, for scripts whose own EXIT trap must
+   * still run when the prelude refuses (a provision's teardown). That trap
+   * must call `cleanup_hivra_guest_ssh_identity`, which the prelude defines.
+   * By default the prelude installs a trap that only removes its identity
+   * directory, replacing any EXIT trap the caller set earlier.
+   */
+  callerOwnsExitTrap?: boolean;
 }
 
 const GUEST_SSH_USER = /^[a-z_][a-z0-9_-]{0,31}$/;
@@ -35,6 +43,7 @@ export function buildVmidBoundGuestSshPrelude(options: VmidBoundGuestSshOptions 
     throw new Error("Invalid guest SSH connect timeout");
   }
   const logLevel = options.quiet ? " -o LogLevel=ERROR" : "";
+  const exitTrap = options.callerOwnsExitTrap ? "" : "trap cleanup_hivra_guest_ssh_identity EXIT HUP INT TERM\n";
   return `GUEST_SSH_IDENTITY_DIR=""
 cleanup_hivra_guest_ssh_identity() {
   case "\${GUEST_SSH_IDENTITY_DIR:-}" in
@@ -43,8 +52,7 @@ cleanup_hivra_guest_ssh_identity() {
     *) printf 'refusing to remove unexpected guest identity directory\n' >&2; return 1 ;;
   esac
 }
-trap cleanup_hivra_guest_ssh_identity EXIT HUP INT TERM
-GUEST_SSH_IDENTITY_DIR="$(mktemp -d /run/hivra-guest-ssh-identity.XXXXXXXX)"
+${exitTrap}GUEST_SSH_IDENTITY_DIR="$(mktemp -d /run/hivra-guest-ssh-identity.XXXXXXXX)"
 chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
 GUEST_SSH_KNOWN_HOSTS="$GUEST_SSH_IDENTITY_DIR/known_hosts"
 GUEST_SSH_HOST_ALIAS="hivra-vmid-$VMID"

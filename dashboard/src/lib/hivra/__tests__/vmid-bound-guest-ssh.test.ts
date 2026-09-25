@@ -64,4 +64,17 @@ describe("VMID-bound guest SSH", () => {
     expect(prelude).toContain("VMID-bound SSH refused: VM %s did not attest a valid Ed25519 SSH host key; nothing was sent to the guest");
     expect(prelude.indexOf("did not attest a valid Ed25519 SSH host key")).toBeLessThan(prelude.indexOf("GUEST_SSH=("));
   });
+
+  it("installs its own EXIT trap unless the caller owns it, so a caller's teardown trap survives a refusal", () => {
+    const trap = "trap cleanup_hivra_guest_ssh_identity EXIT HUP INT TERM";
+    expect(buildVmidBoundGuestSshPrelude()).toContain(trap);
+    expect(buildVmidBoundGuestSshPrelude({ callerOwnsExitTrap: false })).toBe(buildVmidBoundGuestSshPrelude());
+
+    const owned = buildVmidBoundGuestSshPrelude({ callerOwnsExitTrap: true });
+    expect(owned).not.toMatch(/^\s*trap /m);
+    expect(owned).toContain("cleanup_hivra_guest_ssh_identity() {");
+    expect(owned).toBe(buildVmidBoundGuestSshPrelude().replace(`${trap}\n`, ""));
+    const syntax = spawnSync("/bin/bash", ["-n"], { encoding: "utf8", input: owned });
+    expect({ status: syntax.status, stderr: syntax.stderr }).toEqual({ status: 0, stderr: "" });
+  });
 });

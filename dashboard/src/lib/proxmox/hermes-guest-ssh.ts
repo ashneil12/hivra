@@ -48,6 +48,11 @@ export interface HermesGuestSshPreludeOptions {
   agentAttempts?: number;
   connectTimeoutSeconds?: number;
   quiet?: boolean;
+  /**
+   * The caller's EXIT trap stays in place and must call
+   * `cleanup_hivra_guest_ssh_identity` (see `buildVmidBoundGuestSshPrelude`).
+   */
+  callerOwnsExitTrap?: boolean;
 }
 
 function boundedInteger(value: number, min: number, max: number, label: string): number {
@@ -160,7 +165,33 @@ ${buildVmidBoundGuestSshPrelude({
   sshUser: options.sshUser,
   ...(options.connectTimeoutSeconds === undefined ? {} : { connectTimeoutSeconds: options.connectTimeoutSeconds }),
   ...(options.quiet ? { quiet: true } : {}),
+  ...(options.callerOwnsExitTrap ? { callerOwnsExitTrap: true } : {}),
 })}`;
+}
+
+/**
+ * Give a stopped VM the QEMU Guest Agent virtio channel the prelude attests
+ * through, keeping its other agent options. The channel only exists from the
+ * next boot, so a provision runs this between `qm clone` and `qm start`
+ * rather than trusting the template to have it. Callers define VMID.
+ */
+export function buildEnsureQemuGuestAgentChannelScript(): string {
+  return `hermes_guest_agent_opts="$(qm config "$VMID" </dev/null | awk '/^agent:/ && !seen { seen = 1; line = $0; sub(/^agent:[ \\t]*/, "", line); print line }')"
+case ",$hermes_guest_agent_opts," in
+  *,1,*|*,on,*|*,yes,*|*,true,*|*,enabled=1,*|*,enabled=on,*|*,enabled=yes,*|*,enabled=true,*) ;;
+  *)
+    # Drop the (disabled) enabled flag, bare or keyed, and keep the rest.
+    hermes_guest_agent_rest="$(printf '%s\\n' "$hermes_guest_agent_opts" | awk -F, '{
+      out = ""
+      for (i = 1; i <= NF; i++) {
+        if ($i == "" || $i ~ /^(enabled=)?(0|1|on|off|yes|no|true|false)$/) continue
+        out = out (out == "" ? "" : ",") $i
+      }
+      print out
+    }')"
+    qm set "$VMID" --agent "enabled=1\${hermes_guest_agent_rest:+,$hermes_guest_agent_rest}"
+    ;;
+esac`;
 }
 
 /**

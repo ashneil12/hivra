@@ -7,7 +7,8 @@
  * policy against the key the machine answering at the guest IP actually
  * presents, which is how a spoofed neighbour is modelled: it only records what
  * it was sent when OpenSSH would have completed the connection. `sleep` and
- * `timeout` are shims so retry loops run instantly.
+ * `timeout` are shims so retry loops run instantly. `qm set`, `qm stop` and
+ * `qm destroy` are recorded, not applied.
  */
 
 import { spawnSync } from "node:child_process";
@@ -40,6 +41,8 @@ export interface StubRunResult {
   sshCalls: string[];
   /** Every `ssh` invocation's arguments, including refused ones. */
   sshArgs: string[][];
+  /** Every recorded `qm set|stop|destroy` invocation's arguments, one line each. */
+  qmCalls: string[];
 }
 
 export function ed25519KeyBlob(fill: number): string {
@@ -83,6 +86,9 @@ case "$1" in
         ;;
       *) exit 2 ;;
     esac
+    ;;
+  set|stop|destroy)
+    printf '%s\n' "$*" >> "$STUB_ROOT/capture/qm-calls"
     ;;
   *) exit 2 ;;
 esac
@@ -132,10 +138,19 @@ case "$*" in
 esac
 `;
 
+export interface StubRunOptions {
+  vms: StubGuestVm[];
+  /** The Ed25519 key blob the sshd answering at the guest IP presents. */
+  serverHostKey: string;
+  sshStdout?: string;
+  /** Extra commands for this run only, as name -> bash script body. */
+  commands?: Record<string, string>;
+}
+
 export interface StubProxmoxGuestHost {
   root: string;
   vmKeyPath: string;
-  run(script: string, options: { vms: StubGuestVm[]; serverHostKey: string; sshStdout?: string }): StubRunResult;
+  run(script: string, options: StubRunOptions): StubRunResult;
   cleanup(): void;
 }
 
@@ -151,7 +166,7 @@ export function createStubProxmoxGuestHost(): StubProxmoxGuestHost {
   fs.writeFileSync(vmKeyPath, "fixture key\n", { mode: 0o600 });
 
   function reset(vms: StubGuestVm[]): void {
-    for (const dir of ["vms", "qemu-server", "capture", "run"]) {
+    for (const dir of ["vms", "qemu-server", "capture", "run", "run-bin"]) {
       fs.rmSync(path.join(root, dir), { recursive: true, force: true });
       fs.mkdirSync(path.join(root, dir));
     }
@@ -189,8 +204,11 @@ export function createStubProxmoxGuestHost(): StubProxmoxGuestHost {
   return {
     root,
     vmKeyPath,
-    run(script, { vms, serverHostKey, sshStdout = "4242" }) {
+    run(script, { vms, serverHostKey, sshStdout = "4242", commands = {} }) {
       reset(vms);
+      for (const [name, body] of Object.entries(commands)) {
+        fs.writeFileSync(path.join(root, "run-bin", name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+      }
       const sandboxed = script
         .replaceAll("/run/hivra-guest-ssh-identity.", `${root}/run/hivra-guest-ssh-identity.`)
         .replaceAll("/usr/bin/python3", "python3")
@@ -201,7 +219,7 @@ export function createStubProxmoxGuestHost(): StubProxmoxGuestHost {
         timeout: 30_000,
         env: {
           ...process.env,
-          PATH: `${bin}:${process.env.PATH}`,
+          PATH: `${path.join(root, "run-bin")}:${bin}:${process.env.PATH}`,
           STUB_ROOT: root,
           SERVER_HOSTKEY: serverHostKey,
           SSH_STDOUT: sshStdout,
@@ -217,6 +235,7 @@ export function createStubProxmoxGuestHost(): StubProxmoxGuestHost {
           .split("\n")
           .filter(Boolean)
           .map((line) => line.split("\x1f").filter((arg, index, all) => index < all.length - 1 || arg !== "")),
+        qmCalls: read("qm-calls").split("\n").filter(Boolean),
       };
     },
     cleanup() {

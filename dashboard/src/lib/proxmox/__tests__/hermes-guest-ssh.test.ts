@@ -4,8 +4,11 @@ import { spawnSync } from "node:child_process";
 
 import { buildVmidBoundGuestSshPrelude } from "@/lib/hivra/vmid-bound-guest-ssh";
 
+import { GENUINE_GUEST_HOST_KEY, createStubProxmoxGuestHost } from "@/test-utils/stub-proxmox-guest-host";
+
 import {
   GUEST_SSH_REFUSED_MARKER,
+  buildEnsureQemuGuestAgentChannelScript,
   buildHermesVmidBoundGuestSshPrelude,
   buildPinnedGuestSshReadinessWait,
 } from "../hermes-guest-ssh";
@@ -71,5 +74,29 @@ describe("pinned guest SSH readiness wait", () => {
     [{ attempts: 3, sleepSeconds: 0 }],
   ])("rejects an unbounded or empty wait %p", (params) => {
     expect(() => buildPinnedGuestSshReadinessWait(params)).toThrow(/Invalid/);
+  });
+});
+
+describe("QEMU Guest Agent channel for a fresh clone", () => {
+  const host = createStubProxmoxGuestHost();
+  afterAll(() => host.cleanup());
+
+  const qmSetFor = (agent: string | null) =>
+    host.run(`set -euo pipefail\nVMID=201\n${buildEnsureQemuGuestAgentChannelScript()}\n`, {
+      vms: [{ vmid: 201, ip: "10.250.20.51", status: "stopped", agent }],
+      serverHostKey: GENUINE_GUEST_HOST_KEY,
+    });
+
+  it.each([
+    ["no agent line", null, ["set 201 --agent enabled=1"]],
+    ["a disabled agent", "0", ["set 201 --agent enabled=1"]],
+    ["a disabled agent with other options", "0,fstrim_cloned_disks=1,type=virtio", ["set 201 --agent enabled=1,fstrim_cloned_disks=1,type=virtio"]],
+    ["a keyed disabled agent", "enabled=off,freeze-fs-on-backup=0", ["set 201 --agent enabled=1,freeze-fs-on-backup=0"]],
+    ["an enabled agent", "1", []],
+    ["a keyed enabled agent with options", "enabled=1,fstrim_cloned_disks=1", []],
+  ])("enables the channel only when it is off, keeping other options: %s", (_label, agent, expected) => {
+    const result = qmSetFor(agent);
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.qmCalls).toEqual(expected);
   });
 });
