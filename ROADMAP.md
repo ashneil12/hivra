@@ -14,6 +14,59 @@ excluded. Test-scoped lifecycle actions may affect only disposable resources
 created for an approved Canary check and must preserve pre-existing resources
 and produce exact cleanup evidence.
 
+## After launch
+
+Updated 2026-09-25. What comes after launch, in order; each item says what it
+needs. This list changes none of the phase gates below.
+
+**Where things stand.** On Canary, not yet on hivra.cloud: Launch is the only
+way in, and every catalog agent launches from it; Hetzner guided setup;
+connecting a server you already have with one command (its main path passed
+live); DigitalOcean Managed Agents (not yet tested against the live DigitalOcean
+API); the Computer Contract; agent work that survives refreshes, closed tabs and
+restarts; the plan's agent limit enforced by the database for Hivra Cloud
+launches; and adding Codex to an Ubuntu Desktop you already have (Canary only;
+the first live add, Change access and Remove passed). None of this reaches
+hivra.cloud until the owner approves a production promotion; adding Codex to an
+existing computer stays Canary-only even then (see Next, item 5).
+
+**Next**
+
+1. **Home and office machines through Hivra's relay.** A machine with no open
+   inbound port keeps one outbound connection to the approved Cloudflare relay;
+   SSH stays end to end. The relay and connector are built (#87, #95). Needs:
+   the relay deployed for Canary, the connection transport, `--outbound` in the
+   one-command setup, the "At home" path in Connect, and a no-inbound-port test.
+2. **Sign in with DigitalOcean, and a real DigitalOcean team test.** Needs: a
+   DigitalOcean OAuth app, confirmation that its sign-in can grant Managed
+   Agents access, and a team in DigitalOcean's Managed Agents preview.
+3. **Hivra desktop app for Mac, Windows and Linux.** The current Mac alpha stays
+   until the new app matches it. Needs: engineering, code signing for each
+   platform, and the separate release approval Slice 7 requires.
+4. **Better testing.** First, in progress: Dashboard checks on every merge into
+   `canary`, a check that every test file runs somewhere, and size limits for
+   what Hivra sends to a computer. Then fixtures for computers made by older
+   releases, browser journeys on Canary, and a nightly check on real Canary
+   computers. Needs: engineering, and the owner for required-check settings and
+   a nightly test account.
+5. **More agents on computers you already have:** other agents and computers,
+   in-place updates, then hivra.cloud. Needs: engineering, real-computer tests.
+6. **Launch follow-ups:** several Hetzner servers per account, updating older
+   computers, finishing a Start when no page is open. Needs: engineering.
+
+**After the announcement**
+
+- **Hivra Orchestrator:** one chat to talk to all your agents, switch between
+  them, see who is working or stuck, and pass work between them, over the same
+  agents and computers (Phases 6 and 7). Needs: design, then engineering.
+- Adding an agent you already have to another computer, or letting an added
+  agent use the desktop or browser. Needs: an owner decision and a threat model.
+- Windows and Omarchy out of private preview; macOS computers; custom images.
+- Complete self-hosting (Phase 4).
+
+**Not planned:** replacing an agent's own interface with a Hivra chat. Hermes,
+Agent Zero and other agents with their own interface keep it as the main one.
+
 ## Approved web/Canary execution order
 
 The reset slices are the active implementation order. The numbered phases below
@@ -23,55 +76,74 @@ current merely because related implementation is pulled forward.
 | Reset slice | Relationship to the existing phase gates |
 | --- | --- |
 | Slice 0 — Product truth | **Complete 2026-09-04:** all canonical documents record the approval, crosswalk, unchanged portable gate, and authority scope. This does not close the separate Phase 0 public-release exit. |
-| Slice 1 — Launch contract and shell | Pulls forward Phase 2 contracts behind a gated web shell while Phase 1 portable closure continues. |
-| Slice 2 — Hivra Cloud golden paths | Runs one managed Agent alongside Phases 1/3 and Ubuntu Computer alongside Phase 8; neither substitutes for portable acceptance. |
-| Slice 2B — Attach Agent | Adds explicit binding between runtime consolidation and full Computer use. **Status:** part-built and fenced off; nothing a user can reach attaches an agent. See [Slice 2B status](#slice-2b-status). |
-| Slice 3 — Customer-owned capacity | Carries the Phase 1/3 reference path and `UC-PORTABLE-AGENT-01` unchanged. |
+| Slice 1 — Launch contract and shell | Pulls forward Phase 2 contracts behind a gated web shell while Phase 1 portable closure continues. **Status (Canary):** Launch is the only way in (#104), with one Choose screen and resume (#97), and every catalog agent launches from it (#100). This does not close `UC-PORTABLE-AGENT-01`. |
+| Slice 2 — Hivra Cloud golden paths | Runs one managed Agent alongside Phases 1/3 and Ubuntu Computer alongside Phase 8; neither substitutes for portable acceptance. **Status (Canary):** Codex and Ubuntu Desktop run on Hivra Cloud, and agent work keeps running across refreshes, closed tabs and restarts (#98, #124, #136). This does not close `UC-PORTABLE-AGENT-01`. |
+| Slice 2B — Attach Agent | Adds explicit binding between runtime consolidation and full Computer use. **Status (Canary only):** add Codex to an Ubuntu Desktop you already have on Hivra Cloud or My server (#134, with fixes #138, #140, #143, #144); the first live add, Change access and Remove passed on 2026-09-25. Off on hivra.cloud. See [Slice 2B status](#slice-2b-status). |
+| Slice 3 — Customer-owned capacity | Carries the Phase 1/3 reference path and `UC-PORTABLE-AGENT-01` unchanged. **Status (Canary):** Hetzner guided setup (#96, #99, #108); connect a server you already have with one command (#127, main path passed live on 2026-09-24); DigitalOcean as a Launch destination (#105, not yet tested against the live DigitalOcean API); the home-machine relay is built but not deployed or wired in (#87, #95). This does not close `UC-PORTABLE-AGENT-01`. |
 | Slices 4A-4C — Recovery and linking | Split Phase 4 into self-host control-plane recovery, Computer data portability, and separately threat-modelled optional Cloud linking. |
-| Slice 5 — Linux Computer | Carries Phase 8 desktop performance acceptance. |
-| Slice 6 — Windows guest | Carries the Windows-guest part of Phase 9. |
+| Slice 5 — Linux Computer | Carries Phase 8 desktop performance acceptance. **Status:** Ubuntu Desktop is available in the catalog, and a fix that lets Ubuntu Desktops made by older releases Start again is merged to Canary (#148); Omarchy is in private preview as a prepared Canary computer. Measured desktop performance acceptance is still open. |
+| Slice 6 — Windows guest | Carries the Windows-guest part of Phase 9. **Status:** Windows is in private preview: it runs on the owner's own Proxmox host, from their own licensed Windows ISO. |
 | Slice 7 — Native clients | Later separately authorized release track; excluded from current execution scope. |
 | Slice 8 — Orchestration | Carries Phase 7 after real single-agent execution, authority, recovery, and bounded stops; Phase 6 workspace is not a prerequisite. |
 
 ### Slice 2B status
 
-**Recorded 2026-09-24.** The attach backend is part-built and fenced off. The
-full inventory, with the state of each layer, is section 2.1 of
-[the agent computer contract and attach spec](docs/superpowers/specs/2026-09-24-agent-computer-contract-and-attach.md#21-the-half-built-attach-backend);
-section 2.2 says why it cannot ship as built. In short:
+**Updated 2026-09-25.** Adding Codex to an Ubuntu Desktop the owner already has
+is merged and on Canary (#134, with fixes #138, #140, #143 and #144). It is on
+only on Canary: the switch reads the deployment's own channel, so hivra.cloud
+keeps it off with no setting to change. The first pair is Codex on an existing
+Ubuntu Desktop on Proxmox KVM (Hivra Cloud or My server); every other computer
+says it is not available yet. What is built, and where it differs from the
+design, is section 0.1 of
+[the agent computer contract and attach spec](docs/superpowers/specs/2026-09-24-agent-computer-contract-and-attach.md#01-slice-15-attach-implementation-status).
+In short:
 
-- **What exists.** Nine `hivra_attachment_*` migrations
-  (`20260906190000` through `20260907010000`: lease, dispatch, installation
-  reservation, guest, staging, execution snapshot, activation and native
-  observations), on top of the canonical relationship authority and reader
-  (`20260906170000`, `20260906180000`). Nineteen
-  `dashboard/src/lib/agent-computers/attachment-*.ts` worker modules and the
-  guest staging scripts. The scope is Codex only, on a running Ubuntu Desktop
-  computer on Proxmox KVM.
-- **What is fenced.** Every mutating attachment RPC is revoked from all roles;
-  the two read RPCs are service-role only. The workers are one-pass functions
-  that nothing registers or calls, and production invocation stays disabled.
-  The guest scripts have only run in containers, never on a customer computer.
-- **What is missing.** Any attach UI; the mutation routes
+- **What exists.** Add an agent, progress from receipts, Change access and
+  Remove on the computer's Manage page; a Chat tab once Codex is ready; the
+  Computer Contract delivered to the added agent and read back; the routes
   (`POST /api/hivra/computers/[id]/agents`, `PATCH` and `DELETE`
-  `…/agents/[attachmentId]`); the registered progress worker; the completion,
-  failure, change-access, detach and computer-delete transitions; the grant
-  model and its security review; the contract the attached agent is given; and
-  a chat bridge to it. Until those exist, an agent gets its own computer at
-  launch and cannot be added to one the owner already has.
-- **The one reachable piece.** `GET /api/hivra/computers/[id]/relationships`
+  `…/agents/[attachmentId]`); the minute worker
+  (`/api/cron/progress-agent-attachments`); the completion, failure,
+  change-access, detach and computer-delete transitions; and `EXECUTE` for the
+  service role only on the functions they call. The first release grants
+  `~/Hivra`, the agent's own user and internet access, nothing more.
+- **Live evidence.** On Canary on 2026-09-25, adding Codex reached Chat ready in
+  61 s, Change access (stop sharing `~/Hivra`) delivered contract revision 2,
+  and Remove finished with `~/Hivra` kept. That first run found two defects the
+  unit tests missed, both fixed (#143, #144).
+- **What is missing.** Signing in to ChatGPT inside the added agent's Chat
+  (AC-A2, which needs an approved test account) and the spec's other Canary
+  checks; the "One of my computers" choice in Where it runs; added agents in the
+  ⌘K palette; an in-place update for an added Codex (today: Remove, then add
+  again); a time limit for steps that stay held; other agents and computer
+  types; and production. Adding an existing agent to another computer, and
+  desktop, browser or sudo access for an added agent, wait on an owner decision
+  and their own threat model.
+- **The relationships route.** `GET /api/hivra/computers/[id]/relationships`
   is live for a signed-in owner on Hivra hosts and no screen calls it yet.
   **Decision:** keep it as it is. It only reads: it answers for the signed-in
   owner's own computer (404 for any other), is rate-limited and uncached, and
   changes no state. Its planned consumer is the Slice 2B computer page
   ("Agents on this computer"), which the spec builds on the same reader.
   Revisit it if Slice 2B changes the relationship snapshot, or drop it if
-  Slice 2B is withdrawn.
+  Slice 2B is withdrawn. **Update 2026-09-25:** the shipped Slice 2B page reads
+  `GET /api/hivra/computers/[id]/agents`, not this route, so this route still
+  has no caller.
 
 The working agent catalogue, launch path, detail screens, and native surfaces
 remain available until migration, parity, rollback, and acceptance gates pass.
 A new shell, managed path, Ubuntu path, mock, or contract test cannot close the
 portable reference or public-release gates.
+
+**Open discrepancy (noted 2026-09-25):** #104, merged to Canary on 2026-09-24
+and not yet in `main`, retired the original Welcome launcher and made Launch
+the only way in before these gates passed. This paragraph, the Phase 1 item
+"Keep the existing agent catalog, launch flow…" below,
+[VISION.md](VISION.md) and
+[the product architecture](docs/PRODUCT-ARCHITECTURE.md) still say the original
+launch path stays until then. The owner has not yet decided whether this is
+documentation drift (change the text) or a code change to undo (restore the
+original launcher). Until that decision, none of these passages is changed.
 
 ### Responsibility vocabulary
 
@@ -93,11 +165,14 @@ silently assign authority or responsibility.
 - Each phase has an evidence-based exit gate before the next phase depends on it.
 - Existing production reliability work continues when necessary, but it does not redefine product architecture.
 
-The prior HermesOS marketing and maintenance backlog remains available in Git history. Items from it must be re-triaged against this roadmap before implementation.
+The prior HermesOS marketing and maintenance backlog is kept in the private archive of the older repositories; it is not in this repository's history, which starts at the 2026-09-21 source release. Items from it must be re-triaged against this roadmap before implementation.
 
 ## Phase 0 — Canonical truth and public-release safety
 
-**Status:** Building
+**Status:** Complete for the initial source export, published on 2026-09-21
+(see [verification status](docs/release/VERIFICATION-STATUS.md)). Each later
+source candidate is reviewed at its exact revision, and a separately built
+runtime, image, desktop bundle or mirror is its own release gate.
 
 **Goal:** Establish one product source of truth and determine whether the repository can be released publicly with preserved history.
 
@@ -162,163 +237,10 @@ The prior HermesOS marketing and maintenance backlog remains available in Git hi
 surface while making it portable enough to run with user-owned credentials. The
 approved sibling web shell may proceed in parallel but cannot replace this gate.
 
-**Latest live checkpoint (2026-08-28):** the original UI now passed a bounded
-real Hetzner create, firewall-before-power preparation, exact-computer handoff,
-Codex installation, real metered model/tool work, independent file readback,
-restart persistence, and complete teardown. The final cleanup correction
-`66ae1095246d51e916ab538720a9f6a3b1451d35` passed a fresh native-access launch and
-one-confirmation removal of all five original provider resources, with tunnel
-and DNS absence independently verified. Its full gate passed 9,894 tests,
-lint, typecheck and build. Both temporary Hivra connections and issued test
-model keys are removed/revoked; revocation of the temporary Hetzner project
-token remains unverified because the Arc UI is unavailable. See the
-[revision-bound acceptance receipt](docs/release/VERIFICATION-STATUS.md).
-This does not close Phase 1: user-owned Proxmox, whole-catalog/every-key
-acceptance, full self-host packaging, and the Phase 0 release gates remain
-separate. The following checkpoints record their earlier revision's state.
-
-**Current canary evidence (2026-08-26):** The existing launch and agent-detail experience now has an additive Hivra Cloud/self-managed destination selector, an owner-scoped Proxmox connection and target registry, explicit host preparation, exact target-bound launch and lifecycle authority, and a versioned in-repository provisioner. The exact database migrations were transaction-tested and applied while preserving the existing managed agents, and commit `f68dbae54` passed the canary build plus authenticated, non-destructive desktop and mobile checks for the infrastructure registry, Simple/Advanced setup, original agent catalog, Codex launch form, destination fail-closed behavior, and affected read APIs. This is not the Phase 1 exit: `UC-PORTABLE-AGENT-01` must still pass on an approved user-owned target, including real provisioning, native interface access, restart, and verified deletion with no residual resource.
-
-**Managed launch and access checkpoint (2026-08-27):** After the initial
-`.8`/`.9` disposable test, a second Codex computer launched directly with
-provisioner `2026.08.26.10` without guest repair. The original launch/detail
-flow, native terminal, files, Git empty state, landscape browser, saved context,
-restart, and independently verified teardown were exercised on one allowlisted
-managed host. Both disposable computers were removed without residual VM,
-disks, runtime artifacts, DNS records, or live tunnels. Final dashboard commit
-`28ad356bd` reached the verified Canary alias and passed full verification:
-762 suites / 7,373 tests plus lint, typecheck, and production build. No model
-login or inference run was performed, and fullscreen window behavior remains
-unaccepted. See the [redacted acceptance receipt](docs/release/VERIFICATION-STATUS.md)
-for distinct revision/deployment evidence. Older guest upgrades, fleet
-readiness, user-owned Proxmox/BYOK and real Hetzner acceptance, browser sandbox
-hardening, durable failure-path cleanup, canonical access grants, and Phase 0
-publication safety remain separate work. This does not close a roadmap phase.
-
-**Managed guest runtime-update checkpoint (2026-08-29):** Canary revision
-`312d65bfa37a25ca560f8bcc928402bfc59d8d48` adds a bounded, version-checked
-host bundle synchronizer and a truthful `Update & restart` operation in the
-original agent Manage screen. All four configured Canary managed targets
-reported exact bundle `2026.08.29.1`. A disposable Codex computer preserved its
-agent, host and VM identities across the live update, reconnected its terminal,
-then passed verified VM, volume, runtime-artifact, tunnel and DNS cleanup. The
-pre-existing managed Codex computer remained running. The same revision passed
-a fresh real signup-to-agent-reply journey with no teardown residue; that is a
-1/1 checkpoint, not the complete 19/20 campaign. See the
-[acceptance receipt](docs/release/VERIFICATION-STATUS.md).
-Provider-computer updates, self-managed-target updates, whole-catalog acceptance
-and full self-host packaging remain open.
-
-**Installed-runtime receipt checkpoint (2026-08-29):** Canary revision
-`b145091e35beb4804eb58e9a0db5af30f1a6a937` records the actual installed guest
-state and deterministically derives a private CycloneDX 1.6 SBOM plus
-notice/source-review manifest. A fresh original-UI Codex launch on exact bundle
-`2026.08.29.4` verified Ubuntu 22.04, all three byte-bound evidence artifacts,
-708 SBOM components, exact missing-notice counts, both terminal surfaces and
-public HTTP health, then passed bounded teardown while the pre-existing managed
-computer stayed running. All four managed hosts now pass unchanged `.29.4`
-inspection. The evidence remains explicitly `releaseApproved: false`; it does
-not replace vulnerability, rights, complete notice/source-offer or public-release
-review. See the
-[acceptance receipt](docs/release/VERIFICATION-STATUS.md).
-
-**Standalone provider-to-agent checkpoint (2026-08-29):** The independent
-single-operator source-checkout path now starts a loopback-only local Supabase
-control plane, uses installation-owned authentication, removes hosted billing
-surfaces, and accepts an operator-owned Hetzner token. A fresh Hetzner CPX21
-computer was created and prepared with pinned bundle `2026.08.29.5`; the
-original catalog launched Codex, exposed its first-party chat, terminal, files,
-Git and native-login surfaces, and generated byte-bound installed-state receipt,
-CycloneDX SBOM and notice-review artifacts. The test then deleted the agent and
-confirmed exact absence of its server, IPv4, IPv6, SSH key and firewall. No paid
-provider resources were retained. The evidence is still
-`releaseApproved: false`: provider-agent restart, model login/inference,
-clean-machine repetition from the exact committed public-source candidate, and
-the remaining Phase 0 rights/history/security gates are open.
-
-**Current Hetzner create milestone (repository evidence, 2026-08-26):** The
-bounded Simple-mode path now has live policy-filtered offer selection,
-revision-bound short-lived provider-rate observations, explicit spend
-confirmation, idempotent creation, provider-operation reconciliation, and a
-reload-safe same-request recovery path, plus a powered-off/unprepared result
-contract. It shows server, IPv4, IPv6, included traffic, variable overage, and
-billing-lifecycle truth before submission. Disconnect copy warns that Hivra's
-stored generated private key is destroyed while provider resources and billing
-remain. This is not deployed-provider or production-readiness evidence; the
-real approved-project create, observe, restart, delete, and residual-resource
-acceptance gate remains open. Canary also limits each Hivra account to one
-non-rejected in-app Hetzner server claim across all project connections.
-Disconnecting or externally deleting the server does not automatically clear
-the slot in v1; this is a spend guard, not the target multi-box model.
-
-**Scoped cleanup checkpoint (2026-08-27):** Canary commit `6a5cb21af` adds
-explicit cleanup of an original-receipted, unprepared, powered-off server and
-its original IPs/generated SSH key. Only verified absence releases its account
-slot. Failed cleanup can resume; separately confirmed local-access abandonment
-retains the unresolved claim and does not stop billing. Independent review,
-784 suites / 7,798 tests, a production build, and isolated browser checks passed;
-the database migration and Canary alias were verified. Real Hetzner
-create/cleanup, first boot, preparation, and agent placement remain acceptance
-gates. See the [receipt](docs/release/VERIFICATION-STATUS.md).
-
-**First-boot cleanup checkpoint (2026-08-27):** The same cleanup now includes
-the original setup firewall, separate started-computer confirmation, and a
-locked expected-receipt check against setup races. All five absence checks are
-required before release. Independent review, actual-SQL tests, full verification
-and simulated browser interaction passed; the scoped Canary schema is verified.
-Public first boot, pinned SSH/readiness, target-aware retirement and real
-provider acceptance remain open. See the
-[receipt](docs/release/VERIFICATION-STATUS.md).
-
-**Guided preparation checkpoint (2026-08-28):** the original create-server
-review can include a separately approved first-boot recipe. A resumable setup
-dialog uses the existing firewall, enrollment, pinned SSH and bundle delivery
-operations. It publishes only an unavailable, bundle-prepared computer; the
-public provider agent adapter and real Hetzner lifecycle acceptance remain
-unfinished. See the [receipt](docs/release/VERIFICATION-STATUS.md)
-for current checks and delivery status.
-
-**Provider deletion integration (2026-08-28):** the original agent lifecycle
-now routes provider-computer removal through exact owner/operation-bound
-installer cancellation, target retirement and five-resource cleanup. The
-management screen retains pending state until terminal proof. Launch admission,
-native access acceptance, power controls and real-provider acceptance remain
-open; see the [receipt](docs/release/VERIFICATION-STATUS.md).
-
-**Provider readiness integration (2026-08-28):** the original agent status path
-observes the original installer, checks pinned guest services/authentication and
-the named public connection, then uses the shared terminal state guard. The page
-shows observed setup stages and keeps removal accessible. This does not admit
-launches or prove model login, inference or real-provider acceptance; see the
-[receipt](docs/release/VERIFICATION-STATUS.md).
-
-**Provider power foundation (2026-08-28):** explicit owner-token transport and a
-private original-operation journal/store now support bounded, single-dispatch
-start/stop/restart contracts. Shared finalizers require actual state and reboot
-identity proof, with deletion races retaining the original operation. This does
-not expose power controls or admit launches; provider observation/dispatch
-integration and real lifecycle acceptance remain open. See the
-[receipt](docs/release/VERIFICATION-STATUS.md).
-
-**Provider power integration (2026-08-28):** the original action/status/removal
-routes now use the owner-bound coordinator. Explicit actions can send one
-provider request; status/removal only observe it. Actual off state or verified
-guest/public services are required for completion, with changed boot identity
-for restart. Manage shows the observed operation and retains uncertain requests.
-Allocated provider resize remains unavailable. Provider launch admission and
-real Hetzner lifecycle acceptance remain open; see the
-[receipt](docs/release/VERIFICATION-STATUS.md).
-
-**Provider launch integration (2026-08-28):** Canary commit `1fbabd12e` and the
-verified `20260828060000` migration connect prepared exclusive Hetzner computers
-to the existing five-runtime launch route. Separate admission, original-operation
-reservation/dispatch, readiness, native handoff, power and deletion now form one
-implemented provider path. Whole-computer UI controls and native model sign-in
-preserve the original agent experience. Automatic model-key/template-skill
-delivery and Hermes' separate provider lane remain unimplemented. Full tests,
-actual SQL fixtures, independent review and deployed UI/authentication sanity
-passed; the real Hetzner create-to-cleanup acceptance is still pending a connected
-test project. See the [launch receipt](docs/release/VERIFICATION-STATUS.md).
+**Live checkpoints (2026-08-26 to 2026-08-29):** on 2026-08-28 the original UI
+ran a real Hetzner create, Codex install, model work, restart and full teardown.
+None closes Phase 1. Each dated entry, bound to its own revision, is in
+[verification status](docs/release/VERIFICATION-STATUS.md#phase-1-checkpoints-august-2026).
 
 - Keep the existing agent catalog, launch flow, agent detail screens, and useful
   runtime-native interfaces working while the sibling web shell is introduced;
@@ -345,6 +267,9 @@ test project. See the [launch receipt](docs/release/VERIFICATION-STATUS.md).
 - Remove hidden dependencies on Hivra-only hosts, mutable scripts, environment assumptions, and business-only wiring from the portable path.
 - Preserve each runtime's working Hivra or native interface after launch.
 - Keep `/dashboard/workspace` optional; do not make it a dependency of portable provisioning.
+  **Current:** on Canary, `/dashboard` opens the workspace view behind the server
+  flag `HIVRA_WORKSPACE_SHELL_ENABLED`, and `/dashboard/workspace` forwards
+  there; production still opens the Hermes command center at `/dashboard`.
 
 **Exit:** A user can launch one supported existing agent with their own runtime key on supported user-owned infrastructure, open its working interface, restart it, and remove it without Hivra-held credentials or Hivra model credits.
 
@@ -417,7 +342,7 @@ lifecycle, credentials and each runtime's acceptance.
 - Move every currently supported catalog runtime onto the shared target and execution contracts while retaining its native interface.
 - Integrate Block's Buzz as an optional mediated identity, communication, and collaboration service rather than an infrastructure-control replacement.
 - Add DeepSeek Harness and other runtimes one at a time behind pinned adapters and conformance tests.
-- Follow the [2026-08-31 integration and remote-computers addendum](docs/superpowers/specs/2026-08-31-hivra-remote-computers.md): Buzz now has a real signed cross-agent runtime/reply campaign; DeepSeek Harness has real native UI, model, PTY, restart, revocation and cleanup evidence but remains gated on ACP; Omarchy belongs to computer profiles and now passes exact KVM install, desktop reboot, Sunshine guest preparation and teardown while remaining gated on a scoped native route and real Moonlight interaction.
+- Follow the [2026-08-31 integration and remote-computers addendum](docs/superpowers/specs/2026-08-31-hivra-remote-computers.md): Buzz now has a real signed cross-agent runtime/reply campaign; DeepSeek Harness has real native UI, model, PTY, restart, revocation and cleanup evidence but remains gated on ACP; Omarchy belongs to computer profiles and now passes exact KVM install, desktop reboot, Sunshine guest preparation and teardown; it is in private preview as a prepared Canary computer, and its native Moonlight access remains gated on a scoped native route and real Moonlight interaction.
 - Stop legacy writes after parity and rollback gates pass.
 - Retire overlapping Workspace Cloud and legacy agent lanes.
 
@@ -425,7 +350,9 @@ lifecycle, credentials and each runtime's acceptance.
 
 ## Phase 6 — Optional unified workspace
 
-**Status:** Pending Phase 5 and real evidence that it improves the original agent experience
+**Status:** Pending Phase 5 and real evidence that it improves the original agent experience.
+On Canary the workspace is already the `/dashboard` home behind a server flag;
+production is unchanged. That Canary setting does not pass this phase's exit.
 
 **Goal:** Offer a shared workspace only where it is genuinely more useful than the existing agent-specific and native interfaces.
 
@@ -455,9 +382,11 @@ optional Phase 6 workspace is not a prerequisite
 
 ## Phase 8 — Full Linux desktop and computer mobility
 
-**Status:** Desktop performance engineering requested alongside portable-release
-closure. Projects/tasks and a replacement workspace are not prerequisites;
-desktop launch remains gated on its own lifecycle and security acceptance.
+**Status:** Ubuntu Desktop is available in the catalog, and Omarchy is in
+private preview as a prepared Canary computer. Measured desktop performance
+acceptance (`UC-DESKTOP-01`) is still open. Projects/tasks and a replacement
+workspace are not prerequisites; each desktop profile remains gated on its own
+lifecycle and security acceptance.
 
 - Add a general graphical Linux desktop.
 - Compare existing noVNC, Selkies and Sunshine/Moonlight using measured
@@ -472,7 +401,10 @@ desktop launch remains gated on its own lifecycle and security acceptance.
 
 ## Phase 9 — Additional operating systems
 
-**Status:** Pending Phase 8
+**Status:** Windows is in private preview: it runs on the owner's own Proxmox
+host, from their own licensed Windows ISO, while ordinary provisioning waits for
+a licensed image pipeline and the full remote-desktop lifecycle. macOS
+computers are not in the catalog. The rest of this phase is pending Phase 8.
 
 - Add Windows after Linux lifecycle, access, update, and recovery contracts mature.
 - Add macOS only on legitimate Apple hardware with a compliant operational design.
