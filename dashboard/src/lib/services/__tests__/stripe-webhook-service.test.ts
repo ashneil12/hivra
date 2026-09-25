@@ -1510,6 +1510,14 @@ describe("StripeWebhookService", () => {
         builder.maybeSingle.mockImplementation(() =>
           Promise.resolve({ data: subscriptionRow })
         );
+        // Nothing else writes the row in these fixtures, so a conditional
+        // write (invoice.paid's compare-and-set) matches the row it read.
+        builder.update.mockImplementation(() => {
+          const write = createMockBuilder();
+          write.then = (r: (value: unknown) => void) =>
+            r({ data: [{ user_id: "user_fixture" }], error: null });
+          return write;
+        });
       }
       if (table === "hermes_instances") {
         builder.update.mockImplementation((payload: Record<string, unknown>) => {
@@ -2102,6 +2110,9 @@ describe("StripeWebhookService", () => {
           });
           builder.update.mockImplementation((payload: Record<string, unknown>) => {
             subscriptionUpdate = payload;
+            // The compare-and-set matches: nothing rewrote the row since the read.
+            builder.then = (resolve: (value: unknown) => void) =>
+              resolve({ data: [{ user_id: "user_renew" }], error: null });
             return builder;
           });
         }
@@ -2208,10 +2219,23 @@ describe("StripeWebhookService", () => {
       } as unknown as Stripe.Subscription;
     }
 
+    // The user's hermes_subscriptions row is stateful. A read returns a
+    // snapshot of it, and an UPDATE lands only when every filter it carries
+    // matches the row as it is at write time, returning the rows it matched.
+    // `afterRead` stands in for a concurrent writer (a /api/billing/subscribe
+    // upsert) that lands between the handler's read and its write.
     function mockBillingTables(
       hermesRow: Record<string, unknown> | null,
-      readError: { message: string } | null = null
+      readError: { message: string } | null = null,
+      {
+        afterRead,
+        writeError = null,
+      }: {
+        afterRead?: (row: Record<string, unknown>) => Record<string, unknown>;
+        writeError?: { message: string } | null;
+      } = {}
     ) {
+      let row: Record<string, unknown> | null = hermesRow ? { user_id: USER, ...hermesRow } : null;
       const writes: RecordedWrite[] = [];
       (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
         const builder = createMockBuilder();
@@ -2224,20 +2248,37 @@ describe("StripeWebhookService", () => {
           };
         builder.update.mockImplementation(record("update"));
         builder.upsert.mockImplementation(record("upsert"));
-        builder.eq.mockImplementation((column: string, value: unknown) => {
+        const filter = (column: string, value: unknown) => {
           current?.filters.push([column, value]);
           return builder;
-        });
+        };
+        builder.eq.mockImplementation(filter);
+        builder.is.mockImplementation(filter);
         if (table === "hermes_subscriptions") {
-          builder.maybeSingle.mockImplementation(() =>
-            Promise.resolve({ data: readError ? null : hermesRow, error: readError })
-          );
+          builder.maybeSingle.mockImplementation(() => {
+            if (readError) return Promise.resolve({ data: null, error: readError });
+            const snapshot = row ? { ...row } : null;
+            if (row && afterRead) row = afterRead({ ...row });
+            return Promise.resolve({ data: snapshot, error: null });
+          });
+          builder.then = (resolve: (value: unknown) => void) => {
+            const write: RecordedWrite | null = current;
+            if (!write || write.op !== "update") return resolve({ data: null, error: null });
+            if (writeError) return resolve({ data: null, error: writeError });
+            const target = row;
+            if (!target || !write.filters.every(([column, value]) => target[column] === value)) {
+              return resolve({ data: [], error: null });
+            }
+            row = { ...target, ...write.payload };
+            resolve({ data: [{ user_id: target.user_id }], error: null });
+          };
         }
         return builder;
       });
       return {
         writes,
         to: (table: string) => writes.filter((w) => w.table === table),
+        row: () => row,
       };
     }
 
@@ -2372,6 +2413,89 @@ describe("StripeWebhookService", () => {
         );
       });
 
+      // The plan check and the activation write are one compare-and-set. Here
+      // the read sees the paid Operator plan, then a /api/billing/subscribe
+      // for Fleet rewrites plan + limits (keeping the subscription id) before
+      // the write lands. Paying the Operator invoice must not switch Fleet on.
+      it.each([
+        // The grace reconciler sent a Stripe `unpaid` subscription through the
+        // cancel path, which keeps plan and subscription id on the row.
+        ["canceled", 0],
+        // The first invoice of an incomplete subscription.
+        ["pending", PLANS.operator.maxAgents],
+      ])(
+        "invoice.paid does not activate a %s row that a subscribe re-plans between its read and its write",
+        async (status, instanceLimit) => {
+          retrieveReturns(hivraSubscription("sub_hivra", "operator"));
+          const db = mockBillingTables(
+            { ...ACTIVE_OPERATOR_ROW, status, instance_limit: instanceLimit },
+            null,
+            {
+              // What /api/billing/subscribe's pending upsert writes for Fleet.
+              afterRead: (row) => ({
+                ...row,
+                plan: "fleet",
+                status: "pending",
+                instance_limit: PLANS.fleet.maxAgents,
+              }),
+            }
+          );
+
+          await StripeWebhookService.handleInvoicePaid(invoiceFor("sub_hivra"));
+
+          // The pending Fleet row stands: Fleet is not switched on.
+          expect(db.row()).toMatchObject({
+            plan: "fleet",
+            status: "pending",
+            stripe_subscription_id: "sub_hivra",
+            instance_limit: PLANS.fleet.maxAgents,
+          });
+          // Nothing was activated, so no computer is restored or resumed.
+          expect(db.to("hermes_instances")).toEqual([]);
+          // The write was a compare-and-set on the paid plan that matched nothing.
+          expect(db.to("hermes_subscriptions")).toEqual([
+            expect.objectContaining({
+              op: "update",
+              filters: expect.arrayContaining([
+                ["user_id", USER],
+                ["stripe_subscription_id", "sub_hivra"],
+                ["plan", "operator"],
+              ]),
+            }),
+          ]);
+          expect(log.warn).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+              failureType: "invoice_paid_row_changed",
+              subscriptionId: "sub_hivra",
+              rowPlan: "operator",
+              subscriptionPlan: "operator",
+            })
+          );
+          // The Operator cycle was paid, so its credits are still granted.
+          expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: USER, planKey: "operator", subscriptionId: "sub_hivra" })
+          );
+        }
+      );
+
+      it("invoice.paid throws for redelivery, resuming nothing, when the activation write fails", async () => {
+        retrieveReturns(hivraSubscription("sub_hivra", "operator"));
+        const db = mockBillingTables(
+          { ...ACTIVE_OPERATOR_ROW, status: "past_due" },
+          null,
+          { writeError: { message: "statement timeout" } }
+        );
+
+        await expect(
+          StripeWebhookService.handleInvoicePaid(invoiceFor("sub_hivra"))
+        ).rejects.toThrow("statement timeout");
+
+        expect(db.row()).toMatchObject({ status: "past_due" });
+        expect(db.to("hermes_instances")).toEqual([]);
+        expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
+      });
+
       it("invoice.paid activates only the row bound to that exact subscription", async () => {
         retrieveReturns(hivraSubscription("sub_hivra", "operator"));
         const db = mockBillingTables({ ...ACTIVE_OPERATOR_ROW, status: "past_due" });
@@ -2385,9 +2509,11 @@ describe("StripeWebhookService", () => {
             filters: expect.arrayContaining([
               ["user_id", USER],
               ["stripe_subscription_id", "sub_hivra"],
+              ["plan", "operator"],
             ]),
           }),
         ]);
+        expect(db.row()).toMatchObject({ plan: "operator", status: "active" });
         // Payment recovered: the bound row's billing-suspended computers resume.
         expect(
           db.to("hermes_instances").find((w) => w.payload.entitlement_state === "ok")

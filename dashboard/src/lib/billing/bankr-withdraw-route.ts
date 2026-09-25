@@ -36,13 +36,15 @@ const baseTokenSchema = z.object({
   chain: z.literal("Base"),
 });
 
+// A withdrawal never changes the saved destination: older clients may still
+// send `setPrimaryRecipient`, and it is ignored (zod strips unknown keys).
+// `recipientAddress` must equal the saved destination.
 const bodySchema = z.object({
   expectedRecipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
   recipientAddress: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
   amount: z.string().trim().min(1).max(80),
   asset: z.enum(["HERMESOS", "ETH"]).optional().default("HERMESOS"),
   token: baseTokenSchema.optional(),
-  setPrimaryRecipient: z.boolean().optional().default(false),
 }).superRefine((body, ctx) => {
   if (body.token && !body.recipientAddress) {
     ctx.addIssue({
@@ -59,7 +61,6 @@ export interface BankrWithdrawBody {
   amount: string;
   asset: InstanceBankrWithdrawAsset;
   token?: BaseWithdrawalToken & { chain: "Base" };
-  setPrimaryRecipient: boolean;
 }
 
 function assetLabel(asset: string) {
@@ -300,6 +301,38 @@ export function createBankrWithdrawHandler(lane: BankrWithdrawLane) {
             userId,
             instanceId: id,
             failureType: failureType("no_destination"),
+          }
+        );
+      }
+      if (result.status === "destination_cooling_down") {
+        // The saved destination is inside its cooldown (see
+        // withdraw-destination-policy.ts). Nothing was claimed or sent.
+        return apiError(
+          result.errorMessage ?? "This withdrawal destination was saved too recently. Try again later.",
+          423,
+          undefined,
+          { failureType: failureType("destination_cooling_down"), availableAt: result.availableAt ?? null },
+          {
+            ...LOG_CONTEXT,
+            userId,
+            instanceId: id,
+            failureType: failureType("destination_cooling_down"),
+            metadata: { asset },
+          }
+        );
+      }
+      if (result.status === "recipient_not_destination") {
+        return apiError(
+          result.errorMessage ?? "Withdrawals go only to this wallet's saved withdrawal destination.",
+          422,
+          undefined,
+          { failureType: failureType("recipient_not_destination") },
+          {
+            ...LOG_CONTEXT,
+            userId,
+            instanceId: id,
+            failureType: failureType("recipient_not_destination"),
+            metadata: { asset },
           }
         );
       }

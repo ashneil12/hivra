@@ -15,6 +15,7 @@ import { clientLog } from "@/lib/client/logger";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
 import { LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
+import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from "@/components/wallet/useStepUpJsonRequest";
 import type { BillingActivityData } from "@/components/billing/BillingActivityPanel";
 import {
   describeWalletProviderError,
@@ -215,6 +216,7 @@ export function useBillingController() {
   const selfServeDowngradeEnabled = isSelfServeDowngradeUiEnabled();
   // Token geo-policy: "allowed" at once while the policy is dormant.
   const tokenGeo = useTokenGeoAccess();
+  const stepUpRequest = useStepUpJsonRequest();
 
   const [data, setData] = useState<UsageData | null>(null);
   const [activity, setActivity] = useState<BillingActivityData | null>(null);
@@ -1093,7 +1095,9 @@ export function useBillingController() {
         return;
       }
 
-      const verifyResponse = await fetch("/api/billing/wallet/verify", {
+      // Verifying a different wallet can change where a lock-wallet move
+      // sends funds, so the server may ask the user to confirm it's them.
+      const verifyResult = await stepUpRequest("/api/billing/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1101,7 +1105,11 @@ export function useBillingController() {
           signature,
         }),
       });
-      const verifyPayload = await readApiPayload(verifyResponse);
+      if (!verifyResult) {
+        setTokenError(STEP_UP_CANCELLED_VERIFY_MESSAGE);
+        return;
+      }
+      const verifyPayload = verifyResult.body;
       const verifiedWallet = readVerifiedWallet(apiSuccessData(verifyPayload));
       if (!verifiedWallet) {
         setTokenError(apiPayloadError(verifyPayload, "Wallet verification failed."));

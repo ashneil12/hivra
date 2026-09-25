@@ -9,6 +9,7 @@ import { useLocale } from '@/components/i18n/LocaleProvider';
 import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
 import { useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
+import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
 import { LAUNCH_ROUTE } from '@/lib/hivra/launch-navigation';
 import { planReturnParams, withReturnParams } from '@/lib/safe-return-path';
@@ -125,6 +126,8 @@ interface WithdrawAddressPayload {
   normalizedAddress?: string | null;
   setAt?: string;
   updatedAt?: string;
+  /** When a newly saved address can first receive a withdrawal; null once it can. */
+  availableAt?: string | null;
 }
 
 
@@ -321,6 +324,9 @@ export default function WalletPage() {
   const walletCopy = copy.dashboard.wallet;
   // Token geo-policy: "allowed" at once while the policy is dormant.
   const tokenGeo = useTokenGeoAccess();
+  // Verifying a different wallet can change where a lock-wallet move sends
+  // funds, so the server may ask the user to confirm it's them first.
+  const stepUpRequest = useStepUpJsonRequest();
   const fromWelcome = searchParams?.get('from') === 'welcome';
   const welcomeRedirectFiredRef = useRef(false);
   const [data, setData] = useState<WalletApiPayload | null>(null);
@@ -335,6 +341,8 @@ export default function WalletPage() {
   const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
   const [walletConnectSuccess, setWalletConnectSuccess] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState<string | null>(null);
+  // When a newly saved withdraw address can first receive a withdrawal.
+  const [withdrawAvailableAt, setWithdrawAvailableAt] = useState<string | null>(null);
   const [withdrawAddressLoading, setWithdrawAddressLoading] = useState(true);
   const [withdrawAddressFormOpen, setWithdrawAddressFormOpen] = useState(false);
   const [quotes, setQuotes] = useState<QuotesResponse>({ pro: null, power: null });
@@ -412,13 +420,16 @@ export default function WalletPage() {
         // 404 → billing v2 disabled; 401 → not signed in. Treat as "no
         // address set" and let the rest of the page render.
         setWithdrawAddress(null);
+        setWithdrawAvailableAt(null);
         return;
       }
       const body = await response.json().catch(() => ({}));
-      const addr = (body?.data as WithdrawAddressPayload | undefined)?.address ?? null;
-      setWithdrawAddress(addr);
+      const payload = body?.data as WithdrawAddressPayload | undefined;
+      setWithdrawAddress(payload?.address ?? null);
+      setWithdrawAvailableAt(payload?.availableAt ?? null);
     } catch {
       setWithdrawAddress(null);
+      setWithdrawAvailableAt(null);
     } finally {
       setWithdrawAddressLoading(false);
     }
@@ -573,7 +584,7 @@ export default function WalletPage() {
         return;
       }
 
-      const verifyResponse = await fetch('/api/billing/wallet/verify', {
+      const verifyResult = await stepUpRequest('/api/billing/wallet/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -581,7 +592,11 @@ export default function WalletPage() {
           signature,
         }),
       });
-      const verifyPayload = await readApiPayload(verifyResponse);
+      if (!verifyResult) {
+        setWalletConnectError(STEP_UP_CANCELLED_VERIFY_MESSAGE);
+        return;
+      }
+      const verifyPayload = isRecord(verifyResult.body) ? verifyResult.body : null;
       const verifyData = apiSuccessData(verifyPayload);
       if (!verifyData) {
         setWalletConnectError(apiPayloadError(verifyPayload, 'Wallet verification failed.'));
@@ -607,7 +622,7 @@ export default function WalletPage() {
     } finally {
       setWalletConnecting(false);
     }
-  }, [load, walletCopy.verification.verifiedSuffix]);
+  }, [load, stepUpRequest, walletCopy.verification.verifiedSuffix]);
 
   const handleLockPrice = useCallback(async () => {
     setWalletLockingPrice(true);
@@ -1053,6 +1068,7 @@ export default function WalletPage() {
         <section aria-label="Wallet actions" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.5rem' }}>
           <WithdrawDestinationCard
             address={withdrawAddress}
+            availableAt={withdrawAvailableAt}
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
@@ -1065,6 +1081,7 @@ export default function WalletPage() {
             tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
             balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
             withdrawAddress={withdrawAddress}
+            withdrawAvailableAt={withdrawAvailableAt}
             onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
             onWithdrew={() => {
               // Refresh once now (the post-withdraw eligibility re-check
@@ -1084,8 +1101,9 @@ export default function WalletPage() {
         <WithdrawAddressForm
           initialAddress={withdrawAddress}
           onCancel={() => setWithdrawAddressFormOpen(false)}
-          onSaved={(addr) => {
+          onSaved={(addr, availableAt) => {
             setWithdrawAddress(addr);
+            setWithdrawAvailableAt(availableAt);
             setWithdrawAddressFormOpen(false);
           }}
         />

@@ -94,7 +94,6 @@ export const POST = createBankrWithdrawHandler({
           tokenAddress: body.token.tokenAddress,
           decimals: body.token.decimals,
         },
-        setPrimaryRecipient: body.setPrimaryRecipient,
       });
     }
     return withdrawForOwner({

@@ -81,6 +81,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         bankrWalletId: "wlt_instance",
         status: "active",
         withdrawalDestinationEvm: "0x1111111111111111111111111111111111111111",
+        withdrawalDestinationAvailableAt: null,
         apiKeyStatus: "active",
         custody: "hivra_provisioned" as const,
         apiKeyPreview: null,
@@ -98,6 +99,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         bankrWalletId: "wlt_instance",
         status: "active",
         withdrawalDestinationEvm: "0x1111111111111111111111111111111111111111",
+        withdrawalDestinationAvailableAt: null,
         apiKeyStatus: "active",
         custody: "hivra_provisioned" as const,
         apiKeyPreview: null,
@@ -115,6 +117,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         bankrWalletId: "wlt_instance",
         status: "active",
         withdrawalDestinationEvm: "0x2222222222222222222222222222222222222222",
+        withdrawalDestinationAvailableAt: null,
         apiKeyStatus: "active",
         custody: "hivra_provisioned" as const,
         apiKeyPreview: null,
@@ -223,6 +226,8 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
       chain: "Base",
     };
 
+    // An older client may still send setPrimaryRecipient: it is ignored, a
+    // withdrawal never changes the saved destination.
     const response = await POST(makeReq({
       recipientAddress,
       amount: "2.5",
@@ -244,7 +249,6 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         tokenAddress: USDC_CONTRACT,
         decimals: 6,
       },
-      setPrimaryRecipient: true,
     });
     expect(mockedWithdraw).not.toHaveBeenCalled();
     expect(mockedWithdrawEth).not.toHaveBeenCalled();
@@ -265,6 +269,43 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
 
     expect(response.status).toBe(422);
     expect(body.error).toMatch(/withdrawal destination/i);
+  });
+
+  it("returns 423 with the unlock time while the saved destination is in its cooldown", async () => {
+    const availableAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    mockedWithdraw.mockResolvedValueOnce({
+      status: "destination_cooling_down",
+      availableAt,
+      errorMessage: "This withdrawal destination was saved less than 24 hours ago.",
+    } as never);
+
+    const response = await POST(makeReq({ amount: "25" }), { params: Promise.resolve({ id: "inst_123" }) });
+    const body = await response.json();
+
+    expect(response.status).toBe(423);
+    expect(body.error).toMatch(/less than 24 hours ago/);
+    expect(body).toMatchObject({
+      failureType: "agent_wallet_withdraw_destination_cooling_down",
+      availableAt,
+    });
+  });
+
+  it("returns 422 when a token withdrawal names a recipient other than the saved destination", async () => {
+    mockedWithdrawBaseToken.mockResolvedValueOnce({
+      status: "recipient_not_destination",
+      errorMessage: "Withdrawals go only to this wallet's saved withdrawal destination.",
+    } as never);
+
+    const response = await POST(makeReq({
+      recipientAddress: "0x3333333333333333333333333333333333333333",
+      amount: "2.5",
+      token: { symbol: "USDC", tokenAddress: USDC_CONTRACT, decimals: 6, chain: "Base" },
+    }), { params: Promise.resolve({ id: "inst_123" }) });
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.error).toMatch(/saved withdrawal destination/);
+    expect(body).toMatchObject({ failureType: "agent_wallet_withdraw_recipient_not_destination" });
   });
 
   it("requires an amount before dispatching to the withdraw helper", async () => {

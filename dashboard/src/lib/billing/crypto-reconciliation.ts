@@ -37,11 +37,16 @@ type QueryError = { code?: string; message?: string } | null;
 type DbQuery = {
   select: (...args: unknown[]) => DbQuery;
   eq: (...args: unknown[]) => DbQuery;
+  in: (...args: unknown[]) => DbQuery;
   is: (...args: unknown[]) => DbQuery;
   gt: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
+};
+
+type DbTable = DbQuery & {
+  update: (patch: Record<string, unknown>) => DbQuery;
 };
 
 type SupabaseLike = {
@@ -54,6 +59,18 @@ const DEFAULT_LIMIT = 50;
 // Batch slots always left for intents the old session helper failed without a
 // chain check, so that finite backlog drains even while many intents are open.
 const MIN_UNCHECKED_EXPIRED_SHARE = 5;
+// The reconcile queue: `payment_transactions.reconcile_queued_at` is when an
+// intent joined the back of the queue (its insert, then every check). See
+// listOpenCryptoTopUps.
+const QUEUE_COLUMN = "reconcile_queued_at";
+// One account's intents may take at most this many of a run's slots while
+// other accounts' intents are waiting in the rows read ahead.
+const MAX_INTENTS_PER_USER_PER_RUN = 3;
+// Rows read ahead of the batch to find other accounts' intents.
+const QUEUE_LOOKAHEAD_FACTOR = 4;
+const MAX_QUEUE_LOOKAHEAD = 200;
+// limit / this many slots go to the newest intents (none below this limit).
+const FRESH_LANE_DIVISOR = 5;
 const DEFAULT_MIN_CONFIRMATIONS = 3;
 // How many later intents to look through for the next one on the same
 // deposit address (a user's wallet is normally the same across intents).
@@ -61,8 +78,8 @@ const NEXT_INTENT_LOOKAHEAD = 10;
 const PAYMENT_COLUMNS =
   "id, user_id, provider, provider_reference_id, status, asset, amount_minor, package_credits, metadata, created_at, updated_at";
 
-function table(db: SupabaseLike, name: string): DbQuery {
-  return db.from(name) as DbQuery;
+function table(db: SupabaseLike, name: string): DbTable {
+  return db.from(name) as DbTable;
 }
 
 function normalizeLimit(limit: number | undefined) {
@@ -117,36 +134,116 @@ function toTopUpTransfer(transfer: ScannedTransfer): CryptoTopUpTransfer {
 // ── Candidates ────────────────────────────────────────────────────────────
 
 /**
- * Newest first: a fresh payment is always inside the batch, however many
- * older intents are still open. Older intents leave the set by settling or by
- * retiring once their window + grace has been fully scanned, so abandoned
- * intents cannot starve new ones. Intents the old session helper failed
- * without a chain check are included until the reconciler has closed them.
+ * Take up to `budget` rows in order, at most MAX_INTENTS_PER_USER_PER_RUN per
+ * account (counted across the whole run in `perUser`) while other accounts'
+ * rows are waiting. Slots nobody else wants are filled from the deferred rows,
+ * still in order, so the queue head always moves: a burst from one account
+ * delays other intents by a bounded number of runs instead of blocking them.
+ */
+function takeFairly(
+  rows: CryptoTopUpPaymentRow[],
+  budget: number,
+  perUser: Map<string, number>,
+  alreadyTaken: ReadonlySet<string> = new Set()
+) {
+  const taken: CryptoTopUpPaymentRow[] = [];
+  const deferred: CryptoTopUpPaymentRow[] = [];
+  const take = (row: CryptoTopUpPaymentRow) => {
+    perUser.set(row.user_id, (perUser.get(row.user_id) ?? 0) + 1);
+    taken.push(row);
+  };
+  for (const row of rows) {
+    if (taken.length >= budget) break;
+    if (alreadyTaken.has(row.id)) continue;
+    if ((perUser.get(row.user_id) ?? 0) >= MAX_INTENTS_PER_USER_PER_RUN) deferred.push(row);
+    else take(row);
+  }
+  for (const row of deferred) {
+    if (taken.length >= budget) break;
+    take(row);
+  }
+  return taken;
+}
+
+/**
+ * The next batch of open intents, in two lanes:
+ *   - fresh: a fifth of the batch goes to the newest pending intents, so a
+ *     payment made minutes ago is credited on the next run when there is a
+ *     backlog of older intents;
+ *   - queue: the rest goes to the intents that have waited longest since they
+ *     were created or last checked. Every intent a run picks, in either lane,
+ *     goes to the back of the queue (markCheckedThisRun) whatever the outcome,
+ *     and settling or retiring takes it out. So no set of intents, old or new,
+ *     can hold the batch: every open intent is checked within
+ *     ceil(open intents / queue slots) runs, however many arrive meanwhile.
+ * Intents the old session helper failed without a chain check keep a share of
+ * every batch, in queue order, until they are closed.
  */
 async function listOpenCryptoTopUps(db: SupabaseLike, limit: number) {
-  const base = () =>
+  const lookahead = Math.min(MAX_QUEUE_LOOKAHEAD, limit * QUEUE_LOOKAHEAD_FACTOR);
+  const freshShare = Math.floor(limit / FRESH_LANE_DIVISOR);
+  const intents = () =>
     table(db, "payment_transactions")
       .select(PAYMENT_COLUMNS)
       .eq("provider", "bankr")
       .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key);
-  const [pending, uncheckedExpired] = await Promise.all([
-    base().eq("status", "pending").order("created_at", { ascending: false }).limit(limit),
-    base()
-      .eq("status", "failed")
-      .eq("metadata->>failureType", CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE)
-      .is("metadata->>reconciliationClosedAt", null)
-      .order("created_at", { ascending: false })
-      .limit(limit),
+  const inQueueOrder = (query: DbQuery) =>
+    query
+      .order(QUEUE_COLUMN, { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: true })
+      .limit(lookahead);
+  const [fresh, queued, uncheckedExpired] = await Promise.all([
+    freshShare > 0
+      ? intents().eq("status", "pending").order("created_at", { ascending: false }).limit(lookahead)
+      : Promise.resolve({ data: [], error: null }),
+    inQueueOrder(intents().eq("status", "pending")),
+    inQueueOrder(
+      intents()
+        .eq("status", "failed")
+        .eq("metadata->>failureType", CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE)
+        .is("metadata->>reconciliationClosedAt", null)
+    ),
   ]);
-  for (const result of [pending, uncheckedExpired]) {
+  for (const result of [fresh, queued, uncheckedExpired]) {
     if (result.error) {
       throw new Error(result.error.message || "Failed to load open crypto top-ups");
     }
   }
-  const pendingRows = (Array.isArray(pending.data) ? pending.data : []) as CryptoTopUpPaymentRow[];
-  const uncheckedRows = (Array.isArray(uncheckedExpired.data) ? uncheckedExpired.data : []) as CryptoTopUpPaymentRow[];
+  const rowsOf = (result: { data?: unknown }) =>
+    (Array.isArray(result.data) ? result.data : []) as CryptoTopUpPaymentRow[];
+
+  const perUser = new Map<string, number>();
+  const freshRows = takeFairly(rowsOf(fresh), freshShare, perUser);
+  const queuedRows = takeFairly(
+    rowsOf(queued),
+    limit - freshRows.length,
+    perUser,
+    new Set(freshRows.map((row) => row.id))
+  );
+  const pendingRows = [...freshRows, ...queuedRows];
   const uncheckedShare = Math.max(MIN_UNCHECKED_EXPIRED_SHARE, limit - pendingRows.length);
-  return [...pendingRows, ...uncheckedRows.slice(0, uncheckedShare)];
+  const uncheckedRows = takeFairly(rowsOf(uncheckedExpired), uncheckedShare, perUser);
+  return [...pendingRows, ...uncheckedRows];
+}
+
+/**
+ * Move this run's intents to the back of the queue before they are checked,
+ * so a run that dies part-way still advances the queue and an overlapping run
+ * takes the next intents instead of the same ones. A failure here throws: a
+ * queue that stops moving is the starvation this ordering exists to prevent.
+ */
+async function markCheckedThisRun(db: SupabaseLike, rows: CryptoTopUpPaymentRow[], now: Date) {
+  if (rows.length === 0) return;
+  const { error } = await table(db, "payment_transactions")
+    .update({ [QUEUE_COLUMN]: now.toISOString() })
+    .in(
+      "id",
+      rows.map((row) => row.id)
+    )
+    .eq("provider", "bankr");
+  if (error) {
+    throw new Error(`Failed to advance the crypto top-up reconcile queue: ${error.message || "unknown error"}`);
+  }
 }
 
 // ── Attribution ───────────────────────────────────────────────────────────
@@ -433,6 +530,7 @@ export async function reconcilePendingCryptoTopUps(params: {
   };
 
   const intents = await listOpenCryptoTopUps(db, limit);
+  await markCheckedThisRun(db, intents, now);
   for (const row of intents) {
     try {
       const result = await reconcileOpenIntent({ row, db, chain, minConfirmations, settle, now });
