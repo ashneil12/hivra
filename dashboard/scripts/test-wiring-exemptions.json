@@ -1,0 +1,100 @@
+{
+  "$comment": "Test files that CI does not run, and why. Checked by scripts/check-test-wiring.cjs; categories are documented there. An exemption for a file that CI now runs, or that no longer exists, fails the check.",
+  "exemptions": [
+    {
+      "path": "dashboard/scripts/test-attached-agent-systemd-vm.py",
+      "category": "vm",
+      "reason": "Boots a disposable Ubuntu VM and drives the attached-agent units under real systemd."
+    },
+    {
+      "path": "dashboard/scripts/test-deepseek-systemd-vm.py",
+      "category": "vm",
+      "reason": "Boots a disposable QEMU guest as root; run on demand by the manual Offline DeepSeek systemd fixture workflow. Its offline contract (test-deepseek-systemd-vm-contract.py) runs on every PR."
+    },
+    {
+      "path": "dashboard/scripts/test-server-enroll-host.py",
+      "category": "vm",
+      "reason": "Runs as root on a disposable enrolled server (HIVRA_DISPOSABLE_CI=1) and changes its sudo and service configuration."
+    },
+    {
+      "path": "dashboard/scripts/test-self-host-recovery-e2e.mjs",
+      "category": "vm",
+      "reason": "Starts, kills and restores a whole self-host Docker stack it owns; takes up to an hour. Its helper functions run in public-release-safety via test-self-host-recovery-e2e.test.mjs."
+    },
+    {
+      "path": "dashboard/scripts/test-public-source-bootstrap-e2e.mjs",
+      "category": "vm",
+      "reason": "Exports the public source, then runs the full self-host recovery rehearsal inside it on a Docker host it owns. Its argument and receipt checks run via test-public-source-bootstrap-e2e.test.mjs."
+    },
+    {
+      "path": "dashboard/scripts/test-bankr-native-transfer.ts",
+      "category": "live",
+      "reason": "Probes the live Bankr partner API with BANKR_PARTNER_KEY: provisions a probe wallet, mints a scoped key and attempts a native transfer."
+    },
+    {
+      "path": "dashboard/e2e/",
+      "category": "live",
+      "reason": "Playwright journeys against the deployed Canary (E2E_BASE_URL, default canary.hermesos.cloud); the first-run and remote-desktop audits create paid resources."
+    },
+    {
+      "path": "dashboard/scripts/test-attached-codex-bundle.py",
+      "category": "needs-artifact",
+      "reason": "Needs the pinned Codex release tarball at /tmp/codex.tar.gz and the generated attach scripts extracted to /tmp."
+    },
+    {
+      "path": "dashboard/scripts/test-attached-codex-fetch.py",
+      "category": "needs-artifact",
+      "reason": "Runs as root in an owned container; needs the generated fetch-attached-codex.py in /tmp and the real Codex archive already fetched once."
+    },
+    {
+      "path": "dashboard/scripts/test-attached-codex-home-denial.py",
+      "category": "needs-artifact",
+      "reason": "Needs the pinned Codex release tarball at /tmp/codex.tar.gz and the generated stage-attached-codex.py in /tmp."
+    },
+    {
+      "path": "dashboard/scripts/test-attached-codex-stage.py",
+      "category": "needs-artifact",
+      "reason": "Needs the pinned Codex release tarball at /tmp/codex.tar.gz and the generated stage-attached-codex.py in /tmp."
+    },
+    {
+      "path": "dashboard/scripts/test-attached-codex-worker.py",
+      "category": "needs-artifact",
+      "reason": "Needs the root-owned, pinned /tmp/codex.tar.gz plus the generated run-attached-codex-stage.py and stage-attached-codex.py in /tmp."
+    },
+    {
+      "path": "dashboard/scripts/test-deepseek-native-runtime.mjs",
+      "category": "needs-artifact",
+      "reason": "Needs an existing local Docker image by digest (--image sha256:...). Its argument refusals run in public-release-safety via test-deepseek-native-runtime.test.mjs."
+    },
+    {
+      "path": "dashboard/scripts/test-hivra-canonical-authority-concurrency.cjs",
+      "category": "needs-artifact",
+      "reason": "Opt-in real PostgreSQL sessions against an already-pulled postgres:17-alpine image. Its cleanup and lost-acknowledgement paths run with a fake docker via test-hivra-canonical-authority-cleanup.cjs."
+    },
+    {
+      "path": "dashboard/runtime-adapters/omarchy-native/guardian-lifecycle.test.py",
+      "category": "needs-artifact",
+      "reason": "Runs the actual pinned Sunshine binary (/usr/bin/sunshine, checked by hash) in the disposable image named in the administration runtime receipt."
+    },
+    {
+      "path": "dashboard/runtime-adapters/omarchy-native/guardian-stop.test.py",
+      "category": "needs-artifact",
+      "reason": "Reuses the guardian-lifecycle Sunshine fixture, so it needs the same pinned /usr/bin/sunshine image."
+    },
+    {
+      "path": "services/browser-sidecar/tests/",
+      "category": "not-in-ci",
+      "reason": "Vitest suite with no CI job. Blocked: image-build.test.ts reads .github/workflows/browser-sidecar-publish.yml, which is not in this repository, and tests/integration needs Playwright Chromium."
+    },
+    {
+      "path": "apps/macos/HivraMac/Tests/",
+      "category": "not-in-ci",
+      "reason": "XCTest suite for the macOS app; needs a macOS runner job (swift test), which no workflow has yet."
+    },
+    {
+      "path": "contracts/test/",
+      "category": "not-in-ci",
+      "reason": "Foundry test for the payment router; needs forge plus the forge-std and OpenZeppelin libraries, which no workflow installs yet."
+    }
+  ]
+}

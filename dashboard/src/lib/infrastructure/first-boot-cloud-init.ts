@@ -15,7 +15,8 @@ import { validateTrustedAppOrigin } from "./trusted-app-origin";
 // longer renders that recipe, it only keeps accepting their enrollment.
 const HELPER_SHA256 = "16df2dca77a504b67ec51fcfe657b9e5240e90ce8618f27eb346d9016d06726c";
 const GUEST_CONFIG_VERSION = 2;
-const MAX_USER_DATA_BYTES = 32_768;
+/** Hetzner Cloud's user_data limit, in UTF-8 bytes. */
+export const MAX_USER_DATA_BYTES = 32_768;
 const HELPER_PATH = "/usr/local/lib/hivra/hetzner-enroll.py";
 const CONFIG_PATH = "/run/hivra/first-boot-enrollment.json";
 const CALLBACK_PATH = "/api/infrastructure/first-boot/enroll";
