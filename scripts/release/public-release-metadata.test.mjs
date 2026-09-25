@@ -341,7 +341,8 @@ test('every third-party GitHub Action is pinned to an immutable commit', () => {
     'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   ], 'the offline VM fixture adds only the reviewed checkout and evidence upload');
   // 13: the host-connector job adds one pinned actions/checkout.
-  assert.equal(actionCount, 13, 'review the complete workflow action inventory when it changes');
+  // 17: Dashboard CI's parallel jobs each pin checkout and setup-node.
+  assert.equal(actionCount, 17, 'review the complete workflow action inventory when it changes');
 });
 
 test('workflow action inventory fails closed on alternate uses-key forms', () => {
