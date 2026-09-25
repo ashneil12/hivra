@@ -103,9 +103,6 @@
   "components/hivra/HivraGitHubConnect.tsx": {
     "the box": 1
   },
-  "components/hivra/HivraManage.tsx": {
-    "balloon floor": 1
-  },
   "components/hivra/HivraRemoteDesktop.tsx": {
     "the box": 1,
     "runtime": 15

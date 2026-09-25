@@ -406,7 +406,7 @@ describe("each runtime opens its own surface", () => {
   it.each([
     ["claude-code", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`],
     ["codex", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`],
-    ["codex", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage#model-settings`],
+    ["codex", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`],
     ["openclaw", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["agent-zero", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["aeon", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],

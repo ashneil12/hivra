@@ -1,10 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Play, Square, TerminalSquare, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Square, TerminalSquare } from "lucide-react";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { gvisorIsolationDisclosure } from "@/lib/hivra/gvisor-computer-contract";
+import { COMPUTER_PLACEMENT_LABEL, computerPlacementFor } from "@/lib/agent-computers/agent-surfaces";
+import type { ManageSectionId } from "@/lib/hivra/manage-sections";
 import { ComputerAgentSlot } from "./ComputerContractPanel";
+import { ManageLayout, ManageNotice, ManagePanel } from "./ManageLayout";
+import { useManageSection } from "./useManageSection";
+import { ManageHeader } from "./manage/ManageHeader";
+import { ManageDangerZone } from "./manage/ManageDangerZone";
+import { ManageDetails, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
 
 type Observation = { state: "running" | "stopped" | "absent"; cpu?: number; memoryMb?: number; adapterVersion?: string;
   isolationClass?: "application-kernel"; isolationDriver?: "gvisor-runsc"; outerHostBoundary?: "operator-owned-host";
@@ -17,7 +24,7 @@ const button: React.CSSProperties = { border: "1px solid var(--etched-border)", 
 const field: React.CSSProperties = { display: "grid", gap: 6 };
 const control: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "10px 12px", border: "1px solid var(--etched-border)",
   borderRadius: 0, background: "var(--bg-surface)", color: "var(--ink-black)" };
-// A double tap on "Delete sandbox" must not also land on the confirm button.
+// A double tap on Destroy must not also land on the confirm button.
 const CONFIRM_ARM_MS = 600;
 const label: React.CSSProperties = { fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 700,
   textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--text-muted)", marginBottom: 10 };
@@ -25,8 +32,20 @@ const errorStyle: React.CSSProperties = { display: "flex", gap: 8, alignItems: "
   background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 12.5, padding: "9px 13px", fontFamily: "var(--font-mono), monospace",
   lineHeight: 1.5, overflowWrap: "anywhere" };
 
-type Section = "computer" | "terminal" | "resources" | "danger";
-const ACTION_SECTION: Record<"start" | "stop" | "resize" | "delete", Section> = { start: "computer", stop: "computer", resize: "resources", delete: "danger" };
+type Slot = "header" | "computer" | "terminal" | "resources" | "danger";
+const SLOT_SECTION: Record<Slot, ManageSectionId | null> = { header: null, computer: "overview", terminal: "command", resources: "resources", danger: "advanced" };
+const ACTION_SLOT: Record<"start" | "stop" | "resize" | "delete" | "rename", Slot> = { start: "computer", stop: "computer", resize: "resources", delete: "danger", rename: "header" };
+const FALLBACK_SECTIONS: ManageSectionId[] = ["overview", "resources", "command", "advanced"];
+type Busy = "start" | "stop" | "resize" | "delete" | "rename" | "exec";
+// What an action is doing, shown in the section that started it and, while
+// another section is open, as a banner that opens it. A rename shows in the header.
+const PROGRESS: Record<Exclude<Busy, "rename">, { section: ManageSectionId; message: string }> = {
+  start: { section: "overview", message: "Starting this sandbox…" },
+  stop: { section: "overview", message: "Stopping this sandbox…" },
+  resize: { section: "resources", message: "Applying the new limits…" },
+  exec: { section: "command", message: "Running the command…" },
+  delete: { section: "advanced", message: "Deleting this sandbox…" },
+};
 
 // Shown under the control that failed and scrolled into view, so it never covers a field.
 function SectionError({ message }: { message: string }) {
@@ -45,24 +64,33 @@ async function jsonRequest(url: string, init?: RequestInit) {
   return payload.data ?? {};
 }
 
+/** Manage for a Linux Sandbox (gVisor): the shared sections, with its own one-shot command runner. */
 export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent: HivraAgent; onChanged: () => void; onDestroyed: () => void }) {
   const [observation, setObservation] = useState<Observation | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<{ section: Section; message: string } | null>(null);
+  const [busy, setBusy] = useState<Busy | null>(null);
+  const [error, setError] = useState<{ slot: Slot; message: string } | null>(null);
   const [cpu, setCpu] = useState(agent.cpu);
   const [ram, setRam] = useState(agent.ram);
   const [command, setCommand] = useState("python --version && id && pwd && ls -la");
   const [commandResult, setCommandResult] = useState<{ exitCode: number; stdout: string; stderr: string } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const confirmShownAt = useRef(0);
   const disclosure = gvisorIsolationDisclosure();
-  const errorFor = (section: Section) => (error?.section === section ? <SectionError message={error.message} /> : null);
+  const manage = agent.manage;
+  const sections = manage?.sections ?? FALLBACK_SECTIONS;
+  const { selected, select, openAndFocus } = useManageSection(sections, Boolean(manage));
+  const errorFor = (slot: Slot) => (error?.slot === slot ? <SectionError message={error.message} /> : null);
+  const progress = busy && busy !== "rename" ? PROGRESS[busy] : null;
+  const progressIn = (section: ManageSectionId) => progress?.section === section ? (
+    <span role="status" style={{ display: "inline-flex", gap: 7, alignItems: "center" }}>
+      <Loader2 size={14} aria-hidden="true" style={{ animation: "spin 1s linear infinite" }} /> {progress.message}
+    </span>
+  ) : null;
+  const placement = manage?.placement.label ?? COMPUTER_PLACEMENT_LABEL[computerPlacementFor(agent)];
 
   const refresh = useCallback(async () => {
     try {
       const data = await jsonRequest(`/api/hivra/agents/${encodeURIComponent(agent.id)}/gvisor`);
       setObservation(data.observation as Observation); setError(null);
-    } catch (cause) { setError({ section: "computer", message: cause instanceof Error ? cause.message : "Computer status could not be checked." }); }
+    } catch (cause) { setError({ slot: "computer", message: cause instanceof Error ? cause.message : "Computer status could not be checked." }); }
   }, [agent.id]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { setCpu(agent.cpu); setRam(agent.ram); }, [agent.cpu, agent.ram]);
@@ -74,7 +102,16 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
         body: JSON.stringify(action === "resize" ? { action, cpu, ram, maximumCpu: cpu, maximumRam: ram } : { action }) });
       if (action === "delete") { onDestroyed(); return; }
       await refresh(); onChanged();
-    } catch (cause) { setError({ section: ACTION_SECTION[action], message: cause instanceof Error ? cause.message : "Computer operation failed." }); }
+    } catch (cause) { setError({ slot: ACTION_SLOT[action], message: cause instanceof Error ? cause.message : "Computer operation failed." }); }
+    finally { setBusy(null); }
+  };
+
+  const rename = async (name: string) => {
+    setBusy("rename"); setError(null);
+    try {
+      await jsonRequest(`/api/hivra/agents/${encodeURIComponent(agent.id)}/action`, { method: "POST", body: JSON.stringify({ action: "rename", name }) });
+      onChanged();
+    } catch (cause) { setError({ slot: "header", message: cause instanceof Error ? cause.message : "The name could not be changed." }); }
     finally { setBusy(null); }
   };
 
@@ -85,66 +122,107 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
       const argv = ["/bin/sh", "-lc", command.trim()];
       const data = await jsonRequest(`/api/hivra/agents/${encodeURIComponent(agent.id)}/gvisor/exec`, { method: "POST", body: JSON.stringify({ argv }) });
       setCommandResult(data.result as typeof commandResult);
-    } catch (cause) { setError({ section: "terminal", message: cause instanceof Error ? cause.message : "Command failed." }); }
+    } catch (cause) { setError({ slot: "terminal", message: cause instanceof Error ? cause.message : "Command failed." }); }
     finally { setBusy(null); }
   };
 
-  return <div style={{ width: "100%", maxWidth: 620, margin: "0 auto", padding: "clamp(20px, 5vw, 36px) clamp(14px, 4vw, 20px)",
-    height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
-    <div style={label}>Computer</div>
-    <section style={box}>
-      <strong style={{ fontSize: 19 }}>{agent.name}</strong>
-      <span>{observation?.state ?? agent.status} · {agent.cpu} CPU · {agent.ram} GB</span>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {observation?.state === "stopped" ? <button style={button} disabled={Boolean(busy)} onClick={() => void mutate("start")}><Play size={14} />Start</button>
-          : <button style={button} disabled={Boolean(busy) || observation?.state !== "running"} onClick={() => void mutate("stop")}><Square size={14} />Stop</button>}
-        <button style={button} disabled={Boolean(busy)} onClick={() => void refresh()}>Refresh</button>
-        {busy ? <span role="status"><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Confirming {busy}…</span> : null}
-      </div>
-      {errorFor("computer")}
-    </section>
+  const errorSection = error ? SLOT_SECTION[error.slot] : null;
+  const errorNotice = error && errorSection && errorSection !== selected
+    ? <ManageNotice kind="alert" message={error.message} section={errorSection} onOpen={openAndFocus} /> : null;
+  const progressNotice = progress && progress.section !== selected && sections.includes(progress.section)
+    ? <ManageNotice kind="status" message={progress.message} section={progress.section} onOpen={openAndFocus} /> : null;
+  const dirty = cpu !== agent.cpu || ram !== agent.ram;
+  const state = observation?.state ?? agent.status;
 
-    <ComputerAgentSlot />
+  return (
+    <ManageLayout
+      label="Computer settings"
+      sections={sections.map((id) => ({ id, unsaved: id === "resources" && dirty }))}
+      selected={selected}
+      onSelect={select}
+      notice={errorNotice || progressNotice ? <>{errorNotice}{progressNotice}</> : null}
+      header={
+        <ManageHeader
+          eyebrow="Computer settings"
+          name={agent.name}
+          status={state === "absent" ? "error" : state}
+          statusLabel={state}
+          subtitle={`Linux Sandbox · ${placement}`}
+          renaming={busy === "rename"}
+          disabled={Boolean(busy)}
+          onRename={(name) => void rename(name)}
+          error={errorFor("header")}
+        />
+      }
+    >
+      <ManagePanel id="overview" selected={selected}>
+        <div style={label}>Computer</div>
+        <section style={box}>
+          <span>{state} · {agent.cpu} CPU · {agent.ram} GB</span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {observation?.state === "stopped" ? <button style={button} disabled={Boolean(busy)} onClick={() => void mutate("start")}><Play size={14} />Start</button>
+              : <button style={button} disabled={Boolean(busy) || observation?.state !== "running"} onClick={() => void mutate("stop")}><Square size={14} />Stop</button>}
+            <button style={button} disabled={Boolean(busy)} onClick={() => void refresh()}>Refresh</button>
+            {progressIn("overview")}
+          </div>
+          {errorFor("computer")}
+        </section>
 
-    <div style={label}>Isolation</div>
-    <section style={box}>
-      <strong>{disclosure.title}</strong><span>{disclosure.boundary}</span>
-      <span>Driver: gVisor runsc · Class: application-kernel · Outer host: operator-owned</span>
-      <span>No public ports, host mounts, host namespaces, devices, Docker socket, or privileged mode.</span>
-    </section>
+        <ComputerAgentSlot />
 
-    <div style={label}>Terminal command</div>
-    <section style={box}>
-      <label style={field}>Command<textarea aria-label="Terminal command" value={command} onChange={event => setCommand(event.target.value)}
-        autoCapitalize="none" autoCorrect="off" spellCheck={false}
-        rows={5} maxLength={4096} style={{ ...control, fontFamily: "var(--font-mono), monospace" }} /></label>
-      <small>Python 3.13 and a POSIX shell are available. Commands run as a non-root user in the private persistent /workspace directory, with a 60-second limit and bounded output.</small>
-      <button style={button} disabled={Boolean(busy) || observation?.state !== "running" || !command.trim()} onClick={() => void execute()}>
-        <TerminalSquare size={14} />Run in /workspace</button>
-      {errorFor("terminal")}
-      {commandResult ? <div><div>Exit {commandResult.exitCode}</div><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflow: "auto" }}>{commandResult.stdout}{commandResult.stderr}</pre></div> : null}
-    </section>
+        <div style={label}>Isolation</div>
+        <section style={box}>
+          <strong>{disclosure.title}</strong><span>{disclosure.boundary}</span>
+          <span>Driver: gVisor runsc · Class: application-kernel · Outer host: operator-owned</span>
+          <span>No public ports, host mounts, host namespaces, devices, Docker socket, or privileged mode.</span>
+        </section>
+      </ManagePanel>
 
-    <div style={label}>Resources</div>
-    <section id="resources" style={box}>
-      <span>gVisor uses enforced cgroup limits. Reserved and maximum values are identical for this driver.</span>
-      <label style={field}>CPU limit<select aria-label="CPU limit" value={cpu} onChange={event => setCpu(Number(event.target.value))} style={{ ...control, minHeight: 44 }}>
-        {[0.5, 1, 2, 4, 8].map(value => <option key={value} value={value}>{value} CPU</option>)}</select></label>
-      <label style={field}>Memory limit<select aria-label="Memory limit" value={ram} onChange={event => setRam(Number(event.target.value))} style={{ ...control, minHeight: 44 }}>
-        {[1, 2, 4, 8, 16].map(value => <option key={value} value={value}>{value} GB</option>)}</select></label>
-      <button style={button} disabled={Boolean(busy) || (cpu === agent.cpu && ram === agent.ram)} onClick={() => void mutate("resize")}>Apply limits</button>
-      {errorFor("resources")}
-    </section>
+      <ManagePanel id="resources" selected={selected}>
+        <section id="resources" style={box}>
+          <span>gVisor uses enforced cgroup limits. Reserved and maximum values are identical for this driver.</span>
+          <label style={field}>CPU limit<select aria-label="CPU limit" value={cpu} onChange={event => setCpu(Number(event.target.value))} style={{ ...control, minHeight: 44 }}>
+            {[0.5, 1, 2, 4, 8].map(value => <option key={value} value={value}>{value} CPU</option>)}</select></label>
+          <label style={field}>Memory limit<select aria-label="Memory limit" value={ram} onChange={event => setRam(Number(event.target.value))} style={{ ...control, minHeight: 44 }}>
+            {[1, 2, 4, 8, 16].map(value => <option key={value} value={value}>{value} GB</option>)}</select></label>
+          <button style={button} disabled={Boolean(busy) || !dirty} onClick={() => void mutate("resize")}>Apply limits</button>
+          {progressIn("resources")}
+          {errorFor("resources")}
+        </section>
+      </ManagePanel>
 
-    <div style={{ ...label, color: "#c0623f" }}>Danger zone</div>
-    <section style={box}>
-      <span>Delete removes this sandbox and its private workspace volume. It does not alter the connected host or other computers.</span>
-      {/* Cancel takes the Delete button's position; the red confirm comes second. */}
-      {!confirmDelete ? <button style={button} disabled={Boolean(busy)} onClick={() => { confirmShownAt.current = Date.now(); setConfirmDelete(true); }}><Trash2 size={14} />Delete sandbox</button>
-        : <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button style={button} disabled={Boolean(busy)} onClick={() => setConfirmDelete(false)}>Cancel</button>
-          <button style={{ ...button, color: "#e06c5a", borderColor: "rgba(192,57,43,0.5)" }} disabled={Boolean(busy)}
-            onClick={() => { if (Date.now() - confirmShownAt.current >= CONFIRM_ARM_MS) void mutate("delete"); }}>Confirm permanent deletion</button></div>}
-      {errorFor("danger")}
-    </section>
-  </div>;
+      <ManagePanel id="command" selected={selected}>
+        <section style={box}>
+          <label style={field}>Command<textarea aria-label="Terminal command" value={command} onChange={event => setCommand(event.target.value)}
+            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            rows={5} maxLength={4096} style={{ ...control, fontFamily: "var(--font-mono), monospace" }} /></label>
+          <small>Python 3.13 and a POSIX shell are available. Commands run as a non-root user in the private persistent /workspace directory, with a 60-second limit and bounded output.</small>
+          <button style={button} disabled={Boolean(busy) || observation?.state !== "running" || !command.trim()} onClick={() => void execute()}>
+            <TerminalSquare size={14} />Run in /workspace</button>
+          {progressIn("command")}
+          {errorFor("terminal")}
+          {commandResult ? <div><div>Exit {commandResult.exitCode}</div><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflow: "auto" }}>{commandResult.stdout}{commandResult.stderr}</pre></div> : null}
+        </section>
+      </ManagePanel>
+
+      <ManagePanel id="advanced" selected={selected}>
+        <div style={{ display: "grid", gap: 20 }}>
+          {manage ? <section style={{ ...box, marginBottom: 0 }}><ManageDetails details={manage.details} /></section> : null}
+          <ManageHistory agentId={agent.id} />
+          <ManageNotAvailable items={manage?.notAvailable ?? []} />
+          <ManageDangerZone
+            name={agent.name}
+            title="Destroy this sandbox"
+            description="Delete removes this sandbox and its private workspace volume. It does not alter the connected host or other computers."
+            busy={Boolean(busy)}
+            deleting={busy === "delete"}
+            progress={busy === "delete" ? PROGRESS.delete.message : null}
+            armDelayMs={CONFIRM_ARM_MS}
+            onConfirm={() => void mutate("delete")}
+            error={errorFor("danger")}
+          />
+        </div>
+      </ManagePanel>
+    </ManageLayout>
+  );
 }

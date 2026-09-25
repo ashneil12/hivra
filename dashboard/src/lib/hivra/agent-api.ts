@@ -10,6 +10,8 @@ import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import type { HivraAgentActivity } from "./agent-authority";
+import type { ManageCapabilities } from "./manage-sections";
+import type { ComputerHistoryEvent } from "./computer-history";
 import type { ProviderAgentReadinessStage } from "./provider-readiness-contract";
 import type { ProviderAgentPowerStage } from "./provider-power-contract";
 import {
@@ -74,6 +76,9 @@ export interface HivraAgent {
   /** Key-free alternative-LLM provider summary (null = native vendor auth).
    *  Drives box-side inference routing for codex (and claude-code post-shim). */
   llm_config?: AgentLlmSummary | null;
+  /** What Manage offers for this computer, and why not (server-computed,
+   *  public fields only). Absent only from an older server. */
+  manage?: ManageCapabilities;
 }
 
 export interface HivraAgentSnapshot {
@@ -634,6 +639,18 @@ export async function confirmProviderResize(input: {
   });
   const data = await providerResizeResponse(response);
   return ProviderResizeOperationViewSchema.parse(data.operation);
+}
+
+/** The computer's last lifecycle events, newest first (Manage › Advanced). */
+export async function getAgentEvents(id: string, signal?: AbortSignal): Promise<ComputerHistoryEvent[]> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/events`, { cache: "no-store", signal });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Could not load this computer's history.");
+  const events = (j.data as { events?: unknown } | undefined)?.events;
+  return Array.isArray(events)
+    ? events.filter((row): row is ComputerHistoryEvent => Boolean(row) && typeof row === "object"
+      && typeof (row as ComputerHistoryEvent).label === "string" && typeof (row as ComputerHistoryEvent).createdAt === "string")
+    : [];
 }
 
 export async function listAgentSnapshots(id: string): Promise<{
