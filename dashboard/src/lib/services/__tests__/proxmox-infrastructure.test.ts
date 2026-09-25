@@ -255,7 +255,7 @@ describe("stripProxmoxInfrastructure / getReleasedProxmoxInfrastructure", () => 
 });
 
 describe("getHermesGuestSshTarget", () => {
-  const id = "5e0c7a1b-2f3d-4c5e-8a9b-0c1d2e3f4a5b";
+  const id = "00000000-0000-4000-8000-b396cad19098";
 
   it("carries the instance's host, stored VMID and id from config.infrastructure", () => {
     expect(
@@ -266,14 +266,14 @@ describe("getHermesGuestSshTarget", () => {
           infrastructure: {
             provider: "proxmox",
             vmid: 1205,
-            privateIpv4: "10.70.20.55",
+            privateIpv4: "10.250.20.55",
             gatewayHost: "a.example.com",
-            hostSlug: "pve12",
-            hostEnvPrefix: "PROXMOX_PVE12_",
+            hostSlug: "hostb",
+            hostEnvPrefix: "PROXMOX_HOSTB_",
           },
         },
       })
-    ).toEqual({ hostId: "host-12", hostSlug: "pve12", envPrefix: "PROXMOX_PVE12_", failClosed: true, vmid: 1205, instanceId: id });
+    ).toEqual({ hostId: "host-12", hostSlug: "hostb", envPrefix: "PROXMOX_HOSTB_", failClosed: true, vmid: 1205, instanceId: id });
   });
 
   it("falls back to the row's proxmox columns", () => {
@@ -281,11 +281,11 @@ describe("getHermesGuestSshTarget", () => {
       getHermesGuestSshTarget({
         id,
         proxmox_vmid: 1205,
-        proxmox_node: "pve12",
-        ipv4_address: "10.70.20.55",
+        proxmox_node: "hostb",
+        ipv4_address: "10.250.20.55",
         gateway_url: "https://a.example.com",
       })
-    ).toMatchObject({ hostSlug: "pve12", vmid: 1205, instanceId: id });
+    ).toMatchObject({ hostSlug: "hostb", vmid: 1205, instanceId: id });
   });
 
   it("is null for a row with no Proxmox handle (Hetzner) or no id", () => {
@@ -293,7 +293,7 @@ describe("getHermesGuestSshTarget", () => {
     expect(getHermesGuestSshTarget(null)).toBeNull();
     expect(
       getHermesGuestSshTarget({
-        config: { infrastructure: { provider: "proxmox", vmid: 1205, privateIpv4: "10.70.20.55", gatewayHost: "a" } },
+        config: { infrastructure: { provider: "proxmox", vmid: 1205, privateIpv4: "10.250.20.55", gatewayHost: "a" } },
       })
     ).toBeNull();
   });

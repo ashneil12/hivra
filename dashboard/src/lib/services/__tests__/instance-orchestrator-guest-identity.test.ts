@@ -74,7 +74,7 @@ const VMID = 201;
 const GUEST_IP = "10.250.20.51";
 
 const INSTANCE: InstanceRowForOrchestration = {
-  id: "66244f0e-e385-4c3d-88c2-c07e005cb2d2",
+  id: "00000000-0000-4000-8000-a8e7efa045b5",
   user_id: "user-123",
   provider: "openai",
   hetzner_server_id: null,
@@ -104,7 +104,7 @@ async function liveUpdateHostScript(): Promise<string> {
 
 /** The agent deploy script carried inside the stream the guest received. */
 function deliveredAgentScript(delivered: string): string {
-  const b64 = delivered.match(/printf '%s' '([^']+)' \| base64 -d > \/tmp\/hermes-update-66244f0e-e385-4c3d-88c2-c07e005cb2d2\.sh/)?.[1];
+  const b64 = delivered.match(/printf '%s' '([^']+)' \| base64 -d > \/tmp\/hermes-update-00000000-0000-4000-8000-a8e7efa045b5\.sh/)?.[1];
   return b64 ? Buffer.from(b64, "base64").toString("utf8") : "";
 }
 
