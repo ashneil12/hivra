@@ -27,7 +27,7 @@ import { buildBankrSkillsGuestScript, buildBankrSkillsHostScript, collectBankrSk
 import { buildProviderAgentSeedScript } from "@/lib/hivra/provider-agent-seed";
 import { buildHivraTailscaleConnectProgram, connectHivraTailscale, DEFAULT_TAILSCALE_LOGIN_SERVER,
   type HivraPrivateAccessAgentRow } from "@/lib/hivra/tailscale-private-access";
-import { renderFirstBootCloudInit } from "@/lib/infrastructure/first-boot-cloud-init";
+import { MAX_USER_DATA_BYTES, renderFirstBootCloudInit } from "@/lib/infrastructure/first-boot-cloud-init";
 import { createFirstBootChallenge, FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
 import { MAX_PROVIDER_GUEST_SEED_BYTES } from "@/lib/infrastructure/first-boot-ssh";
 import { buildRemoteDesktopCapabilityInspectionScript } from "@/lib/remote-computers/capability-inspection";
@@ -230,9 +230,10 @@ describe("transport payload budgets", () => {
       "provider-guest-seed": MAX_PROVIDER_GUEST_SEED_BYTES,
       // CreateProcess takes 32,767 characters including the terminating NUL.
       "windows-command-line": 32_767 - 1,
-      // Hetzner Cloud's user_data limit, also renderFirstBootCloudInit's own.
-      "cloud-init-user-data": 32_768,
+      // Hetzner Cloud's user_data limit: renderFirstBootCloudInit's own check.
+      "cloud-init-user-data": MAX_USER_DATA_BYTES,
     });
+    expect(MAX_USER_DATA_BYTES).toBe(32 * 1024);
     // A step's stdin crosses the host transport and then the guest agent.
     expect(limits["host-script-with-stdin.stdin"]).toBeGreaterThanOrEqual(limits["guest-exec-stdin"]);
   });

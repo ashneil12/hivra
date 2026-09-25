@@ -1,7 +1,7 @@
 {
   "about": [
     "Sizes of shipped payloads that cross a host or guest transport, against that transport's limit.",
-    "Checked by transport-payload-budgets.test.ts; the limits are proven by host-transport-size-limits.test.ts.",
+    "Checked by transport-payload-budgets.test.ts. The top of host-transport-size-limits.test.ts says which test proves each limit, and which limits belong to Proxmox or Windows and are not checked by Hivra's code.",
     "Each payload must stay within budgetFraction of its limit unless overBudget names it with a reason.",
     "After an intended change: UPDATE_TRANSPORT_BUDGETS=1 npx jest src/lib/services/__tests__/transport-payload-budgets.test.ts"
   ],

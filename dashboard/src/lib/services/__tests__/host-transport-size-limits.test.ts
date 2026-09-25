@@ -9,10 +9,18 @@
 // could still lower the script limit, count stdin in characters, or move the
 // sudo loader's limit without any test failing.
 //
-// The limits here are the ones transport-payload-budgets.json names, so this
-// file proves each number there is what the transport really does. The Linux
-// section runs the largest accepted command for real; in CI it fails rather
-// than skips when it is not on Linux.
+// Where each limit in transport-payload-budgets.json is proven:
+// - linux-argument, host-script-with-stdin.*, sudo-transport-script: here, at
+//   the limit and one byte over, in UTF-8 bytes. The Linux section runs the
+//   largest accepted command for real; in CI it fails rather than skips when
+//   it is not on Linux.
+// - provider-guest-seed: first-boot-ssh.test.ts, at the limit and one byte over.
+// - cloud-init-user-data: transport-payload-budgets.test.ts checks it is the
+//   renderer's own constant. No valid input reaches it (the pinned helper and
+//   bounded fields keep user_data near half of it), so no over-limit case can
+//   be built; the payload budget measures the real size.
+// - guest-exec-stdin, windows-command-line: limits of Proxmox and Windows that
+//   Hivra's code does not check. The JSON cites them; nothing here proves them.
 
 type Handler = (...args: unknown[]) => void;
 type FakeStream = {
@@ -237,6 +245,16 @@ describe("attach host step: the step body is one argument to python3", () => {
     const largest = bodyFor(ARGUMENT_MAX - fixed);
     expect(byteLength(largest)).toBe(ARGUMENT_MAX);
     expect(() => buildAttachmentHostStepScript(target, "#".repeat(ARGUMENT_MAX - fixed + 1), 60)).toThrow("host argument limit");
+  });
+
+  it("counts the step body in UTF-8 bytes, not characters", () => {
+    // "é" is 2 bytes: these bodies are far under the limit in characters.
+    const room = ARGUMENT_MAX - (byteLength(bodyFor(1)) - 1);
+    const atLimit = "é".repeat(Math.floor(room / 2)) + "#".repeat(room % 2);
+    const largest = hostStepArgument(buildAttachmentHostStepScript(target, atLimit, 60));
+    expect(byteLength(largest)).toBe(ARGUMENT_MAX);
+    expect(largest.length).toBeLessThan(ARGUMENT_MAX - 60_000);
+    expect(() => buildAttachmentHostStepScript(target, `${atLimit}#`, 60)).toThrow("host argument limit");
   });
 });
 
