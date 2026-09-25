@@ -26,7 +26,7 @@ import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
 import { ComputerAgentsSlot } from "./manage/ManageExtensionSlots";
-import { AgentSoftwarePanel, type AgentSoftwareUpdateOutcome } from "./AgentSoftwarePanel";
+import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome } from "./AgentSoftwarePanel";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import {
@@ -619,6 +619,23 @@ function HivraManageContent({
     : !providerComputer && !preparedComputer && agent.type !== "deepseek-harness"
       ? agent.status === "running" ? { state: "available" } : { state: "blocked", code: "not_running", reason: "Start this computer to update it." }
       : null;
+  // Update connection service, with the route's refusals in the same words
+  // the agent software card uses: its own copy for host_not_ready, busy,
+  // not_running and unverified, the route's message otherwise.
+  const updateConnectionServiceNow = () => {
+    setRepliesConfirm(null);
+    void run("runtime-update", async () => {
+      try {
+        await updateConnectionService();
+      } catch (error) {
+        if (error instanceof AgentActionError && error.code) {
+          throw new Error(agentSoftwareUpdateError(error.code, error.message, agent.deployment_mode === "self-managed", isComputerOnly ? "computer" : "agent"));
+        }
+        throw error;
+      }
+      followAgentSoftware(agent.id);
+    });
+  };
   const placementLabel = manage?.placement.label ?? COMPUTER_PLACEMENT_LABEL[computerPlacementFor(agent)];
   const sections: ManageSectionId[] = useMemo(() => manage?.sections ?? ["overview", "resources", "advanced"], [manage?.sections]);
   const { selected, select, openAndFocus } = useManageSection(sections, Boolean(manage));
@@ -1406,7 +1423,7 @@ function HivraManageContent({
                   ) : (
                     <>
                       <div>
-                        <button type="button" disabled={busy || !capAvailable(connectionUpdate)} onClick={() => { setRepliesConfirm(null); void run("runtime-update", async () => { await updateConnectionService(); followAgentSoftware(agent.id); }); }} style={{ ...btnGhost, cursor: busy || !capAvailable(connectionUpdate) ? "default" : "pointer", opacity: busy || !capAvailable(connectionUpdate) ? 0.5 : 1 }} title="Refresh the Hivra connection service without restarting the computer">
+                        <button type="button" disabled={busy || !capAvailable(connectionUpdate)} onClick={updateConnectionServiceNow} style={{ ...btnGhost, cursor: busy || !capAvailable(connectionUpdate) ? "default" : "pointer", opacity: busy || !capAvailable(connectionUpdate) ? 0.5 : 1 }} title="Refresh the Hivra connection service without restarting the computer">
                           {acting === "runtime-update" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Update connection service
                         </button>
                       </div>

@@ -120,6 +120,34 @@ it("still says what the connection service update did when an older computer can
   expect(onConnectionServiceRestarted).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  ["hivra-managed", "Hivra hasn't finished preparing this update yet. Nothing was changed. Try again later."],
+  ["self-managed", "Prepare My server with Hivra's current setup, then try again. Nothing was changed."],
+] as const)("explains Update connection service's refusal by its code too (%s)", async (deploymentMode, text) => {
+  // The route's own words for this (managed-provisioner-readiness.ts) are for Hivra's operators.
+  mockUpdateAgentRuntime.mockRejectedValue(new AgentActionError(
+    "This computer cannot be updated until its infrastructure target has the current Hivra runtime bundle. Prepare the target, then try again.",
+    503,
+    "host_not_ready",
+  ));
+  mockGetSoftware.mockResolvedValue(software({ kind: "older_connection_service" }));
+  renderManage({ agent: { ...agent, deployment_mode: deploymentMode } });
+  openSection("Updates");
+  await screen.findByTestId("agent-software-state");
+  fireEvent.click(screen.getByRole("button", { name: "Update connection service" }));
+  expect(await screen.findByText(text)).toBeInTheDocument();
+  expect(screen.queryByText(/infrastructure target|runtime bundle/)).not.toBeInTheDocument();
+});
+
+it("says which is busy, the agent, when Update connection service is refused for another action", async () => {
+  mockUpdateAgentRuntime.mockRejectedValue(new AgentActionError("Another lifecycle operation is already in progress.", 409, "busy"));
+  renderManage();
+  openSection("Updates");
+  fireEvent.click(screen.getByRole("button", { name: "Update connection service" }));
+  expect(await screen.findByText("Another action is running on this agent. Try again when it finishes.")).toBeInTheDocument();
+  expect(screen.queryByText(/lifecycle operation/)).not.toBeInTheDocument();
+});
+
 it("follows the Codex update the connection service update starts", async () => {
   mockUpdateAgentRuntime.mockResolvedValue({ status: "running", agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } });
   renderManage();

@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
-import type { AgentCliUpdateReport, AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
+import { agentSoftwareSubject, type AgentCliUpdateReport, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 import { setAgentSoftwareAutoUpdate, type AgentSoftwareAutoUpdate } from "@/lib/hivra/agent-software-api";
 import { useAgentSoftware } from "./useAgentSoftware";
 import { agentSoftwareCovered } from "./AgentSoftwareChip";
@@ -33,15 +33,19 @@ function checkedAt(iso: string | null): string {
   return `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-/** The action's refusal in the owner's words, by the route's code. */
-export function agentSoftwareUpdateError(code: string | null, message: string, myServer: boolean): string {
+/**
+ * An update's refusal in the owner's words, by the route's code: for this
+ * card's Update and for Manage's Update connection service, which runs the
+ * same update. Any other code keeps the route's own message.
+ */
+export function agentSoftwareUpdateError(code: string | null, message: string, myServer: boolean, subject: "agent" | "computer" = "agent"): string {
   switch (code) {
     case "host_not_ready":
       return myServer
         ? "Prepare My server with Hivra's current setup, then try again. Nothing was changed."
         : "Hivra hasn't finished preparing this update yet. Nothing was changed. Try again later.";
-    case "busy": return "Another action is running on this agent. Try again when it finishes.";
-    case "not_running": return "Start this agent first.";
+    case "busy": return `Another action is running on this ${subject}. Try again when it finishes.`;
+    case "not_running": return `Start this ${subject} first.`;
     case "unverified": return "Hivra couldn't confirm the update finished. Check again in a minute.";
     default: return message;
   }
@@ -50,7 +54,7 @@ export function agentSoftwareUpdateError(code: string | null, message: string, m
 type Action = { label: string; primary: boolean } | null;
 
 /** The sentence for this state, and the update button it offers (if any). */
-function stateCopy(view: AgentSoftwareView, name: string, tested: string | null): { text: string; action: Action; alert?: boolean } {
+function stateCopy(view: AgentSoftwareView, name: string, tested: string | null): { text: string; action: Action } {
   const tv = tested ?? "";
   switch (view.kind) {
     case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
@@ -94,19 +98,17 @@ function stateCopy(view: AgentSoftwareView, name: string, tested: string | null)
       return {
         text: `The update to ${view.target} didn't install, so Hivra put ${name} ${view.installed ?? "back to its previous version"}${view.installed ? " back" : ""}. Your agent works as before.`,
         action: { label: "Try again", primary: false },
-        alert: true,
       };
     case "update_failed":
       if (view.reason === "download_failed") {
-        return { text: `Hivra couldn't download ${name} ${view.target}. Nothing was changed.`, action: { label: "Try again", primary: false }, alert: true };
+        return { text: `Hivra couldn't download ${name} ${view.target}. Nothing was changed.`, action: { label: "Try again", primary: false } };
       }
       if (view.reason === "could_not_start") {
-        return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: { label: "Try again", primary: false }, alert: true };
+        return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: { label: "Try again", primary: false } };
       }
       return {
         text: `${name} ${view.target} didn't install, and Hivra couldn't put the previous version back. Chat may not work until this is fixed. Try again, or contact support.`,
         action: { label: "Try again", primary: true },
-        alert: true,
       };
   }
 }
@@ -183,7 +185,26 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
   const software = useAgentSoftware(agent.id, enabled);
   const [actionError, setActionError] = useState<string | null>(null);
   const state = software.state;
-  if (!enabled || !state?.supported) return null;
+  if (!enabled) return null;
+  if (!state) {
+    // The first read failed: say so where the card would be, with a way to try again.
+    if (!software.error || agent.status !== "running") return null;
+    const cli = agentSoftwareSubject(agent)?.cli ?? null;
+    return (
+      <div style={{ display: "grid", gap: 10 }}>
+        {cli ? <div className="mono" style={manageLabel}>{name}</div> : null}
+        <div style={card}>
+          <div role="status" aria-live="polite" data-testid="agent-software-unavailable" style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55 }}>
+            {cli ? `Couldn't check which ${name} version is installed just now.` : "Couldn't check this agent's connection service just now."}
+          </div>
+          <div>
+            <CheckAgain loading={software.loading} onClick={() => void software.refresh()} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!state.supported) return null;
   const view = state.view;
   const myServer = agent.deployment_mode === "self-managed";
 
@@ -222,28 +243,18 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
           <Fact label="Last checked">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span>{checkedAt(state.observedAt)}</span>
-              {agent.status === "running" ? (
-                <button
-                  type="button"
-                  onClick={() => void software.refresh()}
-                  disabled={software.loading}
-                  className="mono"
-                  style={{ ...manageLabel, border: 0, background: "transparent", color: "var(--ink-black)", textDecoration: "underline", minHeight: 40, padding: 0, cursor: software.loading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-                >
-                  {software.loading ? <Loader2 size={11} style={manageSpin} aria-hidden="true" /> : <RefreshCw size={11} aria-hidden="true" />}
-                  Check again
-                </button>
-              ) : null}
+              {agent.status === "running" ? <CheckAgain loading={software.loading} onClick={() => void software.refresh()} /> : null}
             </span>
           </Fact>
         </div>
 
-        {copy.text ? (
-          <div role={copy.alert ? "alert" : view.kind === "updating" ? "status" : undefined} aria-live={view.kind === "updating" ? "polite" : undefined} data-testid="agent-software-state" style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55, display: "flex", gap: 8, alignItems: "flex-start" }}>
-            {view.kind === "updating" ? <Loader2 size={14} aria-hidden="true" style={{ ...manageSpin, flexShrink: 0, marginTop: 3 }} /> : null}
-            <span>{copy.text}</span>
-          </div>
-        ) : null}
+        {/* One live region in every state, so a screen reader hears each
+            change (an update starting, finishing, or not installing); only
+            its words change. */}
+        <div role="status" aria-live="polite" data-testid="agent-software-state" style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55, display: copy.text ? "flex" : "none", gap: 8, alignItems: "flex-start" }}>
+          {view.kind === "updating" ? <Loader2 size={14} aria-hidden="true" style={{ ...manageSpin, flexShrink: 0, marginTop: 3 }} /> : null}
+          <span>{copy.text}</span>
+        </div>
         {state.autoUpdate?.pausedFor && view.kind === "update_rolled_back" ? (
           <div style={manageMuted}>Automatic updates are paused for {state.autoUpdate.pausedFor.target}.</div>
         ) : null}
@@ -281,6 +292,21 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
 }
 
 const card = manageCard;
+
+function CheckAgain({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className="mono"
+      style={{ ...manageLabel, border: 0, background: "transparent", color: "var(--ink-black)", textDecoration: "underline", minHeight: 40, padding: 0, cursor: loading ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+    >
+      {loading ? <Loader2 size={11} style={manageSpin} aria-hidden="true" /> : <RefreshCw size={11} aria-hidden="true" />}
+      Check again
+    </button>
+  );
+}
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (

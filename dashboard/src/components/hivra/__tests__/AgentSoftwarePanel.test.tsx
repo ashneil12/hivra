@@ -119,6 +119,45 @@ describe("AgentSoftwarePanel", () => {
     expect(agentSoftwareUpdateError(code, "Server said no.", deployment_mode === "self-managed")).toBe(text);
   });
 
+  it("keeps one polite live region for the state line, so the end of an update is heard", async () => {
+    mockGet
+      .mockResolvedValueOnce(stateOf({ kind: "updating", phase: "installing", target: TESTED, installed: "0.140.0" }))
+      .mockResolvedValueOnce(stateOf({ kind: "update_done", target: TESTED, installed: TESTED }))
+      .mockResolvedValue(stateOf({ kind: "update_rolled_back", target: TESTED, installed: "0.140.0" }));
+    renderPanel();
+    const region = await screen.findByTestId("agent-software-state");
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(region).toHaveTextContent(/^Codex 0\.149\.1 is installed\./));
+    // The same element, still a live region: only its words changed.
+    expect(screen.getByTestId("agent-software-state")).toBe(region);
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(region).toHaveTextContent(/^The update to 0\.149\.1 didn't install/));
+    expect(screen.getByTestId("agent-software-state")).toBe(region);
+    expect(region).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("says it couldn't check, with Check again, when the first read fails", async () => {
+    mockGet.mockRejectedValueOnce(new Error("Too Many Requests")).mockResolvedValue(stateOf({ kind: "behind", installed: "0.140.0" }));
+    renderPanel();
+    expect(await screen.findByTestId("agent-software-unavailable")).toHaveTextContent("Couldn't check which Codex version is installed just now.");
+    expect(screen.queryByText(/Too Many Requests/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(mockGet).toHaveBeenLastCalledWith("agent-1", { live: true }));
+    expect(await stateText()).toMatch(/^An update is available\./);
+    expect(screen.queryByTestId("agent-software-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("says nothing about a failed read for an agent that isn't running", async () => {
+    mockGet.mockRejectedValue(new Error("Could not load this agent."));
+    const { container } = renderPanel({ agent: agentOf({ status: "stopped" }) });
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("holds the button while another Manage action runs", async () => {
     mockGet.mockResolvedValue(stateOf({ kind: "behind", installed: "0.140.0" }));
     renderPanel({ busy: true });
@@ -197,6 +236,18 @@ describe("AgentSoftwareChip", () => {
     expect(chip).toHaveAccessibleName(label);
     fireEvent.click(chip);
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[AgentSoftwareView, string]>([
+    [{ kind: "behind", installed: "0.140.0" }, "Update"],
+    [{ kind: "updating", phase: "waiting", target: TESTED, installed: "0.140.0" }, "Updating…"],
+    [{ kind: "update_failed", reason: "install_failed", target: TESTED, installed: null }, "Update failed"],
+  ])("carries a short word for phones for %j, and a finger-sized target", async (view, short) => {
+    mockGet.mockResolvedValue(stateOf(view));
+    render(<AgentSoftwareChip agent={agentOf()} onOpen={jest.fn()} />);
+    const chip = await screen.findByTestId("agent-software-chip");
+    expect(chip.querySelector("[data-chip-short]")).toHaveTextContent(new RegExp(`^${short}$`));
+    expect(chip).toHaveStyle({ minHeight: "44px", minWidth: "44px" });
   });
 
   it.each<AgentSoftwareView>([

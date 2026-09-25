@@ -5,11 +5,18 @@ import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import { agentSoftwareBadge, agentSoftwareSubject, type AgentSoftwareBadge, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 import { useAgentSoftware } from "./useAgentSoftware";
+import styles from "./AgentSoftwareChip.module.css";
 
 const CHIP_TEXT: Record<AgentSoftwareBadge, string> = {
   update_available: "Update available",
   updating: "Updating…",
   update_failed: "Update didn't finish",
+};
+/** What a phone-width page shows instead, so the chip still says something next to its icon. */
+const CHIP_SHORT_TEXT: Record<AgentSoftwareBadge, string> = {
+  update_available: "Update",
+  updating: "Updating…",
+  update_failed: "Update failed",
 };
 
 /**
@@ -59,7 +66,7 @@ export function AgentSoftwareChip({ agent, onOpen, className }: {
       aria-label={describe(state.view, badge, name, state.tested)}
       title={describe(state.view, badge, name, state.tested)}
       style={{
-        display: "inline-flex", alignItems: "center", flexShrink: 0, minHeight: 40, padding: 0,
+        display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, minHeight: 44, minWidth: 44, padding: 0,
         border: 0, background: "transparent", cursor: "pointer", color: "var(--ink-black)",
       }}
     >
@@ -70,6 +77,7 @@ export function AgentSoftwareChip({ agent, onOpen, className }: {
       }}>
         <Icon size={12} aria-hidden="true" style={badge === "updating" ? { animation: "spin 1s linear infinite" } : undefined} />
         <span data-chip-text>{CHIP_TEXT[badge]}</span>
+        <span data-chip-short className={styles.short}>{CHIP_SHORT_TEXT[badge]}</span>
       </span>
     </button>
   );
