@@ -241,8 +241,15 @@ describe("prepared computers", () => {
   });
 
   it("says when a prepared Stop had to switch the computer off after 60 seconds", async () => {
-    mockRun.mockResolvedValue({ ok: true, stdout: "HIVRA_STOP_MODE forced 60\nHIVRA_PREPARED_LIFECYCLE windows stop stopped\n", stderr: "" });
+    mockRun.mockResolvedValue({ ok: true, stdout: "HIVRA_STOP_MODE forced 60 60\nHIVRA_PREPARED_LIFECYCLE windows stop stopped\n", stderr: "" });
     expect(await (await send({ action: "stop" })).json()).toEqual({ success: true, data: { status: "stopped", forced: true, waitedSeconds: 60 } });
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "stopped", detail: { forced: true, reason: "shutdown_timeout" } }));
+  });
+
+  it("gives no wait for a prepared Stop whose shutdown failed sooner", async () => {
+    mockRun.mockResolvedValue({ ok: true, stdout: "HIVRA_STOP_MODE forced 3 60\nHIVRA_PREPARED_LIFECYCLE windows stop stopped\n", stderr: "" });
+    expect(await (await send({ action: "stop" })).json()).toEqual({ success: true, data: { status: "stopped", forced: true } });
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "stopped", detail: { forced: true, reason: "shutdown_failed" } }));
   });
 });
 
@@ -250,28 +257,36 @@ describe("prepared computers", () => {
 // without saying so, and Manage told the owner it had shut down cleanly.
 describe("a truthful Stop and Restart", () => {
   it.each([
-    ["stop", "HIVRA_STOP_MODE forced 50", { status: "stopped", forced: true, waitedSeconds: 50 }],
-    ["stop", "HIVRA_STOP_MODE graceful", { status: "stopped" }],
-    ["stop", "HIVRA_STOP_MODE already", { status: "stopped" }],
-    ["restart", "HIVRA_STOP_MODE forced 40", { status: "provisioning", forced: true, waitedSeconds: 40 }],
-    ["restart", "HIVRA_STOP_MODE graceful", { status: "provisioning" }],
-  ])("%s answers with how the computer went off (%s)", async (action, line, data) => {
+    ["stop", "HIVRA_STOP_MODE forced 50 50", { status: "stopped", forced: true, waitedSeconds: 50 }, "shutdown_timeout"],
+    // `date +%s` steps in whole seconds, so a full wait can read one short.
+    ["stop", "HIVRA_STOP_MODE forced 49 50", { status: "stopped", forced: true, waitedSeconds: 50 }, "shutdown_timeout"],
+    ["stop", "HIVRA_STOP_MODE forced 2 50", { status: "stopped", forced: true }, "shutdown_failed"],
+    // A switch-off without a wait it can check is still a switch-off.
+    ["stop", "HIVRA_STOP_MODE forced", { status: "stopped", forced: true }, "shutdown_failed"],
+    ["stop", "HIVRA_STOP_MODE graceful", { status: "stopped" }, null],
+    ["stop", "HIVRA_STOP_MODE already", { status: "stopped" }, null],
+    ["restart", "HIVRA_STOP_MODE forced 40 40", { status: "provisioning", forced: true, waitedSeconds: 40 }, "shutdown_timeout"],
+    ["restart", "HIVRA_STOP_MODE forced 0 40", { status: "provisioning", forced: true }, "shutdown_failed"],
+    ["restart", "HIVRA_STOP_MODE graceful", { status: "provisioning" }, null],
+  ])("%s answers with how the computer went off (%s)", async (action, line, data, reason) => {
     mockRun.mockResolvedValue({ ok: true, stdout: `stopped 1113\n${line}\nkicked\n`, stderr: "" });
     const response = await send({ action });
     expect(await response.json()).toEqual({ success: true, data });
-    const forced = line.includes("forced");
-    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
-      event: action === "stop" ? "stopped" : "restarted",
-      ...(forced ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
-    }));
+    const event = mockLogEvent.mock.calls.map(([call]) => call).find((call) => call.event === (action === "stop" ? "stopped" : "restarted"));
+    expect(event?.detail).toEqual(reason ? { forced: true, reason } : undefined);
   });
 
-  // The host part of the Stop script, run with a stub qm: it reports "forced"
-  // exactly when the shutdown didn't finish and qm stop switched it off.
+  // The host part of the Stop script, run with a stub qm and a stub clock
+  // that qm shutdown moves on: it reports "forced" with the wait measured on
+  // the host exactly when the shutdown didn't finish and qm stop switched it
+  // off, and the route turns that into what the owner is told. Regression:
+  // the script printed its 50 s budget for any failed shutdown, so a shutdown
+  // that failed at once was reported as "didn't shut down within 50 seconds".
   it.each([
-    ["shuts down in time", "0", "graceful"],
-    ["doesn't shut down in time", "1", "forced 50"],
-  ])("the stop script says so when the computer %s", async (_case, shutdownExit, mode) => {
+    ["shuts down in time", "0", 12, "graceful", { status: "stopped" }],
+    ["doesn't shut down in time", "1", 50, "forced 50 50", { status: "stopped", forced: true, waitedSeconds: 50 }],
+    ["fails to shut down at once", "1", 1, "forced 1 50", { status: "stopped", forced: true }],
+  ] as const)("the stop script says so when the computer %s", async (_case, shutdownExit, seconds, mode, data) => {
     mockRun.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
     await send({ action: "stop" });
     const body = script();
@@ -279,19 +294,31 @@ describe("a truthful Stop and Restart", () => {
     const work = mkdtempSync(path.join(tmpdir(), "hivra-stop-"));
     try {
       const state = path.join(work, "state");
+      const clock = path.join(work, "clock");
       writeFileSync(state, "running");
+      writeFileSync(clock, "1000");
       const qm = path.join(work, "qm");
       writeFileSync(qm, `#!/bin/bash
 case "$1" in
   status) echo "status: $(cat ${JSON.stringify(state)})" ;;
-  shutdown) [ "${shutdownExit}" = 0 ] && echo stopped > ${JSON.stringify(state)}; exit ${shutdownExit} ;;
+  shutdown) echo $(( $(cat ${JSON.stringify(clock)}) + ${seconds} )) > ${JSON.stringify(clock)}; [ "${shutdownExit}" = 0 ] && echo stopped > ${JSON.stringify(state)}; exit ${shutdownExit} ;;
   stop) echo stopped > ${JSON.stringify(state)}; echo "stop $*" >> ${JSON.stringify(path.join(work, "log"))} ;;
 esac`);
+      const date = path.join(work, "date");
+      writeFileSync(date, `#!/bin/bash
+[ "$1" = "+%s" ] || exit 64
+cat ${JSON.stringify(clock)}`);
       chmodSync(qm, 0o755);
+      chmodSync(date, 0o755);
       const result = spawnSync("bash", ["-euo", "pipefail", "-s"], { input: hostPart, encoding: "utf8", env: { PATH: `${work}:/usr/bin:/bin` } as unknown as NodeJS.ProcessEnv });
+      expect(result.stderr).toBe("");
       expect(result.status).toBe(0);
       expect(result.stdout).toBe(`stopped 1113\nHIVRA_STOP_MODE ${mode}\n`);
       if (mode === "graceful") expect(() => readFileSync(path.join(work, "log"))).toThrow();
+
+      // What the owner is told for that host output.
+      mockRun.mockResolvedValue({ ok: true, stdout: result.stdout, stderr: "" });
+      expect(await (await send({ action: "stop" })).json()).toEqual({ success: true, data });
     } finally {
       rmSync(work, { recursive: true, force: true });
     }

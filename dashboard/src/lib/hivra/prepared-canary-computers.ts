@@ -67,14 +67,18 @@ export function preparedCanaryLifecycleScript(
   const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
   const desiredOnboot = action === "stop" || action === "force_stop" ? 0 : 1;
   // Stop and Restart ask the computer to shut down and switch it off only if
-  // it hasn't after 60 s, and say which (HIVRA_STOP_MODE, with that wait).
-  // Force off and Force restart switch it off at once.
+  // it hasn't after 60 s, and say which (HIVRA_STOP_MODE, with the wait
+  // measured on the host and that 60 s budget: a shutdown can also fail
+  // sooner). Force off and Force restart switch it off at once.
   const shutdown = `if [ "$CURRENT_STATUS" != stopped ]; then
+  SHUTDOWN_STARTED="$(date +%s)"
   if qm shutdown "$VMID" --timeout 60; then
     echo "HIVRA_STOP_MODE graceful"
   else
+    SHUTDOWN_WAITED="$(( $(date +%s) - SHUTDOWN_STARTED ))"
+    [ "$SHUTDOWN_WAITED" -ge 0 ] || SHUTDOWN_WAITED=0
     qm stop "$VMID"
-    echo "HIVRA_STOP_MODE forced 60"
+    echo "HIVRA_STOP_MODE forced $SHUTDOWN_WAITED 60"
   fi
 fi`;
   const switchOff = `if [ "$CURRENT_STATUS" != stopped ]; then

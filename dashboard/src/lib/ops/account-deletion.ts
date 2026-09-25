@@ -80,6 +80,16 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     // Newer than hivra_agent_events; a database without it has nothing to delete.
     optionalIfMissing: true,
   },
+  // A computer's last usage read (Manage › Overview). Keyed to the account,
+  // and computers are soft-deleted, so the row would otherwise survive.
+  {
+    table: "hivra_computer_usage",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "Hivra computer usage reads (CPU, memory, disk, uptime) per computer",
+    // Newer than the activity tables; a database without it has nothing to delete.
+    optionalIfMissing: true,
+  },
   {
     table: "hermes_conversations",
     filterColumn: "user_id",

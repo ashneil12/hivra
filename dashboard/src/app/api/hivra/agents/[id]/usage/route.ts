@@ -290,12 +290,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return cache ? respond(viewFrom(row, cache, { refreshing: false })) : fail(USAGE_MESSAGES.cacheUnavailable, 503);
     }
     if (!claim.claimed) {
-      // Someone else is reading the host (or just did): serve what is stored.
+      // Someone else is reading the host, just did, or the last read failed
+      // and is being backed off: serve what is stored. It is "refreshing" only
+      // while a reader is actually reading; a backed-off failure keeps its
+      // host_unreachable note instead, so the page never waits for a read
+      // that isn't happening.
       const latest = claim.row ?? cache;
       if (refusedByBinding(latest)) return fail(USAGE_MESSAGES.bindingMismatch, 409);
-      const nowFresh = Boolean(latest?.observedAt) && readStoredUsage(latest?.sample)?.recordedStatus === String(row.status)
-        && Date.now() - Date.parse(String(latest?.observedAt)) < COMPUTER_USAGE_FRESH_SECONDS * 1000;
-      return respond(viewFrom(row, latest, { refreshing: !nowFresh }));
+      return respond(viewFrom(row, latest, { refreshing: claim.refreshing }));
     }
 
     const authority = await proxmoxAuthority(userId, row, vmid);

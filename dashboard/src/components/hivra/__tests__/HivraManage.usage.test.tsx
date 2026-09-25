@@ -156,12 +156,96 @@ describe("Usage in Overview", () => {
       "Disk use isn't available: the computer's guest agent didn't answer."],
     ["the host couldn't be reached", usage({ ageSeconds: 300, stale: true, notes: ["host_unreachable"] }),
       "Last read 5 min ago. Hivra couldn't reach this computer's host just now."],
-    ["the computer isn't on its host", usage({ power: { observed: "missing", recorded: "running", matches: false }, notes: ["vm_missing"], cpu: null, memory: null, disk: null, uptimeSeconds: null }),
+    ["the computer isn't on its host", usage({ power: { observed: "missing", recorded: "stopped", matches: true }, notes: ["vm_missing"], cpu: null, memory: null, disk: null, uptimeSeconds: null }),
       "Hivra couldn't find this computer on its host."],
   ])("says so when %s", async (_case, view, text) => {
     mockGetComputerUsage.mockResolvedValue(view);
     renderManage(desk);
     expect(await within(usageCard()).findByText(text)).toBeVisible();
+  });
+
+  // Regression: a computer its host couldn't find, recorded as on, was
+  // reported as switched off with "Use Stop and then Start", and Stop fails on
+  // a computer its host doesn't have (and then blocks every power control).
+  it("doesn't call a computer its host can't find switched off, or send the owner to Stop and Start", async () => {
+    mockGetComputerUsage.mockResolvedValue(usage({ power: { observed: "missing", recorded: "running", matches: false }, notes: ["vm_missing"], cpu: null, memory: null, disk: null, uptimeSeconds: null }));
+    renderManage(desk);
+    const card = usageCard();
+    expect(await within(card).findByText("Not found on its host")).toBeVisible();
+    const alerts = within(card).getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent("Hivra couldn't find this computer on its host. Contact support.");
+    expect(card).not.toHaveTextContent(/switched off|Stop and then Start/);
+  });
+
+  // Regression: after a read failed with nothing read before, a Refresh within
+  // the next 20 s was answered "refreshing", and the card showed "Reading…"
+  // for a read that wasn't happening, with the failure hidden.
+  it("says the host couldn't be reached when a read failed and nothing was read before", async () => {
+    const failed = usage({ ...unread, refreshing: false, notes: ["host_unreachable"] });
+    mockGetComputerUsage.mockImplementation(async (_id: string, options?: { cached?: boolean }) => {
+      if (options?.cached) return unread;
+      throw new ComputerUsageError("Hivra couldn't reach this computer's host just now.", 503, null);
+    });
+    renderManage(desk);
+    const card = usageCard();
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Hivra couldn't reach this computer's host just now.");
+    mockGetComputerUsage.mockResolvedValue(failed);
+    fireEvent.click(within(card).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(calls()).toHaveLength(3));
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Hivra couldn't reach this computer's host just now.");
+    expect(card).not.toHaveTextContent(/Reading/);
+  });
+
+  it("stops saying it is reading once the read another request was making must be over", async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetComputerUsage.mockImplementation(async (_id: string, options?: { cached?: boolean }) => (options?.cached ? unread : { ...unread, refreshing: true }));
+      renderManage(desk);
+      await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+      expect(usageCard()).toHaveTextContent("Reading this computer's usage…");
+      // A reader holds the refresh for at most 20 s.
+      for (let tick = 0; tick < 10; tick += 1) {
+        await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
+      }
+      const asked = calls().length;
+      expect(asked).toBeGreaterThan(1 + 20 / 3);
+      expect(usageCard()).not.toHaveTextContent(/Reading/);
+      expect(usageCard()).toHaveTextContent("No usage read yet. Use Refresh to read it.");
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      expect(calls()).toHaveLength(asked);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // Regression: "Updated … ago" was a polite live region that the clock
+  // rewrote every 15 s, so a screen reader announced it over and over.
+  it("announces a finished read once, not every tick of the clock", async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetComputerUsage.mockResolvedValue(usage({ ageSeconds: 10 }));
+      renderManage(desk);
+      await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+      const label = within(usageCard()).getByText("Updated 10 s ago");
+      expect(label.closest("[aria-live], [role=status]")).toBeNull();
+      mockGetComputerUsage.mockResolvedValue(usage({ ageSeconds: 0 }));
+      fireEvent.click(within(usageCard()).getByRole("button", { name: "Refresh" }));
+      await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+      const announced = () => within(usageCard()).getAllByRole("status").map((node) => node.textContent);
+      expect(announced()).toEqual(["Usage updated just now."]);
+      await act(async () => { await jest.advanceTimersByTimeAsync(45_000); });
+      expect(within(usageCard()).getByText("Updated 45 s ago")).toBeVisible();
+      expect(announced()).toEqual(["Usage updated just now."]);
+
+      // A read that failed says so, instead of "updated".
+      mockGetComputerUsage.mockResolvedValue(usage({ ageSeconds: 300, stale: true, notes: ["host_unreachable"] }));
+      fireEvent.click(within(usageCard()).getByRole("button", { name: "Refresh" }));
+      await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+      expect(announced()).toEqual(["Hivra couldn't reach this computer's host just now."]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("flags a computer Hivra records as on but its host has switched off, and says what to do", async () => {
@@ -212,6 +296,37 @@ describe("Force off and Force restart in Advanced", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Force off" }));
     fireEvent.click(within(await within(card).findByRole("alertdialog")).getByRole("button", { name: "Force off" }));
     await waitFor(() => expect(mockForceStopAgent).toHaveBeenCalledWith("computer-a"));
+  });
+
+  // Keyboard and screen-reader users are taken to the confirmation, with
+  // Cancel first as in the danger zone, and back to the button on Cancel.
+  it("moves focus to Cancel when the confirmation opens, and back to Force off when it is cancelled", async () => {
+    renderManage(desk);
+    openSection("Advanced");
+    const card = screen.getByTestId("manage-force-power");
+    const trigger = within(card).getByRole("button", { name: "Force off" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await within(card).findByRole("alertdialog", { name: "Force off Desk?" });
+    const [first, second] = within(dialog).getAllByRole("button");
+    expect(first).toHaveTextContent("Cancel");
+    expect(second).toHaveTextContent("Force off");
+    await waitFor(() => expect(first).toHaveFocus());
+    fireEvent.click(first);
+    expect(within(card).queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(mockForceStopAgent).not.toHaveBeenCalled();
+  });
+
+  // Regression: this said to use Force off when Stop doesn't work, but a
+  // failed Stop keeps its operation, which turns Force off off; and Stop
+  // already switches a computer off when it doesn't shut down in time.
+  it("says what forcing does instead of sending owners here when Stop fails", () => {
+    renderManage(desk);
+    openSection("Advanced");
+    const card = screen.getByTestId("manage-force-power");
+    expect(card).toHaveTextContent("Force off and Force restart switch the computer off at once, like pulling the plug, instead of waiting for it to shut down. Use them when the computer is frozen. Anything not saved in open apps is lost.");
+    expect(card).not.toHaveTextContent(/doesn't work/);
   });
 
   it("forces a restart after its own confirmation", async () => {
@@ -272,6 +387,57 @@ describe("a truthful Stop", () => {
     renderManage(desk);
     fireEvent.click(screen.getByRole("button", { name: "Restart" }));
     expect(await screen.findByText("The computer didn't shut down within 40 seconds, so Hivra switched it off before starting it again.")).toBeVisible();
+  });
+
+  it("says the computer was switched off without a number when its shutdown failed sooner", async () => {
+    mockStopAgent.mockResolvedValue({ switchedOff: true, waitedSeconds: null });
+    renderManage(desk);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(await screen.findByText("The computer didn't shut down, so Hivra switched it off.")).toBeVisible();
+  });
+
+  // Regression: the notice stayed next to the Stop button of a computer that
+  // had been started again.
+  it("keeps the switch-off notice while the computer is off, and drops it once it is started again", async () => {
+    mockStopAgent.mockResolvedValue({ switchedOff: true, waitedSeconds: 50 });
+    const view = renderManage(desk);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    const notice = "The computer didn't shut down within 50 seconds, so Hivra switched it off.";
+    expect(await screen.findByText(notice)).toBeVisible();
+    view.rerenderRow({ ...desk, status: "stopped", desired_state: "stopped" });
+    expect(screen.getByText(notice)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    view.rerenderRow({ ...desk, status: "running" });
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+  });
+
+  it("drops the switch-off notice when the computer is started from somewhere else", async () => {
+    mockStopAgent.mockResolvedValue({ switchedOff: true, waitedSeconds: 50 });
+    const view = renderManage(desk);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    const notice = "The computer didn't shut down within 50 seconds, so Hivra switched it off.";
+    expect(await screen.findByText(notice)).toBeVisible();
+    view.rerenderRow({ ...desk, status: "stopped", desired_state: "stopped" });
+    view.rerenderRow({ ...desk, status: "running" });
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+  });
+
+  // Regression: Manage told a My cloud owner that Stop switches the computer
+  // off if it doesn't shut down in time; Hivra only asks Hetzner to shut it
+  // down, and the same card said no forced power-off was being started.
+  it("doesn't promise a switch-off for a My cloud computer, whose Stop only asks it to shut down", async () => {
+    let finish!: () => void;
+    mockStopAgent.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const myCloud = { ...desk, computer_substrate: "provider-vm", deployment_mode: "self-managed", vmid: null, ip: "192.0.2.80", power_stage: "provider_pending" };
+    renderManage(myCloud);
+    expect(document.body).toHaveTextContent("Stop shuts down the computer; Start brings it back. Restart reboots in place.");
+    expect(document.body).toHaveTextContent("No replacement or forced power-off is being started.");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    const progress = await screen.findByText("Stopping the computer…");
+    expect(progress.parentElement).toHaveTextContent("Hivra is asking it to shut down and confirming that it is off.");
+    expect(document.body).not.toHaveTextContent(/switches it off|switched it off/);
+    await act(async () => finish());
   });
 
   it("says nothing extra when it shut down by itself", async () => {

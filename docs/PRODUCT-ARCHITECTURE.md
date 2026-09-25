@@ -503,8 +503,11 @@ one whitelisted line for that VM only. Memory is the host's figure and includes
 the guest's file cache, and the page says so. Reads are cached in
 `hivra_computer_usage` (migration `20260925130000`): at most one host read per
 computer per 20 s across server instances (a claim on the database clock), the
-last read is kept when the host can't be reached, and a read made before the
+last read is kept when the host can't be reached, a failed read is retried after
+20 s without being shown as a read in progress, and a read made before the
 computer's last state change is read again rather than reported as a mismatch.
+A computer's row is deleted when the computer is deleted, and account deletion
+removes the rest by user.
 My cloud, Linux Sandbox and DigitalOcean computers show why live usage isn't
 available (no new provider calls). Advanced offers Force off and Force restart
 for Proxmox and prepared computers (`qm stop --overrule-shutdown`, falling back
@@ -512,8 +515,11 @@ to a plain `qm stop` on hosts older than PVE 8.1), behind a confirmation that
 unsaved work is lost; they reuse the Stop and Restart leases and receipts, so an
 operation in progress (an in-place update, say) makes them wait instead of
 breaking its lease. A My cloud computer is sent to its provider's console. Stop
-and Restart now report when the computer didn't shut down in time and Hivra
-switched it off, and Manage and History say so. Verified by tests only
+and Restart now report when the computer didn't shut down and Hivra switched it
+off, with the wait measured on the host (a shutdown that failed sooner than its
+wait is reported without a number), and Manage and History say so. Only
+computers whose Stop does this (Proxmox and prepared) are told it will; My
+cloud's Stop only asks Hetzner to shut the computer down. Verified by tests only
 (including the host script run against captured Proxmox VE 9.2 output); not
 yet run against a live host from this code.
 

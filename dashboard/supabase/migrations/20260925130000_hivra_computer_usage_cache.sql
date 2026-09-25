@@ -8,17 +8,28 @@
 -- 1. hivra_computer_usage: one row per computer. `sample` is the whitelisted
 --    observation the route stored (numbers and a filesystem type only; never a
 --    host name, address or another computer's data). `refresh_claimed_until`
---    is the single-flight claim. Service role only: RLS on, no policies.
+--    is the single-flight claim, held by a reader while it reads the host.
+--    `refresh_retry_after` holds off the next read after a failed one. Service
+--    role only: RLS on, no policies.
 --
 -- 2. claim_hivra_computer_usage_refresh: claims the next host read on the
---    database clock. It succeeds only when no claim is live and the stored
---    observation is older than p_fresh_seconds (0 skips that check, for an
---    observation made before the computer's last state change). The row is
---    created on first use, for the computer's owner only.
+--    database clock. It succeeds only when no claim is live, no failed read is
+--    being backed off, and the stored observation is older than p_fresh_seconds
+--    (0 skips that check, for an observation made before the computer's last
+--    state change). The row is created on first use, for the computer's owner
+--    only. A caller that doesn't get the claim is told whether a reader is
+--    reading right now (`refreshing`), so a backed-off failure is never shown
+--    as a read in progress.
 --
 -- 3. record_hivra_computer_usage: stores a read. A sample replaces the
---    observation and releases the claim; an error keeps the claim until it
---    expires, so a failing host is not read again by every request.
+--    observation and releases the claim; an error releases the claim and backs
+--    off until the claim would have expired, so a failing host is not read
+--    again by every request.
+--
+-- 4. The row is deleted when its computer is deleted (status 'deleted', a soft
+--    delete, so the foreign key's cascade never fires on its own), like the
+--    computer's activity records. Account deletion removes the rest by user_id
+--    (ACCOUNT_DELETION_TABLES).
 --
 -- Additive and idempotent: every statement can be re-run.
 
@@ -29,6 +40,7 @@ create table if not exists public.hivra_computer_usage (
   sample                jsonb       check (sample is null or (jsonb_typeof(sample) = 'object' and pg_column_size(sample) < 8192)),
   observed_at           timestamptz,
   refresh_claimed_until timestamptz,
+  refresh_retry_after   timestamptz,
   last_error_code       text        check (last_error_code is null or last_error_code ~ '^[a-z_]{1,40}$'),
   updated_at            timestamptz not null default now(),
   constraint hivra_computer_usage_observation_check check ((sample is null) = (observed_at is null))
@@ -73,6 +85,7 @@ begin
    where u.agent_id = p_agent_id
      and u.user_id = p_user_id
      and (u.refresh_claimed_until is null or u.refresh_claimed_until <= v_now)
+     and (u.refresh_retry_after is null or u.refresh_retry_after <= v_now)
      and (p_fresh_seconds = 0 or u.observed_at is null
           or u.observed_at <= v_now - pg_catalog.make_interval(secs => p_fresh_seconds))
   returning u.* into v_row;
@@ -86,6 +99,8 @@ begin
 
   return pg_catalog.jsonb_build_object(
     'claimed', v_claimed,
+    -- Another reader holds the claim right now (not a backed-off failure).
+    'refreshing', not v_claimed and v_row.refresh_claimed_until is not null and v_row.refresh_claimed_until > v_now,
     'sample', v_row.sample,
     'observedAt', v_row.observed_at,
     'lastErrorCode', v_row.last_error_code
@@ -119,6 +134,7 @@ begin
            observed_at = v_now,
            last_error_code = p_error_code,
            refresh_claimed_until = null,
+           refresh_retry_after = null,
            updated_at = v_now
      where u.agent_id = p_agent_id and u.user_id = p_user_id
     returning u.* into v_row;
@@ -127,12 +143,16 @@ begin
        set sample = null,
            observed_at = null,
            last_error_code = p_error_code,
+           refresh_retry_after = u.refresh_claimed_until,
+           refresh_claimed_until = null,
            updated_at = v_now
      where u.agent_id = p_agent_id and u.user_id = p_user_id
     returning u.* into v_row;
   else
     update public.hivra_computer_usage u
        set last_error_code = p_error_code,
+           refresh_retry_after = u.refresh_claimed_until,
+           refresh_claimed_until = null,
            updated_at = v_now
      where u.agent_id = p_agent_id and u.user_id = p_user_id
     returning u.* into v_row;
@@ -153,3 +173,27 @@ revoke all on function public.claim_hivra_computer_usage_refresh(uuid, text, tex
 revoke all on function public.record_hivra_computer_usage(uuid, text, jsonb, text, boolean) from public, anon, authenticated;
 grant execute on function public.claim_hivra_computer_usage_refresh(uuid, text, text, integer, integer) to service_role;
 grant execute on function public.record_hivra_computer_usage(uuid, text, jsonb, text, boolean) to service_role;
+
+-- A deleted computer's usage goes with it. Computers are soft-deleted (status
+-- 'deleted', only after verified teardown, on every delete path), so the
+-- foreign key's cascade alone would keep the row for good.
+create or replace function public.delete_hivra_computer_usage_after_agent_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.status is distinct from 'deleted' and new.status = 'deleted' then
+    delete from public.hivra_computer_usage u where u.agent_id = new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists delete_hivra_computer_usage_after_agent_delete on public.hivra_agents;
+create trigger delete_hivra_computer_usage_after_agent_delete
+after update of status on public.hivra_agents
+for each row execute function public.delete_hivra_computer_usage_after_agent_delete();
+
+revoke all on function public.delete_hivra_computer_usage_after_agent_delete() from public, anon, authenticated;

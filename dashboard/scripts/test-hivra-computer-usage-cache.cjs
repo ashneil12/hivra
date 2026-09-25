@@ -5,11 +5,16 @@
 // - the claim is single-flight on the database clock: one claimant at a time,
 //   none while the stored observation is fresh, and force (0) skips only the
 //   freshness check;
+// - a caller that loses the claim is told whether a reader is reading now,
+//   and a failed read's back-off never counts as one;
 // - a row is created only for the computer's owner, never for a deleted one;
 // - recording a sample stores it and releases the claim; recording an error
-//   keeps the sample and the claim; clearing drops the sample;
+//   keeps the sample and backs off the next read until the claim would have
+//   expired; clearing drops the sample;
 // - the checks hold (source, error code, sample shape and size, sample and
-//   time together), and the row goes with its computer.
+//   time together);
+// - the row goes with its computer: when it is soft-deleted (status
+//   'deleted') and when its row is removed.
 // Entirely in memory: no credentials or live database.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -74,10 +79,11 @@ async function main() {
     // --- Single-flight claim -------------------------------------------------
     const desk = await agent("owner");
     const first = await claim(desk, "owner");
-    assert.deepEqual(first, { claimed: true, sample: null, observedAt: null, lastErrorCode: null });
+    assert.deepEqual(first, { claimed: true, refreshing: false, sample: null, observedAt: null, lastErrorCode: null });
     assert.equal((await row(desk)).source, "proxmox");
-    // A second reader while the claim is live gets the (empty) observation.
-    assert.equal((await claim(desk, "owner")).claimed, false);
+    // A second reader while the claim is live gets the (empty) observation,
+    // and is told a read is in progress.
+    assert.deepEqual(await claim(desk, "owner"), { claimed: false, refreshing: true, sample: null, observedAt: null, lastErrorCode: null });
     assert.equal((await claim(desk, "owner", 0)).claimed, false, "force never overrides a live claim");
 
     const sample = { v: 1, result: "sample", recordedStatus: "running", sample: { v: 1 } };
@@ -89,6 +95,7 @@ async function main() {
     // Fresh: nobody reads the host again, even with the claim released.
     const fresh = await claim(desk, "owner");
     assert.equal(fresh.claimed, false);
+    assert.equal(fresh.refreshing, false, "nobody is reading: the stored read is fresh");
     assert.deepEqual(fresh.sample, sample);
     // Out of date after a state change: force claims despite freshness.
     assert.equal((await claim(desk, "owner", 0)).claimed, true);
@@ -97,15 +104,26 @@ async function main() {
     await age(desk, 30);
     assert.equal((await claim(desk, "owner")).claimed, true);
 
-    // An error keeps the last sample and the claim.
+    // An error keeps the last sample and backs off the next read until the
+    // claim would have expired, without claiming a read is in progress.
+    const claimedUntil = (await row(desk)).refresh_claimed_until;
     const failed = await record(desk, "owner", null, "host_unreachable");
     assert.deepEqual(failed.sample, sample);
     assert.equal(failed.lastErrorCode, "host_unreachable");
-    assert.notEqual((await row(desk)).refresh_claimed_until, null, "a failed read keeps the claim until it expires");
-    assert.equal((await claim(desk, "owner")).claimed, false);
-    // A later sample clears the error.
+    const backedOff = await row(desk);
+    assert.equal(backedOff.refresh_claimed_until, null, "a failed read releases the claim");
+    assert.deepEqual(backedOff.refresh_retry_after, claimedUntil, "and backs off until the claim would have expired");
+    const during = await claim(desk, "owner");
+    assert.equal(during.claimed, false, "no read while a failure is backed off");
+    assert.equal(during.refreshing, false, "a backed-off failure is not a read in progress");
+    assert.equal(during.lastErrorCode, "host_unreachable");
+    assert.equal((await claim(desk, "owner", 0)).claimed, false, "force waits out the back-off too");
+    await db.query("update public.hivra_computer_usage set refresh_retry_after = now() - interval '1 second' where agent_id = $1", [desk]);
+    assert.equal((await claim(desk, "owner")).claimed, true, "the next read goes ahead once the back-off is over");
+    // A later sample clears the error and the back-off.
     await record(desk, "owner", sample);
     assert.equal((await row(desk)).last_error_code, null);
+    assert.equal((await row(desk)).refresh_retry_after, null);
     // An identity that no longer checks out drops the old numbers.
     const cleared = await record(desk, "owner", null, "binding_mismatch", true);
     assert.equal(cleared.sample, null);
@@ -115,7 +133,7 @@ async function main() {
 
     // --- Owner only, never deleted ------------------------------------------
     const other = await claim(desk, "intruder");
-    assert.deepEqual(other, { claimed: false, sample: null, observedAt: null, lastErrorCode: null });
+    assert.deepEqual(other, { claimed: false, refreshing: false, sample: null, observedAt: null, lastErrorCode: null });
     const foreign = await agent("someone");
     assert.equal((await claim(foreign, "owner")).claimed, false);
     assert.equal(await row(foreign), undefined, "no row for someone else's computer");
@@ -136,6 +154,24 @@ async function main() {
     await rejects(db, "update public.hivra_computer_usage set observed_at = null where agent_id = $1", [desk], /check constraint/, "sample without its time");
 
     // --- The row goes with its computer ------------------------------------
+    // Computers are soft-deleted: the row goes when the status becomes
+    // 'deleted', and no read recreates it or writes to it afterwards.
+    const retired = await agent("owner");
+    await claim(retired, "owner");
+    await record(retired, "owner", sample);
+    const bystander = await agent("owner");
+    await claim(bystander, "owner");
+    await db.query("update public.hivra_agents set status = 'stopped' where id = $1", [retired]);
+    assert.ok(await row(retired), "another status change keeps the row");
+    await db.query("update public.hivra_agents set status = 'deleted' where id = $1", [retired]);
+    assert.equal(await row(retired), undefined, "deleting the computer deletes its usage");
+    assert.ok(await row(bystander), "other computers keep theirs");
+    assert.equal((await claim(retired, "owner")).claimed, false);
+    assert.equal(await row(retired), undefined, "a read after the delete doesn't recreate the row");
+    assert.equal(await record(retired, "owner", sample), null);
+    assert.equal((await one("select has_function_privilege('anon', 'public.delete_hivra_computer_usage_after_agent_delete()', 'execute') r")).r, false);
+    assert.equal((await one("select has_function_privilege('authenticated', 'public.delete_hivra_computer_usage_after_agent_delete()', 'execute') r")).r, false);
+    // And a hard delete cascades.
     await db.query("delete from public.hivra_agents where id = $1", [desk]);
     assert.equal(await row(desk), undefined);
 

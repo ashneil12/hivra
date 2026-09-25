@@ -89,6 +89,9 @@ describe("GET /api/hivra/agents/[id]/events", () => {
     ["force_restarted", undefined, "Forced restart"],
     ["stopped", "shutdown_timeout", "Stopped (switched off: it didn't shut down in time)"],
     ["restarted", "shutdown_timeout", "Restarted (switched off first: it didn't shut down in time)"],
+    ["stopped", "shutdown_failed", "Stopped (switched off: it didn't shut down)"],
+    ["restarted", "shutdown_failed", "Restarted (switched off first: it didn't shut down)"],
+    ["started", "shutdown_failed", "Started"],
     ["stopped", undefined, "Stopped"],
   ])("labels %s (reason %s) as %s", async (event, reason, label) => {
     mockEvents = [{ event, created_at: "2026-09-24T12:00:00.000Z", reason }];

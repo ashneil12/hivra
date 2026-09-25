@@ -47,12 +47,19 @@ const FAILED_REASON_LABELS: Record<string, string> = {
 };
 
 /**
- * A Stop or Restart that switched the computer off because it didn't shut
- * down in time records reason shutdown_timeout, so History says so.
+ * A Stop or Restart that had to switch the computer off records why: it
+ * didn't shut down in time (shutdown_timeout), or its shutdown failed sooner
+ * (shutdown_failed). History says so.
  */
-const SWITCHED_OFF_LABELS: Record<string, string> = {
-  stopped: "Stopped (switched off: it didn't shut down in time)",
-  restarted: "Restarted (switched off first: it didn't shut down in time)",
+const SWITCHED_OFF_LABELS: Record<string, Record<string, string>> = {
+  shutdown_timeout: {
+    stopped: "Stopped (switched off: it didn't shut down in time)",
+    restarted: "Restarted (switched off first: it didn't shut down in time)",
+  },
+  shutdown_failed: {
+    stopped: "Stopped (switched off: it didn't shut down)",
+    restarted: "Restarted (switched off first: it didn't shut down)",
+  },
 };
 
 /** The owner's label for one event, or null for an event History doesn't show. */
@@ -61,7 +68,9 @@ export function computerHistoryLabel(event: string, reason?: unknown): string | 
   if (event === "failed" && typeof reason === "string" && Object.hasOwn(FAILED_REASON_LABELS, reason)) {
     return FAILED_REASON_LABELS[reason];
   }
-  if (reason === "shutdown_timeout" && Object.hasOwn(SWITCHED_OFF_LABELS, event)) return SWITCHED_OFF_LABELS[event];
+  if (typeof reason === "string" && Object.hasOwn(SWITCHED_OFF_LABELS, reason) && Object.hasOwn(SWITCHED_OFF_LABELS[reason], event)) {
+    return SWITCHED_OFF_LABELS[reason][event];
+  }
   return COMPUTER_HISTORY_LABELS[event];
 }
 

@@ -12,6 +12,12 @@ export type ComputerUsageSource = (typeof COMPUTER_USAGE_SOURCES)[number];
 export const COMPUTER_USAGE_FRESH_SECONDS = 20;
 /** An observation older than this is shown as stale. */
 export const COMPUTER_USAGE_STALE_SECONDS = 60;
+/**
+ * The longest one host read holds the refresh: another request that finds a
+ * read in progress (`refreshing`) knows it is over by then, one way or the
+ * other. It also bounds the wait before a failed read is tried again.
+ */
+export const COMPUTER_USAGE_CLAIM_SECONDS = 20;
 
 /**
  * Why part of the usage is missing or out of date, for the page to explain:
@@ -42,7 +48,11 @@ export const ComputerUsageViewSchema = z.object({
   observedAt: z.string().max(64).nullable(),
   ageSeconds: count.nullable(),
   stale: z.boolean(),
-  /** Another request is reading the host right now; ask again shortly. */
+  /**
+   * Another request is reading the host right now; ask again shortly. Never
+   * set while Hivra is waiting to retry a read that failed (the
+   * host_unreachable note says so instead).
+   */
   refreshing: z.boolean(),
   power: z.object({
     observed: z.enum(COMPUTER_POWER_OBSERVED),

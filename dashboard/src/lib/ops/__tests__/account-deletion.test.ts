@@ -304,6 +304,14 @@ describe("account deletion safeguards", () => {
     ).toBeUndefined();
   });
 
+  // Regression: the usage cache kept per-computer usage keyed to the account
+  // after the account was deleted.
+  it("deletes the user's Hivra computer usage reads by user id", () => {
+    expect(ACCOUNT_DELETION_TABLES.find((entry) => entry.table === "hivra_computer_usage")).toEqual(
+      expect.objectContaining({ filterColumn: "user_id", source: "userId", optionalIfMissing: true })
+    );
+  });
+
   it("refuses an apply while the user still has Hivra computers that are not deleted", () => {
     expect(() =>
       assertNoLiveHivraComputers({ apply: true, liveComputerIds: ["agent-1"] })

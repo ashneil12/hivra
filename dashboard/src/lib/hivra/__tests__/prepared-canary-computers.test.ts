@@ -63,7 +63,7 @@ describe("prepared Canary computers", () => {
   it.each([
     ["start", 1, "if [ \"$CURRENT_STATUS\" = stopped ]; then qm start"],
     // Stop and Restart report whether the shutdown finished or qm stop had to run.
-    ["restart", 1, "if qm shutdown \"$VMID\" --timeout 60; then\n    echo \"HIVRA_STOP_MODE graceful\"\n  else\n    qm stop \"$VMID\"\n    echo \"HIVRA_STOP_MODE forced 60\""],
+    ["restart", 1, "if qm shutdown \"$VMID\" --timeout 60; then\n    echo \"HIVRA_STOP_MODE graceful\"\n  else\n    SHUTDOWN_WAITED=\"$(( $(date +%s) - SHUTDOWN_STARTED ))\"\n    [ \"$SHUTDOWN_WAITED\" -ge 0 ] || SHUTDOWN_WAITED=0\n    qm stop \"$VMID\"\n    echo \"HIVRA_STOP_MODE forced $SHUTDOWN_WAITED 60\""],
     ["stop", 0, "EXPECTED_STATUS=stopped"],
     ["force_stop", 0, "qm stop \"$VMID\" --overrule-shutdown 1 --timeout 30 || qm stop \"$VMID\" --timeout 30\nfi\nEXPECTED_STATUS=stopped"],
     ["force_restart", 1, "qm stop \"$VMID\" --overrule-shutdown 1 --timeout 30 || qm stop \"$VMID\" --timeout 30\nfi\nqm start \"$VMID\" 8>&-"],
@@ -120,10 +120,20 @@ with tempfile.NamedTemporaryFile() as lock, tempfile.TemporaryDirectory() as com
     expect(script).not.toContain("HIVRA_STOP_MODE");
   });
 
-  it.each([["0", "graceful"], ["1", "forced 60"]] as const)("a Stop whose shutdown exits %s reports %s", (shutdownExit, mode) => {
+  // The wait is measured on the host (a stub clock here, moved on by the stub
+  // qm shutdown): a shutdown that gave up at the 60 s timeout, and one that
+  // failed after 2 s, are reported as what they were. Regression: the script
+  // used to print "forced 60" for any failed shutdown.
+  it.each([
+    ["0", 5, "graceful"],
+    ["1", 60, "forced 60 60"],
+    ["1", 2, "forced 2 60"],
+  ] as const)("a Stop whose shutdown exits %s after %i s reports %s", (shutdownExit, seconds, mode) => {
     const script = preparedCanaryLifecycleScript("windows", readPreparedCanarySlot("windows")!, "stop");
     const transition = script.slice(script.indexOf('if [ "$CURRENT_STATUS" != stopped ]'), script.indexOf("EXPECTED_STATUS=stopped"));
-    const result = spawnSync("bash", ["-euo", "pipefail", "-c", `qm() { [ "$1" = shutdown ] && return ${shutdownExit}; return 0; }
+    const result = spawnSync("bash", ["-euo", "pipefail", "-c", `NOW=1000
+date() { echo "$NOW"; }
+qm() { if [ "$1" = shutdown ]; then NOW=$((NOW + ${seconds})); return ${shutdownExit}; fi; return 0; }
 VMID=2098; CURRENT_STATUS=running
 ${transition}`], { encoding: "utf8" });
     expect(result.status).toBe(0);

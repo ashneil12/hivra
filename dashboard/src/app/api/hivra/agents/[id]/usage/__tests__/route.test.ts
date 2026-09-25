@@ -87,7 +87,7 @@ beforeEach(() => {
   mockMatchPrepared.mockReturnValue(null);
   mockRun.mockResolvedValue({ ok: true, stdout: `${USAGE_LINE_1113}\n`, stderr: "" });
   mockRpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
-    if (name === "claim_hivra_computer_usage_refresh") return { data: { claimed: true, sample: mockCache?.sample ?? null, observedAt: mockCache?.observed_at ?? null, lastErrorCode: null }, error: null };
+    if (name === "claim_hivra_computer_usage_refresh") return { data: { claimed: true, refreshing: false, sample: mockCache?.sample ?? null, observedAt: mockCache?.observed_at ?? null, lastErrorCode: null }, error: null };
     if (name === "record_hivra_computer_usage") {
       return { data: { sample: args.p_clear_sample ? null : args.p_sample ?? mockCache?.sample ?? null, observedAt: args.p_sample ? new Date().toISOString() : args.p_clear_sample ? null : mockCache?.observed_at ?? null, lastErrorCode: args.p_error_code }, error: null };
     }
@@ -173,14 +173,44 @@ describe("GET /api/hivra/agents/[id]/usage", () => {
       for (const secret of [BEARER, PRIVATE_IP, "fixturenode11", BINDING_TAG, "b".repeat(32)]) expect(text).not.toContain(secret);
     });
 
-    it("serves the last read, marked as refreshing, when another request holds the claim", async () => {
+    it("serves the last read, marked as refreshing, when another request is reading the host", async () => {
       mockCache = { sample: stored(), observed_at: secondsAgo(45), last_error_code: null };
       mockRpc.mockImplementation(async (name: string) => name === "claim_hivra_computer_usage_refresh"
-        ? { data: { claimed: false, sample: stored(), observedAt: mockCache?.observed_at, lastErrorCode: null }, error: null }
+        ? { data: { claimed: false, refreshing: true, sample: stored(), observedAt: mockCache?.observed_at, lastErrorCode: null }, error: null }
         : { data: null, error: null });
       const response = await get();
       expect(response.status).toBe(200);
       expect((await response.json()).data).toMatchObject({ refreshing: true, cpu: { percent: 1.1 } });
+      expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    // Regression: a failed read keeps other readers off for 20 s, and a
+    // Refresh inside that window was answered "refreshing" with nothing
+    // stored, so the page showed "Reading…" for a read that wasn't happening
+    // and hid the failure.
+    it("doesn't call a failed read's back-off a read in progress, and says the host couldn't be reached", async () => {
+      mockRun.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "connect ECONNREFUSED" });
+      expect((await get()).status).toBe(503);
+      expect(mockRun).toHaveBeenCalledTimes(1);
+
+      mockCache = { sample: null, observed_at: null, last_error_code: "host_unreachable" };
+      mockRpc.mockImplementation(async (name: string) => name === "claim_hivra_computer_usage_refresh"
+        ? { data: { claimed: false, refreshing: false, sample: null, observedAt: null, lastErrorCode: "host_unreachable" }, error: null }
+        : { data: null, error: null });
+      const response = await get();
+      expect(response.status).toBe(200);
+      expect((await response.json()).data).toMatchObject({ observedAt: null, refreshing: false, notes: ["host_unreachable"] });
+      expect(mockRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the last read, not refreshing, while a failed read is backed off", async () => {
+      mockCache = { sample: stored(), observed_at: secondsAgo(300), last_error_code: "host_unreachable" };
+      mockRpc.mockImplementation(async (name: string) => name === "claim_hivra_computer_usage_refresh"
+        ? { data: { claimed: false, refreshing: false, sample: stored(), observedAt: mockCache?.observed_at, lastErrorCode: "host_unreachable" }, error: null }
+        : { data: null, error: null });
+      const response = await get();
+      expect(response.status).toBe(200);
+      expect((await response.json()).data).toMatchObject({ refreshing: false, stale: true, notes: ["host_unreachable"], cpu: { percent: 1.1 } });
       expect(mockRun).not.toHaveBeenCalled();
     });
 

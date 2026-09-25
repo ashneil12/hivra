@@ -178,16 +178,33 @@ ${vmAuthority}`;
 }
 
 // How a stop ended, printed by the host: "graceful" (the computer shut itself
-// down in time), "forced <seconds>" (it hadn't after that long, so qm stop
-// switched it off) or "already" (it was off). Only "forced" changes what the
-// owner is told, with the wait the script itself used.
-const STOP_MODE_LINE = /^HIVRA_STOP_MODE (graceful|forced|already)(?: (\d{1,4}))?$/m;
+// down in time), "forced <waited> <budget>" (qm shutdown gave up after
+// <waited> seconds, measured on the host, of the <budget> it was given, so
+// qm stop switched it off) or "already" (it was off). Only "forced" changes
+// what the owner is told.
+const STOP_MODE_LINE = /^HIVRA_STOP_MODE (graceful|forced|already)\b(.*)$/m;
 
-function stopOutcome(stdout: string | undefined): { forced: true; waitedSeconds?: number } | null {
+/**
+ * How Stop or Restart ended. `waitedSeconds` (the budget) only when qm
+ * shutdown used the whole budget, i.e. the computer didn't shut down in time;
+ * a shutdown that failed sooner (the guest refused, or the host couldn't ask
+ * it) switched it off with no wait to report.
+ */
+type StopOutcome = { forced: true; waitedSeconds?: number };
+
+function stopOutcome(stdout: string | undefined): StopOutcome | null {
   const match = STOP_MODE_LINE.exec(stdout || "");
   if (match?.[1] !== "forced") return null;
-  const waited = Number(match[2]);
-  return { forced: true, ...(Number.isInteger(waited) && waited > 0 ? { waitedSeconds: waited } : {}) };
+  const [waited, budget] = match[2].trim().split(/\s+/).map(Number);
+  // `date +%s` steps in whole seconds, so a full wait can read one short.
+  const timedOut = Number.isInteger(waited) && Number.isInteger(budget) && budget > 0 && waited >= budget - 1;
+  return { forced: true, ...(timedOut ? { waitedSeconds: budget } : {}) };
+}
+
+/** The History reason for a Stop or Restart that had to switch the computer off. */
+function stopOutcomeEvent(outcome: StopOutcome | null): { detail?: { forced: true; reason: "shutdown_timeout" | "shutdown_failed" } } {
+  if (!outcome) return {};
+  return { detail: { forced: true, reason: outcome.waitedSeconds ? "shutdown_timeout" : "shutdown_failed" } };
 }
 
 function verifiedStopVmBody(vmid: number, timeoutSeconds: number): string {
@@ -195,11 +212,14 @@ function verifiedStopVmBody(vmid: number, timeoutSeconds: number): string {
 STOP_MODE=already
 CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
 if [ "$CURRENT_STATUS" != "stopped" ]; then
+  SHUTDOWN_STARTED="$(date +%s)"
   if qm shutdown "$VMID" --timeout ${timeoutSeconds}; then
     STOP_MODE=graceful
   else
+    SHUTDOWN_WAITED="$(( $(date +%s) - SHUTDOWN_STARTED ))"
+    [ "$SHUTDOWN_WAITED" -ge 0 ] || SHUTDOWN_WAITED=0
     qm stop "$VMID"
-    STOP_MODE="forced ${timeoutSeconds}"
+    STOP_MODE="forced $SHUTDOWN_WAITED ${timeoutSeconds}"
   fi
 fi
 FINAL_STATUS="$(qm status "$VMID" | awk '{print $2}')"
@@ -563,7 +583,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             : action === "stop" ? "stopped" : action === "restart" ? "restarted" : "started",
         agentId: agent.id,
         agentType: agent.type,
-        ...(switchedOff ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
+        ...stopOutcomeEvent(switchedOff),
       });
       return apiSuccess({
         status: desiredState,
@@ -1051,7 +1071,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       const switchedOff = stopOutcome(r.stdout);
       await logHivraAgentEvent({
         userId, event: "stopped", agentId: agent.id, agentType: agent.type,
-        ...(switchedOff ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
+        ...stopOutcomeEvent(switchedOff),
       });
       return apiSuccess({ status: "stopped", ...switchedOff });
     }
@@ -1168,7 +1188,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       const switchedOff = stopOutcome(r.stdout);
       await logHivraAgentEvent({
         userId, event: "restarted", agentId: agent.id, agentType: agent.type,
-        ...(switchedOff ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
+        ...stopOutcomeEvent(switchedOff),
       });
       return apiSuccess({ status: "provisioning", ...switchedOff });
     }

@@ -5,17 +5,19 @@
 // server instance: a request first serves a fresh stored observation; else it
 // claims the refresh in the database (claim_hivra_computer_usage_refresh, a
 // conditional update on the database clock), and only the claim's winner
-// reads the host. A request that loses the claim gets the last observation
-// marked as refreshing. Within one instance, concurrent winners for the same
-// computer also share one read (singleFlightUsageRead).
+// reads the host. A request that loses the claim gets the last observation,
+// marked as refreshing only while another reader is actually reading (not
+// while a failed read is being backed off). Within one instance, concurrent
+// winners for the same computer also share one read (singleFlightUsageRead).
 
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase";
-import { COMPUTER_USAGE_FRESH_SECONDS, type ComputerUsageSource } from "@/lib/hivra/computer-usage-contract";
-
-/** How long a claim holds off other readers; also bounds retries after a failed read. */
-export const COMPUTER_USAGE_CLAIM_SECONDS = 20;
+import {
+  COMPUTER_USAGE_CLAIM_SECONDS,
+  COMPUTER_USAGE_FRESH_SECONDS,
+  type ComputerUsageSource,
+} from "@/lib/hivra/computer-usage-contract";
 
 /** Error codes the cache keeps, for the next cached read. */
 export type ComputerUsageErrorCode = "host_unreachable" | "binding_mismatch" | "probe_invalid" | "context_unavailable";
@@ -76,7 +78,7 @@ export async function claimComputerUsageRefresh(input: {
   userId: string;
   source: ComputerUsageSource;
   force: boolean;
-}): Promise<{ claimed: boolean; row: ComputerUsageCacheRow | null }> {
+}): Promise<{ claimed: boolean; refreshing: boolean; row: ComputerUsageCacheRow | null }> {
   const { data, error } = await db().rpc("claim_hivra_computer_usage_refresh", {
     p_agent_id: input.agentId,
     p_user_id: input.userId,
@@ -85,15 +87,19 @@ export async function claimComputerUsageRefresh(input: {
     p_claim_seconds: COMPUTER_USAGE_CLAIM_SECONDS,
   });
   if (error) throw new ComputerUsageCacheError("cache_claim_failed");
-  const claimed = Boolean(data && typeof data === "object" && (data as { claimed?: unknown }).claimed === true);
-  return { claimed, row: cacheRow(data) };
+  const answer = data && typeof data === "object" ? data as { claimed?: unknown; refreshing?: unknown } : {};
+  const claimed = answer.claimed === true;
+  // Only a reader holding the claim right now counts, never a backed-off
+  // failure (the database says which).
+  return { claimed, refreshing: !claimed && answer.refreshing === true, row: cacheRow(data) };
 }
 
 /**
  * Save a read. A sample replaces the observation and releases the claim; an
- * error keeps the claim until it expires, so a failing host isn't retried by
- * every request. `clearSample` drops the observation (the computer's identity
- * no longer checks out, so its old numbers mustn't be shown).
+ * error releases the claim and backs off the next read until the claim would
+ * have expired, so a failing host isn't retried by every request.
+ * `clearSample` drops the observation (the computer's identity no longer
+ * checks out, so its old numbers mustn't be shown).
  */
 export async function recordComputerUsage(input: {
   agentId: string;

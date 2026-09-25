@@ -97,7 +97,7 @@ const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; sectio
   },
   stop: {
     title: "Stopping the computer…",
-    detail: "Hivra is asking it to shut down and confirming that it is off. If it doesn't shut down in time, Hivra switches it off.",
+    detail: "Hivra is asking it to shut down and confirming that it is off.",
     section: "overview",
   },
   restart: {
@@ -138,6 +138,13 @@ const RUN_ENDING: Record<RunEndingAction, { effect: string; proceed: string }> =
   force_restart: { effect: "Forcing a restart ends", proceed: "Force restart" },
 };
 
+/**
+ * Said about Stop only where Hivra switches a computer off when it doesn't
+ * shut down in time: the computers that offer Force off (Proxmox, prepared).
+ * My cloud's Stop only asks the provider to shut it down.
+ */
+const STOP_SWITCHES_OFF = "If it doesn't shut down in time, Hivra switches it off.";
+
 // Force off and Force restart (Advanced), confirmed first because anything
 // not saved on the computer is lost.
 const FORCE_POWER: Record<ForcePowerAction, { button: string; title: (name: string) => string; detail: string }> = {
@@ -153,13 +160,28 @@ const FORCE_POWER: Record<ForcePowerAction, { button: string; title: (name: stri
   },
 };
 
-/** What the owner is told when Stop or Restart had to switch the computer off. */
+/**
+ * What the owner is told when Stop or Restart had to switch the computer off.
+ * `waitedSeconds` is set only when the host waited the whole time for it; a
+ * shutdown that failed sooner is reported without a number.
+ */
 function switchedOffNotice(action: "stop" | "restart", waitedSeconds: number | null): string {
-  const within = waitedSeconds ? `within ${waitedSeconds} seconds` : "in time";
+  const shutDown = waitedSeconds ? `shut down within ${waitedSeconds} seconds` : "shut down";
   return action === "stop"
-    ? `The computer didn't shut down ${within}, so Hivra switched it off.`
-    : `The computer didn't shut down ${within}, so Hivra switched it off before starting it again.`;
+    ? `The computer didn't ${shutDown}, so Hivra switched it off.`
+    : `The computer didn't ${shutDown}, so Hivra switched it off before starting it again.`;
 }
+
+/**
+ * A Stop or Restart notice stays while the computer is in the state it
+ * describes, and goes once it moves on (Start after a Stop, Stop after a
+ * Restart), wherever that change was made.
+ */
+type PowerNotice = { agentId: string; text: string; keepWhile: readonly string[] };
+const POWER_NOTICE_KEEP_WHILE: Record<"stop" | "restart", readonly string[]> = {
+  stop: ["stopped"],
+  restart: ["provisioning", "running"],
+};
 
 function repliesInProgress(count: number): string {
   return count === 1
@@ -424,9 +446,21 @@ function HivraManageContent({
   // Force off / Force restart: the confirmation, with any replies it would end.
   const [forceConfirm, setForceConfirm] = useState<{ action: ForcePowerAction; running: number } | null>(null);
   // Stop or Restart had to switch the computer off; say so where it was asked.
-  const [powerNotice, setPowerNotice] = useState<string | null>(null);
-  // A confirmation belongs to the computer state it was asked about.
-  useEffect(() => { setRepliesConfirm(null); setForceConfirm(null); }, [agent.id, agent.status]);
+  const [powerNotice, setPowerNotice] = useState<PowerNotice | null>(null);
+  // A confirmation belongs to the computer state it was asked about, and so
+  // does the notice of how the computer went off.
+  useEffect(() => {
+    setRepliesConfirm(null);
+    setForceConfirm(null);
+    setPowerNotice((notice) => (notice && notice.agentId === agent.id && notice.keepWhile.includes(agent.status) ? notice : null));
+  }, [agent.id, agent.status]);
+  // Force off / Force restart: where focus goes back when the confirmation is
+  // cancelled, and the Cancel button that takes focus when it opens.
+  const forceTriggers = useRef<Partial<Record<ForcePowerAction, HTMLButtonElement | null>>>({});
+  const forceCancel = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (forceConfirm) forceCancel.current?.focus();
+  }, [forceConfirm]);
 
   // Restore points are listed only where the server keeps them: an older
   // computer without ownership checks is told why instead (manage.restorePoints).
@@ -608,6 +642,10 @@ function HivraManageContent({
     };
   };
   const power = manage?.power ?? legacyPower();
+  // Stop switches the computer off when it doesn't shut down in time only
+  // where Force off exists: Proxmox and prepared computers, not My cloud,
+  // DigitalOcean or a Linux Sandbox.
+  const stopSwitchesOff = Boolean(manage?.power.forceStop && manage.power.forceStop.state !== "unavailable");
   const resizeKind = manage?.resize.kind
     ?? (providerComputer ? "hetzner-server-type" : preparedComputer ? "fixed" : "proxmox-envelope");
   const connectionUpdate: ManageCap | null = manage
@@ -638,7 +676,9 @@ function HivraManageContent({
     if (action === "stop" || action === "restart") {
       void run(action, async () => {
         const outcome = await (action === "stop" ? stopAgent(agent.id) : restartAgent(agent.id));
-        if (outcome?.switchedOff) setPowerNotice(switchedOffNotice(action, outcome.waitedSeconds));
+        if (outcome?.switchedOff) {
+          setPowerNotice({ agentId: agent.id, text: switchedOffNotice(action, outcome.waitedSeconds), keepWhile: POWER_NOTICE_KEEP_WHILE[action] });
+        }
       });
     } else if (action === "force_stop" || action === "force_restart") {
       void run(action, () => (action === "force_stop" ? forceStopAgent(agent.id) : forceRestartAgent(agent.id)));
@@ -687,6 +727,11 @@ function HivraManageContent({
     setForceConfirm(null);
     sendRunEnding(action);
   };
+  const cancelForce = () => {
+    const action = forceConfirm?.action;
+    setForceConfirm(null);
+    if (action) forceTriggers.current[action]?.focus();
+  };
 
   const errorFor = (slot: ErrorSlot) => (err && err.slot === slot ? <SectionError message={err.message} /> : null);
   // The replies-in-progress confirmation, shown next to the control that asked.
@@ -716,7 +761,9 @@ function HivraManageContent({
       <Loader2 size={15} aria-hidden="true" style={{ animation: "spin 1s linear infinite", flexShrink: 0, marginTop: 2 }} />
       <div>
         <div style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{LIFECYCLE_PROGRESS[acting].title}</div>
-        <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>{LIFECYCLE_PROGRESS[acting].detail}</div>
+        <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+          {LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
+        </div>
       </div>
     </div>
   ) : null;
@@ -827,7 +874,7 @@ function HivraManageContent({
               ) : (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {agent.status === "stopped" ? (
-                    <button type="button" disabled={busy || !capAvailable(power.start)} title={capReason(power.start) ?? undefined} onClick={() => void run("start", () => startAgent(agent.id))} style={{ ...btnDark, cursor: busy || !capAvailable(power.start) ? "default" : "pointer", opacity: busy || !capAvailable(power.start) ? 0.6 : 1 }}>
+                    <button type="button" disabled={busy || !capAvailable(power.start)} title={capReason(power.start) ?? undefined} onClick={() => { setPowerNotice(null); void run("start", () => startAgent(agent.id)); }} style={{ ...btnDark, cursor: busy || !capAvailable(power.start) ? "default" : "pointer", opacity: busy || !capAvailable(power.start) ? 0.6 : 1 }}>
                       {acting === "start" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Start
                     </button>
                   ) : (
@@ -841,12 +888,14 @@ function HivraManageContent({
                 </div>
               )}
               {repliesDialog(["stop", "restart"])}
-              {powerNotice ? <div role="status" style={{ ...manageMuted, color: "var(--ink-black)" }}>{powerNotice}</div> : null}
+              {powerNotice && powerNotice.agentId === agent.id ? <div role="status" style={{ ...manageMuted, color: "var(--ink-black)" }}>{powerNotice.text}</div> : null}
               {errorFor("power")}
               {!powerUnavailable && lifecyclePending ? <CapReasonLine cap={power.stop} /> : null}
               {/* Only explains buttons that are there. */}
               {powerUnavailable ? null : <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                Stop shuts down the computer, and switches it off if it doesn&apos;t shut down in time; Start brings it back. Restart reboots in place. Stopping does not cancel your plan or any provider billing.
+                {stopSwitchesOff
+                  ? "Stop shuts down the computer, and switches it off if it doesn't shut down in time; Start brings it back."
+                  : "Stop shuts down the computer; Start brings it back."} Restart reboots in place. Stopping does not cancel your plan or any provider billing.
               </div>}
               {progressFor("overview")}
               {providerComputer && providerPowerMessage(agent.power_stage) ? <p
@@ -1479,14 +1528,15 @@ function HivraManageContent({
                 {forcePower.offered ? (
                   <>
                     <div style={manageMuted}>
-                      Use these only when Stop or Restart doesn&apos;t work. They switch the computer off at once, like pulling the plug.
+                      Force off and Force restart switch the computer off at once, like pulling the plug, instead of waiting for it to shut down. Use them when the computer is frozen. Anything not saved in open apps is lost.
                     </div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {(["force_stop", "force_restart"] as const).map((action) => {
                         const cap = action === "force_stop" ? forcePower.stop : forcePower.restart;
                         const disabled = busy || !capAvailable(cap);
                         return (
-                          <button key={action} type="button" disabled={disabled} title={capReason(cap) ?? undefined}
+                          <button key={action} ref={(button) => { forceTriggers.current[action] = button; }} type="button" disabled={disabled} title={capReason(cap) ?? undefined}
+                            aria-haspopup="dialog" aria-expanded={forceConfirm?.action === action}
                             onClick={() => void requestForce(action)}
                             style={{ ...btnGhost, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1 }}>
                             {acting === action || repliesCheck === action ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />}
@@ -1505,11 +1555,12 @@ function HivraManageContent({
                       {FORCE_POWER[forceConfirm.action].detail}
                       {forceConfirm.running > 0 ? ` ${repliesInProgress(forceConfirm.running)} ${RUN_ENDING[forceConfirm.action].effect} ${forceConfirm.running === 1 ? "it" : "them"} now.` : ""}
                     </div>
+                    {/* Cancel first, as in the danger zone; it takes focus when this opens. */}
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button ref={forceCancel} type="button" onClick={cancelForce} style={{ ...btnGhost, cursor: "pointer" }}>Cancel</button>
                       <button type="button" disabled={busy} onClick={confirmForce} style={{ ...btnDark, background: "#c0392b", borderColor: "#c0392b", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
                         {FORCE_POWER[forceConfirm.action].button}
                       </button>
-                      <button type="button" onClick={() => setForceConfirm(null)} style={{ ...btnGhost, cursor: "pointer" }}>Cancel</button>
                     </div>
                   </div>
                 ) : null}
