@@ -6,19 +6,87 @@ import {
   enforceAuthenticatedRouteRateLimit,
   RATE_LIMIT_PRESETS,
 } from "@/lib/authenticated-rate-limit";
-import { verifyWalletChallenge } from "@/lib/billing/wallet-verification";
+import { getSelfCustodyPrimaryWallet } from "@/lib/billing/bankr-withdraw";
+import { getHermesLockWallet } from "@/lib/billing/token-holdings";
+import { getPendingWalletChallengeAddress, verifyWalletChallenge } from "@/lib/billing/wallet-verification";
+import {
+  noticeWithdrawDestinationChange,
+  withdrawDestinationStepUpResponse,
+} from "@/lib/billing/withdraw-destination-notice";
+import { withdrawDestinationAvailableAt } from "@/lib/billing/withdraw-destination-policy";
+import { log } from "@/lib/logger";
 import { hasExistingTokenHolderAccess, resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { supabaseAdmin } from "@/lib/supabase";
+
+const ROUTE = "/api/billing/wallet/verify";
 
 const WalletVerifyRequestSchema = z.object({
   challengeId: z.string().trim().min(1),
   signature: z.string().trim().min(1),
 });
 
+/**
+ * For a lock-wallet holder, the verified primary wallet is where
+ * "move to my own wallet" sends the lock wallet's tokens, so verifying a
+ * different wallet changes a withdrawal destination: it needs a fresh sign-in
+ * check, the move is held for the cooldown from the new verification
+ * (bankr-withdraw.ts) and the owner is emailed here. Read before verifying;
+ * null when it could not be read.
+ */
+async function loadMoveDestination(userId: string): Promise<{ hasLockWallet: boolean; address: string | null } | null> {
+  try {
+    const [lockWallet, primary] = await Promise.all([
+      getHermesLockWallet(userId),
+      getSelfCustodyPrimaryWallet(userId),
+    ]);
+    return { hasLockWallet: Boolean(lockWallet), address: primary?.normalizedAddress ?? null };
+  } catch (error) {
+    log.warn("could not read the lock-wallet move destination before verifying a wallet", {
+      source: "billing/wallet-verify",
+      route: ROUTE,
+      userId,
+      failureType: "wallet_verify_move_destination_read_failed",
+    }, error);
+    return null;
+  }
+}
+
+/**
+ * Whether verifying this challenge would change where a lock-wallet move
+ * sends funds, so it needs the same fresh sign-in check as every other
+ * withdrawal destination change. Fails closed: when the current destination
+ * or the challenge's wallet can't be read, it counts as a change. An account
+ * without a lock wallet has no move destination to change, and can't gain
+ * one later (no path creates new lock wallets), so it is never asked.
+ */
+async function verificationChangesMoveDestination(
+  userId: string,
+  challengeId: string,
+  before: { hasLockWallet: boolean; address: string | null } | null
+): Promise<boolean> {
+  if (before && !before.hasLockWallet) return false;
+  let challengeAddress: string | null;
+  try {
+    challengeAddress = await getPendingWalletChallengeAddress({ userId, challengeId });
+  } catch (error) {
+    log.warn("could not read the wallet a challenge would verify", {
+      source: "billing/wallet-verify",
+      route: ROUTE,
+      userId,
+      failureType: "wallet_verify_challenge_read_failed",
+    }, error);
+    return true;
+  }
+  // No pending challenge: nothing will be verified, and the verifier says why.
+  if (challengeAddress === null) return false;
+  return before === null || before.address !== challengeAddress;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    const authObject = await auth();
+    const { userId } = authObject;
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
@@ -38,7 +106,7 @@ export async function POST(req: NextRequest) {
     if (geo.blocked && !(await hasExistingTokenHolderAccess(userId))) {
       return tokenGeoBlockedResponse(geo, {
         source: "billing/wallet-verify",
-        route: "/api/billing/wallet/verify",
+        route: ROUTE,
         method: "POST",
         userId,
       });
@@ -59,6 +127,14 @@ export async function POST(req: NextRequest) {
       return apiError("Invalid wallet verification request", 400);
     }
 
+    const moveDestinationBefore = await loadMoveDestination(userId);
+    // Checked before the challenge is used, so the dashboard can retry the
+    // same signed request once the user has confirmed it's them.
+    if (await verificationChangesMoveDestination(userId, parsed.data.challengeId, moveDestinationBefore)) {
+      const stepUp = withdrawDestinationStepUpResponse(authObject, { route: ROUTE, userId });
+      if (stepUp) return stepUp;
+    }
+
     const result = await verifyWalletChallenge({
       userId,
       challengeId: parsed.data.challengeId,
@@ -66,7 +142,26 @@ export async function POST(req: NextRequest) {
     });
 
     switch (result.status) {
-      case "verified":
+      case "verified": {
+        const newAddress = result.wallet?.normalizedAddress ?? null;
+        // Notify when a lock-wallet holder's move destination changed. If it
+        // could not be read beforehand, notify anyway: a spare email is better
+        // than a missed one.
+        if (
+          newAddress &&
+          (moveDestinationBefore === null ||
+            (moveDestinationBefore.hasLockWallet && moveDestinationBefore.address !== newAddress))
+        ) {
+          const changedAt = result.wallet?.verifiedAt ? new Date(result.wallet.verifiedAt) : new Date();
+          await noticeWithdrawDestinationChange({
+            userId,
+            kind: "verified_wallet",
+            previousAddress: moveDestinationBefore?.address ?? null,
+            newAddress,
+            changedAt,
+            availableAt: withdrawDestinationAvailableAt(changedAt),
+          });
+        }
         return apiSuccess({
           status: result.status,
           wallet: result.wallet,
@@ -76,6 +171,7 @@ export async function POST(req: NextRequest) {
           // boolean crosses the API — never the displaced account ids.
           movedFromAnotherAccount: Boolean(result.takeover),
         });
+      }
       case "invalid_signature":
         return apiError("Invalid wallet signature", 400, undefined, {
           status: result.status,

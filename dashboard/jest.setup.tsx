@@ -35,6 +35,9 @@ const mockClerk = {
     isLoaded: true,
     isSignedIn: true,
   })),
+  // A session that verified recently: requests pass straight through. Tests
+  // of the "confirm it's you" flow mock this themselves.
+  useReverification: (fetcher: (...args: unknown[]) => unknown) => fetcher,
   UserButton: () => <div data-testid="mock-user-button">User Button</div>,
   SignIn: () => <div data-testid="mock-sign-in">Sign In</div>,
   SignUp: () => <div data-testid="mock-sign-up">Sign Up</div>,
