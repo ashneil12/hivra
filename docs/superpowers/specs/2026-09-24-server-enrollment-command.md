@@ -5,10 +5,15 @@ Status: Design and threat model for slice 13. Revision 6 is implemented on
 branch `claude/capacity-connect` (code, migration `20260924213000`, script
 `2026.09.24.1`) and was checked on disposable Ubuntu 22.04 and 24.04 servers
 (section 21, 24.04 again on the final code in Revision 6). The migration must be applied to a database before code that
-reads it serves there (section 20). It is not merged, deployed or accepted on Canary: section 18
-lists what the Canary run must still show, section 22 is that run on a
-disposable Hetzner server, and until it passes nothing here claims a working
-enrollment for users.
+reads it serves there (section 20). It merged in #127 and is on Canary. On
+2026-09-24 the main owner path of section 22.3 passed on Canary's Git build of
+that merge (`10d32d0`) on a disposable server: the command, the three words,
+"Is this your server?" with the matching host key, inspection and gVisor setup
+over sudo, Launch on this server, a working Linux Sandbox terminal, the sudo
+audit, uninstall and Disconnect. The other section 18 checks (the leaked-code,
+Replace and spoofed-address drills, `--yes`, the 15-minute wait, IPv6-only,
+Proxmox VE and a provider web console) have no recorded result here, so the
+slice is not fully accepted.
 Revision 2 (2026-09-24) fixes the first review: the gVisor authority rule no
 longer depends on a discovery snapshot for existing computers (9.5), the
 terminal prompt can't be skipped with `--yes` when a terminal exists (6.1),
