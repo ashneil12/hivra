@@ -2,9 +2,16 @@
 
 **Status:** the relay (`services/host-relay-worker`) and the connector
 (`services/host-connector`) are built and tested locally, including an end to
-end test with the real connector. Not deployed. Hivra's control plane does not
-use them yet: the transport seam, connector issuance and the "At home"
-enrollment land with the one-command enrollment (slice 13).
+end test with the real connector (#87). The control plane's side (tickets,
+connector config and the `ssh2` socket, in
+`dashboard/src/lib/infrastructure/host-relay.ts`) is built and tested too
+(#95). Not deployed, and nothing in the dashboard uses it yet. The one-command
+enrollment (slice 13, #127) shipped without it: there is no connection
+`transport`, no connector issuance, no `--outbound` flag, and the "At home"
+path still ends at "Hosted Hivra cannot connect to your local network". Those
+now need their own release, listed in
+[the roadmap](../../../ROADMAP.md#after-launch). The owner approved the
+Cloudflare relay on 2026-09-25; its Rollout section below still applies.
 
 ## Problem
 

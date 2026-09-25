@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { join } from "node:path";
 import { createFirstBootChallenge, FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
-import { renderFirstBootCloudInit } from "../first-boot-cloud-init";
+import { MAX_USER_DATA_BYTES, renderFirstBootCloudInit } from "../first-boot-cloud-init";
 
 jest.mock("node:fs/promises", () => ({
   ...jest.requireActual("node:fs/promises"),
@@ -43,7 +43,7 @@ describe("private deterministic first-boot recipe", () => {
     const input = fixture();
     const text = await renderFirstBootCloudInit(input);
     expect(await renderFirstBootCloudInit(input)).toBe(text);
-    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(32_768);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_USER_DATA_BYTES);
     const config = parse(text);
     expect(config.users).toEqual([{name:"hivra", groups:["sudo"], sudo:["ALL=(ALL) NOPASSWD:ALL"],
       shell:"/bin/bash", lock_passwd:true, ssh_authorized_keys:[publicKey]}]);
@@ -58,6 +58,17 @@ describe("private deterministic first-boot recipe", () => {
     expect(text).not.toContain("PRIVATE KEY");
     expect(text).not.toContain(input.currentBinding.userId);
     expect(fileContent(config,"/etc/ssh/sshd_config.d/00-hivra-bootstrap.conf")).toContain("PermitRootLogin no\n");
+  });
+  it("stays far under the user_data limit for the longest valid input, so its own check is only a backstop", async () => {
+    // Only the origin varies in length (at most 253 characters). The token,
+    // key and binding have fixed formats, and the helper is pinned by SHA-256.
+    const callbackOrigin = "https://" + ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(53)].join(".");
+    expect(callbackOrigin).toHaveLength(253);
+    const shortest = Buffer.byteLength(await renderFirstBootCloudInit(fixture()));
+    const longest = Buffer.byteLength(await renderFirstBootCloudInit({ ...fixture(), callbackOrigin }));
+    expect(longest).toBeGreaterThan(shortest);
+    expect(longest).toBeLessThan(MAX_USER_DATA_BYTES * 0.6);
+    await expect(renderFirstBootCloudInit({ ...fixture(), callbackOrigin: callbackOrigin + "e" })).rejects.toThrow("invalid_origin");
   });
   it("embeds the exact vendored helper and root-only narrowly scoped configuration", async () => {
     const input = fixture();
