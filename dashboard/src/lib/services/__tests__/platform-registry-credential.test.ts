@@ -165,6 +165,13 @@ it("fresh-server gateway user_data skips the scrub (no earlier script ran there)
 const PLATFORM_AUTH = Buffer.from(`__token__:${SENTINEL_TOKEN}`).toString("base64");
 const OWNER_AUTH = Buffer.from("owner:owner-docker-hub-password").toString("base64");
 
+// An owner with root access may log in to ghcr.io with their own account to
+// pull their own private images. That login is theirs and must survive every
+// dashboard update, redeploy and recovery.
+function ownerGhcrAuth(user: string): string {
+  return Buffer.from(`${user}:ghp_${"O".repeat(36)}`).toString("base64");
+}
+
 function dockerConfigJson(auths: Record<string, string>): string {
   const entries = Object.entries(auths)
     .map(([host, auth]) => `\t\t"${host}": {\n\t\t\t"auth": "${auth}"\n\t\t}`)
@@ -263,6 +270,45 @@ describe("registry credential scrub on an existing box", () => {
     expect(existsSync(customConfig)).toBe(false);
   });
 
+  it.each([
+    ["a classic PAT", `ghp_${"a".repeat(36)}`],
+    ["a fine-grained PAT", `github_pat_11${"B".repeat(80)}`],
+    ["an OAuth token", `gho_${"c".repeat(36)}`],
+    ["an app token", `ghs_${"d".repeat(36)}`],
+    ["a one-character token", "Z"],
+  ])("recognises the platform __token__ login stored with %s", (_label, token) => {
+    writeFileSync(
+      configPath,
+      dockerConfigJson({ "ghcr.io": Buffer.from(`__token__:${token}`).toString("base64") })
+    );
+
+    const res = runScrub(sandbox, { docker: "failing", env: { HOME: home } });
+
+    expect(res.status).toBe(0);
+    expect(res.dockerCalls).toContain("logout ghcr.io");
+    expect(existsSync(configPath)).toBe(false);
+  });
+
+  it.each(["octocat", "__token"])(
+    "keeps an owner's own ghcr.io login (user %s) and does not call docker",
+    (user) => {
+      const ownerLogins = dockerConfigJson({
+        "ghcr.io": ownerGhcrAuth(user),
+        "https://index.docker.io/v1/": OWNER_AUTH,
+      });
+      writeFileSync(configPath, ownerLogins);
+
+      const res = runScrub(sandbox, { docker: "failing", env: { HOME: home } });
+
+      expect(res.status).toBe(0);
+      expect(res.stdout).toContain("SCRIPT_CONTINUED");
+      expect(res.stdout).not.toContain("removed");
+      expect(res.stderr).toBe("");
+      expect(res.dockerCalls).toBe("");
+      expect(readFileSync(configPath, "utf8")).toBe(ownerLogins);
+    }
+  );
+
   it("leaves a config without a ghcr.io login alone and does not call docker", () => {
     const ownerOnly = dockerConfigJson({ "https://index.docker.io/v1/": OWNER_AUTH });
     writeFileSync(configPath, ownerOnly);
@@ -310,8 +356,20 @@ describe("registry credential scrub on an existing box", () => {
       const res = runScrub(sandbox, { docker: "real", env: { HOME: home } });
 
       expect(res.status).toBe(0);
-      expect(res.stdout).toContain("removed the stored ghcr.io login");
+      expect(res.stdout).toContain("removed the platform ghcr.io login");
       expect(existsSync(configPath)).toBe(false);
+    });
+
+    it("keeps an owner's own ghcr.io login, even when it is their only one", () => {
+      const ownerLogin = dockerConfigJson({ "ghcr.io": ownerGhcrAuth("octocat") });
+      writeFileSync(configPath, ownerLogin);
+
+      const res = runScrub(sandbox, { docker: "real", env: { HOME: home } });
+
+      expect(res.status).toBe(0);
+      expect(res.stdout).not.toContain("removed");
+      expect(existsSync(configPath)).toBe(true);
+      expect(readFileSync(configPath, "utf8")).toBe(ownerLogin);
     });
   });
 });
