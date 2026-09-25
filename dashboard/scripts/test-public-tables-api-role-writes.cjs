@@ -6,8 +6,10 @@
 // finding on the full schema (a JWT with role=authenticated inserts a
 // hermes_hosts row naming another tenant's Hetzner server, which
 // DELETE /api/hosts/[id] would then delete), applies the fix twice, and checks:
-// - no public table keeps a write-capable policy for PUBLIC, anon or
-//   authenticated, while read-only and deny-only policies are unchanged;
+// - no public table keeps a permissive write-capable policy for PUBLIC, anon or
+//   authenticated; read-only, deny-only and restrictive policies are unchanged,
+//   and each dropped FOR ALL policy's read path is kept as a FOR SELECT policy
+//   (an authenticated caller still reads its own rows and only those);
 // - anon and authenticated hold no write privilege on any public table, and a
 //   table created afterwards does not inherit one;
 // - the same forged writes are refused, and the service role keeps every write.
@@ -25,6 +27,7 @@ const read = (name) => fs.readFileSync(path.join(MIGRATIONS, name), "utf8");
 
 const WRITE_POLICY_FILTER = `
   schemaname = 'public'
+  and permissive = 'PERMISSIVE'
   and cmd in ('ALL', 'INSERT', 'UPDATE', 'DELETE')
   and roles && array['public', 'anon', 'authenticated']::name[]
   and not (coalesce(qual, 'false') = 'false' and coalesce(with_check, 'false') = 'false')`;
@@ -50,15 +53,16 @@ async function main() {
     };
     const denied = (role, sub, sql, params) =>
       assert.rejects(asRole(role, sub, sql, params), /permission denied for table/, `${role} must be refused: ${sql}`);
-    const readOnlyPolicies = async () =>
+    const keptPolicies = async () =>
       (
         await db.query(
-          `select tablename, policyname from pg_policies
-            where schemaname = 'public' and (cmd = 'SELECT'
+          `select tablename, policyname, cmd, permissive, qual from pg_policies
+            where schemaname = 'public' and (cmd = 'SELECT' or permissive = 'RESTRICTIVE'
               or (coalesce(qual, 'false') = 'false' and coalesce(with_check, 'false') = 'false'))
             order by tablename, policyname`
         )
       ).rows;
+    const key = (row) => `${row.tablename}.${row.policyname}`;
 
     // The finding reproduces on every committed migration.
     const forgeHost = `insert into public.hermes_hosts (user_id, name, hetzner_server_id) values ($1, 'x', $2) returning id`;
@@ -71,7 +75,21 @@ async function main() {
     await db.query("delete from public.hermes_hosts where id = $1", [forged.rows[0].id]);
     const writePoliciesBefore = (await one(`select count(*)::int as n from pg_policies where ${WRITE_POLICY_FILTER}`)).n;
     assert.ok(writePoliciesBefore > 0, "pre-fix: API-role write policies exist on public tables");
-    const readOnlyBefore = await readOnlyPolicies();
+    // A RESTRICTIVE policy only narrows access; dropping it would widen what
+    // the permissive policies allow, so it must survive.
+    await db.exec(`create policy "restrictive owner guard" on public.hermes_hosts
+      as restrictive for all to authenticated using (public.requesting_user_id() = user_id)`);
+    const keptBefore = await keptPolicies();
+    const droppedAll = (
+      await db.query(`select tablename, policyname, qual from pg_policies where ${WRITE_POLICY_FILTER} and cmd = 'ALL' and qual is not null`)
+    ).rows;
+    assert.ok(droppedAll.some((p) => p.tablename === "hermes_hosts"), "pre-fix: hermes_hosts has a FOR ALL policy");
+
+    // Own-row reads through those policies, to prove they survive.
+    await db.query("insert into public.hermes_hosts (user_id, name, hetzner_server_id) values ($1, 'mine', 1001), ('user_victim', 'theirs', $2)", [
+      ATTACKER,
+      VICTIM_SERVER,
+    ]);
 
     await db.exec(read(MIGRATION));
     await db.exec(read(MIGRATION)); // Re-run safe.
@@ -81,7 +99,19 @@ async function main() {
       0,
       "no public table keeps a write-capable policy for the API roles"
     );
-    assert.deepEqual(await readOnlyPolicies(), readOnlyBefore, "read-only and deny-only policies are unchanged");
+    const keptAfter = await keptPolicies();
+    const afterKeys = new Set(keptAfter.map(key));
+    for (const policy of keptBefore) {
+      assert.ok(afterKeys.has(key(policy)), `kept: ${key(policy)}`);
+    }
+    for (const policy of droppedAll) {
+      const read = keptAfter.find((p) => p.tablename === policy.tablename && p.policyname === `${policy.policyname.slice(0, 55)} (read)`);
+      assert.ok(read, `read path kept for ${policy.tablename}.${policy.policyname}`);
+      assert.equal(read.cmd, "SELECT");
+      assert.equal(read.qual, policy.qual, `same USING for ${policy.tablename}.${policy.policyname}`);
+    }
+    const visible = await asRole("authenticated", ATTACKER, "select name from public.hermes_hosts order by name");
+    assert.deepEqual(visible.rows.map((r) => r.name), ["mine"], "authenticated still reads its own hosts, and only those");
 
     const writable = await db.query(
       `select c.relname, r.role_name
@@ -106,6 +136,7 @@ async function main() {
     await denied("authenticated", ATTACKER, forgeHost, [ATTACKER, VICTIM_SERVER]);
     await denied("authenticated", ATTACKER, "update public.hermes_hosts set hetzner_server_id = $1 where user_id = $2", [VICTIM_SERVER, ATTACKER]);
     await denied("authenticated", ATTACKER, "delete from public.hermes_hosts where user_id = $1", [ATTACKER]);
+    await db.query("delete from public.hermes_hosts where user_id in ($1, 'user_victim')", [ATTACKER]);
     await denied("authenticated", ATTACKER, "insert into public.user_api_keys (user_id) values ($1)", [ATTACKER]);
     await denied("authenticated", ATTACKER, "delete from public.hermes_conversations where user_id = $1", [ATTACKER]);
     await denied("anon", null, "insert into public.hermes_hosts (user_id, name) values ('x', 'x')");
