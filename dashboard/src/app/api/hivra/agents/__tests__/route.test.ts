@@ -262,17 +262,7 @@ jest.mock("@/lib/services/cloudflare-tunnel", () => ({
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   DEFAULT_PROXMOX_VM_DISK_GB: 30,
-  getReservedProxmoxVmidsForNode: (...args: unknown[]) => mockGetReservedProxmoxVmidsForNode(...args),
-  buildProxmoxVmidReferenceLedger: async (params: { proxmoxNode: string; excludeInstanceId: string; lane: "hermes" | "hivra" }) => {
-    const references = await mockGetReservedProxmoxVmidsForNode({
-      proxmoxNode: params.proxmoxNode,
-      excludeInstanceId: params.excludeInstanceId,
-    });
-    return {
-      reservedVmids: references,
-      vmidLedger: { plane: "canaryplanefixture", lane: params.lane, references },
-    };
-  },
+  buildProxmoxVmidReferenceLedger: (...args: unknown[]) => mockBuildProxmoxVmidReferenceLedger(...args),
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveProxmoxTargetConfiguration(...args),
   runProxmoxHostScript: (...args: unknown[]) => mockRunProxmoxHostScript(...args),
 }));
@@ -3524,3 +3514,15 @@ describe("GET /api/hivra/agents", () => {
     expect(JSON.stringify(body)).not.toMatch(/fixturenode10|10\.253\.0\.90/);
   });
 });
+
+// Defined after the suite so fixture line numbers above stay stable; jest only
+// calls it at test time. It routes through the reserved-VMID mock so existing
+// reservation assertions keep describing the DB lookup.
+async function mockBuildProxmoxVmidReferenceLedger(...args: unknown[]) {
+  const params = args[0] as { proxmoxNode: string; excludeInstanceId: string; lane: "hermes" | "hivra" };
+  const references = await mockGetReservedProxmoxVmidsForNode({
+    proxmoxNode: params.proxmoxNode,
+    excludeInstanceId: params.excludeInstanceId,
+  });
+  return { reservedVmids: references, vmidLedger: { plane: "canaryplanefixture", lane: params.lane, references } };
+}
