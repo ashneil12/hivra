@@ -478,9 +478,15 @@ refuses, with the reason shown in Manage (and listed under Advanced › Not
 available) instead of a control that fails. Placement is shown as Hivra Cloud,
 My server or My cloud, never a region; a Hivra Cloud computer's private host
 address is never shown. Advanced lists public details, the last 20 lifecycle
-events (`GET /api/hivra/agents/[id]/events`, labels only) and the danger zone,
+events (`GET /api/hivra/agents/[id]/events`, labels only; a failure's label
+comes from its recorded reason, which is never sent) and the danger zone,
 which needs the typed name for every kind. Manage stays reachable while a
-computer is being set up. Not built: the Agents section's attach panel (its
+computer is being set up: its tab, Open Manage on the setup progress, or a link
+to a section (the launch's Open it to delete) opens it, while a launch's own
+landing (`?welcome=1`, a Linux Sandbox's `?tab=manage`) keeps the setup
+progress and opens Manage once the computer is ready. While another operation
+holds a computer, the page reads it again every 5 s so the controls it blocks
+come back when it ends. Not built: the Agents section's attach panel (its
 extension point is empty until attach lands), the agent-software version and
 automatic updates in Updates, live usage and disk, force power off, disk grow,
 Hetzner power-off, and power or resize for Windows on My server.

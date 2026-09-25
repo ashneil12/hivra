@@ -1,4 +1,5 @@
 import { manageCapabilitiesFor, type ManageCapabilitiesRow } from "../manage-capabilities";
+import { manageAwaitsOperation } from "../manage-sections";
 import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 
 // The Manage capability map for every kind of computer and agent: its
@@ -256,5 +257,25 @@ describe("manageCapabilitiesFor", () => {
     expect(map("ubuntuUnbound").folderRecovery).toMatchObject({ state: "unavailable", code: "not_bound" });
     expect(map("codex").folderRecovery).toBeNull();
     expect(map("preparedWindows").folderRecovery).toBeNull();
+  });
+});
+
+// The agent page reads a computer again while its map says another operation
+// holds it, so the controls that operation blocks come back without a reload.
+describe("manageAwaitsOperation", () => {
+  // Windows on My server has no control an operation could block.
+  const blockable = Object.keys(rows).filter((name) => name !== "windowsMyServer");
+  it.each(blockable)("is true for %s while an operation it didn't start holds it", (name) => {
+    const row = { ...rows[name], operation_id: "op-1", operation_kind: "desktop_prepare" };
+    expect(manageAwaitsOperation(manageCapabilitiesFor(row, { preparedMatch: true }))).toBe(true);
+  });
+
+  it.each(Object.keys(rows))("is false for %s when nothing holds it", (name) => {
+    expect(manageAwaitsOperation(manageCapabilitiesFor(rows[name], { preparedMatch: true }))).toBe(false);
+  });
+
+  it("is false for a stopped computer and for no map at all", () => {
+    expect(manageAwaitsOperation(manageCapabilitiesFor({ ...rows.ubuntu, status: "stopped" }, { preparedMatch: true }))).toBe(false);
+    expect(manageAwaitsOperation(undefined)).toBe(false);
   });
 });

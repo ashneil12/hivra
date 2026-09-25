@@ -109,3 +109,17 @@ export function capShown(cap: ManageCap | null | undefined): boolean {
 export function capReason(cap: ManageCap | null | undefined): string | null {
   return cap && cap.state !== "available" ? cap.reason : null;
 }
+
+/**
+ * The map says another operation holds this computer (one the page didn't
+ * start, such as a desktop preparation), so the controls it blocks come back
+ * only when the computer is read again after that operation ends.
+ */
+export function manageAwaitsOperation(map: ManageCapabilities | null | undefined): boolean {
+  if (!map) return false;
+  const caps: Array<ManageCap | null | undefined> = [
+    map.power.start, map.power.stop, map.power.restart, map.resize.cap, map.restorePoints,
+    map.folderRecovery, map.privateNetwork, map.connectionServiceUpdate, map.export, map.destroy.cap,
+  ];
+  return caps.some((cap) => cap?.state === "blocked" && cap.code === "operation_in_progress");
+}

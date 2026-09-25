@@ -24,6 +24,8 @@ import {
   type AgentSurfaceId,
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
+import { manageAwaitsOperation } from "@/lib/hivra/manage-sections";
+import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
@@ -767,6 +769,10 @@ export default function AgentPage() {
   // confirmation) while the owner looks at another surface: once opened for
   // this agent, it stays mounted and hidden.
   const [manageOpenedFor, setManageOpenedFor] = useState<string | null>(null);
+  // The agent whose Manage the owner chose here (its tab, or Open Manage on
+  // the setup progress). Only that choice, or a link to one of Manage's
+  // sections, replaces the setup progress while it is being set up.
+  const [manageChosenFor, setManageChosenFor] = useState<string | null>(null);
   const [browserOn, setBrowserOn] = useState<boolean | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
@@ -845,8 +851,12 @@ export default function AgentPage() {
     });
   }, [agent]);
 
-  // Load + poll while provisioning. getAgent returns null for BOTH "not found"
-  // and transient failures (network blip, cold start, auth hiccup) — a single
+  // Load + poll while provisioning, and while another operation holds the
+  // computer (a desktop preparation, say): Manage's map blocks its controls
+  // until that ends, and only a fresh read unblocks them.
+  //
+  // getAgent returns null for BOTH "not found" and transient failures
+  // (network blip, cold start, auth hiccup) — a single
   // null used to wipe the agent to "Agent not found" AND stop the poll loop,
   // stranding the row in "provisioning" with the box already converged. Keep
   // the last known agent on a blip and keep polling; only show "not found"
@@ -862,7 +872,7 @@ export default function AgentPage() {
         setAgent(a);
         setStatusObservation({ agentId: id, receivedAt: Date.now(), unavailable: false });
         setLoaded(true);
-        if (a.status === "provisioning") {
+        if (a.status === "provisioning" || manageAwaitsOperation(a.manage)) {
           timerRef.current = window.setTimeout(tick, 5000);
         }
         return;
@@ -874,7 +884,7 @@ export default function AgentPage() {
           : null);
         // Transient blip: keep the stale agent rendered; keep polling if the
         // flip is what we're waiting on.
-        if (last.status === "provisioning") {
+        if (last.status === "provisioning" || manageAwaitsOperation(last.manage)) {
           timerRef.current = window.setTimeout(tick, 5000);
         }
         return;
@@ -903,10 +913,11 @@ export default function AgentPage() {
   // retained sessions or adding a Back entry for every local tab click.
   const selectTab = useCallback((t: Tab) => {
     setTab(t);
+    if (t === "manage") setManageChosenFor(id);
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("tab", t);
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
-  }, []);
+  }, [id]);
 
   // Remember this agent and the surface actually on screen, so Home can offer
   // it back ("Pick up where you left off") and the switchers can list it under
@@ -983,7 +994,7 @@ export default function AgentPage() {
     // (Terminal, Browser, Git) and Skills do not apply.
     return (
       <SurfaceCodeBoundary>
-        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onDeleted={() => { listChanged(); go("/dashboard"); }} />
+        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onChanged={listChanged} onDeleted={() => { listChanged(); go("/dashboard"); }} />
       </SurfaceCodeBoundary>
     );
   }
@@ -1044,10 +1055,16 @@ export default function AgentPage() {
   const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
     && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
   if (effectiveTab === "chat" && chatSurfaceReady && !chatOpened) setChatOpened(true);
-  // While a computer is being set up it lands on its setup progress, but
-  // choosing Manage (the tab, Open Manage, or a ?tab=manage link) opens Manage,
-  // so its owner can always reach Delete.
-  const showManage = effectiveTab === "manage" && (!provisioning || tab === "manage");
+  // While it is being set up, a computer or agent shows its setup progress.
+  // Manage replaces it only when the owner asks for Manage, so Delete is
+  // always reachable: its tab or Open Manage here, or a link to one of its
+  // sections (the launch's Open it to delete). A launch's own landing
+  // (?welcome=1) and a bare ?tab=manage (where a Linux Sandbox always lands)
+  // keep the progress and its While you wait, and open Manage once ready.
+  const manageLinked = requestedTab === "manage" && !launchWelcome
+    && Boolean(searchParams && linkNamesManageSection(searchParams));
+  const manageAsked = manageChosenFor === agent.id || manageLinked;
+  const showManage = effectiveTab === "manage" && (!provisioning || manageAsked);
   if (showManage && manageOpenedFor !== agent.id) setManageOpenedFor(agent.id);
   const manageMounted = manageOpenedFor === agent.id;
   const activity = agentActivityPresentation(agent, def?.name || "the agent");
