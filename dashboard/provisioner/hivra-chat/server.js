@@ -2090,8 +2090,18 @@ function gateProxy(req, res, port, strip) {
 // bits, and the socket the gateway's own and not writable by others (connecting
 // to a unix socket needs write permission on it). Guests whose
 // terminal units predate the socket release still listen on loopback; the port
-// stays their fallback.
+// stays their fallback. The installed unit decides which applies: a unit from
+// the socket release never falls back to the port, not even while ttyd restarts
+// and its socket is briefly gone, because by then any local process could have
+// bound that port. The terminal answers "restarting" until its socket is back.
 const TTYD_SOCKETS = { 7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock" };
+const TTYD_UNIT_FILES = {
+  7681: process.env.HIVRA_TTYD_UNIT_FILE_AGENT || "/etc/systemd/system/bux-ttyd.service.d/base-path.conf",
+  7682: process.env.HIVRA_TTYD_UNIT_FILE_BOX || "/etc/systemd/system/bux-box-ttyd.service",
+};
+function terminalUnitUsesSocket(port) {
+  try { return fs.readFileSync(TTYD_UNIT_FILES[port], "utf8").includes("-i " + TTYD_SOCKETS[port] + " "); } catch { return false; }
+}
 const GATEWAY_UID = typeof process.getuid === "function" ? process.getuid() : -1;
 function terminalUpstream(port) {
   const socketPath = TTYD_SOCKETS[port];
@@ -2101,17 +2111,27 @@ function terminalUpstream(port) {
     if (folder.isDirectory() && folder.uid === GATEWAY_UID && (folder.mode & 0o077) === 0
       && info.isSocket() && info.uid === GATEWAY_UID && (info.mode & 0o002) === 0) return { socketPath };
   } catch {}
-  return { port };
+  return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };
+}
+function terminalGate(req, res, port) {
+  if (!authed(req)) return denyHtml(res);
+  const upstream = terminalUpstream(port);
+  if (upstream.unavailable) {
+    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "2" });
+    return res.end("The terminal is restarting. It reconnects in a moment.");
+  }
+  return proxyHttp(req, res, upstream);
 }
 // Which upstream this gateway would use for each terminal right now. The guest
 // updater and the installer read it (bearer only) with a proxied request, so a
 // terminal the gateway would refuse to reach over its socket fails readiness
 // instead of being checked around the gateway.
 function terminalTransports() {
-  return {
-    terminal: terminalUpstream(7681).socketPath ? "socket" : "port",
-    boxTerminal: terminalUpstream(7682).socketPath ? "socket" : "port",
+  const transport = (port) => {
+    const upstream = terminalUpstream(port);
+    return upstream.socketPath ? "socket" : upstream.unavailable ? "restarting" : "port";
   };
+  return { terminal: transport(7681), boxTerminal: transport(7682) };
 }
 
 // ---- attached agents (design 5.4) -------------------------------------------
@@ -3507,8 +3527,8 @@ const server = http.createServer((req, res) => {
   if (u === "/desktop" || u.startsWith("/desktop/")) {
     return proxyHttp(req, res, REMOTE_DESKTOP_BROKER_PORT, null, true);
   }
-  if (u === "/terminal" || u.startsWith("/terminal/")) return gateProxy(req, res, terminalUpstream(7681));
-  if (u === "/box-terminal" || u.startsWith("/box-terminal/")) return gateProxy(req, res, terminalUpstream(7682));
+  if (u === "/terminal" || u.startsWith("/terminal/")) return terminalGate(req, res, 7681);
+  if (u === "/box-terminal" || u.startsWith("/box-terminal/")) return terminalGate(req, res, 7682);
   // Live browser view: noVNC/websockify serves at root, so mount it under /vnc.
   if (u === "/vnc" || u.startsWith("/vnc/")) return gateProxy(req, res, 6080, "/vnc");
   // Aeon dashboard (Next.js). NO strip: Aeon is configured with basePath=/aeon
@@ -3558,7 +3578,13 @@ server.on("upgrade", (req, socket, head) => {
   const a0Ws = port === AGENT_ZERO_PORT;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
-  const terminalSocket = (port === 7681 || port === 7682) ? terminalUpstream(port).socketPath : null;
+  const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
+  if (terminalUp && terminalUp.unavailable) {
+    try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 2\r\n\r\n"); } catch (e) {}
+    socket.destroy();
+    return;
+  }
+  const terminalSocket = terminalUp && terminalUp.socketPath ? terminalUp.socketPath : null;
   const onProxyConnect = () => {
     let hdr = req.method + " " + fwdUrl + " HTTP/1.1\r\n";
     for (const [k, raw] of Object.entries(req.headers)) {
