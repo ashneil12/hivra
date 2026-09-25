@@ -720,7 +720,6 @@ export function HivraManage({
           <Row icon={<span style={{ width: 9, height: 9, borderRadius: "50%", background: STATUS_COLOR[agent.status] || "var(--text-muted)", display: "inline-block" }} />} k="Status"><span style={{ ...valStyle, textTransform: "capitalize" }}>{lifecyclePending ? agentActivityPresentation(agent, computerTemplate?.name || def?.name || "the agent").label : agent.status}</span></Row>
           <Row icon={<Cpu size={14} />} k="Size"><span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><span style={valStyle}>{agent.cpu} CPU · {agent.ram} GB reserved · up to {agent.cpu_max ?? agent.cpu} CPU · {agent.ram_max ?? agent.ram} GB</span><a href="#resources" className="hm-inline-link" style={{ ...label, color: "var(--ink-black)" }}>Resources</a></span></Row>
           <Row icon={<Globe size={14} />} k="Region"><span style={valStyle}>{providerComputer ? "See your provider project" : "EU"}</span></Row>
-          {agent.ip ? <Row icon={<Globe size={14} />} k="IP"><span style={valStyle}>{agent.ip}</span></Row> : null}
           <Row icon={<Clock size={14} />} k="Created"><span style={valStyle}>{fmtDate(agent.created_at)}</span></Row>
           {agent.chat_url ? (
             <Row icon={<Globe size={14} />} k="Endpoint">
