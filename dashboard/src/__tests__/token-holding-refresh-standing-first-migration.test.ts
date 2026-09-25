@@ -20,10 +20,13 @@ it("re-reads every account with token standing on every run, however many accoun
 }, 100_000);
 
 it("reads lock-wallet standing from the registry's $HermesOS contract on Base", () => {
-  // The candidates function hardcodes the token and chain getTokenVerificationWallet
+  // The candidates function names the token and chain getTokenVerificationWallet
   // reads the lock wallet's balance in; they must stay the registry's.
   const sql = fs.readFileSync(MIGRATION, "utf8");
-  expect(sql).toContain(`latest.token_address = '${HERMESOS_TOKEN.address}'`);
-  expect(sql).toContain(`latest.chain_id = ${BASE_CHAIN_ID}`);
+  expect(sql).toContain(
+    `(values (${BASE_CHAIN_ID}, '${HERMESOS_TOKEN.address}')) as hermesos(chain_id, contract)`
+  );
+  expect(sql).toContain("latest.token_address = hermesos.contract");
+  expect(sql).toContain("latest.chain_id = hermesos.chain_id");
   expect(HERMESOS_TOKEN.address).toBe(HERMESOS_TOKEN.address.toLowerCase());
 });

@@ -39,8 +39,9 @@
 -- code deployed before this release keeps working until it is replaced; the
 -- app no longer calls it.
 --
--- The $HermesOS address and Base chain id below are the platform token
--- registry's (token-registry.ts); a jest test fails if they drift.
+-- The hermesos(chain_id, contract) constant below is $HermesOS on Base as the
+-- platform token registry publishes it (token-registry.ts); a jest test fails
+-- if they drift.
 --
 -- Service-role only: RLS on with no policies, and no API-role grants.
 
@@ -87,13 +88,14 @@ as $$
              select latest.balance_raw > 0
              from public.token_holding_snapshots as latest
              where latest.user_id = lock_wallet.user_id
-               and latest.chain_id = 8453
-               and latest.token_address = '0x95ccfd2b81a9667b0cc979992632f98fc853eba3'
+               and latest.chain_id = hermesos.chain_id
+               and latest.token_address = hermesos.contract
                and latest.normalized_wallet_address = lock_wallet.normalized_address
              order by latest.checked_at desc
              limit 1
            ) is true
     from public.user_wallets as lock_wallet
+    cross join (values (8453, '0x95ccfd2b81a9667b0cc979992632f98fc853eba3')) as hermesos(chain_id, contract)
     where lock_wallet.chain_type = 'evm'
       and lock_wallet.verification_method = 'bankr'
       and lock_wallet.verified_at is not null
