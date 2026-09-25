@@ -132,6 +132,7 @@ interface RecordedFilter {
   capturedOnly: boolean;
   gte: [string, string] | null;
   lt: [string, string] | null;
+  in: [string, readonly string[]] | null;
 }
 
 function makeReservationDb(counts: { attempts: number; captured: number }) {
@@ -143,7 +144,7 @@ function makeReservationDb(counts: { attempts: number; captured: number }) {
       }
       return {
         select: () => {
-          const recorded: RecordedFilter = { capturedOnly: false, gte: null, lt: null };
+          const recorded: RecordedFilter = { capturedOnly: false, gte: null, lt: null, in: null };
           filters.push(recorded);
           const chain = {
             eq: (col: string, val: string) => {
@@ -156,6 +157,10 @@ function makeReservationDb(counts: { attempts: number; captured: number }) {
             },
             lt: (col: string, val: string) => {
               recorded.lt = [col, val];
+              return chain;
+            },
+            in: (col: string, vals: readonly string[]) => {
+              recorded.in = [col, vals];
               return chain;
             },
             then: (resolve: (value: { count: number; error: null }) => unknown) =>
@@ -192,6 +197,17 @@ describe("readCaptureDroughtCounts", () => {
     }
   });
 
+  it("counts only chat holds, so media holds the billing-off gate releases are not read as failures", async () => {
+    const { db, filters } = makeReservationDb({ attempts: 7, captured: 2 });
+    await readCaptureDroughtCounts(db, {
+      windowStartIso: "2026-07-16T00:00:00.000Z",
+      windowEndIso: "2026-07-16T05:50:00.000Z",
+    });
+    for (const filter of filters) {
+      expect(filter.in).toEqual(["endpoint", ["/api/v1/chat/completions", "/api/v1/responses"]]);
+    }
+  });
+
   it("throws on a query error", async () => {
     const db: SupabaseLike = {
       from: () => ({
@@ -200,6 +216,7 @@ describe("readCaptureDroughtCounts", () => {
             eq: () => chain,
             gte: () => chain,
             lt: () => chain,
+            in: () => chain,
             then: (resolve: (value: unknown) => unknown) =>
               Promise.resolve({ count: null, error: { message: "boom" } }).then(resolve),
           };

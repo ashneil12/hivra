@@ -186,7 +186,14 @@ interface CountFilterChain extends PromiseLike<CountResult> {
   eq(column: string, value: string): CountFilterChain;
   gte(column: string, value: string): CountFilterChain;
   lt(column: string, value: string): CountFilterChain;
+  in(column: string, values: readonly string[]): CountFilterChain;
 }
+
+// Only chat holds (chat completions, Anthropic messages, Responses) are
+// captured on success. Media holds are RELEASED on success while multimodal
+// billing is off (lib/venice/media-spend-gate.ts), so counting them would read
+// healthy media traffic as a capture drought.
+export const CAPTURE_DROUGHT_ENDPOINTS = ["/api/v1/chat/completions", "/api/v1/responses"] as const;
 
 type ReservationCountTable = {
   select(columns: string, options: { count: "exact"; head: boolean }): CountFilterChain;
@@ -199,9 +206,10 @@ export type SupabaseLike = { from: (table: string) => unknown };
  * Equivalent SQL:
  *
  *   SELECT count(*) FROM managed_venice_reservations
- *    WHERE created_at >= $windowStart AND created_at < $windowEnd;            -- attempts
+ *    WHERE endpoint IN (<chat endpoints>)
+ *      AND created_at >= $windowStart AND created_at < $windowEnd;            -- attempts
  *   SELECT count(*) FROM managed_venice_reservations
- *    WHERE status = 'captured'
+ *    WHERE endpoint IN (<chat endpoints>) AND status = 'captured'
  *      AND created_at >= $windowStart AND created_at < $windowEnd;            -- captured
  *
  * Both counts key on created_at (not captured_at) so the ratio is "of the
@@ -214,7 +222,8 @@ export async function readCaptureDroughtCounts(
 ): Promise<{ attempts: number; captured: number }> {
   const countReservations = async (capturedOnly: boolean): Promise<number> => {
     let chain = (db.from("managed_venice_reservations") as ReservationCountTable)
-      .select("id", { count: "exact", head: true });
+      .select("id", { count: "exact", head: true })
+      .in("endpoint", CAPTURE_DROUGHT_ENDPOINTS);
     if (capturedOnly) chain = chain.eq("status", "captured");
     const { count, error } = await chain
       .gte("created_at", window.windowStartIso)
