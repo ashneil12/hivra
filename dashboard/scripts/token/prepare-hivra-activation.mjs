@@ -425,7 +425,7 @@ export function evaluateActivation({ address, activatesAt, poolId = null, nowMs,
           historyMinutes >= PRICE_MEDIAN_WINDOW_MINUTES,
           historyMinutes >= PRICE_MEDIAN_WINDOW_MINUTES
             ? `at least ${PRICE_MEDIAN_WINDOW_MINUTES} minutes of candle history (first candle ${historyMinutes} minutes ago)`
-            : `only ${historyMinutes} minutes of candle history: the median has less than its ${PRICE_MEDIAN_WINDOW_MINUTES}-minute window to check a pumped spot against (docs/security/PRE-LAUNCH-REVIEW-2026-09.md, price gate for a young pool)`
+            : `only ${historyMinutes} minutes of candle history: every $HIVRA quote fails closed (insufficient_history) until the pool has ${PRICE_MEDIAN_WINDOW_MINUTES} minutes of history and 24 traded five-minute periods (docs/token/HIVRA-ACTIVATION.md, section 5)`
         );
       }
       if (hasCandle && pool.priceNative) {
