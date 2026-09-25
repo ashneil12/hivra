@@ -227,6 +227,24 @@ built.
   and cannot bind the computer's loopback, and changing `server.js` means
   sealing the bundle again. The fix (fall back only while the unit is still the
   port-bound one) belongs with the next provisioner release.
+- **The runtime updater's "is anyone on the terminal" check sees TCP only**
+  (final review). `terminal_idle()` in `hivra-update-guest-runtime.sh` counts
+  established connections on ports 7681 and 7682. Once a computer is on this
+  release its terminals listen on owner-only unix sockets, so the check always
+  reads idle, and every later Update & restart restarts both terminals even
+  while the owner is connected, against #124's rule. The tmux sessions survive
+  (`KillMode=process`); only a plain shell in a terminal ends. It first bites on
+  the update after 2026.09.24.3. The fix (count connected peers on
+  `/run/hivra-terminal/ttyd.sock` and `/run/hivra-box-terminal/ttyd.sock`, e.g.
+  `ss -Hx state connected`) goes with the next provisioner release, which also
+  reseals the bundle and its admission digest.
+- **More steps that can stay held** (final review), beyond the residuals in
+  the worker row above: a resumed or lost-answer Change access whose read-only
+  look matches neither the old nor the new access stays held
+  (`access_unconfirmed`), and a running VM whose guest agent never answers keeps
+  a sent step held. While held, Start, Stop and Restart are refused; deleting the
+  computer, or shutting it down from inside, lets it go. A time limit for these
+  belongs with the next worker change.
 
 **The host lock on a real Proxmox host.** On a disposable Proxmox VE 8.4.21
 host (a Hetzner `cx33`, Debian 12, with a TCG guest running the QEMU guest

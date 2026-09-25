@@ -1,12 +1,12 @@
 "use client";
 
+import { parseAttachedAgentsEnvelope } from "@/lib/hivra/attached-agents-envelope";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { clientLog } from "@/lib/client/logger";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import {
   unifyAll,
-  type AttachedAgentLite,
   type HermesInstanceLite,
   type UnifiedAgent,
 } from "@/lib/hivra/unified-agent";
@@ -163,35 +163,6 @@ function parseHivraEnvelope(value: unknown): HivraAgent[] {
   });
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ATTACHED_PHASES = new Set(["claimed", "dispatched", "attached"]);
-
-function requiredId(value: unknown): string {
-  if (typeof value !== "string" || !UUID.test(value)) throw new Error("invalid-source-record");
-  return value;
-}
-
-/** Agents added to the owner's computers (GET /api/hivra/attached-agents): none where attach is not offered. */
-function parseAttachedEnvelope(value: unknown): AttachedAgentLite[] {
-  const envelope = asRecord(value);
-  const list = asRecord(envelope?.data);
-  if (!envelope || envelope.success !== true || !list || !Array.isArray(list.agents)) {
-    throw new Error("invalid-attached-envelope");
-  }
-  if (list.enabled !== true) return [];
-  return list.agents.map((candidate) => {
-    const row = asRecord(candidate);
-    if (!row || typeof row.phase !== "string" || !ATTACHED_PHASES.has(row.phase)) throw new Error("invalid-source-record");
-    return {
-      id: requiredId(row.id),
-      phase: row.phase as AttachedAgentLite["phase"],
-      agentName: requiredString(row.agentName),
-      computerId: requiredId(row.computerId),
-      computerName: requiredString(row.computerName),
-      computerStatus: optionalString(row.computerStatus) ?? null,
-    };
-  });
-}
 
 function logSourceFailure(agentSource: "hermes" | "hivra" | "attached"): void {
   clientLog.warn("Workspace agent source unavailable", {
@@ -284,7 +255,7 @@ export function useWorkspaceAgents(
   // (a rate limit, say) is reported on its own, the agents and computers it
   // did not touch stay current, and nothing waits for it.
   const attached = useMemo(
-    () => mine ? sourceRows(snapshot.attached, parseAttachedEnvelope, marks.attached) : NO_ROWS,
+    () => mine ? sourceRows(snapshot.attached, parseAttachedAgentsEnvelope, marks.attached) : NO_ROWS,
     [mine, snapshot.attached, marks.attached],
   );
 

@@ -76,7 +76,7 @@ describe("attached Codex", () => {
     computer: { ...computer, ramGb: computer.ram }, installationId, grants: { workspace } }), 1);
 
   it("puts a Chat tab on the computer's page only once the agent is ready", () => {
-    const attached = { computerId: "c", installationId, agentName: "Codex" };
+    const attached = { computerId: "c", attachmentId: "a", installationId, agentName: "Codex" };
     expect(withAttachedAgentChat(agentSurfacesFor(computer), attached)[0]).toBe("chat");
     expect(withAttachedAgentChat(agentSurfacesFor(computer), null)).not.toContain("chat");
     expect(agentSurfacesFor(computer)).not.toContain("chat");

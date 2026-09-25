@@ -10,6 +10,8 @@ export const ATTACHED_AGENTS_CHANGED_EVENT = "hivra:attached-agents-changed";
 
 export interface AttachedAgentChatTarget {
   computerId: string;
+  /** hivra_agent_attachments.id: the agent's own identity in recents (`a-<id>`). */
+  attachmentId: string;
   installationId: string;
   agentName: string;
 }

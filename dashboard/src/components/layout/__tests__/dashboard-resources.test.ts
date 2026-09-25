@@ -1,4 +1,4 @@
-import { filterDashboardResources, parseDashboardResources, resourceMatchesPath } from '../dashboard-resources';
+import { filterDashboardResources, parseAttachedDashboardResources, parseDashboardResources, resourceMatchesPath } from '../dashboard-resources';
 
 const envelope = (source: string, rows: unknown[]) => ({ success: true, data: source === 'hermes' ? rows : { agents: rows } });
 
@@ -10,6 +10,21 @@ describe('dashboard resource projection', () => {
     expect(hivra[0]).toMatchObject({ uid: 'x-same', href: '/dashboard/agent/same' });
     expect(JSON.stringify([...hermes, ...hivra])).not.toMatch(/hidden|private\.invalid/);
     expect(filterDashboardResources([...hermes, ...hivra], 'x-same')).toEqual(hivra);
+  });
+
+  // The shell's sidebar and Cmd-K list the agents added to computers too, each
+  // opening its computer's Chat tab (or the progress while it is being added).
+  it('lists an agent added to a computer by its own uid, opening that computer', () => {
+    const computerId = '11111111-1111-4111-8111-111111111111';
+    const rows = parseAttachedDashboardResources({ success: true, data: { enabled: true, agents: [
+      { id: '7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f', phase: 'attached', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running', api_token: 'hidden' },
+      { id: '8d2f3e4a-5b6c-4d7e-9f0a-1b2c3d4e5f6a', phase: 'claimed', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running' },
+    ] } });
+    expect(rows[0]).toMatchObject({ uid: 'a-7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f', source: 'hivra', kind: 'agent', name: 'Codex on MY_UBUNTU_DESKTOP',
+      status: 'running', href: `/dashboard/agent/${computerId}?tab=chat`, hostUid: `x-${computerId}` });
+    expect(rows[1]).toMatchObject({ status: 'provisioning', href: `/dashboard/agent/${computerId}?tab=manage` });
+    expect(JSON.stringify(rows)).not.toContain('hidden');
+    expect(parseAttachedDashboardResources({ success: true, data: { enabled: false, agents: [] } })).toEqual([]);
   });
 
   it('carries approval metadata without carrying its command text', () => {

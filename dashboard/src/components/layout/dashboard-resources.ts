@@ -1,6 +1,7 @@
 import { resourceAttention, type ResourceAttention } from "@/lib/hivra/resource-attention";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate } from "@/lib/hivra/computer-catalog";
+import { parseAttachedAgentsEnvelope } from "@/lib/hivra/attached-agents-envelope";
 
 export type DashboardResourceSource = "hermes" | "hivra";
 
@@ -15,6 +16,8 @@ export interface DashboardResource {
   description: string;
   status: string;
   href: string;
+  /** An agent added to a computer: that computer's uid, so lists can show the two together. */
+  hostUid?: string;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -60,6 +63,22 @@ export function parseDashboardResources(value: unknown, source: DashboardResourc
     }
   }
   return resources.sort((a, b) => a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
+}
+
+/** The agents added to the owner's computers, as the shell lists them. Each
+ * opens its computer's Chat tab, or the computer's progress while being added. */
+export function parseAttachedDashboardResources(value: unknown): DashboardResource[] {
+  return parseAttachedAgentsEnvelope(value).map((row) => {
+    const ready = row.phase === "attached";
+    const status = ready ? row.computerStatus ?? "unknown" : "provisioning";
+    return {
+      uid: `a-${row.id}`, id: row.id, source: "hivra" as const, kind: "agent" as const,
+      name: `${row.agentName} on ${row.computerName}`, description: row.agentName, status,
+      attention: resourceAttention(status),
+      href: `/dashboard/agent/${encodeURIComponent(row.computerId)}?tab=${ready ? "chat" : "manage"}`,
+      hostUid: `x-${row.computerId}`,
+    };
+  });
 }
 
 export function resourceMatchesPath(resource: DashboardResource, pathname: string | null): boolean {
