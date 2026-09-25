@@ -4,7 +4,7 @@ import {
   getBankrWalletForInstance,
   type SupabaseLike,
 } from "@/lib/billing/bankr-instance-wallets";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import {
   COMPOSIO_MCP_SERVER_NAME,
   isComposioManagedServerName,
@@ -88,6 +88,7 @@ async function writeHermesConfigDirectly(params: {
   containerName: string;
   hermesHomeDir: string;
   ip: string;
+  guestTarget: ProxmoxSshHostConfig | null;
 }): Promise<void> {
   const configYaml = `${serializeHermesConfigYaml(params.config)}\n`;
   const b64Config = Buffer.from(configYaml, "utf8").toString("base64");
@@ -101,7 +102,8 @@ async function writeHermesConfigDirectly(params: {
       buildResolveAgentContainerScript(params.containerName, { varName: "AGENT_CONTAINER" }),
       `if [ -z "$AGENT_CONTAINER" ]; then echo "no running agent container for ${params.containerName}" >&2; exit 1; fi`,
       `echo "${b64Config}" | base64 -d | docker exec -i "$AGENT_CONTAINER" sh -c "cat > ${targetPath}"`,
-    ].join("\n")
+    ].join("\n"),
+    params.guestTarget ? { proxmoxHostConfig: params.guestTarget } : {}
   );
 
   if (!result.ok) {
@@ -214,6 +216,8 @@ export async function putHermesConfigWithBindMountFallback(params: {
   containerName: string;
   hermesHomeDir: string;
   ip: string;
+  /** The instance's `getHermesGuestSshTarget`, for the direct-write fallback. */
+  guestTarget: ProxmoxSshHostConfig | null;
   instanceId?: string | null;
   userId?: string | null;
   db?: SupabaseLike | null;
@@ -252,6 +256,7 @@ export async function putHermesConfigWithBindMountFallback(params: {
     containerName: params.containerName,
     hermesHomeDir: params.hermesHomeDir,
     ip: params.ip,
+    guestTarget: params.guestTarget,
   });
 
   return {

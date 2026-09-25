@@ -29,6 +29,7 @@ export async function GET(
 
     const result = await sshExec(hostIp, buildElevatedModeReadScript(instanceId), {
       timeoutMs: ELEVATED_READ_TIMEOUT_MS,
+      proxmoxHostConfig: access.proxmoxHostConfig ?? null,
     });
     if (!result.ok) {
       log.warn('elevated-mode read failed', {
@@ -75,6 +76,7 @@ export async function POST(
 
     const result = await sshExec(hostIp, buildElevatedModeApplyScript(instanceId, enabled), {
       timeoutMs: ELEVATED_APPLY_TIMEOUT_MS,
+      proxmoxHostConfig: access.proxmoxHostConfig ?? null,
     });
     if (!result.ok) {
       log.warn('elevated-mode apply failed', {

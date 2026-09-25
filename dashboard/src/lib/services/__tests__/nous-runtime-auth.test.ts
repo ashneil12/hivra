@@ -40,7 +40,7 @@ describe("nous-runtime-auth", () => {
 
     const result = await syncNousRuntimeAuthStore(
       "inst-123",
-      "192.0.2.40",
+      "192.0.2.40", null,
       bundle,
       "/opt/data"
     );
@@ -65,7 +65,7 @@ describe("nous-runtime-auth", () => {
       stderr: "",
     });
 
-    await syncNousRuntimeAuthStore("inst-123", "192.0.2.40", bundle, "/home/hermes/.hermes");
+    await syncNousRuntimeAuthStore("inst-123", "192.0.2.40", null, bundle, "/home/hermes/.hermes");
 
     const command = mockedSshExec.mock.calls[0]?.[1];
     expect(command).toContain(
@@ -95,6 +95,7 @@ describe("nous-runtime-auth", () => {
     const result = await repairNousRuntimeAuthFromStoredSession({
       instanceId: "inst-123",
       hostIp: "192.0.2.40",
+      guestTarget: null,
       hermesHomeDir: "/root/.hermes",
       encryptedInstanceSecret: encryptedBundle,
       provider: "nous",
@@ -122,6 +123,7 @@ describe("nous-runtime-auth", () => {
       repairNousRuntimeAuthFromStoredSession({
         instanceId: "inst-123",
         hostIp: "192.0.2.40",
+        guestTarget: null,
         hermesHomeDir: "/root/.hermes",
         encryptedInstanceSecret: encryptedBundle,
         provider: "openrouter",
@@ -157,6 +159,7 @@ describe("nous-runtime-auth", () => {
     const result = await repairNousRuntimeAuthFromStoredSession({
       instanceId: "inst-123",
       hostIp: "192.0.2.40",
+      guestTarget: null,
       hermesHomeDir: "/root/.hermes",
       encryptedInstanceSecret: encryptedBundle,
       provider: "nous-portal",
@@ -187,6 +190,7 @@ describe("nous-runtime-auth", () => {
     const result = await repairNousRuntimeAuthFromStoredSession({
       instanceId: "inst-123",
       hostIp: "192.0.2.40",
+      guestTarget: null,
       hermesHomeDir: "/root/.hermes",
       encryptedInstanceSecret: encryptedBundle,
       provider: "nous",

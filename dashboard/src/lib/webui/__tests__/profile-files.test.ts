@@ -20,6 +20,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "# Bea",
     });
@@ -40,6 +41,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     const res = await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "# Bea",
     });
@@ -51,6 +53,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     const res = await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "# overwrite attempt",
     });
@@ -62,6 +65,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "# Bea",
       overwriteExistingIdentity: true,
@@ -75,6 +79,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "x",
     });
@@ -87,6 +92,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "work",
       systemPrompt: "x",
     });
@@ -99,6 +105,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "héllo 🌍",
     });
@@ -112,6 +119,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
       writeWebUIProfileSystemPrompt({
         instanceId: "abc",
         hostIp: "203.0.113.4",
+        guestTarget: null,
         profileName: "default",
         systemPrompt: "x",
       }),
@@ -131,6 +139,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
       writeWebUIProfileSystemPrompt({
         instanceId: "abc",
         hostIp: "203.0.113.4",
+        guestTarget: null,
         profileName: "default",
         systemPrompt: "x",
       }),
@@ -150,6 +159,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
       writeWebUIProfileSystemPrompt({
         instanceId: "abc",
         hostIp: "203.0.113.4",
+        guestTarget: null,
         profileName: "default",
         systemPrompt: "x",
       }),
@@ -166,6 +176,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
     const err = await writeWebUIProfileSystemPrompt({
       instanceId: "abc",
       hostIp: "203.0.113.4",
+      guestTarget: null,
       profileName: "default",
       systemPrompt: "x",
     }).then(
@@ -184,6 +195,7 @@ describe("writeWebUIProfileSystemPrompt", () => {
       writeWebUIProfileSystemPrompt({
         instanceId: "abc",
         hostIp: "203.0.113.4",
+        guestTarget: null,
         profileName: "default",
         systemPrompt: "x",
       }),

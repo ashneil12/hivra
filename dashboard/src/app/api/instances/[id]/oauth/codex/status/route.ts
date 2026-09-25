@@ -26,6 +26,7 @@ import { ProfileService } from '@/lib/services/profile-service';
 import { supabaseAdmin } from '@/lib/supabase';
 import { log } from '@/lib/logger';
 import { isWebfreeBackend } from '@/lib/types/instance';
+import { GUEST_IDENTITY_REFUSED_MESSAGE, GUEST_SSH_REFUSED_MARKER } from "@/lib/proxmox/hermes-guest-ssh";
 
 const SAFE_VAULT_PERSISTENCE_ERROR =
   'Unable to save the reusable Vault session. Please try again or contact support.';
@@ -133,6 +134,12 @@ function classifyCodexStatusFailure(result: {
   const rawMessage = (result.stderr || result.error || result.stdout || '').trim();
   const normalized = rawMessage.toLowerCase();
   const presence = buildCodexStatusCommandFailureDetails(result);
+
+  // Checked first: a refused guest identity check can follow a guest agent
+  // error such as "QEMU guest agent is not running", which is not the runtime.
+  if (`${result.stderr || ''}\n${result.error || ''}`.includes(GUEST_SSH_REFUSED_MARKER)) {
+    return { status: 503, message: GUEST_IDENTITY_REFUSED_MESSAGE };
+  }
 
   if (
     normalized.includes('no such container') ||
@@ -292,7 +299,8 @@ export async function GET(
     // resolves to 'codex'.
     const sshPromise = sshExec(
       hostIp,
-      buildCodexStatusCommand(instanceId, hermesExecUser, targetHermesHomeDir)
+      buildCodexStatusCommand(instanceId, hermesExecUser, targetHermesHomeDir),
+      { proxmoxHostConfig: access.proxmoxHostConfig ?? null }
     );
     const profileProviderPromise = profileName !== 'default'
       ? ProfileService.getProfileProvider(access.id, access.userId, profileName).catch(() => null)
@@ -331,6 +339,7 @@ export async function GET(
         const runtimeSync = await syncCodexRuntimeAuthStore(
           access.id,
           access.hostIp,
+          access.proxmoxHostConfig ?? null,
           bundle,
           targetHermesHomeDir
         );
@@ -350,7 +359,7 @@ export async function GET(
             applyRuntimeChanges,
             failureType: "codex_oauth_runtime_restart_apply",
           });
-          gatewayRestartTriggered = await restartCodexGateway(access.id, access.hostIp);
+          gatewayRestartTriggered = await restartCodexGateway(access.id, access.hostIp, access.proxmoxHostConfig ?? null);
         } else if (!isWebUIBackend && runtimeNeedsRestart && applyRuntimeChanges) {
           await ProfileService.stopProfileGateway(access.id, access.userId, profileName);
           await ProfileService.startProfileGateway(access.id, access.userId, profileName);
@@ -410,6 +419,7 @@ export async function GET(
           const runtimeSync = await syncCodexRuntimeAuthStore(
             access.id,
             access.hostIp,
+            access.proxmoxHostConfig ?? null,
             reusableBundle,
             targetHermesHomeDir
           );
@@ -425,7 +435,7 @@ export async function GET(
               applyRuntimeChanges,
               failureType: "codex_stored_vault_runtime_restart_apply",
             });
-            profileSyncResult.gatewayRestartTriggered = await restartCodexGateway(access.id, access.hostIp);
+            profileSyncResult.gatewayRestartTriggered = await restartCodexGateway(access.id, access.hostIp, access.proxmoxHostConfig ?? null);
           } else if (runtimeSync.changed) {
             profileSyncResult.gatewayRestartRequired = true;
             log.info("deferred stored Vault runtime restart during passive status poll", {
@@ -555,6 +565,7 @@ export async function GET(
             const runtimeSync = await syncCodexRuntimeAuthStore(
               access.id,
               access.hostIp,
+              access.proxmoxHostConfig ?? null,
               payload.vaultBundle,
               targetHermesHomeDir
             );
@@ -575,7 +586,7 @@ export async function GET(
                 applyRuntimeChanges,
                 failureType: "codex_oauth_completion_runtime_restart_apply",
               });
-              gatewayRestartTriggered = await restartCodexGateway(access.id, access.hostIp);
+              gatewayRestartTriggered = await restartCodexGateway(access.id, access.hostIp, access.proxmoxHostConfig ?? null);
             } else {
               gatewayRestartRequired = true;
               log.info("deferred OAuth completion runtime restart during passive status poll", {
