@@ -40,8 +40,11 @@ struct HivraBrowserPane: View {
         self.onOpenLocalControls = onOpenLocalControls
         self.onUseHivraCanary = onUseHivraCanary
         self.onAddConnection = onAddConnection
+        // A pane that owns its browser is a URL-based surface window, never a
+        // connection-owned view, so it carries no native bridges.
         _browser = StateObject(wrappedValue: existingBrowser ?? HivraBrowserModel(
             initialURL: profile.url,
+            role: .unprivileged,
             localCredentials: automaticLocalSignInEnabled ? localCredentials : nil
         ))
     }
@@ -53,17 +56,22 @@ struct HivraBrowserPane: View {
 
             HivraWebView(webView: browser.webView)
 
-            if let errorMessage = browser.errorMessage {
-                recoveryColor(HivraRecoveryAppearance.backdrop)
+            if let failure = browser.failure {
+                Color(recovery: HivraRecoveryAppearance.backdrop)
                     .ignoresSafeArea()
-                connectionError(errorMessage)
+                switch failure {
+                case .unreachable(let message): connectionError(message)
+                case .contentProcessTerminated: contentProcessStopped
+                }
             }
         }
-        .onAppear {
-            browser.openDetachedSurface = onDetach
+        .overlay(alignment: .bottom) {
+            HivraDownloadBanner(browser: browser)
         }
         .onDisappear {
-            if ownsBrowser { browser.cancelAutomaticSignIn() }
+            guard ownsBrowser else { return }
+            browser.cancelAutomaticSignIn()
+            browser.closeOwnedPopups()
         }
         .onChange(of: profile.url) { _, nextURL in
             browser.load(
@@ -125,40 +133,33 @@ struct HivraBrowserPane: View {
     }
 
     private func connectionError(_ message: String) -> some View {
-        VStack(spacing: 18) {
-            Image(systemName: profile.isBuiltInLocal ? "desktopcomputer.trianglebadge.exclamationmark" : "network.slash")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Color(red: 1, green: 0.25, blue: 0.27))
-
-            VStack(spacing: 6) {
-                Text(profile.isBuiltInLocal ? "Local Hivra is not reachable" : "Hivra is not reachable")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                Text(profile.url.absoluteString)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 440)
-            }
-
+        HivraRecoveryCard(
+            symbol: profile.isBuiltInLocal ? "desktopcomputer.trianglebadge.exclamationmark" : "network.slash",
+            title: profile.isBuiltInLocal ? "Local Hivra is not reachable" : "Hivra is not reachable",
+            address: profile.url.absoluteString,
+            detail: message
+        ) {
             if profile.isBuiltInLocal {
                 localRecoveryActions
             } else {
                 Button("Try again", action: browser.reload)
                     .buttonStyle(.borderedProminent)
-                    .tint(recoveryColor(HivraRecoveryAppearance.primaryAction))
+                    .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
             }
         }
-        .padding(38)
-        .foregroundStyle(recoveryColor(HivraRecoveryAppearance.text))
-        .background(recoveryColor(HivraRecoveryAppearance.card), in: RoundedRectangle(cornerRadius: 18))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+    }
+
+    private var contentProcessStopped: some View {
+        HivraRecoveryCard(
+            symbol: "exclamationmark.triangle",
+            title: HivraRecoveryCopy.stoppedTitle,
+            address: profile.url.absoluteString,
+            detail: HivraRecoveryCopy.stoppedDetail
+        ) {
+            Button("Reload", action: browser.reload)
+                .buttonStyle(.borderedProminent)
+                .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
         }
-        .padding(32)
     }
 
     private var localRecoveryActions: some View {
@@ -171,7 +172,7 @@ struct HivraBrowserPane: View {
                 if let onOpenLocalControls {
                     Button("Set up or start Local Hivra", action: onOpenLocalControls)
                         .buttonStyle(.borderedProminent)
-                        .tint(recoveryColor(HivraRecoveryAppearance.primaryAction))
+                        .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
                 }
 
                 if let onUseHivraCanary {
@@ -190,9 +191,5 @@ struct HivraBrowserPane: View {
                 }
             }
         }
-    }
-
-    private func recoveryColor(_ value: HivraRecoveryAppearance.RGB) -> Color {
-        Color(red: value.red, green: value.green, blue: value.blue)
     }
 }

@@ -38,11 +38,13 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
     private var tabSubscriptions: [UUID: AnyCancellable] = [:]
     private var lastConnectionURL: URL?
     private var hasExplicitSelection = false
+    private let services: HivraBrowserServices
 
-    init(profile: HivraConnectionProfile) {
+    init(profile: HivraConnectionProfile, services: HivraBrowserServices = .live) {
         self.profile = profile
+        self.services = services
         id = profile.id
-        connectionBrowser = HivraBrowserModel(initialURL: profile.url, nativeWorkspace: true)
+        connectionBrowser = HivraBrowserModel(initialURL: profile.url, role: .connection(profile), services: services)
         observeConnection()
     }
 
@@ -75,23 +77,29 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
         connectionBrowser.navigateWorkspace(to: path)
     }
 
-    func open(_ resource: HivraWorkspaceResource) {
+    /// Opens or selects the resource's tab. `path` is a route within that resource,
+    /// such as a surface, requested by a page rather than the resource's default route.
+    func open(_ resource: HivraWorkspaceResource, path: String? = nil) {
         guard snapshot?.ownerKey != nil,
               let resource = resources.first(where: { $0.uid == resource.uid }) else { return }
         hasExplicitSelection = true
+        let requestedPath = path ?? resource.href
         if let existing = tabs.first(where: { $0.resourceUID == resource.uid }) {
-            if HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+            if let path, let currentURL = existing.browser.currentURL,
+               HivraWorkspacePolicy.relativePath(url: currentURL, trustedURL: profile.url) != HivraWorkspaceRoute.normalizedPath(path) {
+                existing.browser.navigateWorkspace(to: path)
+            } else if HivraWorkspacePolicy.shouldReloadResourceOnReselection(
                 currentURL: existing.browser.currentURL,
                 trustedURL: profile.url,
-                requestedPath: resource.href
-            ), let url = HivraWorkspaceRoute.url(for: resource.href, profile: profile) {
+                requestedPath: requestedPath
+            ), let url = HivraWorkspaceRoute.url(for: requestedPath, profile: profile) {
                 existing.browser.load(url)
             }
             selectedTabID = existing.id
             return
         }
-        guard let url = HivraWorkspaceRoute.url(for: resource.href, profile: profile) else { return }
-        append(resource, browser: HivraBrowserModel(initialURL: url, nativeWorkspace: true))
+        guard let url = HivraWorkspaceRoute.url(for: requestedPath, profile: profile) else { return }
+        append(resource, browser: HivraBrowserModel(initialURL: url, role: .connection(profile), services: services))
     }
 
     func detach(_ tab: HivraWorkspaceTab) {
@@ -124,7 +132,7 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         let nextSelection = HivraWorkspacePolicy.selectionAfterClosing(tabID: tab.id, tabs: tabs.map(\.id), selected: selectedTabID)
         detachedWindows.removeValue(forKey: tab.id)?.finish()
-        tab.browser.handleWorkspaceNavigation = nil
+        release(tab.browser)
         tabs.remove(at: index)
         tabSubscriptions.removeValue(forKey: tab.id)
         selectedTabID = nextSelection
@@ -138,7 +146,9 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
         let windows = detachedWindows.values
         detachedWindows.removeAll()
         for window in windows { window.finish() }
-        for tab in tabs { tab.browser.handleWorkspaceNavigation = nil }
+        for tab in tabs { release(tab.browser) }
+        // Popups belong to the account and window that opened them.
+        connectionBrowser.closeOwnedPopups()
         tabs.removeAll()
         tabSubscriptions.removeAll()
         selectedTabID = nil
@@ -148,10 +158,31 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
         hasExplicitSelection = false
     }
 
+    private func release(_ browser: HivraBrowserModel) {
+        browser.handleWorkspaceNavigation = nil
+        browser.handleWorkspaceNewWindow = nil
+        browser.closeOwnedPopups()
+    }
+
+    /// A dashboard route a page opens in a new window joins this workspace, as the
+    /// same route does when a tab navigates to it, instead of a chrome-less popup.
+    private func routeNewWindow(_ url: URL) -> Bool {
+        guard snapshot?.ownerKey != nil,
+              let path = HivraWorkspacePolicy.relativePath(url: url, trustedURL: profile.url) else { return false }
+        if let uid = HivraWorkspaceRoute.resourceUID(for: path) {
+            guard let resource = resources.first(where: { $0.uid == uid }) else { return false }
+            open(resource, path: path)
+        } else {
+            showDashboard(path)
+        }
+        return true
+    }
+
     private func append(_ resource: HivraWorkspaceResource, browser: HivraBrowserModel, select: Bool = true) {
         let tab = HivraWorkspaceTab(resource: resource, browser: browser)
         tabs.append(tab)
         if select { selectedTabID = tab.id }
+        browser.handleWorkspaceNewWindow = { [weak self] url in self?.routeNewWindow(url) ?? false }
         browser.handleWorkspaceNavigation = { [weak self, weak tab] url in
             guard let self, let tab, tabs.contains(where: { $0.id == tab.id }),
                   let path = HivraWorkspacePolicy.relativePath(url: url, trustedURL: profile.url) else { return false }
@@ -183,6 +214,7 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
     private func observeConnection() {
         subscriptions.removeAll()
         let browser = connectionBrowser
+        browser.handleWorkspaceNewWindow = { [weak self] url in self?.routeNewWindow(url) ?? false }
         browser.$workspaceSnapshot.combineLatest(browser.$currentURL)
             .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
             .receive(on: RunLoop.main)
@@ -218,7 +250,8 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
         case .adopt(let resource):
             let browser = connectionBrowser
             resetInventoryReturnDestination()
-            connectionBrowser = HivraBrowserModel(initialURL: profile.dashboardURL(), nativeWorkspace: true)
+            connectionBrowser = HivraBrowserModel(initialURL: profile.dashboardURL(), role: .connection(profile),
+                                                  services: services)
             lastConnectionURL = nil
             append(resource, browser: browser, select: shouldSelect)
             observeConnection()
