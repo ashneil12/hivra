@@ -17,13 +17,16 @@ concurrency:
   group: dashboard-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# `npm run verify` (lint, typecheck, jest, build) ran as one serial job and hit
+# 20 minutes on 2026-09-24, 16 of them in `jest --runInBand`. The same work now
+# runs as parallel jobs, with jest split into duration-balanced shards
+# (dashboard/scripts/jest-duration-sequencer.cjs). "Verify Dashboard" is the
+# aggregate check and passes only when every job below passed.
 jobs:
-  verify-dashboard:
-    name: Verify Dashboard
+  static-checks:
+    name: Lint and typecheck
     runs-on: ubuntu-latest
-    # The full suite alone takes ~15 min on a hosted runner (2026-09-24), so 20
-    # cancelled green runs during the build that follows it.
-    timeout-minutes: 35
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: dashboard
@@ -68,6 +71,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+  jest:
+    name: Jest (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    # A shard takes about 4 minutes of jest plus 1-2 minutes of setup.
+    timeout-minutes: 15
+    strategy:
+      # Report every failing shard, not just the first one.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
       # Browser regression suites (recovery-control styles, desktop handoff)
       # launch headless Chromium; the runner image does not ship Playwright's
       # pinned build, so install exactly the version in package-lock.json.
@@ -94,14 +134,38 @@ jobs:
           uv pip install --python "$HERMES_CONFIG_TEST_VENV/bin/python" PyYAML==6.0.3
           echo "HERMES_CONFIG_TEST_PYTHON=$HERMES_CONFIG_TEST_VENV/bin/python" >> "$GITHUB_ENV"
 
-      - name: Run deployment and contract smoke suite
-        run: npm run test:smoke-contracts
+      # The smoke-contract and hot-path suites are part of every shard's
+      # selection, so they are not run a second time here.
+      - name: Run jest shard
+        run: npm run test:ci -- --shard=${{ matrix.shard }}/4
 
-      - name: Run hot path regression suite
-        run: npm run test:hot-paths
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
 
-      - name: Verify dashboard
-        run: npm run verify
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
 
       - name: Verify public dashboard artifact boundary
         run: npm run verify:public-artifact
@@ -159,3 +223,25 @@ jobs:
           HIVRA_HOST_STEP_FIXTURE_DIR="$fixture" npx jest --ci src/lib/agent-computers/__tests__/attachment-host-step.test.ts
           test -s "$fixture/step-ok.sh"
           docker run --rm --network none -v "$PWD/scripts":/scripts:ro -v "$fixture":/fixture:ro "$DEBIAN_IMAGE" python3 -I -B /scripts/test-attachment-host-step.py
+
+  verify-dashboard:
+    name: Verify Dashboard
+    needs: [static-checks, jest, build, attach-fixtures]
+    # Always report, so a failed or cancelled job fails this check instead of
+    # leaving it skipped.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every dashboard job to pass
+        shell: bash
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed="$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')"
+          if [ -n "$failed" ]; then
+            echo "::error::Dashboard verification failed: $failed"
+            exit 1
+          fi
