@@ -24,6 +24,7 @@ jest.mock("@/lib/supabase", () => ({
               },
               gte: () => chain,
               lt: () => chain,
+              in: () => chain,
               then: (resolve: (value: unknown) => unknown) =>
                 Promise.resolve({
                   count: capturedOnly

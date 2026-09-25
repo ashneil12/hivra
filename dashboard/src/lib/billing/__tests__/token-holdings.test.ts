@@ -39,26 +39,6 @@ function buildSingleQuery(data: unknown, error: unknown = null) {
   return query;
 }
 
-function buildListQuery(data: unknown, error: unknown = null) {
-  type MockQuery = {
-    select: jest.Mock;
-    eq: jest.Mock;
-    not: jest.Mock;
-    order: jest.Mock;
-    limit: jest.Mock;
-    then: Promise<{ data: unknown; error: unknown }>["then"];
-  };
-  const query = {} as MockQuery;
-  query.select = jest.fn(() => query);
-  query.eq = jest.fn(() => query);
-  query.not = jest.fn(() => query);
-  query.order = jest.fn(() => query);
-  query.limit = jest.fn(() => query);
-  query.then = (resolve, reject) => Promise.resolve({ data, error }).then(resolve, reject);
-
-  return query;
-}
-
 function buildInsertSnapshotTable(rows: unknown[], error: unknown = null) {
   type MockInsert = {
     insert: jest.Mock;
@@ -220,41 +200,15 @@ describe("Hivra token holdings", () => {
     });
   });
 
-  it("refreshes verified primary wallet holdings and summarizes outcomes", async () => {
-    const wallets = [
-      {
-        id: "wallet_1",
-        user_id: "user_1",
-        address: "0x000000000000000000000000000000000000dEaD",
-        normalized_address: "0x000000000000000000000000000000000000dead",
-        chain_type: "evm",
-        chain_id: BASE_CHAIN_ID,
-        is_primary: true,
-        verified_at: "2026-04-24T12:00:00.000Z",
-      },
-      {
-        id: "wallet_2",
-        user_id: "user_2",
-        address: "0x0000000000000000000000000000000000000001",
-        normalized_address: "0x0000000000000000000000000000000000000001",
-        chain_type: "evm",
-        chain_id: BASE_CHAIN_ID,
-        is_primary: true,
-        verified_at: "2026-04-24T12:01:00.000Z",
-      },
-      {
-        id: "wallet_3",
-        user_id: "user_3",
-        address: "0x0000000000000000000000000000000000000002",
-        normalized_address: "0x0000000000000000000000000000000000000002",
-        chain_type: "evm",
-        chain_id: BASE_CHAIN_ID,
-        is_primary: true,
-        verified_at: "2026-04-24T12:02:00.000Z",
-      },
-    ];
-    const query = buildListQuery(wallets);
-    const db = { from: jest.fn(() => query) };
+  it("refreshes the claimed page of accounts and summarizes outcomes", async () => {
+    const snapshotLookup = buildSingleQuery(null);
+    const db = {
+      rpc: jest.fn().mockResolvedValue({
+        data: [{ user_id: "user_1" }, { user_id: "user_2" }, { user_id: "user_3" }],
+        error: null,
+      }),
+      from: jest.fn(() => snapshotLookup),
+    };
     const refreshUserHolding = jest.fn()
       .mockResolvedValueOnce({
         status: "refreshed",
@@ -270,18 +224,22 @@ describe("Hivra token holdings", () => {
       .mockRejectedValueOnce(new Error("rpc-secret-leak"));
 
     const result = await refreshVerifiedHermesTokenHoldings({
+      lane: "token_holdings",
       db,
       limit: 3,
       refreshUserHolding,
     });
 
-    expect(db.from).toHaveBeenCalledWith("user_wallets");
-    expect(query.eq).toHaveBeenCalledWith("chain_type", "evm");
-    expect(query.eq).toHaveBeenCalledWith("is_primary", true);
-    expect(query.not).toHaveBeenCalledWith("verified_at", "is", null);
-    expect(query.limit).toHaveBeenCalledWith(3);
+    expect(db.rpc).toHaveBeenCalledWith("claim_token_holding_refresh_batch", {
+      p_lane: "token_holdings",
+      p_limit: 3,
+    });
+    // user_2 has no verification wallet: its latest snapshots are checked
+    // (none here, so nothing to zero).
+    expect(db.from).toHaveBeenCalledWith("token_holding_snapshots");
     expect(refreshUserHolding).toHaveBeenCalledTimes(3);
     expect(result).toEqual({
+      lane: "token_holdings",
       checked: 3,
       refreshed: 1,
       noVerifiedWallet: 1,
@@ -289,19 +247,17 @@ describe("Hivra token holdings", () => {
       results: [
         {
           userId: "user_1",
-          walletId: "wallet_1",
           status: "refreshed",
           snapshotId: "snapshot_1",
           qualifiesBaseTier: true,
         },
         {
           userId: "user_2",
-          walletId: "wallet_2",
           status: "no_verified_wallet",
+          zeroSnapshotsRecorded: 0,
         },
         {
           userId: "user_3",
-          walletId: "wallet_3",
           status: "failed",
         },
       ],

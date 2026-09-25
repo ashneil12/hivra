@@ -429,11 +429,24 @@ async function debitHermesosLots(
 }
 
 async function debitCardWallet(
-  params: { userId: string; amountMicroUsd: number; referenceId: string },
+  params: {
+    userId: string;
+    amountMicroUsd: number;
+    referenceId: string;
+    // A capture spends funds its OWN active reservation is holding, so that
+    // hold must not count against it. Without this, a card user whose hold
+    // covered most of the balance could never be charged: the capture saw
+    // "available = total - (every hold, including this one)" and threw.
+    capturingReservedMicroUsd?: number;
+  },
   db: SupabaseLike
 ) {
   const summary = await getManagedVeniceWalletSummary(params.userId, db);
-  if (summary.card.availableMicroUsd < params.amountMicroUsd) {
+  const otherHoldsMicroUsd = Math.max(
+    0,
+    summary.card.reservedMicroUsd - (params.capturingReservedMicroUsd ?? 0)
+  );
+  if (summary.card.totalValueMicroUsd - otherHoldsMicroUsd < params.amountMicroUsd) {
     throw new ManagedVeniceInsufficientBalanceError();
   }
 
@@ -468,7 +481,21 @@ export async function debitManagedVeniceWallet(
 ) {
   requireUserId(params.userId);
   requirePositiveMicroUsd(params.amountMicroUsd, "debit amount");
-  const client = requireDb(db);
+  return debitWallet(params, requireDb(db));
+}
+
+async function debitWallet(
+  params: {
+    userId: string;
+    walletType: ManagedVeniceWalletType;
+    amountMicroUsd: number;
+    referenceId: string;
+    capturingReservedMicroUsd?: number;
+  },
+  client: SupabaseLike
+) {
+  requireUserId(params.userId);
+  requirePositiveMicroUsd(params.amountMicroUsd, "debit amount");
 
   if (params.walletType === "hermesos") {
     await debitHermesosLots(params.userId, params.amountMicroUsd, client);
@@ -657,12 +684,13 @@ export async function captureManagedVeniceReservation(
   }
 
   if (params.captureMicroUsd > 0) {
-    await debitManagedVeniceWallet(
+    await debitWallet(
       {
         userId: params.userId,
         walletType: reservation.wallet_type,
         amountMicroUsd: params.captureMicroUsd,
         referenceId: params.referenceId,
+        capturingReservedMicroUsd: asNumber(reservation.reserved_micro_usd),
       },
       client
     );

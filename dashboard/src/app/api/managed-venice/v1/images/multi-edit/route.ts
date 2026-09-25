@@ -5,7 +5,8 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+import { mediaModelField, mediaPricingFieldError } from "@/lib/venice/media-request-fields";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-image-compose | Ecclesiastes 4:12 | Verse: A threefold cord is not quickly broken.
 const VENICE_IMAGES_MULTI_EDIT_URL = "https://api.venice.ai/api/v1/image/multi-edit";
@@ -31,9 +32,10 @@ export async function POST(req: NextRequest) {
     return apiError("Invalid JSON body.", 400);
   }
 
-  const modelId = typeof body.modelId === "string" && body.modelId.trim()
-    ? body.modelId.trim()
-    : "firered-image-edit";
+  // `model` and `modelId` can't name different models; either one is priced.
+  const fieldError = mediaPricingFieldError(body);
+  if (fieldError) return apiError(fieldError, 400);
+  const modelId = mediaModelField(body) ?? "firered-image-edit";
   if (typeof body.prompt !== "string" || !body.prompt.trim()) {
     return apiError("prompt is required.", 400);
   }
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
 
   const serverKey = resolveManagedVeniceUpstreamKey({
     proxyKeyId: verifiedKey.id,
-    model: typeof body.model === "string" ? body.model : null,
+    model: modelId,
     endpoint: "/api/v1/image/multi-edit",
   })?.key;
   if (!serverKey) {
@@ -53,62 +55,55 @@ export async function POST(req: NextRequest) {
   }
 
   const referenceId = randomUUID();
-  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
-
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetch(VENICE_IMAGES_MULTI_EDIT_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serverKey}`,
-        "Content-Type": "application/json",
+  const gate = await holdManagedVeniceMediaSpend({
+    key: verifiedKey,
+    operation: {
+      endpoint: ENDPOINT_LABEL,
+      model: modelId,
+      metadata: {
+        imageCount: (body.images as unknown[]).length,
+        aspectRatio: typeof body.aspect_ratio === "string" ? body.aspect_ratio : null,
+        resolution: typeof body.resolution === "string" ? body.resolution : null,
+        outputFormat: typeof body.output_format === "string" ? body.output_format : null,
       },
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    return apiError(
-      "Venice upstream request failed.",
-      502,
-      { failureType: "managed_venice_multi_edit_upstream_fetch_failed" },
-      undefined,
-      { cause: error }
-    );
-  }
+    },
+    referenceId,
+    source: "managed-venice-multi-edit",
+  });
+  if (!gate.ok) return gate.response;
 
-  if (upstreamResponse.ok) {
-    try {
-      await recordManagedVeniceMultimodalUsage({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        walletType,
-        referenceId,
-        endpoint: ENDPOINT_LABEL,
-        model: modelId,
-        upstreamStatus: upstreamResponse.status,
-        metadata: {
-          imageCount: (body.images as unknown[]).length,
-          aspectRatio: typeof body.aspect_ratio === "string" ? body.aspect_ratio : null,
-          resolution: typeof body.resolution === "string" ? body.resolution : null,
-          outputFormat: typeof body.output_format === "string" ? body.output_format : null,
-        },
-      });
-    } catch (error) {
-      log.error("Managed Venice multi-edit usage record failed", error, {
-        source: "managed-venice-multi-edit",
-        route: ENDPOINT_LABEL,
+  const sent = await sendManagedVeniceMediaRequest({
+    hold: gate.hold,
+    mode: "stream",
+    fetchFailureType: "managed_venice_multi_edit_upstream_fetch_failed",
+    send: () =>
+      fetch(VENICE_IMAGES_MULTI_EDIT_URL, {
         method: "POST",
-        failureType: "managed_venice_multi_edit_usage_record_failed",
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        model: modelId,
-        referenceId,
-      });
-    }
+        headers: {
+          Authorization: `Bearer ${serverKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+  });
+  if (!sent.ok) return sent.response;
+
+  if (!sent.upstream.ok) {
+    log.warn("Managed Venice upstream returned non-2xx", {
+      source: "managed-venice-multi-edit",
+      route: ENDPOINT_LABEL,
+      method: "POST",
+      failureType: "managed_venice_multi_edit_upstream_non_2xx",
+      upstreamStatus: sent.upstream.status,
+      userId: verifiedKey.userId,
+      proxyKeyId: verifiedKey.id,
+      model: modelId,
+    });
   }
 
-  const contentType = upstreamResponse.headers.get("content-type") || "image/png";
-  return new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
+  const contentType = sent.upstream.headers.get("content-type") || "image/png";
+  return new Response(sent.upstream.body, {
+    status: sent.upstream.status,
     headers: { "Content-Type": contentType },
   });
 }
