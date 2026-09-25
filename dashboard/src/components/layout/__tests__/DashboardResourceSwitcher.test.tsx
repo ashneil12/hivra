@@ -31,7 +31,7 @@ beforeEach(() => {
   global.fetch = jest.fn(async (url: RequestInfo | URL) => {
     expect(String(url)).toBe('/api/hivra/attached-agents');
     return { ok: true, status: 200, json: async () => ({ success: true, data: { enabled: true, agents: [
-      { id: '7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f', phase: 'attached', agentName: 'Codex', computerId: COMPUTER_ID, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running' },
+      { id: '77777777-7777-4777-8777-777777777777', phase: 'attached', agentName: 'Codex', computerId: COMPUTER_ID, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running' },
     ] } }) } as Response;
   }) as jest.Mock;
 });
@@ -51,6 +51,6 @@ it('lists an agent added to a computer right after that computer, opening its Ch
 
   within(list).getByRole('option', { name: /Codex on MY_UBUNTU_DESKTOP/ }).click();
   expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({
-    uid: 'a-7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f', href: `/dashboard/agent/${COMPUTER_ID}?tab=chat`,
+    uid: 'a-77777777-7777-4777-8777-777777777777', href: `/dashboard/agent/${COMPUTER_ID}?tab=chat`,
   }));
 });

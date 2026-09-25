@@ -99,9 +99,9 @@ describe("ResourceSwitcher", () => {
   // computer's Desktop instead of the agent's Chat.
   it("opens an agent added to a computer on that computer's Chat tab", () => {
     const attachedCodex: UnifiedAgent = {
-      ...agent("a-7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", "Codex on My Desktop", "hivra"),
+      ...agent("a-77777777-7777-4777-8777-777777777777", "Codex on My Desktop", "hivra"),
       id: "desktop",
-      attachment: { id: "7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", computerId: "desktop", computerName: "My Desktop", phase: "attached" },
+      attachment: { id: "77777777-7777-4777-8777-777777777777", computerId: "desktop", computerName: "My Desktop", phase: "attached" },
       href: "/dashboard/agent/desktop?tab=chat",
     };
     mockedUseWorkspaceAgents.mockReturnValue({ ...mockedUseWorkspaceAgents(), agents: [desktop, attachedCodex] });

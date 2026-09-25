@@ -17,10 +17,10 @@ describe('dashboard resource projection', () => {
   it('lists an agent added to a computer by its own uid, opening that computer', () => {
     const computerId = '11111111-1111-4111-8111-111111111111';
     const rows = parseAttachedDashboardResources({ success: true, data: { enabled: true, agents: [
-      { id: '7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f', phase: 'attached', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running', api_token: 'hidden' },
-      { id: '8d2f3e4a-5b6c-4d7e-9f0a-1b2c3d4e5f6a', phase: 'claimed', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running' },
+      { id: '77777777-7777-4777-8777-777777777777', phase: 'attached', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running', api_token: 'hidden' },
+      { id: '88888888-8888-4888-8888-888888888888', phase: 'claimed', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running' },
     ] } });
-    expect(rows[0]).toMatchObject({ uid: 'a-7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f', source: 'hivra', kind: 'agent', name: 'Codex on MY_UBUNTU_DESKTOP',
+    expect(rows[0]).toMatchObject({ uid: 'a-77777777-7777-4777-8777-777777777777', source: 'hivra', kind: 'agent', name: 'Codex on MY_UBUNTU_DESKTOP',
       status: 'running', href: `/dashboard/agent/${computerId}?tab=chat`, hostUid: `x-${computerId}` });
     expect(rows[1]).toMatchObject({ status: 'provisioning', href: `/dashboard/agent/${computerId}?tab=manage` });
     expect(JSON.stringify(rows)).not.toContain('hidden');
