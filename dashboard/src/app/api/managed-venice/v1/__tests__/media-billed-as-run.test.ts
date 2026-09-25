@@ -11,6 +11,9 @@
  *      Venice ran it as sent.
  *   3. Options Venice bills extra for (`enable_web_search`, `enhance_prompt`)
  *      were forwarded without being priced.
+ * A third review found the other side of it: 4. the Hermes agent's image
+ * plugin offers four models the catalog didn't price, so a paying user who
+ * picked one got a 402 on every image. They are now priced at Venice's tiers.
  * These tests run the real routes and wallet code against an in-memory DB.
  */
 import { NextRequest } from "next/server";
@@ -430,6 +433,60 @@ describe("managed-Venice media: Venice runs only what Hivra charged for", () => 
       );
       expect(res.status).toBe(200);
       expect(sentJson()).toEqual({ url: "https://example.com" });
+    });
+  });
+
+  // Third review: the agent's image plugin offers nano-banana-pro,
+  // gpt-image-2, venice-sd35 and grok-imagine-image next to qwen-image-2.
+  // None was priced, so picking one was a 402 on every managed image.
+  // Payloads are plugins/image_gen/venice _build_payload for each sizing
+  // family, sent to image/generate on the catch-all like the agent does.
+  describe("finding 4: the agent's image models are billed at the tier Venice runs, not refused", () => {
+    const agentPayload = (model: string, sizing: Record<string, unknown>) => ({
+      model,
+      prompt: "a lighthouse at dusk",
+      safe_mode: true,
+      format: "webp",
+      return_binary: false,
+      ...sizing,
+    });
+
+    it.each<[string, Record<string, unknown>, number, number]>([
+      ["qwen-image-2", { aspect_ratio: "16:9" }, 50_000, 50_000],
+      ["grok-imagine-image", { aspect_ratio: "9:16" }, 40_000, 30_000],
+      ["venice-sd35", { width: 1280, height: 720 }, 10_000, 10_000],
+      ["nano-banana-pro", { aspect_ratio: "1:1", resolution: "1K" }, 180_000, 180_000],
+      ["nano-banana-pro", { aspect_ratio: "1:1", resolution: "4K" }, 350_000, 350_000],
+      ["gpt-image-2", { aspect_ratio: "1:1", resolution: "1K" }, 270_000, 270_000],
+      ["gpt-image-2", { aspect_ratio: "16:9", resolution: "2K" }, 510_000, 510_000],
+    ])("%s %j: held %i, charged %i, forwarded unchanged", async (model, sizing, held, expected) => {
+      const payload = agentPayload(model, sizing);
+      fetchMock.mockImplementationOnce(async () => {
+        expect(mockMemory.reservations()[0].reserved_micro_usd).toBe(held);
+        return okJson({ id: "req_fixture", images: ["b64"] });
+      });
+      const res = await viaPassthrough("image/generate", jsonReq("image/generate", payload));
+      expect(res.status).toBe(200);
+      expect(charged()).toBe(expected);
+      expect(sentJson()).toEqual(payload);
+    });
+
+    it("gpt-image-2 with a quality setting is refused before any hold", async () => {
+      refusedBeforeVenice(
+        await viaPassthrough(
+          "image/generate",
+          jsonReq("image/generate", agentPayload("gpt-image-2", { resolution: "1K", quality: "high" }))
+        )
+      );
+    });
+
+    it("grok-imagine-image at 4K, a tier Venice doesn't publish for it, is refused before any hold", async () => {
+      refusedBeforeVenice(
+        await viaPassthrough(
+          "image/generate",
+          jsonReq("image/generate", agentPayload("grok-imagine-image", { resolution: "4K" }))
+        )
+      );
     });
   });
 });
