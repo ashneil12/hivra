@@ -1048,6 +1048,8 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual(expect.objectContaining({
       error: expect.stringMatching(/provisioner is being prepared/i),
+      // Refused before anything was created: Launch goes back to Review.
+      code: "placement_unavailable",
     }));
     expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(1);
     const readinessScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
