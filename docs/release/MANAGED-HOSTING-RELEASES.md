@@ -103,6 +103,17 @@ there, following the steps in the file's header.
 |---|---|---|
 | `hivra_agent_slot_writer_guard.sql` (plan agent limit, migration B) | `*_hivra_agent_slot_limit.sql` is applied and the code that writes Hivra-managed agents through `insert_hivra_managed_agent` and `reserve_hivra_launch_model_request_v3` is serving on that environment | Launch smoke test; start and restart of an existing agent, including one in `error` (the file's header lists every status writer it was audited against) |
 
+Where each queued step stands:
+
+- `hivra_agent_slot_writer_guard.sql`: **Canary** applied 2026-09-25 from this
+  folder as ledger version `20260925151500_hivra_agent_slot_writer_guard`.
+  Before the apply, a launch and a restart passed on the served revision; after
+  it, a launch, stop and start, and restart passed, with no refusal logged. Start
+  of an agent in `error` is proven only by `scripts/test-hivra-agent-slot-limit.cjs`:
+  no Canary agent in `error` still has a computer. **Production** is pending:
+  apply the same file with the same version only after the owner's Promote,
+  never in the schema catch-up before it. The file stays here until then.
+
 ## Provisioner releases in flight
 
 A provisioner release (`dashboard/provisioner/VERSION`, its sealed manifest and

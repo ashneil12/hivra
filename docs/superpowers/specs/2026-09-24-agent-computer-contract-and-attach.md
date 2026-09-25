@@ -245,6 +245,23 @@ built.
   a sent step held. While held, Start, Stop and Restart are refused; deleting the
   computer, or shutting it down from inside, lets it go. A time limit for these
   belongs with the next worker change.
+- **Found in the first live attach on Canary (2026-09-25), both fixed.** (1)
+  Every activation and observation failed on the host before the VM was
+  checked: the step body carried the ~150 KB attached-agent bundle as one
+  argument to `python3` and `bash`, over Linux's 128 KiB limit for one argument
+  (`Argument list too long`). The host-step evidence below used a small bundle,
+  so it did not show this. Steps now carry the bundle on the host script's own
+  stdin (#143); the container test sends the real bundle over both SSH
+  transports. (2) The cleanup Remove of that never-activated agent was refused
+  in the guest: it opened the gateway drop-in folder, which exists only on agent
+  computers or after an activation, and left the staged home. Remove now
+  handles a staged, never-activated agent (#144,
+  `scripts/test-attached-agent-remove.py`; the program is re-pinned by
+  `20260925160000`). After both, on Canary fixture desktop `MY_UBUNTU_DESKTOP`:
+  add Codex reached Chat ready in 61 s, Change access (stop sharing ~/Hivra)
+  delivered contract rev 2, and Remove ended `removed` with ~/Hivra kept.
+  Signing in to ChatGPT in the attached Chat (AC-A2) needs the owner's account
+  and was not run.
 
 **The host lock on a real Proxmox host.** On a disposable Proxmox VE 8.4.21
 host (a Hetzner `cx33`, Debian 12, with a TCG guest running the QEMU guest
