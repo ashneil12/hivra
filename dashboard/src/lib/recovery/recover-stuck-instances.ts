@@ -226,7 +226,7 @@ async function attemptAutoRestart(
     { hostSlug: node, node },
     { host_id: row.host_id ?? null },
   );
-  const result = await startProxmoxInstance({ vmid, node }, { hostConfig });
+  const result = await startProxmoxInstance({ vmid, node }, { hostConfig, expectedInstanceId: row.id });
 
   const nowIso = new Date().toISOString();
   const nextAttempts = (row.auto_restart_attempts ?? 0) + 1;

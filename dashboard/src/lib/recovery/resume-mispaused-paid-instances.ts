@@ -104,6 +104,7 @@ async function resumeInstance(candidate: ResumeCandidate): Promise<ResumeOutcome
   }
 
   const result = await startProxmoxInstance(infra, {
+    expectedInstanceId: candidate.id,
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
       host_id: candidate.host_id,
     }),

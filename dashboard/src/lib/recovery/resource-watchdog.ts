@@ -257,6 +257,7 @@ async function pauseForRamCap(
   if (!infra) throw new Error("instance is not Proxmox-backed");
 
   const result = await shutdownProxmoxInstance(infra, {
+    expectedInstanceId: instance.id,
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
       host_id: instance.host_id,
     }),

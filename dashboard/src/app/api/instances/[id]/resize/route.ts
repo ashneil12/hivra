@@ -75,6 +75,7 @@ export async function PATCH(
 
   const result = await resizeProxmoxVm({
     vmid: infrastructure.vmid,
+    expectedInstanceId: instance.id,
     node: infrastructure.node,
     cpuLimit: spec.cpuLimit,
     memoryMb: spec.ramLimitMb,
