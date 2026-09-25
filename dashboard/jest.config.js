@@ -19,6 +19,8 @@ const config = {
     "<rootDir>/__tests__",
   ],
   setupFilesAfterEnv: ["<rootDir>/jest.setup.tsx"],
+  // Balances `--shard=i/n` (Dashboard CI) by measured suite duration.
+  testSequencer: "<rootDir>/scripts/jest-duration-sequencer.cjs",
   // Clear mock.calls / mock.results between tests so test:ci's
   // --runInBand serial run doesn't bleed call history from one test
   // into the next. Without this, mocks declared at module scope
