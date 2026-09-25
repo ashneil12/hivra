@@ -103,12 +103,13 @@ function usd(value: number): number {
   return Math.round(value * 1_000_000);
 }
 
-// Source for every number: https://docs.venice.ai/overview/pricing, re-checked
-// 2026-09-25 (every entry below still matches it), plus Venice's GET /models
-// pricing where that is higher (nano-banana-2-edit). Model ids are the exact
-// strings observed in prod `managed_venice_usage_events.model` (verified
-// against real usage rows) or, for not-yet-observed operations, the id our own
-// proxy route records.
+// Source for every number: https://docs.venice.ai/overview/pricing and the
+// model_spec.pricing of Venice's public GET /api/v1/models, both re-checked
+// 2026-09-25. Every entry below matches both, except nano-banana-2-edit, where
+// GET /models is higher and wins. Model ids are the exact strings observed in
+// prod `managed_venice_usage_events.model` (verified against real usage rows),
+// the models the Hermes agent's Venice image plugin offers, or, for
+// not-yet-observed operations, the id our own proxy route records.
 export const VENICE_MULTIMODAL_PRICES: readonly VeniceMultimodalPrice[] = [
   // ── Image generation (per image) ────────────────────────────────────────
   {
@@ -129,6 +130,51 @@ export const VENICE_MULTIMODAL_PRICES: readonly VeniceMultimodalPrice[] = [
     tiers: { "1k": usd(0.1), "2k": usd(0.14), "4k": usd(0.19) },
     tierMetadataKey: "resolution",
     notes: "Venice prices Nano Banana 2 by output resolution (1K/2K/4K).",
+  },
+  // The Hermes agent's Venice image plugin (vanilla-hermes-agent
+  // plugins/image_gen/venice) offers these four next to its qwen-image-2
+  // default; unpriced, they were a 402 on every managed image.
+  {
+    endpoint: "/api/v1/image/generate",
+    model: "nano-banana-pro",
+    displayName: "Nano Banana Pro",
+    unit: "per_image",
+    microUsdPerUnit: usd(0.18),
+    tiers: { "1k": usd(0.18), "2k": usd(0.23), "4k": usd(0.35) },
+    tierMetadataKey: "resolution",
+    notes: "Priced by output resolution; Venice's default is 1K.",
+  },
+  {
+    endpoint: "/api/v1/image/generate",
+    model: "gpt-image-2",
+    displayName: "GPT Image 2",
+    unit: "per_image",
+    microUsdPerUnit: usd(0.27),
+    tiers: { "1k": usd(0.27), "2k": usd(0.51), "4k": usd(0.84) },
+    tierMetadataKey: "resolution",
+    notes:
+      "Venice also prices it by quality within each resolution, defaulting to " +
+      "high; every quality price is at or below the resolution price, and a " +
+      "request that sets quality is refused (media-request-fields.ts), so the " +
+      "resolution price is the ceiling. Venice's default resolution is 1K.",
+  },
+  {
+    endpoint: "/api/v1/image/generate",
+    model: "venice-sd35",
+    displayName: "Venice SD 3.5",
+    unit: "per_image",
+    microUsdPerUnit: usd(0.01),
+    notes: "Flat per image; sized by width/height, which Venice doesn't price.",
+  },
+  {
+    endpoint: "/api/v1/image/generate",
+    model: "grok-imagine-image",
+    displayName: "Grok Imagine",
+    unit: "per_image",
+    microUsdPerUnit: usd(0.03),
+    tiers: { "1k": usd(0.03), "2k": usd(0.04) },
+    tierMetadataKey: "resolution",
+    notes: "Priced by output resolution (1K/2K only); Venice's default is 1K.",
   },
 
   // ── Image editing (per edit == per image) ───────────────────────────────

@@ -131,7 +131,6 @@ async function provisionForUser(userId: string, dryRun: boolean): Promise<{ outc
     const creditResult = await ensureBankrDepositWalletForUser({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
 
     if (creditResult.status === "not_configured") {

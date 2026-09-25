@@ -16,6 +16,8 @@ import {
   type RpcCallOptions,
   type RpcRetryConfig,
 } from "@/lib/billing/base-rpc-retry";
+import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
+import { reportOpsEvent } from "@/lib/ops-events";
 
 // SCRIPTURE_ANCHOR: token-store | Matthew 6:20 | Verse: Lay up for yourselves treasures in heaven, where neither moth nor rust consume.
 type DbTable = {
@@ -886,12 +888,305 @@ export async function refreshPrimaryHermesTokenHolding(params: {
   return result;
 }
 
+/**
+ * Lanes for the two crons that refresh holdings. Each keeps its own claim and
+ * judgment times per account: refresh-token-tiers only refreshes snapshots,
+ * so sharing them would let it mark accounts judged that
+ * refresh-token-holdings (the eligibility evaluator) never evaluated.
+ */
+export type TokenHoldingRefreshLane = "token_holdings" | "token_tiers";
+
+// supabase/migrations/20260925194500_token_holding_refresh_standing_first.sql
+export const TOKEN_HOLDING_REFRESH_CLAIM_RPC = "claim_token_holding_refresh_page";
+export const TOKEN_HOLDING_REFRESH_RECORD_RPC = "record_token_holding_refresh_judgments";
+export const TOKEN_HOLDING_REFRESH_CLOSE_RPC = "close_token_holding_refresh_run";
+
+/**
+ * Every account with token standing must be re-read within the Pro/Power
+ * breach grace. When a lane's cycle over those accounts runs longer than this,
+ * the run raises an ops event: until it clears, a holder who sold can keep a
+ * tier.
+ */
+export const TOKEN_STANDING_REREAD_OVERDUE_HOURS = REQUALIFICATION_GRACE_HOURS;
+
+// How long a run keeps starting reads when the caller sets no budget. The
+// caller's own work after the run must still fit its route's maxDuration.
+const DEFAULT_REFRESH_TIME_BUDGET_MS = 120_000;
+const MAX_REFRESH_TIME_BUDGET_MS = 240_000;
+
+type TokenHoldingRefreshDb = SupabaseLike & {
+  rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
+};
+
+/** One account read by a refresh run. */
+export interface TokenHoldingRefreshRead {
+  userId: string;
+  /** Claimed as an account with token standing: read first, on every run. */
+  standing: boolean;
+  status: "refreshed" | "no_verified_wallet" | "failed";
+  snapshotId?: string;
+  qualifiesBaseTier?: boolean;
+  zeroSnapshotsRecorded?: number;
+}
+
+/**
+ * Judges one page of reads (evaluates each account's standing) and returns the
+ * ids of the accounts it actually judged. Only those are recorded as judged;
+ * the rest keep their old judgment time, so the next run claims them ahead
+ * of every account judged since.
+ * Throwing leaves the whole page unrecorded.
+ */
+export type TokenHoldingJudgePage = (reads: TokenHoldingRefreshRead[]) => Promise<string[]>;
+
+/** The lane's cycle over accounts with standing, as a run left it. */
+export interface TokenStandingCycle {
+  /** Accounts with standing now. */
+  standing: number;
+  /** Of those, how many have not been judged since the cycle began. */
+  unjudged: number;
+  startedAt: string | null;
+  /** How long the cycle had run when the run closed it. */
+  ageSeconds: number;
+  /** Every account with standing was judged, so the next cycle has begun. */
+  completed: boolean;
+  /** The cycle ran longer than TOKEN_STANDING_REREAD_OVERDUE_HOURS. */
+  overdue: boolean;
+}
+
+function normalizeRefreshTimeBudget(ms: number | undefined): number {
+  if (!Number.isFinite(ms)) return DEFAULT_REFRESH_TIME_BUDGET_MS;
+  return Math.max(0, Math.min(MAX_REFRESH_TIME_BUDGET_MS, Math.floor(ms as number)));
+}
+
+function refreshRpcError(
+  rpc: string,
+  lane: TokenHoldingRefreshLane,
+  error: unknown,
+  action: string
+): Error {
+  const detail = error as { code?: unknown; message?: unknown };
+  const reason = `${String(detail.code ?? "unknown")}: ${String(detail.message ?? "no message")}`;
+  if (process.env.NODE_ENV !== "test") {
+    // eslint-disable-next-line no-console
+    console.error(`[refreshVerifiedHermesTokenHoldings] ${rpc} failed lane=${lane}: ${reason}`);
+  }
+  return new Error(`Failed to ${action} (${reason})`);
+}
+
+/**
+ * Next page of one class of accounts on a lane, least recently judged first
+ * (never judged first). With standing: an eligible or in-grace Pro/Power
+ * qualification, an eligible Venice boost, or a grandfathered lock wallet whose
+ * latest read is positive. Without: a verified primary (or lock) wallet read
+ * only to auto-qualify a new holder. A claim is a ten-minute lease, so neither
+ * the same run nor an overlapping one claims an account twice.
+ */
+async function claimTokenHoldingRefreshPage(params: {
+  db: TokenHoldingRefreshDb;
+  lane: TokenHoldingRefreshLane;
+  standing: boolean;
+  limit: number;
+}): Promise<string[]> {
+  const { data, error } = await params.db.rpc(TOKEN_HOLDING_REFRESH_CLAIM_RPC, {
+    p_lane: params.lane,
+    p_standing: params.standing,
+    p_limit: params.limit,
+  });
+  if (error) {
+    throw refreshRpcError(
+      TOKEN_HOLDING_REFRESH_CLAIM_RPC,
+      params.lane,
+      error,
+      "claim a token holding refresh page"
+    );
+  }
+  const rows = Array.isArray(data) ? (data as Array<{ user_id?: unknown }>) : [];
+  return rows
+    .map((row) => row.user_id)
+    .filter((userId): userId is string => typeof userId === "string" && userId.length > 0);
+}
+
+async function recordTokenHoldingJudgments(params: {
+  db: TokenHoldingRefreshDb;
+  lane: TokenHoldingRefreshLane;
+  userIds: string[];
+}): Promise<void> {
+  if (params.userIds.length === 0) return;
+  const { error } = await params.db.rpc(TOKEN_HOLDING_REFRESH_RECORD_RPC, {
+    p_lane: params.lane,
+    p_user_ids: params.userIds,
+  });
+  if (error) {
+    throw refreshRpcError(
+      TOKEN_HOLDING_REFRESH_RECORD_RPC,
+      params.lane,
+      error,
+      "record token holding judgments"
+    );
+  }
+}
+
+async function closeTokenHoldingRefreshRun(params: {
+  db: TokenHoldingRefreshDb;
+  lane: TokenHoldingRefreshLane;
+}): Promise<TokenStandingCycle> {
+  const { data, error } = await params.db.rpc(TOKEN_HOLDING_REFRESH_CLOSE_RPC, {
+    p_lane: params.lane,
+  });
+  if (error) {
+    throw refreshRpcError(
+      TOKEN_HOLDING_REFRESH_CLOSE_RPC,
+      params.lane,
+      error,
+      "close the token holding refresh run"
+    );
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+        standing?: unknown;
+        unjudged?: unknown;
+        cycle_started_at?: unknown;
+        cycle_seconds?: unknown;
+        cycle_completed?: unknown;
+      }
+    | null
+    | undefined;
+  if (!row) {
+    throw new Error("Failed to close the token holding refresh run (no row returned)");
+  }
+  const ageSeconds = Number(row.cycle_seconds ?? 0);
+  return {
+    standing: Number(row.standing ?? 0),
+    unjudged: Number(row.unjudged ?? 0),
+    startedAt: typeof row.cycle_started_at === "string" ? row.cycle_started_at : null,
+    ageSeconds: Number.isFinite(ageSeconds) ? ageSeconds : 0,
+    completed: row.cycle_completed === true,
+    overdue:
+      Number.isFinite(ageSeconds) && ageSeconds > TOKEN_STANDING_REREAD_OVERDUE_HOURS * 3600,
+  };
+}
+
+const REFRESH_CRON_ROUTES: Record<TokenHoldingRefreshLane, { source: string; route: string }> = {
+  token_holdings: {
+    source: "cron.refresh-token-holdings",
+    route: "/api/cron/refresh-token-holdings",
+  },
+  token_tiers: {
+    source: "cron.refresh-token-tiers",
+    route: "/api/cron/refresh-token-tiers",
+  },
+};
+
+async function reportOverdueStandingRereads(
+  lane: TokenHoldingRefreshLane,
+  cycle: TokenStandingCycle
+): Promise<void> {
+  const { source, route } = REFRESH_CRON_ROUTES[lane];
+  // Title and message stay fixed so repeats fold into one ops event.
+  await reportOpsEvent({
+    source,
+    severity: "error",
+    title: "Token standing re-reads overdue",
+    message:
+      "Accounts with Pro/Power, Venice boost or lock-wallet standing went longer than the " +
+      `${TOKEN_STANDING_REREAD_OVERDUE_HOURS}h breach grace without a complete re-read on the ` +
+      `${lane} lane. Until it clears, a holder who sold can keep a tier. Check the run's ` +
+      "budgetExhausted, unread and failed counts and the Base RPC.",
+    route,
+    metadata: {
+      failureType: "token_standing_reread_overdue",
+      lane,
+      standing: cycle.standing,
+      unjudged: cycle.unjudged,
+      cycleStartedAt: cycle.startedAt,
+      cycleHours: Math.round(cycle.ageSeconds / 360) / 10,
+      cycleCompleted: cycle.completed,
+    },
+  });
+}
+
+/**
+ * An account the crons are judging has no verification wallet (its primary is
+ * missing or is a platform deposit wallet). Its verified holding is zero, so
+ * record that for every token whose latest snapshot still shows a balance:
+ * refresh-token-tiers honours the latest snapshot for token_base, and the
+ * snapshot is the audit trail for the zero-balance eligibility evaluation.
+ * Idempotent: once the latest snapshot is zero nothing more is written.
+ */
+async function recordUnbackedTokenHoldings(params: {
+  db: SupabaseLike;
+  userId: string;
+  now: Date;
+}): Promise<number> {
+  let written = 0;
+  for (const token of verifiedTokenBalanceConfigs(params.now)) {
+    const latest = await getLatestTokenHoldingSnapshot(params.userId, token.tokenAddress, params.db);
+    if (!latest || BigInt(latest.balanceRaw) <= 0n) continue;
+
+    const { error } = await table(params.db, "token_holding_snapshots")
+      .insert({
+        user_id: params.userId,
+        wallet_id: null,
+        wallet_address: latest.walletAddress,
+        normalized_wallet_address: latest.normalizedWalletAddress,
+        chain_id: token.chainId,
+        token_address: token.tokenAddress,
+        token_symbol: token.tokenSymbol,
+        token_decimals: token.tokenDecimals,
+        balance_raw: "0",
+        balance_display: "0",
+        qualifies_base_tier: false,
+        block_number: null,
+        source: "admin",
+        metadata: { reason: "no_verification_wallet" },
+        checked_at: params.now.toISOString(),
+      })
+      .select("id")
+      .single();
+    if (error) {
+      throw new Error(`Failed to record zero ${token.tokenSymbol} holding for an account without a verification wallet`);
+    }
+    written += 1;
+  }
+  return written;
+}
+
+/**
+ * One run of a holdings cron on its lane.
+ *
+ * Accounts with token standing come first, and all of them are read, page
+ * after page, until none is left or the time budget runs out, so no number of
+ * accounts without standing can delay them. Accounts without standing (read
+ * only to auto-qualify a new holder) get the capacity that remains, at most
+ * `limit` per run. Each page is judged (judgePage) and only the accounts
+ * actually judged are recorded: a failed read, an evaluation that failed or
+ * never ran, and a page cut short by the budget all keep their old judgment
+ * time, so the next run claims them ahead of every account judged since. The run then closes the lane's cycle over accounts with standing
+ * and raises an ops event once that cycle has run longer than the breach grace.
+ */
 export async function refreshVerifiedHermesTokenHoldings(params: {
-  db?: SupabaseLike | null;
+  /** Which cron's claim and judgment times to use (see TokenHoldingRefreshLane). */
+  lane: TokenHoldingRefreshLane;
+  db?: TokenHoldingRefreshDb | null;
+  /**
+   * Page size, 1..100, and the most accounts WITHOUT standing read per run.
+   * Accounts with standing are all read on every run, within timeBudgetMs.
+   */
   limit?: number;
+  /** Stop starting reads after this many ms (default 120 s, at most 240 s). */
+  timeBudgetMs?: number;
+  /**
+   * Evaluates a page of reads and returns the ids it judged. Without it, every
+   * account whose read gave a balance (refreshed, or zero for no wallet) is
+   * judged: the snapshot is all refresh-token-tiers needs.
+   */
+  judgePage?: TokenHoldingJudgePage;
+  /** Millisecond clock for the time budget; injectable for tests. */
+  clock?: () => number;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   refreshUserHolding?: RefreshUserHolding;
+  now?: Date;
   // Base RPC resilience knobs (all optional; sensible defaults). Exposed mainly
   // so tests can inject a fake sleep/random and tighten the retry budget. The
   // retry/backoff/jitter on 429/5xx/network lives in the shared base-rpc-retry
@@ -902,25 +1197,18 @@ export async function refreshVerifiedHermesTokenHoldings(params: {
   rpcSleepImpl?: (ms: number) => Promise<void>;
   rpcRandom?: () => number;
   interUserDelayMs?: number;
-} = {}) {
-  const admin = requireDb(params.db ?? supabaseAdmin);
+}) {
+  const admin = requireDb(
+    params.db ?? (supabaseAdmin as unknown as TokenHoldingRefreshDb | null)
+  );
+  const lane = params.lane;
   const limit = normalizeRefreshLimit(params.limit);
-  const { data, error } = await (table(admin, "user_wallets")
-    .select("id, user_id, address, normalized_address, chain_type, chain_id, is_primary, verified_at")
-    .eq("chain_type", "evm")
-    .eq("is_primary", true)
-    .not("verified_at", "is", null)
-    .order("verified_at", { ascending: true })
-    .limit(limit) as unknown as Promise<{ data: unknown; error: unknown }>);
-
-  if (error) {
-    throw new Error("Failed to load verified wallets for token refresh");
-  }
-
-  const wallets = Array.isArray(data) ? (data as UserWalletRow[]) : [];
+  const clock = params.clock ?? Date.now;
+  const deadline = clock() + normalizeRefreshTimeBudget(params.timeBudgetMs);
+  const now = params.now ?? new Date();
 
   // Build the per-call RPC options once: retry config + injectable sleep/random
-  // ride along with every eth_* call this batch makes (only when the default
+  // ride along with every eth_* call this run makes (only when the default
   // refresher is used — a caller-supplied refreshUserHolding owns its own RPC).
   const rpcOptions: RpcCallOptions = {
     retryConfig: normalizeRpcRetryConfig(params.rpcRetryConfig),
@@ -943,46 +1231,37 @@ export async function refreshVerifiedHermesTokenHoldings(params: {
         rpcOptions,
       }));
 
-  const results: Array<{
-    userId: string;
-    walletId: string;
-    status: "refreshed" | "no_verified_wallet" | "failed";
-    snapshotId?: string;
-    qualifiesBaseTier?: boolean;
-  }> = [];
+  const results: TokenHoldingRefreshRead[] = [];
+  const byClass = {
+    standing: { claimed: 0, read: 0, judged: 0 },
+    withoutStanding: { claimed: 0, read: 0, judged: 0 },
+  };
+  let readsStarted = 0;
+  let budgetExhausted = false;
 
-  let refreshed = 0;
-  let noVerifiedWallet = 0;
-  let failed = 0;
-
-  let walletIndex = 0;
-  for (const wallet of wallets) {
+  const readAccount = async (userId: string, standing: boolean): Promise<TokenHoldingRefreshRead> => {
     // Throttle between users (not before the first) to keep the per-tick request
     // rate under the public Base RPC endpoint's rate-limit threshold. Skipped
     // when a caller injects its own refreshUserHolding (it owns its pacing).
-    if (walletIndex > 0 && !params.refreshUserHolding && interUserDelayMs > 0) {
+    if (readsStarted > 0 && !params.refreshUserHolding && interUserDelayMs > 0) {
       await sleepImpl(interUserDelayMs);
     }
-    walletIndex += 1;
+    readsStarted += 1;
     try {
-      const result = await refreshUserHolding(wallet.user_id);
+      const result = await refreshUserHolding(userId);
       if (result.status === "refreshed") {
-        refreshed += 1;
-        results.push({
-          userId: wallet.user_id,
-          walletId: wallet.id,
+        return {
+          userId,
+          standing,
           status: "refreshed",
           snapshotId: result.snapshot?.id,
           qualifiesBaseTier: result.snapshot?.qualifiesBaseTier,
-        });
-      } else {
-        noVerifiedWallet += 1;
-        results.push({
-          userId: wallet.user_id,
-          walletId: wallet.id,
-          status: "no_verified_wallet",
-        });
+        };
       }
+      // Standing with no verification wallet behind it: the verified holding
+      // is zero. The caller judges this account at a zero balance.
+      const zeroSnapshotsRecorded = await recordUnbackedTokenHoldings({ db: admin, userId, now });
+      return { userId, standing, status: "no_verified_wallet", zeroSnapshotsRecorded };
     } catch (refreshErr) {
       // Diagnostic: gated on non-test so the existing leak tests still
       // pass. Surfaces the underlying refresh error to runtime logs so
@@ -990,24 +1269,97 @@ export async function refreshVerifiedHermesTokenHoldings(params: {
       if (process.env.NODE_ENV !== "test") {
         // eslint-disable-next-line no-console
         console.error(
-          `[refreshVerifiedHermesTokenHoldings] refresh failed user=${wallet.user_id} wallet=${wallet.id}:`,
+          `[refreshVerifiedHermesTokenHoldings] refresh failed user=${userId} lane=${lane}:`,
           refreshErr
         );
       }
-      failed += 1;
-      results.push({
-        userId: wallet.user_id,
-        walletId: wallet.id,
-        status: "failed",
-      });
+      // A failed read is not a zero balance: the account is not judged, so
+      // the next run claims it ahead of every account judged since.
+      return { userId, standing, status: "failed" };
     }
+  };
+
+  const judgeReads = async (reads: TokenHoldingRefreshRead[]): Promise<string[]> => {
+    const definitive = reads.filter((read) => read.status !== "failed").map((read) => read.userId);
+    if (definitive.length === 0) return [];
+    if (!params.judgePage) return definitive;
+    const judged = new Set(await params.judgePage(reads));
+    // Only an account this page read can be recorded as judged.
+    return definitive.filter((userId) => judged.has(userId));
+  };
+
+  let runError: unknown = null;
+  try {
+    for (const standing of [true, false]) {
+      const tally = standing ? byClass.standing : byClass.withoutStanding;
+      // With standing: every account, every run. Without: at most `limit`.
+      let quota = standing ? Number.POSITIVE_INFINITY : limit;
+      while (quota > 0) {
+        if (clock() >= deadline) {
+          budgetExhausted = true;
+          break;
+        }
+        const pageLimit = Math.min(limit, quota);
+        const userIds = await claimTokenHoldingRefreshPage({ db: admin, lane, standing, limit: pageLimit });
+        if (userIds.length === 0) break;
+        quota -= userIds.length;
+        tally.claimed += userIds.length;
+
+        const reads: TokenHoldingRefreshRead[] = [];
+        for (const userId of userIds) {
+          // Out of time: the rest of the page stays unread and unjudged, so
+          // the next run claims it ahead of every account judged since.
+          if (clock() >= deadline) {
+            budgetExhausted = true;
+            break;
+          }
+          reads.push(await readAccount(userId, standing));
+        }
+        results.push(...reads);
+        tally.read += reads.length;
+
+        const judged = await judgeReads(reads);
+        await recordTokenHoldingJudgments({ db: admin, lane, userIds: judged });
+        tally.judged += judged.length;
+
+        if (budgetExhausted || userIds.length < pageLimit) break;
+      }
+      if (budgetExhausted) break;
+    }
+  } catch (error) {
+    runError = error;
   }
 
+  // Close the run even when it failed part-way, so a lane that keeps failing
+  // still raises the overdue event once its cycle outlasts the grace.
+  let cycle: TokenStandingCycle | null = null;
+  try {
+    cycle = await closeTokenHoldingRefreshRun({ db: admin, lane });
+  } catch (closeError) {
+    runError ??= closeError;
+  }
+  if (cycle?.overdue) {
+    await reportOverdueStandingRereads(lane, cycle);
+  }
+  if (runError || !cycle) throw runError;
+
+  const countStatus = (status: TokenHoldingRefreshRead["status"]) =>
+    results.filter((read) => read.status === status).length;
   return {
-    checked: wallets.length,
-    refreshed,
-    noVerifiedWallet,
-    failed,
+    lane,
+    checked: results.length,
+    refreshed: countStatus("refreshed"),
+    noVerifiedWallet: countStatus("no_verified_wallet"),
+    failed: countStatus("failed"),
+    judged: byClass.standing.judged + byClass.withoutStanding.judged,
+    unread:
+      byClass.standing.claimed -
+      byClass.standing.read +
+      (byClass.withoutStanding.claimed - byClass.withoutStanding.read),
+    budgetExhausted,
+    standing: byClass.standing,
+    withoutStanding: byClass.withoutStanding,
+    cycle,
     results,
   };
 }
