@@ -190,8 +190,10 @@ conclusions. Custody and regulatory treatment are under legal review.
   user's saved withdraw address (or, as a move, to their signature-verified
   primary wallet) using a row-5 key that Hivra mints and submits. Saving a
   withdraw address needs a fresh sign-in check (Clerk reverification), emails
-  the owner, and the new address cannot receive anything for 24 hours; a newly
-  verified wallet is held the same way (`withdraw-destination-policy.ts`).
+  the owner, and the new address cannot receive anything for 24 hours.
+  Verifying a different wallet changes the move destination, so it needs the
+  same fresh sign-in check, emails the owner and is held the same way
+  (`withdraw-destination-policy.ts`).
   Hivra can also mint keys through the partner key. The stored credential rows
   hold no key.
 - **How long:** until the user withdraws; there is no expiry.

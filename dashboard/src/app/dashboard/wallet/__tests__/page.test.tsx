@@ -543,6 +543,83 @@ describe("WalletPage custody migration", () => {
     });
   });
 
+  describe("when verifying a wallet needs a fresh sign-in check", () => {
+    const REVERIFY = {
+      clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } },
+    };
+    type Fetcher = (...args: unknown[]) => Promise<unknown>;
+    const clerk = jest.requireMock("@clerk/nextjs") as { useReverification: (fetcher: Fetcher) => Fetcher };
+    const passthrough = clerk.useReverification;
+    let prompts = 0;
+    let cancel = false;
+
+    beforeEach(() => {
+      prompts = 0;
+      cancel = false;
+      // Clerk's useReverification, faithfully enough: a reverification answer
+      // opens the "confirm it's you" dialog, then the request is retried.
+      clerk.useReverification = (fetcher) => async (...args) => {
+        const first = (await fetcher(...args)) as { clerk_error?: { reason?: string } } | undefined;
+        if (first?.clerk_error?.reason !== "reverification-error") return first;
+        prompts += 1;
+        if (cancel) {
+          const { ClerkRuntimeError } = jest.requireActual("@clerk/nextjs/errors");
+          throw new ClerkRuntimeError("cancelled", { code: "reverification_cancelled" });
+        }
+        return fetcher(...args);
+      };
+      const baseFetch = fetchMock.getMockImplementation()!;
+      let verifyCalls = 0;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input) === "/api/billing/wallet/verify") {
+          verifyCalls += 1;
+          if (verifyCalls === 1) return json(REVERIFY, 403);
+        }
+        return baseFetch(input, init);
+      });
+      (window as unknown as { ethereum: { request: jest.Mock } }).ethereum = {
+        request: jest
+          .fn()
+          .mockResolvedValueOnce(["0x000000000000000000000000000000000000abcd"])
+          .mockResolvedValueOnce("0xsigned"),
+      };
+    });
+
+    afterEach(() => {
+      clerk.useReverification = passthrough;
+    });
+
+    function verifyCalls() {
+      return fetchMock.mock.calls.filter(([input]) => requestUrl(input as RequestInfo | URL) === "/api/billing/wallet/verify");
+    }
+
+    it("asks the owner to confirm it's them, then retries the same signed request", async () => {
+      render(<WalletPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: /connect wallet/i }));
+
+      expect(await screen.findByText(/wallet connected/i)).toBeInTheDocument();
+      expect(prompts).toBe(1);
+      expect(verifyCalls()).toHaveLength(2);
+      expect(verifyCalls()[1][1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ challengeId: "challenge_123", signature: "0xsigned" }),
+      }));
+    });
+
+    it("changes nothing and says so when the owner closes the dialog", async () => {
+      cancel = true;
+      render(<WalletPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: /connect wallet/i }));
+
+      expect(await screen.findByText(/confirm it's you to verify this wallet/i)).toBeInTheDocument();
+      expect(prompts).toBe(1);
+      expect(verifyCalls()).toHaveLength(1);
+      expect(screen.queryByText(/wallet connected/i)).not.toBeInTheDocument();
+    });
+  });
+
   it("locks the Pro price for a connected self-custody wallet before refreshing balance", async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);

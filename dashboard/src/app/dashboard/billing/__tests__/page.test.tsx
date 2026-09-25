@@ -1629,6 +1629,72 @@ describe("BillingPage", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/billing/token-holding", { method: "POST" });
   });
 
+  it("asks the owner to confirm it's them when verifying a wallet needs it, then retries the same signed request", async () => {
+    type Fetcher = (...args: unknown[]) => Promise<unknown>;
+    const clerk = jest.requireMock("@clerk/nextjs") as { useReverification: (fetcher: Fetcher) => Fetcher };
+    const passthrough = clerk.useReverification;
+    let prompts = 0;
+    // Clerk's useReverification, faithfully enough: a reverification answer
+    // opens the "confirm it's you" dialog, then the request is retried.
+    clerk.useReverification = (fetcher) => async (...args) => {
+      const first = (await fetcher(...args)) as { clerk_error?: { reason?: string } } | undefined;
+      if (first?.clerk_error?.reason !== "reverification-error") return first;
+      prompts += 1;
+      return fetcher(...args);
+    };
+    try {
+      tokenHoldingData = {
+        token: { chainId: 8453, tokenAddress: HERMESOS_CONTRACT, tokenSymbol: "Hivra", minimumBalanceDisplay: "1" },
+        wallet: null,
+        snapshot: null,
+        entitlement: { verified: false, qualifiesBaseTier: false },
+      };
+      tokenRefreshData = {
+        token: { chainId: 8453, tokenAddress: HERMESOS_CONTRACT, tokenSymbol: "Hivra", minimumBalanceDisplay: "1" },
+        refresh: {
+          status: "refreshed",
+          snapshot: { id: "snapshot_2", balanceDisplay: "2", qualifiesBaseTier: true, checkedAt: "2026-04-24T12:05:00.000Z" },
+        },
+        entitlement: { verified: true, qualifiesBaseTier: true },
+      };
+      const baseFetch = fetchMock.getMockImplementation()!;
+      let verifyCalls = 0;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/wallet/verify")) {
+          verifyCalls += 1;
+          if (verifyCalls === 1) {
+            return Promise.resolve(apiResponse(
+              { clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } } },
+              { ok: false, status: 403 },
+            ));
+          }
+        }
+        return baseFetch(input, init);
+      });
+      (window as unknown as { ethereum?: { request: jest.Mock } }).ethereum = {
+        request: jest.fn()
+          .mockResolvedValueOnce(["0x000000000000000000000000000000000000dEaD"])
+          .mockResolvedValueOnce("0xsigned"),
+      };
+
+      render(<BillingPage />);
+      await openTab("Payment methods");
+      await waitFor(() => {
+        expect(screen.getByText(/no verified wallet/i)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /connect wallet/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("0x000000000000000000000000000000000000dead")).toBeInTheDocument();
+      });
+      expect(prompts).toBe(1);
+      expect(verifyCalls).toBe(2);
+    } finally {
+      clerk.useReverification = passthrough;
+    }
+  });
+
   it("asks the wallet for accounts on billing even when the provider reports disconnected before permission", async () => {
     tokenHoldingData = {
       token: {

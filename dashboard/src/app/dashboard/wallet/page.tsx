@@ -9,6 +9,7 @@ import { useLocale } from '@/components/i18n/LocaleProvider';
 import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
 import { useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
+import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
 import { LAUNCH_ROUTE } from '@/lib/hivra/launch-navigation';
 import { planReturnParams, withReturnParams } from '@/lib/safe-return-path';
@@ -323,6 +324,9 @@ export default function WalletPage() {
   const walletCopy = copy.dashboard.wallet;
   // Token geo-policy: "allowed" at once while the policy is dormant.
   const tokenGeo = useTokenGeoAccess();
+  // Verifying a different wallet can change where a lock-wallet move sends
+  // funds, so the server may ask the user to confirm it's them first.
+  const stepUpRequest = useStepUpJsonRequest();
   const fromWelcome = searchParams?.get('from') === 'welcome';
   const welcomeRedirectFiredRef = useRef(false);
   const [data, setData] = useState<WalletApiPayload | null>(null);
@@ -580,7 +584,7 @@ export default function WalletPage() {
         return;
       }
 
-      const verifyResponse = await fetch('/api/billing/wallet/verify', {
+      const verifyResult = await stepUpRequest('/api/billing/wallet/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -588,7 +592,11 @@ export default function WalletPage() {
           signature,
         }),
       });
-      const verifyPayload = await readApiPayload(verifyResponse);
+      if (!verifyResult) {
+        setWalletConnectError(STEP_UP_CANCELLED_VERIFY_MESSAGE);
+        return;
+      }
+      const verifyPayload = isRecord(verifyResult.body) ? verifyResult.body : null;
       const verifyData = apiSuccessData(verifyPayload);
       if (!verifyData) {
         setWalletConnectError(apiPayloadError(verifyPayload, 'Wallet verification failed.'));
@@ -614,7 +622,7 @@ export default function WalletPage() {
     } finally {
       setWalletConnecting(false);
     }
-  }, [load, walletCopy.verification.verifiedSuffix]);
+  }, [load, stepUpRequest, walletCopy.verification.verifiedSuffix]);
 
   const handleLockPrice = useCallback(async () => {
     setWalletLockingPrice(true);

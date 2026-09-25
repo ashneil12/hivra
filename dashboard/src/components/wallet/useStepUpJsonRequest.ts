@@ -5,7 +5,8 @@ import { useReverification } from '@clerk/nextjs';
 import { isReverificationCancelledError } from '@clerk/nextjs/errors';
 
 /**
- * JSON requests that change a withdrawal destination. The server answers them
+ * JSON requests that change a withdrawal destination (including verifying a
+ * different wallet for a lock-wallet holder). The server answers them
  * with Clerk's reverification response (403) unless the user signed in or
  * confirmed it's them in the last few minutes; Clerk's useReverification then
  * shows its "confirm it's you" dialog and retries the request.
@@ -56,3 +57,4 @@ export function useStepUpJsonRequest() {
 }
 
 export const STEP_UP_CANCELLED_MESSAGE = "Confirm it's you to save this address. Nothing was changed.";
+export const STEP_UP_CANCELLED_VERIFY_MESSAGE = "Confirm it's you to verify this wallet. Nothing was changed.";

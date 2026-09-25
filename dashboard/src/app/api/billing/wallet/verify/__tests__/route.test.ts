@@ -5,14 +5,17 @@ import { verifyWalletChallenge } from "@/lib/billing/wallet-verification";
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
+  reverificationErrorResponse: jest.requireActual("@clerk/nextjs/server").reverificationErrorResponse,
 }));
 
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {},
 }));
 
+const mockChallengeAddress = jest.fn();
 jest.mock("@/lib/billing/wallet-verification", () => ({
   verifyWalletChallenge: jest.fn(),
+  getPendingWalletChallengeAddress: (...args: unknown[]) => mockChallengeAddress(...args),
 }));
 
 const mockPrimaryWallet = jest.fn();
@@ -25,8 +28,21 @@ jest.mock("@/lib/billing/token-holdings", () => ({
   getHermesLockWallet: (...args: unknown[]) => mockLockWallet(...args),
 }));
 jest.mock("@/lib/billing/withdraw-destination-notice", () => ({
+  // The real fresh sign-in check: it only reads the auth object.
+  withdrawDestinationStepUpResponse:
+    jest.requireActual("@/lib/billing/withdraw-destination-notice").withdrawDestinationStepUpResponse,
   noticeWithdrawDestinationChange: (...args: unknown[]) => mockNotice(...args),
 }));
+jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+
+const LOCK_WALLET = { id: "lock", address: "0x00000000000000000000000000000000000010c4" };
+const OLD_PRIMARY = {
+  id: "old",
+  address: "0x000000000000000000000000000000000000beef",
+  normalizedAddress: "0x000000000000000000000000000000000000beef",
+  verifiedAt: "2026-01-01T00:00:00.000Z",
+};
+const NEW_ADDRESS = "0x000000000000000000000000000000000000dead";
 
 describe("POST /api/billing/wallet/verify", () => {
   const userId = "user_123";
@@ -35,12 +51,18 @@ describe("POST /api/billing/wallet/verify", () => {
     signature: "0xabcdef",
   };
 
+  // A session that has not confirmed it's the owner recently. Only
+  // verifications that change a lock-wallet holder's move destination ask.
+  const mockHas = jest.fn();
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrimaryWallet.mockResolvedValue(null);
     mockLockWallet.mockResolvedValue(null);
     mockNotice.mockResolvedValue(undefined);
-    (auth as unknown as jest.Mock).mockResolvedValue({ userId });
+    mockChallengeAddress.mockResolvedValue(NEW_ADDRESS);
+    mockHas.mockReturnValue(false);
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId, has: mockHas });
     (verifyWalletChallenge as jest.Mock).mockResolvedValue({
       status: "verified",
       challenge: {
@@ -129,18 +151,80 @@ describe("POST /api/billing/wallet/verify", () => {
     });
   });
 
-  it("emails a lock-wallet holder when a different wallet becomes the one their tokens can move to", async () => {
-    mockLockWallet.mockResolvedValue({ id: "lock", address: "0x00000000000000000000000000000000000010c4" });
-    mockPrimaryWallet.mockResolvedValue({
-      id: "old",
-      address: "0x000000000000000000000000000000000000beef",
-      normalizedAddress: "0x000000000000000000000000000000000000beef",
-      verifiedAt: "2026-01-01T00:00:00.000Z",
+  it("asks a lock-wallet holder to confirm it's them before a different wallet becomes where their tokens can move, and verifies nothing", async () => {
+    mockLockWallet.mockResolvedValue(LOCK_WALLET);
+    mockPrimaryWallet.mockResolvedValue(OLD_PRIMARY);
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } },
     });
+    expect(mockHas).toHaveBeenCalledWith({ reverification: "strict" });
+    expect(mockChallengeAddress).toHaveBeenCalledWith({ userId, challengeId: "challenge_123" });
+    // The challenge stays unused, so the same request can be retried once
+    // the user has confirmed it's them.
+    expect(verifyWalletChallenge).not.toHaveBeenCalled();
+    expect(mockNotice).not.toHaveBeenCalled();
+  });
+
+  it("asks for the fresh sign-in check when the lock wallet or the current wallet can't be read", async () => {
+    mockLockWallet.mockRejectedValue(new Error("db down"));
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(403);
+    expect(verifyWalletChallenge).not.toHaveBeenCalled();
+  });
+
+  it("asks for the fresh sign-in check when the challenge's wallet can't be read", async () => {
+    mockLockWallet.mockResolvedValue(LOCK_WALLET);
+    mockPrimaryWallet.mockResolvedValue(OLD_PRIMARY);
+    mockChallengeAddress.mockRejectedValue(new Error("db down"));
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(403);
+    expect(verifyWalletChallenge).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the session can't answer the fresh sign-in check", async () => {
+    mockLockWallet.mockResolvedValue(LOCK_WALLET);
+    mockPrimaryWallet.mockResolvedValue(OLD_PRIMARY);
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId });
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(403);
+    expect(verifyWalletChallenge).not.toHaveBeenCalled();
+  });
+
+  it("leaves an unknown, used or expired challenge to the verifier without asking", async () => {
+    mockLockWallet.mockResolvedValue(LOCK_WALLET);
+    mockPrimaryWallet.mockResolvedValue(OLD_PRIMARY);
+    mockChallengeAddress.mockResolvedValue(null);
+    (verifyWalletChallenge as jest.Mock).mockResolvedValueOnce({ status: "already_used" });
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(409);
+    expect(mockHas).not.toHaveBeenCalled();
+  });
+
+  it("verifies the new wallet after a fresh sign-in check and emails the lock-wallet holder", async () => {
+    mockLockWallet.mockResolvedValue(LOCK_WALLET);
+    mockPrimaryWallet.mockResolvedValue(OLD_PRIMARY);
+    mockHas.mockReturnValue(true);
 
     const response = await POST(createRequest());
 
     expect(response.status).toBe(200);
+    expect(verifyWalletChallenge).toHaveBeenCalledWith({
+      userId,
+      challengeId: "challenge_123",
+      signature: "0xabcdef",
+    });
     expect(mockNotice).toHaveBeenCalledWith({
       userId,
       kind: "verified_wallet",
@@ -151,8 +235,8 @@ describe("POST /api/billing/wallet/verify", () => {
     });
   });
 
-  it("sends no destination email to an account without a lock wallet, or when the same wallet is verified again", async () => {
-    await POST(createRequest());
+  it("needs no fresh sign-in and sends no email for an account without a lock wallet, or when the same wallet is verified again", async () => {
+    expect((await POST(createRequest())).status).toBe(200);
     expect(mockNotice).not.toHaveBeenCalled();
 
     mockLockWallet.mockResolvedValue({ id: "lock", address: "0x00000000000000000000000000000000000010c4" });
@@ -162,8 +246,9 @@ describe("POST /api/billing/wallet/verify", () => {
       normalizedAddress: "0x000000000000000000000000000000000000dead",
       verifiedAt: "2026-01-01T00:00:00.000Z",
     });
-    await POST(createRequest());
+    expect((await POST(createRequest())).status).toBe(200);
     expect(mockNotice).not.toHaveBeenCalled();
+    expect(mockHas).not.toHaveBeenCalled();
   });
 
   it("flags the takeover when the wallet moved from another account", async () => {
