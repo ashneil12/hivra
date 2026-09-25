@@ -1318,7 +1318,7 @@ export function LaunchJourney() {
               <AlertTriangle size={16} aria-hidden />
               <span><strong>Starting a new launch doesn&apos;t delete what was created.</strong>
                 <span className={styles.blockerActions}>
-                  <Link href={`/dashboard/agent/${encodeURIComponent(notes.partialId)}?tab=manage`}>Open it to delete</Link>
+                  <Link href={`/dashboard/agent/${encodeURIComponent(notes.partialId)}?tab=manage&section=advanced#danger`}>Open it to delete</Link>
                 </span>
               </span>
             </div>
@@ -2702,7 +2702,7 @@ export function LaunchJourney() {
           {draft.result?.status === "error" ? <div className={styles.blocker}>
             <AlertTriangle size={16} aria-hidden />
             <span><strong>Part of this launch was created and can be removed.</strong>
-              <Link href={`/dashboard/agent/${encodeURIComponent(draft.result.id)}?tab=manage`}>Open it to delete</Link>
+              <Link href={`/dashboard/agent/${encodeURIComponent(draft.result.id)}?tab=manage&section=advanced#danger`}>Open it to delete</Link>
             </span>
           </div> : null}
           {footer(primary(launchLabel, () => void submit(), Boolean(capacityBlocker

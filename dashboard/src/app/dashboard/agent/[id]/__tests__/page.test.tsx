@@ -6,6 +6,7 @@ import { NativeWorkspaceProvider } from "@/components/layout/NativeWorkspaceBrid
 import { refreshDesktopCapability, resetDesktopSessionLaneForTests } from "@/lib/remote-computers/desktop-session-lane";
 import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
 import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
+import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -73,10 +74,11 @@ jest.mock("@/components/hivra/HivraChat", () => ({
 }));
 
 jest.mock("@/components/hivra/DigitalOceanAgentWorkspace", () => ({
-  DigitalOceanAgentWorkspace: ({ agentId, firstTask, onDeleted }: { agentId: string; firstTask?: string | null; onDeleted: () => void }) => (
+  DigitalOceanAgentWorkspace: ({ agentId, firstTask, onDeleted, onChanged }: { agentId: string; firstTask?: string | null; onDeleted: () => void; onChanged?: () => void }) => (
     <div>
       <span>DigitalOcean session {agentId}{firstTask ? ` · first task: ${firstTask}` : ""}</span>
       <button type="button" onClick={onDeleted}>Session deleted</button>
+      <button type="button" onClick={onChanged}>Session renamed</button>
     </div>
   ),
 }));
@@ -104,14 +106,20 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ plan, onChanged, onDestroyed, onConnectionServiceRestarted }: {
+  HivraManage: ({ agent, plan, onChanged, onDestroyed, onConnectionServiceRestarted, chatReadiness }: {
+    agent?: { manage?: { power?: { stop?: { state?: string } } } };
     plan?: { usage?: { usedCpu: number } } | null;
     onChanged: () => void;
     onDestroyed: () => void;
     onConnectionServiceRestarted?: () => void;
+    chatReadiness?: string | null;
   }) => <>
     <div>Manage panel</div>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
+    <output data-testid="manage-stop">{agent?.manage?.power?.stop?.state ?? "unknown"}</output>
+    <output data-testid="manage-sign-in">{chatReadiness ?? "unknown"}</output>
+    {/* Uncontrolled: it keeps what was typed only while Manage stays mounted. */}
+    <input aria-label="Manage draft" />
     <button onClick={onChanged}>Refresh capacity</button>
     <button onClick={onDestroyed}>Agent deleted</button>
     {/* Stands in for a finished in-place connection-service update. */}
@@ -303,6 +311,150 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: button }));
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+  });
+
+  it("keeps Manage mounted, with its drafts, while the owner uses Chat", async () => {
+    render(<AgentPage />);
+    expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Manage draft" }), { target: { value: "unsaved size" } });
+    await waitFor(() => expect(screen.getByTestId("manage-sign-in")).toHaveTextContent("native_connected"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^agent$/i }));
+    expect(screen.getByText("Manage panel")).not.toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Manage draft" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    expect(screen.getByRole("textbox", { name: "Manage draft" })).toHaveValue("unsaved size");
+    expect(screen.getByText("Manage panel")).toBeVisible();
+  });
+
+  // Regression: while a Proxmox computer was being set up, every tab showed the
+  // setup progress, so Manage (and Delete) could not be reached.
+  it("opens Manage while a Proxmox computer is still being set up, after landing on its progress", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "ubuntu-desktop", name: "NEW_UBUNTU",
+      status: "provisioning", activity: "provision", provisioned_at: null, cpu: 2, ram: 4,
+      computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    });
+    render(<AgentPage />);
+    expect(await screen.findByText(/Setting up NEW_UBUNTU/)).toBeVisible();
+    expect(screen.queryByText("Manage panel")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(screen.getByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText(/Setting up NEW_UBUNTU/)).not.toBeInTheDocument();
+  });
+
+  it("opens Manage straight away from the launch's Open it to delete link to a computer being set up", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "ubuntu-desktop", name: "NEW_UBUNTU",
+      status: "provisioning", activity: "provision", provisioned_at: null, cpu: 2, ram: 4,
+      computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    });
+    // LaunchJourney's link: ?tab=manage&section=advanced#danger.
+    mockSearchGet.mockImplementation((key: string) => ({ tab: "manage", section: "advanced" } as Record<string, string>)[key] ?? null);
+    render(<AgentPage />);
+    expect(await screen.findByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText(/Setting up NEW_UBUNTU/)).not.toBeInTheDocument();
+  });
+
+  // Regression: a launch's own landing (?tab=manage) replaced the setup
+  // progress with settings that can't be used until setup finishes.
+  it("keeps the Codex model-key launch on its setup progress and While you wait, then opens Model & tools once it is ready", async () => {
+    jest.useFakeTimers();
+    try {
+      const provisioning = {
+        id: "agent_123", type: "codex", name: "NEW_CODEX", status: "provisioning", activity: "provision",
+        provisioned_at: null, cpu: 2, ram: 4, chat_url: null, api_token: null,
+      };
+      mockGetAgent.mockResolvedValueOnce(provisioning).mockResolvedValue({ ...provisioning, status: "running", activity: null,
+        provisioned_at: "2026-09-25T10:00:00Z", chat_url: "https://box.example.com", api_token: "box-token" });
+      // launchResultHref for Codex with a model key: ?welcome=1&tab=manage&section=model#model-settings.
+      mockSearchGet.mockImplementation((key: string) => ({ welcome: "1", tab: "manage", section: "model" } as Record<string, string>)[key] ?? null);
+      render(<AgentPage />);
+      expect(await screen.findByText("While you wait")).toBeInTheDocument();
+      expect(screen.getByText(/Setting up NEW_CODEX/)).toBeVisible();
+      expect(screen.queryByText("Manage panel")).not.toBeInTheDocument();
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(screen.getByText("Manage panel")).toBeVisible();
+      expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("opens Manage from the Codex launch's setup progress when the owner asks for it", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "codex", name: "NEW_CODEX", status: "provisioning", activity: "provision",
+      provisioned_at: null, cpu: 2, ram: 4, chat_url: null, api_token: null,
+    });
+    mockSearchGet.mockImplementation((key: string) => ({ welcome: "1", tab: "manage", section: "model" } as Record<string, string>)[key] ?? null);
+    render(<AgentPage />);
+    expect(await screen.findByText("While you wait")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(screen.getByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["the Linux Sandbox launch", { tab: "manage" }],
+    ["the computers list", { tab: "manage" }],
+    ["a remembered visit", {}],
+  ])("keeps a Linux Sandbox being set up on its progress when opened from %s", async (_from, params: Record<string, string>) => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-terminal", computer_profile: "linux-terminal", name: "SANDBOX",
+      status: "provisioning", activity: "provision", provisioned_at: null, cpu: 1, ram: 1,
+      computer_substrate: "gvisor", deployment_mode: "hivra-managed", chat_url: null, api_token: null,
+    });
+    // A Linux Sandbox always lands on Manage, so its visits are recorded there.
+    recordVisit("x-agent_123", "manage");
+    mockSearchGet.mockImplementation((key: string) => params[key] ?? null);
+    render(<AgentPage />);
+    expect(await screen.findByText(/Setting up SANDBOX/)).toBeVisible();
+    expect(screen.queryByText("Manage panel")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(screen.getByText("Manage panel")).toBeVisible();
+  });
+
+  // Regression: the page read a computer again only while it was being set
+  // up, so controls blocked by an operation it didn't start (a desktop
+  // preparation) stayed blocked after it finished, until a reload.
+  it("reads the computer again while another operation runs, so Manage's controls come back without a reload", async () => {
+    jest.useFakeTimers();
+    try {
+      const row = {
+        id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT", status: "running", cpu: 2, ram: 4,
+        chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
+        deployment_mode: "hivra-managed", infrastructure_binding_token_enforced: true,
+      };
+      const leased = { ...row, operation_id: "op-1", operation_kind: "desktop_prepare" };
+      mockGetAgent
+        .mockResolvedValueOnce({ ...row, manage: manageCapabilitiesFor(leased, { preparedMatch: false }) })
+        .mockResolvedValue({ ...row, manage: manageCapabilitiesFor(row, { preparedMatch: false }) });
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "manage" : null);
+      render(<AgentPage />);
+      expect(await screen.findByTestId("manage-stop")).toHaveTextContent("blocked");
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(screen.getByTestId("manage-stop")).toHaveTextContent("available");
+      const reads = mockGetAgent.mock.calls.length;
+      // Nothing is running any more: no further reads.
+      await act(async () => { jest.advanceTimersByTime(20000); });
+      expect(mockGetAgent.mock.calls.length).toBe(reads);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("opens Manage from the Windows setup handoff on the owner's own server", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "linux-desktop", computer_profile: "windows", deployment_mode: "self-managed",
+      computer_substrate: "proxmox-kvm", name: "MY_WINDOWS_DESKTOP", status: "provisioning", vmid: 208, cpu: 4, ram: 8,
+    });
+    render(<AgentPage />);
+    expect(await screen.findByText("Finish Windows setup on your Proxmox host")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(screen.getByText("Manage panel")).toBeVisible();
+    expect(screen.queryByText("Finish Windows setup on your Proxmox host")).not.toBeInTheDocument();
   });
 
   it("opens a DigitalOcean agent in its session workspace, never the box chat or login", async () => {
@@ -2231,6 +2383,17 @@ describe("AgentPage", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Session deleted" }));
       expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
       await waitFor(() => expect(heldNames()).toEqual([]));
+      expect(listReads).toBe(2);
+    });
+
+    // Regression: a DigitalOcean agent renamed in Manage kept its old name in
+    // the sidebar, ⌘K and Home until their list refreshed on its own.
+    it("reads the agents list again after a DigitalOcean agent is renamed, paused or resumed in Manage", async () => {
+      mockGetAgent.mockResolvedValue({ ...agentRow, computer_substrate: "do-managed-session", deployment_mode: "self-managed", chat_url: null });
+      render(<AgentPage />);
+      listed = [{ ...agentRow, name: "RENAMED_AGENT" }];
+      fireEvent.click(await screen.findByRole("button", { name: "Session renamed" }));
+      await waitFor(() => expect(heldNames()).toEqual(["RENAMED_AGENT"]));
       expect(listReads).toBe(2);
     });
   });

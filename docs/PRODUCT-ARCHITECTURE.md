@@ -461,6 +461,36 @@ terminals in again; DeepSeek computers are refused before any lease. The
 2026-08-29 evidence above covers the reboot flow only; this change has no live
 Canary evidence yet.
 
+**Manage in sections (2026-09-25, code on this branch, not yet accepted
+live).** Every computer and agent page's Manage is one sectioned settings page
+(`ManageLayout`): Overview, Agents, Model & tools, Resources, Recovery, Private
+network, Updates, Run a command (Linux Sandbox) and Advanced, as a side nav when
+the pane is at least 760px wide and a sticky strip below that. Sections stay
+mounted, so drafts survive switching; Manage itself stays mounted after it is
+first opened. Deep links use `?tab=manage&section=<id>`; the older anchors
+(`#resources`, `#model-settings`, `#private-access`, `#danger`) and `?tools=1`
+open their section. Which sections and controls appear comes from a
+server-computed capability map (`lib/hivra/manage-capabilities.ts`, sent as
+`manage` by `GET /api/hivra/agents/[id]` for every kind of computer). It shares
+its predicates with the lifecycle route (`lib/hivra/lifecycle-support.ts`), and
+a parity test holds the two together: what the map calls unavailable the route
+refuses, with the reason shown in Manage (and listed under Advanced › Not
+available) instead of a control that fails. Placement is shown as Hivra Cloud,
+My server or My cloud, never a region; a Hivra Cloud computer's private host
+address is never shown. Advanced lists public details, the last 20 lifecycle
+events (`GET /api/hivra/agents/[id]/events`, labels only; a failure's label
+comes from its recorded reason, which is never sent) and the danger zone,
+which needs the typed name for every kind. Manage stays reachable while a
+computer is being set up: its tab, Open Manage on the setup progress, or a link
+to a section (the launch's Open it to delete) opens it, while a launch's own
+landing (`?welcome=1`, a Linux Sandbox's `?tab=manage`) keeps the setup
+progress and opens Manage once the computer is ready. While another operation
+holds a computer, the page reads it again every 5 s so the controls it blocks
+come back when it ends. Not built: the Agents section's attach panel (its
+extension point is empty until attach lands), the agent-software version and
+automatic updates in Updates, live usage and disk, force power off, disk grow,
+Hetzner power-off, and power or resize for Windows on My server.
+
 The current portable code can inspect a generic Linux host, inventory an owner's
 Hetzner Cloud project, create a policy-bounded provider VM after explicit billing
 confirmation, prepare it and admit supported agents through the existing flow.

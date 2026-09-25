@@ -8,6 +8,7 @@ import {
   FolderRecoveryError, sha256FolderBytes, validateFolderRecoveryPayload,
 } from "./folder-recovery-artifact";
 import { buildFolderRecoveryHostScript, parseFolderRecoveryHostResult } from "./folder-recovery-host";
+import { folderRecoveryEligible } from "./lifecycle-support";
 
 type AgentRow = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -17,9 +18,8 @@ async function ownedUbuntu(userId: string, id: string): Promise<AgentRow> {
   const { data, error } = await supabaseAdmin.from("hivra_agents").select("*")
     .eq("id", id).eq("user_id", userId).neq("status", "deleted").maybeSingle();
   if (error || !data) throw new FolderRecoveryError("Computer not found.", 404);
-  if (data.type !== "linux-desktop" || data.computer_profile !== "ubuntu-desktop"
-    || data.computer_substrate !== "proxmox-kvm" || data.infrastructure_binding_token_enforced !== true
-    || !data.vmid || typeof data.ip !== "string") {
+  // The same rule Manage uses to offer folder recovery (lifecycle-support.ts).
+  if (!folderRecoveryEligible(data)) {
     throw new FolderRecoveryError("Folder recovery currently supports enrolled Ubuntu desktops on Proxmox only.", 409);
   }
   return data;
