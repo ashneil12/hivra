@@ -732,6 +732,14 @@ function HivraManageContent({
       {/* OVERVIEW — what this is, its size and where it runs, and power. */}
       <ManagePanel id="overview" selected={selected}>
         <div style={{ display: "grid", gap: 20 }}>
+          {/* Error lands here, not on a surface: say why and what to do next
+              where the owner actually is, not only under Advanced. */}
+          {agent.status === "error" && agent.error ? (
+            <div role="alert" style={{ ...card, borderColor: "var(--red)" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>{agent.provisioned_at ? "This computer isn’t ready" : "Setup didn’t finish"}</div>
+              <div style={{ ...manageMuted, overflowWrap: "anywhere" }}>{agent.error}</div>
+            </div>
+          ) : null}
           <div style={card}>
             <div style={{ display: "grid", gap: 9, gridTemplateColumns: "minmax(0, 1fr)" }}>
               <Row icon={<Server size={14} />} k={isComputerOnly ? "Computer" : "Agent"}><span style={valStyle}>{computerTemplate ? computerTemplate.name : `${def?.name || agent.type} · ${def?.vendor || "—"}`}</span></Row>

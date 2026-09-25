@@ -7,6 +7,7 @@ import { refreshDesktopCapability, resetDesktopSessionLaneForTests } from "@/lib
 import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
 import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { SETTLED_AGENT_POLL_MS } from "@/lib/hivra/agent-status-poll";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -437,10 +438,65 @@ describe("AgentPage", () => {
       await act(async () => { jest.advanceTimersByTime(5000); });
       expect(screen.getByTestId("manage-stop")).toHaveTextContent("available");
       const reads = mockGetAgent.mock.calls.length;
-      // Nothing is running any more: no further reads.
-      await act(async () => { jest.advanceTimersByTime(20000); });
+      // Nothing is running any more: it drops to the slow settled cadence.
+      await act(async () => { jest.advanceTimersByTime(SETTLED_AGENT_POLL_MS - 1); });
       expect(mockGetAgent.mock.calls.length).toBe(reads);
+      await act(async () => { jest.advanceTimersByTime(1); });
+      expect(mockGetAgent.mock.calls.length).toBe(reads + 1);
     } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // Reproduced on Canary 2026-09-25 (1c8d40ce): the page read Error, stopped
+  // reading, and a Start sent from outside it sat at provisioning/start with no
+  // read to complete it until the page was reloaded.
+  it("keeps reading a settled Error computer, so a Start sent elsewhere is completed without a reload", async () => {
+    jest.useFakeTimers();
+    try {
+      const row = {
+        id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT",
+        cpu: 2, ram: 4, vmid: 1112, computer_substrate: "proxmox-kvm", provisioned_at: "2026-09-12T08:30:00Z",
+        chat_url: "https://box.example.com", api_token: "box-token",
+      };
+      mockGetAgent
+        .mockResolvedValueOnce({ ...row, status: "error", error: "Choose Restart in Manage to try again." })
+        .mockResolvedValueOnce({ ...row, status: "provisioning", activity: "start", error: null })
+        .mockResolvedValue({ ...row, status: "running", error: null });
+      render(<AgentPage />);
+      expect(await screen.findByText("Computer isn’t ready")).toBeVisible();
+      expect(screen.queryByText("Provisioning failed")).not.toBeInTheDocument();
+      expect(mockGetAgent).toHaveBeenCalledTimes(1);
+      await act(async () => { jest.advanceTimersByTime(SETTLED_AGENT_POLL_MS); });
+      expect(mockGetAgent).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("Computer isn’t ready")).not.toBeInTheDocument();
+      // Converging again: the fast read that completes the Start.
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(mockGetAgent).toHaveBeenCalledTimes(3);
+    } finally {
+      mockGetAgent.mockReset();
+      jest.useRealTimers();
+    }
+  });
+
+  it("pauses settled reads while the tab is hidden and reads at once when it is shown again", async () => {
+    jest.useFakeTimers();
+    const visibility = jest.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      mockGetAgent.mockResolvedValue({
+        id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT", status: "stopped", cpu: 2, ram: 4,
+        chat_url: "https://box.example.com", api_token: "box-token",
+      });
+      render(<AgentPage />);
+      await screen.findAllByText(/stopped/i);
+      await act(async () => { jest.advanceTimersByTime(SETTLED_AGENT_POLL_MS * 3); });
+      expect(mockGetAgent).toHaveBeenCalledTimes(1);
+      visibility.mockReturnValue("visible");
+      await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+      expect(mockGetAgent).toHaveBeenCalledTimes(2);
+    } finally {
+      visibility.mockRestore();
+      mockGetAgent.mockReset();
       jest.useRealTimers();
     }
   });

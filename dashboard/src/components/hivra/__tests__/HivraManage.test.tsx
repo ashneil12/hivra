@@ -260,6 +260,20 @@ describe("HivraManage lifecycle guidance", () => {
     }
   });
 
+  // Reproduced on Canary 2026-09-25: a computer whose Start failed opened on
+  // Manage with only an "Error" badge; the reason sat under Advanced.
+  it("says on Overview why a started computer is in Error and what to do next", () => {
+    render(<HivraManage agent={{ ...agent, status: "error", provisioned_at: "2026-09-12T08:30:00Z",
+      error: "This computer turned on, but Hivra couldn’t confirm its desktop is safe to open. Choose Restart in Manage to try again." }}
+      plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("This computer isn’t ready");
+    expect(alert).toHaveTextContent("Choose Restart in Manage to try again.");
+  });
+  it("shows no error callout once the computer is running again", () => {
+    render(<HivraManage agent={{ ...agent, status: "running", error: "stale" }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.queryByText("This computer isn’t ready")).not.toBeInTheDocument();
+  });
   it("allows removal but not conflicting power or resize actions during provisioning", () => {
     render(<HivraManage agent={{ ...agent, status: "provisioning", deployment_mode: "self-managed", computer_substrate: "provider-vm" }} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();

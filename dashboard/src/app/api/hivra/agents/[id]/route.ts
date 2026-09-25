@@ -46,7 +46,7 @@ import { decryptApiKey } from "@/lib/crypto";
 import { validateHivraHostRunningResult } from "@/lib/hivra/agent-host-result";
 import {
   buildRemoteDesktopCapabilityInspectionScript,
-  parseRemoteDesktopCapabilityReceipt,
+  verifyDesktopReadinessReceipt,
 } from "@/lib/remote-computers/capability-inspection";
 import { HivraAgentDeleteCleanupError } from "@/lib/hivra/agent-delete-cleanup";
 import {
@@ -729,19 +729,17 @@ fi` : ""}`;
                   earlyFinishMarker: "HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ",
                 },
               );
-              const capability = capabilityResult.ok
-                ? parseRemoteDesktopCapabilityReceipt(capabilityResult.stdout || "")
-                : null;
-              if (
-                !capability ||
-                capability.computerId !== current.id ||
-                capability.brokerOrigin !== validatedResult.value.chatUrl
-              ) {
+              const readiness = verifyDesktopReadinessReceipt(capabilityResult, {
+                computerId: String(current.id),
+                brokerOrigin: validatedResult.value.chatUrl,
+                operationKind: convergenceOperationKind,
+              });
+              if (!readiness.ok) {
                 await releaseHivraAgentOperation({
                   userId,
                   agentId: String(current.id),
                   operationId: provisionOperationId,
-                  error: "Ubuntu Desktop did not publish its exact remote-desktop capability receipt.",
+                  error: readiness.ownerMessage,
                   markError: true,
                 });
                 log.warn("linux desktop readiness capability is unavailable", {
@@ -750,7 +748,10 @@ fi` : ""}`;
                   userId,
                   agentId: current.id,
                   vmid,
+                  operationKind: convergenceOperationKind,
                   capabilityCommandOk: capabilityResult.ok,
+                  capabilityFailureCode: readiness.failureCode,
+                  observedRevision: readiness.observedRevision,
                 });
                 const { data: failed } = await supabaseAdmin
                   .from("hivra_agents")
