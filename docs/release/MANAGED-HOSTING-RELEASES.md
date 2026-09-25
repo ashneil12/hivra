@@ -117,8 +117,8 @@ the higher release shipped.
 Last pair: #124 (persistent sessions, 2026.09.24.2) merged first, so the
 attach release (`claude/agent-computer`) is sealed again as 2026.09.24.3 on top
 of it. Had the attach release merged first, #124 would have become 2026.09.24.4.
-#130 still uses migration version `20260924220000`, which #124 now holds; #130
-moves to a free version before it merges.
+#130, which also used migration version `20260924220000`, moved to
+`20260924231500` before it merged.
 
 ## Feature acceptance
 

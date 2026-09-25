@@ -284,9 +284,9 @@ number, and a lower number is never shipped after a higher one. Had this
 branch landed first, #124 would have had to become 2026.09.24.4 on top of
 2026.09.24.3: shipped as 2026.09.24.2 it would have put new installs and
 runtime updates back on the loopback terminals and removed the gateway's
-`/agents/<id>/` proxy and its `attachedAgents` protocol. #130 still uses
-migration version `20260924220000`, which #124 now holds on `canary`; #130 has
-to move to a free version before it merges.
+`/agents/<id>/` proxy and its `attachedAgents` protocol. #130 moved its
+migration off #124's `20260924220000` to `20260924231500` and merged; this
+branch includes it (merge `80e93bd9`).
 
 Steps 1 to 7 go on before the merged code serves (Canary: before the merge
 into `canary` builds; production: **before the owner's Promote**, not only on
