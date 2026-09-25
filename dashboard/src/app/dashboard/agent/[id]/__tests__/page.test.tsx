@@ -1818,7 +1818,6 @@ describe("AgentPage", () => {
       cpu: 2,
       ram: 4,
       vmid: 1090,
-      proxmox_host: "fixturenode10",
       chat_url: null,
       api_token: null,
     });
@@ -1839,7 +1838,6 @@ describe("AgentPage", () => {
         agentType: "claude-code",
         status: "error",
         vmid: 1090,
-        proxmoxHost: "fixturenode10",
         hasChatUrl: false,
         error: "Proxmox target fixturenode10 is missing target-specific values",
       }),
