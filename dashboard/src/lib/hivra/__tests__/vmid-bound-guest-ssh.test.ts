@@ -49,4 +49,19 @@ describe("VMID-bound guest SSH", () => {
       expect(refused.status).not.toBe(0);
     }
   });
+
+  it("keeps the Hivra lane's ubuntu login by default and takes a validated login user, timeout and quiet mode", () => {
+    expect(buildVmidBoundGuestSshPrelude()).toContain('-o ConnectTimeout=10 "ubuntu@$GUEST_IP")');
+    const hermes = buildVmidBoundGuestSshPrelude({ sshUser: "hermes", connectTimeoutSeconds: 5, quiet: true });
+    expect(hermes).toContain('-o ConnectTimeout=5 -o LogLevel=ERROR "hermes@$GUEST_IP")');
+    expect(() => buildVmidBoundGuestSshPrelude({ sshUser: "root@10.250.20.9" })).toThrow("Invalid guest SSH user");
+    expect(() => buildVmidBoundGuestSshPrelude({ connectTimeoutSeconds: 0 })).toThrow("Invalid guest SSH connect timeout");
+  });
+
+  it("names the reason and exits before any connection when the key can't be attested", () => {
+    const prelude = buildVmidBoundGuestSshPrelude();
+    expect(prelude).toContain("VMID-bound SSH refused: VM %s SSH host key could not be read through QEMU Guest Agent; nothing was sent to the guest");
+    expect(prelude).toContain("VMID-bound SSH refused: VM %s did not attest a valid Ed25519 SSH host key; nothing was sent to the guest");
+    expect(prelude.indexOf("did not attest a valid Ed25519 SSH host key")).toBeLessThan(prelude.indexOf("GUEST_SSH=("));
+  });
 });
