@@ -35,6 +35,31 @@ interface AuthorizedChat {
   userId: string;
   proxyKeyId: string;
   model: string;
+  /**
+   * Output-cap fields to overwrite before forwarding. The wallet hold covers
+   * the request only as patched (a lower max_tokens when the wallet cannot
+   * cover the model maximum), so it MUST be applied. Sent because this Worker
+   * declares `acceptsBodyPatch: true`.
+   */
+  bodyPatch?: Record<string, unknown>;
+}
+
+const OUTPUT_CAP_FIELDS = ["max_completion_tokens", "max_tokens", "max_output_tokens"] as const;
+
+/** Mirror of the dashboard's bodyPatch contract: only positive-integer output caps. */
+function applyBodyPatch(
+  body: Record<string, unknown>,
+  patch: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!patch || typeof patch !== "object") return body;
+  const patched = { ...body };
+  for (const field of OUTPUT_CAP_FIELDS) {
+    const value = patch[field];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+      patched[field] = value;
+    }
+  }
+  return patched;
 }
 
 function jsonError(status: number, message: string, code: string, type = "server_error") {
@@ -160,7 +185,10 @@ async function handleChatCompletions(
         "Content-Type": "application/json",
         [INTERNAL_SECRET_HEADER]: env.MANAGED_VENICE_INTERNAL_SECRET,
       },
-      body: JSON.stringify({ plaintextKey, body }),
+      // acceptsBodyPatch: this Worker forwards `{ ...body, ...bodyPatch }`, so
+      // authorize may lower the output cap to what the wallet covers instead
+      // of refusing the request outright.
+      body: JSON.stringify({ plaintextKey, body, acceptsBodyPatch: true }),
     });
   } catch (err) {
     console.error("managed-venice authorize call failed", String(err));
@@ -187,10 +215,11 @@ async function handleChatCompletions(
 
   const auth = (await authRes.json()) as AuthorizedChat;
   const streaming = body.stream === true;
+  const cappedBody = applyBodyPatch(body, auth.bodyPatch);
 
   const upstreamBody = streaming
     ? {
-        ...body,
+        ...cappedBody,
         stream_options: {
           ...((body.stream_options && typeof body.stream_options === "object"
             ? body.stream_options
@@ -198,7 +227,7 @@ async function handleChatCompletions(
           include_usage: true,
         },
       }
-    : body;
+    : cappedBody;
 
   // 2. Hold the long-lived connection to Venice from the edge.
   let upstream: Response;

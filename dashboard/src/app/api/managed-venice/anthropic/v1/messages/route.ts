@@ -16,14 +16,18 @@ import { NextRequest } from "next/server";
 
 import { log } from "@/lib/logger";
 import { type ManagedVeniceWalletType } from "@/lib/billing/managed-venice-wallets";
-import { estimateChatCompletionCost } from "@/lib/venice/cost-estimator";
+import {
+  InvalidVeniceChatRequestError,
+  estimateChatCompletionCost,
+  type VeniceChatEstimateRequest,
+} from "@/lib/venice/cost-estimator";
+import { reserveManagedVeniceChatWithinBalance } from "@/lib/venice/chat-output-budget";
 import { UnsupportedVeniceModelError } from "@/lib/venice/pricing";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
-  reserveManagedVeniceChatRequest,
   captureManagedVeniceChatUsage,
   releaseManagedVeniceChatReservation,
   markManagedVeniceReconciliationRequired,
@@ -94,7 +98,7 @@ export async function POST(req: NextRequest) {
   const livePricing = await getVenicePricingMap();
   const pricingMap = livePricing.map;
   try {
-    estimateChatCompletionCost(openAiBody as { model: string; [key: string]: unknown }, pricingMap);
+    estimateChatCompletionCost(openAiBody as VeniceChatEstimateRequest, pricingMap);
   } catch (error) {
     if (error instanceof UnsupportedVeniceModelError) {
       return anthropicError({
@@ -102,6 +106,9 @@ export async function POST(req: NextRequest) {
         type: "invalid_request_error",
         message: `Unsupported Venice model "${model}". Pick a Venice model in the box's Inference settings.`,
       });
+    }
+    if (error instanceof InvalidVeniceChatRequestError) {
+      return anthropicError({ status: 400, type: "invalid_request_error", message: error.message });
     }
     throw error;
   }
@@ -119,15 +126,22 @@ export async function POST(req: NextRequest) {
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
 
+  // The hold covers the translated request's worst case. Claude Code sends a
+  // large max_tokens; above the model maximum it is written down to it, and
+  // below what the wallet covers it is lowered to that (chat-output-budget.ts).
+  let bodyPatch: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>["bodyPatch"];
   try {
-    await reserveManagedVeniceChatRequest({
+    ({ bodyPatch } = await reserveManagedVeniceChatWithinBalance({
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
       walletType,
       referenceId,
-      requestBody: openAiBody as { model: string; [key: string]: unknown },
+      protocol: "chat",
+      body: openAiBody,
       pricingMap,
-    });
+      allowBodyRewrite: true,
+      route: "/api/managed-venice/anthropic/v1/messages",
+    }));
   } catch (error) {
     if (error instanceof ManagedVeniceSpendCapError) {
       return anthropicError({
@@ -147,8 +161,8 @@ export async function POST(req: NextRequest) {
   }
 
   const upstreamBody = isStream
-    ? { ...openAiBody, stream: true, stream_options: { include_usage: true } }
-    : { ...openAiBody, stream: false };
+    ? { ...openAiBody, ...bodyPatch, stream: true, stream_options: { include_usage: true } }
+    : { ...openAiBody, ...bodyPatch, stream: false };
 
   let upstreamResponse: Response;
   try {

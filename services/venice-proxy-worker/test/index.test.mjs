@@ -32,21 +32,27 @@ test('keeps the Worker toolchain on the reviewed sharp security floor', () => {
   assert.equal(lock.packages['node_modules/wrangler']?.version, '4.135.0');
 });
 
-function chatUpstream(upstream, expectedBody = body) {
+function chatUpstream(upstream, expectedBody = body, bodyPatch = undefined) {
   return (call) => {
     assert.equal(call.method, 'POST');
     if (call.url === authorize) {
       assert.equal(call.headers['x-managed-venice-internal-secret'], 'test-internal-secret');
       assert.equal(call.headers.authorization, undefined);
-      assert.deepEqual(JSON.parse(call.body), { plaintextKey: 'test-client-key', body: expectedBody });
-      return json(auth);
+      assert.deepEqual(JSON.parse(call.body), {
+        plaintextKey: 'test-client-key', body: expectedBody, acceptsBodyPatch: true,
+      });
+      return json(bodyPatch === undefined ? auth : { ...auth, bodyPatch });
     }
     if (call.url === auth.upstreamUrl) {
       assert.equal(call.headers.authorization, 'Bearer test-upstream-key');
       assert.equal(call.headers['x-managed-venice-internal-secret'], undefined);
-      const expectedUpstream = expectedBody.stream === true
-        ? { ...expectedBody, stream_options: { ...expectedBody.stream_options, include_usage: true } }
-        : expectedBody;
+      const capped = { ...expectedBody };
+      for (const field of ['max_completion_tokens', 'max_tokens', 'max_output_tokens']) {
+        if (Number.isSafeInteger(bodyPatch?.[field]) && bodyPatch[field] > 0) capped[field] = bodyPatch[field];
+      }
+      const expectedUpstream = capped.stream === true
+        ? { ...capped, stream_options: { ...capped.stream_options, include_usage: true } }
+        : capped;
       assert.deepEqual(JSON.parse(call.body), expectedUpstream);
       return upstream();
     }
@@ -148,5 +154,26 @@ for (const streaming of [false, true]) {
       outcome: 'release', userId: auth.userId, referenceId: auth.referenceId,
     });
     assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
+  });
+}
+
+for (const streaming of [false, true]) {
+  test(`forwards the output cap authorize lowered to the wallet, and nothing else from the patch (${streaming ? 'stream' : 'JSON'})`, async (t) => {
+    const requestBody = { ...body, stream: streaming, max_tokens: 64000 };
+    const bodyPatch = { max_tokens: 30000, max_completion_tokens: 0, model: 'other-model', max_output_tokens: 'lots' };
+    const sse = `data: ${JSON.stringify({ usage })}\n\ndata: [DONE]\n\n`;
+    const harness = await create(t, chatUpstream(() => (streaming
+      ? new Response(sse, { headers: { 'content-type': 'text/event-stream' } })
+      : json({ choices: [], usage })), requestBody, bodyPatch));
+    const response = await chat(harness.mf, requestBody);
+    assert.equal(response.status, 200);
+    await response.text();
+    const upstreamCall = harness.calls.find((call) => call.url === auth.upstreamUrl);
+    const forwarded = JSON.parse(upstreamCall.body);
+    assert.equal(forwarded.max_tokens, 30000);
+    assert.equal(forwarded.model, body.model);
+    assert.equal('max_completion_tokens' in forwarded, false);
+    assert.equal('max_output_tokens' in forwarded, false);
+    await harness.waitForCall((call) => call.url === settle);
   });
 }

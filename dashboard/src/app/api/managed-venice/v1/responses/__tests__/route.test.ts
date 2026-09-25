@@ -13,10 +13,11 @@ const frame = (value: unknown) => new TextEncoder().encode(`data: ${JSON.stringi
 const req = (body: unknown = { model: "test", input: "hello", stream: true }, key = "fixture") => new Request("https://hivra.test/api/managed-venice/v1/responses", {
   method: "POST", body: JSON.stringify(body), headers: key ? { Authorization: `Bearer ${key}` } : {},
 }) as NextRequest;
+const authorized = { userId: "user", proxyKeyId: "key", referenceId: "reference", reservationId: "reservation", model: "test",
+  upstreamUrl: "https://api.venice.ai/api/v1/responses", upstreamKey: "server-fixture", walletType: "card" as const, pricingMap: new Map(), pricingSource: "live", liveModelCount: 1, bodyPatch: {} };
 beforeEach(() => {
   jest.resetAllMocks();
-  authorize.mockResolvedValue({ ok: true, value: { userId: "user", proxyKeyId: "key", referenceId: "reference", reservationId: "reservation", model: "test",
-    upstreamUrl: "https://api.venice.ai/api/v1/responses", upstreamKey: "server-fixture", walletType: "card", pricingMap: new Map(), pricingSource: "live", liveModelCount: 1 } });
+  authorize.mockResolvedValue({ ok: true, value: authorized });
   global.fetch = jest.fn();
 });
 afterEach(() => { global.fetch = originalFetch; });
@@ -104,4 +105,11 @@ it("does not release on transport errors or 5xx with ambiguous generation", asyn
   jest.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 503 }));
   await POST(req());
   expect(reconcile).toHaveBeenCalledTimes(2); expect(release).not.toHaveBeenCalled();
+});
+it("forwards the lowered output cap when authorize had to write one; the rest of the body is unchanged", async () => {
+  authorize.mockResolvedValue({ ok: true, value: { ...authorized, bodyPatch: { max_output_tokens: 6_000 } } });
+  const body = { model: "test", input: [{ type: "message", role: "user", content: "hi" }], instructions: "be brief", max_output_tokens: 50_000 };
+  jest.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(terminal)));
+  expect((await POST(req(body))).status).toBe(200);
+  expect(JSON.parse(jest.mocked(fetch).mock.calls[0][1]?.body as string)).toEqual({ ...body, max_output_tokens: 6_000 });
 });

@@ -13,14 +13,22 @@ See `../../docs/PRODUCT-ARCHITECTURE.md` for the why and the full design.
 ```
 box → Worker /v1/chat/completions
         1. POST {VERCEL_BASE_URL}/api/managed-venice/internal/authorize
-             {plaintextKey, body}  →  {referenceId, upstreamKey, upstreamUrl, walletType, userId, proxyKeyId, model}
-        2. fetch(api.venice.ai, Bearer upstreamKey)   ← Worker holds this stream
+             {plaintextKey, body, acceptsBodyPatch: true}
+               →  {referenceId, upstreamKey, upstreamUrl, walletType, userId, proxyKeyId, model, bodyPatch}
+        2. fetch(api.venice.ai, Bearer upstreamKey) with {...body, ...bodyPatch}   ← Worker holds this stream
         3. tee → client gets tokens; sniff branch extracts usage
         4. POST {VERCEL_BASE_URL}/api/managed-venice/internal/settle
              {outcome:"settle", referenceId, usage, ...}   (or {outcome:"release"} on upstream failure)
 
 box → Worker /v1/embeddings (and all other /v1/*)  →  reverse-proxied to Vercel verbatim
 ```
+
+Output cap (`bodyPatch`): the wallet hold covers the request only as patched.
+When a wallet cannot cover the model's maximum output, authorize lowers
+`max_completion_tokens` / `max_tokens` to what it can cover, and the Worker must
+forward that. A Worker that does not send `acceptsBodyPatch: true` (an older
+deploy) is never given a patch: its requests hold the full worst case or get
+a 402.
 
 Auth/error relay rules:
 - authorize `403` → Worker misconfig (wrong shared secret) → Worker returns `502` (does NOT blame the box's key).
