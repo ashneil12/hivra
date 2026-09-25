@@ -16,7 +16,7 @@ import platform
 import sys
 
 PINS = {
-    'agent': 'ea761a6df567b033b7ae83158d845777f024c0b7a27843f311db71bebeb54551',
+    'agent': '58ab3cac9ea75ee85c2c8bbb29202d31b3e2081d4bf87d633f0c3100e4c0ab4c',
     'workspace': '4f74a959fea741862fa0525693c0e1965f612fbd7fb2e574af5ee0e0b90576ea',
     'network': '0cc2470b6135da76894d035637d0bee314935fe4901467b241a800db41810219',
     'relay': '5fd6b334ffe66d9ecdaed1011f9f9f659cf6be1498a8c36b66b5723ff67d5bdf',

@@ -17,8 +17,8 @@ import { buildAttachmentHostStepScript, parseAttachmentTargetRefusal, parseGuest
 // program travel with the three pinned helpers over the VMID-bound guest exec,
 // the same fence as staging. No private-IP SSH, no caller path or command.
 
-export const ATTACHED_AGENT_PROGRAM_SHA256 = "ea761a6df567b033b7ae83158d845777f024c0b7a27843f311db71bebeb54551";
-export const ATTACHED_AGENT_RUNNER_SHA256 = "c90d2cb65a2323d38c43fcbaecccea0084608b574b62c5b2b29f82af0ab8d90f";
+export const ATTACHED_AGENT_PROGRAM_SHA256 = "58ab3cac9ea75ee85c2c8bbb29202d31b3e2081d4bf87d633f0c3100e4c0ab4c";
+export const ATTACHED_AGENT_RUNNER_SHA256 = "cbfc850f552c8a2ae2d19414fed47d5cd304098db0f6568c41b92bf682ad2dba";
 const ASSETS = {
   agent: { file: "attached-agent.py", digest: ATTACHED_AGENT_PROGRAM_SHA256 },
   workspace: { file: ATTACHED_HELPERS[0].file, digest: ATTACHED_HELPERS[0].sha256 },
