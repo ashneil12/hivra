@@ -3070,6 +3070,7 @@ export async function POST(
             return deferResponse;
           }
           const result = await startProxmoxInstance(proxmoxInfra, {
+            expectedInstanceId: instance!.id,
             hostConfig: wakeHostConfig,
             // Restore onboot so a resumed agent survives host reboots while
             // active — the inverse of the inactivity-pause onboot:0. Without
@@ -3167,6 +3168,7 @@ export async function POST(
       case "stop":
         if (proxmoxInfra) {
           const result = await shutdownProxmoxInstance(proxmoxInfra, {
+            expectedInstanceId: instance!.id,
             hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, { host_id: instance!.host_id ?? null }),
           });
           if (!result.ok) {
@@ -3194,6 +3196,7 @@ export async function POST(
       case "reboot":
         if (proxmoxInfra) {
           const result = await rebootProxmoxInstance(proxmoxInfra, {
+            expectedInstanceId: instance!.id,
             hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, { host_id: instance!.host_id ?? null }),
           });
           if (!result.ok) {

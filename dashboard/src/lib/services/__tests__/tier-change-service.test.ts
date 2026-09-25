@@ -127,6 +127,7 @@ describe("applyTierChange", () => {
     expect(outcome.resizesFailed).toEqual([]);
     expect(resizeProxmoxVm).toHaveBeenCalledWith({
       vmid: 201,
+      expectedInstanceId: "inst-prox-1",
       cpuLimit: 2,        // operator plan: PLANS.operator.maxCpuPerAgent
       memoryMb: 4096,     // operator plan: PLANS.operator.maxRamPerAgent
       cpuUnits: 100,      // operator priority (1) → cgroup CPU weight 100
@@ -228,7 +229,7 @@ describe("applyTierChange", () => {
     });
 
     expect(resizeProxmoxVm).toHaveBeenCalledWith(
-      { vmid: 300, cpuLimit: 3, memoryMb: 6144, cpuUnits: 100 },
+      { vmid: 300, expectedInstanceId: "inst-boost", cpuLimit: 3, memoryMb: 6144, cpuUnits: 100 },
       { hostConfig: null }
     );
   });
@@ -256,7 +257,7 @@ describe("applyTierChange", () => {
     });
 
     expect(resizeProxmoxVm).toHaveBeenCalledWith(
-      { vmid: 301, cpuLimit: 0.5, memoryMb: 1024, cpuUnits: 50 },
+      { vmid: 301, expectedInstanceId: "inst-free-boost", cpuLimit: 0.5, memoryMb: 1024, cpuUnits: 50 },
       { hostConfig: null }
     );
   });

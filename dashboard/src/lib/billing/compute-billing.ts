@@ -260,6 +260,7 @@ export async function pauseComputeForCreditInstance(
     }
 
     const result = await shutdownProxmoxInstance(proxmox, {
+      expectedInstanceId: instance.id,
       hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmox, { host_id: instance.host_id ?? null }),
     });
     return result.ok
@@ -297,6 +298,7 @@ export async function startComputeForCreditInstance(
     }
 
     const result = await startProxmoxInstance(proxmox, {
+      expectedInstanceId: instance.id,
       hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmox, { host_id: instance.host_id ?? null }),
     });
     return result.ok

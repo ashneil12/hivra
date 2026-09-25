@@ -1605,6 +1605,7 @@ export class StripeWebhookService {
 
       try {
         const result = await mod.startProxmoxInstance(infra, {
+          expectedInstanceId: row.id,
           hostConfig: mod.getProxmoxHostRoutingConfigFromInfrastructure(infra, {
             host_id: row.host_id,
           }),
