@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { mediaModelField, mediaPricingFieldError } from "@/lib/venice/media-request-fields";
+import { mediaModelField, mediaPricingFieldError, planMediaRequest } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-image-edit | Jeremiah 18:6 | Verse: As the clay is in the potter's hand, so are ye in mine hand.
@@ -45,6 +45,16 @@ export async function POST(req: NextRequest) {
   if (!formData.get("image")) {
     return apiError("image is required.", 400);
   }
+  // Only documented fields go to Venice, the resolution is sent as the tier
+  // that is charged, and options Venice bills extra for are refused.
+  const plan = planMediaRequest({
+    endpoint: ENDPOINT_LABEL,
+    model,
+    fields: formData,
+    source: "managed-venice-image-edit",
+  });
+  if (!plan.ok) return apiError(plan.error, 400);
+  const forward = plan.fields;
 
   const referenceId = randomUUID();
   const serverKey = resolveManagedVeniceUpstreamKey({
@@ -65,9 +75,9 @@ export async function POST(req: NextRequest) {
       endpoint: ENDPOINT_LABEL,
       model,
       metadata: {
-        aspectRatio: formData.get("aspect_ratio")?.toString() ?? null,
-        resolution: formData.get("resolution")?.toString() ?? null,
-        outputFormat: formData.get("output_format")?.toString() ?? null,
+        aspectRatio: forward.get("aspect_ratio")?.toString() ?? null,
+        resolution: forward.get("resolution")?.toString() ?? null,
+        outputFormat: forward.get("output_format")?.toString() ?? null,
       },
     },
     referenceId,
@@ -83,7 +93,7 @@ export async function POST(req: NextRequest) {
       fetch(VENICE_IMAGES_EDIT_URL, {
         method: "POST",
         headers: { Authorization: `Bearer ${serverKey}` },
-        body: formData,
+        body: forward,
       }),
   });
   if (!sent.ok) return sent.response;

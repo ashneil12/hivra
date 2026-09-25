@@ -49,7 +49,9 @@ import {
   applyVeniceMultimodalMarkup,
   computeVeniceMultimodalCost,
   computeVeniceMultimodalHoldCost,
+  describeVeniceMultimodalTiers,
   resolveVeniceMultimodalMarkup,
+  resolveVeniceMultimodalPrice,
 } from "./multimodal-pricing";
 import { managedVeniceTopUpUrl } from "./proxy-chat-core";
 import { markManagedVeniceReconciliationRequired } from "./proxy-settlement";
@@ -142,6 +144,33 @@ export async function holdManagedVeniceMediaSpend(
     model: operation.model,
     metadata,
   });
+  if (!estimate.priced && estimate.reason === "invalid_tier") {
+    // Routes normalize tier fields before they get here
+    // (media-request-fields.ts planMediaRequest), so this is the backstop.
+    const price = resolveVeniceMultimodalPrice(operation.endpoint, operation.model);
+    const field = price?.tierMetadataKey ?? "tier";
+    log.warn("Managed Venice media request refused: tier value can't be priced", {
+      ...logContext,
+      failureType: "managed_venice_media_invalid_tier",
+      field,
+    });
+    return {
+      ok: false,
+      response: new Response(
+        JSON.stringify({
+          error: {
+            message:
+              `"${field}" must be ${price ? describeVeniceMultimodalTiers(price) : "a published tier"} ` +
+              `for ${operation.model.slice(0, 80)}. The request was not sent and nothing was charged.`,
+            type: "invalid_request_error",
+            param: field,
+            code: "managed_venice_invalid_tier",
+          },
+        }),
+        { status: 400, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
+      ),
+    };
+  }
   if (!estimate.priced) {
     log.warn("Managed Venice media request refused: no known price", {
       ...logContext,
@@ -263,9 +292,9 @@ export async function holdManagedVeniceMediaSpend(
   const settle = async (outcome: ManagedVeniceMediaOutcome) => {
     const rowMetadata = { ...metadata, ...(outcome.metadata ?? {}) };
 
-    // Settlement price = the catalog's published floor for what was recorded
-    // (the same number the offline settlement cron would charge), bounded by
-    // the hold we already proved the wallet can cover.
+    // Settlement price = the catalog price of the tier that was sent (Venice's
+    // default, the cheapest tier, when none was), the same number the offline
+    // settlement would charge, bounded by the hold the wallet already covers.
     const cost = computeVeniceMultimodalCost({ endpoint: operation.endpoint, model: operation.model, metadata: rowMetadata });
     const listCostMicroUsd = cost.priced ? cost.listCostMicroUsd : estimate.listCostMicroUsd;
     const chargeMicroUsd = Math.min(heldMicroUsd, applyVeniceMultimodalMarkup(listCostMicroUsd, markup));

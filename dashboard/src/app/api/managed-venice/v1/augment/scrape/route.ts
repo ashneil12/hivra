@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { planMediaRequest } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-scrape | Proverbs 18:15 | Verse: The heart of the prudent getteth knowledge; and the ear of the wise seeketh knowledge.
@@ -46,6 +47,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Only the one url is forwarded: the catalog bills one URL per request.
+  const plan = planMediaRequest({ endpoint: ENDPOINT_LABEL, model: "venice-scrape", fields: body, source: "managed-venice-scrape" });
+  if (!plan.ok) return apiError(plan.error, 400);
+  const forward = plan.fields;
+
   const referenceId = randomUUID();
   const targetUrl = body.url as string;
   const host = (() => {
@@ -78,7 +84,7 @@ export async function POST(req: NextRequest) {
           Authorization: `Bearer ${serverKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(forward),
       }),
   });
   if (!sent.ok) return sent.response;

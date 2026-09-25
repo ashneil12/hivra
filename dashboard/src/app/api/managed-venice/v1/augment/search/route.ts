@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { planMediaRequest } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-search | Proverbs 25:2 | Verse: The honour of kings is to search out a matter.
@@ -46,14 +47,19 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const model =
+    typeof body.search_provider === "string" ? `venice-search-${body.search_provider}` : "venice-search-brave";
+  // Only query, limit and search_provider are forwarded.
+  const plan = planMediaRequest({ endpoint: ENDPOINT_LABEL, model, fields: body, source: "managed-venice-search" });
+  if (!plan.ok) return apiError(plan.error, 400);
+  const forward = plan.fields;
+
   const referenceId = randomUUID();
   const gate = await holdManagedVeniceMediaSpend({
     key: verifiedKey,
     operation: {
       endpoint: ENDPOINT_LABEL,
-      model: typeof body.search_provider === "string"
-        ? `venice-search-${body.search_provider}`
-        : "venice-search-brave",
+      model,
       metadata: {
         queryLength: (body.query as string).length,
         limit: typeof body.limit === "number" ? body.limit : null,
@@ -76,7 +82,7 @@ export async function POST(req: NextRequest) {
           Authorization: `Bearer ${serverKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(forward),
       }),
   });
   if (!sent.ok) return sent.response;

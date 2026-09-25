@@ -72,6 +72,26 @@ describe("holdManagedVeniceMediaSpend", () => {
     expect(world.reservations()).toHaveLength(0);
   });
 
+  // Second review: an unrecognised tier was held at the top tier but charged
+  // at the cheapest. Routes normalise tiers first; the gate is the backstop.
+  it.each([
+    ["/api/v1/image/upscale", "venice-upscaler", { scale: "1" }, "scale"],
+    ["/api/v1/image/generate", "nano-banana-2", { resolution: "8K" }, "resolution"],
+    ["/api/v1/image/edit", "nano-banana-2-edit", { resolution: 4 }, "resolution"],
+  ])("refuses %s %s with an unpublished tier (400) before any hold", async (endpoint, model, metadata, param) => {
+    world.fundCard(USER_ID, 1_000_000);
+    const result = await holdManagedVeniceMediaSpend(
+      { key: KEY, operation: { endpoint, model, metadata }, source: "test" },
+      world.db
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(400);
+    const body = (await result.response.json()) as { error: { code: string; param: string } };
+    expect(body.error).toMatchObject({ code: "managed_venice_invalid_tier", param });
+    expect(world.reservations()).toHaveLength(0);
+  });
+
   it("keeps the hold and files a non-pausing reconciliation item when capture fails after Venice succeeded", async () => {
     process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED = "true";
     world.fundCard(USER_ID, 1_000_000);

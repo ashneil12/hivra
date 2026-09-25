@@ -4,7 +4,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
+import { mediaPricingFieldError, planMediaRequest } from "@/lib/venice/media-request-fields";
 import {
   holdManagedVeniceMediaSpend,
   readNumericField,
@@ -47,6 +47,12 @@ export async function POST(req: NextRequest) {
   }
   const model = body.model;
 
+  // Only documented fields go to Venice, the resolution is sent as the tier
+  // that is charged, and options Venice bills extra for are refused.
+  const plan = planMediaRequest({ endpoint: ENDPOINT_LABEL, model, fields: body, source: "managed-venice-image" });
+  if (!plan.ok) return apiError(plan.error, 400);
+  const forward = plan.fields;
+
   const serverKey = resolveManagedVeniceUpstreamKey({
     proxyKeyId: verifiedKey.id,
     model,
@@ -64,12 +70,12 @@ export async function POST(req: NextRequest) {
       endpoint: ENDPOINT_LABEL,
       model,
       metadata: {
-        aspectRatio: typeof body.aspect_ratio === "string" ? body.aspect_ratio : null,
-        resolution: typeof body.resolution === "string" ? body.resolution : null,
-        width: typeof body.width === "number" ? body.width : null,
-        height: typeof body.height === "number" ? body.height : null,
-        variants: readNumericField(body.variants),
-        format: typeof body.format === "string" ? body.format : null,
+        aspectRatio: typeof forward.aspect_ratio === "string" ? forward.aspect_ratio : null,
+        resolution: typeof forward.resolution === "string" ? forward.resolution : null,
+        width: typeof forward.width === "number" ? forward.width : null,
+        height: typeof forward.height === "number" ? forward.height : null,
+        variants: readNumericField(forward.variants),
+        format: typeof forward.format === "string" ? forward.format : null,
       },
     },
     source: "managed-venice-image",
@@ -87,7 +93,7 @@ export async function POST(req: NextRequest) {
           Authorization: `Bearer ${serverKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(forward),
       }),
   });
   if (!sent.ok) return sent.response;

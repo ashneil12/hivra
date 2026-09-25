@@ -2,7 +2,13 @@ import { NextRequest } from "next/server";
 
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
-import { mediaModelField, mediaPricingFieldError } from "@/lib/venice/media-request-fields";
+import {
+  isMediaForm,
+  mediaModelField,
+  mediaPricingFieldError,
+  mediaTextFields,
+  planMediaRequest,
+} from "@/lib/venice/media-request-fields";
 import {
   holdManagedVeniceMediaSpend,
   readNumericField,
@@ -28,9 +34,11 @@ import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 // variants, alternate methods — is refused and never fetched.
 // Paid operations are forwarded only under a wallet hold (media-spend-gate.ts);
 // one the price catalog can't price is refused with a 402. A paid request must
-// be JSON or multipart that parses, its pricing fields must be unambiguous
-// (media-request-fields.ts), and what is forwarded is rebuilt from the parsed
-// fields, so Venice runs exactly the request that was priced.
+// be JSON or multipart that parses, its pricing fields must be unambiguous,
+// and what is forwarded is rebuilt from the parsed fields by planMediaRequest
+// (media-request-fields.ts): only documented fields, the tier sent as the one
+// charged, and no option Venice bills extra for. So Venice runs exactly the
+// request that was priced.
 const VENICE_API_BASE = "https://api.venice.ai/api/v1";
 
 // Each segment must be plain lower-case path text. Next hands the catch-all
@@ -120,7 +128,7 @@ const METERED_RULES: MeteredRule[] = [
     endpoint: fixedEndpoint("image/upscale"),
     operation: (fields) => ({
       model: "venice-upscaler",
-      metadata: { scale: stringField(fields, "scale") ?? readNumericField(fields.scale), enhance: stringField(fields, "enhance") },
+      metadata: { scale: stringField(fields, "scale") ?? readNumericField(fields.scale) },
     }),
   },
   {
@@ -224,9 +232,7 @@ function refused(method: string, segments: string[]) {
   return response;
 }
 
-type MeteredBody =
-  | { ok: true; fields: BodyFields; forward: { body: string | FormData; contentType: string | null } }
-  | { ok: false; response: Response };
+type MeteredBody = { ok: true; body: BodyFields | FormData } | { ok: false; response: Response };
 
 function bodyRefused(message: string, status: 400 | 415) {
   const response = apiError(message, status);
@@ -235,10 +241,10 @@ function bodyRefused(message: string, status: 400 | 415) {
 }
 
 /**
- * Parse a PAID request's body and rebuild what gets forwarded from the parsed
- * fields. A body Hivra can't read is refused rather than priced as if it
- * named no fields, and the rebuilt body means Venice sees the same fields the
- * hold was priced from (one value per key, no parser differences).
+ * Parse a PAID request's body. A body Hivra can't read is refused rather than
+ * priced as if it named no fields. What gets forwarded is rebuilt from the
+ * parsed body (planMediaRequest), so Venice sees the same fields the hold was
+ * priced from (one value per key, no parser differences).
  */
 async function readMeteredBody(bodyBuf: ArrayBuffer, contentType: string): Promise<MeteredBody> {
   const mediaType = contentType.split(";")[0].trim().toLowerCase();
@@ -255,11 +261,7 @@ async function readMeteredBody(bodyBuf: ArrayBuffer, contentType: string): Promi
     }
     const fieldError = mediaPricingFieldError(parsed as BodyFields);
     if (fieldError) return bodyRefused(fieldError, 400);
-    return {
-      ok: true,
-      fields: parsed as BodyFields,
-      forward: { body: JSON.stringify(parsed), contentType: "application/json" },
-    };
+    return { ok: true, body: parsed as BodyFields };
   }
 
   if (mediaType === "multipart/form-data") {
@@ -271,12 +273,7 @@ async function readMeteredBody(bodyBuf: ArrayBuffer, contentType: string): Promi
     }
     const fieldError = mediaPricingFieldError(form);
     if (fieldError) return bodyRefused(fieldError, 400);
-    const fields: BodyFields = {};
-    form.forEach((value, name) => {
-      if (typeof value === "string") fields[name] = value;
-    });
-    // fetch writes a fresh boundary for the rebuilt form.
-    return { ok: true, fields, forward: { body: form, contentType: null } };
+    return { ok: true, body: form };
   }
 
   return bodyRefused("Paid Venice requests must be application/json or multipart/form-data.", 415);
@@ -314,11 +311,26 @@ async function handle(req: NextRequest, segments: string[]) {
   if (rule.kind === "metered") {
     const parsed = await readMeteredBody(bodyBuf ?? new ArrayBuffer(0), reqContentType);
     if (!parsed.ok) return parsed.response;
-    const described = rule.operation(parsed.fields);
+    const described = rule.operation(mediaTextFields(parsed.body));
     if ("error" in described) return apiError(described.error, 400);
-    operation = described;
-    forwardBody = parsed.forward.body;
-    forwardContentType = parsed.forward.contentType;
+    const plan = planMediaRequest({
+      endpoint: endpointLabel,
+      model: described.model,
+      fields: parsed.body,
+      source: "managed-venice-passthrough",
+    });
+    if (!plan.ok) return bodyRefused(plan.error, 400).response;
+    // Price what will be sent: the planned body carries the tier Venice runs.
+    const planned = rule.operation(mediaTextFields(plan.fields));
+    operation = { model: described.model, metadata: "error" in planned ? described.metadata : planned.metadata };
+    if (isMediaForm(plan.fields)) {
+      // fetch writes a fresh boundary for the rebuilt form.
+      forwardBody = plan.fields;
+      forwardContentType = null;
+    } else {
+      forwardBody = JSON.stringify(plan.fields);
+      forwardContentType = "application/json";
+    }
   }
 
   const serverKey = resolveManagedVeniceUpstreamKey({
