@@ -2,9 +2,13 @@
 
 **Date:** 2026-09-24
 
-**Status:** Security review and threat model. No attach or contract code may
-merge before this document. Nothing described as target behavior here is
-implemented. Facts marked **Current** were verified against canary `ed478e0`.
+**Status:** Security review and threat model; its design is now built. Slice 14
+(the Computer Contract) merged in #102 and slice 15 (attach) in #134, with fixes
+#138, #140, #143 and #144; both are on Canary, and attach is on only on Canary.
+Sections 0 and 0.1 say what is built and where it differs from this design;
+the first live attach on Canary passed on 2026-09-25 (0.1, Still open). Facts
+marked **Current** in section 2 were verified against canary `ed478e0`, before
+either slice merged.
 
 **Revision 2** (same day, after review): root never resolves a path the agent
 controls (5.3.1); the attached agent gets its own network namespace, with DNS
@@ -46,8 +50,9 @@ check that needs other capacity or a credential says so.
 
 ## 0. Slice 14 implementation status
 
-**Built on branch `claude/agent-computer`, not yet merged or on Canary.** No
-live check in 8.3 has run. Everything here is source- and test-verified only.
+**Merged in #102 and on Canary.** On 2026-09-24 a Hivra Cloud agent and a new
+My cloud agent on Canary each showed a delivered contract with its read-back;
+no other check in 8.3 (AC-C1 to AC-C5) has a recorded result here.
 
 What is implemented, and where it differs from the design below:
 
@@ -79,9 +84,11 @@ What is implemented, and where it differs from the design below:
 
 ## 0.1 Slice 15 (attach) implementation status
 
-**Built on branch `claude/agent-computer`, not yet merged or on Canary.**
-Attach is on only where the deployment's own environment says Canary, and
-no check in 8.3 has run. The first pair is Codex 0.149.1 on an existing
+**Merged in #134 and on Canary, with fixes #138, #140, #143 and #144.**
+Attach is on only where the deployment's own environment says Canary. The
+first live add, Change access and Remove passed on Canary on 2026-09-25 (the
+last item under Still open); ChatGPT sign-in (AC-A2) and the other checks in
+8.3 have no recorded result here. The first pair is Codex 0.149.1 on an existing
 Ubuntu Desktop computer on Proxmox (Hivra Cloud or My server). Every other
 computer says "Not available to add to an existing computer yet".
 
@@ -196,7 +203,8 @@ built.
 
 **Still open:**
 
-- Canary acceptance AC-A1 to AC-A14. AC-A2 needs a ChatGPT account or an
+- Canary acceptance AC-A1 to AC-A14, beyond the first live add, Change access
+  and Remove (the last item below). AC-A2 needs a ChatGPT account or an
   OpenAI key approved for testing. The interruption of a sent step (T3) is
   proven in PGlite and the worker's tests, not yet with a computer that
   really stops mid-install (AC-A13, AC-A14).
@@ -212,23 +220,33 @@ built.
   is missing; it has not been run again on a VM since.
 - The Desktop after attach, Change access and Remove (no remote desktop on
   the VMs), aarch64, and the "One of my computers" group.
-- The slot writer guard for queued launches stays in
-  `_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql`.
+- The slot writer guard for queued launches
+  (`_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql`) is
+  applied on Canary (2026-09-25, with smoke tests before and after, including
+  Start of an agent in `error`). Production applies the same file only after the
+  owner's Promote; see the queued database steps in
+  [the managed release process](../../release/MANAGED-HOSTING-RELEASES.md).
 - A refusal the computer names (T3) is proven in the worker's tests, PGlite,
   the root container fixtures and the host step fixture, not on a VM or a
   Canary computer: no attach has run on a computer whose gateway predates
   2026.09.24.3 (the gate now refuses it first) or whose stage failed.
-- The gateway falls back to the loopback terminal ports whenever its socket
-  check fails (`terminalUpstream()` in `server.js`), also on a computer already
-  on the socket release while ttyd restarts. A local user other than `bux`
+- **Fixed in #136 (provisioner 2026.09.24.4):** the gateway now falls back to
+  a loopback port only while the installed terminal unit is still port-bound;
+  otherwise the terminal answers 503 "restarting" until its socket is back.
+  The original finding: the gateway fell back to the loopback terminal ports
+  whenever its socket check failed (`terminalUpstream()` in `server.js`),
+  also on a computer already on the socket release while ttyd restarts. A local user other than `bux`
   that bound 7681 or 7682 in that window would receive the owner's proxied
   terminal traffic. Not changed in this release: the only other accounts on a
   Hivra computer are attached agents, which run in their own network namespace
   and cannot bind the computer's loopback, and changing `server.js` means
   sealing the bundle again. The fix (fall back only while the unit is still the
   port-bound one) belongs with the next provisioner release.
-- **The runtime updater's "is anyone on the terminal" check sees TCP only**
-  (final review). `terminal_idle()` in `hivra-update-guest-runtime.sh` counts
+- **Fixed in #136 (provisioner 2026.09.24.4):** `terminal_idle()` now counts
+  clients on the loopback port and on the unit's socket, and a check that can't
+  run counts as busy. The original finding: **the runtime updater's "is anyone
+  on the terminal" check sees TCP only** (final review). `terminal_idle()` in
+  `hivra-update-guest-runtime.sh` counts
   established connections on ports 7681 and 7682. Once a computer is on this
   release its terminals listen on owner-only unix sockets, so the check always
   reads idle, and every later Update & restart restarts both terminals even
@@ -462,6 +480,11 @@ worker does nothing there.
 ---
 
 ## 2. Current state (verified)
+
+**Historical.** This section records the state verified at `ed478e0`, before
+slices 14 and 15 merged. Slice 15 (#134) reused the attach chain below,
+retired its v1 activation programs and added the missing transitions, routes,
+worker, chat and UI. Sections 0 and 0.1 say what is built now.
 
 ### 2.1 The half-built attach backend
 
