@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { crossOriginMutationRefusal } from "@/lib/cross-origin-mutation-guard";
 import { isProtectedPath, PROTECTED_ROUTE_MATCHERS } from "@/lib/protected-routes";
 import { isHostedBillingPath } from "@/lib/self-host/hosted-surface-guard";
 import { isNoIndexHost } from "@/lib/seo-host";
@@ -11,6 +12,33 @@ export default clerkMiddleware(async (auth, request) => {
   const response = NextResponse.next();
   if (noIndexHost) {
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+
+  // Before Clerk: a state-changing API request that a browser sent from
+  // another origin (for example a box page on the same registrable domain,
+  // which still carries the SameSite=Lax session cookie) is refused outright.
+  const crossOrigin = crossOriginMutationRefusal(request, request.nextUrl.pathname);
+  if (crossOrigin) {
+    // eslint-disable-next-line no-console -- The proxy runs on every request; the structured logger pulls in ops_events and Supabase, so this stays a single JSON line on console.
+    console.warn(JSON.stringify({
+      level: "warn",
+      msg: "refused cross-origin API mutation",
+      source: "proxy",
+      failureType: "cross_origin_api_mutation",
+      method: request.method,
+      path: request.nextUrl.pathname,
+      reason: crossOrigin.reason,
+      secFetchSite: crossOrigin.secFetchSite,
+      origin: crossOrigin.origin?.slice(0, 200) ?? null,
+    }));
+    const refused = NextResponse.json(
+      { error: "Cross-origin request refused." },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+    if (noIndexHost) {
+      refused.headers.set("X-Robots-Tag", "noindex, nofollow");
+    }
+    return refused;
   }
 
   if (
