@@ -565,7 +565,9 @@ async function main() {
     assert.deepEqual(await listed2(), [["attach", pid("f", 2)], ["access_change", pid("f", 22)]],
       "the next pass serves the ones not tried yet, not the same held two again");
     assert.deepEqual(await listed2(), [["attach", pid("f", 3)], ["access_change", pid("f", 23)]]);
-    assert.deepEqual(await listed2(), [["attach", pid("f", 1)], ["access_change", pid("f", 21)]], "then the least recently tried");
+    // Both were stamped by the same pass; which of the two stamps is earlier is
+    // not specified, so the pass is compared as a set.
+    assert.deepEqual((await listed2()).sort(), [["access_change", pid("f", 21)], ["attach", pid("f", 1)]], "then the least recently tried");
     assert.equal((await value("select public.list_open_hivra_agent_attachment_work(20) as result")).length, 6);
     // An interrupted step waits off the list until its computer is running and
     // free, then is tried at most every ten minutes.
