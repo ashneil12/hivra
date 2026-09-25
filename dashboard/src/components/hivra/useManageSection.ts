@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isManageSectionId, type ManageSectionId } from "@/lib/hivra/manage-sections";
+import { tabPanelDomId } from "@/components/ui/Tabs";
+import { MANAGE_ID_PREFIX } from "./ManageLayout";
 
 // Links that predate sections point at an anchor inside Manage. Each anchor
 // belongs to one section, which opens before the page scrolls to it.
@@ -30,6 +32,14 @@ export function requestedManageSection(url: URL): { section: ManageSectionId | n
   return { section: null, invalid: false, anchor };
 }
 
+/**
+ * Whether a link names one of Manage's sections (?section=, or the older
+ * ?tools=1 and ?addAgent=1), rather than only Manage itself.
+ */
+export function linkNamesManageSection(params: Pick<URLSearchParams, "get">): boolean {
+  return params.get("section") !== null || params.get("tools") === "1" || params.get("addAgent") === "1";
+}
+
 function scrollToAnchor(anchor: string | null): number | null {
   if (!anchor) return null;
   return window.requestAnimationFrame(() => {
@@ -51,10 +61,19 @@ function scrollToAnchor(anchor: string | null): number | null {
  *
  * `ready` is false while the section list is only a placeholder, so a deep
  * link isn't discarded before the computer's real sections are known.
+ *
+ * `select` is for the section tabs, which keep focus on the tab.
+ * `openAndFocus` is for everything else that opens a section (a link in
+ * Overview, a banner, a header chip): the control that was pressed is now
+ * hidden or gone, so the opened section takes focus and a screen reader
+ * announces it.
  */
 export function useManageSection(sections: readonly ManageSectionId[], ready = true) {
   const [selected, setSelected] = useState<ManageSectionId>("overview");
   const frame = useRef<number | null>(null);
+  const focusOnShow = useRef<ManageSectionId | null>(null);
+  // Bumped by openAndFocus(), so a section that is already open still takes focus.
+  const [focusRequest, setFocusRequest] = useState(0);
   const key = sections.join(",");
 
   useEffect(() => {
@@ -97,5 +116,18 @@ export function useManageSection(sections: readonly ManageSectionId[], ready = t
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  return { selected, select };
+  useEffect(() => {
+    const section = focusOnShow.current;
+    if (section === null || section !== selected) return;
+    focusOnShow.current = null;
+    document.getElementById(tabPanelDomId(MANAGE_ID_PREFIX, section))?.focus();
+  }, [selected, focusRequest]);
+
+  const openAndFocus = useCallback((section: ManageSectionId) => {
+    focusOnShow.current = section;
+    setFocusRequest((request) => request + 1);
+    select(section);
+  }, [select]);
+
+  return { selected, select, openAndFocus };
 }

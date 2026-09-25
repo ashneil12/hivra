@@ -135,3 +135,52 @@ it("gives a Linux Sandbox an honest Agent slot in Overview until an agent can be
   expect(within(overview).getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
   await waitFor(() => expect(mockFetch).toHaveBeenCalled());
 });
+
+// Regression: progress showed only in Overview ("Confirming exec…"), so from
+// Resources or Run a command the owner saw a disabled button and nothing else.
+describe("progress where the owner is", () => {
+  function holdAction(path: string) {
+    let finish: (body: unknown) => void = () => undefined;
+    mockFetch.mockImplementation((url: string) => {
+      if (String(url).endsWith(path)) return new Promise((resolve) => { finish = (body) => resolve(jsonResponse(body)); });
+      return Promise.resolve(String(url).endsWith("/gvisor")
+        ? jsonResponse({ success: true, data: { observation: { state: "running" } } })
+        : jsonResponse({ success: true, data: { events: [] } }));
+    });
+    return (body: unknown) => finish(body);
+  }
+
+  it("says a command is running in Run a command, in plain words, and in a banner from another section", async () => {
+    const finish = holdAction("/gvisor/exec");
+    render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+    openSection("Run a command");
+    const run = screen.getByRole("button", { name: "Run in /workspace" });
+    await waitFor(() => expect(run).toBeEnabled());
+    fireEvent.click(run);
+    const panel = screen.getByRole("tabpanel", { name: "Run a command" });
+    expect(await within(panel).findByRole("status")).toHaveTextContent("Running the command…");
+    expect(document.body.textContent).not.toMatch(/Confirming/);
+
+    openSection("Overview");
+    const banner = screen.getAllByRole("status").find((node) => node.textContent?.includes("Running the command…") && !panel.contains(node));
+    expect(banner).toBeDefined();
+    fireEvent.click(within(banner as HTMLElement).getByRole("button", { name: "Open Run a command" }));
+    expect(screen.getByRole("tabpanel", { name: "Run a command" })).toBeVisible();
+
+    finish({ success: true, data: { result: { exitCode: 0, stdout: "ok", stderr: "" } } });
+    expect(await screen.findByText("Exit 0")).toBeInTheDocument();
+    expect(screen.queryByText("Running the command…")).not.toBeInTheDocument();
+  });
+
+  it("says new limits are being applied in Resources", async () => {
+    const finish = holdAction("/action");
+    render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+    openSection("Resources");
+    fireEvent.change(await screen.findByLabelText("CPU limit"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply limits" }));
+    const panel = screen.getByRole("tabpanel", { name: "Resources" });
+    expect(await within(panel).findByRole("status")).toHaveTextContent("Applying the new limits…");
+    finish({ success: true, data: {} });
+    await waitFor(() => expect(within(panel).queryByRole("status")).not.toBeInTheDocument());
+  });
+});

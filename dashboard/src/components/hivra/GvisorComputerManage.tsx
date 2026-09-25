@@ -36,6 +36,16 @@ type Slot = "header" | "computer" | "terminal" | "resources" | "danger";
 const SLOT_SECTION: Record<Slot, ManageSectionId | null> = { header: null, computer: "overview", terminal: "command", resources: "resources", danger: "advanced" };
 const ACTION_SLOT: Record<"start" | "stop" | "resize" | "delete" | "rename", Slot> = { start: "computer", stop: "computer", resize: "resources", delete: "danger", rename: "header" };
 const FALLBACK_SECTIONS: ManageSectionId[] = ["overview", "resources", "command", "advanced"];
+type Busy = "start" | "stop" | "resize" | "delete" | "rename" | "exec";
+// What an action is doing, shown in the section that started it and, while
+// another section is open, as a banner that opens it. A rename shows in the header.
+const PROGRESS: Record<Exclude<Busy, "rename">, { section: ManageSectionId; message: string }> = {
+  start: { section: "overview", message: "Starting this sandbox…" },
+  stop: { section: "overview", message: "Stopping this sandbox…" },
+  resize: { section: "resources", message: "Applying the new limits…" },
+  exec: { section: "command", message: "Running the command…" },
+  delete: { section: "advanced", message: "Deleting this sandbox…" },
+};
 
 // Shown under the control that failed and scrolled into view, so it never covers a field.
 function SectionError({ message }: { message: string }) {
@@ -57,7 +67,7 @@ async function jsonRequest(url: string, init?: RequestInit) {
 /** Manage for a Linux Sandbox (gVisor): the shared sections, with its own one-shot command runner. */
 export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent: HivraAgent; onChanged: () => void; onDestroyed: () => void }) {
   const [observation, setObservation] = useState<Observation | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Busy | null>(null);
   const [error, setError] = useState<{ slot: Slot; message: string } | null>(null);
   const [cpu, setCpu] = useState(agent.cpu);
   const [ram, setRam] = useState(agent.ram);
@@ -66,8 +76,14 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
   const disclosure = gvisorIsolationDisclosure();
   const manage = agent.manage;
   const sections = manage?.sections ?? FALLBACK_SECTIONS;
-  const { selected, select } = useManageSection(sections, Boolean(manage));
+  const { selected, select, openAndFocus } = useManageSection(sections, Boolean(manage));
   const errorFor = (slot: Slot) => (error?.slot === slot ? <SectionError message={error.message} /> : null);
+  const progress = busy && busy !== "rename" ? PROGRESS[busy] : null;
+  const progressIn = (section: ManageSectionId) => progress?.section === section ? (
+    <span role="status" style={{ display: "inline-flex", gap: 7, alignItems: "center" }}>
+      <Loader2 size={14} aria-hidden="true" style={{ animation: "spin 1s linear infinite" }} /> {progress.message}
+    </span>
+  ) : null;
   const placement = manage?.placement.label ?? COMPUTER_PLACEMENT_LABEL[computerPlacementFor(agent)];
 
   const refresh = useCallback(async () => {
@@ -111,6 +127,10 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
   };
 
   const errorSection = error ? SLOT_SECTION[error.slot] : null;
+  const errorNotice = error && errorSection && errorSection !== selected
+    ? <ManageNotice kind="alert" message={error.message} section={errorSection} onOpen={openAndFocus} /> : null;
+  const progressNotice = progress && progress.section !== selected && sections.includes(progress.section)
+    ? <ManageNotice kind="status" message={progress.message} section={progress.section} onOpen={openAndFocus} /> : null;
   const dirty = cpu !== agent.cpu || ram !== agent.ram;
   const state = observation?.state ?? agent.status;
 
@@ -120,8 +140,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
       sections={sections.map((id) => ({ id, unsaved: id === "resources" && dirty }))}
       selected={selected}
       onSelect={select}
-      notice={error && errorSection && errorSection !== selected
-        ? <ManageNotice kind="alert" message={error.message} section={errorSection} onOpen={select} /> : null}
+      notice={errorNotice || progressNotice ? <>{errorNotice}{progressNotice}</> : null}
       header={
         <ManageHeader
           eyebrow="Computer settings"
@@ -144,7 +163,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
             {observation?.state === "stopped" ? <button style={button} disabled={Boolean(busy)} onClick={() => void mutate("start")}><Play size={14} />Start</button>
               : <button style={button} disabled={Boolean(busy) || observation?.state !== "running"} onClick={() => void mutate("stop")}><Square size={14} />Stop</button>}
             <button style={button} disabled={Boolean(busy)} onClick={() => void refresh()}>Refresh</button>
-            {busy && busy !== "rename" ? <span role="status"><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Confirming {busy}…</span> : null}
+            {progressIn("overview")}
           </div>
           {errorFor("computer")}
         </section>
@@ -167,6 +186,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
           <label style={field}>Memory limit<select aria-label="Memory limit" value={ram} onChange={event => setRam(Number(event.target.value))} style={{ ...control, minHeight: 44 }}>
             {[1, 2, 4, 8, 16].map(value => <option key={value} value={value}>{value} GB</option>)}</select></label>
           <button style={button} disabled={Boolean(busy) || !dirty} onClick={() => void mutate("resize")}>Apply limits</button>
+          {progressIn("resources")}
           {errorFor("resources")}
         </section>
       </ManagePanel>
@@ -179,6 +199,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
           <small>Python 3.13 and a POSIX shell are available. Commands run as a non-root user in the private persistent /workspace directory, with a 60-second limit and bounded output.</small>
           <button style={button} disabled={Boolean(busy) || observation?.state !== "running" || !command.trim()} onClick={() => void execute()}>
             <TerminalSquare size={14} />Run in /workspace</button>
+          {progressIn("command")}
           {errorFor("terminal")}
           {commandResult ? <div><div>Exit {commandResult.exitCode}</div><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflow: "auto" }}>{commandResult.stdout}{commandResult.stderr}</pre></div> : null}
         </section>
@@ -195,6 +216,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
             description="Delete removes this sandbox and its private workspace volume. It does not alter the connected host or other computers."
             busy={Boolean(busy)}
             deleting={busy === "delete"}
+            progress={busy === "delete" ? PROGRESS.delete.message : null}
             armDelayMs={CONFIRM_ARM_MS}
             onConfirm={() => void mutate("delete")}
             error={errorFor("danger")}

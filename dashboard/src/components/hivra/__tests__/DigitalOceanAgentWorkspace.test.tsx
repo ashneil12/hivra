@@ -236,13 +236,15 @@ describe("Manage on the shared sections", () => {
   const lastChatProps = () => mockChatProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
   async function openManage() {
     mockGetWithExpiry.mockResolvedValue({ session, credentialExpiry: null });
-    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={onDeleted} />);
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={onDeleted} onChanged={onChanged} />);
     await screen.findByText("chat surface");
     fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
   }
   const onDeleted = jest.fn();
+  const onChanged = jest.fn();
   beforeEach(() => {
     onDeleted.mockReset();
+    onChanged.mockReset();
     // Manage remembers its open section in the address; each test starts clean.
     window.history.replaceState(null, "", "/dashboard/agent/do-agent");
   });
@@ -267,6 +269,22 @@ describe("Manage on the shared sections", () => {
     await waitFor(() => expect(mockRename).toHaveBeenCalledWith(AGENT, "Reviewer"));
     expect(await screen.findByRole("heading", { name: "Reviewer" })).toBeInTheDocument();
     expect((lastChatProps().session as { name: string }).name).toBe("Reviewer");
+    // The sidebar, ⌘K and Home read the agents list again.
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the page after a pause and a resume, but not after a refused one", async () => {
+    await openManage();
+    mockChange.mockResolvedValueOnce({ ...session, status: "paused" });
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    mockChange.mockResolvedValueOnce({ ...session, status: "ready" });
+    fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(2));
+    mockChange.mockRejectedValueOnce(new Error("DigitalOcean didn't pause it."));
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("DigitalOcean didn't pause it.");
+    expect(onChanged).toHaveBeenCalledTimes(2);
   });
 
   it("pauses from Overview and tells the chat", async () => {

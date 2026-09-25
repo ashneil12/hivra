@@ -187,6 +187,7 @@ function DigitalOceanManage({
   session,
   manage,
   onSessionChange,
+  onChanged,
   onDeleted,
   onContractStatus,
   onCredentialProblem,
@@ -194,12 +195,14 @@ function DigitalOceanManage({
   session: ManagedSessionDto;
   manage?: ManageCapabilities;
   onSessionChange: (session: ManagedSessionDto) => void;
+  /** A rename, pause or resume went through: lists elsewhere show the old name or status. */
+  onChanged?: () => void;
   onDeleted: () => void;
   onContractStatus: (status: ComputerContractStatus, cause: "load" | ComputerContractAction) => void;
   onCredentialProblem: (error: ManagedSessionApiError) => void;
 }) {
   const sections = manage?.sections ?? DO_FALLBACK_SECTIONS;
-  const { selected, select } = useManageSection(sections, Boolean(manage));
+  const { selected, select, openAndFocus } = useManageSection(sections, Boolean(manage));
   const [busy, setBusy] = useState<"pause" | "resume" | "delete" | "rename" | null>(null);
   const [error, setError] = useState<{ slot: DoSlot; message: string } | null>(null);
   const harness = DIGITALOCEAN_HARNESS_LABELS[session.harness];
@@ -214,6 +217,7 @@ function DigitalOceanManage({
       const next = await changeManagedSession(session.agentId, action);
       onSessionChange(next);
       if (next.status === "deleted") onDeleted();
+      else onChanged?.();
     } catch (cause) {
       if (isManagedSessionCredentialProblem(cause)) onCredentialProblem(cause);
       setError({ slot: action === "delete" ? "danger" : "power", message: cause instanceof Error ? cause.message : `The ${action} was not confirmed.` });
@@ -227,6 +231,7 @@ function DigitalOceanManage({
     try {
       await renameAgent(session.agentId, name);
       onSessionChange({ ...session, name });
+      onChanged?.();
     } catch (cause) {
       setError({ slot: "header", message: cause instanceof Error ? cause.message : "The name could not be changed." });
     } finally {
@@ -244,7 +249,7 @@ function DigitalOceanManage({
       selected={selected}
       onSelect={select}
       notice={error && errorSection && errorSection !== selected
-        ? <ManageNotice kind="alert" message={error.message} section={errorSection} onOpen={select} /> : null}
+        ? <ManageNotice kind="alert" message={error.message} section={errorSection} onOpen={openAndFocus} /> : null}
       header={
         <ManageHeader
           eyebrow="Agent settings"
@@ -322,11 +327,14 @@ function DigitalOceanManage({
 export function DigitalOceanAgentWorkspace({
   agentId,
   onDeleted,
+  onChanged,
   firstTask,
   manage,
 }: {
   agentId: string;
   onDeleted: () => void;
+  /** A change made in Manage (a rename, pause or resume) that lists elsewhere need to show. */
+  onChanged?: () => void;
   /** The server's capability map for this session (sections, details, reasons). */
   manage?: ManageCapabilities;
   /** The task chosen at launch, offered back in the composer if it was never sent. */
@@ -433,7 +441,7 @@ export function DigitalOceanAgentWorkspace({
       ) : null}
       {/* Kept mounted so the chat's reminder and Manage share one status. */}
       <div className={styles.manage} hidden={view !== "manage"}>
-        <DigitalOceanManage session={session} manage={manage} onSessionChange={setSession}
+        <DigitalOceanManage session={session} manage={manage} onSessionChange={setSession} onChanged={onChanged}
           onDeleted={() => onDeletedRef.current()} onContractStatus={onContractStatus} onCredentialProblem={reportProblem} />
       </div>
     </div>

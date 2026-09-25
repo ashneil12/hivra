@@ -169,6 +169,8 @@ describe("stage-1 truthfulness", () => {
     const overview = screen.getByRole("tabpanel", { name: "Overview" });
     expect(within(overview).getByText(/Hivra can't start, stop or restart a Windows computer on your own server yet/)).toBeVisible();
     for (const name of ["Start", "Stop", "Restart"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    // Nor does it explain buttons that aren't there.
+    expect(overview).not.toHaveTextContent(/Stop shuts down the computer/);
     openSection("Resources");
     expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("Hivra can't resize Windows computers yet.");
   });
@@ -256,6 +258,39 @@ describe("sections", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open Private network" }));
     expect(selectedSection()).toBe("Private network");
     expect(screen.queryByRole("button", { name: "Open Private network" })).not.toBeInTheDocument();
+  });
+
+  // Regression: opening a section from a link, a banner or a chip left focus
+  // on a control that was now hidden (or gone), and nothing was announced.
+  it("moves focus into Resources when See resources opens it", () => {
+    renderManage(codexRow);
+    const seeResources = screen.getByRole("button", { name: "See resources" });
+    seeResources.focus();
+    fireEvent.click(seeResources);
+    expect(selectedSection()).toBe("Resources");
+    const panel = screen.getByRole("tabpanel", { name: "Resources" });
+    expect(panel).toBeVisible();
+    expect(panel).toHaveFocus();
+  });
+
+  it("moves focus into the section a banner opens", () => {
+    renderManage(ubuntuRow);
+    openSection("Private network");
+    fireEvent.click(screen.getByRole("button", { name: "Fail private access" }));
+    openSection("Overview");
+    const open = screen.getByRole("button", { name: "Open Private network" });
+    open.focus();
+    fireEvent.click(open);
+    const panel = screen.getByRole("tabpanel", { name: "Private network" });
+    expect(panel).toBeVisible();
+    expect(panel).toHaveFocus();
+    expect(document.activeElement?.closest("[hidden]")).toBeNull();
+  });
+
+  it("keeps focus on the section tab when the tabs are used", () => {
+    renderManage(codexRow);
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
+    expect(screen.getByRole("tab", { name: "Resources" })).toHaveFocus();
   });
 
   it("moves between sections with the arrow keys, Home and End", () => {

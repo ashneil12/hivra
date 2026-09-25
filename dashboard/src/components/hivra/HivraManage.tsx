@@ -576,7 +576,7 @@ function HivraManageContent({
       : null;
   const placementLabel = manage?.placement.label ?? COMPUTER_PLACEMENT_LABEL[computerPlacementFor(agent)];
   const sections: ManageSectionId[] = manage?.sections ?? ["overview", "resources", "advanced"];
-  const { selected, select } = useManageSection(sections, Boolean(manage));
+  const { selected, select, openAndFocus } = useManageSection(sections, Boolean(manage));
 
   const maximumCapCpu = budget.selfManaged
     ? MAX_CPU
@@ -677,12 +677,12 @@ function HivraManageContent({
     <>
       {err && !err.slot ? <div role="alert" style={errorStyle}>{err.message}</div> : null}
       {err && errorSection && errorSection !== selected && sections.includes(errorSection)
-        ? <ManageNotice kind="alert" message={err.message} section={errorSection} onOpen={select} /> : null}
+        ? <ManageNotice kind="alert" message={err.message} section={errorSection} onOpen={openAndFocus} /> : null}
       {acting && progressSection && progressSection !== selected && sections.includes(progressSection)
-        ? <ManageNotice kind="status" message={LIFECYCLE_PROGRESS[acting].title} section={progressSection} onOpen={select} /> : null}
+        ? <ManageNotice kind="status" message={LIFECYCLE_PROGRESS[acting].title} section={progressSection} onOpen={openAndFocus} /> : null}
       {(Object.entries(sectionFeedback) as Array<[ManageSectionId, ManageFeedback]>).map(([section, feedback]) =>
         feedback && section !== selected && sections.includes(section)
-          ? <ManageNotice key={section} kind={feedback.kind} message={feedback.message} section={section} onOpen={select} /> : null)}
+          ? <ManageNotice key={section} kind={feedback.kind} message={feedback.message} section={section} onOpen={openAndFocus} /> : null)}
     </>
   );
 
@@ -715,7 +715,7 @@ function HivraManageContent({
           disabled={busy}
           onRename={(name) => void run("rename", () => renameAgent(agent.id, name))}
           error={errorFor("header")}
-          chips={<ManageHeaderChipsSlot agent={agent} onOpenUpdates={() => select("updates")} />}
+          chips={<ManageHeaderChipsSlot agent={agent} onOpenUpdates={() => openAndFocus("updates")} />}
         />
       }
     >
@@ -737,7 +737,7 @@ function HivraManageContent({
               <Row icon={<Cpu size={14} />} k="Size">
                 <span style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={valStyle}>{agent.cpu} CPU · {agent.ram} GB reserved · up to {agent.cpu_max ?? agent.cpu} CPU · {agent.ram_max ?? agent.ram} GB</span>
-                  {sections.includes("resources") ? <button type="button" onClick={() => select("resources")} className="mono" style={{ ...label, border: 0, background: "transparent", color: "var(--ink-black)", textDecoration: "underline", minHeight: 40, padding: 0, cursor: "pointer" }}>See resources</button> : null}
+                  {sections.includes("resources") ? <button type="button" onClick={() => openAndFocus("resources")} className="mono" style={{ ...label, border: 0, background: "transparent", color: "var(--ink-black)", textDecoration: "underline", minHeight: 40, padding: 0, cursor: "pointer" }}>See resources</button> : null}
                 </span>
               </Row>
               <Row icon={<Globe size={14} />} k="Where it runs"><span style={valStyle}>{placementLabel}</span></Row>
@@ -769,9 +769,10 @@ function HivraManageContent({
               {repliesDialog(["stop", "restart"])}
               {errorFor("power")}
               {!powerUnavailable && lifecyclePending ? <CapReasonLine cap={power.stop} /> : null}
-              <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              {/* Only explains buttons that are there. */}
+              {powerUnavailable ? null : <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                 Stop shuts down the computer; Start brings it back. Restart reboots in place. Stopping does not cancel your plan or any provider billing.
-              </div>
+              </div>}
               {progressFor("overview")}
               {providerComputer && providerPowerMessage(agent.power_stage) ? <p
                 role={["verification_unavailable", "request_uncertain", "failed"].includes(String(agent.power_stage)) ? "alert" : "status"}
