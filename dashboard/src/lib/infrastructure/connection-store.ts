@@ -6,6 +6,7 @@ import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { normalizeProxmoxSshHostFingerprint } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 
+import { SshPrivateKeyError, unlockSshPrivateKey } from "./ssh-private-key";
 import {
   DeploymentTargetDtoSchema,
   GvisorDeploymentTargetDtoSchema,
@@ -41,6 +42,8 @@ const CONNECTION_SELECT = [
   "ssh_port",
   "ssh_user",
   "ssh_host_fingerprint_sha256",
+  "ssh_privilege",
+  "ssh_host_key_type",
   "config",
   "revision",
   "preflight_run_id",
@@ -92,6 +95,9 @@ type InfrastructureConnectionRow = {
   ssh_port: number | null;
   ssh_user: string | null;
   ssh_host_fingerprint_sha256: string | null;
+  /** Absent only in rows written before migration 20260924213000. */
+  ssh_privilege?: "login" | "sudo" | null;
+  ssh_host_key_type?: "ssh-ed25519" | null;
   config: unknown;
   revision: number;
   preflight_run_id: string | null;
@@ -150,7 +156,9 @@ export type InfrastructureConnectionStoreErrorCode =
   | "capacity_busy"
   | "capacity_force_forget_required"
   | "force_forget_not_available"
-  | "agents_bound";
+  | "agents_bound"
+  | "key_passphrase_required"
+  | "key_passphrase_incorrect";
 
 /**
  * Stable, secret-free store error. Database and crypto error messages are not
@@ -298,6 +306,10 @@ function dtoFromRow(
       sshPort: row.ssh_port,
       sshUser: row.ssh_user,
       sshHostFingerprintSha256: row.ssh_host_fingerprint_sha256,
+      // Only non-default values appear, so a login connection's read model
+      // is exactly what it was before sudo connections existed.
+      ...(row.ssh_privilege === "sudo" ? { sshPrivilege: "sudo" as const } : {}),
+      ...(row.ssh_host_key_type === "ssh-ed25519" ? { sshHostKeyType: "ssh-ed25519" as const } : {}),
     },
     configuration: normalizedConfiguration(row.config),
     credentialsConfigured,
@@ -432,6 +444,8 @@ function metadataForCreate(
     ssh_host_fingerprint_sha256: normalizeProxmoxSshHostFingerprint(
       input.endpoint.sshHostFingerprintSha256,
     ),
+    ssh_privilege: input.endpoint.sshPrivilege ?? "login",
+    ssh_host_key_type: input.endpoint.sshHostKeyType ?? null,
     config: "configuration" in input ? input.configuration ?? {} : {},
     last_checked_at: null,
     last_error_code: null,
@@ -440,6 +454,29 @@ function metadataForCreate(
 
 function encryptedSecretBundle(sshPrivateKey: string): string {
   const bundle: SecretBundle = { version: 1, sshPrivateKey };
+  return encryptSecret(JSON.stringify(bundle));
+}
+
+/** The key to seal: a passphrase-protected key is unlocked once here, and
+ * the passphrase goes no further. */
+function unlockedPrivateKey(credentials: { sshPrivateKey: string; sshPrivateKeyPassphrase?: string }): string {
+  try {
+    return unlockSshPrivateKey(credentials.sshPrivateKey, credentials.sshPrivateKeyPassphrase);
+  } catch (error) {
+    if (error instanceof SshPrivateKeyError && error.code === "passphrase_required") {
+      throw new InfrastructureConnectionStoreError("key_passphrase_required");
+    }
+    if (error instanceof SshPrivateKeyError && error.code === "passphrase_incorrect") {
+      throw new InfrastructureConnectionStoreError("key_passphrase_incorrect");
+    }
+    throw new InfrastructureConnectionStoreError("invalid_request");
+  }
+}
+
+/** The connection-secret envelope for a key Hivra generated itself (the
+ * enrollment's key, re-sealed at Yes or Replace). */
+export function sealConnectionPrivateKey(sshPrivateKey: string): string {
+  const bundle = SecretBundleSchema.parse({ version: 1, sshPrivateKey });
   return encryptSecret(JSON.stringify(bundle));
 }
 
@@ -555,7 +592,7 @@ export async function createInfrastructureConnection(
   // Resolve encryption configuration before the transaction starts. The RPC
   // inserts metadata and its credential envelope atomically, so neither row can
   // outlive a failure in the other insert.
-  const encryptedBundle = encryptedSecretBundle(input.credentials.sshPrivateKey);
+  const encryptedBundle = encryptedSecretBundle(unlockedPrivateKey(input.credentials));
   const metadata = metadataForCreate(userId, input);
   const rpcName = input.provider === "host"
     ? "create_host_infrastructure_connection"
@@ -570,6 +607,10 @@ export async function createInfrastructureConnection(
         p_ssh_host_fingerprint_sha256: metadata.ssh_host_fingerprint_sha256,
         p_encrypted_bundle: encryptedBundle,
         p_key_version: 1,
+        // Sent only when not the default, so the call is unchanged for every
+        // login connection.
+        ...(metadata.ssh_privilege !== "login" ? { p_ssh_privilege: metadata.ssh_privilege } : {}),
+        ...(metadata.ssh_host_key_type ? { p_ssh_host_key_type: metadata.ssh_host_key_type } : {}),
       }
     : {
         p_user_id: userId,
@@ -632,7 +673,7 @@ export async function updateInfrastructureConnection(
   // Encryption/key configuration is validated before either table changes,
   // but the encrypted value is not persisted until metadata succeeds.
   const rotatedEncryptedBundle = input.credentials
-    ? encryptedSecretBundle(input.credentials.sshPrivateKey)
+    ? encryptedSecretBundle(unlockedPrivateKey(input.credentials))
     : null;
   // Resolve the response-only credential-presence flag before the atomic
   // mutation. A transient read failure must not turn a committed PATCH into an
@@ -718,6 +759,17 @@ export async function updateInfrastructureConnection(
     patch.ssh_host_fingerprint_sha256 = normalizeProxmoxSshHostFingerprint(
       input.endpoint.sshHostFingerprintSha256,
     );
+    // ssh_privilege is revision-bound: changing it is an operational edit.
+    const privilege = input.endpoint.sshPrivilege ?? "login";
+    if (privilege !== (current.ssh_privilege ?? "login")) {
+      if (privilege === "sudo" && current.provider !== "host") {
+        throw new InfrastructureConnectionStoreError("invalid_request");
+      }
+      patch.ssh_privilege = privilege;
+    }
+    if (input.endpoint.sshHostKeyType !== undefined) {
+      patch.ssh_host_key_type = input.endpoint.sshHostKeyType;
+    }
   }
   if (input.configuration !== undefined) {
     patch.config = input.configuration ?? {};

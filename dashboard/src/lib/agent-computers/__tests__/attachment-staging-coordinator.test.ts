@@ -74,7 +74,7 @@ it("uses exact private RPC arguments and requires literal confirmation, not trut
   expect(rpc).toHaveBeenLastCalledWith("read_hivra_attachment_execution", { p_owner: "owner", p_operation_id: prepared.operationId });
   rpc.mockResolvedValue({ data: true, error: null });
   expect(await store.dispatch(prepared, dispatched.dispatchId!)).toBe(true);
-  expect(rpc).toHaveBeenLastCalledWith("dispatch_hivra_agent_attachment", expect.objectContaining({
+  expect(rpc).toHaveBeenLastCalledWith("dispatch_hivra_agent_attachment_v2", expect.objectContaining({
     p_expected_generation: "2", p_expected_authority: prepared.guestAuthority, p_dispatch_id: dispatched.dispatchId,
   }));
   for (const response of [{ data: true }, { data: "true", error: null }, { data: null, error: null },
@@ -184,6 +184,16 @@ it.each(["stage", "observe"] as const)("keeps %s uncertainty held without anothe
   expect(deps.store.recordStaged).not.toHaveBeenCalled();
 });
 
+it.each(["stage", "observe"] as const)("names a VM the host saw stopped after the %s dispatch, and records nothing (T3)", async action => {
+  const deps = fixture();
+  if (action === "observe") deps.store.read.mockResolvedValueOnce(dispatched);
+  deps.execute.mockImplementation(async (_owner, _agent, requested) => requested === "fetch"
+    ? { ok: true, action: "fetch", artifact: {} } : { ok: false, code: "target_refused", reason: "computer_not_running" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
+  expect(deps.store.recordStaged).not.toHaveBeenCalled();
+  expect(deps.store.dispatch).toHaveBeenCalledTimes(action === "stage" ? 1 : 0);
+});
+
 it("returns a previously recorded receipt state without touching the host", async () => {
   const deps = fixture();
   deps.store.read.mockResolvedValueOnce(completed);
@@ -238,4 +248,86 @@ it("does not execute against unavailable or wrong-owner state", async () => {
   }
   expect(deps.execute).not.toHaveBeenCalled();
   expect(deps.store.dispatch).not.toHaveBeenCalled();
+});
+
+it("tells a guest that never answered (boot_unobserved) from an answer it could not record (boot_unconfirmed)", async () => {
+  const deps = fixture();
+  deps.store.read.mockResolvedValue({ ...prepared, observation: null });
+  deps.observeBoot.mockResolvedValue({ ok: false, code: "transport_failed" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "boot_unobserved" });
+  expect(deps.store.recordBoot).not.toHaveBeenCalled();
+  deps.observeBoot.mockResolvedValue({ ok: true, observation: { bootId: dispatched.observation!.bootId } });
+  deps.store.recordBoot.mockResolvedValue(false);
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "boot_unconfirmed" });
+  expect(deps.execute).not.toHaveBeenCalled();
+});
+
+it("names a VM the host refused before anything ran in it, at the boot read and at the fetch", async () => {
+  const deps = fixture();
+  deps.store.read.mockResolvedValue({ ...prepared, observation: null });
+  deps.observeBoot.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
+  deps.observeBoot.mockResolvedValue({ ok: false, code: "target_refused", reason: "address_mismatch" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_ready" });
+  deps.store.read.mockResolvedValue(prepared);
+  deps.execute.mockResolvedValue({ ok: false, code: "target_refused", reason: "computer_not_running" });
+  expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "computer_not_running" });
+  expect(deps.store.dispatch).not.toHaveBeenCalled();
+});
+
+it("does not fetch, or win the one-time stage dispatch, when fetch and stage together could outlast the pass", async () => {
+  const deps = fixture();
+  deps.store.read.mockResolvedValue(prepared);
+  const now = () => 1_000_000;
+  expect(await run({ ...deps, now, deadline: 1_000_000 + 699_999 } as never))
+    .toEqual({ operationId: dispatched.operationId, state: "held", reason: "budget_exhausted" });
+  expect(deps.execute).not.toHaveBeenCalled();
+  expect(deps.store.dispatch).not.toHaveBeenCalled();
+});
+
+describe("a stage the computer ended without a receipt (T3)", () => {
+  const refusing = (deps: ReturnType<typeof fixture>, reason: string) => deps.execute.mockImplementation(async (_owner, _agent, requested) =>
+    requested === "fetch" ? { ok: true, action: "fetch", artifact: {} } : { ok: false, code: "guest_refused", reason });
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+
+  it("is final when the stage itself was refused: there is no receipt to wait for", async () => {
+    const deps = fixture();
+    refusing(deps, "staging_failed");
+    expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "refused", reason: "staging_failed" });
+    expect(deps.execute.mock.calls.map(call => call[2])).toEqual(["fetch", "stage"]);
+    expect(deps.store.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.store.recordStaged).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["staging_failed", 1, "refused"], ["computer_restarted", 1, "refused"],
+    ["staging_in_progress", 60, "held"],
+    ["staging_absent", 1, "held"], ["staging_absent", 15, "refused"],
+    ["staging_unresolved", 1, "held"], ["staging_unresolved", 15, "refused"],
+  ] as const)("reads an observed %s %i minutes after the dispatch as %s, and never stages again", async (reason, minutes, state) => {
+    const deps = fixture();
+    deps.store.read.mockResolvedValue(dispatched);
+    refusing(deps, reason);
+    const progress = await progressAttachmentStaging("owner", dispatched.operationId, "x86_64",
+      { ...deps, now: () => NOW, dispatchedAt: at(minutes) } as never);
+    expect(progress).toEqual(state === "refused" ? { operationId: dispatched.operationId, state, reason }
+      : { operationId: dispatched.operationId, state, reason: "staging_unconfirmed" });
+    expect(deps.execute.mock.calls.map(call => call[2])).toEqual(["observe"]);
+    expect(deps.store.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("never reads a missing journal as final without the dispatch time", async () => {
+    const deps = fixture();
+    deps.store.read.mockResolvedValue(dispatched);
+    refusing(deps, "staging_absent");
+    expect((await progressAttachmentStaging("owner", dispatched.operationId, "x86_64", { ...deps, now: () => NOW } as never)).state).toBe("held");
+  });
+
+  it("names a download the computer refused before anything was dispatched, to be tried again", async () => {
+    const deps = fixture();
+    deps.execute.mockResolvedValue({ ok: false, code: "guest_refused", reason: "fetch_failed" });
+    expect(await run(deps)).toEqual({ operationId: dispatched.operationId, state: "held", reason: "fetch_refused" });
+    expect(deps.store.dispatch).not.toHaveBeenCalled();
+  });
 });

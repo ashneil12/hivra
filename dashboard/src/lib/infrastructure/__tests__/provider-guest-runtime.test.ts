@@ -56,7 +56,7 @@ it("runs the actual generated recipes and filesystem guards without network or s
   });
   expect({ status: result.status, stdout: result.stdout, error: result.error || (result.status === 0 ? "" : result.stderr) })
     .toEqual({ status: 0, stdout: "", error: "" });
-  expect(result.stderr).toContain("Ran 7 tests");
+  expect(result.stderr).toContain("Ran 8 tests");
 }, 12_000);
 it("accepts only a matching readiness receipt; unsuccessful observations never carry a bearer", () => {
   const { probe, receipt } = ready();

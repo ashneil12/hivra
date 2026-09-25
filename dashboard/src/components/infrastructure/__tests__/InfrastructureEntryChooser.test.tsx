@@ -58,12 +58,24 @@ describe("guided infrastructure paths", () => {
     fireEvent.click(screen.getByRole("button", { name: /On my local network/i }));
     expect(screen.getByText("Hosted Hivra cannot connect to your local network.")).toBeInTheDocument();
     expect(screen.getByText(/192.168.x.x or localhost is not reachable/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Connect existing host/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Connect a server you already have/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Set up local network access")).not.toBeInTheDocument();
     expect(callbacks.onConnectExisting).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Use a remote server instead/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Connect a server you already have/i }));
     expect(callbacks.onConnectExisting).toHaveBeenCalledTimes(1);
+  });
+
+  // The remote path opens the setup command (slice 13): its checklist asks
+  // for a terminal with sudo, not an address, key file and fingerprint.
+  it("prepares the owner for the setup command on the remote path", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: /Choose my machine/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Remote server/i }));
+    expect(screen.getByText(/Ubuntu 22\.04 or 24\.04 on x86, with a public IPv4 address/)).toBeInTheDocument();
+    expect(screen.getByText(/as root or a user who can use sudo\. You paste one command there/)).toBeInTheDocument();
+    expect(screen.queryByText(/Have a key file ready/)).not.toBeInTheDocument();
+    expect(screen.getByText(/The next step also lets you connect with SSH details instead\./)).toBeInTheDocument();
   });
 
   it("explains explicit self-hosted network opt-in without changing network policy", () => {

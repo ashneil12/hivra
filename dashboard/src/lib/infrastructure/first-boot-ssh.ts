@@ -79,7 +79,8 @@ export async function inspectProviderShutdownReadiness(input: FirstBootSshInput,
  */
 export async function inspectFirstBootGuest(input:FirstBootSshInput & {connectionId:string},dependencies:Partial<Dependencies>={}):Promise<FirstBootSshIdentity & {output:string}> {
   let script:string;
-  try{script=buildReadOnlyHostDiscoveryScript(input.connectionId);}catch{throw new FirstBootSshError("invalid_identity");}
+  // The provider lane keeps its own version 1 script, byte for byte.
+  try{script=buildReadOnlyHostDiscoveryScript(input.connectionId,"provider-guest");}catch{throw new FirstBootSshError("invalid_identity");}
   return connectFirstBootGuest(input,dependencies,{kind:"discovery",script});
 }
 

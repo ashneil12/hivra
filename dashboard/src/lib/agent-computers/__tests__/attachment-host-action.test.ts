@@ -15,15 +15,19 @@ const target = { operationId: expected.identity.operationId, computerId: expecte
   sourceId: expected.identity.sourceId, architecture: expected.identity.architecture,
   vmid: 1234, guestIp: "10.241.0.44", bindingTag: "hivra-bind-" + "a".repeat(32) };
 
-it.each(["fetch", "stage", "observe"] as const)("builds the fixed %s transport inside the allocation lock", action => {
+it.each(["fetch", "stage", "observe"] as const)("checks the VM and starts the %s step inside the allocation lock, then waits outside it", action => {
   const script = buildAttachmentHostActionScript(action, target, expected);
   expect(spawnSync("bash", ["-n"], { input: script, encoding: "utf8", timeout: 5000 }).status).toBe(0);
   expect(script).toContain('fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)');
   expect(script).toContain('VMID=1234');
   expect(script).toContain('qm() { command timeout --kill-after=5 20 qm "$@"; }');
-  expect(script).toContain(`qm() { command timeout --kill-after=5 ${ATTACHMENT_ACTION_TIMEOUTS[action].guestSeconds} qm "$@"; }`);
-  expect(script.indexOf('grep -Fxq "$EXPECTED_BINDING_TAG"')).toBeLessThan(script.lastIndexOf('run_vmid_bound_guest_exec_stdin /usr/bin/python3'));
-  expect(script).toContain('qm guest exec "$VMID" --timeout 0 --pass-stdin 1 -- "$@"');
+  const dispatch = script.lastIndexOf('dispatch_vmid_bound_guest_exec_stdin /usr/bin/python3');
+  expect(script.indexOf('grep -Fxq "$EXPECTED_BINDING_TAG"')).toBeLessThan(dispatch);
+  expect(dispatch).toBeLessThan(script.lastIndexOf("flock -u 9"));
+  expect(script.lastIndexOf("flock -u 9")).toBeLessThan(script.lastIndexOf(
+    `await_vmid_bound_guest_exec "$HIVRA_GUEST_PID" ${ATTACHMENT_ACTION_TIMEOUTS[action].guestSeconds}`));
+  expect(script).toContain('qm guest exec "$VMID" --synchronous 0 --pass-stdin 1 -- "$@"');
+  expect(script.match(/qm\(\) \{ command timeout/g)).toHaveLength(1);
   expect(script).toContain(`"action":"${action}"`);
   expect(script).toContain(`"bootId":"${expected.bootId}"`);
   expect(script).not.toContain('ssh ');

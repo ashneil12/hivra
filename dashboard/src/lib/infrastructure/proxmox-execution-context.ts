@@ -14,6 +14,7 @@ import {
 } from "./connection-runtime";
 import { isProxmoxDeploymentTarget, type DeploymentTargetDto, type ProxmoxDeploymentTargetDto } from "./contracts";
 import { resolveProxmoxHostCapacityPolicy } from "./host-capacity-policy";
+import { PROXMOX_SUDO_TRANSPORT_READY } from "./sudo-transport-gate";
 import {
   PORTABLE_HIVRA_PROVISIONER_DIRECTORY,
   isCompatibleProxmoxProvisionerVersion,
@@ -177,6 +178,14 @@ export async function resolveSelfManagedProxmoxExecutionContext(
     throw mapStoreError(error, "connection_not_found");
   }
 
+  // Release gate T43: no Proxmox-lane host work through sudo, for any
+  // purpose, until early finish is proven under sudo. Preflight refuses such
+  // connections, so none should hold a Proxmox target; this refuses before
+  // any SSH if one ever does.
+  if (connection.endpoint.sshPrivilege === "sudo" && !PROXMOX_SUDO_TRANSPORT_READY) {
+    throw new ProxmoxExecutionContextError("connection_not_ready");
+  }
+
   let target: DeploymentTargetDto;
   try {
     target = await deps.getTarget(userId, selection.targetId);
@@ -241,6 +250,8 @@ export async function resolveSelfManagedProxmoxExecutionContext(
       sshUser: connection.endpoint.sshUser,
       sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256,
       sshPrivateKey: connection.credentials.sshPrivateKey,
+      sshPrivilege: connection.endpoint.sshPrivilege,
+      sshHostKeyType: connection.endpoint.sshHostKeyType,
       node: runtime.node,
       vmidStart: runtime.vmidStart,
       vmidEnd: runtime.vmidEnd,

@@ -3,8 +3,8 @@ import "server-only";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
-import { buildAttachmentHostObservationScript, parseAttachmentHostObservation,
-  type AttachmentHostObservation, type AttachmentObservationTarget } from "./attachment-host-observation";
+import { buildAttachmentHostObservationScript, parseAttachmentHostObservation, parseAttachmentTargetRefusal,
+  type AttachmentHostObservation, type AttachmentObservationTarget, type AttachmentTargetRefusal } from "./attachment-host-observation";
 
 type Request = Pick<AttachmentObservationTarget, "operationId" | "computerId" | "sourceId" | "architecture">;
 type Dependencies = {
@@ -13,7 +13,7 @@ type Dependencies = {
 };
 type Result = { ok: true; observation: AttachmentHostObservation } | {
   ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_observation";
-};
+} | { ok: false; code: "target_refused"; reason: AttachmentTargetRefusal };
 
 /** Internal read-only observer. The orchestrator must load the row and request
  * from the authorized durable claim, not directly from browser input. Recheck
@@ -44,7 +44,11 @@ export async function observeAttachmentGuestBoot(
   catch { return { ok: false, code: "invalid_target" }; }
   try {
     const result = await deps.runHostScript(script, context.env, { timeoutMs: 90_000, maxOutputBytes: 16 * 1024 });
-    if (!result.ok) return { ok: false, code: "transport_failed" };
+    if (!result.ok) {
+      // The host refused the VM before anything ran in it: say why.
+      const refused = parseAttachmentTargetRefusal(result.stdout);
+      return refused ? { ok: false, code: "target_refused", reason: refused } : { ok: false, code: "transport_failed" };
+    }
     const observation = parseAttachmentHostObservation(result.stdout, target);
     return observation ? { ok: true, observation } : { ok: false, code: "invalid_observation" };
   } catch { return { ok: false, code: "transport_failed" }; }

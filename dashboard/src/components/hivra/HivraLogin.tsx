@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { ExternalLink, Loader2, Check, Copy } from "lucide-react";
 
 import { boxLoginStartRaw, boxLoginComplete, boxLoginStatus } from "@/lib/hivra/agent-api";
+import { isTrustedSignInLink } from "@/lib/agent-computers/attach-client";
 
 // Classes rather than inline styles so the narrow-pane rules below can win.
 // Phones tighten the rhythm so the only action clears the fold at 375x667
@@ -84,6 +85,7 @@ export function HivraLogin({
   displayName,
   emoji,
   token,
+  untrustedLinks = false,
 }: {
   boxUrl: string;
   onDone: () => void;
@@ -96,6 +98,12 @@ export function HivraLogin({
   emoji?: string | null;
   /** Per-box bearer token — the box's login endpoints are token-gated. */
   token?: string | null;
+  /**
+   * The sign-in link comes from an agent added to its owner's computer, whose
+   * answers are its own (design 5.4, T28): it is shown as a link only on the
+   * OpenAI or ChatGPT sign-in hosts, and as plain text with a warning otherwise.
+   */
+  untrustedLinks?: boolean;
 }) {
   const isCodex = agentKind === "codex";
   const product = productName || (isCodex ? "Codex" : "Claude Code");
@@ -159,10 +167,13 @@ export function HivraLogin({
       setStep("awaiting");
       // Runs after an await, outside the tap's user gesture, so mobile Safari
       // may block it. The "Open sign-in page" button below is always shown.
-      try {
-        window.open(s.url, "_blank", "noopener,noreferrer");
-      } catch {
-        /* popup blocked — the button below opens it */
+      // A link from an attached agent opens only on the trusted sign-in hosts.
+      if (!untrustedLinks || isTrustedSignInLink(s.url)) {
+        try {
+          window.open(s.url, "_blank", "noopener,noreferrer");
+        } catch {
+          /* popup blocked — the button below opens it */
+        }
       }
     } catch (e) {
       setError((e as Error).message);
@@ -195,10 +206,15 @@ export function HivraLogin({
     }
   }
 
-  const openSignIn = (
+  const openSignIn = !untrustedLinks || isTrustedSignInLink(url) ? (
     <a href={url} target="_blank" rel="noopener noreferrer" className="hivra-login__primary hivra-login__cta">
       <ExternalLink size={15} /> Open sign-in page
     </a>
+  ) : (
+    <div role="alert" style={{ border: "1px solid #c0392b", padding: "10px 14px", fontSize: 13, lineHeight: 1.55 }}>
+      <p style={{ margin: 0, color: "var(--ink-black)" }}>This sign-in address isn&apos;t an OpenAI or ChatGPT page, so Hivra won&apos;t open it. Don&apos;t enter your password there.</p>
+      <code style={{ display: "block", marginTop: 6, overflowWrap: "anywhere", color: "var(--text-secondary)" }}>{url}</code>
+    </div>
   );
 
   return (

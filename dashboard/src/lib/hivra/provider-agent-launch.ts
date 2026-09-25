@@ -230,7 +230,9 @@ export async function launchProviderAgent(raw: ProviderAgentLaunchInput, depende
         infrastructure_connection_id: row.infrastructure_connection_id, infrastructure_connection_revision: row.infrastructure_connection_revision,
         deployment_target_id: row.deployment_target_id, provider_capacity_order_id: row.provider_capacity_order_id,
         provider_enrollment_attempt_id: row.provider_enrollment_attempt_id, provider_server_id: row.provider_server_id,
-      });
+      // An agent on the owner's own cloud uses the owner's capacity and is not
+      // counted toward the plan's agent limit; the reservation does not count it.
+      }, 0);
       if (!reservation.created) return { agent: sanitizeHivraAgentRow(reservation.agent), launchRequestId: reservation.requestId };
       agent = reservation.agent;
     } else agent = await deps.reserve(row);

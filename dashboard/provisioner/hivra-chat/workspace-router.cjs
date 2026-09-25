@@ -23,6 +23,12 @@ function createWorkspaceRouter(options, { terminalRequest = http.request } = {})
     || controlUrl.protocol !== 'https:' || controlUrl.origin !== options.controlOrigin
     || !['list', 'read', 'write'].every(key => typeof options.files?.[key] === 'function')) throw new Error('workspace_router_configuration_invalid');
   const control = createWorkspaceControl(options);
+  // The computer's shell listens on a bux-owned unix socket when its terminal
+  // unit is from the socket release; older units keep the loopback port.
+  const boxTerminal = () => {
+    const target = typeof options.boxTerminal === 'function' ? options.boxTerminal() : null;
+    return target && typeof target.socketPath === 'string' ? { socketPath: target.socketPath } : { host: '127.0.0.1', port: 7682 };
+  };
   let closed = false, pending = 0;
   const sockets = new Set(), upstreams = new Set();
   const headers = { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer',
@@ -53,7 +59,7 @@ function createWorkspaceRouter(options, { terminalRequest = http.request } = {})
   // Only fixed ttyd routes reach this proxy. Neither management credentials nor
   // workspace cookies/forwarded browser authority are passed to the terminal.
   function terminalHttp(req, res, url) {
-    const upstream = terminalRequest({ host: '127.0.0.1', port: 7682, method: 'GET', path: url,
+    const upstream = terminalRequest({ ...boxTerminal(), method: 'GET', path: url,
       headers: { accept: typeof req.headers.accept === 'string' ? req.headers.accept : '*/*' } });
     upstreams.add(upstream);
     const timer = setTimeout(() => upstream.destroy(), 15000);
@@ -128,7 +134,7 @@ function createWorkspaceRouter(options, { terminalRequest = http.request } = {})
       release = await control.attachSocket(target.sessionId, scoped, close);
       if (!release || closed || socket.destroyed) return close();
       sockets.add(close); socket.once('close', close); socket.once('error', close);
-      upstream = terminalRequest({ host: '127.0.0.1', port: 7682, method: 'GET', path: target.url,
+      upstream = terminalRequest({ ...boxTerminal(), method: 'GET', path: target.url,
         headers: { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13',
           'sec-websocket-key': key, 'sec-websocket-protocol': 'tty' } });
       const timer = setTimeout(close, 5000);

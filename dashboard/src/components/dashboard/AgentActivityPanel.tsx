@@ -66,6 +66,8 @@ interface HivraActivityEvent {
   agentType: string | null;
   agentId: string | null;
   createdAt: string;
+  /** Set by the server for an agent added to a computer (design 5.7). */
+  summary?: string;
 }
 
 interface HivraActivity {
@@ -152,6 +154,11 @@ const EVENT_LABEL: Record<string, string> = {
   agent_cli_updated: "Agent software updated",
   agent_cli_update_failed: "Agent software update didn't finish",
   agent_cli_auto_update_changed: "Automatic updates changed",
+  // An agent added to a computer; the timeline shows the row's own words.
+  agent_attached: "Agent added",
+  agent_attach_failed: "Agent not added",
+  agent_access_changed: "Access changed",
+  agent_removed: "Agent removed · files in ~/Hivra kept",
 };
 
 function eventLabel(event: string): string {
@@ -617,7 +624,7 @@ export function AgentActivityPanel() {
                   style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}
                 >
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {eventLabel(e.event)}
+                    {e.summary ?? eventLabel(e.event)}
                   </span>
                   <span className="mono" style={{ fontSize: 11, opacity: 0.55, flexShrink: 0 }}>
                     {agentTypeLabel(e.agentType)} · {timeAgo(e.createdAt, nowMs)}

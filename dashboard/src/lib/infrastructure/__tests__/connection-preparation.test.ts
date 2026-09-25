@@ -192,6 +192,25 @@ describe("portable Proxmox host preparation", () => {
     expect(deps.beginPreparation).not.toHaveBeenCalled();
   });
 
+  // Release gate T43 (review finding 2): prepare-proxmox-host.sh checks only
+  // `id -u`, which a sudo connection passes, so Hivra refuses first.
+  it("refuses a sudo connection before reading the bundle or any SSH while the gate is off", async () => {
+    const deps = dependencies();
+    const base = connection();
+    deps.loadConnection.mockResolvedValue(connection({
+      provider: "host", endpoint: { ...base.endpoint, sshUser: "hivra", sshPrivilege: "sudo" },
+    }));
+
+    const result = await prepareSimpleProxmoxConnection("user_1", CONNECTION_ID, deps);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "PREPARATION_FAILED", cause: "root_required",
+      message: "Setup needs a root login on this server. Proxmox launches need a root login for now." } });
+    expect(deps.resolveDestination).not.toHaveBeenCalled();
+    expect(deps.loadBundle).not.toHaveBeenCalled();
+    expect(deps.executeHostScript).not.toHaveBeenCalled();
+    expect(deps.beginPreparation).not.toHaveBeenCalled();
+  });
+
   it("maps cross-owner absence without attempting DNS or SSH", async () => {
     const deps = dependencies();
     deps.loadConnection.mockRejectedValue(new InfrastructureConnectionStoreError("not_found"));

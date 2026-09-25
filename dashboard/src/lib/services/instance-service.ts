@@ -759,6 +759,9 @@ async function loadProxmoxHostRegistry(
   return { active: [], nonActiveHostIds, registryHasAnyRows, outcome: "empty" };
 }
 
+// Hivra agent statuses whose VM holds CPU and RAM on its host.
+const HIVRA_AGENT_POWERED_STATUSES: ReadonlySet<string> = new Set(["provisioning", "running"]);
+
 type RankedProxmoxHost = {
   host: ProxmoxHostRegistryRow;
   freeCpu: number;
@@ -783,11 +786,16 @@ async function rankProxmoxHostsForPlacement(params: {
     .select("proxmox_node, cpu_limit, ram_limit, disk_size_gb, lifecycle_state")
     .in("proxmox_node", hostIds)
     .in("lifecycle_state", Array.from(PROXMOX_HOST_ALLOCATION_STATES));
+  // Every Hivra row that is not deleted, not only the powered-on ones: a
+  // stopped or errored computer still owns its thin-pool disk. The
+  // delete paths flip a row to `deleted` only after the VM and its local-lvm
+  // volumes are verifiably gone, so `deleted` is the one status that frees
+  // disk. CPU/RAM are split out below by status.
   const { data: hivraRows, error: hivraError } = await params.supabase
     .from("hivra_agents")
-    .select("proxmox_host, cpu, ram, status")
+    .select("proxmox_host, cpu, ram, status, vmid")
     .in("proxmox_host", hostIds)
-    .in("status", ["provisioning", "running"]);
+    .neq("status", "deleted");
 
   if (error || hivraError) {
     const allocationError = error ?? hivraError;
@@ -826,9 +834,18 @@ async function rankProxmoxHostsForPlacement(params: {
   for (const row of hivraRows ?? []) {
     const node = (row as { proxmox_host?: string | null }).proxmox_host;
     if (!node) continue;
+    const { status, vmid } = row as { status?: string | null; vmid?: number | null };
+    const powered = status !== null && status !== undefined && HIVRA_AGENT_POWERED_STATUSES.has(status);
+    // A powered row owns (or is about to own) a VM. Any other non-deleted row
+    // owns one only if it recorded a vmid: a stopped computer keeps its disk,
+    // and an errored one may have allocated before it failed.
+    const ownsVm = powered || (vmid !== null && vmid !== undefined);
+    if (!ownsVm) continue;
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
-    acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
-    acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
+    if (powered) {
+      acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
+      acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
+    }
     acc.disk += DEFAULT_PROXMOX_VM_DISK_GB;
     allocByHost.set(node, acc);
   }

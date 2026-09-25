@@ -9,6 +9,7 @@ import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import styles from "./WorkspaceIdentity.module.css";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { listRecents, recentHref } from "@/lib/workspace/recents";
+import { fleetEntryHref } from "@/lib/hivra/fleet-sections";
 
 /**
  * The fleet switcher, on the canonical resource route.
@@ -57,6 +58,8 @@ export function statusTone(status: string): "ok" | "busy" | "off" | "error" {
 }
 
 function agentHref(agent: UnifiedAgent): string {
+  // An agent added to a computer opens that computer's Chat tab, not its Desktop.
+  if (agent.attachment) return fleetEntryHref(agent);
   return agent.kind === "hermes"
     ? `/dashboard/instances/${encodeURIComponent(agent.id)}`
     : `/dashboard/agent/${encodeURIComponent(agent.id)}`;

@@ -138,3 +138,15 @@ describe("fleet entry destination", () => {
     );
   });
 });
+
+describe("an agent added to a computer (design 5.8)", () => {
+  it("opens the href it carries: its computer's Chat tab, or its progress", () => {
+    const attached = agent("x-computer", "Codex on MY_UBUNTU_DESKTOP", {
+      uid: "a-44444444-4444-4444-8444-444444444444", resourceKind: "agent",
+      attachment: { id: "44444444-4444-4444-8444-444444444444", computerId: "computer", computerName: "MY_UBUNTU_DESKTOP", phase: "attached" },
+      href: "/dashboard/agent/computer?tab=chat" });
+    expect(fleetEntryHref(attached)).toBe("/dashboard/agent/computer?tab=chat");
+    expect(fleetEntryHref({ ...attached, attachment: { ...attached.attachment!, phase: "claimed" }, href: "/dashboard/agent/computer?tab=manage" }))
+      .toBe("/dashboard/agent/computer?tab=manage");
+  });
+});

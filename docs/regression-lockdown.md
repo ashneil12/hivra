@@ -63,8 +63,9 @@ These are the extra protections added to reduce the remaining “cross-repo drif
 These are the extra protections added to make the highest-risk deployment contracts fail earlier in CI:
 
 1. `dashboard/package.json` now exposes `npm run test:smoke-contracts` as a focused suite for runtime topology, gateway routing, Hetzner instance wiring, instance action routes, dashboard health and browser-session routes, dashboard↔agent bridge code, official dashboard handoff, sidecar script generation, and the deployed instance contract routes.
-2. `dashboard-ci.yml` now runs that smoke suite immediately after dependency install, before the broader hot-path suite and the full verify pipeline.
-3. This creates a fast, explicit failure point for the cross-boundary surfaces that have been regressing even when the wider dashboard test suite is still green.
+2. `dashboard-ci.yml` originally ran that smoke suite immediately after dependency install, before the broader hot-path suite and the full verify pipeline.
+3. This created a fast, explicit failure point for the cross-boundary surfaces that have been regressing even when the wider dashboard test suite is still green.
+4. Since 2026-09-25 `dashboard-ci.yml` runs the full jest suite as four duration-balanced parallel shards (about five minutes end to end), which already include every smoke-contract and hot-path suite, so the separate serial steps were removed. Both scripts remain for focused local runs.
 
 ## Phase 7 live instance smoke hardening
 

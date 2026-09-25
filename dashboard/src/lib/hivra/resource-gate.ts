@@ -30,13 +30,20 @@ export interface ComputeUsage {
 // `excludeHivraAgentId` drops one agent from the tally so a RESIZE measures the
 // pool as "everything except the box being resized" (otherwise the box would be
 // double-counted against its own new size).
+//
+// The agent count comes from the database's own slot count
+// (hivra_owner_agent_slot_count), the same function the launch insert, the
+// launch-model reservation and attach enforce under the owner's slot lock, so
+// this courtesy check, billing usage and the database cannot count differently.
+// It includes agents attached to the owner's Hivra Cloud computers, which have
+// no hivra_agents row and use none of the pool's CPU or memory.
 export async function loadCurrentComputeUsage(
   userId: string,
   opts?: { excludeHivraAgentId?: string },
 ): Promise<ComputeUsage> {
   if (!supabaseAdmin) return { usedCpu: 0, usedRamGb: 0, activeCount: 0 };
 
-  const [{ data: hivraAgents, error: hivraAgentsError }, { data: legacyInstances, error: legacyError }] =
+  const [{ data: hivraAgents, error: hivraAgentsError }, { data: legacyInstances, error: legacyError }, slots] =
     await Promise.all([
       supabaseAdmin
         .from("hivra_agents")
@@ -54,15 +61,21 @@ export async function loadCurrentComputeUsage(
         // would count phantom compute against the user's pool and slot count and
         // wrongly deny a launch they're entitled to.
         .not("lifecycle_state", "in", SLOT_FREEING_LIFECYCLE_IN_LIST),
+      supabaseAdmin.rpc("hivra_owner_agent_slot_count", { p_owner: userId }),
     ]);
+  const slotCount = slots?.data;
+  const slotError = slots?.error ?? (Number.isSafeInteger(slotCount) && (slotCount as number) >= 0
+    ? null : new Error("slot count unavailable"));
 
-  if (hivraAgentsError || legacyError) {
-    log.error("hivra resource usage query failed", hivraAgentsError ?? legacyError ?? new Error("usage query failed"), {
+  if (hivraAgentsError || legacyError || slotError) {
+    const error = hivraAgentsError ?? legacyError ?? slotError;
+    log.error("hivra resource usage query failed", error ?? new Error("usage query failed"), {
       source: "hivra/resource-gate",
       failureType: "hivra_agent_usage_query_failed",
       userId,
       hivraError: hivraAgentsError ? String(hivraAgentsError.message ?? hivraAgentsError) : null,
       legacyError: legacyError ? String(legacyError.message ?? legacyError) : null,
+      slotError: slotError ? String((slotError as { message?: unknown }).message ?? slotError) : null,
       verboseErrors: true,
     });
     throw new Error("Could not verify remaining compute");
@@ -85,8 +98,30 @@ export async function loadCurrentComputeUsage(
   return {
     usedCpu: usedHivraCpu + usedLegacyCpu,
     usedRamGb: usedHivraRamGb + usedLegacyRamGb,
-    activeCount: hivra.length + legacy.length,
+    activeCount: slotCount as number,
   };
+}
+
+/** The launch copy for a full plan. The database refusal maps to the same words. */
+export function planAgentLimitMessage(planName: string, maxAgents: number): string {
+  return `Your ${planName} plan allows ${maxAgents} active agent${maxAgents === 1 ? "" : "s"}.`;
+}
+
+/** The attach gate's copy for a full plan (design 5.8). Nothing is bought or upgraded. */
+export function attachPlanAgentLimitMessage(planName: string, maxAgents: number, activeCount: number): string {
+  return `Your ${planName} plan allows ${maxAgents} active agent${maxAgents === 1 ? "" : "s"} and you already have ${activeCount}. Upgrade for more slots, or remove an agent first.`;
+}
+
+/**
+ * The plan's agent limit exactly as the gate resolves it, for writers that
+ * pass it to the database (insert_hivra_managed_agent, the v3 launch-model
+ * reservation, the attach claim). Null when the owner has no plan access.
+ */
+export async function resolvePlanAgentSlots(userId: string): Promise<{ agentLimit: number; planName: string } | null> {
+  const sub = await resolveEffectiveSubscription(userId);
+  if (!sub) return null;
+  const plan = getPlan(sub.plan);
+  return { agentLimit: Number(sub.instance_limit) || plan.maxAgents, planName: plan.name };
 }
 
 export interface ValidateResourcesInput {
@@ -103,8 +138,10 @@ export interface ValidateResourcesInput {
   /**
    * "launch" enforces the agent-slot count (you're adding a box); "resize" skips
    * the slot check (the box already exists) and excludes the box from pool usage.
+   * "attach" checks the slot count only: an agent added to a computer the owner
+   * already has shares that computer's CPU and memory (design 5.1).
    */
-  mode: "launch" | "resize";
+  mode: "launch" | "resize" | "attach";
   /** Hivra agent id to exclude from pool usage (required for "resize"). */
   excludeAgentId?: string;
   /** Slot-only agents (Aeon): skip the pool + per-agent-cap checks. */
@@ -166,6 +203,14 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
     maxAgents,
   };
 
+  if (params.mode === "attach") {
+    if (usage.activeCount >= maxAgents) {
+      log.warn("hivra resource gate: agent slot limit reached", denialDetail);
+      return { ok: false, status: 403, message: attachPlanAgentLimitMessage(plan.name, maxAgents, usage.activeCount) };
+    }
+    return { ok: true };
+  }
+
   if (params.browser && isFreePlan) {
     log.warn("hivra resource gate: browser automation is not available on Free", denialDetail);
     return { ok: false, status: 403, message: "Browser automation requires a paid plan." };
@@ -173,7 +218,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
 
   if (params.mode === "launch" && usage.activeCount >= maxAgents) {
     log.warn("hivra resource gate: agent slot limit reached", denialDetail);
-    return { ok: false, status: 403, message: `Your ${plan.name} plan allows ${maxAgents} active agent${maxAgents === 1 ? "" : "s"}.` };
+    return { ok: false, status: 403, message: planAgentLimitMessage(plan.name, maxAgents) };
   }
 
   if (params.cpu < floorCpu || params.ram < floorRam) {

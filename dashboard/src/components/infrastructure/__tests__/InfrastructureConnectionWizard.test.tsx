@@ -15,13 +15,16 @@ import type {
   ProxmoxPreflightResult,
 } from "@/lib/infrastructure/contracts";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
+import { captureServerHostKey } from "@/lib/infrastructure/server-enrollment-client";
 import {
+  InfrastructureApiError,
   checkGvisorConnection,
   createInfrastructureConnection,
   discoverInfrastructureHost,
   preflightInfrastructureConnection,
 } from "@/lib/infrastructure/client";
 
+jest.mock("@/lib/infrastructure/server-enrollment-client", () => ({ captureServerHostKey: jest.fn() }));
 jest.mock("@/lib/infrastructure/client", () => ({
   ...jest.requireActual("@/lib/infrastructure/client"),
   createInfrastructureConnection: jest.fn(),
@@ -45,7 +48,10 @@ function form(overrides: Partial<InfrastructureConnectionFormValues> = {}): Infr
     sshPort: "22",
     sshUser: "root",
     sshHostFingerprintSha256: "a".repeat(64),
+    sshHostKeyType: null,
+    sshPrivilege: "login",
     sshPrivateKey: PRIVATE_KEY,
+    sshPrivateKeyPassphrase: "",
     node: "",
     bridge: "",
     storage: "",
@@ -544,7 +550,7 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     } finally { jest.useRealTimers(); }
   });
 
-  it("offers Connect as root when discovery signed in without root", async () => {
+  it("offers Change SSH user when discovery signed in without root or passwordless sudo", async () => {
     (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
       ...supportedDiscovery,
       snapshot: {
@@ -568,8 +574,8 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.change(screen.getByLabelText("SSH user"), { target: { value: "ubuntu" } });
     fillAndConnect();
 
-    expect(await screen.findByRole("heading", { name: "Signed in as ubuntu without root access." })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Connect as root" }));
+    expect(await screen.findByRole("heading", { name: "Signed in as ubuntu without passwordless sudo." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change SSH user" }));
     expect(onEditRequested).toHaveBeenCalledWith(savedHost);
   });
 
@@ -710,5 +716,124 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     expect(screen.getByRole("listitem", { name: "Recommend, current" })).toHaveAttribute("aria-current", "step");
     expect(screen.getByRole("listitem", { name: "Prepare" })).not.toHaveAttribute("aria-current");
     expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
+  });
+});
+
+// INF-14 and T44: the advanced wizard keeps the pasted fingerprint as its
+// default, adds a key passphrase and a sudo-user option, and offers reading
+// the key from the server only as a fallback that pins nothing by itself.
+describe("advanced SSH details", () => {
+  const presented = { publicKey: "ssh-ed25519 " + "A".repeat(68), fingerprintSha256: "SHA256:" + "Q".repeat(43) };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (createInfrastructureConnection as jest.Mock).mockResolvedValue(savedHost);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(supportedDiscovery);
+  });
+
+  function renderWizard(extra: Record<string, unknown> = {}) {
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        {...extra}
+      />,
+    );
+  }
+
+  it("sends a passphrase only when one is typed, and never keeps it in the form after saving", async () => {
+    const withPassphrase = buildInfrastructureConnectionCreate(form({ setupMode: "simple", sshPrivateKeyPassphrase: "open sesame" }));
+    expect(withPassphrase.ok && withPassphrase.value.credentials).toEqual({ sshPrivateKey: PRIVATE_KEY, sshPrivateKeyPassphrase: "open sesame" });
+    const without = buildInfrastructureConnectionCreate(form());
+    expect(without.ok && without.value.credentials).toEqual({ sshPrivateKey: PRIVATE_KEY });
+
+    renderWizard();
+    fireEvent.change(screen.getByLabelText("Key passphrase (only if your key has one)"), { target: { value: "open sesame" } });
+    fillAndConnect();
+    expect(await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." })).toBeInTheDocument();
+    expect((createInfrastructureConnection as jest.Mock).mock.calls[0][0].credentials)
+      .toEqual({ sshPrivateKey: PRIVATE_KEY, sshPrivateKeyPassphrase: "open sesame" });
+  });
+
+  it("shows a wrong or missing passphrase under the passphrase field", async () => {
+    (createInfrastructureConnection as jest.Mock).mockRejectedValue(
+      new InfrastructureApiError("That passphrase didn't unlock this key.", 422, "key_passphrase_incorrect"));
+    renderWizard();
+    fillAndConnect();
+    expect(await screen.findByText("That passphrase didn't unlock this key.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Key passphrase (only if your key has one)")).toBeInTheDocument();
+    expect(discoverInfrastructureHost).not.toHaveBeenCalled();
+  });
+
+  it("offers passwordless sudo for a non-root user only, and sends it as the connection's privilege", () => {
+    const endpointOf = (built: ReturnType<typeof buildInfrastructureConnectionCreate>) =>
+      built.ok && "endpoint" in built.value ? built.value.endpoint : null;
+    expect(endpointOf(buildInfrastructureConnectionCreate(form({ sshUser: "ubuntu", sshPrivilege: "sudo" }))))
+      .toMatchObject({ sshUser: "ubuntu", sshPrivilege: "sudo" });
+    // Root never uses sudo: its login already is root.
+    const root = endpointOf(buildInfrastructureConnectionCreate(form({ sshUser: "root", sshPrivilege: "sudo" })));
+    expect(root).not.toBeNull();
+    expect(root).not.toHaveProperty("sshPrivilege");
+    // Turning sudo off on a saved sudo connection says so explicitly.
+    const back = buildInfrastructureConnectionUpdate(form({ sshUser: "ubuntu", sshPrivilege: "login", sshPrivateKey: "" }), {
+      ...savedHost, endpoint: { ...savedHost.endpoint!, sshUser: "ubuntu", sshPrivilege: "sudo" },
+    });
+    expect(back.ok && back.value?.endpoint).toMatchObject({ sshPrivilege: "login" });
+
+    renderWizard();
+    fireEvent.click(screen.getByText("SSH settings"));
+    expect(screen.queryByText(/uses passwordless sudo/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("SSH user"), { target: { value: "ubuntu" } });
+    expect(screen.getByText("ubuntu uses passwordless sudo")).toBeInTheDocument();
+    expect(screen.getByText(/Proxmox launches need a root login for now\./)).toBeInTheDocument();
+  });
+
+  it("keeps the pasted fingerprint as the default and offers the setup command next to it", () => {
+    const onSetupCommandRequested = jest.fn();
+    renderWizard({ onSetupCommandRequested });
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toBeRequired();
+    expect(screen.getByRole("button", { name: "Copy the fingerprint command" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use the setup command" }));
+    expect(onSetupCommandRequested).toHaveBeenCalledTimes(1);
+    for (const provider of ["AWS:", "Hetzner:", "DigitalOcean:"]) expect(screen.getByText(provider)).toBeInTheDocument();
+    expect(captureServerHostKey).not.toHaveBeenCalled();
+  });
+
+  it("reads the key from the server only when asked, warns, and pins it only after the owner confirms (T44)", async () => {
+    (captureServerHostKey as jest.Mock).mockResolvedValue(presented);
+    renderWizard();
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "203.0.113.9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read it from the server" }));
+    expect(captureServerHostKey).toHaveBeenCalledWith("203.0.113.9", 22);
+    const result = await screen.findByRole("group", { name: "SSH identity the server presented" });
+    expect(within(result).getByText(presented.fingerprintSha256)).toBeInTheDocument();
+    expect(within(result).getByText(/If someone is intercepting Hivra's connection, this could be their key instead of your server's\./))
+      .toBeInTheDocument();
+    expect(within(result).getByRole("button", { name: "Copy the presented fingerprint" })).toBeInTheDocument();
+    // Nothing is pinned or saved yet.
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toHaveValue("");
+    expect(createInfrastructureConnection).not.toHaveBeenCalled();
+    fireEvent.click(within(result).getByRole("button", { name: /It matches: use this fingerprint/ }));
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toHaveValue(presented.fingerprintSha256);
+    expect(createInfrastructureConnection).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+    await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
+    // A key read from the server is Ed25519, so SSH offers only that algorithm.
+    expect((createInfrastructureConnection as jest.Mock).mock.calls[0][0].endpoint)
+      .toMatchObject({ sshHostFingerprintSha256: presented.fingerprintSha256, sshHostKeyType: "ssh-ed25519" });
+  });
+
+  it("says the same thing for every capture failure and lets the owner dismiss a key", async () => {
+    (captureServerHostKey as jest.Mock).mockRejectedValue(new Error("Hivra couldn't read an Ed25519 SSH identity from 203.0.113.9:22."));
+    renderWizard();
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "203.0.113.9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read it from the server" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Hivra couldn't read an Ed25519 SSH identity from 203.0.113.9:22.");
+    (captureServerHostKey as jest.Mock).mockResolvedValue(presented);
+    fireEvent.click(screen.getByRole("button", { name: "Read it from the server" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Don't use it" }));
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toHaveValue("");
   });
 });

@@ -7,6 +7,7 @@ import {
   canonicalFirstBootHostKey, FIRST_BOOT_RECIPE_VERSION, verifyFirstBootChallengeSecret,
   type FirstBootBinding, type FirstBootChallenge,
 } from "./first-boot-enrollment";
+import { validateTrustedAppOrigin } from "./trusted-app-origin";
 
 // Pinned helper for recipe 2026.09.24.1 (15 minutes from the guest's first
 // boot). A changed helper needs a new pin AND a new FIRST_BOOT_RECIPE_VERSION.
@@ -30,16 +31,7 @@ export function firstBootCallbackUrl(origin: string): string {
   try {
     // The caller supplies the trusted deployment configuration, never a Host,
     // Origin or forwarded header from the incoming request.
-    if (typeof origin !== "string" || origin.length > 253
-      || /[\u0000-\u0020\u007f\\]/.test(origin)) throw new Error();
-    const url = new URL(origin);
-    if (url.protocol !== "https:" || url.username || url.password || url.port
-      || url.pathname !== "/" || url.search || url.hash || !url.hostname
-      || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(url.hostname)
-      || url.hostname.split(".").some(label => !label || label.length > 63 || label.startsWith("-") || label.endsWith("-"))) {
-      throw new Error();
-    }
-    return url.origin + CALLBACK_PATH;
+    return validateTrustedAppOrigin(origin) + CALLBACK_PATH;
   } catch {
     throw new FirstBootRecipeError("invalid_origin");
   }

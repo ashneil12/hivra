@@ -25,6 +25,8 @@ export interface MobileMoreSheetProps {
   attentionCount: number;
   userName: string;
   userEmail: string;
+  /** The account code the server setup script shows. */
+  accountCode?: string | null;
   resourceKind?: 'agent' | 'computer' | null;
 }
 
@@ -167,7 +169,7 @@ const SHEET_STYLES = `
 `;
 
 /** Phone "More": every destination that is not on the bottom bar, plus account and theme. */
-export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userName, userEmail, resourceKind }: MobileMoreSheetProps) {
+export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userName, userEmail, accountCode = null, resourceKind }: MobileMoreSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const pathname = usePathname();
@@ -254,6 +256,7 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
           <div className="hivra-more-sheet__identity">
             <strong>{userName}</strong>
             {userEmail && <small>{userEmail}</small>}
+            {accountCode && <small>Account code {accountCode}</small>}
           </div>
           {!localAuth && (
             <button type="button" className="hivra-more-sheet__row" disabled={!hosted}

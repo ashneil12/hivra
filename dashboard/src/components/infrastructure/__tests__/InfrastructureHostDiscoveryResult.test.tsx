@@ -18,7 +18,7 @@ import {
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import { parseHostDiscoveryOutput } from "@/lib/infrastructure/host-discovery";
 import { HOST_DISCOVERY_PROTOCOL } from "@/lib/infrastructure/host-discovery-contracts";
-import { InfrastructureHostDiscoveryResult } from "../InfrastructureHostDiscoveryResult";
+import { InfrastructureHostDiscoveryResult, supportsStrictProxmoxDiscovery } from "../InfrastructureHostDiscoveryResult";
 import { LaunchOnServerProvider } from "../LaunchOnServer";
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -29,9 +29,9 @@ function b64(value: string): string {
 }
 
 /** Real discovery protocol output, parsed by the real parser. */
-function discovered(overrides: Record<string, string> = {}): HostDiscoveryResult {
+function discovered(overrides: Record<string, string> = {}, privilegeVia: "login" | "sudo" = "login"): HostDiscoveryResult {
   const values: Record<string, string> = {
-    PROTOCOL: "1", OS_FAMILY: "linux", OS_ID_B64: b64("ubuntu"),
+    PROTOCOL: "2", PASSWORDLESS_SUDO: "", OS_FAMILY: "linux", OS_ID_B64: b64("ubuntu"),
     OS_VERSION_ID_B64: b64("22.04"), KERNEL_RELEASE_B64: b64("6.8.0-79-generic"),
     ARCH_B64: b64("x86_64"), EUID: "0", VIRTUALIZATION: "virtual-machine",
     CGROUP_VERSION: "2", CPU_LOGICAL_CORES: "4", MEMORY_TOTAL_BYTES: "8321499136",
@@ -59,6 +59,7 @@ function discovered(overrides: Record<string, string> = {}): HostDiscoveryResult
       connectionId: CONNECTION_ID,
       connectionRevision: 2,
       connectionProvider: "host",
+      privilegeVia,
       normalizedHostFingerprint: "ab".repeat(32),
       observedAt: new Date("2026-08-26T12:00:00.000Z"),
     }),
@@ -83,7 +84,9 @@ function renderResult(
     onDone: jest.fn(),
     onStrictPreflightRequested: jest.fn(),
     onGvisorSetupRequested: jest.fn(),
-    onConnectAsRootRequested: jest.fn(),
+    onChangeSshUserRequested: jest.fn(),
+    onUseSudoRequested: jest.fn(),
+    onSetupCommandRequested: jest.fn(),
     onGvisorReady: jest.fn(),
   };
   render(
@@ -156,21 +159,62 @@ describe("InfrastructureHostDiscoveryResult", () => {
   });
 
   // INF-04: a default cloud image signs in as a sudo user on a VM without
-  // nested KVM. The old result blamed nested KVM; root is the real blocker.
-  it("reports the missing root login first on a cloud VM, never nested KVM", () => {
-    const handlers = renderResult(discovered({ EUID: "1000" }), { sshUser: "ubuntu" });
+  // nested KVM. The old result blamed nested KVM; privilege is the blocker,
+  // and passwordless sudo is enough.
+  it("reports the missing privilege first on a cloud VM, never nested KVM, and offers the setup command", () => {
+    const handlers = renderResult(discovered({ EUID: "1000", PASSWORDLESS_SUDO: "0" }), { sshUser: "ubuntu" });
 
-    expect(screen.getByRole("heading", { name: "Signed in as ubuntu without root access." })).toBeInTheDocument();
-    expect(screen.getByText(/Hivra needs a root login on web-1 for now/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Signed in as ubuntu without passwordless sudo." })).toBeInTheDocument();
+    expect(screen.getByText(/^Run the setup command with sudo, or connect as a user who has it\. Hivra asked sudo once/)).toBeInTheDocument();
     expect(screen.queryByText(/nested KVM/i)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Connect as root" }));
-    expect(handlers.onConnectAsRootRequested).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Use the setup command" }));
+    expect(handlers.onSetupCommandRequested).toHaveBeenCalledTimes(1);
   });
 
-  it("puts root before nested KVM on an installed Proxmox VM too", () => {
+  // Review finding 2: through sudo, Proxmox is neither checked nor set up
+  // while Proxmox launches need a root login.
+  it("offers no Proxmox check or setup on a server inspected through sudo", () => {
+    expect(supportsStrictProxmoxDiscovery(discovered(PROXMOX))).toBe(true);
+    expect(supportsStrictProxmoxDiscovery(discovered(PROXMOX, "sudo"))).toBe(false);
+    renderResult(discovered(PROXMOX, "sudo"), { sshUser: "hivra" });
+    expect(screen.getByRole("heading", { name: /Proxmox launches need a root login for now\.$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Check readiness|Prepare|Set up Proxmox/ })).not.toBeInTheDocument();
+  });
+
+  it("offers Use sudo for setup when the login has passwordless sudo", () => {
+    const handlers = renderResult(discovered({ EUID: "1000", PASSWORDLESS_SUDO: "1" }), { sshUser: "ubuntu" });
+    expect(screen.getByRole("heading", { name: "ubuntu can use sudo without a password." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use sudo for setup" }));
+    expect(handlers.onUseSudoRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to changing the SSH user when no setup command is offered", () => {
+    const handlers = renderResult(discovered({ EUID: "1000" }), { sshUser: "ubuntu", onSetupCommandRequested: undefined });
+    fireEvent.click(screen.getByRole("button", { name: "Change SSH user" }));
+    expect(handlers.onChangeSshUserRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts privilege before nested KVM on an installed Proxmox VM too", () => {
     renderResult(discovered({ ...PROXMOX, EUID: "1000", VIRTUALIZATION: "virtual-machine", KVM_DEVICE: "0" }), { sshUser: "admin" });
-    expect(screen.getByRole("heading", { name: "Signed in as admin without root access." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Signed in as admin without passwordless sudo." })).toBeInTheDocument();
     expect(screen.queryByText(/nested KVM/i)).not.toBeInTheDocument();
+  });
+
+  // INF-14: a changed identity shows both fingerprints side by side.
+  it("shows the pinned and presented fingerprints side by side on a mismatch", () => {
+    const expected = "SHA256:" + "A".repeat(42) + "E";
+    const presented = "SHA256:" + "B".repeat(42) + "E";
+    renderResult({ ok: false, connectionId: CONNECTION_ID, attemptedAt: "2026-09-24T12:00:00.000Z", error: {
+      code: "SSH_HOST_KEY_MISMATCH", message: "The server presented a different SSH identity than the one Hivra pinned.",
+      remediation: "If the server was rebuilt, run a new setup command to reconnect.",
+      hostKey: { expected, presented } } });
+    const identities = screen.getByRole("group", { name: "SSH identities" });
+    expect(identities).toHaveTextContent("Pinned by Hivra");
+    expect(identities).toHaveTextContent(expected);
+    expect(identities).toHaveTextContent("Presented by the server");
+    expect(identities).toHaveTextContent(presented);
+    expect(screen.getByRole("button", { name: "Copy the presented fingerprint" })).toBeInTheDocument();
+    expect(screen.getByText("If the server was rebuilt, run a new setup command to reconnect.")).toBeInTheDocument();
   });
 
   // INF-05: the fix is a supported image, not "gVisor detected, but not

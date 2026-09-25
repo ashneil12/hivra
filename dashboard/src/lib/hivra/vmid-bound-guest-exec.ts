@@ -84,3 +84,72 @@ run_vmid_bound_guest_exec_stdin() {
   decode_hivra_qga_result
 }`;
 }
+
+/**
+ * Start one bounded program in the exact VM and wait for its answer in two
+ * separate steps, so a caller can hold a host-wide lock only while it checks
+ * the VM and starts the program, not for the program's whole run.
+ *
+ * `qm guest exec --synchronous 0` hands the command to that VMID's guest agent
+ * and returns its pid. From then on the command runs in that VM whatever
+ * happens to the VMID: a VM destroyed and recreated under the same number has
+ * a new guest agent that never ran this pid, so `exec-status` fails and the
+ * answer is lost, never read from another VM.
+ *
+ * Append after buildVmidBoundGuestExecPrelude(); it reuses its result file,
+ * cleanup and strict decoder. Callers define VMID and a bounded qm().
+ */
+export function buildDetachedVmidBoundGuestExecPrelude(): string {
+  return String.raw`dispatch_vmid_bound_guest_exec_stdin() {
+  local answer
+  answer="$(qm guest exec "$VMID" --synchronous 0 --pass-stdin 1 -- "$@")" || {
+    printf 'HIVRA_QGA_FAILURE dispatch_stdin\n' >&2
+    return 125
+  }
+  printf '%s' "$answer" | /usr/bin/perl -MJSON::PP -e '
+    local $/;
+    my $document = eval { JSON::PP::decode_json(<STDIN>) };
+    exit 125 unless ref($document) eq "HASH" && defined($document->{pid}) && !ref($document->{pid})
+      && "$document->{pid}" =~ /\A[1-9][0-9]{0,9}\z/;
+    print "$document->{pid}";' || {
+    printf 'HIVRA_QGA_FAILURE dispatch_result\n' >&2
+    return 125
+  }
+}
+await_vmid_bound_guest_exec() {
+  local pid="$1" deadline=$((SECONDS + $2)) misses=0 state
+  [[ "$pid" =~ ^[1-9][0-9]{0,9}$ ]] || { printf 'HIVRA_QGA_FAILURE await_pid\n' >&2; return 125; }
+  HIVRA_QGA_RESULT_FILE="$(mktemp /run/hivra-qga-result.XXXXXXXX)"
+  chmod 0600 "$HIVRA_QGA_RESULT_FILE"
+  while :; do
+    if qm guest exec-status "$VMID" "$pid" > "$HIVRA_QGA_RESULT_FILE"; then
+      misses=0
+      state="$(/usr/bin/perl -MJSON::PP -e '
+        local $/;
+        open my $stream, "<", $ARGV[0] or exit 125;
+        my $document = eval { JSON::PP::decode_json(<$stream>) };
+        exit 125 unless ref($document) eq "HASH" && exists($document->{exited}) && !ref($document->{exited});
+        print($document->{exited} ? "exited" : "running");' "$HIVRA_QGA_RESULT_FILE")" || state=invalid
+      case "$state" in
+        exited) decode_hivra_qga_result; return ;;
+        running) ;;
+        *) printf 'HIVRA_QGA_FAILURE status_invalid\n' >&2; cleanup_hivra_qga_result; return 125 ;;
+      esac
+    else
+      # A guest agent that stops answering for good (the VM is gone) ends the wait.
+      misses=$((misses + 1))
+      if [ "$misses" -ge 10 ]; then
+        printf 'HIVRA_QGA_FAILURE status_unavailable\n' >&2
+        cleanup_hivra_qga_result
+        return 125
+      fi
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      printf 'HIVRA_QGA_FAILURE await_timeout\n' >&2
+      cleanup_hivra_qga_result
+      return 124
+    fi
+    sleep 2
+  done
+}`;
+}

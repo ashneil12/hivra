@@ -68,6 +68,9 @@ export function switcherGroups<T extends { uid: string }>(
     recents: readonly RecentVisit[];
     currentUid: string | null;
     isComputer: (item: T) => boolean;
+    /** An agent added to a computer: that computer's uid. It is listed right
+     *  after its computer, when the computer is listed outside Recent. */
+    hostUid?: (item: T) => string | null | undefined;
     limit?: number;
   },
 ): SwitcherGroup<T>[] {
@@ -77,10 +80,21 @@ export function switcherGroups<T extends { uid: string }>(
     .slice(0, options.limit ?? SWITCHER_RECENT_LIMIT);
   const shown = new Set(recent.map((item) => item.uid));
   const rest = items.filter((item) => !shown.has(item.uid));
+  const computers = rest.filter((item) => options.isComputer(item));
+  const listedComputers = new Set(computers.map((item) => item.uid));
+  const hostOf = (item: T) => options.hostUid?.(item) ?? null;
+  const hosted = (item: T) => {
+    const host = hostOf(item);
+    return host !== null && listedComputers.has(host);
+  };
   const groups: SwitcherGroup<T>[] = [
     { key: "recent", label: "Recent", items: recent },
-    { key: "agent", label: "Agents", items: rest.filter((item) => !options.isComputer(item)) },
-    { key: "computer", label: "Computers", items: rest.filter((item) => options.isComputer(item)) },
+    { key: "agent", label: "Agents", items: rest.filter((item) => !options.isComputer(item) && !hosted(item)) },
+    {
+      key: "computer",
+      label: "Computers",
+      items: computers.flatMap((computer) => [computer, ...rest.filter((item) => hosted(item) && hostOf(item) === computer.uid)]),
+    },
   ];
   return groups.filter((group) => group.items.length > 0);
 }

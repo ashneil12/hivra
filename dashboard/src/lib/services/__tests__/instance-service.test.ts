@@ -364,6 +364,18 @@ function emptyHivraAgentsQuery() {
   return query;
 }
 
+// hivra_agents allocation query that resolves to `rows` however the chain
+// filters it (the mock does not apply the filters; assert them instead).
+function hivraAllocationRowsQuery(rows: Array<Record<string, unknown>>) {
+  const query: Record<string, jest.Mock | unknown> = {};
+  query.select = jest.fn().mockReturnValue(query);
+  query.in = jest.fn().mockReturnValue(query);
+  query.neq = jest.fn().mockReturnValue(query);
+  query.then = (resolve: (value: { data: unknown[]; error: null }) => void) =>
+    Promise.resolve({ data: rows, error: null }).then(resolve);
+  return query as Record<string, jest.Mock>;
+}
+
 function buildProxmoxCapacityRowsSupabaseStub(
   rows: Array<{
     status: string | null;
@@ -3546,25 +3558,15 @@ describe("InstanceService.createInstance free-tier guard", () => {
       return Promise.resolve({ data: [], error: null });
     });
 
-    const hivraAllocationQuery: Record<string, unknown> = {
-      select: jest.fn().mockReturnThis(),
-    };
-    let hivraInCalls = 0;
-    hivraAllocationQuery.in = jest.fn(() => {
-      hivraInCalls += 1;
-      if (hivraInCalls === 1) return hivraAllocationQuery;
-      return Promise.resolve({
-        data: [
-          {
-            proxmox_host: "fixturenode1",
-            cpu: 4,
-            ram: 48,
-            status: "running",
-          },
-        ],
-        error: null,
-      });
-    });
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      {
+        proxmox_host: "fixturenode1",
+        cpu: 4,
+        ram: 48,
+        status: "running",
+        vmid: 1090,
+      },
+    ]);
 
     const fakeSupabase = {
       from: jest.fn((tableName: string) => {
@@ -3592,7 +3594,110 @@ describe("InstanceService.createInstance free-tier guard", () => {
         env: expect.objectContaining({ PROXMOX_NODE: "fixturenode2" }),
       })
     );
-    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status");
+    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status, vmid");
+  });
+
+  it("counts stopped Hivra computers' disk but not their CPU/RAM when ranking hosts", async () => {
+    // A stopped Hivra computer keeps its thin-pool disk. Placement used to
+    // read only provisioning/running rows, so a host full of stopped
+    // computers looked empty on disk and kept winning placements.
+    delete process.env.HERMES_PROXMOX_TARGETS;
+    delete process.env.HERMES_PROXMOX_TARGET;
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+
+    (getProxmoxTemplateAvailability as jest.Mock).mockImplementation(
+      async ({ env }: { env: NodeJS.ProcessEnv }) => ({
+        ok: true,
+        targetId: env.PROXMOX_NODE,
+        templateId: 9000,
+      })
+    );
+    (getProxmoxVmidAvailability as jest.Mock).mockImplementation(
+      async ({ env }: { env: NodeJS.ProcessEnv }) => ({
+        ok: true,
+        targetId: env.PROXMOX_NODE,
+        vmidStart: 1090,
+        vmidEnd: 1097,
+        occupiedVmids: [],
+        freeVmids: [1090],
+      })
+    );
+
+    const host = {
+      status: "active",
+      env_prefix: null,
+      total_cpu: 12,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: 391,
+      thinpool_overcommit_ratio: 1.5,
+    };
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({
+        data: [
+          // More free RAM, so worst-fit prefers it unless disk rules it out.
+          { ...host, id: "fixturenode1", total_ram_mb: 131072 },
+          { ...host, id: "fixturenode2", total_ram_mb: 65536 },
+        ],
+        error: null,
+      }),
+    };
+
+    let allocationInCalls = 0;
+    const legacyAllocationQuery: Record<string, unknown> = {
+      select: jest.fn().mockReturnThis(),
+    };
+    legacyAllocationQuery.in = jest.fn(() => {
+      allocationInCalls += 1;
+      if (allocationInCalls === 1) return legacyAllocationQuery;
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    // fixturenode1: 19 stopped computers x 30 GB = 570 GB of a 586.5 GB
+    // budget, leaving less than one more VM's disk.
+    // fixturenode2: two stopped computers whose CPU/RAM would exhaust the host
+    // if counted, but a stopped VM holds neither.
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      ...Array.from({ length: 19 }, (_, index) => ({
+        proxmox_host: "fixturenode1",
+        cpu: 2,
+        ram: 4,
+        status: "stopped",
+        vmid: 2000 + index,
+      })),
+      { proxmox_host: "fixturenode2", cpu: 20, ram: 64, status: "stopped", vmid: 3000 },
+      { proxmox_host: "fixturenode2", cpu: 20, ram: 64, status: "stopped", vmid: 3001 },
+    ]);
+
+    const fakeSupabase = {
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return hivraAllocationQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env: process.env,
+      hostConfig: null,
+      userId: "user_stopped_hivra_disk",
+      neededCpu: 2,
+      neededRamMb: 4096,
+      neededDiskGb: 30,
+    });
+
+    expect(selection).toEqual(
+      expect.objectContaining({
+        ok: true,
+        targetId: "fixturenode2",
+        env: expect.objectContaining({ PROXMOX_NODE: "fixturenode2" }),
+      })
+    );
+    expect(hivraAllocationQuery.neq).toHaveBeenCalledWith("status", "deleted");
   });
 
   it("uses the configured VM disk size for placement instead of the template default", async () => {
@@ -3875,7 +3980,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
     return {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
-        if (tableName === "hermes_instances" || tableName === "hivra_agents") return allocationQuery;
+        if (tableName === "hermes_instances") return allocationQuery;
+        if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -3948,7 +4054,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return allocationQuery;
-        if (tableName === "hivra_agents") return allocationQuery;
+        if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;

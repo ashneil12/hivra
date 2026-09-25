@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import {
   resourceInventory,
-  type InventorySource,
   type InventorySourceState,
 } from "@/lib/workspace/resource-inventory";
 import { parseDashboardResources, type DashboardResource, type DashboardResourceSource } from "./dashboard-resources";
@@ -15,7 +14,7 @@ const LOADING: SourceView = { resources: [], loading: true, error: null };
 const OFF: SourceView = { resources: [], loading: false, error: null };
 
 /** The resource a detail route names, so arriving on one the list lacks re-reads it. */
-function routeResource(routeKey: string | null | undefined): { source: InventorySource; id: string } | null {
+function routeResource(routeKey: string | null | undefined): { source: DashboardResourceSource; id: string } | null {
   const match = routeKey?.match(/^\/dashboard\/(agent|instances)\/([^/?#]+)/);
   if (!match) return null;
   try {
@@ -25,7 +24,7 @@ function routeResource(routeKey: string | null | undefined): { source: Inventory
   }
 }
 
-function listsResource(state: InventorySourceState, source: InventorySource, id: string): boolean {
+function listsResource(state: InventorySourceState, source: DashboardResourceSource, id: string): boolean {
   if (!state.hasBody) return false;
   try {
     return parseDashboardResources(state.body, source).some((resource) => resource.id === id);

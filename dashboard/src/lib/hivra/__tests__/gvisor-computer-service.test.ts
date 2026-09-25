@@ -4,6 +4,7 @@ const mockRunScript = jest.fn();
 const mockLoadConnection = jest.fn();
 const mockBeginPreparation = jest.fn();
 const mockCompletePreflight = jest.fn();
+const mockLoadSnapshot = jest.fn();
 
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) } }));
@@ -15,6 +16,11 @@ jest.mock("@/lib/infrastructure/connection-store", () => ({
 jest.mock("@/lib/infrastructure/connection-runtime", () => ({
   resolveValidatedSshDestination: jest.fn(async () => ({ address: "192.0.2.1" })),
   buildUserProxmoxEnvironment: jest.fn(() => ({})),
+}));
+// The authority rules are the real ones; only the snapshot read is stubbed.
+jest.mock("@/lib/infrastructure/host-authority", () => ({
+  ...jest.requireActual("@/lib/infrastructure/host-authority"),
+  loadCurrentHostDiscoverySnapshot: (...args: unknown[]) => mockLoadSnapshot(...args),
 }));
 jest.mock("@/lib/infrastructure/host-capacity-policy", () => ({
   resolveProxmoxHostCapacityPolicy: jest.fn(() => ({ hostMemoryReserveMb: 2048 })),
@@ -100,7 +106,27 @@ beforeEach(() => {
   mockRunScript.mockReset();
   mockBeginPreparation.mockReset().mockResolvedValue(true);
   mockCompletePreflight.mockReset().mockResolvedValue(true);
+  mockLoadSnapshot.mockReset().mockResolvedValue(snapshot("login"));
 });
+
+/** A current inspection of connection revision 7 that ran as root. */
+function snapshot(privilegeVia: "login" | "sudo", overrides: Record<string, unknown> = {}) {
+  return {
+    connectionRevision: 7,
+    contractVersion: 2,
+    expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    host: { environment: { effectivePrivilege: "root", privilegeVia, passwordlessSudo: null } },
+    ...overrides,
+  };
+}
+
+function connectionAs(sshUser: string, sshPrivilege?: "login" | "sudo") {
+  return { id: connectionId, revision: 7, provider: "host", status: "ready",
+    pendingBindingRebindFromRevision: null, name: "Host", setupMode: "advanced", configuration: {},
+    endpoint: { sshHost: "host.example", sshPort: 22, sshUser, sshHostFingerprintSha256: "c".repeat(64),
+      ...(sshPrivilege ? { sshPrivilege } : {}) },
+    credentials: { sshPrivateKey: "test" } };
+}
 
 it("recovers an uppercase lost-response UUID through its canonical database identity", async () => {
   await expect(findGvisorComputerByLaunchRequest(userId, launchRequestId.toUpperCase()))
@@ -219,4 +245,58 @@ it("does not unlock a lease for target authority rejection", async () => {
   expect(mockRunWithStdin).not.toHaveBeenCalled();
   expect(agent).toMatchObject({ status: "provisioning", operation_kind: "resize", error: "gvisor_resize_unconfirmed" });
   expect(agent.operation_id).toEqual(expect.any(String));
+});
+
+describe("host authority (section 9.5)", () => {
+  it("runs operations on an existing computer without reading any discovery snapshot (root login and sudo)", async () => {
+    mockLoadSnapshot.mockResolvedValue(null); // Expired, or never inspected.
+    for (const connection of [connectionAs("root"), connectionAs("hivra", "sudo")]) {
+      Object.assign(agent, { status: "running", desired_state: "running", operation_id: null, operation_kind: null });
+      mockLoadConnection.mockResolvedValue(connection);
+      mockRunWithStdin.mockReset().mockResolvedValueOnce(result("stopped"));
+      await expect(mutateGvisorComputer(userId, computerId, { action: "stop" }))
+        .resolves.toMatchObject({ status: "stopped", operation_id: null });
+      expect(mockRunWithStdin).toHaveBeenCalledTimes(1);
+    }
+    expect(mockLoadSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-root login connection before any SSH", async () => {
+    mockLoadConnection.mockResolvedValue(connectionAs("ubuntu"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "stop" }))
+      .rejects.toMatchObject({ code: "not_ready" });
+    expect(mockRunWithStdin).not.toHaveBeenCalled();
+  });
+
+  it("checks the inspection before Prepare installs anything: none, expired or another privilege opens no SSH", async () => {
+    for (const current of [null, snapshot("sudo"), snapshot("login", { connectionRevision: 6 }),
+      snapshot("login", { host: { environment: { effectivePrivilege: "non-root", privilegeVia: "login", passwordlessSudo: true } } })]) {
+      mockLoadSnapshot.mockResolvedValueOnce(current);
+      await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({ code: "not_ready" });
+    }
+    expect(mockBeginPreparation).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
+  it("prepares a passwordless-sudo connection whose current inspection ran through sudo", async () => {
+    mockLoadConnection.mockResolvedValue(connectionAs("hivra", "sudo"));
+    mockLoadSnapshot.mockResolvedValue(snapshot("sudo"));
+    mockRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: "HIVRA_GVISOR_PREPARE_FAILED_V1 prerequisites\n" });
+    await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({ code: "remote_failed", stage: "prerequisites" });
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+    // Prepare installs packages, so under sudo it runs without the remote
+    // TERM/KILL limit: apt and dpkg are never killed mid-install (finding 6).
+    expect(mockRunScript.mock.calls[0][2]).toMatchObject({ timeoutMs: 360_000, remoteLimit: "none" });
+    // A v1 snapshot counts as "login", so it never authorizes a sudo connection.
+    mockLoadSnapshot.mockResolvedValue({ ...snapshot("login"), contractVersion: 1,
+      host: { environment: { effectivePrivilege: "root" } } });
+    await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({ code: "not_ready" });
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+  });
+
+  it("names root or passwordless sudo in the refusal", async () => {
+    mockLoadConnection.mockResolvedValue(connectionAs("ubuntu"));
+    await expect(prepareGvisorHost(userId, connectionId))
+      .rejects.toThrow("Linux Sandbox needs root or passwordless sudo on this server.");
+  });
 });

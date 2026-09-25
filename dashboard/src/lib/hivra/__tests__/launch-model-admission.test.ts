@@ -64,15 +64,16 @@ it.each([{ id: "foreign" }, { user_id: "foreign" }, { type: "claude-code" }])("r
 
 it.each([true, false])("retains the reservation disposition without performing any dispatch (created=%s)", async created => {
   const f = fixture(), { admission } = await f.prepare(); f.store.reserve.mockResolvedValue({ created, agentId: f.agentId, phase: "waiting" });
-  expect(await f.service.reserve(admission!, f.row)).toMatchObject({ created, requestId: f.requestId, agent: { id: f.agentId } });
+  expect(await f.service.reserve(admission!, f.row, 3)).toMatchObject({ created, requestId: f.requestId, agent: { id: f.agentId } });
   expect(f.store.reserve).toHaveBeenCalledWith({ userId: "owner", requestId: f.requestId,
-    modelOperationId: admission!.modelOperationId, fingerprints: admission!.fingerprints, agent: f.row, llm: f.intent.llm });
+    modelOperationId: admission!.modelOperationId, fingerprints: admission!.fingerprints, agent: f.row, llm: f.intent.llm,
+    agentLimit: 3 });
 });
 
 it.each([{ cpu: 4 }, { ram: 8 }, { name: "Different" }, { goal: "different" }, { context: "different" },
   { template_skills: ["different"] }, { deployment_mode: "self-managed" }])("does not reserve a row for different canonical intent: %j", async changed => {
   const f = fixture(), { admission } = await f.prepare();
-  await expect(f.service.reserve(admission!, { ...f.row, ...changed } as LaunchModelReservation)).rejects.toMatchObject({ code: "invalid_request" });
+  await expect(f.service.reserve(admission!, { ...f.row, ...changed } as LaunchModelReservation, 3)).rejects.toMatchObject({ code: "invalid_request" });
   expect(f.store.reserve).not.toHaveBeenCalled();
 });
 
@@ -80,9 +81,9 @@ it("binds reserved maxima to the model launch intent", async () => {
   const f = fixture();
   const explicit = { ...f.intent, maximumCpu: 4, maximumRam: 8 };
   const { admission } = await f.service.prepare("owner", f.requestId, explicit);
-  await expect(f.service.reserve(admission!, { ...f.row, cpu_max: 2, ram_max: 4 }))
+  await expect(f.service.reserve(admission!, { ...f.row, cpu_max: 2, ram_max: 4 }, 3))
     .rejects.toMatchObject({ code: "invalid_request" });
-  await expect(f.service.reserve(admission!, { ...f.row, cpu_max: 4, ram_max: 8 }))
+  await expect(f.service.reserve(admission!, { ...f.row, cpu_max: 4, ram_max: 8 }, 3))
     .resolves.toMatchObject({ created: true });
 });
 
@@ -91,8 +92,8 @@ it("keeps the exact selected self-managed target and connection revision", async
   const { admission } = await f.prepare();
   const row: LaunchModelReservation = { ...f.row, deployment_mode: "self-managed", infrastructure_connection_id: f.intent.deployment.connectionId,
     deployment_target_id: f.intent.deployment.targetId, infrastructure_connection_revision: 3 };
-  await expect(f.service.reserve(admission!, row)).rejects.toMatchObject({ code: "invalid_request" });
+  await expect(f.service.reserve(admission!, row, 3)).rejects.toMatchObject({ code: "invalid_request" });
   expect(f.store.reserve).not.toHaveBeenCalled();
   row.infrastructure_connection_revision = 2;
-  expect(await f.service.reserve(admission!, row)).toMatchObject({ created: true });
+  expect(await f.service.reserve(admission!, row, 3)).toMatchObject({ created: true });
 });

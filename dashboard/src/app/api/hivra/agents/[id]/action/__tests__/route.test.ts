@@ -40,6 +40,7 @@ jest.mock("@/lib/hivra/gvisor-computer-service", () => ({
 const mockFetch = jest.fn();
 let mockAgent: Record<string, unknown>;
 let mockSnapshot: Record<string, unknown>;
+let mockAttachments: Array<{ id: string }> = [];
 let mockLifecycleUpdateError: unknown;
 let mockContinueOperationResult: boolean;
 
@@ -206,6 +207,7 @@ describe("POST /api/hivra/agents/[id]/action", () => {
       ram: 2,
       pool_id: "pool-free",
     };
+    mockAttachments = [];
     mockSnapshot = {
       id: "11111111-1111-4111-8111-111111111111",
       provider_snapshot_id: "hivra_11111111111141118111111111111111",
@@ -227,6 +229,15 @@ describe("POST /api/hivra/agents/[id]/action", () => {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
           maybeSingle: jest.fn(async () => ({ data: mockSnapshot, error: null })),
+        };
+      }
+
+      if (table === "hivra_agent_attachments") {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          in: jest.fn().mockReturnThis(),
+          limit: jest.fn(async () => ({ data: mockAttachments, error: null })),
         };
       }
 
@@ -345,6 +356,21 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
     expect(script).toContain('qm rollback "$VMID" "$SNAPSHOT"');
     expect(script).not.toContain("qm start");
+  });
+
+  it("refuses a restore while an agent is added to the computer, before claiming anything (design 5.5)", async () => {
+    mockAgent = { ...mockAgent, computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true };
+    mockAttachments = [{ id: "22222222-2222-4222-8222-222222222222" }];
+    const request = new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
+      method: "POST",
+      headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "restore", snapshotId: mockSnapshot.id }),
+    });
+    const response = await POST(request, { params: Promise.resolve({ id: "agent-1" }) });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe("Remove Codex from this computer first. A restore would roll the computer back under it.");
+    expect(mockSupabaseRpc).not.toHaveBeenCalledWith("begin_hivra_agent_snapshot_restore", expect.anything());
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
   it("keeps the specific provider restore error for reconciliation", async () => {

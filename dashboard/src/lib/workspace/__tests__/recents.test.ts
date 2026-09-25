@@ -62,8 +62,19 @@ describe("recents", () => {
     expect(lastTabFor("x-never-opened")).toBeNull();
   });
 
+  // An agent added to a computer is its own resource: `a-<attachment id>`.
+  it("keeps an agent added to a computer by its own uid", () => {
+    const uid = "a-77777777-7777-4777-8777-777777777777";
+    expect(recordVisit(uid, "chat", { now: 9 })).toBe(true);
+    expect(listRecents()).toEqual([{ uid, tab: "chat", usedAt: 9 }]);
+    expect(lastTabFor(uid)).toBe("chat");
+  });
+
   it.each([
     ["a token-shaped identity", "x-api-token-secret"],
+    ["a token-shaped added-agent identity", "a-api-token-secret"],
+    ["a JWT-shaped added-agent identity", "a-eyJabc.def.ghi"],
+    ["an added-agent identity that is not a lowercase UUID", "a-AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"],
     ["a JWT-shaped identity", "x-eyJabc.def.ghi"],
     ["an unqualified identity", "agent-1"],
     ["an identity that is too long", `x-${"a".repeat(200)}`],
@@ -180,6 +191,11 @@ describe("recents", () => {
     it("encodes the id and ignores a uid it did not write", () => {
       expect(visitHref("x-a:b", "chat")).toBe("/dashboard/agent/a%3Ab?tab=chat");
       expect(visitHref("not-a-uid", "chat")).toBe("/dashboard?runtimes=1");
+      // An added agent's id is its attachment, never a page: only its own link opens it.
+      const attached = "a-77777777-7777-4777-8777-777777777777";
+      const computerChat = "/dashboard/agent/c0mputer?tab=chat";
+      expect(visitHref(attached, "chat", computerChat)).toBe(computerChat);
+      expect(visitHref(attached, "chat")).toBe("/dashboard?runtimes=1");
     });
   });
 });

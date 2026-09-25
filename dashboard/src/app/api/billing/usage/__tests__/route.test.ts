@@ -126,6 +126,8 @@ describe("GET /api/billing/usage", () => {
       maybeSingle: jest.fn(),
     };
     (supabaseAdmin!.from as jest.Mock).mockReturnValue(mockSupabaseQuery);
+    // The agent count comes from the database's slot count (T35).
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue({ data: 0, error: null });
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 500,
       monthlyGrant: 0,
@@ -327,6 +329,7 @@ describe("GET /api/billing/usage", () => {
       ],
       error: null,
     });
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: 1, error: null });
 
     const res = await GET();
     expect(res.status).toBe(200);
@@ -392,6 +395,7 @@ describe("GET /api/billing/usage", () => {
       ],
       error: null,
     });
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: 1, error: null });
 
     const res = await GET();
     const body = await res.json();
@@ -440,6 +444,44 @@ describe("GET /api/billing/usage", () => {
     expect(body.data.usage.instances).toEqual([]);
   });
 
+  it("takes the agent count from the database's slot count, including agents added to a computer", async () => {
+    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+      data: { plan: "operator", status: "active", instance_limit: 3, total_cpu_budget: 2, total_ram_budget: 4096, current_period_end: null },
+      error: null,
+    });
+    mockSupabaseQuery.not.mockReturnValueOnce(mockSupabaseQuery).mockResolvedValueOnce({ data: [], error: null });
+    mockSupabaseQuery.or.mockResolvedValueOnce({
+      data: [{ id: "desktop", name: "Desktop", status: "running", cpu: 2, ram: 4, type: "linux-desktop" }],
+      error: null,
+    });
+    // The desktop plus Codex attached to it: two agents, one computer's compute.
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: 2, error: null });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("hivra_owner_agent_slot_count", { p_owner: mockUserId });
+    expect(body.data.usage.agentCount).toBe(2);
+    expect(body.data.usage.usedCpu).toBe(2);
+    expect(body.data.usage.usedRam).toBe(4096);
+  });
+
+  it.each([{ data: null, error: { message: "private database detail" } }, { data: "2", error: null }, { data: -1, error: null }])(
+    "does not present a guessed agent count when the slot count is unavailable: %j", async (reply) => {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+        data: { plan: "operator", status: "active", instance_limit: 3, total_cpu_budget: 2, total_ram_budget: 4096, current_period_end: null },
+        error: null,
+      });
+      mockSupabaseQuery.not.mockReturnValueOnce(mockSupabaseQuery).mockResolvedValueOnce({ data: [], error: null });
+      mockSupabaseQuery.or.mockResolvedValueOnce({ data: [], error: null });
+      (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce(reply);
+
+      const res = await GET();
+      expect(res.status).toBe(503);
+      expect(JSON.stringify(await res.json())).not.toContain("private database detail");
+    });
+
   it("still counts live boxes when dead rows sit alongside them (both lanes)", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
       data: { plan: "operator", status: "active", instance_limit: 7, total_cpu_budget: 6, total_ram_budget: 12288, current_period_end: null },
@@ -459,6 +501,7 @@ describe("GET /api/billing/usage", () => {
       ],
       error: null,
     });
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: 2, error: null });
 
     const res = await GET();
     const body = await res.json();

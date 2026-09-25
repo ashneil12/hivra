@@ -209,6 +209,8 @@ export class InfrastructureApiError extends Error {
     public readonly retryAfterSeconds: number | null = null,
     /** A fixed failure cause or step name the server reported, if any. */
     public readonly detail: { cause?: string; stage?: string } = {},
+    /** The parsed error body, for callers whose failures carry a result. */
+    public readonly failureBody?: unknown,
   ) {
     super(message);
     this.name = "InfrastructureApiError";
@@ -243,7 +245,9 @@ async function responseJson(response: Response): Promise<unknown> {
   }
 }
 
-async function requestJson<T>(
+/** Fetch one infrastructure API response and validate it. Throws
+ * InfrastructureApiError with the server's plain message on failure. */
+export async function requestJson<T>(
   input: string,
   init: RequestInit,
   schema: z.ZodType<T>,
@@ -280,6 +284,7 @@ async function requestJson<T>(
       parsedError.success ? parsedError.data.code : undefined,
       retryAfterSeconds,
       parsedError.success ? { cause: parsedError.data.cause, stage: parsedError.data.stage } : {},
+      body,
     );
   }
 
@@ -536,15 +541,30 @@ export async function preflightInfrastructureConnection(
   return body.data.preflight;
 }
 
+const HostDiscoveryFailureBodySchema = z
+  .object({ discovery: HostDiscoveryResultSchema })
+  .passthrough();
+
+/** An inspection that reached the server but failed still returns its
+ * result (what failed and, for a changed identity, both fingerprints), so the
+ * owner sees the specific reason instead of a generic error. */
 export async function discoverInfrastructureHost(
   id: string,
 ): Promise<HostDiscoveryResult> {
-  const body = await requestJson(
-    `/api/infrastructure/connections/${encodeURIComponent(id)}/discover`,
-    { method: "POST" },
-    HostDiscoveryResponseSchema,
-  );
-  return body.data.discovery;
+  try {
+    const body = await requestJson(
+      `/api/infrastructure/connections/${encodeURIComponent(id)}/discover`,
+      { method: "POST" },
+      HostDiscoveryResponseSchema,
+    );
+    return body.data.discovery;
+  } catch (error) {
+    if (error instanceof InfrastructureApiError && error.failureBody !== undefined) {
+      const parsed = HostDiscoveryFailureBodySchema.safeParse(error.failureBody);
+      if (parsed.success && !parsed.data.discovery.ok) return parsed.data.discovery;
+    }
+    throw error;
+  }
 }
 
 export async function prepareInfrastructureConnection(

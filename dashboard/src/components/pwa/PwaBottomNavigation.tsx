@@ -22,6 +22,8 @@ interface PwaBottomNavigationProps {
   attentionCount?: number;
   userName?: string;
   userEmail?: string;
+  /** The account code the server setup script shows. */
+  accountCode?: string | null;
   onOpenSwitcher?: () => void;
 }
 
@@ -114,6 +116,7 @@ export function PwaBottomNavigation({
   attentionCount = 0,
   userName = '',
   userEmail = '',
+  accountCode = null,
   onOpenSwitcher,
 }: PwaBottomNavigationProps) {
   const pathname = usePathname();
@@ -200,6 +203,7 @@ export function PwaBottomNavigation({
           attentionCount={attentionCount}
           userName={userName}
           userEmail={userEmail}
+          accountCode={accountCode}
           resourceKind={resourceKind}
         />
       )}

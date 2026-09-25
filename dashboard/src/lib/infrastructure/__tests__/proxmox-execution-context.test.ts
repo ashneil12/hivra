@@ -100,6 +100,22 @@ const selection = {
 };
 
 describe("portable Proxmox execution context", () => {
+  // Release gate T43 (review finding 2): no Proxmox-lane host work through
+  // sudo for any purpose, before any lookup of the target or the network.
+  it.each(["lifecycle", "teardown"] as const)("refuses a sudo connection before any SSH for %s while the gate is off", async purpose => {
+    const resolveDestination = jest.fn();
+    const getTarget = jest.fn(async () => target());
+    await expect(resolveSelfManagedProxmoxExecutionContext("user_a", { ...selection, purpose }, {
+      loadConnection: jest.fn(async () => connection({
+        provider: "host", endpoint: { ...connection().endpoint, sshUser: "hivra", sshPrivilege: "sudo" },
+      })),
+      getTarget,
+      resolveDestination,
+    })).rejects.toMatchObject({ code: "connection_not_ready" });
+    expect(getTarget).not.toHaveBeenCalled();
+    expect(resolveDestination).not.toHaveBeenCalled();
+  });
+
   it.each(["lifecycle", "teardown"] as const)("rejects a provider VM before network resolution for %s", async purpose => {
     const resolveDestination = jest.fn();
     const provider = providerVmTarget();

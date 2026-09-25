@@ -51,8 +51,6 @@ export interface HivraAgent {
   cpu_max?: number | null;
   ram_max?: number | null;
   vmid?: number | null;
-  proxmox_host?: string | null;
-  ip?: string | null;
   chat_url?: string | null;
   error?: string | null;
   created_at?: string;

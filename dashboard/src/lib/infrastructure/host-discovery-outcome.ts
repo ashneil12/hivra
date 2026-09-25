@@ -1,7 +1,8 @@
-import type {
-  HostDiscoveryEngine,
-  HostDiscoverySnapshot,
-  HostEngineRequirement,
+import {
+  snapshotPrivilegeVia,
+  type HostDiscoveryEngine,
+  type HostDiscoverySnapshot,
+  type HostEngineRequirement,
 } from "./host-discovery-contracts";
 
 // One inspection, one outcome: a sentence that says what Hivra found and one
@@ -22,7 +23,12 @@ export type HostDiscoveryAction =
   /** Run the read-only strict check of an installed Linux Sandbox setup. */
   | "check-gvisor"
   /** Change the connection's SSH user. */
-  | "connect-as-root"
+  | "change-ssh-user"
+  /** Run host scripts through the user's passwordless sudo (an operational
+   * change that raises the revision), then inspect again. */
+  | "use-sudo"
+  /** Connect the server with the one-line setup command instead. */
+  | "use-setup-command"
   /** Inspect again after fixing the server. */
   | "check-again";
 
@@ -86,7 +92,9 @@ export function proxmoxVersionLabel(engine: HostDiscoveryEngine | undefined): st
   return version ? `Proxmox VE ${version}` : "Proxmox VE";
 }
 
-/** A root x86 Debian server with KVM is where Proxmox VE itself installs. */
+/** A root x86 Debian server with KVM is where Proxmox VE itself installs.
+ * (Root through sudo counts: the snapshot's effective privilege is what the
+ * inspection itself ran as.) */
 function couldHostProxmox(snapshot: HostDiscoverySnapshot): boolean {
   const { host } = snapshot;
   return host.os.id === "debian" && host.kernel.architecture === "amd64"
@@ -99,7 +107,12 @@ function engine(snapshot: HostDiscoverySnapshot, id: HostDiscoveryEngine["id"]):
 
 export function hostDiscoveryOutcome(
   snapshot: HostDiscoverySnapshot,
-  context: { hostName?: string | null; sshUser?: string | null } = {},
+  context: {
+    hostName?: string | null;
+    sshUser?: string | null;
+    /** Whether Proxmox launches may run through sudo yet (release gate T43). */
+    proxmoxSudoAllowed?: boolean;
+  } = {},
 ): HostDiscoveryOutcome {
   const name = context.hostName?.trim() || "This server";
   // Mid-sentence, an unnamed server reads "this server".
@@ -108,7 +121,19 @@ export function hostDiscoveryOutcome(
   const gvisor = engine(snapshot, "gvisor");
   const path: HostDiscoveryPath = proxmox?.availability === "installed" ? "proxmox" : "gvisor";
   const target = path === "proxmox" ? proxmox : gvisor;
+  // Release gate T43: Proxmox launches can't run through sudo yet, so a sudo
+  // connection is never offered Proxmox checks, setup or launch. Through sudo,
+  // Hivra sets up Linux Sandbox only for now, which Proxmox VE (Debian) can't
+  // run.
+  const proxmoxThroughSudo = snapshotPrivilegeVia(snapshot) === "sudo" && !context.proxmoxSudoAllowed;
 
+  if (path === "proxmox" && proxmoxThroughSudo) {
+    return {
+      path, ready: false, blocker: "privilege", action: "change-ssh-user",
+      title: `${name} runs ${proxmoxVersionLabel(proxmox)}. Proxmox launches need a root login for now.`,
+      detail: "Through sudo, Hivra sets up only Linux Sandbox for now, and that needs Ubuntu 22.04 or 24.04. Connect as root instead, then check again.",
+    };
+  }
   if (path === "proxmox" && proxmox?.supported) {
     return {
       path, ready: true, blocker: null, action: "check-proxmox",
@@ -144,13 +169,36 @@ export function hostDiscoveryOutcome(
   switch (blocker) {
     case "privilege": {
       const user = context.sshUser?.trim();
-      const title = snapshot.host.environment.effectivePrivilege === "unknown" || !user || user === "root"
-        ? `Hivra couldn't confirm root access on ${named}.`
-        : `Signed in as ${user} without root access.`;
+      const { effectivePrivilege, passwordlessSudo } = snapshot.host.environment;
+      if (effectivePrivilege === "unknown" || !user || user === "root") {
+        return blocked(
+          `Hivra couldn't confirm root access on ${named}.`,
+          `Run the setup command on ${named} with sudo, or connect as root.`,
+          "use-setup-command",
+        );
+      }
+      if (passwordlessSudo === true) {
+        // Proxmox launches need a root login until the sudo transport passes
+        // release gate T43, so sudo isn't offered on Proxmox VE yet.
+        if (path === "proxmox" && !context.proxmoxSudoAllowed) {
+          return blocked(
+            `${user} can use sudo without a password, but ${name} runs Proxmox VE, which needs a root login for now.`,
+            "Connect as root, then check again.",
+            "change-ssh-user",
+          );
+        }
+        return blocked(
+          `${user} can use sudo without a password.`,
+          "Use sudo for setup: Hivra runs its setup and checks through sudo as this user, then inspects again.",
+          "use-sudo",
+        );
+      }
       return blocked(
-        title,
-        `Hivra needs a root login on ${named} for now. Let root sign in with your SSH key, then connect as root.`,
-        "connect-as-root",
+        `Signed in as ${user} without passwordless sudo.`,
+        // sudo logs the check, and mails root an incident for a user it
+        // doesn't know at all (mail_no_user), so the copy says Hivra asked.
+        "Run the setup command with sudo, or connect as a user who has it. Hivra asked sudo once, without a password; the server's log records that check.",
+        "use-setup-command",
       );
     }
     case "operating-system":
@@ -158,7 +206,7 @@ export function hostDiscoveryOutcome(
         ? blocked(`${name} doesn't report a Linux system.`, "Hivra runs Proxmox servers on Linux. Check the server, then check again.")
         : blocked(
             `${name} runs ${os}. ${LINUX_SANDBOX_NEEDS}`,
-            couldHostProxmox(snapshot)
+            couldHostProxmox(snapshot) && !proxmoxThroughSudo
               ? "Rebuild it with a supported image, or install Proxmox VE 8 or 9 on it to run agents and desktops. Then check again."
               : "Rebuild it with a supported image, then check again.",
           );

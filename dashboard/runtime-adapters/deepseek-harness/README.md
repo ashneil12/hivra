@@ -212,6 +212,15 @@ npm run lab:deepseek-proxmox -- --restart ...    # new boot identity, then nativ
 npm run lab:deepseek-proxmox -- --teardown ...   # VM, volumes, host artifacts and tunnel
 ```
 
+Inspect and launch admit the lab computer with `--capacity-policy reserved` by
+default: every non-template guest on the host, stopped ones included, must
+still fit its configured memory afterwards. On a shared Canary host whose
+stopped guests belong to other owners, `--capacity-policy active` admits it
+exactly as a product launch is admitted, through the sealed
+`hivra-host-capacity-admission` helper of the verified Canary bundle (running
+guests plus a 2048 MB reserve, observe mode). A refusal still exits 8 with
+`HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY`, followed by the helper's reason.
+
 The pinned release is the `provisioner/` bundle of the checkout you run the
 harness from, sealed exactly as managed bundle sync seals the Canary directory,
 so run it from the commit Canary serves. A VERSION string alone does not

@@ -406,7 +406,7 @@ describe("pinned read-only guest inspection",()=>{
     const f=inspecting();expect(f.client.exec).not.toHaveBeenCalled();f.ready();f.ready();f.acknowledge();
     expect(f.client.exec).toHaveBeenCalledTimes(1);
     expect(f.client.exec.mock.calls[0][0]).toBe("sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/timeout --signal=TERM --kill-after=1s 8s /bin/bash --noprofile --norc -s");
-    expect(f.stream.end).toHaveBeenCalledWith(buildReadOnlyHostDiscoveryScript(inspectInput.connectionId));
+    expect(f.stream.end).toHaveBeenCalledWith(buildReadOnlyHostDiscoveryScript(inspectInput.connectionId,"provider-guest"));
     f.stream.emit("data",Buffer.from("facts"));f.stream.stderr.emit("data",Buffer.from("private diagnostic"));f.stream.emit("close",0);
     await expect(f.pending).resolves.toMatchObject({hostVerified:true,administratorAuthenticated:true,output:"facts"});
     expect(f.client.destroy).toHaveBeenCalledTimes(1);
@@ -475,7 +475,7 @@ it("executes the exact probe protocol over a real local SSH channel, without exe
         commands++;const stream=acceptExec(),chunks:Buffer[]=[];
         stream.on("data",(chunk:Buffer)=>chunks.push(chunk));
         stream.on("end",()=>{
-          if(Buffer.concat(chunks).toString()!==buildReadOnlyHostDiscoveryScript(connectionId)){stream.exit(1);stream.end();return;}
+          if(Buffer.concat(chunks).toString()!==buildReadOnlyHostDiscoveryScript(connectionId,"provider-guest")){stream.exit(1);stream.end();return;}
           scripts++;stream.write(guestDiscoveryOutput());stream.exit(0);stream.end();
         });
       });

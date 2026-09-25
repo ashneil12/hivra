@@ -13,3 +13,9 @@ export function guestDiscoveryOutput(overrides:Record<string,string>={}) {
   }
   return Object.entries({...values,END:"1",...overrides}).map(([key,value])=>`${HOST_DISCOVERY_PROTOCOL}\t${key}\t${value}`).join("\n");
 }
+
+/** The same facts in the host lane's version 2 protocol, which adds the sudo
+ * question. The provider lane refuses this output. */
+export function hostLaneDiscoveryOutput(overrides:Record<string,string>={}) {
+  return guestDiscoveryOutput({PROTOCOL:"2",PASSWORDLESS_SUDO:"",...overrides});
+}

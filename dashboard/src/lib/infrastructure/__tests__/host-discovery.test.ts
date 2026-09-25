@@ -25,7 +25,7 @@ function b64(value: string): string {
 
 function protocolOutput(overrides: Record<string, string> = {}): string {
   const values: Record<string, string> = {
-    PROTOCOL: "1",
+    PROTOCOL: "2",
     OS_FAMILY: "linux",
     OS_ID_B64: b64("debian"),
     OS_VERSION_ID_B64: b64("12"),
@@ -43,6 +43,7 @@ function protocolOutput(overrides: Record<string, string> = {}): string {
     CPU_VIRTUALIZATION: "1",
     PACKAGE_MANAGERS: "apt",
     MACHINE_ID_DIGEST: "c".repeat(64),
+    PASSWORDLESS_SUDO: "",
     PROXMOX_KVM_INSTALLED: "1",
     PROXMOX_KVM_VERSION_B64: b64("pve-manager/8.4.1/2a5fa54a8503f96d"),
     QEMU_KVM_INSTALLED: "1",
@@ -126,7 +127,17 @@ describe("read-only host discovery", () => {
     expect(script).toContain("/proc/meminfo");
     expect(script).toContain("/dev/kvm");
     expect(script).toContain("sha256sum");
-    expect(script).not.toMatch(/\b(?:sudo|apt-get\s+install|dnf\s+install|yum\s+install|apk\s+add|systemctl|service|mkdir|mktemp|touch|rm|mv|cp|tee)\b/);
+    // The one use of sudo is a read-only probe for a non-root login: can it
+    // run `id -u` without a password (INF-04)? Nothing else ever runs as sudo.
+    expect(script.match(/sudo -n/g)).toEqual(["sudo -n"]);
+    expect(script).toContain("timeout 5 sudo -n -- /usr/bin/id -u 2>/dev/null </dev/null");
+    const withoutProbe = script
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n")
+      .replace("timeout 5 sudo -n -- /usr/bin/id -u", "")
+      .replace("command -v sudo", "");
+    expect(withoutProbe).not.toMatch(/\b(?:sudo|apt-get\s+install|dnf\s+install|yum\s+install|apk\s+add|systemctl|service|mkdir|mktemp|touch|rm|mv|cp|tee)\b/);
     expect(script).not.toContain("source /etc/os-release");
     expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
   });
@@ -363,5 +374,74 @@ describe("read-only host discovery", () => {
       expectedRevision: 3,
       runId: RUN_ID,
     }));
+  });
+});
+
+// Slice 13: failures on a connection the setup command created, and a server
+// that presents another identity (T17, T28, T33, T34; section 10.5).
+describe("discovery failures after Yes", () => {
+  const enrolled = connection({
+    endpoint: { sshHost: "203.0.113.24", sshPort: 22, sshUser: "hivra", sshHostFingerprintSha256: "ab".repeat(32),
+      sshPrivilege: "sudo", sshHostKeyType: "ssh-ed25519" },
+  });
+
+  function withEnrollment() {
+    return {
+      ...dependencies(),
+      loadConnection: jest.fn().mockResolvedValue(enrolled),
+      recordIdentityMismatch: jest.fn().mockResolvedValue(true),
+      enrolledFacts: jest.fn().mockResolvedValue({ sshMatchRules: false }),
+    };
+  }
+
+  it("shows the pinned and the presented fingerprints side by side, and records the mismatch once (T33)", async () => {
+    const deps = withEnrollment();
+    deps.executeHostScript.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: Handshake failed",
+      presentedHostFingerprintSha256: "cd".repeat(32) });
+    const result = await discoverInfrastructureHost("user_1", CONNECTION_ID, deps);
+    const display = (hex: string) => "SHA256:" + Buffer.from(hex, "hex").toString("base64").replace(/=+$/, "");
+    expect(result).toMatchObject({ ok: false, error: {
+      code: "SSH_HOST_KEY_MISMATCH",
+      remediation: expect.stringContaining("If the server was rebuilt, run a new setup command to reconnect."),
+      hostKey: { expected: display("ab".repeat(32)), presented: display("cd".repeat(32)) },
+    } });
+    expect(deps.recordIdentityMismatch).toHaveBeenCalledWith("user_1", CONNECTION_ID);
+    // The runner got the connection's privilege and key type.
+    expect(deps.executeHostScript.mock.calls[0][1]).toMatchObject({ PROXMOX_SSH_PRIVILEGE: "sudo", PROXMOX_SSH_HOST_KEY_TYPE: "ssh-ed25519" });
+  });
+
+  it("says an enrolled server couldn't be reached, with the firewall and home-machine copy (T34)", async () => {
+    const deps = withEnrollment();
+    deps.executeHostScript.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: connect ETIMEDOUT" });
+    expect(await discoverInfrastructureHost("user_1", CONNECTION_ID, deps)).toMatchObject({ ok: false, error: {
+      code: "SSH_CONNECTION_FAILED",
+      message: "Hivra couldn't reach 203.0.113.24 on port 22.",
+      remediation: "Allow SSH from the internet in your provider's firewall (on AWS, the security group), then check again. Home or office machines aren't supported yet.",
+    } });
+  });
+
+  it("names address rules when the server reported them and the sign-in failed (10.5)", async () => {
+    const deps = withEnrollment();
+    deps.executeHostScript.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "All configured authentication methods failed" });
+    expect(await discoverInfrastructureHost("user_1", CONNECTION_ID, deps)).toMatchObject({ ok: false, error: {
+      code: "SSH_AUTHENTICATION_FAILED", message: "Hivra couldn't sign in as hivra. The server may have undone the setup, or its key was replaced.",
+    } });
+    deps.enrolledFacts.mockResolvedValue({ sshMatchRules: true });
+    expect(await discoverInfrastructureHost("user_1", CONNECTION_ID, deps)).toMatchObject({ ok: false, error: {
+      message: "Hivra reached the server but couldn't sign in as hivra.",
+      remediation: "This server's SSH settings have rules for particular addresses; allow hivra from any address, then check again.",
+    } });
+  });
+
+  it.each([
+    [{ kind: "missing_tool", path: "/usr/bin/timeout" }, "This server is missing /usr/bin/timeout, which Hivra needs."],
+    [{ kind: "password_required" }, "Hivra signed in as hivra, but sudo wouldn't run without a password."],
+    [{ kind: "command_not_allowed" }, "sudo on this server wouldn't run Hivra's command."],
+  ])("gives each sudo diagnosis its own copy, the password copy only for a password (T28)", async (sudoFailure, message) => {
+    const deps = withEnrollment();
+    deps.executeHostScript.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "Sudo transport failed", sudoFailure });
+    const result = await discoverInfrastructureHost("user_1", CONNECTION_ID, deps);
+    expect(result).toMatchObject({ ok: false, error: { code: "SSH_SUDO_UNAVAILABLE", message } });
+    if (sudoFailure.kind !== "password_required") expect(JSON.stringify(result)).not.toContain("password");
   });
 });

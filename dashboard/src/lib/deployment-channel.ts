@@ -26,7 +26,13 @@ function hostnameFromUrl(value: string | undefined): string {
   }
 }
 
-function isCanaryDeployment(env: EnvLike = process.env): boolean {
+/**
+ * Whether this server is the Canary deployment (canary.hermesos.cloud), from
+ * the deployment's own environment: an explicit channel, the Git repository,
+ * or its production and deployment URLs. Production resolves false without any
+ * environment change.
+ */
+export function isCanaryDeployment(env: EnvLike = process.env): boolean {
   const channel = explicitChannel(env);
   if (isCanaryToken(channel)) return true;
   if (isProdToken(channel)) return false;

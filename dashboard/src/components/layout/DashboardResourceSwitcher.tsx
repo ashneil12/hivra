@@ -1,12 +1,20 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "@/components/ui/NavigationLink";
 import { createPortal } from "react-dom";
 import { Bot, Monitor, Search, X } from "lucide-react";
 import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
 import { listRecents } from "@/lib/workspace/recents";
-import { filterDashboardResources, resourceStatusLabel, type DashboardResource, type DashboardResourceSource } from "./dashboard-resources";
+import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
+import { resourceInventory } from "@/lib/workspace/resource-inventory";
+import {
+  filterDashboardResources,
+  parseAttachedDashboardResources,
+  resourceStatusLabel,
+  type DashboardResource,
+  type DashboardResourceSource,
+} from "./dashboard-resources";
 import styles from "./DashboardSidebar.module.css";
 
 export interface DashboardResourceSwitcherProps {
@@ -22,7 +30,32 @@ export interface DashboardResourceSwitcherProps {
 }
 
 /**
- * ⌘K: Recent first, then Agents, then Computers. The highlight starts on the
+ * The agents added to the owner's computers, read from the shared inventory
+ * when ⌘K opens (the sidebar doesn't list them, so no page reads them just for
+ * it). Scoped to the account like every inventory list: a new owner drops it.
+ */
+function useAttachedResources(): DashboardResource[] {
+  const snapshot = useSyncExternalStore(
+    resourceInventory.subscribe,
+    resourceInventory.getSnapshot,
+    resourceInventory.getServerSnapshot,
+  );
+  useEffect(() => {
+    if (isHivraEnabled()) void resourceInventory.load("attached");
+  }, []);
+  return useMemo(() => {
+    if (!snapshot.attached.hasBody) return [];
+    try {
+      return parseAttachedDashboardResources(snapshot.attached.body);
+    } catch {
+      return [];
+    }
+  }, [snapshot.attached]);
+}
+
+/**
+ * ⌘K: Recent first, then Agents, then Computers (an agent added to a computer
+ * right after that computer). The highlight starts on the
  * resource you were in before this one, so ⌘K then Enter goes back to it and
  * pressing it again returns: two agents, one shortcut. With nothing typed,
  * 1–9 open that Recent entry, except on a touch screen, where no hint shows
@@ -37,9 +70,11 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
   const [recents] = useState(listRecents);
   const [shortcuts] = useState(recentShortcutsShown);
   const listId = useId();
-  const matches = useMemo(() => filterDashboardResources(resources, query), [resources, query]);
+  const attached = useAttachedResources();
+  const listed = useMemo(() => [...resources, ...attached], [resources, attached]);
+  const matches = useMemo(() => filterDashboardResources(listed, query), [listed, query]);
   const groups = useMemo(
-    () => switcherGroups(matches, { recents, currentUid, isComputer: (item) => item.kind === "computer" }),
+    () => switcherGroups(matches, { recents, currentUid, isComputer: (item) => item.kind === "computer", hostUid: (item) => item.hostUid }),
     [matches, recents, currentUid],
   );
   const ordered = groups.flatMap((group) => group.items);
@@ -101,7 +136,7 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
           {group.items.map((item, position) => {
             const index = ordered.indexOf(item);
             const Icon = item.kind === "agent" ? Bot : Monitor;
-            const duplicate = resources.some((other) => other.uid !== item.uid && other.name === item.name);
+            const duplicate = listed.some((other) => other.uid !== item.uid && other.name === item.name);
             const detail = duplicate ? `${item.description} · ${item.source} · ${item.id.slice(-8)}` : `${item.description} · ${item.kind === "agent" ? "Agent" : "Computer"}`;
             const shortcut = shortcuts && group.key === "recent" && !query && position < 9 ? String(position + 1) : undefined;
             const current = item.uid === currentUid;

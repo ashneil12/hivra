@@ -18,9 +18,14 @@ import {
   type LoadedInfrastructureConnection,
 } from "./connection-store";
 import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
+import { sha256FingerprintDisplay } from "./ssh-host-key";
 import {
   HOST_DISCOVERY_CONTRACT_VERSION,
   HOST_DISCOVERY_PROTOCOL,
+  HOST_DISCOVERY_SCRIPT_PROTOCOL_VERSION,
+  PROVIDER_GUEST_DISCOVERY_CONTRACT_VERSION,
+  PROVIDER_GUEST_DISCOVERY_SCRIPT_PROTOCOL_VERSION,
+  type HostDiscoveryScriptLane,
   HOST_DISCOVERY_SNAPSHOT_TTL_MS,
   HOST_ISOLATION_ENGINE_IDS,
   HostDiscoveryResultSchema,
@@ -35,6 +40,8 @@ import {
   type HostEngineRequirement,
   type HostIsolationEngineId,
 } from "./host-discovery-contracts";
+import type { SudoTransportFailure } from "@/lib/services/proxmox-sudo-transport";
+import { loadEnrolledServerFacts, recordServerEnrollmentIdentityMismatch } from "./server-enrollment-store";
 import {
   beginInfrastructureHostDiscovery,
   completeInfrastructureHostDiscovery,
@@ -90,7 +97,9 @@ const BASE_OUTPUT_KEYS = [
   "MACHINE_ID_DIGEST",
 ] as const;
 
-const EXPECTED_OUTPUT_KEYS = new Set([
+// The provider lane's version 1 protocol has exactly these keys; the host
+// lane's version 2 adds PASSWORDLESS_SUDO.
+const PROVIDER_GUEST_OUTPUT_KEYS = new Set([
   ...BASE_OUTPUT_KEYS,
   ...Object.values(ENGINE_OUTPUT_KEYS).flatMap(({ installed, version }) => [
     installed,
@@ -98,6 +107,7 @@ const EXPECTED_OUTPUT_KEYS = new Set([
   ]),
   "END",
 ]);
+const HOST_OUTPUT_KEYS = new Set([...PROVIDER_GUEST_OUTPUT_KEYS, "PASSWORDLESS_SUDO"]);
 
 const PUBLIC_ERROR_COPY: Record<
   HostDiscoveryErrorCode,
@@ -117,8 +127,8 @@ const PUBLIC_ERROR_COPY: Record<
     // Mode-dependent; see discoveryErrorCopy.
   },
   SSH_HOST_KEY_MISMATCH: {
-    message: "The server identity did not match the pinned SSH fingerprint.",
-    remediation: "Verify the host fingerprint out of band before changing the connection.",
+    message: "The server presented a different SSH identity than the one Hivra pinned.",
+    remediation: "If the server was rebuilt, run a new setup command to reconnect. Otherwise compare both fingerprints with your provider's console before you change anything.",
   },
   SSH_AUTHENTICATION_FAILED: {
     message: "SSH authentication failed.",
@@ -131,6 +141,10 @@ const PUBLIC_ERROR_COPY: Record<
   SSH_COMMAND_FAILED: {
     message: "The bounded read-only host inspection did not complete.",
     remediation: "Check the SSH account permissions and try again.",
+  },
+  SSH_SUDO_UNAVAILABLE: {
+    message: "Hivra signed in, but sudo wouldn't run its command.",
+    // Specific copy per diagnosis; see sudoFailureCopy.
   },
   DISCOVERY_OUTPUT_INVALID: {
     message: "The host returned invalid discovery evidence.",
@@ -154,6 +168,21 @@ function discoveryErrorCopy(code: HostDiscoveryErrorCode): { message: string; re
   return copy;
 }
 
+/** One sentence per sudo diagnosis. The password copy appears only when sudo
+ * itself refused to run without one, never for a missing tool. */
+export function sudoFailureCopy(failure: SudoTransportFailure, sshUser: string): { message: string; remediation?: string } {
+  if (failure.kind === "missing_tool") {
+    return { message: `This server is missing ${failure.path}, which Hivra needs.`,
+      remediation: "Install it (it comes with the base system on Ubuntu), then check again." };
+  }
+  if (failure.kind === "password_required") {
+    return { message: `Hivra signed in as ${sshUser}, but sudo wouldn't run without a password.`,
+      remediation: "Run the setup command again, or give this user passwordless sudo, then check again." };
+  }
+  return { message: "sudo on this server wouldn't run Hivra's command.",
+    remediation: `Hivra needs the rule \`${sshUser} ALL=(ALL:ALL) NOPASSWD: ALL\`. Add it in /etc/sudoers.d, then check again.` };
+}
+
 type DiscoveryDependencies = {
   loadConnection: typeof loadInfrastructureConnectionSecret;
   beginDiscovery: typeof beginInfrastructureHostDiscovery;
@@ -163,6 +192,10 @@ type DiscoveryDependencies = {
   executeHostScript: typeof runProxmoxHostScript;
   now: () => Date;
   newRunId: () => string;
+  /** Best-effort receipt when the first sign-in after Yes met another key. */
+  recordIdentityMismatch: (userId: string, connectionId: string) => Promise<unknown>;
+  /** What an enrolled server reported, for failure copy after Yes. */
+  enrolledFacts: (userId: string, connectionId: string) => Promise<{ sshMatchRules: boolean } | null>;
 };
 
 const DEFAULT_DEPENDENCIES: DiscoveryDependencies = {
@@ -174,19 +207,27 @@ const DEFAULT_DEPENDENCIES: DiscoveryDependencies = {
   executeHostScript: runProxmoxHostScript,
   now: () => new Date(),
   newRunId: randomUUID,
+  recordIdentityMismatch: recordServerEnrollmentIdentityMismatch,
+  enrolledFacts: loadEnrolledServerFacts,
 };
 
 function failure(
   connectionId: string,
   attemptedAt: string,
   code: HostDiscoveryErrorCode,
+  copy?: { message: string; remediation?: string; hostKey?: { expected: string; presented: string } },
 ): HostDiscoveryResult {
   return HostDiscoveryResultSchema.parse({
     ok: false,
     connectionId,
     attemptedAt,
-    error: { code, ...discoveryErrorCopy(code) },
+    error: { code, ...(copy ?? discoveryErrorCopy(code)) },
   });
+}
+
+/** A connection the setup command created: user hivra through sudo. */
+function isEnrolledConnection(connection: LoadedInfrastructureConnection): boolean {
+  return connection.endpoint.sshUser === "hivra" && connection.endpoint.sshPrivilege === "sudo";
 }
 
 function classifyTransportFailure(raw: string | undefined): HostDiscoveryErrorCode {
@@ -203,15 +244,43 @@ function classifyTransportFailure(raw: string | undefined): HostDiscoveryErrorCo
   return "SSH_CONNECTION_FAILED";
 }
 
+// Host lane only: can a non-root login run sudo without a password? One
+// read-only probe. When sudo asks for a password it fails at once; the
+// server's auth log records one failed attempt, and a user sudo doesn't know
+// at all is reported as a sudo incident (mailed to root where mail is set up).
+const SUDO_PROBE = `
+# Only for a non-root login: can it run sudo without a password? One
+# read-only probe; when sudo asks for a password it fails at once, and the
+# server's auth log records one failed attempt.
+passwordless_sudo=''
+if [ -n "$euid" ] && [ "$euid" != 0 ] && command -v sudo >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  if [ "$(timeout 5 sudo -n -- /usr/bin/id -u 2>/dev/null </dev/null || true)" = 0 ]; then
+    passwordless_sudo=1
+  else
+    passwordless_sudo=0
+  fi
+fi
+emit PASSWORDLESS_SUDO "$passwordless_sudo"
+`;
+
 /**
  * Static, bounded and read-only Linux capability probe. Dynamic host values are
  * base64 encoded and length-limited before crossing the protocol boundary.
  * Machine identity is salted on-host and never emitted verbatim.
  */
-export function buildReadOnlyHostDiscoveryScript(connectionId: string): string {
+export function buildReadOnlyHostDiscoveryScript(
+  connectionId: string,
+  lane: HostDiscoveryScriptLane = "host",
+): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(connectionId)) {
     throw new Error("Invalid discovery connection id");
   }
+  if (lane !== "host" && lane !== "provider-guest") throw new Error("Invalid discovery lane");
+  // The provider lane's first-boot recipe keeps its version 1 script byte for
+  // byte (a test pins its sha256). Only host and Proxmox connections ask the
+  // new sudo question.
+  const protocol = lane === "host" ? HOST_DISCOVERY_SCRIPT_PROTOCOL_VERSION : PROVIDER_GUEST_DISCOVERY_SCRIPT_PROTOCOL_VERSION;
+  const sudoProbe = lane === "host" ? SUDO_PROBE : "";
 
   return `#!/usr/bin/env bash
 set -u
@@ -233,7 +302,7 @@ command_version() {
   "$@" 2>/dev/null | head -n 1 | head -c ${MAX_DISCOVERY_TEXT_BYTES} || true
 }
 
-emit PROTOCOL '${HOST_DISCOVERY_CONTRACT_VERSION}'
+emit PROTOCOL '${protocol}'
 
 os_family=unknown
 if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then os_family=linux; fi
@@ -252,7 +321,7 @@ emit_b64 ARCH_B64 "$(uname -m 2>/dev/null || true)"
 euid=''
 if command -v id >/dev/null 2>&1; then euid=$(id -u 2>/dev/null || true); fi
 emit EUID "$euid"
-
+${sudoProbe}
 virtualization=unknown
 if [ -e /.dockerenv ] || [ -e /run/.containerenv ]; then
   virtualization=container
@@ -392,7 +461,9 @@ emit END 1
 `;
 }
 
-function parseProtocolValues(output: string): Map<string, string> {
+function parseProtocolValues(output: string, lane: HostDiscoveryScriptLane): Map<string, string> {
+  const expectedKeys = lane === "host" ? HOST_OUTPUT_KEYS : PROVIDER_GUEST_OUTPUT_KEYS;
+  const protocol = lane === "host" ? HOST_DISCOVERY_SCRIPT_PROTOCOL_VERSION : PROVIDER_GUEST_DISCOVERY_SCRIPT_PROTOCOL_VERSION;
   if (Buffer.byteLength(output, "utf8") > MAX_HOST_DISCOVERY_OUTPUT_BYTES) {
     throw new Error("Discovery output exceeded its protocol budget");
   }
@@ -405,16 +476,16 @@ function parseProtocolValues(output: string): Map<string, string> {
       throw new Error("Malformed discovery marker");
     }
     const [, key, value] = parts;
-    if (!EXPECTED_OUTPUT_KEYS.has(key) || values.has(key)) {
+    if (!expectedKeys.has(key) || values.has(key)) {
       throw new Error("Unknown or duplicate discovery marker");
     }
     values.set(key, value);
   }
 
-  if (values.size !== EXPECTED_OUTPUT_KEYS.size) {
+  if (values.size !== expectedKeys.size) {
     throw new Error("Discovery output was incomplete");
   }
-  if (values.get("PROTOCOL") !== String(HOST_DISCOVERY_CONTRACT_VERSION) || values.get("END") !== "1") {
+  if (values.get("PROTOCOL") !== String(protocol) || values.get("END") !== "1") {
     throw new Error("Discovery protocol version was invalid");
   }
   return values;
@@ -585,15 +656,26 @@ type DiscoveryOutputInput = {
   observedAt: Date;
 };
 
-export function parseHostDiscoveryOutput(input:DiscoveryOutputInput & {connectionProvider:"proxmox"|"host"}):HostDiscoverySnapshot {
-  return HostDiscoverySnapshotSchema.parse({...parseDiscoveryOutput(input),connectionProvider:input.connectionProvider});
+export function parseHostDiscoveryOutput(input:DiscoveryOutputInput & {
+  connectionProvider:"proxmox"|"host";
+  /** The connection's privilege: how this run reached root. */
+  privilegeVia?:"login"|"sudo";
+}):HostDiscoverySnapshot {
+  const {passwordlessSudo,...evidence}=parseDiscoveryOutput(input,"host");
+  return HostDiscoverySnapshotSchema.parse({...evidence,contractVersion:HOST_DISCOVERY_CONTRACT_VERSION,
+    connectionProvider:input.connectionProvider,
+    host:{...evidence.host,environment:{...evidence.host.environment,
+      passwordlessSudo,privilegeVia:input.privilegeVia ?? "login"}}});
 }
 
 export function parseProviderGuestDiscoveryOutput(input:DiscoveryOutputInput & {
   providerServerId:string;capacityOrderId:string;enrollmentAttemptId:string;
 }):ProviderGuestDiscoverySnapshot {
-  const evidence=parseDiscoveryOutput(input);
+  // The provider lane's version 1 protocol has no sudo field.
+  const {passwordlessSudo:_unused,...evidence}=parseDiscoveryOutput(input,"provider-guest");
+  void _unused;
   return ProviderGuestDiscoverySnapshotSchema.parse({...evidence,connectionProvider:"hetzner-cloud",
+    contractVersion:PROVIDER_GUEST_DISCOVERY_CONTRACT_VERSION,
     providerServerId:input.providerServerId,capacityOrderId:input.capacityOrderId,enrollmentAttemptId:input.enrollmentAttemptId,
     // Provider publication and lifecycle guards bind to the enrolled SSH key,
     // not the generic host/machine composite identity used for custom hosts.
@@ -605,8 +687,8 @@ export function parseProviderGuestDiscoveryOutput(input:DiscoveryOutputInput & {
   });
 }
 
-function parseDiscoveryOutput(input:DiscoveryOutputInput) {
-  const values = parseProtocolValues(input.output);
+function parseDiscoveryOutput(input:DiscoveryOutputInput,lane:HostDiscoveryScriptLane) {
+  const values = parseProtocolValues(input.output, lane);
   const osFamily = values.get("OS_FAMILY");
   if (osFamily !== "linux" && osFamily !== "unknown") {
     throw new Error("Discovery OS family was invalid");
@@ -648,6 +730,11 @@ function parseDiscoveryOutput(input:DiscoveryOutputInput) {
   ) {
     throw new Error("Discovery package managers were invalid");
   }
+  const rawPasswordlessSudo = lane === "host" ? values.get("PASSWORDLESS_SUDO") : "";
+  if (rawPasswordlessSudo !== "" && rawPasswordlessSudo !== "0" && rawPasswordlessSudo !== "1") {
+    throw new Error("Discovery sudo probe was invalid");
+  }
+  const passwordlessSudo = rawPasswordlessSudo === "" ? null : rawPasswordlessSudo === "1";
   const machineIdDigest = values.get("MACHINE_ID_DIGEST") ?? "";
   if (machineIdDigest !== "" && !/^[0-9a-f]{64}$/.test(machineIdDigest)) {
     throw new Error("Discovery machine identity digest was invalid");
@@ -688,10 +775,10 @@ function parseDiscoveryOutput(input:DiscoveryOutputInput) {
   );
 
   return {
+    passwordlessSudo,
     discoveryId: input.discoveryId,
     connectionId: input.connectionId,
     connectionRevision: input.connectionRevision,
-    contractVersion: HOST_DISCOVERY_CONTRACT_VERSION,
     observedAt,
     expiresAt,
     hostIdentityDigest,
@@ -735,6 +822,31 @@ function networkFailureCode(error: InfrastructureNetworkError): HostDiscoveryErr
   if (error.code === "ssh_host_unresolvable") return "HOST_RESOLUTION_FAILED";
   if (error.code === "ssh_host_forbidden") return "HOST_ADDRESS_BLOCKED";
   return "INVALID_CONNECTION";
+}
+
+/** Copy for an enrolled server that Hivra couldn't reach or sign in to. */
+async function enrolledFailureCopy(
+  code: "SSH_AUTHENTICATION_FAILED" | "SSH_CONNECTION_FAILED",
+  connection: LoadedInfrastructureConnection,
+  factsPromise: Promise<{ sshMatchRules: boolean } | null>,
+): Promise<{ message: string; remediation: string }> {
+  const address = connection.endpoint.sshHost;
+  if (code === "SSH_CONNECTION_FAILED") {
+    return {
+      message: `Hivra couldn't reach ${address} on port ${connection.endpoint.sshPort}.`,
+      remediation: "Allow SSH from the internet in your provider's firewall (on AWS, the security group), then check again. Home or office machines aren't supported yet.",
+    };
+  }
+  const facts = await factsPromise;
+  return facts?.sshMatchRules
+    ? {
+        message: "Hivra reached the server but couldn't sign in as hivra.",
+        remediation: "This server's SSH settings have rules for particular addresses; allow hivra from any address, then check again.",
+      }
+    : {
+        message: "Hivra couldn't sign in as hivra. The server may have undone the setup, or its key was replaced.",
+        remediation: "Run a new setup command on the server to reconnect.",
+      };
 }
 
 export async function discoverInfrastructureHost(
@@ -797,6 +909,8 @@ export async function discoverInfrastructureHost(
         sshUser: connection.endpoint.sshUser,
         sshHostFingerprintSha256: normalizedHostFingerprint,
         sshPrivateKey: connection.credentials.sshPrivateKey,
+        sshPrivilege: connection.endpoint.sshPrivilege,
+        sshHostKeyType: connection.endpoint.sshHostKeyType,
       },
       destination,
     );
@@ -809,11 +923,23 @@ export async function discoverInfrastructureHost(
       },
     );
     if (!execution.ok) {
-      return failure(
-        connectionId,
-        attemptedAt,
-        classifyTransportFailure(execution.error ?? execution.stderr),
-      );
+      if (execution.presentedHostFingerprintSha256) {
+        const presented = sha256FingerprintDisplay(execution.presentedHostFingerprintSha256);
+        const expected = sha256FingerprintDisplay(normalizedHostFingerprint);
+        await deps.recordIdentityMismatch(userId, connectionId).catch(() => undefined);
+        return failure(connectionId, attemptedAt, "SSH_HOST_KEY_MISMATCH",
+          presented && expected ? { ...discoveryErrorCopy("SSH_HOST_KEY_MISMATCH"), hostKey: { expected, presented } } : undefined);
+      }
+      if (execution.sudoFailure) {
+        return failure(connectionId, attemptedAt, "SSH_SUDO_UNAVAILABLE",
+          sudoFailureCopy(execution.sudoFailure, connection.endpoint.sshUser));
+      }
+      const code = classifyTransportFailure(execution.error ?? execution.stderr);
+      if (isEnrolledConnection(connection) && (code === "SSH_AUTHENTICATION_FAILED" || code === "SSH_CONNECTION_FAILED")) {
+        return failure(connectionId, attemptedAt, code,
+          await enrolledFailureCopy(code, connection, deps.enrolledFacts(userId, connectionId).catch(() => null)));
+      }
+      return failure(connectionId, attemptedAt, code);
     }
 
     let snapshot: HostDiscoverySnapshot;
@@ -824,6 +950,7 @@ export async function discoverInfrastructureHost(
         connectionId,
         connectionRevision: connection.revision,
         connectionProvider: connection.provider,
+        privilegeVia: connection.endpoint.sshPrivilege ?? "login",
         normalizedHostFingerprint,
         observedAt: deps.now(),
       });

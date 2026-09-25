@@ -2215,6 +2215,55 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(script).toContain("METRIC cleanup_timer=");
   });
 
+  it("reads cumulative CPU from the kvm process on PVE 9, where qm status prints no cpu", () => {
+    // Real `buildProxmoxMetricsScript` output captured read-only on a
+    // pve-manager 9.2.2 Hermes host on 2026-09-24. Scrubbed for the public
+    // tree: VM name, vmid, pid and the machine-type suffix.
+    const captured = readFileSync(
+      join(__dirname, "fixtures", "proxmox-9-qm-metrics.capture.txt"),
+      "utf8"
+    );
+    // PVE 9's one-shot `qm status --verbose` has no cpu/cputime line at all.
+    expect(captured).not.toMatch(/^METRIC (cpu|cputime)=/m);
+
+    const metrics = parseProxmoxMetricsOutput(captured);
+    expect(metrics?.cpu_seconds_total).toBeCloseTo(228359.06, 2);
+    expect(metrics?.cpu_seconds_source).toBe("kvm_proc");
+    expect(metrics?.runtime_seconds).toBe(4773538);
+
+    // Without the kvm lines (the old script) the same host yields 0 CPU —
+    // every prod metering row since 2026-04-29 recorded exactly this.
+    const legacy = parseProxmoxMetricsOutput(
+      captured.replace(/^METRIC (proc_cpu_ticks|clk_tck)=.*$/gm, "")
+    );
+    expect(legacy?.cpu_seconds_total).toBe(0);
+    expect(legacy?.cpu_seconds_source).toBe("none");
+  });
+
+  it("keeps qm cputime and the uptime*cpu estimate as fallbacks", () => {
+    const withCputime = parseProxmoxMetricsOutput(
+      ["METRIC status=running", "METRIC uptime=3600", "METRIC cputime=55.5", "METRIC cpu=0.5"].join("\n")
+    );
+    expect(withCputime?.cpu_seconds_total).toBe(55.5);
+    expect(withCputime?.cpu_seconds_source).toBe("qm_cputime");
+
+    const estimate = parseProxmoxMetricsOutput(
+      ["METRIC status=running", "METRIC uptime=3600", "METRIC cpu=0.5"].join("\n")
+    );
+    expect(estimate?.cpu_seconds_total).toBe(1800);
+    expect(estimate?.cpu_seconds_source).toBe("qm_cpu_estimate");
+  });
+
+  it("builds a metrics script that reads kvm CPU ticks from /proc for the right VM", () => {
+    const script = buildProxmoxMetricsScript(201);
+    expect(script).toContain('pid_file="/var/run/qemu-server/$VMID.pid"');
+    expect(script).toContain('/proc/$kvm_pid/cmdline');
+    expect(script).toContain("-id $VMID");
+    expect(script).toContain("getconf CLK_TCK");
+    expect(script).toContain("METRIC proc_cpu_ticks=");
+    expect(script).toContain("METRIC clk_tck=");
+  });
+
   it("prefers guest filesystem usage over Proxmox maxdisk fallback when parsing metrics", () => {
     const metrics = parseProxmoxMetricsOutput(
       [

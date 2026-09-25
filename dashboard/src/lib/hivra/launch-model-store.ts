@@ -47,6 +47,14 @@ export class LaunchModelRequestError extends Error {
   }
 }
 
+/** The database refused a new Hivra-managed agent: the owner's plan agent
+ * limit is reached. Counted under the owner's slot lock, so it is exact. */
+export class LaunchPlanAgentLimitError extends Error {
+  constructor(readonly activeCount: number, readonly limit: number) {
+    super("plan_agent_limit");
+  }
+}
+
 export function launchModelFingerprints(userId: string, requestId: string, raw: unknown,
   explicitLegacyKeys?: readonly Buffer[]) {
   const parsed = LaunchModelIntentSchema.safeParse(raw);
@@ -142,10 +150,11 @@ export function createLaunchModelStore(db = supabaseAdmin) {
       return row;
     },
     async reserve(input: { userId: string; requestId: string; modelOperationId: string; fingerprints: LaunchModelFingerprint[];
-      agent: LaunchModelReservation; llm: unknown }, encrypt = encryptSecret) {
+      agent: LaunchModelReservation; llm: unknown; agentLimit: number }, encrypt = encryptSecret) {
       const selected = ModelKeySelectionSchema.safeParse(input.llm), row = Reservation.safeParse(input.agent);
       if (!selected.success || !selected.data || !row.success || !Id.safeParse(input.requestId).success
-        || !Id.safeParse(input.modelOperationId).success || !z.array(Fingerprint).min(1).max(2).safeParse(input.fingerprints).success) {
+        || !Id.safeParse(input.modelOperationId).success || !z.array(Fingerprint).min(1).max(2).safeParse(input.fingerprints).success
+        || !Number.isSafeInteger(input.agentLimit) || input.agentLimit < 0) {
         throw new LaunchModelRequestError("invalid_request");
       }
       const selection = selected.data;
@@ -154,10 +163,14 @@ export function createLaunchModelStore(db = supabaseAdmin) {
       catch { throw new ModelKeyStoreError(); }
       let result: unknown;
       try {
-        result = await rpc("reserve_hivra_launch_model_request_v2", { p_user_id: input.userId, p_request_id: input.requestId,
+        // v3 counts the owner's plan slots under the slot lock before it
+        // inserts, so a launch cannot race an attach or another launch past
+        // the plan's agent limit (T35).
+        result = await rpc("reserve_hivra_launch_model_request_v3", { p_user_id: input.userId, p_request_id: input.requestId,
           p_fingerprints: input.fingerprints, p_model_operation_id: input.modelOperationId, p_agent: row.data,
           p_selection: { provider: selection.provider, mode: selection.mode, model: selection.model,
-            ...(selection.mode === "managed" ? { walletType: selection.walletType } : {}) }, p_encrypted_key: encryptedKey });
+            ...(selection.mode === "managed" ? { walletType: selection.walletType } : {}) }, p_encrypted_key: encryptedKey,
+          p_agent_limit: input.agentLimit });
       } catch {
         // Lost acknowledgement is not permission for another insert or guest
         // dispatch. Read the stable original request, or retain uncertainty.
@@ -171,8 +184,11 @@ export function createLaunchModelStore(db = supabaseAdmin) {
         z.object({ status: z.literal("existing"), agentId: Id, phase: LaunchModelRequestSchema.shape.phase }).strict(),
         z.object({ status: z.literal("request_conflict") }).strict(),
         z.object({ status: z.literal("invalid_request") }).strict(),
+        z.object({ status: z.literal("plan_agent_limit"), activeCount: z.number().int().nonnegative(),
+          limit: z.number().int().nonnegative() }).strict(),
       ]).safeParse(result);
       if (!parsed.success) throw new ModelKeyStoreError();
+      if (parsed.data.status === "plan_agent_limit") throw new LaunchPlanAgentLimitError(parsed.data.activeCount, parsed.data.limit);
       if (parsed.data.status === "invalid_request" || parsed.data.status === "request_conflict") throw new LaunchModelRequestError(parsed.data.status);
       if (parsed.data.status === "reserved") {
         if (parsed.data.agentId !== row.data.id) throw new ModelKeyStoreError();

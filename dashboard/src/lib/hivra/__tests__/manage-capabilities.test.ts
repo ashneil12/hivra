@@ -52,13 +52,13 @@ const map = (name: keyof typeof rows, preparedMatch = true) => manageCapabilitie
 
 describe("manageCapabilitiesFor", () => {
   it.each([
-    ["ubuntu", "ubuntu-proxmox", ["overview", "resources", "recovery", "network", "updates", "advanced"]],
-    ["ubuntuUnbound", "ubuntu-proxmox", ["overview", "resources", "updates", "advanced"]],
-    ["ubuntuMyServer", "ubuntu-proxmox", ["overview", "resources", "recovery", "network", "updates", "advanced"]],
-    ["preparedWindows", "prepared", ["overview", "resources", "advanced"]],
-    ["preparedOmarchy", "prepared", ["overview", "resources", "advanced"]],
-    ["windowsMyServer", "windows-my-server", ["overview", "resources", "advanced"]],
-    ["hetznerUbuntu", "my-cloud", ["overview", "resources", "advanced"]],
+    ["ubuntu", "ubuntu-proxmox", ["overview", "agents", "resources", "recovery", "network", "updates", "advanced"]],
+    ["ubuntuUnbound", "ubuntu-proxmox", ["overview", "agents", "resources", "updates", "advanced"]],
+    ["ubuntuMyServer", "ubuntu-proxmox", ["overview", "agents", "resources", "recovery", "network", "updates", "advanced"]],
+    ["preparedWindows", "prepared", ["overview", "agents", "resources", "advanced"]],
+    ["preparedOmarchy", "prepared", ["overview", "agents", "resources", "advanced"]],
+    ["windowsMyServer", "windows-my-server", ["overview", "agents", "resources", "advanced"]],
+    ["hetznerUbuntu", "my-cloud", ["overview", "agents", "resources", "advanced"]],
     ["gvisor", "linux-sandbox", ["overview", "resources", "command", "advanced"]],
     ["digitalocean", "digitalocean", ["overview", "resources", "advanced"]],
     ["codex", "chat-agent", ["overview", "model", "resources", "recovery", "updates", "advanced"]],
@@ -237,11 +237,14 @@ describe("manageCapabilitiesFor", () => {
     expect(map("ubuntu").destroy.extraWarning).toBeNull();
   });
 
-  it("offers the Agents section only when the attach work says so", () => {
+  it("lists Agents for every computer Manage shows, never for agents or Linux Sandboxes", () => {
+    // ComputerAgentsPanel decides between "Add an agent" and the honest Agent slot.
+    expect(map("ubuntu").sections).toContain("agents");
+    expect(map("preparedWindows").sections).toContain("agents");
+    expect(map("codex").sections).not.toContain("agents");
+    expect(map("gvisor").sections).not.toContain("agents");
     expect(map("ubuntu").attachAgents).toBe(false);
-    const offered = manageCapabilitiesFor(rows.ubuntu, { preparedMatch: true, attachAgents: true });
-    expect(offered.attachAgents).toBe(true);
-    expect(offered.sections).toEqual(["overview", "agents", "resources", "recovery", "network", "updates", "advanced"]);
+    expect(manageCapabilitiesFor(rows.ubuntu, { preparedMatch: true, attachAgents: true }).attachAgents).toBe(true);
     expect(manageCapabilitiesFor(rows.codex, { preparedMatch: true, attachAgents: true }).attachAgents).toBe(false);
   });
 
