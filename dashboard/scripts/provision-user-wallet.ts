@@ -168,7 +168,6 @@ async function main(): Promise<void> {
   const credit = await ensureBankrDepositWalletForUser({
     userId,
     purpose: "credit_deposit",
-    makePrimary: true,
   });
 
   process.stdout.write(`[provision-user-wallet] credit_deposit status=${credit.status}\n`);
