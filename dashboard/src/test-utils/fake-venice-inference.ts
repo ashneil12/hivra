@@ -59,6 +59,11 @@ export function createWorstCaseVenice(
   options: {
     /** Venice's real per-model output maximum, where it is not the catalog's. */
     veniceMaxOutputTokens?: Record<string, number>;
+    /**
+     * Awaited after a call is recorded and before Venice answers, so a test
+     * can hold a request "at Venice" (its hold still active) while another runs.
+     */
+    beforeRespond?: () => Promise<void>;
   } = {}
 ) {
   const calls: FakeVeniceCall[] = [];
@@ -75,6 +80,7 @@ export function createWorstCaseVenice(
     if (url.endsWith("/api/v1/responses")) {
       const completionTokens = responsesOutputTokens(body, modelMax);
       calls.push({ url, body, rawBody, promptTokens, completionTokens });
+      await options.beforeRespond?.();
       const usage = {
         input_tokens: promptTokens,
         output_tokens: completionTokens,
@@ -86,6 +92,7 @@ export function createWorstCaseVenice(
     if (url.endsWith("/api/v1/chat/completions")) {
       const completionTokens = chatOutputTokens(body, modelMax);
       calls.push({ url, body, rawBody, promptTokens, completionTokens });
+      await options.beforeRespond?.();
       const usage = {
         prompt_tokens: promptTokens,
         completion_tokens: completionTokens,

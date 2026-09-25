@@ -25,7 +25,10 @@ import {
   estimateChatCompletionCost,
   type VeniceChatEstimateRequest,
 } from "@/lib/venice/cost-estimator";
-import { reserveManagedVeniceChatWithinBalance } from "@/lib/venice/chat-output-budget";
+import {
+  managedVeniceBalanceHeldMessage,
+  reserveManagedVeniceChatWithinBalance,
+} from "@/lib/venice/chat-output-budget";
 import { UnsupportedVeniceModelError } from "@/lib/venice/pricing";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
@@ -46,7 +49,10 @@ import {
   managedVeniceStreamDeadline,
   settleAfterResponse,
 } from "@/lib/venice/stream-settlement";
-import { ManagedVeniceInsufficientBalanceError } from "@/lib/billing/managed-venice-wallets";
+import {
+  ManagedVeniceBalanceHeldError,
+  ManagedVeniceInsufficientBalanceError,
+} from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import {
   anthropicRequestToOpenAi,
@@ -163,6 +169,23 @@ export async function POST(req: NextRequest) {
         status: 402,
         type: "billing_error",
         message: `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ${managedVeniceTopUpUrl(walletType)}`,
+      });
+    }
+    if (error instanceof ManagedVeniceBalanceHeldError) {
+      log.warn("Managed Venice request refused: the wallet balance is held by requests still running", {
+        source: "managed-venice-anthropic",
+        route: ANTHROPIC_ROUTE,
+        failureType: "managed_venice_balance_held",
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        walletType,
+        heldMicroUsd: error.heldMicroUsd,
+        availableMicroUsd: error.balance?.availableMicroUsd ?? null,
+      });
+      return anthropicError({
+        status: 402,
+        type: "billing_error",
+        message: managedVeniceBalanceHeldMessage(error, managedVeniceTopUpUrl(walletType)),
       });
     }
     if (error instanceof ManagedVeniceInsufficientBalanceError) {

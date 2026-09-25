@@ -129,6 +129,44 @@ describe("managed-Venice Anthropic shim: the hold covers everything the request 
     expect(mockMemory.reservations()).toHaveLength(0);
   });
 
+  it("two Claude Code turns at once on a small wallet both run; a third refused while funds are held says so", async () => {
+    // Review of #166: the lowered cap took the whole wallet, so a second
+    // request at the same time got a "top up" 402 although nothing was spent.
+    // $0.40 on claude-opus-4-8: the first turn may hold half ($0.20), the
+    // second the 4,096-token floor (about $0.135), and a third finds $0.065.
+    mockMemory.fundCard(USER_ID, 400_000);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    venice = createWorstCaseVenice({ beforeRespond: () => gate });
+    global.fetch = venice.fetch as unknown as typeof fetch;
+    const settle = async (predicate: () => boolean) => {
+      for (let tick = 0; tick < 500 && !predicate(); tick += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
+
+    const first = POST(messagesReq(claudeCodeTurn()));
+    await settle(() => venice.calls.length === 1);
+    const second = POST(messagesReq(claudeCodeTurn()));
+    await settle(() => venice.calls.length === 2);
+    // By now the two holds leave less than one short answer free.
+    const holds = mockMemory.reservations().map((row) => Number(row.reserved_micro_usd));
+    expect(holds).toHaveLength(2);
+    const third = await POST(messagesReq(claudeCodeTurn()));
+    open();
+    const [firstRes, secondRes] = await Promise.all([first, second]);
+    await firstRes.text();
+    await secondRes.text();
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(third.status).toBe(402);
+    const body = (await third.json()) as { error?: { type?: string; message?: string } };
+    expect(body.error?.type).toBe("billing_error");
+    expect(body.error?.message).toMatch(/held by requests still running/i);
+    expectEveryCallCoveredByItsHold(mockMemory, venice, USER_ID);
+  });
+
   it("a malformed max_tokens is a 400, not a 500", async () => {
     mockMemory.fundCard(USER_ID, 10 * USD);
 

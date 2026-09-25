@@ -4,6 +4,7 @@ import { VENICE_RESPONSES_ENDPOINT, VENICE_RESPONSES_URL } from "./responses-pro
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import {
+  ManagedVeniceBalanceHeldError,
   ManagedVeniceInsufficientBalanceError,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
@@ -18,6 +19,7 @@ import {
   type VenicePricingMap,
 } from "@/lib/venice/cost-estimator";
 import {
+  managedVeniceBalanceHeldMessage,
   managedVeniceChatEstimateBody,
   reserveManagedVeniceChatWithinBalance,
   unbilledVeniceChatOption,
@@ -312,6 +314,29 @@ export async function authorizeManagedVeniceChat(params: {
           message:
             `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ` +
             `${managedVeniceTopUpUrl(walletType)}`,
+        }),
+      };
+    }
+    if (error instanceof ManagedVeniceBalanceHeldError) {
+      const topUpUrl = managedVeniceTopUpUrl(walletType);
+      log.warn("Managed Venice request refused: the wallet balance is held by requests still running", {
+        source: "managed-venice-chat",
+        route: "/api/managed-venice/v1/chat/completions",
+        method: "POST",
+        failureType: "managed_venice_balance_held",
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        walletType,
+        heldMicroUsd: error.heldMicroUsd,
+        availableMicroUsd: error.balance?.availableMicroUsd ?? null,
+      });
+      return {
+        ok: false,
+        response: openAiCompatibleError({
+          status: 402,
+          code: "managed_venice_insufficient_balance",
+          type: "billing_error",
+          message: managedVeniceBalanceHeldMessage(error, topUpUrl),
         }),
       };
     }

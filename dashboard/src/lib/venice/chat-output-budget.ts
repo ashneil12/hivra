@@ -8,17 +8,26 @@
 // The rule here is "reserve what you forward":
 //   1. The hold covers the worst case of the request exactly as it will be
 //      forwarded (cost-estimator.ts: the model maximum when no cap is sent).
-//   2. When the wallet cannot cover that worst case, the proxy does not refuse
-//      outright. It writes a lower output cap into the forwarded request, the
-//      largest one the available balance covers, and holds for that. Venice then
-//      stops generating where the wallet runs out, so the hold still covers the
-//      whole bill, and a small wallet keeps working for normal-length answers.
-//      Refusing instead would 402 every request on a premium model for anyone
-//      holding less than its worst case (about $4.22 on claude-opus-4-8), even
-//      though a typical answer costs cents.
-//   3. Below MIN_CLAMPED_OUTPUT_TOKENS the request is refused with 402: an
-//      answer truncated that short is not worth sending, and every request that
-//      the old 4,096-token hold admitted still clears this floor.
+//   2. No single hold takes more than half of the wallet's available balance
+//      (MAX_HOLD_SHARE_BPS). When the worst case is larger, the proxy does not
+//      refuse. It writes a lower output cap into the forwarded request, the
+//      largest one half the available balance covers, and holds for that.
+//      Venice then stops generating where that budget runs out, so the hold
+//      still covers the whole bill, and a small wallet keeps working for
+//      normal-length answers. Refusing instead would 402 every request on a
+//      premium model for anyone holding less than its worst case (about $4.22
+//      on claude-opus-4-8), though a typical answer costs cents. Holding only
+//      half is what lets requests run at the same time: the review of #166
+//      found the lowered cap took the whole wallet, so a $2 wallet running two
+//      Opus chats at once got a 402 on the second (canary had admitted both).
+//      Each request now leaves at least half of what it found for the next.
+//   3. The floor: a cap is never lowered below MIN_CLAMPED_OUTPUT_TOKENS while
+//      the whole available balance covers that much. So the smallest wallet a
+//      request runs on alone is unchanged (input plus 4,096 output tokens,
+//      plus the buffer), and below it the request is refused with 402: an
+//      answer truncated that short is not worth sending. When the refusal is
+//      only because requests still running hold the money, the 402 says so
+//      (ManagedVeniceBalanceHeldError): it frees up as they settle.
 //   4. The model maximum is only trusted when Venice published it (the live
 //      /v1/models refresh). While that refresh is down the proxy prices from
 //      the static catalog, whose maximum can lag Venice's (it listed
@@ -28,18 +37,23 @@
 //
 // A caller that cannot rewrite the forwarded body (an older Cloudflare Worker
 // that forwards its own copy) gets rule 1 only: the full worst-case hold, or a
-// 402. It never gets a lower cap it would not apply. With a catalog maximum
-// nothing enforces that maximum, so its worst case is bounded by the model's
-// context window instead.
+// 402. It never gets a lower cap it would not apply, and the half-balance rule
+// does not apply to it, since it could only turn a hold into a refusal. With a
+// catalog maximum nothing enforces that maximum, so its worst case is bounded
+// by the model's context window instead.
 
 import {
+  ManagedVeniceBalanceHeldError,
   ManagedVeniceInsufficientBalanceError,
   getManagedVeniceWalletSummary,
+  type ManagedVeniceWalletBalance,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
+import { microdollarsToDisplayDollars } from "@/lib/billing/microdollars";
 import { log } from "@/lib/logger";
 import { reserveManagedVeniceChatRequest } from "@/lib/venice/proxy-settlement";
 import {
+  estimateChatCompletionCost,
   maxAffordableVeniceChatOutputCap,
   readVeniceChatPositiveInteger,
   resolveVeniceChatPrice,
@@ -54,6 +68,12 @@ export type ManagedVeniceChatProtocol = "chat" | "responses";
 
 /** Smallest output cap the proxy will lower a request to before it 402s instead. */
 export const MIN_CLAMPED_OUTPUT_TOKENS = 4_096;
+
+/**
+ * The most of the available balance one hold may take above the floor, in
+ * basis points: half, so a request running at the same time still finds funds.
+ */
+export const MAX_HOLD_SHARE_BPS = 5_000;
 
 export type ManagedVeniceOutputCapField =
   | "max_completion_tokens"
@@ -186,11 +206,51 @@ export interface ManagedVeniceChatBudgetedReservation {
   clampedToBalance: boolean;
 }
 
+/** The balance of the wallet a request pays from, read fresh. */
+async function readWalletBalance(
+  userId: string,
+  walletType: ManagedVeniceWalletType
+): Promise<ManagedVeniceWalletBalance> {
+  const summary = await getManagedVeniceWalletSummary(userId);
+  const wallet = walletType === "card" ? summary.card : summary.hermesos;
+  return {
+    totalValueMicroUsd: wallet.totalValueMicroUsd,
+    reservedMicroUsd: wallet.reservedMicroUsd,
+    availableMicroUsd: wallet.availableMicroUsd,
+  };
+}
+
+/**
+ * The 402 for a request whose smallest acceptable hold (`minimumHoldMicroUsd`)
+ * does not fit what is available: "held" when the wallet has that much but
+ * requests still running hold it, else a plain insufficient balance.
+ */
+function refusal(balance: ManagedVeniceWalletBalance, minimumHoldMicroUsd: number) {
+  if (balance.reservedMicroUsd > 0 && balance.totalValueMicroUsd >= minimumHoldMicroUsd) {
+    return new ManagedVeniceBalanceHeldError(balance);
+  }
+  return new ManagedVeniceInsufficientBalanceError(undefined, balance);
+}
+
+/**
+ * The 402 text for a request refused because requests still running hold the
+ * wallet's balance: nothing was spent, and it frees up as they finish.
+ */
+export function managedVeniceBalanceHeldMessage(error: ManagedVeniceBalanceHeldError, topUpUrl: string) {
+  const held = microdollarsToDisplayDollars(Math.max(0, Math.round(error.heldMicroUsd)), 2);
+  return (
+    `Your managed Venice LLM credits are held by requests still running (${held} held, not spent). ` +
+    `Retry when they finish, or top up LLM credits in Hivra to run more at once: ${topUpUrl}`
+  );
+}
+
 /**
  * Reserve wallet funds for a chat request so the hold covers everything the
  * forwarded request can spend. Throws ManagedVeniceInsufficientBalanceError
- * (402) when not even MIN_CLAMPED_OUTPUT_TOKENS fit, ManagedVeniceSpendCapError
- * from the spend cap, and InvalidVeniceChatRequestError for a malformed cap.
+ * (402) when not even MIN_CLAMPED_OUTPUT_TOKENS fit, as the subclass
+ * ManagedVeniceBalanceHeldError when that is only because requests in progress
+ * hold the balance; ManagedVeniceSpendCapError from the spend cap; and
+ * InvalidVeniceChatRequestError for a malformed cap.
  */
 export async function reserveManagedVeniceChatWithinBalance(params: {
   userId: string;
@@ -210,7 +270,10 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   const price = resolveVeniceChatPrice(modelId, pricingMap);
   const modelMaxOutputTokens = price.maxOutputTokens;
 
-  const reserve = (patch: ManagedVeniceOutputCapPatch, holdPricing: VenicePricingMap = pricingMap) =>
+  const reserve = (
+    patch: ManagedVeniceOutputCapPatch,
+    options: { holdPricing?: VenicePricingMap; maxShareOfAvailableBps?: number } = {}
+  ) =>
     reserveManagedVeniceChatRequest({
       userId: params.userId,
       proxyKeyId: params.proxyKeyId,
@@ -218,29 +281,47 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
       referenceId: params.referenceId,
       requestBody: managedVeniceChatEstimateBody(protocol, body, patch),
       ...(protocol === "responses" ? { endpoint: VENICE_RESPONSES_ENDPOINT } : {}),
-      pricingMap: holdPricing,
+      pricingMap: options.holdPricing ?? pricingMap,
+      ...(options.maxShareOfAvailableBps !== undefined
+        ? { maxShareOfAvailableBps: options.maxShareOfAvailableBps }
+        : {}),
     });
+  // The balance a refusal was judged against; the database guard reports
+  // none (a concurrent hold won the race), so it is read fresh then.
+  const balanceOf = async (error: ManagedVeniceInsufficientBalanceError) =>
+    error.balance ?? (await readWalletBalance(params.userId, params.walletType));
 
   if (!params.allowBodyRewrite) {
     // Forwarded exactly as sent: hold its worst case (the larger cap field,
     // or the model maximum, or with a catalog maximum the context window), or
     // refuse.
     const unpatched = unpatchedRequestPricing(modelId, price, pricingMap);
-    const reservation = await reserve({}, unpatched.pricingMap);
-    return {
-      reservation,
-      bodyPatch: {},
-      outputCap: worstCaseVeniceChatOutputCap(managedVeniceChatEstimateBody(protocol, body), unpatched.price),
-      modelMaxOutputTokens: unpatched.price.maxOutputTokens,
-      clampedToBalance: false,
-    };
+    try {
+      const reservation = await reserve({}, { holdPricing: unpatched.pricingMap });
+      return {
+        reservation,
+        bodyPatch: {},
+        outputCap: worstCaseVeniceChatOutputCap(managedVeniceChatEstimateBody(protocol, body), unpatched.price),
+        modelMaxOutputTokens: unpatched.price.maxOutputTokens,
+        clampedToBalance: false,
+      };
+    } catch (error) {
+      if (!(error instanceof ManagedVeniceInsufficientBalanceError)) throw error;
+      const worstCase = estimateChatCompletionCost(
+        managedVeniceChatEstimateBody(protocol, body),
+        unpatched.pricingMap
+      ).reservedCostMicroUsd;
+      throw refusal(await balanceOf(error), worstCase);
+    }
   }
 
   const requested = requestedOutputCap(protocol, body);
   const fullCap = Math.min(requested ?? modelMaxOutputTokens, modelMaxOutputTokens);
   const fullPatch = managedVeniceOutputCapPatch(protocol, body, fullCap, price);
+  let refused: ManagedVeniceInsufficientBalanceError;
   try {
-    const reservation = await reserve(fullPatch);
+    // The worst case, if it is at most half of what is available.
+    const reservation = await reserve(fullPatch, { maxShareOfAvailableBps: MAX_HOLD_SHARE_BPS });
     return {
       reservation,
       bodyPatch: fullPatch,
@@ -250,27 +331,32 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
     };
   } catch (error) {
     if (!(error instanceof ManagedVeniceInsufficientBalanceError)) throw error;
+    refused = error;
   }
 
-  // The worst case does not fit. Lower the cap to what the wallet covers now.
-  const summary = await getManagedVeniceWalletSummary(params.userId);
-  const available =
-    params.walletType === "card"
-      ? summary.card.availableMicroUsd
-      : summary.hermesos.availableMicroUsd;
-  const affordable = maxAffordableVeniceChatOutputCap(
-    managedVeniceChatEstimateBody(protocol, body, fullPatch),
-    available,
+  // Lower the cap to what half the available balance covers, never below the
+  // floor while the whole balance covers the floor.
+  const balance = await balanceOf(refused);
+  const estimateBody = managedVeniceChatEstimateBody(protocol, body, fullPatch);
+  const floorCap = Math.min(MIN_CLAMPED_OUTPUT_TOKENS, fullCap);
+  const floorHoldMicroUsd = estimateChatCompletionCost(
+    { ...estimateBody, max_completion_tokens: floorCap, max_tokens: undefined },
     pricingMap
-  );
-  if (affordable < Math.min(MIN_CLAMPED_OUTPUT_TOKENS, fullCap)) {
-    throw new ManagedVeniceInsufficientBalanceError();
-  }
-  const outputCap = Math.min(affordable, fullCap);
+  ).reservedCostMicroUsd;
+  const affordable = maxAffordableVeniceChatOutputCap(estimateBody, balance.availableMicroUsd, pricingMap);
+  if (affordable < floorCap) throw refusal(balance, floorHoldMicroUsd);
+  const shareMicroUsd = Math.floor((balance.availableMicroUsd * MAX_HOLD_SHARE_BPS) / 10_000);
+  const affordableShare = maxAffordableVeniceChatOutputCap(estimateBody, shareMicroUsd, pricingMap);
+  const outputCap = Math.min(fullCap, Math.max(affordableShare, floorCap));
   const bodyPatch = managedVeniceOutputCapPatch(protocol, body, outputCap, price);
-  // A concurrent request can still take the balance first; the reservation
-  // then throws ManagedVeniceInsufficientBalanceError and the caller 402s.
-  const reservation = await reserve(bodyPatch);
+  let reservation: Awaited<ReturnType<typeof reserveManagedVeniceChatRequest>>;
+  try {
+    reservation = await reserve(bodyPatch);
+  } catch (error) {
+    // A request running at the same time took the balance first.
+    if (!(error instanceof ManagedVeniceInsufficientBalanceError)) throw error;
+    throw refusal(await balanceOf(error), floorHoldMicroUsd);
+  }
   if (outputCap < fullCap) {
     log.info("Managed Venice chat output cap lowered to what the wallet covers", {
       source: "managed-venice-chat",
@@ -285,6 +371,8 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
       requestedOutputCap: fullCap,
       modelMaxOutputTokens,
       modelMaxOutputTokensSource: price.maxOutputTokensSource,
+      availableMicroUsd: balance.availableMicroUsd,
+      heldByOtherRequestsMicroUsd: balance.reservedMicroUsd,
       reservedMicroUsd: reservation.reservedMicroUsd,
     });
   }

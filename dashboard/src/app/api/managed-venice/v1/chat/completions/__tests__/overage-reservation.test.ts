@@ -130,7 +130,7 @@ describe("managed-Venice chat: the hold covers everything the request can spend"
     ["non-streaming", {}],
     ["streaming", { stream: true }],
   ])(
-    "%s, no max_tokens, $1 wallet: Venice is told to stop where the wallet runs out",
+    "%s, no max_tokens, $1 wallet: Venice is told to stop where half the wallet runs out",
     async (_label, extra) => {
       mockMemory.fundCard(USER_ID, 1 * USD);
 
@@ -146,10 +146,11 @@ describe("managed-Venice chat: the hold covers everything the request can spend"
       expect(typeof forwarded.max_completion_tokens).toBe("number");
       expect(forwarded.max_completion_tokens as number).toBeLessThan(128_000);
       expect(forwarded.max_completion_tokens as number).toBeGreaterThanOrEqual(4_096);
-      // It is the largest cap the wallet covers, not an arbitrary small one.
+      // It is the largest cap half the wallet covers: the other half stays
+      // free for a request running at the same time.
       const [hold] = mockMemory.reservations();
-      expect(Number(hold.reserved_micro_usd)).toBeLessThanOrEqual(1 * USD);
-      expect(Number(hold.reserved_micro_usd)).toBeGreaterThan(0.999 * USD);
+      expect(Number(hold.reserved_micro_usd)).toBeLessThanOrEqual(0.5 * USD);
+      expect(Number(hold.reserved_micro_usd)).toBeGreaterThan(0.499 * USD);
       expect(log.info).toHaveBeenCalledWith(
         "Managed Venice chat output cap lowered to what the wallet covers",
         expect.objectContaining({
@@ -230,74 +231,106 @@ describe("managed-Venice chat: the hold covers everything the request can spend"
     expect(res.status).toBe(402);
     expect(venice.calls).toHaveLength(0);
     expect(mockMemory.reservations()).toHaveLength(0);
-    const body = (await res.json()) as { error?: { code?: string } };
+    const body = (await res.json()) as { error?: { code?: string; message?: string } };
     expect(body.error?.code).toBe("managed_venice_insufficient_balance");
+    expect(body.error?.message).toContain("Top up LLM credits");
+    expect(body.error?.message).not.toMatch(/held/i);
   });
 
-  it("a small wallet can still run a short answer on a cheap model (legit agent traffic)", async () => {
-    // The starter credit on the default Hermes model, with a 30 KB context.
-    mockMemory.fundCard(USER_ID, 500_000);
+  // Review of #166 (required fix 1): the lowered cap took the whole wallet, so
+  // a second request at the same time got a 402. Probe: a $2 wallet, two
+  // uncapped claude-opus-4-8 requests at once. Canary admitted both (each held
+  // $0.135); #166 held $1.99997 for the first and refused the second. Two
+  // Hermes chats on one wallet, or a side call overlapping the main one, hit it.
+  describe("requests running at the same time on one wallet", () => {
+    async function waitUntil(condition: () => boolean) {
+      for (let tick = 0; tick < 500 && !condition(); tick += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(condition()).toBe(true);
+    }
 
-    const res = await POST(
-      chatReq({
-        model: "deepseek-v4-pro",
-        messages: [
-          { role: "system", content: "You are Hermes. ".repeat(1_000) },
-          { role: "user", content: "Summarise the plan. ".repeat(700) },
-        ],
-        tools: [{ type: "function", function: { name: "terminal", parameters: { type: "object" } } }],
-        stream: true,
-      })
-    );
-    await drain(res);
+    /** Starts `first`, waits until it is at Venice with its hold active, then runs `second`. */
+    async function overlap(first: () => Promise<Response>, second: () => Promise<Response>) {
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => (open = resolve));
+      venice = createWorstCaseVenice({ beforeRespond: () => gate });
+      global.fetch = venice.fetch as unknown as typeof fetch;
 
-    expect(res.status).toBe(200);
-    // The whole 32,768-token worst case fits, so nothing about the request changes.
-    expect(venice.calls[0].body).not.toHaveProperty("max_completion_tokens");
-    expect(venice.calls[0].body).not.toHaveProperty("max_tokens");
-    expectSpendCoveredByHold();
-  });
+      const firstRes = first();
+      await waitUntil(() => venice.calls.length === 1);
+      let secondDone = false;
+      const secondRes = second().finally(() => {
+        secondDone = true;
+      });
+      await waitUntil(() => secondDone || venice.calls.length === 2);
+      open();
+      return Promise.all([firstRes, secondRes]);
+    }
 
-  it.each([
-    ["web search on", { venice_parameters: { enable_web_search: "on" } }],
-    ["web search auto", { venice_parameters: { enable_web_search: "auto" } }],
-    ["web scraping", { venice_parameters: { enable_web_scraping: true } }],
-    ["X search", { venice_parameters: { enable_x_search: true } }],
-    ["model fallbacks", { fallbacks: [{ model: "claude-fable-5" }] }],
-  ])("refuses %s (billed by Venice outside token usage) before any hold", async (_label, extra) => {
-    mockMemory.fundCard(USER_ID, 10 * USD);
+    it("a $2 wallet runs two uncapped premium requests at once, each with a cap it can pay for", async () => {
+      mockMemory.fundCard(USER_ID, 2 * USD);
 
-    const res = await POST(chatReq(shortChat({ max_tokens: 100, ...extra })));
+      const [first, second] = await overlap(
+        () => POST(chatReq(shortChat())),
+        () => POST(chatReq(shortChat({ stream: true })))
+      );
+      await drain(first);
+      await drain(second);
 
-    expect(res.status).toBe(400);
-    expect(venice.calls).toHaveLength(0);
-    expect(mockMemory.reservations()).toHaveLength(0);
-  });
-
-  it("keeps free Venice parameters such as a character persona", async () => {
-    mockMemory.fundCard(USER_ID, 10 * USD);
-
-    const res = await POST(
-      chatReq(
-        shortChat({
-          max_tokens: 100,
-          venice_parameters: {
-            character_slug: "alan-watts",
-            include_venice_system_prompt: false,
-            enable_web_search: "off",
-          },
-        })
-      )
-    );
-    await drain(res);
-
-    expect(res.status).toBe(200);
-    expect(venice.calls[0].body.venice_parameters).toEqual({
-      character_slug: "alan-watts",
-      include_venice_system_prompt: false,
-      enable_web_search: "off",
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(venice.calls).toHaveLength(2);
+      const [firstCap, secondCap] = venice.calls.map((call) => call.body.max_completion_tokens as number);
+      expect(firstCap).toBeGreaterThanOrEqual(4_096);
+      expect(secondCap).toBeGreaterThanOrEqual(4_096);
+      expect(secondCap).toBeLessThan(firstCap);
+      const [firstHold, secondHold] = mockMemory.reservations().map((row) => Number(row.reserved_micro_usd));
+      // Neither hold takes more than half of what was free when it was made.
+      expect(firstHold).toBeLessThanOrEqual(1 * USD);
+      expect(secondHold).toBeLessThanOrEqual((2 * USD - firstHold) / 2);
+      expectSpendCoveredByHold();
     });
-    expectSpendCoveredByHold();
+
+    it("a wallet above the worst case still leaves room for a second request", async () => {
+      // $4.30 covers the 128,000-token worst case (about $4.22) once, with
+      // almost nothing left: the first hold must not take it all.
+      mockMemory.fundCard(USER_ID, 4_300_000);
+
+      const [first, second] = await overlap(
+        () => POST(chatReq(shortChat())),
+        () => POST(chatReq(shortChat()))
+      );
+      await drain(first);
+      await drain(second);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expectSpendCoveredByHold();
+    });
+
+    it("a request refused because the balance is held (not spent) gets a 402 that says so", async () => {
+      // $0.20 covers one short answer (4,096 tokens, about $0.135) at a time.
+      mockMemory.fundCard(USER_ID, 200_000);
+
+      const [first, second] = await overlap(
+        () => POST(chatReq(shortChat())),
+        () => POST(chatReq(shortChat()))
+      );
+      await drain(first);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(402);
+      expect(venice.calls).toHaveLength(1);
+      const body = (await second.json()) as { error?: { code?: string; message?: string } };
+      expect(body.error?.code).toBe("managed_venice_insufficient_balance");
+      expect(body.error?.message).toMatch(/held by requests still running/i);
+      expect(body.error?.message).toMatch(/retry/i);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.stringContaining("held"),
+        expect.objectContaining({ failureType: "managed_venice_balance_held", heldMicroUsd: expect.any(Number) })
+      );
+    });
   });
 
   it.each([

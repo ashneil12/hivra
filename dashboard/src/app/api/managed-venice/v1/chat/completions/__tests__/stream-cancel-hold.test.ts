@@ -289,8 +289,11 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
   // that cap is written into the forwarded request. The same 10,000 tokens
   // streamed without a usage frame now fall inside the hold: the request
   // charges the input estimate plus the observed output, with no overage, and
-  // gives the rest of the worst-case hold back at once.
+  // gives the rest of the worst-case hold back at once. The wallet holds $10,
+  // so the $4.22 worst case is within the half of it one hold may take.
   it("an uncapped request holds the model maximum, and a usage-less stream is charged its observed output inside that hold", async () => {
+    const WALLET = 10_000_000;
+    mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = WALLET;
     const FRAMES = 10_000;
     mockFetch.mockResolvedValueOnce(
       new Response(closedUpstreamStream(Array.from({ length: FRAMES }, () => contentFrame("abcd"))), {
@@ -314,7 +317,7 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     expect(cost).toBeLessThan(held);
     expect(row).toMatchObject({ status: "captured", captured_micro_usd: cost });
     const summary = await getManagedVeniceWalletSummary(USER_ID, mockMemory.db);
-    expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: STARTING_BALANCE_MICRO_USD - cost, reservedMicroUsd: 0 });
+    expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: WALLET - cost, reservedMicroUsd: 0 });
     expect(mockMemory.tables.managed_venice_usage_events).toEqual([
       expect.objectContaining({ charged_micro_usd: cost }),
     ]);
@@ -327,9 +330,13 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
 
   // #167 review probe: $2 wallet on Opus, one Stop press. $1.99997 stayed held
   // until the daily sweep, and the next request got a 402. The hold now goes
-  // back as soon as Venice finishes the answer the client left.
+  // back as soon as Venice finishes the answer the client left. (Since the
+  // #166 review one hold takes at most half the wallet above the 4,096-token
+  // floor, so the lock shows on a $0.20 wallet: its floor hold, about $0.135,
+  // leaves too little for a second.)
   it("gives the rest of the hold back once Venice finishes, so one Stop press does not lock a small wallet", async () => {
-    mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = 2_000_000;
+    const WALLET = 200_000;
+    mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = WALLET;
     const bigRequest = { ...requestBody, model: "claude-opus-4-8", max_completion_tokens: 60_000 };
     const first = pacedUpstreamStream([
       contentFrame("Once"),
@@ -342,7 +349,9 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     );
 
     const response = await POST(makeReq(bigRequest));
-    expect(Number(reservation().reserved_micro_usd)).toBeGreaterThan(1_900_000);
+    const held = Number(reservation().reserved_micro_usd);
+    // What is left could not hold a second request of the same size.
+    expect(WALLET - held).toBeLessThan(held);
     const client = response.body!.getReader();
     await client.read();
     await client.cancel();
