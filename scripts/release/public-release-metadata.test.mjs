@@ -117,7 +117,11 @@ test('release policies preserve third-party and incomplete-release boundaries', 
   assert.match(runtime, /self-host acceptance and independent export review/i);
 
   const roadmap = read('ROADMAP.md');
-  assert.match(roadmap, /Phase 0 — Canonical truth and public-release safety[\s\S]*?\*\*Status:\*\* Building/);
+  // Phase 0 is complete only for the initial export; every later candidate and
+  // every separately built artifact keeps its own review gate.
+  assert.match(roadmap, /Phase 0 — Canonical truth and public-release safety\s+\*\*Status:\*\* Complete for the initial source export/);
+  assert.match(roadmap, /Each later\s+source candidate is reviewed at its exact revision/);
+  assert.match(roadmap, /separately built\s+runtime, image, desktop bundle or mirror is its own release gate/);
   assert.match(roadmap, /first public artifact\s+is explicitly source-only/i);
   assert.match(roadmap, /separate byte-level evidence is complete/i);
   assert.match(roadmap, /\[x\] Decide preserved-history versus fresh-public-repository/);

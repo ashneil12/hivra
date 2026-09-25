@@ -7,15 +7,28 @@ on:
       - 'docker-compose.yml'
       # Workflow-only changes still report the same public verification check.
       - '.github/**'
+  # Also verify the merged result. Two PRs that each pass can break canary
+  # together, and a PR can merge while its own run was cancelled.
+  push:
+    branches: [canary]
+    paths:
+      - 'dashboard/**'
+      - 'docker-compose.yml'
+      - '.github/**'
+  # Lets "Verify Dashboard" gate a merge queue if the owner turns one on.
+  merge_group:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Cancel an obsolete run when a newer commit lands on the same PR or branch.
+# A newer commit on the same PR makes the older run obsolete, so cancel it.
+# Push, merge-queue and manual runs each verify one exact commit: they get their
+# own group and are never cancelled (a shared group would also drop a queued
+# run whenever a newer one arrived).
 concurrency:
-  group: dashboard-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: dashboard-ci-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # `npm run verify` (lint, typecheck, jest, build) ran as one serial job and hit
 # 20 minutes on 2026-09-24, 16 of them in `jest --runInBand`. The same work now
@@ -48,25 +61,40 @@ jobs:
       - name: Determine migration diff range
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "MIGRATION_BASE_SHA=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
-            echo "MIGRATION_HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
-          else
-            # A manual dispatch has no meaningful PR change-set. Verify the
-            # current tree and give diff-only guards an empty range.
-            BEFORE_SHA="${{ github.event.before }}"
-            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-              BEFORE_SHA="${{ github.sha }}"
-            fi
-            echo "MIGRATION_BASE_SHA=$BEFORE_SHA" >> "$GITHUB_ENV"
-            echo "MIGRATION_HEAD_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
-          fi
+          case "${{ github.event_name }}" in
+            pull_request)
+              echo "MIGRATION_BASE_SHA=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
+              echo "MIGRATION_HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+              ;;
+            merge_group)
+              # The queued merge result against the branch it will land on.
+              echo "MIGRATION_BASE_SHA=${{ github.event.merge_group.base_sha }}" >> "$GITHUB_ENV"
+              echo "MIGRATION_HEAD_SHA=${{ github.event.merge_group.head_sha }}" >> "$GITHUB_ENV"
+              ;;
+            *)
+              # A push checks what it added to the branch (before..after). A
+              # manual dispatch or a new branch has no change-set: verify the
+              # current tree and give diff-only guards an empty range.
+              BEFORE_SHA="${{ github.event.before }}"
+              if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+                BEFORE_SHA="${{ github.sha }}"
+              elif ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+                echo "::warning::Push base $BEFORE_SHA is not in history (force push?); diff-only guards get an empty range."
+                BEFORE_SHA="${{ github.sha }}"
+              fi
+              echo "MIGRATION_BASE_SHA=$BEFORE_SHA" >> "$GITHUB_ENV"
+              echo "MIGRATION_HEAD_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
+              ;;
+          esac
 
       - name: Enforce append-only Supabase migrations
         run: node scripts/check-supabase-migration-hygiene.cjs --base "$MIGRATION_BASE_SHA" --head "$MIGRATION_HEAD_SHA"
 
       - name: Enforce hot-surface regression coverage
         run: npm run guard:hot-surfaces -- --base "$MIGRATION_BASE_SHA" --head "$MIGRATION_HEAD_SHA"
+
+      - name: Every test file is run by CI or exempted with a reason
+        run: node scripts/check-test-wiring.cjs
 
       - name: Install dependencies
         run: npm ci
@@ -173,7 +201,8 @@ jobs:
   # The attach helpers need root, mounts and a real kernel (idmapped mounts on
   # tmpfs need 6.3 or later; ubuntu-latest has 6.8), so they run in owned,
   # disposable containers on the runner, never on a real computer. The host
-  # step test runs the exact scripts Hivra generates against a fake qm.
+  # step test runs the exact scripts Hivra generates against a fake qm. The
+  # other guest-program fixtures run here too, in the same pinned images.
   attach-fixtures:
     name: Attach host and guest fixtures
     runs-on: ubuntu-latest
@@ -215,6 +244,31 @@ jobs:
 
       - name: Host allocation lock program
         run: docker run --rm --network none -v "$PWD/src/lib/agent-computers/attachment-host-observation.ts":/tmp/attachment-host-observation.ts:ro -v "$PWD/scripts":/scripts:ro "$DEBIAN_IMAGE" python3 -I -B /scripts/test-attachment-host-lock.py
+
+      - name: Desktop image build, transfer and prepared-image contracts
+        run: |
+          set -euo pipefail
+          python3 -I -B scripts/test-desktop-image-builder.py
+          python3 -I -B scripts/test-desktop-image-transfer.py
+          python3 -I -B scripts/test-desktop-prepared-image.py
+
+      - name: Prepared desktop lab DHCP unit
+        run: python3 -I -B scripts/test-prepared-desktop-lab-service.py
+
+      # Written for a disposable network-none Linux image: they depend on its
+      # OpenSSL and UID layout, and fail on the runner's own Python.
+      - name: Omarchy guardian, install, ownership and layout contracts
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 -I -B /src/runtime-adapters/omarchy-native/guardian-unit.test.py
+          docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 -I -B /src/runtime-adapters/omarchy-native/install-web.test.py
+          docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 -I -B /src/runtime-adapters/omarchy-native/ownership.test.py
+          docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 -I -B /src/runtime-adapters/omarchy-native/supervisor.test.py
+          docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 -I -B /src/runtime-adapters/remote-desktop/omarchy-layout.test.py
+
+      # Compiles the patched hotspot logic, so it needs the Debian image's C++.
+      - name: Aquamarine virtio cursor patch
+        run: docker run --rm --network none -v "$PWD/provisioner":/provisioner:ro "$DEBIAN_IMAGE" python3 -I -B /provisioner/remote-desktop/aquamarine-virtio-cursor/test-repair.py
 
       - name: Install dependencies
         run: npm ci

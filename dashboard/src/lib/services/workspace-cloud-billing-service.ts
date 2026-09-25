@@ -176,6 +176,25 @@ export async function handleWorkspaceCloudSubscriptionDeleted(
 }
 
 /**
+ * invoice.paid / invoice.payment_failed for a lane subscription. An invoice
+ * carries no lane marker of its own, so StripeWebhookService retrieves the live
+ * subscription, recognises the lane from its metadata and hands it here. The
+ * lane row is re-synced from that live subscription (the same write
+ * customer.subscription.updated makes); a terminal subscription cancels the lane
+ * row by subscription id. Nothing here reads or writes Hivra's
+ * hermes_subscriptions row or its instances.
+ */
+export async function handleWorkspaceCloudInvoiceEvent(
+  subscription: Stripe.Subscription
+): Promise<void> {
+  if (subscription.status === "canceled" || subscription.status === "incomplete_expired") {
+    await handleWorkspaceCloudSubscriptionDeleted(subscription);
+    return;
+  }
+  await handleWorkspaceCloudSubscriptionChange(subscription);
+}
+
+/**
  * Checkout completed for a lane purchase. Stripe also fires
  * customer.subscription.created, but we resolve the subscription here too so
  * the entitlement row exists the moment the user returns from Checkout.

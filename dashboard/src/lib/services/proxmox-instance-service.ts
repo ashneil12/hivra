@@ -46,6 +46,10 @@ import { isCodexAuthProvider } from "@/lib/provider-auth";
 import { isOperatorosAgentImage } from "@/lib/operatoros-flavor";
 import { resolvePersonaSoulFromSystemPrompt } from "@/lib/persona-souls-accessor";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  resolveVmidReferencePlane,
+  type VmidReferenceLedger,
+} from "@/lib/proxmox/vmid-reference-ledger";
 // Proxmox script generation and output parsing live in dedicated modules
 // (./proxmox/script-builders, ./proxmox/output-parsers). Everything this
 // module used to export is re-exported below, so existing importers keep
@@ -1040,9 +1044,36 @@ export async function getReservedProxmoxVmidsForNode(params: {
   proxmoxNode: string;
   excludeInstanceId: string;
 }): Promise<number[]> {
-  if (!supabaseAdmin) return [];
+  return (await lookupReservedProxmoxVmidsForNode(params)) ?? [];
+}
+
+/**
+ * This control plane's VMID references on one host, for the cross-plane host
+ * ledger. Unlike the picker's reservation (which degrades to []), a failed
+ * lookup is null so the allocator never publishes an empty list over a good one.
+ */
+export async function buildProxmoxVmidReferenceLedger(params: {
+  proxmoxNode: string;
+  excludeInstanceId: string;
+  lane: VmidReferenceLedger["lane"];
+  references?: readonly number[];
+}): Promise<{ reservedVmids: number[]; vmidLedger: VmidReferenceLedger }> {
+  const references = params.references
+    ? [...params.references]
+    : await lookupReservedProxmoxVmidsForNode(params);
+  return {
+    reservedVmids: references ?? [],
+    vmidLedger: { plane: resolveVmidReferencePlane(process.env), lane: params.lane, references },
+  };
+}
+
+async function lookupReservedProxmoxVmidsForNode(params: {
+  proxmoxNode: string;
+  excludeInstanceId: string;
+}): Promise<number[] | null> {
+  if (!supabaseAdmin) return null;
   const node = params.proxmoxNode.trim();
-  if (!node) return [];
+  if (!node) return null;
   // `hermes_instances.id` is a uuid. The vmid-availability preflight calls this
   // with a sentinel string (`__vmid_availability_preflight__`) — there's no row
   // to exclude — and comparing that to a uuid column throws "invalid input
@@ -1084,7 +1115,7 @@ export async function getReservedProxmoxVmidsForNode(params: {
       legacyError: legacyError ? redactSensitiveCommandOutput(legacyError.message ?? "", 400) : null,
       hivraError: hivraError ? redactSensitiveCommandOutput(hivraError.message ?? "", 400) : null,
     });
-    return [];
+    return null;
   }
   const seen = new Set<number>();
   for (const row of legacyRows ?? []) {
@@ -1198,8 +1229,15 @@ export async function getProxmoxVmidAvailability(
     };
   }
 
+  const { reservedVmids, vmidLedger } = targetId
+    ? await buildProxmoxVmidReferenceLedger({
+        proxmoxNode: targetId,
+        excludeInstanceId: "__vmid_availability_preflight__",
+        lane: "hermes",
+      })
+    : { reservedVmids: [] as number[], vmidLedger: null };
   const runner = deps.runHostScript ?? ((script: string) => runProxmoxHostScript(script, env));
-  const result = await runner(buildProxmoxVmidAvailabilityScript({ vmidStart, vmidEnd }));
+  const result = await runner(buildProxmoxVmidAvailabilityScript({ vmidStart, vmidEnd, vmidLedger }));
   if (!result.ok) {
     return {
       ok: false,
@@ -1214,12 +1252,6 @@ export async function getProxmoxVmidAvailability(
   }
 
   const parsed = parseProxmoxVmidAvailabilityOutput(result.stdout);
-  const reservedVmids = targetId
-    ? await getReservedProxmoxVmidsForNode({
-        proxmoxNode: targetId,
-        excludeInstanceId: "__vmid_availability_preflight__",
-      })
-    : [];
   const occupiedSet = new Set(parsed.occupiedVmids);
   for (const vmid of reservedVmids) {
     if (vmid >= vmidStart && vmid <= vmidEnd) occupiedSet.add(vmid);
@@ -2285,14 +2317,16 @@ export async function provisionProxmoxInstance(params: {
   // value stored in `proxmox_node` by buildPostProvisionMetadataPayload
   // — see instance-service.ts:~2417. Empty slug short-circuits to [] so
   // single-host deployments without a slug keep working.
-  const reservedVmidLookup =
-    deps.getReservedVmidsForNode ?? getReservedProxmoxVmidsForNode;
-  const reservedVmids = inferredHostSlug
-    ? await reservedVmidLookup({
+  const { reservedVmids, vmidLedger } = inferredHostSlug
+    ? await buildProxmoxVmidReferenceLedger({
         proxmoxNode: inferredHostSlug,
         excludeInstanceId: params.instanceId,
+        lane: "hermes",
+        references: deps.getReservedVmidsForNode
+          ? await deps.getReservedVmidsForNode({ proxmoxNode: inferredHostSlug, excludeInstanceId: params.instanceId })
+          : undefined,
       })
-    : [];
+    : { reservedVmids: [] as number[], vmidLedger: null };
   const script = buildProxmoxProvisionScript({
     instanceId: params.instanceId,
     vmName: sanitizeVmName(`hermes-${params.name}-${params.instanceId.slice(0, 8)}`),
@@ -2300,6 +2334,7 @@ export async function provisionProxmoxInstance(params: {
     vmidStart,
     vmidEnd,
     reservedVmids,
+    vmidLedger,
     ipLastOctetStart: envInt(env, "PROXMOX_IP_LAST_OCTET_START", 50),
     privateSubnetPrefix: envValue(env, "PROXMOX_PRIVATE_SUBNET_PREFIX", "10.250.20"),
     privateCidr: envInt(env, "PROXMOX_PRIVATE_CIDR", 24),

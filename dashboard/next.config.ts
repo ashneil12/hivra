@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
 
 // This is build-generation provenance only. Vercel's authoritative deployment
 // createdAt is collected from `vercel inspect --json` during Plan 08 rather
@@ -233,16 +234,13 @@ const nextConfig: NextConfig = {
         source: "/p/decide",
         destination: "https://us.i.posthog.com/decide",
       },
-      // Same-origin proxy for Clerk's pinned npm assets (clerk.browser.js +
-      // ui.browser.js and the named sub-chunks ui.browser.js fans out into —
-      // Clerk resolves those relative to its own URL, so the rewrite must
-      // cover the whole /npm/* dist path). cdn.jsdelivr.net times out for a
-      // slice of users every week and takes sign-in down with it; serving
-      // through our origin rides Vercel's edge instead.
-      {
-        source: "/clerk-assets/:path*",
-        destination: "https://cdn.jsdelivr.net/npm/:path*",
-      },
+      // Same-origin proxy for Clerk's pinned browser bundles and the lazy
+      // chunks they load from their own dist/ directory. cdn.jsdelivr.net
+      // times out for a slice of users every week and takes sign-in down with
+      // it; serving through our origin rides Vercel's edge instead. Scoped to
+      // the pinned @clerk/clerk-js and @clerk/ui dist/*.js files only: see
+      // src/lib/clerk-assets.ts.
+      ...clerkAssetRewrites(),
     ];
   },
   async headers() {
@@ -357,6 +355,8 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // After the document rule so this path keeps its own enforced policy.
+      clerkAssetHeaders,
       {
         source: "/sw.js",
         headers: [

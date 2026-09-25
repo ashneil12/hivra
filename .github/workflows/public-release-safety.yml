@@ -24,6 +24,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # The wiring guard covers every test file in the repository, so it runs
+      # here, where no path filter applies. Dashboard CI only starts for
+      # dashboard/** and .github/** changes, so a new unrun test under
+      # scripts/, services/, docs/, apps/ or contracts/ would otherwise land
+      # unchecked. It needs only Node and git, not npm ci.
+      - name: Every test file is run by CI or exempted with a reason
+        run: node dashboard/scripts/check-test-wiring.cjs
+
       - name: Guard managed hosting control validation
         run: node --test scripts/release/check-managed-hosting-controls.test.mjs
 
@@ -60,6 +68,9 @@ jobs:
 
       - name: Preserve exact portable release bytes including bundled documentation
         run: node --test scripts/release/portable-bundle-immutability.test.mjs
+
+      - name: Guard the production migration risk and schema diff helpers
+        run: node --test scripts/release/prod-migration-risk.test.mjs scripts/release/prod-schema-diff.test.mjs
 
       - name: Export exact tracked tree
         shell: bash

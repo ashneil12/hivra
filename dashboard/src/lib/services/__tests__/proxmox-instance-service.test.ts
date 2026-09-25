@@ -1392,7 +1392,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       apiServerKey: "a".repeat(64),
     });
 
-    expect(script).toContain('ssh -n "${GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5');
+    expect(script).toContain('ssh -n "${UNATTESTED_GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5');
     // The guest bootstrap + deploy now run through a bounded retry helper so
     // a single transient failure (apt-lock / mirror blip) doesn't trip set -e
     // and immediately destroy a fresh-signup VM. Only a persistent failure
@@ -1400,8 +1400,10 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(script).toContain('run_guest_script bootstrap "$BOOTSTRAP_B64_FILE"');
     expect(script).toContain('run_guest_script deploy "$DEPLOY_B64_FILE"');
     // The payload still streams from the staged FILE (not the orchestrator's
-    // remaining stdin) — the property this test originally guarded.
-    expect(script).toContain('base64 -d < "$b64_file" | ssh "${GUEST_SSH_OPTS[@]}"');
+    // remaining stdin) — the property this test originally guarded — over the
+    // connection each call site names (the deploy's is the VMID-pinned one).
+    expect(script).toContain('base64 -d < "$b64_file" | "$@" "sudo bash -s"');
+    expect(script).toContain('run_guest_script deploy "$DEPLOY_B64_FILE" "${GUEST_SSH[@]}"');
     // Bounded, not infinite: 3 attempts then give up and tear down.
     expect(script).toContain('while [ "$attempt" -le 3 ];');
   });
