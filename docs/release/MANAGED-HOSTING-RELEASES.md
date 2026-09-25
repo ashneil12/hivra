@@ -108,9 +108,9 @@ Where each queued step stands:
 - `hivra_agent_slot_writer_guard.sql`: **Canary** applied 2026-09-25 from this
   folder as ledger version `20260925151500_hivra_agent_slot_writer_guard`.
   Before the apply, a launch and a restart passed on the served revision; after
-  it, a launch, stop and start, and restart passed, with no refusal logged. Start
-  of an agent in `error` is proven only by `scripts/test-hivra-agent-slot-limit.cjs`:
-  no Canary agent in `error` still has a computer. **Production** is pending:
+  it, a launch, stop and start, restart, and Start of a Hivra-managed Ubuntu
+  Desktop in `error` that kept its computer (answered `provisioning`) passed,
+  with no refusal logged. **Production** is pending:
   apply the same file with the same version only after the owner's Promote,
   never in the schema catch-up before it. The file stays here until then.
 
