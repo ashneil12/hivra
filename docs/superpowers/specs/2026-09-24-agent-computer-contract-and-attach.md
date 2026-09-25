@@ -268,30 +268,25 @@ Database, in this order, on each environment:
 | 7 | `20260925100600_hivra_agent_attach_refusals.sql` | Additive | preflight: `select phase, end_reason, interrupt_reason, count(*) from public.hivra_agent_attachments group by 1,2,3;` shows only phases and reasons the file allows (existing rows get no `failure_code`) |
 | 8 | `_pending_destructive_migrations/hivra_agent_slot_writer_guard.sql` | **Blocking** (queued) | only after the code serves there, with the launch, start and restart smoke tests (an agent in `error` included) before and after |
 
-The provisioner release is 2026.09.24.3, built on 2026.09.24.1.
-2026.09.24.2 and migration version 20260924220000 belong to the
-persistent-sessions release (PR #124), which is not in `canary` yet. Step 2
-and #124's admission each anchor on the 2026.09.24.1 entry, so either
-admission can apply first and every release stays admitted (the slice 15
-review applied #124's real admission file in PGlite in both orders, with
-step 2 applied again). The bundles are not independent:
-the newest sealed bundle is what a host installs and what a runtime update
-moves a computer to. Whichever lands second is re-sealed on top of the other:
-
-- **#124 lands first:** re-seal this release, still 2026.09.24.3, on top of
-  #124's 2026.09.24.2 bundle before this branch merges (VERSION, the manifest,
-  its digest-bound admission in step 2, the bundle tests).
-- **This branch lands first:** #124 is re-sealed as **2026.09.24.4** on top of
-  2026.09.24.3, with its own admission migration at a version after this
-  branch's, and never shipped as 2026.09.24.2. A 2026.09.24.2 bundle released
-  after 2026.09.24.3 would move new installs and runtime updates back to the
-  loopback terminals and drop the gateway's `/agents/<id>/` proxy and its
-  `attachedAgents` protocol, so every attached agent's Chat and the gate's
-  gateway check would break on the computers it reached.
-- Migration versions: #124 (`claude/persistent-sessions`) and #130 both use
-  `20260924220000`. That does not collide with this branch's
-  `20260925100000` to `20260925100600`, but one of the two has to move before
-  both merge.
+The provisioner release is 2026.09.24.3. The persistent-sessions release (PR
+#124, 2026.09.24.2 and migration `20260924220000`) merged into `canary` first,
+so 2026.09.24.3 is sealed on top of it (merge `6bcabf0a`): the terminals keep
+#124's persistent tmux session slots and move onto the owner-only sockets, the
+guest runtime updater keeps #124's in-place update, and 2026.09.24.2 stays
+admitted and compatible wherever 2026.09.24.1 is. Step 2 and #124's admission
+each anchor on the 2026.09.24.1 entry, so either admission can apply first and
+every release stays admitted (the slice 15 review applied #124's real
+admission file in PGlite in both orders, with step 2 applied again). The
+bundles are not independent: the newest sealed bundle is what a host installs
+and what a runtime update moves a computer to, so the rule for the next pair
+stays: whichever lands second is sealed again on top of the other, at a higher
+number, and a lower number is never shipped after a higher one. Had this
+branch landed first, #124 would have had to become 2026.09.24.4 on top of
+2026.09.24.3: shipped as 2026.09.24.2 it would have put new installs and
+runtime updates back on the loopback terminals and removed the gateway's
+`/agents/<id>/` proxy and its `attachedAgents` protocol. #130 still uses
+migration version `20260924220000`, which #124 now holds on `canary`; #130 has
+to move to a free version before it merges.
 
 Steps 1 to 7 go on before the merged code serves (Canary: before the merge
 into `canary` builds; production: **before the owner's Promote**, not only on
@@ -304,16 +299,21 @@ path, not behind the attach flag): see 8.3, AC-H1 to AC-H7.
 **Existing computers and the terminal socket move.** Release 2026.09.24.3
 moves both terminals onto owner-only unix sockets. New computers get it from
 the installer; an existing one gets it from the guest runtime update
-(`hivra-update-guest-runtime.sh`), which refuses before it changes anything
-(exit 1, "terminal units are missing or unsafe") on a computer missing
-`/etc/systemd/system/bux-ttyd.service.d/base-path.conf` or
-`/etc/systemd/system/bux-box-ttyd.service`. Such a computer can no longer take
-a runtime update. Before any fleet runtime update, take a read-only census of
-the running Hivra computers on each environment (`test -f` on both paths over
-the host's guest exec, no change) and record the count missing either file
-with the release; a computer on the list needs its own reviewed repair (the
-installer's terminal units) before it can be updated. No census has been
-taken.
+(`hivra-update-guest-runtime.sh`, Manage → Update & restart). Since the merge
+with #124 the updater writes both terminal units (a missing one is installed,
+and rolled back if the result does not hold), restarts a terminal only while
+nobody is connected to it, and then checks both through the gateway: a
+restarted terminal must be on its socket, and one whose restart was deferred
+(it prints `HIVRA_TERMINAL_RESTART_DEFERRED`) keeps its loopback port, reached
+through the gateway's port fallback, until its next start. A computer whose
+base `bux-ttyd.service` is missing fails the updater's unit checks and is
+rolled back. Before any fleet runtime update, take a read-only census of the
+running Hivra computers on each environment (`test -f` on
+`/etc/systemd/system/bux-ttyd.service`, its `base-path.conf` drop-in and
+`bux-box-ttyd.service` over the host's guest exec, no change) and record the
+counts with the release. No census has been taken. The merged updater and
+units are covered by the unit and fixture tests only; no VM has run the
+2026.09.24.2 to 2026.09.24.3 update (AC-H7 is its first real run).
 
 **The attach flag.** `isAgentAttachEnabled()` is `isCanaryDeployment()`:
 on for the Canary deployment's own channel and hosts, off for `hivra.cloud`,
@@ -1916,7 +1916,7 @@ served Git SHA, with disposable Canary capacity and cleanup evidence)
 | AC-H4 | Launch on My server (self-managed) and, if a preview team is approved, on DigitalOcean | Both launch; My server does not count against the plan's Hivra Cloud limit |
 | AC-H5 | `GET /api/billing/usage` as the fixture owner | 200 with the agent count from `hivra_owner_agent_slot_count` |
 | AC-H6 | On a fixture at its plan's limit, Launch | The existing plan-limit copy, and no row is written |
-| AC-H7 | On an existing Canary computer made before 2026.09.24.3, Manage → Update & restart; then open its Terminal and computer Terminal | The update completes (or refuses with "terminal units are missing or unsafe" and changes nothing); both terminals open a shell afterwards |
+| AC-H7 | On an existing Canary computer made before 2026.09.24.3 (one on 2026.09.24.1 and one on 2026.09.24.2 if Canary has both), Manage → Update & restart once with no terminal open and once with its Terminal open; then open its Terminal and computer Terminal | The update completes, or fails its checks and is rolled back with nothing changed; with no terminal open both move to their sockets (`/api/meta` bearer: `terminals` both `socket`), with the Terminal open that one is deferred and still answers; both terminals open a shell in a persistent session afterwards, and a tab reopened after closing it finds the same session |
 
 **Attach** (Codex on a disposable Canary Ubuntu Desktop)
 

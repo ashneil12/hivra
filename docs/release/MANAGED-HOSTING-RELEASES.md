@@ -114,13 +114,11 @@ one: hosts install the newest sealed bundle and a runtime update moves a
 computer to it, so an older-numbered bundle released later would take back what
 the higher release shipped.
 
-Open now: 2026.09.24.3 (attach, `claude/agent-computer`) and 2026.09.24.2
-(persistent sessions, #124). If #124 merges first, 2026.09.24.3 is sealed again
-on top of it. If the attach release merges first, #124 is sealed again as
-2026.09.24.4 on top of 2026.09.24.3; shipped as 2026.09.24.2 it would put new
-installs and runtime updates back on the loopback terminals and remove the
-gateway proxy that attached agents use. #124 and #130 both use migration version
-`20260924220000`; one of them moves before both merge.
+Last pair: #124 (persistent sessions, 2026.09.24.2) merged first, so the
+attach release (`claude/agent-computer`) is sealed again as 2026.09.24.3 on top
+of it. Had the attach release merged first, #124 would have become 2026.09.24.4.
+#130 still uses migration version `20260924220000`, which #124 now holds; #130
+moves to a free version before it merges.
 
 ## Feature acceptance
 
