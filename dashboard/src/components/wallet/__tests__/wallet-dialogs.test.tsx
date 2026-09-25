@@ -14,6 +14,7 @@ import {
   UnlockPromptCard,
   WithdrawAddressForm,
   WithdrawDestinationCard,
+  WithdrawSection,
 } from "../WithdrawSection";
 import type { AgentWalletCardData } from "@/app/dashboard/wallet/agent-wallet-data";
 import type { DepositQuotePayload } from "@/lib/wallet/format";
@@ -28,6 +29,25 @@ jest.mock("@/components/i18n/LocaleProvider", () => ({
 
 jest.mock("@/lib/client/logger", () => ({
   clientLog: { error: jest.fn(), warn: jest.fn() },
+}));
+
+// Clerk's useReverification, faithfully enough: a reverification answer from
+// the server opens "confirm it's you"; confirming retries the request,
+// closing the dialog rejects with a cancellation error.
+const mockReverification = { cancel: false, prompts: 0 };
+jest.mock("@clerk/nextjs", () => ({
+  useReverification:
+    (fetcher: (...args: unknown[]) => Promise<unknown>) =>
+    async (...args: unknown[]) => {
+      const first = (await fetcher(...args)) as { clerk_error?: { reason?: string } } | undefined;
+      if (first?.clerk_error?.reason !== "reverification-error") return first;
+      mockReverification.prompts += 1;
+      if (mockReverification.cancel) throw Object.assign(new Error("cancelled"), { code: "reverification_cancelled" });
+      return fetcher(...args);
+    },
+}));
+jest.mock("@clerk/nextjs/errors", () => ({
+  isReverificationCancelledError: (err: { code?: string }) => err?.code === "reverification_cancelled",
 }));
 
 const WALLET = "0x000000000000000000000000000000000000ba5e";
@@ -69,7 +89,15 @@ function cardProps() {
 
 afterEach(() => {
   jest.useRealTimers();
+  mockReverification.cancel = false;
+  mockReverification.prompts = 0;
 });
+
+const REVERIFY = { clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } } };
+
+function jsonResponse(status: number, body: unknown) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+}
 
 describe("agent wallet modals", () => {
   it("renders the withdraw form in a body portal with the actions pinned in the footer", () => {
@@ -142,6 +170,96 @@ describe("agent wallet modals", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     const footer = screen.getByRole("dialog").lastElementChild as HTMLElement;
     expect(within(footer).getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("asks the user to confirm it's them, then saves the new destination", async () => {
+    const saved = { ...card().wallet!, withdrawalDestinationEvm: "0x2222222222222222222222222222222222222222" };
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(403, REVERIFY))
+      .mockResolvedValueOnce(jsonResponse(200, { success: true, data: { wallet: saved } }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const onSaved = jest.fn();
+    const onClose = jest.fn();
+    render(<WithdrawalDestinationModal card={card()} onClose={onClose} onSaved={onSaved} />);
+
+    fireEvent.change(screen.getByPlaceholderText("0x..."), { target: { value: saved.withdrawalDestinationEvm } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(mockReverification.prompts).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/instances/inst_1/bankr-wallet/withdraw-destination",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ destination: saved.withdrawalDestinationEvm }) })
+    );
+    expect(onSaved).toHaveBeenCalledWith(saved);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("keeps the form open and says nothing changed when the user closes the confirm-it's-you dialog", async () => {
+    mockReverification.cancel = true;
+    global.fetch = jest.fn().mockResolvedValue(jsonResponse(403, REVERIFY)) as unknown as typeof fetch;
+    const onSaved = jest.fn();
+    const onClose = jest.fn();
+    render(<WithdrawalDestinationModal card={card()} onClose={onClose} onSaved={onSaved} />);
+
+    fireEvent.change(screen.getByPlaceholderText("0x..."), { target: { value: "0x2222222222222222222222222222222222222222" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/confirm it's you to save this address\. nothing was changed/i);
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("sends a withdrawal only to the saved destination, with no other recipient to pick", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      jsonResponse(200, { success: true, data: { txHash: "0xsent", asset: "ETH", amountDisplay: "0.01", recipientAddress: RECIPIENT } })
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<AgentWalletWithdrawModal card={card()} onClose={jest.fn()} onSubmitted={jest.fn()} />);
+
+    const dialog = screen.getByRole("dialog", { name: "Withdraw on Base." });
+    expect(within(dialog).getByText(RECIPIENT)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/recipient address/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/set as primary/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /yes, withdraw/i }));
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.recipientAddress).toBe(RECIPIENT);
+    expect(body).not.toHaveProperty("setPrimaryRecipient");
+  });
+
+  it("holds a withdrawal to a destination still in its cooldown, and explains when it opens", () => {
+    const availableAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    render(
+      <AgentWalletWithdrawModal
+        card={card({ wallet: { ...card().wallet!, withdrawalDestinationAvailableAt: availableAt } })}
+        onClose={jest.fn()}
+        onSubmitted={jest.fn()}
+      />
+    );
+    const dialog = screen.getByRole("dialog", { name: "Withdraw on Base." });
+    expect(dialog).toHaveTextContent(/saved recently\. for your safety, withdrawals to it open/i);
+    expect(within(dialog).getByRole("button", { name: /yes, withdraw/i })).toBeDisabled();
+  });
+
+  it("cannot withdraw before a destination is saved", () => {
+    render(
+      <AgentWalletWithdrawModal
+        card={card({ wallet: { ...card().wallet!, withdrawalDestinationEvm: null } })}
+        onClose={jest.fn()}
+        onSubmitted={jest.fn()}
+      />
+    );
+    const dialog = screen.getByRole("dialog", { name: "Withdraw on Base." });
+    expect(dialog).toHaveTextContent(/no withdrawal destination saved/i);
+    expect(within(dialog).getByRole("button", { name: /yes, withdraw/i })).toBeDisabled();
   });
 
   it("never calls a sweep-only deposit address non-custodial", () => {
@@ -231,6 +349,45 @@ describe("legacy withdraw lane", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(onCancel).toHaveBeenCalledTimes(3);
+  });
+
+  it("tells the owner when a newly saved withdraw address opens, and holds Withdraw all until then", () => {
+    const availableAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    render(<WithdrawDestinationCard address={RECIPIENT} availableAt={availableAt} loading={false} onEdit={jest.fn()} />);
+    expect(screen.getByText(/new address\. for your safety, withdrawals to it open/i)).toBeInTheDocument();
+
+    render(
+      <WithdrawSection
+        tokenSymbol="HERMESOS"
+        balanceDisplay="5000000"
+        withdrawAddress={RECIPIENT}
+        withdrawAvailableAt={availableAt}
+        onWithdrew={jest.fn()}
+        onRequestSetAddress={jest.fn()}
+      />
+    );
+    expect(screen.getByRole("button", { name: /withdraw all/i })).toBeDisabled();
+    expect(screen.getByText(/your withdraw address was saved recently/i)).toBeInTheDocument();
+  });
+
+  it("saves a withdraw address after the confirm-it's-you check and reports when it opens", async () => {
+    const availableAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(403, REVERIFY))
+      .mockResolvedValueOnce(jsonResponse(200, { success: true, data: { status: "saved", address: RECIPIENT, availableAt } })) as unknown as typeof fetch;
+    const onSaved = jest.fn();
+    render(<WithdrawAddressForm initialAddress={null} onCancel={jest.fn()} onSaved={onSaved} />);
+    const dialog = screen.getByRole("dialog", { name: "Set withdraw address" });
+
+    fireEvent.change(within(dialog).getByPlaceholderText("0x..."), { target: { value: RECIPIENT } });
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    await act(async () => {
+      fireEvent.click(within(dialog.lastElementChild as HTMLElement).getByRole("button", { name: "Save withdraw address" }));
+    });
+
+    expect(mockReverification.prompts).toBe(1);
+    expect(onSaved).toHaveBeenCalledWith(RECIPIENT, availableAt);
   });
 
   it("keeps a typed withdraw address from a backdrop tap", () => {
