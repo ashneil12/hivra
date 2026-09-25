@@ -353,6 +353,87 @@ export function computeVeniceMultimodalCost(row: {
   }
 }
 
+function readPositiveQuantity(value: unknown): number | null {
+  if (typeof value === "string" && value.trim()) {
+    return readPositiveNumber(Number(value.trim()));
+  }
+  return readPositiveNumber(value);
+}
+
+/**
+ * Conservative CEILING for a request that has not run yet: what the managed
+ * proxy holds on the wallet BEFORE it forwards to Venice (see
+ * media-spend-gate.ts). Same catalog and the same fail-safe contract as
+ * `computeVeniceMultimodalCost` — an operation the catalog can't price is
+ * never guessed at — but the rounding runs the other way:
+ *   * an unrecorded or unrecognized tier holds at the MOST expensive published
+ *     tier (settlement floors it to the cheapest);
+ *   * a variant count is rounded up, and numeric strings count (Venice
+ *     coerces them), so a hold is never smaller than what Venice can bill.
+ * The hold is released or captured down to the settlement price afterwards.
+ */
+export function computeVeniceMultimodalHoldCost(row: {
+  endpoint: string;
+  model: string;
+  metadata?: Record<string, unknown> | null;
+}): VeniceMultimodalCostResult {
+  const price = resolveVeniceMultimodalPrice(row.endpoint, row.model);
+  if (!price) return { priced: false, reason: "unpriced_operation" };
+
+  const metadata = row.metadata ?? {};
+  let microUsdPerUnit = price.microUsdPerUnit;
+  let tier: string | null = null;
+  if (price.tiers && price.tierMetadataKey) {
+    const token = normalizeTierToken(metadata[price.tierMetadataKey]);
+    if (token && price.tiers[token] !== undefined) {
+      microUsdPerUnit = price.tiers[token];
+      tier = token;
+    } else {
+      microUsdPerUnit = Math.max(price.microUsdPerUnit, ...Object.values(price.tiers));
+    }
+  }
+
+  switch (price.unit) {
+    case "per_image": {
+      const variants = readPositiveQuantity(metadata.variants);
+      const quantity = variants ? Math.ceil(variants) : 1;
+      return {
+        priced: true,
+        displayName: price.displayName,
+        unit: price.unit,
+        quantity,
+        tier,
+        microUsdPerUnit,
+        listCostMicroUsd: Math.max(1, quantity * microUsdPerUnit),
+      };
+    }
+    case "per_million_characters": {
+      const characters = readPositiveNumber(metadata.inputLength);
+      if (characters === null) return { priced: false, reason: "missing_quantity" };
+      const quantity = Math.ceil(characters);
+      return {
+        priced: true,
+        displayName: price.displayName,
+        unit: price.unit,
+        quantity,
+        tier,
+        microUsdPerUnit,
+        listCostMicroUsd: Math.max(1, Math.ceil((quantity * microUsdPerUnit) / 1_000_000)),
+      };
+    }
+    case "per_request":
+      return {
+        priced: true,
+        displayName: price.displayName,
+        unit: price.unit,
+        quantity: 1,
+        tier,
+        microUsdPerUnit,
+        listCostMicroUsd: Math.max(1, microUsdPerUnit),
+      };
+  }
+}
+
 /**
  * Apply the operator markup to a list cost. Ceil so we never round a
  * positive charge down to zero micro-dollars.

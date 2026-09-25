@@ -505,7 +505,7 @@ export async function recordManagedVeniceMultimodalUsage(
  *     ``pauseKey: false`` — backlog settlement must not brick a live key the
  *     way an in-flight uncovered overage does.
  */
-function isManagedVeniceMultimodalBillingEnabled(): boolean {
+export function isManagedVeniceMultimodalBillingEnabled(): boolean {
   return process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED === "true";
 }
 

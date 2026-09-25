@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-upscale | Isaiah 40:31 | Verse: They shall mount up with wings as eagles; they shall run, and not be weary.
 const VENICE_IMAGES_UPSCALE_URL = "https://api.venice.ai/api/v1/image/upscale";
@@ -48,56 +48,50 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
+  const gate = await holdManagedVeniceMediaSpend({
+    key: verifiedKey,
+    operation: {
+      endpoint: ENDPOINT_LABEL,
+      model: "venice-upscaler",
+      metadata: {
+        scale: formData.get("scale")?.toString() ?? null,
+        enhance: formData.get("enhance")?.toString() ?? null,
+      },
+    },
+    referenceId,
+    source: "managed-venice-upscale",
+  });
+  if (!gate.ok) return gate.response;
 
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetch(VENICE_IMAGES_UPSCALE_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${serverKey}` },
-      body: formData,
-    });
-  } catch (error) {
-    return apiError(
-      "Venice upstream request failed.",
-      502,
-      { failureType: "managed_venice_upscale_upstream_fetch_failed" },
-      undefined,
-      { cause: error }
-    );
-  }
-
-  if (upstreamResponse.ok) {
-    try {
-      await recordManagedVeniceMultimodalUsage({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        walletType,
-        referenceId,
-        endpoint: ENDPOINT_LABEL,
-        model: "venice-upscaler",
-        upstreamStatus: upstreamResponse.status,
-        metadata: {
-          scale: formData.get("scale")?.toString() ?? null,
-          enhance: formData.get("enhance")?.toString() ?? null,
-        },
-      });
-    } catch (error) {
-      log.error("Managed Venice upscale usage record failed", error, {
-        source: "managed-venice-upscale",
-        route: ENDPOINT_LABEL,
+  const sent = await sendManagedVeniceMediaRequest({
+    hold: gate.hold,
+    mode: "stream",
+    fetchFailureType: "managed_venice_upscale_upstream_fetch_failed",
+    send: () =>
+      fetch(VENICE_IMAGES_UPSCALE_URL, {
         method: "POST",
-        failureType: "managed_venice_upscale_usage_record_failed",
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        referenceId,
-      });
-    }
+        headers: { Authorization: `Bearer ${serverKey}` },
+        body: formData,
+      }),
+  });
+  if (!sent.ok) return sent.response;
+
+  if (!sent.upstream.ok) {
+    log.warn("Managed Venice upstream returned non-2xx", {
+      source: "managed-venice-upscale",
+      route: ENDPOINT_LABEL,
+      method: "POST",
+      failureType: "managed_venice_upscale_upstream_non_2xx",
+      upstreamStatus: sent.upstream.status,
+      userId: verifiedKey.userId,
+      proxyKeyId: verifiedKey.id,
+      model: "venice-upscaler",
+    });
   }
 
-  const contentType = upstreamResponse.headers.get("content-type") || "image/png";
-  return new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
+  const contentType = sent.upstream.headers.get("content-type") || "image/png";
+  return new Response(sent.upstream.body, {
+    status: sent.upstream.status,
     headers: { "Content-Type": contentType },
   });
 }

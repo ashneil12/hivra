@@ -28,27 +28,37 @@ One Venice API key now unlocks every modality the agent and dashboard expose. Bi
 
 ## How metering works
 
-The chat path has full per-call pricing (`reserveManagedVeniceChatRequest` → token-level recost → refund-or-flag). Every other modality is **offline-reconciled**:
+Every managed-Venice request goes to Venice with **Hivra's** upstream key, so Venice bills Hivra whether or not the user can pay. The chat path reserves per call (`reserveManagedVeniceChatRequest` → token-level recost → refund-or-flag). Every paid media route (images, video, audio, embeddings, web search/scrape, and the paid paths of the `[...path]` passthrough) goes through the **media spend gate** in [`lib/venice/media-spend-gate.ts`](../src/lib/venice/media-spend-gate.ts):
 
-1. Each successful upstream call writes a row to `managed_venice_usage_events` via [`recordManagedVeniceMultimodalUsage()`](../src/lib/venice/proxy-settlement.ts).
-2. The row carries `endpoint` (e.g. `/api/v1/images/generate`), `model` (e.g. `qwen-image-2`), `metadata` (resolution / duration / token counts / etc.), `actual_cost_micro_usd=0`, `charged_micro_usd=0`, and `status='reconciliation_required'`.
-3. **No per-call wallet deduction** for multi-modal. The user's proxy key is NOT paused on these rows — that's the explicit difference from `markManagedVeniceReconciliationRequired()`, which is for settlement failures.
-4. Settlement happens against Venice's monthly invoice via `/api/ops/managed-venice/invoice-reconciliation` (run on demand by ops).
+1. **Price before forwarding.** The request is priced from the in-code catalog [`lib/venice/multimodal-pricing.ts`](../src/lib/venice/multimodal-pricing.ts) as a conservative ceiling (`computeVeniceMultimodalHoldCost`: unrecorded tiers hold at the most expensive published tier, variant counts round up). An operation the catalog can't price (today: video, music, STT, embeddings, multi-edit, background removal, text parser, voice clone, crypto RPC, and any image/edit model not in the catalog) is **refused with a 402** and never sent to Venice.
+2. **Hold.** The ceiling (after `MANAGED_VENICE_MULTIMODAL_MARKUP`) is reserved on the key's wallet with the same reservation table, DB balance trigger and monthly spend cap as chat. A wallet that can't cover it gets a 402 (`managed_venice_insufficient_balance`) and Venice is never called. If the balance can't be checked, the request fails closed with a 503.
+3. **Settle.** Venice error or no answer → the hold is released. A 2xx with `MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED=true` → the catalog's settlement price is captured from the hold and a `status='recorded'` usage row + `usage_capture` financial event are written (the offline settlement cron skips recorded rows). A 2xx with the flag off → the hold is released and the old `status='reconciliation_required'`, `charged=0` row is written, exactly as before.
+
+The flag only decides whether a **funded** wallet is charged. It never lets an unfunded wallet spend: the gate in steps 1–2 runs either way.
+
+### The passthrough is an allowlist
+
+`/api/managed-venice/v1/[...path]` forwards only these paths (evidence: callers in the Hermes agent fork that use `VENICE_BASE_URL`):
+
+| Method | Path | Why it's allowed |
+|---|---|---|
+| GET | `models` | model discovery (normally served by the dedicated `/v1/models` route) |
+| GET | `image/styles` | `venice_extras_tool` style list; free |
+| GET | `crypto/rpc/networks` | `venice_extras_tool` network list; free |
+| POST | `video/retrieve`, `audio/retrieve` | job polling; the generation was held at queue time |
+| POST | `video/quote`, `audio/quote` | free price previews |
+| POST | `image/generate`, `image/edit`, `image/upscale` | paid; forwarded only under a wallet hold |
+| POST | `image/multi-edit`, `image/background-remove`, `video/queue`, `video/transcriptions`, `audio/voices`, `augment/text-parser`, `crypto/rpc/{network}` | paid; routed through the gate, which refuses them (402) until the catalog prices them |
+
+Everything else — Venice account management (`api_keys*`, `billing*`, `characters`, ...), unknown paths, upper-case or percent-encoded variants, dot or empty segments, and any other method — gets a 404 and is never fetched.
 
 ### Why the chat reconciliation cron skips multi-modal
 
 `/api/cron/managed-venice-reconciliation` (daily 09:00 UTC) is for chat only — it filters at the SQL layer to `endpoint='/api/v1/chat/completions'`. Without that filter, multi-modal rows show up as `unpriceable_model` (their model ids aren't in the chat catalog) and trigger a daily warn-level ops alert. Filter landed in PR #157.
 
-### Adding per-modality pricing (deferred follow-up)
+### Pricing more operations
 
-When you're ready to bill multi-modal per call (instead of monthly), the work is:
-
-1. Add price tables: `lib/venice/image-pricing.ts`, `lib/venice/video-pricing.ts`, `lib/venice/audio-pricing.ts`, `lib/venice/embeddings-pricing.ts`, `lib/venice/web-pricing.ts`.
-2. Wrap each multi-modal route: replace `recordManagedVeniceMultimodalUsage()` with a per-modality `reserve` → upstream → `capture` flow mirroring `reserveManagedVeniceChatRequest` / `captureManagedVeniceChatUsage`.
-3. Extend `/api/cron/managed-venice-reconciliation` to handle each modality (currently scoped to chat by `CHAT_COMPLETIONS_ENDPOINT`).
-4. Per-modality drift alerts.
-
-Pricing moves fast on Venice — defer until a model surface stabilizes.
+To unblock an operation the gate refuses, add a Venice list-price entry to `VENICE_MULTIMODAL_PRICES` (with its unit and, for tiered prices, the tier key) and a test. Never add a guessed price: the gate treats the catalog as the only source of truth. Pricing moves fast on Venice — re-pull the catalog from docs.venice.ai when it goes stale.
 
 ## How to redeploy a tenant VM with the new code
 

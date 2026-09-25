@@ -2,6 +2,7 @@ import {
   ManagedVeniceInsufficientBalanceError,
   captureManagedVeniceReservation,
   createManagedVeniceReservation,
+  debitManagedVeniceWallet,
   ensureManagedVeniceWalletAccount,
   getManagedVeniceWalletSummary,
   grantManagedVeniceCardTopUpCredit,
@@ -374,6 +375,76 @@ describe("managed Venice wallet accounting", () => {
         availableMicroUsd: 1_600_000,
       },
     });
+  });
+
+  it("captures a card reservation that holds the whole balance (its own hold is not counted against it)", async () => {
+    // Regression: the card debit's balance check subtracted EVERY active card
+    // hold — including the one being captured — so a user whose hold covered
+    // most of the balance could never be charged (capture threw "insufficient").
+    const { db, insertRow, tables } = createMemoryDb();
+    const account = await ensureManagedVeniceWalletAccount("user_1", db);
+    insertRow("managed_venice_card_ledger_entries", {
+      account_id: account.id,
+      user_id: "user_1",
+      amount_micro_usd: 500_000,
+      source: "stripe",
+      reason: "stripe_topup",
+      reference_id: "topup_1",
+    });
+    await createManagedVeniceReservation(
+      { userId: "user_1", walletType: "card", amountMicroUsd: 500_000, referenceId: "usage_full" },
+      db
+    );
+
+    await expect(
+      captureManagedVeniceReservation(
+        { userId: "user_1", referenceId: "usage_full", captureMicroUsd: 300_000 },
+        db
+      )
+    ).resolves.toMatchObject({ captured: true, capturedMicroUsd: 300_000 });
+
+    expect(tables.managed_venice_card_ledger_entries).toContainEqual(
+      expect.objectContaining({ amount_micro_usd: -300_000, reference_id: "usage_full" })
+    );
+    await expect(getManagedVeniceWalletSummary("user_1", db)).resolves.toMatchObject({
+      card: { totalValueMicroUsd: 200_000, reservedMicroUsd: 0, availableMicroUsd: 200_000 },
+    });
+  });
+
+  it("still refuses a direct card debit that would eat into other requests' holds", async () => {
+    const { db, insertRow } = createMemoryDb();
+    const account = await ensureManagedVeniceWalletAccount("user_1", db);
+    insertRow("managed_venice_card_ledger_entries", {
+      account_id: account.id,
+      user_id: "user_1",
+      amount_micro_usd: 500_000,
+      source: "stripe",
+      reason: "stripe_topup",
+      reference_id: "topup_1",
+    });
+    await createManagedVeniceReservation(
+      { userId: "user_1", walletType: "card", amountMicroUsd: 200_000, referenceId: "usage_a" },
+      db
+    );
+    await createManagedVeniceReservation(
+      { userId: "user_1", walletType: "card", amountMicroUsd: 300_000, referenceId: "usage_b" },
+      db
+    );
+
+    // An overage-style debit outside any reservation sees every hold.
+    await expect(
+      debitManagedVeniceWallet(
+        { userId: "user_1", walletType: "card", amountMicroUsd: 100_000, referenceId: "usage_a:overage" },
+        db
+      )
+    ).rejects.toBeInstanceOf(ManagedVeniceInsufficientBalanceError);
+    // Each capture only excludes its OWN hold, so both still settle in full.
+    await expect(
+      captureManagedVeniceReservation({ userId: "user_1", referenceId: "usage_a", captureMicroUsd: 200_000 }, db)
+    ).resolves.toMatchObject({ captured: true });
+    await expect(
+      captureManagedVeniceReservation({ userId: "user_1", referenceId: "usage_b", captureMicroUsd: 300_000 }, db)
+    ).resolves.toMatchObject({ captured: true });
   });
 
   it("credits managed Venice card top-ups idempotently and records a financial event", async () => {

@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-search | Proverbs 25:2 | Verse: The honour of kings is to search out a matter.
 const VENICE_AUGMENT_SEARCH_URL = "https://api.venice.ai/api/v1/augment/search";
@@ -15,13 +15,6 @@ function readBearerKey(req: NextRequest) {
   const header = req.headers.get("authorization")?.trim() || "";
   if (!header.toLowerCase().startsWith("bearer ")) return null;
   return header.slice(7).trim() || null;
-}
-
-function jsonResponseFromText(text: string, status: number) {
-  return new Response(text, {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
 }
 
 export async function POST(req: NextRequest) {
@@ -54,60 +47,55 @@ export async function POST(req: NextRequest) {
   }
 
   const referenceId = randomUUID();
-  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
-
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetch(VENICE_AUGMENT_SEARCH_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serverKey}`,
-        "Content-Type": "application/json",
+  const gate = await holdManagedVeniceMediaSpend({
+    key: verifiedKey,
+    operation: {
+      endpoint: ENDPOINT_LABEL,
+      model: typeof body.search_provider === "string"
+        ? `venice-search-${body.search_provider}`
+        : "venice-search-brave",
+      metadata: {
+        queryLength: (body.query as string).length,
+        limit: typeof body.limit === "number" ? body.limit : null,
+        searchProvider: typeof body.search_provider === "string" ? body.search_provider : "brave",
       },
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    return apiError(
-      "Venice upstream request failed.",
-      502,
-      { failureType: "managed_venice_search_upstream_fetch_failed" },
-      undefined,
-      { cause: error }
-    );
-  }
+    },
+    referenceId,
+    source: "managed-venice-search",
+  });
+  if (!gate.ok) return gate.response;
 
-  const upstreamText = await upstreamResponse.text();
-
-  if (upstreamResponse.ok) {
-    try {
-      await recordManagedVeniceMultimodalUsage({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        walletType,
-        referenceId,
-        endpoint: ENDPOINT_LABEL,
-        model: typeof body.search_provider === "string"
-          ? `venice-search-${body.search_provider}`
-          : "venice-search-brave",
-        upstreamStatus: upstreamResponse.status,
-        metadata: {
-          queryLength: (body.query as string).length,
-          limit: typeof body.limit === "number" ? body.limit : null,
-          searchProvider: typeof body.search_provider === "string" ? body.search_provider : "brave",
-        },
-      });
-    } catch (error) {
-      log.error("Managed Venice search usage record failed", error, {
-        source: "managed-venice-search",
-        route: ENDPOINT_LABEL,
+  const sent = await sendManagedVeniceMediaRequest({
+    hold: gate.hold,
+    mode: "buffer",
+    fetchFailureType: "managed_venice_search_upstream_fetch_failed",
+    send: () =>
+      fetch(VENICE_AUGMENT_SEARCH_URL, {
         method: "POST",
-        failureType: "managed_venice_search_usage_record_failed",
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        referenceId,
-      });
-    }
+        headers: {
+          Authorization: `Bearer ${serverKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+  });
+  if (!sent.ok) return sent.response;
+
+  if (!sent.upstream.ok) {
+    log.warn("Managed Venice upstream returned non-2xx", {
+      source: "managed-venice-search",
+      route: ENDPOINT_LABEL,
+      method: "POST",
+      failureType: "managed_venice_search_upstream_non_2xx",
+      upstreamStatus: sent.upstream.status,
+      userId: verifiedKey.userId,
+      proxyKeyId: verifiedKey.id,
+      model: null,
+    });
   }
 
-  return jsonResponseFromText(upstreamText, upstreamResponse.status);
+  return new Response(sent.body, {
+    status: sent.upstream.status,
+    headers: { "Content-Type": "application/json" },
+  });
 }

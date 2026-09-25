@@ -2,6 +2,7 @@ import {
   VENICE_MULTIMODAL_PRICES,
   applyVeniceMultimodalMarkup,
   computeVeniceMultimodalCost,
+  computeVeniceMultimodalHoldCost,
   resolveVeniceMultimodalMarkup,
   resolveVeniceMultimodalPrice,
 } from "@/lib/venice/multimodal-pricing";
@@ -258,5 +259,52 @@ describe("Venice multimodal price catalog", () => {
     expect(resolveVeniceMultimodalMarkup({ MANAGED_VENICE_MULTIMODAL_MARKUP: "0" })).toBe(1.0);
     expect(resolveVeniceMultimodalMarkup({ MANAGED_VENICE_MULTIMODAL_MARKUP: "-2" })).toBe(1.0);
     expect(resolveVeniceMultimodalMarkup({ MANAGED_VENICE_MULTIMODAL_MARKUP: "banana" })).toBe(1.0);
+  });
+});
+
+describe("computeVeniceMultimodalHoldCost (pre-forward ceiling)", () => {
+  const cost = (endpoint: string, model: string, metadata?: Record<string, unknown>) => {
+    const result = computeVeniceMultimodalHoldCost({ endpoint, model, metadata });
+    return result.priced ? result.listCostMicroUsd : result.reason;
+  };
+
+  it("never guesses an unpriced operation", () => {
+    expect(cost("/api/v1/video/queue", "wan-2-7-image-to-video")).toBe("unpriced_operation");
+    expect(cost("/api/v1/image/generate", "not-in-catalog")).toBe("unpriced_operation");
+    expect(cost("/api/v1/crypto/rpc/base-mainnet", "passthrough:crypto/rpc")).toBe("unpriced_operation");
+    expect(cost("/api/v1/audio/speech", "tts-kokoro", {})).toBe("missing_quantity");
+  });
+
+  it("holds an unrecorded or unknown tier at the most expensive published tier", () => {
+    expect(cost("/api/v1/image/generate", "nano-banana-2")).toBe(190_000);
+    expect(cost("/api/v1/image/generate", "nano-banana-2", { resolution: "8K" })).toBe(190_000);
+    expect(cost("/api/v1/image/generate", "nano-banana-2", { resolution: "2K" })).toBe(140_000);
+    expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: "3" })).toBe(80_000);
+    expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: 2 })).toBe(20_000);
+  });
+
+  it("rounds variant counts up and counts numeric strings", () => {
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: 3 })).toBe(150_000);
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: "4" })).toBe(200_000);
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: 1.2 })).toBe(100_000);
+    expect(cost("/api/v1/image/generate", "qwen-image-2", { variants: "lots" })).toBe(50_000);
+  });
+
+  it("is never below what settlement charges for the same request", () => {
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ["/api/v1/image/generate", "nano-banana-2", {}],
+      ["/api/v1/image/generate", "nano-banana-2", { resolution: "4k", variants: 2 }],
+      ["/api/v1/image/upscale", "venice-upscaler", { scale: "4x" }],
+      ["/api/v1/audio/speech", "tts-kokoro", { inputLength: 12_345 }],
+      ["/api/v1/augment/search", "venice-search-brave", {}],
+    ];
+    for (const [endpoint, model, metadata] of cases) {
+      const hold = computeVeniceMultimodalHoldCost({ endpoint, model, metadata });
+      const settled = computeVeniceMultimodalCost({ endpoint, model, metadata });
+      expect(hold.priced && settled.priced).toBe(true);
+      if (hold.priced && settled.priced) {
+        expect(hold.listCostMicroUsd).toBeGreaterThanOrEqual(settled.listCostMicroUsd);
+      }
+    }
   });
 });
