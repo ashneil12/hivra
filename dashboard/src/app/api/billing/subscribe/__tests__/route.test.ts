@@ -801,7 +801,7 @@ describe("POST /api/billing/subscribe", () => {
     const res = await POST(
       createRequest(
         { plan: "fleet" },
-        { "cf-connecting-ip": "198.51.100.7,or(status.eq.active)" }
+        { "x-forwarded-for": "or(status.eq.active), 198.51.100.7" }
       )
     );
 
@@ -819,7 +819,7 @@ describe("POST /api/billing/subscribe", () => {
     const res = await POST(
       createRequest(
         { plan: "fleet" },
-        { "cf-connecting-ip": "2001:db8::1" }
+        { "x-forwarded-for": "2001:db8::1" }
       )
     );
 
@@ -841,7 +841,7 @@ describe("POST /api/billing/subscribe", () => {
     const res = await POST(
       createRequest(
         { plan: "fleet" },
-        { "cf-connecting-ip": "198.51.100.7" }
+        { "x-forwarded-for": "198.51.100.7" }
       )
     );
 
@@ -891,7 +891,7 @@ describe("POST /api/billing/subscribe", () => {
     expect(callArgs.subscription_data.metadata.checkout_ip).toBe("203.0.113.1");
   });
 
-  it("should use the first X-Forwarded-For entry when X-Real-IP is absent", async () => {
+  it("should use the rightmost X-Forwarded-For hop, not a client-prepended entry", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
     
     const req = createRequest({ plan: "fleet" }, { "x-forwarded-for": "1.1.1.1, 198.51.100.1" });
@@ -899,8 +899,8 @@ describe("POST /api/billing/subscribe", () => {
     
     expect(res.status).toBe(200);
     const callArgs = mockStripeSessionsCreate.mock.calls[0][0];
-    expect(callArgs.metadata.checkout_ip).toBe("1.1.1.1");
-    expect(callArgs.subscription_data.metadata.checkout_ip).toBe("1.1.1.1");
+    expect(callArgs.metadata.checkout_ip).toBe("198.51.100.1");
+    expect(callArgs.subscription_data.metadata.checkout_ip).toBe("198.51.100.1");
   });
 
   it("does not leak raw database errors when the new customer record cannot be persisted", async () => {
