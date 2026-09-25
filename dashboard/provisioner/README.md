@@ -157,6 +157,25 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `PROFILE_DIR` | `/home/bux/.browser-profile` | **Must be non-default** (see gotcha #1). |
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
 | `DUMMY_BU_KEY` | `local` | Dummy `BROWSER_USE_API_KEY` (installer requires one; we self-host). |
+| `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | from `agent-cli-versions.json` | Vetted CLI versions. Leave unset on managed computers so the installer, the runtime updater and the dashboard read the same pins. |
+
+### Agent CLI versions
+
+Hivra owns the Claude Code and Codex versions on its computers. The vetted
+versions ship as `agent-cli-versions.json` (exported to the dashboard as
+`AGENT_CLI_VERSIONS`); vendor self-updaters are off (`DISABLE_AUTOUPDATER=1`
+for every CLI the gateway starts and on both terminal units, and Codex's
+`check_for_update_on_startup = false`, set by `hivra-codex-config-pin.py` only
+when the owner has not chosen). The agent terminal runs the exact binary the
+chat gateway runs and never falls back to another vendor's CLI.
+
+`hivra-update-guest-runtime.sh` reports the installed and vetted versions
+(`HIVRA_AGENT_CLI` line) and, when they differ, starts
+`hivra-agent-cli-update.sh` as a transient unit: it downloads the package,
+waits until no chat run is in flight (up to 6 hours), holds new runs back for
+the few seconds of the swap, verifies the new version and restores the previous
+package on failure. The gateway reports the installed version and the swap's
+progress to the dashboard as `agentCli` on authenticated `GET /api/meta`.
 
 ## The one manual step
 
@@ -209,10 +228,30 @@ is the alternative long-lived-token path.
    process environments, and they never claim release approval.
 
 For an already-running Proxmox computer, `hivra-update-guest-runtime.sh VMID IP`
-updates only the Hivra Chat connection-service assets and then verifies secure
-surface authentication plus unchanged agent identity/API-token metadata. The
-dashboard owns the lifecycle lock and performs the reboot after this helper
-returns a verified receipt; the helper never powers the VM on or off itself.
+updates the Hivra Chat connection-service assets in place, together with the
+root-owned `hivra-agent-shell` and `hivra-tg-apply` helpers, both terminal
+units and the agent CLI pins (all backed up and rolled back with them), and
+then verifies secure surface authentication plus unchanged agent
+identity/API-token metadata. Only `bux-hivra-chat` restarts; the VM is never
+powered off or on, so desktop apps, agent services, tmux-backed agent terminals
+and detached chat runs keep running. Surface sign-ins are saved across the
+restart (see Architecture notes); a computer moving off an older gateway that
+kept them only in memory gets a new `bootId`, and each open surface signs in
+again when it is next shown. For a Claude
+Code / Codex computer it also consumes a staged agent-run reporter credential
+(`HIVRA_ACTIVITY_TELEMETRY_FILE`, the same slot and code as the start helper)
+and reinstalls the reporter after the gateway commit, but only when that step's
+bounded worst case still fits before the dashboard's request deadline
+(`HIVRA_RUNTIME_UPDATE_DEADLINE`); otherwise it reports `not_attempted` and the
+next start installs it. Its stdout carries only host-authored lines: at most one
+`HIVRA_AGENT_CLI` line (see Agent CLI versions), at most one
+`HIVRA_ACTIVITY_COLLECTOR` line, then `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>`.
+The dashboard takes the FD8 lifecycle lock (`HIVRA_LIFECYCLE_LOCK_FD=8`) for
+the host-side checks; the helper releases it before any guest step, as the
+start helper does, while the operation lease keeps fencing the computer. The
+dashboard completes the operation as running only on that receipt, and refuses
+DeepSeek computers before taking the lease because their guest step cannot
+update them yet.
 
 ## Architecture notes
 
@@ -232,10 +271,19 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   `~/.hivra/chat-runs/<runId>/events.ndjson`; the HTTP response only tails that
   log. With `{detach: true, runId, clientRef}` a closed tab or dropped network
   no longer ends the turn: `GET /api/chat/runs` lists recent runs,
-  `GET /api/chat/runs/<id>/events` replays one from the start (live until it
-  finishes) and `POST /api/chat/runs/<id>/stop` is the only way to end it early.
+  `GET /api/chat/runs/<id>/events[?offset=<bytes>]` replays one from the start
+  of its log, or from a byte offset into it (live until it finishes), and
+  `POST /api/chat/runs/<id>/stop` is the only way to end it early.
   Requests without `detach` keep the historical contract (their disconnect
-  stops the turn). The `10-hivra-detached-runs.conf` drop-in sets
+  stops the turn). The computer's own chat page (`index.html` + `app.js`,
+  served at `GET /`) uses detached runs: it keeps the conversation in the
+  browser's localStorage, shows it only after an authenticated
+  `GET /api/chat/runs` succeeds, rebuilds an unfinished reply from the run's
+  log after a reload, and within one page re-attaches from the bytes it has
+  already applied. Tabs of the page share that conversation: while one tab is
+  following a reply, the others hold new messages until it finishes there, or
+  take the reply over on their next check if that tab closes. The
+  `10-hivra-detached-runs.conf` drop-in sets
   `KillMode=process` on `bux-hivra-chat.service`, so a gateway restart (runtime
   update, crash) leaves in-flight runs working; permission flags are unchanged.
 - **Agent terminal.** For Claude Code and Codex, `hivra-agent-shell` runs the
@@ -248,7 +296,105 @@ returns a verified receipt; the helper never powers the VM on or off itself.
   redirect to a clean local URL. Terminal, browser, and native dashboard links
   never put the bearer in a URL. Older connection services without this
   capability require an explicit runtime update before those surfaces open;
-  header-authenticated API access remains unchanged.
+  header-authenticated API access remains unchanged. Surface sign-ins
+  survive a gateway restart (runtime update, crash, reboot): each one is
+  saved, before its cookie is handed out, to `~/.hivra/surface-sessions.json`
+  as a SHA-256 of the session secret plus its expiry (never the cookie, never
+  the token). The file is owner-only `0600`, replaced atomically (temp file,
+  fsync, rename, directory fsync), never read or written through a symlink,
+  only used in a non-group/world-writable `~/.hivra` owned by the gateway
+  user, pruned of expired entries on every load and save, and bounded to 1024
+  sign-ins (the one closest to expiry is revoked first, and that revocation is
+  saved too). It is bound to an HMAC of the API token, so a token rotation
+  signs every surface out. A malformed, duplicated or over-long entry makes the
+  whole file untrusted. The file browser cannot open it. `/api/meta` carries
+  the store's random epoch as `bootId` (served `no-store`): it changes only when
+  sign-ins were lost (no store yet, a rotated token, an untrusted or corrupt
+  file, or a store that cannot be kept current, which keeps sign-ins for that
+  process only and moves it to a new epoch), so an ordinary restart keeps both
+  the cookie and the `bootId`. While a surface is on screen the dashboard
+  re-reads `/api/meta` on focus, `online`, visibility and every 30 s, and when
+  `bootId` changes, appears or disappears it posts the bootstrap into a newly
+  mounted frame (never into the loaded one, which would add a browser history
+  entry). Gateways that never advertised a `bootId` keep sign-ins in memory
+  only and are never reloaded. A
+  DeepSeek surface for the native root waits for `nativeReady: true` before
+  it bootstraps, and waits again whenever a loaded one reports it false; the
+  wait ends after 3 minutes (or 20 s of an unreachable gateway) with an
+  honest failure and Try again. `hivra-update-guest-runtime.sh` refuses
+  DeepSeek, so a DeepSeek computer only gets saved sign-ins and `bootId` from a
+  fresh DeepSeek install of a bundle that contains them.
+- **Aeon fork sync.** The Aeon dashboard saves every config edit into `~/aeon`
+  and pushes it with a plain `git push`. After GitHub connect, and on every
+  gateway start, the gateway makes that clone push-capable against the user's
+  fork: `gh auth setup-git` for HTTPS credentials, the GitHub account (and its
+  noreply address) as the clone's commit identity, and a local branch tracking
+  the fork's default branch.
+  - Only the dashboard's own saves are committed and pushed: tracked edits to
+    `aeon.yml`, `skills/`, `soul/`, `STRATEGY.md` and `.mcp.json` (the paths
+    the pinned dashboard's `commitAndPush`/`saveFile` calls write), plus
+    whatever the dashboard already staged for a save whose commit failed
+    (including the `.github/workflows` secret allowlist an MCP save writes).
+    Every other edit (terminal edits, other workflow edits, untracked files)
+    stays an uncommitted edit on the computer. Only this computer's own
+    commits are replayed (the depth-1 template checkout's shallow boundary
+    marks where they begin).
+  - Nothing on the computer is lost. Every move is a
+    `git rebase --autostash` (never a forced checkout): commits that conflict
+    with the fork are kept on a local `hivra/unpushed-edits-<time>` branch
+    first; a move that fails for any other reason (for example an untracked
+    file in the way) changes nothing and reports `error` with the files named;
+    edits git cannot put back after a move stay in the stash list. A file git
+    left with unresolved conflicts (for example an autostash the dashboard's
+    own `git pull --rebase --autostash` could not put back, or a
+    `git stash pop` in the terminal) is never committed or pushed: the sync
+    stops with `error` and names it.
+  - A branch or commit the owner checked out by hand is left exactly as it is
+    (nothing committed, HEAD not moved) and reported as `on_other_branch`.
+    A rebase, merge, cherry-pick, revert, `git am` or bisect left unfinished
+    in the clone is also left exactly as it is, with nothing written into it,
+    and reported as `operation_in_progress` with the command that finishes or
+    cancels it. The only rebase a sync ever rolls back is its own: before each
+    rebase it records what git will record for it
+    (`~/.hivra/aeon-sync-rebase.json`: orig-head, head-name and onto), so the
+    next sync can roll it back after a gateway stop interrupted it. A rebase
+    the dashboard's own save left when it was stopped part-way is not the
+    sync's, so it waits for the owner too.
+  - Hivra's `apps/dashboard/next.config.ts` (the `/aeon` basePath) is never
+    pushed. A durable copy is kept in `~/.hivra/aeon-next.config.ts`. Every
+    sync puts the file back from that copy (or from the provisioner's text)
+    whenever it lacks the basePath config, holds conflict-marker lines or is
+    unmerged in the index (the unmerged entry is cleared); a copy with
+    conflict markers is never kept.
+  - Statuses: `ok`, `auth_failed` (GitHub rejected the sign-in),
+    `unreachable` and `fetch_failed` (retried after 30 s, 1, 2 and 4 min),
+    `credentials_failed` (`gh auth setup-git` failed or git has no sign-in),
+    `push_denied` (GitHub refused the push: 403, permissions or workflow
+    scope), `push_failed` (any other push failure, after one retry following a
+    fresh fetch and replay; the detail carries what GitHub said, such as a
+    repository rule, push protection or a protected branch),
+    `on_other_branch`, `operation_in_progress` and `error`. Connect answers
+    200 only for `ok`, `syncing` (the sync outlasted the request) and the
+    retried `unreachable` and `fetch_failed`. Every other status answers 400:
+    `push_denied` with the token-permissions fix, `credentials_failed` with
+    "connect again", and the rest with the status detail.
+  - Workflows GitHub disabled by itself (`disabled_fork`,
+    `disabled_inactivity`) among `aeon.yml`, `scheduler.yml`, `messages.yml`,
+    `chain-runner.yml` and `setup-commands.yml` are enabled; a manual disable
+    is left alone. The outcome is written to `~/.hivra/aeon-connect.json` and
+    returned as `connect` by `GET /api/login/status`.
+  - Verified against local git repositories and a stubbed `gh` only; not yet
+    exercised against GitHub on a running Aeon computer.
+- **Telegram connect.** `hivra-tg-apply apply` writes `/etc/bux/tg.env` and then
+  enables and restarts `bux-tg`, so a new bot token or pairing link takes
+  effect even when the bot is already running.
+- **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
+  with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
+  so the whole guest shutdown fits inside the shortest host budget that stops
+  a Hivra computer (`qm shutdown --timeout 40` on restart, resize and idle
+  parking; the host hard-stops the VM after it). A contract test ties these
+  numbers together. The unit is written at provisioning: computers provisioned
+  earlier keep docker's 10 s default until they are provisioned again.
 
 ## Gotchas (do NOT reintroduce these)
 

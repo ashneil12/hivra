@@ -530,6 +530,16 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return (await fetchPlanStrict()) ?? FREE_PLAN;
 }
 
+/** A lifecycle action the server refused or could not verify, with its HTTP status. */
+export class AgentActionError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AgentActionError";
+    this.status = status;
+  }
+}
+
 async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
   const r = await fetch(`/api/hivra/agents/${id}/action`, {
     method: "POST",
@@ -537,7 +547,7 @@ async function agentAction(id: string, action: string, extra?: Record<string, un
     body: JSON.stringify({ action, ...(extra || {}) }),
   });
   const j = await readJson(r);
-  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Action failed");
+  if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
 }
 export const stopAgent = (id: string) => agentAction(id, "stop");
 export const startAgent = (id: string) => agentAction(id, "start");
@@ -657,11 +667,56 @@ function boxBase(boxUrl: string): string {
   return boxUrl.replace(/\/$/, "");
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null }> {
+/** An Aeon computer's last sync with the user's GitHub fork, as recorded by
+ *  the computer (~/.hivra/aeon-connect.json). `pushReady` means dashboard
+ *  saves reach the fork; `workflows` maps each Aeon workflow file to its
+ *  GitHub state after the computer enabled the ones GitHub disabled itself.
+ *  - auth_failed: GitHub rejected the computer's sign-in (401/403).
+ *  - unreachable: GitHub could not be reached; retried until `retryAt`.
+ *  - fetch_failed: the fork could not be read; also retried.
+ *  - credentials_failed: git could not be given the GitHub sign-in.
+ *  - push_denied: GitHub refused the push (token permissions).
+ *  - push_failed: the push failed for another reason; `detail` carries what
+ *    GitHub said (a repository rule, push protection, a protected branch).
+ *  - on_other_branch: the owner checked out another branch by hand; nothing
+ *    was changed and saves are not pushed until the default branch is back.
+ *  - operation_in_progress: a git rebase, merge or other operation the sync
+ *    did not start is unfinished in the clone; nothing was changed and saves
+ *    are not pushed until it is finished or cancelled.
+ *  GitHub connect fails (HTTP 400) for every status other than syncing, ok,
+ *  unreachable and fetch_failed. */
+export interface AeonConnectStatus {
+  status:
+    | "syncing"
+    | "ok"
+    | "auth_failed"
+    | "unreachable"
+    | "fetch_failed"
+    | "credentials_failed"
+    | "push_denied"
+    | "push_failed"
+    | "on_other_branch"
+    | "operation_in_progress"
+    | "error";
+  repo: string;
+  branch: string | null;
+  pushReady: boolean;
+  workflows: Record<string, string>;
+  /** Local branches holding edits that could not be applied to the fork. */
+  parkedBranches: string[];
+  detail?: string;
+  /** How many syncs have run in this series (1 for the first). */
+  attempt?: number;
+  /** When the computer will try again, for the retried statuses. */
+  retryAt?: string;
+  at: string;
+}
+
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
   } catch {
     return { loggedIn: false };
   }
@@ -726,9 +781,11 @@ export async function listBoxSessions(boxUrl: string, token?: string | null): Pr
     const r = await fetch(`${boxBase(boxUrl)}/api/sessions`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return [];
     const sessions = (((await r.json()) as { sessions?: BoxSession[] }).sessions) || [];
-    // The box persists the hidden welcome-generation turn as a session; drop it so
-    // the setup prompt never appears as a visible, readable chat in the rail.
-    return sessions.filter((s) => !isHiddenWelcomeTitle(s.title));
+    // The box titles a conversation with its first message, which for the
+    // first-contact welcome is the hidden setup prompt. That conversation is the
+    // owner's to read and continue, so it lists as "Welcome", and a computer
+    // whose only history is its welcome still counts as one with history.
+    return sessions.map((s) => (isHiddenWelcomeTitle(s.title) ? { ...s, title: "Welcome" } : s));
   } catch { return []; }
 }
 export async function readBoxSession(boxUrl: string, id: string, token?: string | null): Promise<BoxMessage[]> {
@@ -755,10 +812,10 @@ export interface BoxChatRun {
   createdAt: string;
   finishedAt: string | null;
 }
-/** Recent runs, newest first; null when the box predates detached runs or is unreachable. */
-export async function listBoxChatRuns(boxUrl: string, token?: string | null): Promise<BoxChatRun[] | null> {
+/** Recent runs, newest first; null when the box predates detached runs, is unreachable, or the signal aborts. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatRun[] | null> {
   try {
-    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token) });
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token), signal });
     if (!r.ok) return null;
     const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
     return Array.isArray(runs) ? runs : null;

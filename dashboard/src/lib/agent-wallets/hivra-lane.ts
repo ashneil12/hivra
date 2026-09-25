@@ -138,8 +138,10 @@ function errorMessage(error: unknown): string {
 
 /**
  * Apply the wallet row to a Hivra box that just came (back) up: start,
- * restart, resize, update_runtime, and the first start after a snapshot
- * restore (restore itself always ends stopped). A connect or disconnect made
+ * restart, resize, and the first start after a snapshot restore (restore
+ * itself always ends stopped). update_runtime updates a running box in place
+ * without a boot, so it does not run this; changes made while a box runs go
+ * through syncBankrEnvToRunningHivraAgent. A connect or disconnect made
  * while the box was stopped never reached its disk, and a restored snapshot can
  * carry an old bankr.env, so this runs on every boot, not only when the row
  * changed.

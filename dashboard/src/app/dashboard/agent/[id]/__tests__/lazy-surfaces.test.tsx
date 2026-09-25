@@ -11,8 +11,8 @@ const mockLoaded: string[] = [];
 // Modules whose download fails, as when the connection drops or a new release
 // replaced the file while the page was open.
 const mockUnavailable = new Set<string>();
-// A fault while drawing Tasks, as opposed to a failed download.
-let mockTasksFault: Error | null = null;
+// A fault while drawing the desktop, as opposed to a failed download.
+let mockDesktopFault: Error | null = null;
 let mockAgent: Record<string, unknown>;
 let mockAgentLoad: () => Promise<unknown>;
 let mockParams: Record<string, string> = {};
@@ -40,7 +40,12 @@ jest.mock("@/components/hivra/HivraManage", () => ({ HivraManage: () => <div>Man
 jest.mock("@/components/hivra/HivraRemoteDesktop", () => {
   if (mockUnavailable.has("HivraRemoteDesktop")) throw new Error("Failed to load chunk HivraRemoteDesktop");
   mockLoaded.push("HivraRemoteDesktop");
-  return { HivraRemoteDesktop: ({ active }: { active?: boolean }) => <div hidden={!active}>Remote desktop</div> };
+  return {
+    HivraRemoteDesktop: ({ active }: { active?: boolean }) => {
+      if (mockDesktopFault) throw mockDesktopFault;
+      return <div hidden={!active}>Remote desktop</div>;
+    },
+  };
 });
 jest.mock("@/components/hivra/HivraConsoleDesktop", () => {
   if (mockUnavailable.has("HivraConsoleDesktop")) throw new Error("Failed to load chunk HivraConsoleDesktop");
@@ -62,7 +67,6 @@ jest.mock("@/components/scheduled-tasks/TasksPanel", () => {
   mockLoaded.push("TasksPanel");
   return {
     TasksPanel: () => {
-      if (mockTasksFault) throw mockTasksFault;
       return <div>Tasks panel</div>;
     },
   };
@@ -93,7 +97,7 @@ beforeEach(() => {
   // the shared registry; start that registry empty too.
   jest.resetModules();
   mockParams = {};
-  mockTasksFault = null;
+  mockDesktopFault = null;
   mockLoaded.length = 0;
   mockUnavailable.clear();
   mockAgentLoad = async () => mockAgent;
@@ -190,23 +194,25 @@ describe("a part of the page whose code can't download", () => {
   });
   afterEach(() => consoleError.mockRestore());
 
-  it("says so where Tasks would be, and the tabs and chat keep working", async () => {
-    mockAgent = CODEX;
-    mockParams = { tab: "tasks" };
-    mockUnavailable.add("TasksPanel");
+  // Hivra agents no longer show Tasks, so the desktop stands in for a part of
+  // the page whose code downloads on demand.
+  it("says so where the desktop would be, and the other tabs keep working", async () => {
+    mockAgent = UBUNTU;
+    mockParams = { tab: "desktop" };
+    mockUnavailable.add("HivraRemoteDesktop");
     const { screen, fireEvent } = openPage();
 
     expect(await screen.findByText(NOTICE)).toBeVisible();
     expect(screen.queryByText(/Dashboard error page/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Agent/ }));
-    expect(await screen.findByText("Chat panel")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^Manage/ }));
+    expect(await screen.findByText("Manage panel")).toBeVisible();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });
 
   it("offers a reload, which is what fetches the code again", async () => {
-    mockAgent = CODEX;
-    mockParams = { tab: "tasks" };
-    mockUnavailable.add("TasksPanel");
+    mockAgent = UBUNTU;
+    mockParams = { tab: "desktop" };
+    mockUnavailable.add("HivraRemoteDesktop");
     const { screen, fireEvent } = openPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Reload page" }));
@@ -242,11 +248,11 @@ describe("a part of the page whose code can't download", () => {
   });
 
   it("still sends a fault inside a part that did download to the dashboard's error page", async () => {
-    mockAgent = CODEX;
-    mockParams = { tab: "tasks" };
-    mockTasksFault = new Error("Tasks broke while drawing");
+    mockAgent = UBUNTU;
+    mockParams = { tab: "desktop" };
+    mockDesktopFault = new Error("Desktop broke while drawing");
     const { screen } = openPage();
-    expect(await screen.findByText("Dashboard error page: Tasks broke while drawing")).toBeInTheDocument();
+    expect(await screen.findByText("Dashboard error page: Desktop broke while drawing")).toBeInTheDocument();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });
 });

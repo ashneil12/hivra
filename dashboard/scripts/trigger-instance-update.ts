@@ -31,6 +31,7 @@ import {
   applyLiveUpdate,
   resolveInstanceIpv4,
 } from "../src/lib/services/instance-orchestrator";
+import { OPERATOR_LIVE_UPDATE } from "../src/lib/services/live-update-initiator";
 import { extractGlobalHermesSettings } from "../src/lib/instance-settings";
 
 async function main() {
@@ -83,7 +84,9 @@ async function main() {
   console.log(`[trigger-update] resolved ipv4=${ipv4}`);
 
   console.log(`[trigger-update] calling applyLiveUpdate...`);
-  const result = await applyLiveUpdate(instance, ipv4, globalSettings, supabase);
+  const result = await applyLiveUpdate(instance, ipv4, globalSettings, supabase, {
+    initiator: OPERATOR_LIVE_UPDATE,
+  });
   console.log(
     `[trigger-update] applyLiveUpdate returned:`,
     JSON.stringify(result, null, 2)
