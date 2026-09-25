@@ -80,6 +80,17 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     // Newer than hivra_agent_events; a database without it has nothing to delete.
     optionalIfMissing: true,
   },
+  // Server setup commands and their receipts. Receipts
+  // (infrastructure_server_enrollment_events) go by cascade from their
+  // enrollment; the service role can't delete them directly.
+  {
+    table: "infrastructure_server_enrollments",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "server setup commands, observed addresses and their receipts",
+    // Newer than the other tables; a database without it has nothing to delete.
+    optionalIfMissing: true,
+  },
   // A computer's last usage read (Manage › Overview). Keyed to the account,
   // and computers are soft-deleted, so the row would otherwise survive.
   {

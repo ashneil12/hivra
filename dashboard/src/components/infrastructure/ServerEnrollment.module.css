@@ -1,0 +1,389 @@
+/* My server: the setup command panel and "Is this your server?" card.
+   Rendered inside the Capacity page or its modal theme, so the --infra-*
+   tokens and the global theme tokens are inherited. */
+
+.lead {
+  margin: 0 0 10px;
+  color: var(--ink-black);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.commandRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.command {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--infra-line);
+  background: var(--bg-elevated);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: all;
+}
+
+.recipe {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--infra-line);
+  background: var(--bg-elevated);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.meta {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-black);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.linkButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.accountCode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--hivra-red) 24%, var(--infra-line));
+  background: color-mix(in srgb, var(--hivra-red-soft) 40%, var(--infra-panel));
+  font-size: 13px;
+}
+
+.accountCode strong {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+
+.notes {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.notes code,
+.fine code,
+.scriptFirst code {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--infra-line);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.waiting svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.scriptFirst {
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-panel);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.scriptFirst p {
+  margin: 10px 0 8px;
+}
+
+.scriptFirst a {
+  color: var(--ink-black);
+}
+
+.digests {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.digests div {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.digests dt {
+  color: var(--infra-muted);
+  font-size: 11px;
+}
+
+.digests dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.warning {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--ink-black);
+}
+
+.warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--yellow);
+}
+
+.fine {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* "Is this your server?" */
+.card {
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--hivra-red) 30%, var(--infra-line));
+  background: var(--infra-panel-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.card h3 {
+  margin: 4px 0 8px;
+  font-family: var(--font-grotesk), "Space Grotesk", sans-serif;
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.card p {
+  margin: 0 0 10px;
+}
+
+.cardDone {
+  border-color: var(--infra-line);
+}
+
+.facts {
+  display: grid;
+  gap: 1px;
+  margin: 12px 0 14px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-line);
+}
+
+.facts > div {
+  display: grid;
+  grid-template-columns: minmax(170px, 34%) minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--infra-panel-strong);
+}
+
+.facts dt {
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.words {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.identity code {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  padding: 10px 12px;
+  border-left: 3px solid var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+}
+
+.addressField {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.addressField label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.addressField input {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--infra-line);
+  background: var(--bg-elevated);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 13px;
+}
+
+.addressField input:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0 6px;
+}
+
+/* Yes and No carry the same weight (T32). */
+.answerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--ink-black) 40%, transparent);
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.answerButton:hover:not(:disabled) {
+  border-color: var(--ink-black);
+}
+
+.answerButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.answerButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+/* The Capacity page's own list of answers still to give. */
+.section {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 28px;
+}
+
+.pendingLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px dashed var(--infra-line);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.receipts {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .facts > div,
+  .digests div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .commandRow {
+    flex-direction: column;
+  }
+}

@@ -42,9 +42,22 @@ const OPENCLAW_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT) || 18789;
 // its own web UI with a seeded basic-auth login, and MUST sit behind this token
 // proxy — mounted under /agent-zero with a path strip + Referer re-home.
 const AGENT_ZERO_PORT = Number(process.env.AGENT_ZERO_PORT) || 50080;
+// Attached mode (design 5.4): the same gateway code runs as an attached agent's
+// own sandboxed instance on a computer its owner already has. Its root-written
+// unit sets these; nothing in the agent's writable HOME can change them.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ATTACHED_INSTALLATION_ID = process.env.HIVRA_ATTACHED_INSTALLATION_ID || "";
+const ATTACHED = ATTACHED_INSTALLATION_ID !== "";
+if (ATTACHED && !UUID_RE.test(ATTACHED_INSTALLATION_ID)) throw new Error("Invalid attached installation identity");
 // Which agent this box runs. Set by the provisioner via ~/.hivra/agent-kind or
 // the HIVRA_AGENT_KIND env. Same server drives whichever runtime is selected.
 function readAgentKind() {
+  // An attached agent is Codex, pinned by its unit. Its own HOME cannot switch
+  // it to another runtime or route set.
+  if (ATTACHED) {
+    if (process.env.HIVRA_AGENT_KIND !== "codex") throw new Error("An attached agent runs Codex only");
+    return "codex";
+  }
   // Root-owned native/computer services bind this gateway to their profile. A
   // writable HOME selector must not switch their authentication/routes back to
   // an agent runtime with chat or account-login surfaces.
@@ -74,12 +87,29 @@ if (WORKSPACE_ROOT !== HOME && !WORKSPACE_ROOT.startsWith(HOME + path.sep)) {
   throw new Error("Hivra workspace must stay inside the computer owner's home");
 }
 const AGENT_ENV = Object.assign({}, process.env, {
-  PATH: "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
+  // An attached agent follows its unit's PATH (its own Codex first), never the
+  // desktop owner's home directories.
+  PATH: ATTACHED ? String(process.env.PATH || "/usr/bin:/bin") : "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
   HOME: HOME,
   // Hivra installs and updates the vetted CLI versions (agent-cli-versions.json);
   // a vendor self-update would swap the binary under the gateway mid-life.
   DISABLE_AUTOUPDATER: "1",
 });
+// Where new agent sessions start. For an attached agent this is its root-owned,
+// read-only starting folder, which holds the AGENTS.md Hivra wrote and the view
+// of the owner's Hivra folder; the agent cannot change or hide that file there.
+const AGENT_WORKDIR = ATTACHED ? path.resolve(process.env.HIVRA_AGENT_WORKDIR || "") : HOME;
+if (ATTACHED && AGENT_WORKDIR !== "/var/lib/hivra/agent-views/" + ATTACHED_INSTALLATION_ID) {
+  throw new Error("An attached agent starts only in its own root-owned folder");
+}
+// Codex 0.149.1 refuses to run when CODEX_HOME does not exist, and a freshly
+// staged home has none (found on real Ubuntu 22.04 and 24.04 VMs). The instance
+// runs as the agent, so it creates its own folder in its own home.
+if (ATTACHED) {
+  const codexHome = path.resolve(String(process.env.CODEX_HOME || ""));
+  if (codexHome !== path.join(HOME, ".codex")) throw new Error("An attached agent keeps Codex's state in its own home");
+  try { fs.mkdirSync(codexHome, { mode: 0o700 }); } catch (error) { if (error.code !== "EEXIST") throw error; }
+}
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
 
 // The installed agent CLI version, reported on /api/meta so the dashboard can
@@ -174,7 +204,11 @@ function chatSpawnEnv() {
 // body of the dedicated bootstrap POST. It must never appear in a URL, cookie,
 // redirect, access log, or browser history.
 function readApiToken() {
-  try { return fs.readFileSync(path.join(HOME, ".hivra", "api-token"), "utf8").trim(); } catch { return ""; }
+  // An attached instance reads its token from the root-owned attachment folder;
+  // a file in its own HOME is the agent's to replace.
+  const file = ATTACHED ? String(process.env.HIVRA_API_TOKEN_FILE || "") : path.join(HOME, ".hivra", "api-token");
+  if (ATTACHED && file !== "/etc/hivra/attachments/" + ATTACHED_INSTALLATION_ID + "/instance-token") return "";
+  try { return fs.readFileSync(file, "utf8").trim(); } catch { return ""; }
 }
 const API_TOKEN = readApiToken();
 if (!/^[a-f0-9]{64}$/.test(API_TOKEN)) {
@@ -1487,9 +1521,19 @@ function resolveChatSpawn(message, sessionId, images) {
       if (model) flags.push("-m", model);
     }
     for (const img of images || []) flags.push("-i", img);
-    const args = (sessionId && /^[0-9a-f-]{8,}$/i.test(sessionId))
-      ? ["exec", "resume", ...flags, sessionId, message]
-      : ["exec", ...flags, "-C", HOME, message];
+    // An attached agent's own config.toml cannot switch off the AGENTS.md
+    // Hivra wrote in its starting folder: pin Codex's project-doc budget on
+    // the command line (spike S3: a config.toml project_doc_max_bytes = 0
+    // drops the file; the command-line value wins).
+    if (ATTACHED) flags.push("-c", "project_doc_max_bytes=32768");
+    const resume = sessionId && /^[0-9a-f-]{8,}$/i.test(sessionId);
+    // Spike S3 on Codex 0.149.1: a resumed turn takes its working folder from
+    // -C given to `exec` before `resume` (or the spawn cwd), never from the
+    // session file the agent can edit, and reads that folder's AGENTS.md again.
+    // So an attached agent resumes in its root-owned starting folder too.
+    const args = resume
+      ? (ATTACHED ? ["exec", "-C", AGENT_WORKDIR, "resume", ...flags, sessionId, message] : ["exec", "resume", ...flags, sessionId, message])
+      : ["exec", ...flags, "-C", AGENT_WORKDIR, message];
     return { bin: CODEX, args, useStdin: false, textMode: false, env: llmEnv };
   }
   if (AGENT_KIND === "generic") {
@@ -1571,7 +1615,7 @@ function handleChat(req, res) {
       started = CHAT_RUNS.start({
         runId, clientRef, detached: detach, agentKind: AGENT_KIND, title: message.slice(0, 120), admit: agentCliUpdateRefusal,
         resumeSessionId: typeof sessionId === "string" ? sessionId : null,
-        bin, args, cwd: HOME, env: spawnEnv, textMode, stdinText: useStdin ? sendMsg : null,
+        bin, args, cwd: AGENT_WORKDIR, env: spawnEnv, textMode, stdinText: useStdin ? sendMsg : null,
       });
     } catch (error) {
       if (error instanceof CHAT_RUNS_MODULE.ChatRunError) return jsonRes(res, error.status, { error: error.message, code: error.code });
@@ -1674,10 +1718,12 @@ function handleChatRuns(req, res, u, q) {
 // `strip` lets us mount a backend that serves at root (noVNC/websockify) under a
 // sub-path: we drop the prefix before forwarding (ttyd keeps its prefix via -b).
 function proxyHttp(req, res, port, strip, preserveAuthority = false) {
+  // A loopback port, or { socketPath } for a backend on an owner-only unix socket.
+  const target = port && typeof port === "object" ? port : { port };
   let path = req.url;
   if (strip) { path = req.url.slice(strip.length); if (!path.startsWith("/")) path = "/" + path; }
   const headers = Object.assign({}, req.headers);
-  if (!preserveAuthority) headers.host = "127.0.0.1:" + port;
+  if (!preserveAuthority) headers.host = target.socketPath ? "localhost" : "127.0.0.1:" + target.port;
   // The outer gateway authenticates Hivra authority. Never forward that
   // replayable authority into a bux-owned terminal/browser/native backend.
   // Preserve unrelated backend cookies and non-Hivra Authorization schemes.
@@ -1687,7 +1733,9 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false) {
     headers.cookie = headers.cookie.split(";").map(part => part.trim()).filter(part => part && part.split("=", 1)[0] !== AUTH_COOKIE).join("; ");
     if (!headers.cookie) delete headers.cookie;
   }
-  const opts = { host: "127.0.0.1", port, method: req.method, path, headers };
+  const opts = target.socketPath
+    ? { socketPath: target.socketPath, method: req.method, path, headers }
+    : { host: "127.0.0.1", port: target.port, method: req.method, path, headers };
   const p = http.request(opts, (pr) => {
     const h = Object.assign({}, pr.headers);
     // The dashboard embeds these surfaces in a same-origin iframe behind our token
@@ -2031,6 +2079,153 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 function gateProxy(req, res, port, strip) {
   if (!authed(req)) return denyHtml(res);
   return proxyHttp(req, res, port, strip);
+}
+
+// ---- terminals on owner-only unix sockets -----------------------------------
+// ttyd serves the agent terminal and the computer's shell on unix sockets owned
+// by bux in bux-owned 0700 runtime folders, so no other local user or service
+// can open a shell as bux. The folder is the boundary: libwebsockets always
+// creates its socket 0660 (group bux), and nobody but bux can traverse the
+// folder to it. So the folder must be the gateway's own with no group or other
+// bits, and the socket the gateway's own and not writable by others (connecting
+// to a unix socket needs write permission on it). Guests whose
+// terminal units predate the socket release still listen on loopback; the port
+// stays their fallback.
+const TTYD_SOCKETS = { 7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock" };
+const GATEWAY_UID = typeof process.getuid === "function" ? process.getuid() : -1;
+function terminalUpstream(port) {
+  const socketPath = TTYD_SOCKETS[port];
+  try {
+    const folder = fs.lstatSync(path.dirname(socketPath));
+    const info = fs.lstatSync(socketPath);
+    if (folder.isDirectory() && folder.uid === GATEWAY_UID && (folder.mode & 0o077) === 0
+      && info.isSocket() && info.uid === GATEWAY_UID && (info.mode & 0o002) === 0) return { socketPath };
+  } catch {}
+  return { port };
+}
+// Which upstream this gateway would use for each terminal right now. The guest
+// updater and the installer read it (bearer only) with a proxied request, so a
+// terminal the gateway would refuse to reach over its socket fails readiness
+// instead of being checked around the gateway.
+function terminalTransports() {
+  return {
+    terminal: terminalUpstream(7681).socketPath ? "socket" : "port",
+    boxTerminal: terminalUpstream(7682).socketPath ? "socket" : "port",
+  };
+}
+
+// ---- attached agents (design 5.4) -------------------------------------------
+// Computers only. The owner's browser reaches an attached agent's own sandboxed
+// hivra-chat instance through /agents/<installation-id>/... with the computer's
+// existing auth. Everything the instance answers is agent-controlled, so only
+// JSON, NDJSON and event streams pass, and nothing that could act as this
+// computer's origin (documents, cookies, redirects, CORS) is forwarded.
+const ATTACHED_AGENTS_PROTOCOL = "hivra-attached-agent-v1";
+const RUN_ROUTE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const ATTACHED_ROUTES = [
+  ["GET", /^\/api\/meta$/], ["POST", /^\/api\/chat$/],
+  ["GET", /^\/api\/chat\/runs$/], ["GET", new RegExp("^/api/chat/runs/" + RUN_ROUTE + "$")],
+  ["GET", new RegExp("^/api/chat/runs/" + RUN_ROUTE + "/events$")], ["POST", new RegExp("^/api/chat/runs/" + RUN_ROUTE + "/stop$")],
+  ["POST", /^\/api\/upload$/], ["GET", /^\/api\/sessions$/], ["GET", /^\/api\/sessions\/[0-9A-Za-z._-]{1,128}$/],
+  ["GET", /^\/api\/login\/status$/], ["POST", /^\/api\/login\/start$/], ["POST", /^\/api\/login\/complete$/],
+  ["GET", /^\/api\/model$/], ["POST", /^\/api\/model$/], ["GET", /^\/api\/llm$/], ["POST", /^\/api\/llm$/],
+  ["GET", /^\/api\/llm\/application$/], ["POST", /^\/api\/llm\/application$/],
+];
+function attachedRouteAllowed(method, route) {
+  return ATTACHED_ROUTES.some(([allowed, pattern]) => allowed === method && pattern.test(route));
+}
+const ATTACHMENTS_DIR = "/etc/hivra/attachments";
+const ATTACHED_SOCKET_DIR = "/run/hivra-attached";
+const ATTACHED_REQUEST_MAX = 13 * 1024 * 1024;
+const ATTACHED_RESPONSE_TYPE = /^(application\/json|application\/x-ndjson|text\/event-stream)\s*(;[^\r\n]*)?$/i;
+const ATTACHED_DROPPED_REQUEST_HEADERS = new Set(["cookie", "authorization", "host", "connection", "upgrade", "keep-alive",
+  "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "origin", "referer"]);
+function rootOwnedFile(file) {
+  const info = fs.lstatSync(file);
+  return info.isFile() && info.uid === 0 && (info.mode & 0o022) === 0 ? info : null;
+}
+// The registry file is written by root in a root-owned folder; the agent
+// cannot create, replace or re-point it.
+function attachedRegistry(id) {
+  const file = path.join(ATTACHMENTS_DIR, id, "binding.json");
+  if (!rootOwnedFile(file)) return null;
+  const value = JSON.parse(fs.readFileSync(file, "utf8"));
+  return value && value.installationId === id && Number.isInteger(value.gatewayGid) && value.gatewayGid > 0 ? value : null;
+}
+// Connect only to exactly the socket systemd made: root-owned, group hvc_, 0660,
+// in root's 0711 folder. SO_PEERCRED would name systemd, not the agent.
+function attachedSocketPath(id, gatewayGid) {
+  const folder = fs.lstatSync(ATTACHED_SOCKET_DIR);
+  if (!folder.isDirectory() || folder.uid !== 0 || (folder.mode & 0o7777) !== 0o711) return null;
+  const socketPath = path.join(ATTACHED_SOCKET_DIR, id + ".sock");
+  const info = fs.lstatSync(socketPath);
+  return info.isSocket() && info.uid === 0 && info.gid === gatewayGid && (info.mode & 0o7777) === 0o660 ? socketPath : null;
+}
+function attachedGatewayToken(id) {
+  const file = path.join(ATTACHMENTS_DIR, id, "gateway-token");
+  const info = fs.lstatSync(file);
+  if (!info.isFile() || info.uid !== 0 || (info.mode & 0o7777) !== 0o440) return null;
+  const token = fs.readFileSync(file, "utf8").trim();
+  return /^[a-f0-9]{64}$/.test(token) && !safeEq(token, API_TOKEN) ? token : null;
+}
+function handleAttachedAgentProxy(req, res, u) {
+  res.setHeader("Cache-Control", "no-store");
+  // The computer's own auth: bearer or its session cookie. A Files or Terminal
+  // workspace grant (/workspace/...) never reaches this route.
+  if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+  const match = u.match(/^\/agents\/([^/]+)(\/.*)?$/);
+  if (!match || !UUID_RE.test(match[1]) || !match[2]) return jsonRes(res, 404, { error: "agent not found" });
+  const id = match[1], route = match[2];
+  if (!attachedRouteAllowed(req.method, route)) return jsonRes(res, 404, { error: "not available for an attached agent" });
+  let registry = null;
+  try { registry = attachedRegistry(id); } catch {}
+  if (!registry) return jsonRes(res, 404, { error: "agent not found" });
+  let socketPath = null, token = null;
+  try { socketPath = attachedSocketPath(id, registry.gatewayGid); token = socketPath && attachedGatewayToken(id); } catch {}
+  if (!socketPath || !token) return jsonRes(res, 503, { error: "Codex isn't reachable" });
+  const query = req.url.indexOf("?") >= 0 ? req.url.slice(req.url.indexOf("?")) : "";
+  const headers = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    const name = key.toLowerCase();
+    if (ATTACHED_DROPPED_REQUEST_HEADERS.has(name) || name.startsWith("x-forwarded-") || name.startsWith("cf-")) continue;
+    headers[name] = value;
+  }
+  headers.host = "localhost";
+  headers.authorization = "Bearer " + token;
+  let size = 0, finished = false;
+  const fail = (status, error) => {
+    if (finished) return;
+    finished = true;
+    if (!res.headersSent) jsonRes(res, status, { error }); else res.end();
+  };
+  const upstream = http.request({ socketPath, method: req.method, path: route + query, headers }, (answer) => {
+    const type = String(answer.headers["content-type"] || "");
+    if (!ATTACHED_RESPONSE_TYPE.test(type)) {
+      answer.resume();
+      return fail(502, "Codex sent a response Hivra doesn't pass on");
+    }
+    const out = {
+      "Content-Type": type,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "sandbox; default-src 'none'",
+      "Access-Control-Expose-Headers": "X-Hivra-Run-Id, X-Hivra-Run-State",
+    };
+    for (const name of ["x-hivra-run-id", "x-hivra-run-state"]) {
+      const value = answer.headers[name];
+      if (typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value)) out[name === "x-hivra-run-id" ? "X-Hivra-Run-Id" : "X-Hivra-Run-State"] = value;
+    }
+    finished = true;
+    res.writeHead(answer.statusCode && answer.statusCode >= 200 && answer.statusCode < 600 ? answer.statusCode : 502, out);
+    answer.pipe(res);
+  });
+  upstream.on("error", () => fail(503, "Codex isn't reachable"));
+  res.on("close", () => upstream.destroy());
+  req.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > ATTACHED_REQUEST_MAX) { upstream.destroy(); fail(413, "request too large"); req.destroy(); }
+  });
+  req.pipe(upstream);
 }
 
 // ---- Claude account login (the user's OWN native login, driven on the box) ----
@@ -3127,6 +3322,7 @@ const WORKSPACE_ROUTER = COMPUTER_PROFILE && process.env.HIVRA_WORKSPACE_PROTOCO
     publicOrigin: process.env.HIVRA_REMOTE_DESKTOP_PUBLIC_ORIGIN,
     controlOrigin: process.env.HIVRA_REMOTE_DESKTOP_CONTROL_ORIGIN,
     files: { list: handleFilesList, read: handleFileRead, write: handleFileWrite },
+    boxTerminal: () => terminalUpstream(7682),
   }) : null;
 const server = http.createServer((req, res) => {
   if (WORKSPACE_ROUTER && req.url.startsWith("/workspace/")) return void WORKSPACE_ROUTER.handleHttp(req, res);
@@ -3152,6 +3348,17 @@ const server = http.createServer((req, res) => {
   // CORS: the Hivra dashboard streams browser->box directly (cross-origin).
   managementCors(res);
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+  // An attached instance serves exactly the chat routes the computer's
+  // gateway forwards to it, and nothing else (design 5.4).
+  if (ATTACHED && !attachedRouteAllowed(req.method, u)) return jsonRes(res, 404, { error: "not available for an attached agent" });
+  if (COMPUTER_PROFILE) {
+    // Files an attached agent writes in ~/Hivra are stored as the owner, so Git
+    // would trust a repository it planted and run that repository's commands
+    // (core.fsmonitor on a plain status, hooks, filters). No computer screen
+    // uses Git: answer before any process starts, whatever the credential (5.3.2).
+    if (u === "/api/git" || u.startsWith("/api/git/")) return jsonRes(res, 404, { error: "git_unavailable_on_computer" });
+    if (u === "/agents" || u.startsWith("/agents/")) return handleAttachedAgentProxy(req, res, u);
+  }
   if (req.method === "GET" && u === "/healthz") {
     const ready = !DEEPSEEK_BROKER || DEEPSEEK_BROKER.ready();
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
@@ -3229,7 +3436,7 @@ const server = http.createServer((req, res) => {
     // no-store: bootId (the sign-in epoch) and nativeReady describe the live
     // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
-    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra" } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
@@ -3300,8 +3507,8 @@ const server = http.createServer((req, res) => {
   if (u === "/desktop" || u.startsWith("/desktop/")) {
     return proxyHttp(req, res, REMOTE_DESKTOP_BROKER_PORT, null, true);
   }
-  if (u === "/terminal" || u.startsWith("/terminal/")) return gateProxy(req, res, 7681);
-  if (u === "/box-terminal" || u.startsWith("/box-terminal/")) return gateProxy(req, res, 7682);
+  if (u === "/terminal" || u.startsWith("/terminal/")) return gateProxy(req, res, terminalUpstream(7681));
+  if (u === "/box-terminal" || u.startsWith("/box-terminal/")) return gateProxy(req, res, terminalUpstream(7682));
   // Live browser view: noVNC/websockify serves at root, so mount it under /vnc.
   if (u === "/vnc" || u.startsWith("/vnc/")) return gateProxy(req, res, 6080, "/vnc");
   // Aeon dashboard (Next.js). NO strip: Aeon is configured with basePath=/aeon
@@ -3318,6 +3525,8 @@ const server = http.createServer((req, res) => {
 });
 
 server.on("upgrade", (req, socket, head) => {
+  // No websocket reaches an attached instance, directly or through /agents/.
+  if (ATTACHED || req.url === "/agents" || req.url.startsWith("/agents/")) { socket.destroy(); return; }
   if (WORKSPACE_ROUTER && req.url.startsWith("/workspace/")) return void WORKSPACE_ROUTER.handleUpgrade(req, socket, head);
   if (DEEPSEEK_BROKER) {
     const pathname = req.url.split("?")[0];
@@ -3347,7 +3556,10 @@ server.on("upgrade", (req, socket, head) => {
   // Agent Zero's WS also rides its form-login session (the browser never holds one —
   // we inject our managed cookie), so its live chat/canvas connect behind our gate.
   const a0Ws = port === AGENT_ZERO_PORT;
-  const proxy = net.connect(port, "127.0.0.1", () => {
+  // Terminals from the socket release listen on an owner-only unix socket; older
+  // ones on the loopback port. Keep the positional connect for a port.
+  const terminalSocket = (port === 7681 || port === 7682) ? terminalUpstream(port).socketPath : null;
+  const onProxyConnect = () => {
     let hdr = req.method + " " + fwdUrl + " HTTP/1.1\r\n";
     for (const [k, raw] of Object.entries(req.headers)) {
       const key = k.toLowerCase();
@@ -3370,7 +3582,8 @@ server.on("upgrade", (req, socket, head) => {
     if (head && head.length) proxy.write(head);
     proxy.pipe(socket);
     socket.pipe(proxy);
-  });
+  };
+  const proxy = terminalSocket ? net.connect({ path: terminalSocket }, onProxyConnect) : net.connect(port, "127.0.0.1", onProxyConnect);
   proxy.on("error", () => socket.destroy());
   socket.on("error", () => proxy.destroy());
 });
@@ -3378,7 +3591,15 @@ server.on("upgrade", (req, socket, head) => {
 // Bind loopback only: cloudflared runs in-VM and connects to localhost, and the
 // health checks curl 127.0.0.1 — so nothing legitimate needs the LAN interface.
 // This keeps a compromised sibling VM from reaching the gateway by private IP.
-server.listen(PORT, "127.0.0.1", () => console.log("hivra-chat listening on 127.0.0.1:" + PORT));
+if (ATTACHED) {
+  // Socket activation: systemd created /run/hivra-attached/<id>.sock root:hvc_
+  // 0660 in a root-owned folder and hands the listening end to this unit. The
+  // instance never binds a TCP port, not even on its own loopback.
+  if (process.env.LISTEN_PID !== String(process.pid) || process.env.LISTEN_FDS !== "1") {
+    throw new Error("An attached agent listens only on the socket systemd passes it");
+  }
+  server.listen({ fd: 3 }, () => console.log("hivra-chat (attached " + ATTACHED_INSTALLATION_ID + ") listening on its socket"));
+} else server.listen(PORT, "127.0.0.1", () => console.log("hivra-chat listening on 127.0.0.1:" + PORT));
 // Idempotent on every start: an Aeon computer connected to GitHub before the
 // fork sync existed is repaired by the gateway restart of a runtime update.
 if (AGENT_KIND === "aeon") setTimeout(() => { void syncAeonFork("startup"); }, 0);

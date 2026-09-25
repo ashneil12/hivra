@@ -49,3 +49,15 @@ export async function cancelUndispatchedDesktopPrepare(userId: string, operation
 export async function completeDesktopPrepare(userId: string, receipt: DesktopPrepareReceipt): Promise<boolean> {
   return await rpc("complete_hivra_desktop_prepare", { p_user_id: userId, p_operation_id: receipt.operationId, p_receipt: receipt }) === true;
 }
+
+/** Host evidence, taken under FD8 after fencing the operation, that no guest installer can still run. */
+export type DesktopPrepareAbandonEvidence = {
+  version: 1; operationId: string; computerId: string; vmid: number; bindingTag: string;
+} & (
+  | { vmStatus: "stopped"; guestInstaller: "powered_off" }
+  | { vmStatus: "running"; guestInstaller: "absent" | "exited" }
+);
+
+export async function abandonDesktopPrepare(userId: string, evidence: DesktopPrepareAbandonEvidence): Promise<boolean> {
+  return await rpc("abandon_hivra_desktop_prepare", { p_user_id: userId, p_operation_id: evidence.operationId, p_evidence: evidence }) === true;
+}

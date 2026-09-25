@@ -88,3 +88,15 @@ it("retains uncertainty without retry or raw-error disclosure", async () => {
   }
   expect(runProxmoxHostScript).toHaveBeenCalledTimes(9);
 });
+
+it("reads the one refusal the runner named when a step raised in the VM, and only a name it knows (T3)", async () => {
+  jest.mocked(runProxmoxHostScript).mockResolvedValueOnce({ ok: false, stdout: "HIVRA_GUEST_STEP_REFUSED staging_failed\n", stderr: "" });
+  expect(await executeAttachmentGuestAction("owner", agent, "stage", expected)).toEqual({ ok: false, code: "guest_refused", reason: "staging_failed" });
+  jest.mocked(runProxmoxHostScript).mockResolvedValueOnce({ ok: false, stdout: "HIVRA_GUEST_STEP_REFUSED staging_in_progress\n", stderr: "" });
+  expect(await executeAttachmentGuestAction("owner", agent, "observe", expected))
+    .toEqual({ ok: false, code: "guest_refused", reason: "staging_in_progress" });
+  for (const stdout of ["HIVRA_GUEST_STEP_REFUSED ../etc/passwd\n", "HIVRA_GUEST_STEP_REFUSED staging_failed\nHIVRA_GUEST_STEP_REFUSED staging_failed\n"]) {
+    jest.mocked(runProxmoxHostScript).mockResolvedValueOnce({ ok: false, stdout, stderr: "" });
+    expect(await executeAttachmentGuestAction("owner", agent, "observe", expected)).toEqual({ ok: false, code: "transport_failed" });
+  }
+});

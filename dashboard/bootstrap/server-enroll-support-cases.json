@@ -1,0 +1,14 @@
+[
+  {"osId": "ubuntu", "osVersionId": "24.04", "architecture": "x86_64", "proxmoxVersion": null, "supported": true},
+  {"osId": "ubuntu", "osVersionId": "22.04", "architecture": "x86_64", "proxmoxVersion": null, "supported": true},
+  {"osId": "ubuntu", "osVersionId": "20.04", "architecture": "x86_64", "proxmoxVersion": null, "supported": false},
+  {"osId": "ubuntu", "osVersionId": "24.10", "architecture": "x86_64", "proxmoxVersion": null, "supported": false},
+  {"osId": "ubuntu", "osVersionId": "24.04", "architecture": "aarch64", "proxmoxVersion": null, "supported": false},
+  {"osId": "debian", "osVersionId": "12", "architecture": "x86_64", "proxmoxVersion": null, "supported": false},
+  {"osId": "debian", "osVersionId": "12", "architecture": "x86_64", "proxmoxVersion": "8.2.4", "supported": false},
+  {"osId": "debian", "osVersionId": "13", "architecture": "x86_64", "proxmoxVersion": "9.0.3", "supported": false},
+  {"osId": "debian", "osVersionId": "11", "architecture": "x86_64", "proxmoxVersion": "7.4", "supported": false},
+  {"osId": "debian", "osVersionId": "12", "architecture": "aarch64", "proxmoxVersion": "8.2.4", "supported": false},
+  {"osId": null, "osVersionId": null, "architecture": "x86_64", "proxmoxVersion": null, "supported": false},
+  {"osId": "ubuntu", "osVersionId": "24.04", "architecture": null, "proxmoxVersion": null, "supported": false}
+]

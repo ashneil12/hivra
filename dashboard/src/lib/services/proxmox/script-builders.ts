@@ -1235,6 +1235,30 @@ out="$(qm status "$VMID" --verbose 2>/dev/null || true)"
 # lines. We only consume scalar top-level keys here.
 echo "$out" | awk -F': ' '/^[a-zA-Z][a-zA-Z0-9_-]*:/ { gsub(/^ +| +$/, "", $2); printf "METRIC %s=%s\\n", $1, $2 }'
 
+# Cumulative CPU time of the VM's kvm process. A one-shot 'qm status' cannot
+# report CPU: PVE derives 'cpu' from two /proc samples taken inside one
+# long-lived process (pvestatd), so on PVE 9 it prints no cpu line and no
+# cputime at all. utime+stime of the kvm process is the real monotonic counter
+# (all vCPU threads, since VM start). Fields are counted after the last ')'
+# because the comm field may contain spaces.
+pid_file="/var/run/qemu-server/$VMID.pid"
+if [ -r "$pid_file" ]; then
+  kvm_pid="$(tr -dc '0-9' < "$pid_file")"
+  # Guard against a stale pid file whose pid was reused by another process.
+  if [ -n "$kvm_pid" ] && [ -r "/proc/$kvm_pid/stat" ] \\
+    && tr '\\0' ' ' < "/proc/$kvm_pid/cmdline" 2>/dev/null | grep -qE -- "(^| )-id $VMID( |\\$)"; then
+    stat_rest="$(sed 's/^.*) //' "/proc/$kvm_pid/stat")"
+    cpu_ticks="$(printf '%s\\n' "$stat_rest" | awk '{ print $12 + $13 }')"
+    clk_tck="$(getconf CLK_TCK 2>/dev/null || true)"
+    case "$cpu_ticks" in ''|*[!0-9]*) cpu_ticks="" ;; esac
+    case "$clk_tck" in ''|*[!0-9]*|0) clk_tck="" ;; esac
+    if [ -n "$cpu_ticks" ] && [ -n "$clk_tck" ]; then
+      echo "METRIC proc_cpu_ticks=$cpu_ticks"
+      echo "METRIC clk_tck=$clk_tck"
+    fi
+  fi
+fi
+
 # Prefer the guest filesystem's real usage when the orchestrator can SSH
 # into the VM. Proxmox qm status --verbose often reports disk=0 unless
 # qemu-guest-agent is fully wired up, and falling back to maxdisk makes every

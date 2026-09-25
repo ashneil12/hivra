@@ -88,12 +88,48 @@ async function main() {
         "20260908090000_desktop_handoff_latency_release.sql",
         "20260922201510_provider_release_admission_2026_09_22.sql",
         "20260924180000_provider_release_admission_2026_09_24.sql",
-        "20260924220000_provider_release_admission_2026_09_24_2.sql",
+        // 2026.09.24.2's admission (#124) is applied below, in both orders with 2026.09.24.3's.
         // Legacy (2026.08.27.1) computers must keep every check after arm-at-start.
         "20260924190000_hetzner_first_boot_arm_at_start.sql",
       ].includes(name)).sort()) {
       await db.exec(migration(file));
     }
+    const ADMISSION = "20260925100100_provider_release_admission_2026_09_24_3.sql";
+    const admissionFunctions = ["public.admit_prepared_provider_computer(text,uuid,bigint,uuid,uuid,text,uuid,uuid,jsonb)",
+      "public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)", "public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)"];
+    const admissionDefinitions = async () => Promise.all(admissionFunctions.map(async (fn) =>
+      (await db.query("select pg_get_functiondef($1::regprocedure) as result", [fn])).rows[0].result));
+    // 2026.09.24.2 is the persistent-sessions release (#124), merged first;
+    // 2026.09.24.3 is sealed on top of it. Both admissions anchor on the
+    // 2026.09.24.1 entry: whichever of the two real files applies first, both
+    // releases must end up admitted exactly once.
+    const SIBLING = "20260924220000_provider_release_admission_2026_09_24_2.sql";
+    const siblingAdmission = migration(SIBLING);
+    const occurrences = (text, needle) => text.split(needle).length - 1;
+    const beforeAdmission = await admissionDefinitions();
+    for (const [order, steps] of [["2026.09.24.2 first", [siblingAdmission, migration(ADMISSION)]],
+      ["2026.09.24.3 first", [migration(ADMISSION), siblingAdmission]]]) {
+      for (const step of steps) await db.exec(step);
+      const admitted = await admissionDefinitions();
+      admitted.forEach((definition, index) => {
+        for (const version of ["2026.09.24.1", "2026.09.24.2", "2026.09.24.3"]) {
+          assert.equal(occurrences(definition, `'${version}'`), 1, `${order}: ${admissionFunctions[index]} admits ${version} once`);
+        }
+      });
+      await db.exec(migration(ADMISSION));
+      assert.deepEqual(await admissionDefinitions(), admitted, `${order}: re-applying the 2026.09.24.3 admission changes nothing`);
+      for (const definition of beforeAdmission) await db.exec(definition);
+    }
+    assert.deepEqual(await admissionDefinitions(), beforeAdmission, "the admission functions are restored");
+    // The tree's own order (2026.09.24.2, then 2026.09.24.3), and idempotent:
+    // applied again, nothing grows.
+    await db.exec(siblingAdmission);
+    await db.exec(migration(ADMISSION));
+    const admittedOnce = await admissionDefinitions();
+    admittedOnce.forEach((definition, index) =>
+      assert.equal(occurrences(definition, "'2026.09.24.3'"), 1, `${admissionFunctions[index]} admits 2026.09.24.3`));
+    await db.exec(migration(ADMISSION));
+    assert.deepEqual(await admissionDefinitions(), admittedOnce, "re-applying the 2026.09.24.3 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

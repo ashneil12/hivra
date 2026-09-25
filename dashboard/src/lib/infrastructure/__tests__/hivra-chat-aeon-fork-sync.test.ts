@@ -568,8 +568,9 @@ describe("Aeon fork sync in the Hivra guest gateway", () => {
     expect(reply.sync.detail).toContain(`Could not reach GitHub to push to ${LOGIN}/aeon`);
     expect(JSON.stringify(reply)).not.toContain("Read and write");
     expect(typeof reply.sync.retryAt).toBe("string");
-    // The computer tries again on its own.
-    const retried = await waitForStatus(() => gateway.logs.join("\n"), (current) => current.attempt === 2 && current.status !== "syncing");
+    // The computer tries again on its own. Retries run every 25 ms here, faster
+    // than this polls, so any later settled attempt proves it.
+    const retried = await waitForStatus(() => gateway.logs.join("\n"), (current) => Number(current.attempt) >= 2 && current.status !== "syncing");
     expect(retried).toMatchObject({ status: "unreachable", pushReady: false });
     expect(gateway.retryWaits.slice(0, 1)).toEqual(RETRY_DELAYS.slice(0, 1));
   });

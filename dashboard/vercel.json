@@ -81,12 +81,20 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/progress-agent-attachments",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/purge-error-hivra-agents",
       "schedule": "40 4 * * *"
     },
     {
       "path": "/api/cron/prune-hivra-activity",
       "schedule": "50 4 * * *"
+    },
+    {
+      "path": "/api/cron/sweep-server-enrollments",
+      "schedule": "20 5 * * *"
     },
     {
       "path": "/api/cron/recover-missing-vm-instances",

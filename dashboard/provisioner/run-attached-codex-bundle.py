@@ -24,6 +24,19 @@ PINS = {
 MAX_BUNDLE_BYTES = 65536
 
 
+class Refused(ValueError):
+    """A refusal with a fixed name the host may read. The name never carries a
+    path or bytes an agent could plant."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+# What an action that raised without a name is called.
+UNNAMED_REFUSALS = {'fetch': 'fetch_failed', 'stage': 'staging_failed', 'observe': 'staging_unresolved'}
+
+
 def decode_bundle(raw):
     if not isinstance(raw, bytes) or len(raw) > MAX_BUNDLE_BYTES:
         raise ValueError('oversized attachment bundle')
@@ -86,16 +99,32 @@ def observe_staged(identity, boot, worker):
 
     No create, chmod, download, subprocess, installer or journal publication.
     Missing/started/changed/busy/old-boot state stays unresolved with its lease.
+    Each outcome is named so the host can tell a stage still running
+    (staging_in_progress: the stager holds its lock) from one that ended
+    without a receipt (staging_failed: this identity's journal still says
+    started and nothing holds the lock) and from no journal at all.
     """
-    root = journal_root()
+    try:
+        root = journal_root()
+    except FileNotFoundError:
+        raise Refused('staging_absent')
     try:
         root_info = os.fstat(root)
-        lock = os.open('installer.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+        try:
+            lock = os.open('installer.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+        except FileNotFoundError:
+            raise Refused('staging_absent')
         try:
             lock_info = os.fstat(lock)
             private_file(lock_info)
-            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            fd = os.open('staging.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Refused('staging_in_progress')
+            try:
+                fd = os.open('staging.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+            except FileNotFoundError:
+                raise Refused('staging_absent')
             with os.fdopen(fd, 'rb') as source:
                 before = os.fstat(source.fileno())
                 private_file(before)
@@ -105,6 +134,12 @@ def observe_staged(identity, boot, worker):
                 if len(raw) > 16384 or file_identity(before) != file_identity(os.fstat(source.fileno())):
                     raise ValueError('attachment journal changed during observation')
             record = json.loads(raw)
+            # The stager wrote "started" before it ran and holds the lock until
+            # it ends; with the lock free, this run ended without a receipt.
+            if (isinstance(record, dict) and set(record) == {'version', 'identity', 'bootId', 'phase'}
+                    and type(record['version']) is int and record['version'] == 1 and record['identity'] == identity
+                    and record['bootId'] == boot and record['phase'] == 'started'):
+                raise Refused('staging_failed')
             if (not isinstance(record, dict) or set(record) != {'version', 'identity', 'bootId', 'phase', 'receipt'}
                     or type(record['version']) is not int or record['version'] != 1
                     or record['identity'] != identity or record['bootId'] != boot or record['phase'] != 'staged'):
@@ -128,15 +163,28 @@ def observe_staged(identity, boot, worker):
 
 
 def execute_bundle(raw):
-    value, sources = decode_bundle(raw)  # Verify every asset before loading any.
+    try:
+        value, sources = decode_bundle(raw)  # Verify every asset before loading any.
+    except Exception as error:
+        raise Refused('bundle_invalid') from error
+    try:
+        return run_action(value, sources)
+    except Refused:
+        raise
+    except Exception as error:
+        raise Refused(UNNAMED_REFUSALS[value['action']]) from error
+
+
+def run_action(value, sources):
     if os.geteuid() != 0 or platform.system() != 'Linux':
         raise ValueError('requires the bound Linux guest')
     worker = load_reviewed('worker', sources['worker'])
     identity = worker['checked_identity'](value['identity'])
     boot = value['bootId']
-    if (not isinstance(boot, str) or not worker['UUID'].fullmatch(boot)
-            or boot != Path('/proc/sys/kernel/random/boot_id').read_text().strip()):
-        raise ValueError('guest boot changed before bundle execution')
+    if not isinstance(boot, str) or not worker['UUID'].fullmatch(boot):
+        raise ValueError('invalid guest boot')
+    if boot != Path('/proc/sys/kernel/random/boot_id').read_text().strip():
+        raise Refused('computer_restarted')
     if value['action'] == 'observe':
         return observe_staged(identity, boot, worker)
     fetcher = load_reviewed('fetcher', sources['fetcher'])
@@ -196,6 +244,10 @@ def execute_bundle(raw):
 
 if __name__ == '__main__':
     try:
-        print(json.dumps(execute_bundle(sys.stdin.buffer.read(MAX_BUNDLE_BYTES + 1)), separators=(',', ':')))
+        line = json.dumps(execute_bundle(sys.stdin.buffer.read(MAX_BUNDLE_BYTES + 1)), separators=(',', ':'))
     except Exception as error:
-        raise SystemExit('Attachment bundle refused (' + type(error).__name__ + '); retain the operation for reconciliation.')
+        code = error.code if isinstance(error, Refused) else 'bundle_invalid'
+        # One line for the host: this program ended here, refused; there is no answer to wait for.
+        print('HIVRA_GUEST_STEP_REFUSED ' + code, flush=True)
+        raise SystemExit('Attachment bundle refused (' + code + '); retain the operation for reconciliation.')
+    print(line)

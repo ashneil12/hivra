@@ -570,13 +570,13 @@ describe("runResourceWatchdog", () => {
     const samples: Sample[] = [
       {
         sampled_at: "2026-05-09T12:00:00.000Z",
-        cpu_seconds_total: 0,
+        cpu_seconds_total: 1000,
         ram_peak_bytes: 0,
         runtime_seconds: 0,
       },
       {
         sampled_at: "2026-05-10T12:00:00.000Z",
-        cpu_seconds_total: 86400 * 2 * 0.99, // 99% of (24h * 2 vCPU)
+        cpu_seconds_total: 1000 + 86400 * 2 * 0.99, // 99% of (24h * 2 vCPU)
         ram_peak_bytes: 0,
         runtime_seconds: 86400,
       },
@@ -615,6 +615,78 @@ describe("runResourceWatchdog", () => {
     );
   });
 
+  it("does not treat pre-fix zero CPU rows as a baseline (PVE 9 rollout transition)", async () => {
+    // Before the kvm /proc CPU source, PVE 9 samples recorded 0. The first
+    // real reading is CPU since VM start (here ~55 days of light use), which
+    // must not read as one 24h window pegged at >95%.
+    const instance: InstanceRow = {
+      id: "inst_paid_transition",
+      user_id: "user_paid",
+      resource_tier: "operator",
+      cpu_limit: 2,
+      ram_limit: 4096,
+      proxmox_node: "fixturenode1",
+      proxmox_vmid: 201,
+      host_id: null,
+      config: { infrastructure: baseInfra },
+      name: "Transition Agent",
+    };
+    const samples: Sample[] = [
+      { sampled_at: "2026-05-09T12:00:00.000Z", cpu_seconds_total: 0, ram_peak_bytes: 0, runtime_seconds: 4_700_000 },
+      { sampled_at: "2026-05-10T00:00:00.000Z", cpu_seconds_total: 0, ram_peak_bytes: 0, runtime_seconds: 4_743_200 },
+      { sampled_at: "2026-05-10T11:00:00.000Z", cpu_seconds_total: 228_359.06, ram_peak_bytes: 0, runtime_seconds: 4_782_800 },
+      { sampled_at: "2026-05-10T12:00:00.000Z", cpu_seconds_total: 228_380.5, ram_peak_bytes: 0, runtime_seconds: 4_786_400 },
+    ];
+
+    const { flagsInserted } = buildWatchdogStub({
+      instances: [instance],
+      samplesByInstance: { inst_paid_transition: samples },
+    });
+
+    const summary = await runResourceWatchdog({
+      now: new Date("2026-05-10T12:00:00.000Z"),
+    });
+
+    expect(summary.cpuSustainedFlags).toBe(0);
+    expect(flagsInserted).toHaveLength(0);
+    expect(sendResourceWatchdogCustomerEmail).not.toHaveBeenCalled();
+    expect(sendResourceWatchdogAdminEmail).not.toHaveBeenCalled();
+  });
+
+  it("counts CPU growth after a VM restart instead of dropping the window", async () => {
+    const instance: InstanceRow = {
+      id: "inst_paid_rebooted",
+      user_id: "user_paid",
+      resource_tier: "operator",
+      cpu_limit: 2,
+      ram_limit: 4096,
+      proxmox_node: "fixturenode1",
+      proxmox_vmid: 201,
+      host_id: null,
+      config: { infrastructure: baseInfra },
+      name: "Rebooted Hot Agent",
+    };
+    // Pegged all day, with a restart at 18:00 resetting the kvm counter.
+    const samples: Sample[] = [
+      { sampled_at: "2026-05-09T12:00:00.000Z", cpu_seconds_total: 500_000, ram_peak_bytes: 0, runtime_seconds: 0 },
+      { sampled_at: "2026-05-09T18:00:00.000Z", cpu_seconds_total: 500_000 + 21_600 * 2 * 0.99, ram_peak_bytes: 0, runtime_seconds: 0 },
+      { sampled_at: "2026-05-09T18:05:00.000Z", cpu_seconds_total: 300 * 2 * 0.99, ram_peak_bytes: 0, runtime_seconds: 0 },
+      { sampled_at: "2026-05-10T12:00:00.000Z", cpu_seconds_total: 64_800 * 2 * 0.99, ram_peak_bytes: 0, runtime_seconds: 0 },
+    ];
+
+    const { flagsInserted } = buildWatchdogStub({
+      instances: [instance],
+      samplesByInstance: { inst_paid_rebooted: samples },
+    });
+
+    const summary = await runResourceWatchdog({
+      now: new Date("2026-05-10T12:00:00.000Z"),
+    });
+
+    expect(summary.cpuSustainedFlags).toBe(1);
+    expect(flagsInserted).toHaveLength(1);
+  });
+
   it("skips a paid instance whose CPU window is too short to be meaningful", async () => {
     const instance: InstanceRow = {
       id: "inst_paid_recent",
@@ -632,13 +704,13 @@ describe("runResourceWatchdog", () => {
     const samples: Sample[] = [
       {
         sampled_at: "2026-05-10T11:00:00.000Z",
-        cpu_seconds_total: 0,
+        cpu_seconds_total: 1000,
         ram_peak_bytes: 0,
         runtime_seconds: 0,
       },
       {
         sampled_at: "2026-05-10T12:00:00.000Z",
-        cpu_seconds_total: 7200,
+        cpu_seconds_total: 8200,
         ram_peak_bytes: 0,
         runtime_seconds: 3600,
       },
@@ -673,13 +745,13 @@ describe("runResourceWatchdog", () => {
     const samples: Sample[] = [
       {
         sampled_at: "2026-05-09T12:00:00.000Z",
-        cpu_seconds_total: 0,
+        cpu_seconds_total: 1000,
         ram_peak_bytes: 0,
         runtime_seconds: 0,
       },
       {
         sampled_at: "2026-05-10T12:00:00.000Z",
-        cpu_seconds_total: 86400 * 2 * 0.99,
+        cpu_seconds_total: 1000 + 86400 * 2 * 0.99,
         ram_peak_bytes: 0,
         runtime_seconds: 86400,
       },

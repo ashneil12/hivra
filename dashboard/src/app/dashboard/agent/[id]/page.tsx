@@ -59,6 +59,8 @@ import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
+import { AttachedAgentChat, useAttachedAgentChatRead } from "@/components/hivra/AttachedAgentChat";
+import { withAttachedAgentChat } from "@/lib/agent-computers/attached-agent-surface";
 import type { WelcomePersonalizationDraft } from "@/lib/welcome-personalization";
 import {
   buildWelcomePersonalizationContext,
@@ -199,6 +201,8 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
  */
 function listChanged(): void {
   resourceInventory.invalidate("hivra");
+  // A computer's change can end or pause the agents added to it.
+  resourceInventory.invalidate("attached");
 }
 
 /**
@@ -845,7 +849,6 @@ export default function AgentPage() {
       agentType: agent.type,
       status: agent.status,
       vmid: agent.vmid ?? null,
-      proxmoxHost: agent.proxmox_host ?? null,
       hasChatUrl: Boolean(agent.chat_url),
       error: agent.error || null,
     });
@@ -925,10 +928,21 @@ export default function AgentPage() {
   // an unknown or unavailable page is not somewhere to return to. A
   // DigitalOcean session keeps its own views and opens on its chat. Recording
   // cannot navigate: Home follows it only when the app itself opens at Home.
+  // An agent added to this computer (design 5.8): the computer gains a Chat
+  // tab that reaches it through the computer's gateway.
+  const attachedRead = useAttachedAgentChatRead(agent, id);
+  const attachedAgent = attachedRead.target;
+
+  // While that agent's Chat is on screen, the visit is the agent's own
+  // (`a-<attachment id>`), not the computer's Desktop.
+  const attachedVisit = Boolean(flagOn && attachedAgent && agent?.id === id && tab === "chat");
   const visitTab: Tab | null = flagOn && agent && agent.id === id
-    ? agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
+    ? attachedVisit || agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
     : null;
-  useRecordVisit(id ? hivraRuntimeUid(id) : null, visitTab);
+  useRecordVisit(
+    attachedVisit && attachedAgent ? `a-${attachedAgent.attachmentId}` : id ? hivraRuntimeUid(id) : null,
+    visitTab,
+  );
 
   // Read-only capability refresh once per computer id/session, started as
   // soon as the computer is known so Desktop rarely waits on it. It is the
@@ -1010,8 +1024,8 @@ export default function AgentPage() {
   // is the durable workspace capability signal (agentSurfacesFor). The
   // surfaces handle transient gateway outages themselves so navigation does
   // not appear and disappear with live probes.
-  const computerTabs: Tab[] = isComputer ? agentSurfacesFor(agent) : [];
-  const tabs = agentSurfacesFor(agent).map((id) => ({
+  const computerTabs: Tab[] = isComputer ? withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent) : [];
+  const tabs = withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent).map((id) => ({
     id,
     // A computer's own shell is just "Terminal"; an agent's CLI is its session.
     label: agentSurfaceLabel(id, def),
@@ -1043,7 +1057,12 @@ export default function AgentPage() {
     surfaceKind: def?.surface,
     resourceKind: def?.resourceKind,
   });
-  const effectiveTab: Tab = shownTab(agent, tab);
+  // The attached agent's Chat (design 5.8). Its deep link waits for the
+  // computer's attach read rather than open the landing surface (and start a
+  // Desktop session) only to replace it a moment later.
+  const attachedChatShown = isComputer && tab === "chat"
+    && (computerTabs.includes("chat") || (requestedTab === "chat" && attachedRead.checking));
+  const effectiveTab: Tab = attachedChatShown ? "chat" : shownTab(agent, tab);
   const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
   const unavailableTab = isComputer
     ? COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
@@ -1274,6 +1293,12 @@ export default function AgentPage() {
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
           )
+        ) : effectiveTab === "chat" && isComputer ? (
+          attachedAgent && agent.chat_url ? (
+            <AttachedAgentChat computerId={agent.id} computerName={agent.name} chatUrl={agent.chat_url}
+              installationId={attachedAgent.installationId} token={agent.api_token} agentName={attachedAgent.agentName} />
+          ) : attachedRead.checking ? <LoadingState compact label="Checking this computer…" />
+            : <Stub title="No agent here yet" body="Add an agent to this computer in Manage." />
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
             <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />

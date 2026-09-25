@@ -339,6 +339,36 @@ if [ "$RESTART_BOX_TTYD" = 1 ] && ! systemctl try-restart bux-box-ttyd.service; 
 [ "$RESTART_AGENT_TTYD" = 1 ] || printf 'HIVRA_TERMINAL_RESTART_DEFERRED bux-ttyd.service\n'
 [ "$RESTART_BOX_TTYD" = 1 ] || printf 'HIVRA_TERMINAL_RESTART_DEFERRED bux-box-ttyd.service\n'
 
+# Check the terminals the way the owner reaches them: through the gateway. A
+# terminal restarted above now listens on its owner-only socket, and the gateway
+# must report it there (its own owner and mode checks); a terminal whose restart
+# was deferred keeps its loopback port until its next start, and the gateway
+# falls back to that port meanwhile. A proxied request to each must answer 200:
+# a check made around the gateway would pass while the gateway refused the
+# socket and Terminal stayed broken.
+AUTH_HEADER="$WORK/gateway-auth.header"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN")" > "$AUTH_HEADER"
+TERMINALS=0
+for _ in $(seq 1 30); do
+  META="$(curl -fsS --max-time 5 -H @"$AUTH_HEADER" "http://127.0.0.1:${CHAT_PORT}/api/meta" 2>/dev/null || true)"
+  if printf '%s' "$META" | HIVRA_AGENT_SOCKET="$RESTART_AGENT_TTYD" HIVRA_BOX_SOCKET="$RESTART_BOX_TTYD" node -e '
+    let value=""; process.stdin.on("data", chunk => value += chunk);
+    process.stdin.on("end", () => {
+      try {
+        const t=JSON.parse(value).terminals || {};
+        const ok=(transport, restarted) => restarted === "1" ? transport === "socket" : transport === "socket" || transport === "port";
+        process.exit(ok(t.terminal, process.env.HIVRA_AGENT_SOCKET) && ok(t.boxTerminal, process.env.HIVRA_BOX_SOCKET) ? 0 : 1);
+      } catch { process.exit(1); }
+    });
+  ' && [ "$(curl -sS --max-time 5 -H @"$AUTH_HEADER" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${CHAT_PORT}/terminal/" 2>/dev/null || true)" = 200 ] \
+    && [ "$(curl -sS --max-time 5 -H @"$AUTH_HEADER" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${CHAT_PORT}/box-terminal/" 2>/dev/null || true)" = 200 ]; then
+    TERMINALS=1; break
+  fi
+  sleep 1
+done
+rm -f -- "$AUTH_HEADER"
+if [ "$TERMINALS" != 1 ]; then rollback; echo "terminals did not answer through the gateway on their owner-only sockets" >&2; exit 1; fi
+
 TOKEN_HASH_AFTER="$(sha256sum "$TOKEN" | awk '{print $1}')"
 TOKEN_INODE_AFTER="$(stat -c '%d:%i:%u:%g:%a' "$TOKEN")"
 KIND_AFTER="$(cat "$KIND")"

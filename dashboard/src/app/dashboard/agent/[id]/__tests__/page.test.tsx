@@ -138,6 +138,19 @@ jest.mock("@/components/hivra/HivraConsoleDesktop", () => ({
     <iframe data-testid="windows-desktop" title="Windows desktop" hidden={!active} />,
 }));
 
+// An agent added to a computer (design 5.8): the page reads it from the
+// computer's attach gate. Elsewhere the gate is not offered.
+const mockFetchAttachGate = jest.fn();
+jest.mock("@/lib/agent-computers/attach-client", () => ({
+  ...jest.requireActual("@/lib/agent-computers/attach-client"),
+  fetchAttachGate: (...args: unknown[]) => mockFetchAttachGate(...args) ?? Promise.resolve({ state: "not_offered" }),
+}));
+jest.mock("@/components/hivra/AttachedAgentChat", () => ({
+  ...jest.requireActual("@/components/hivra/AttachedAgentChat"),
+  AttachedAgentChat: ({ agentName, installationId, chatUrl }: { agentName: string; installationId: string; chatUrl: string }) =>
+    <div data-testid="attached-chat">{agentName} {installationId} via {chatUrl}</div>,
+}));
+
 // Keep the component's build-time flag false so these tests exercise the same
 // hostname-resolved hydration path as Canary, independent of the caller's env.
 const previousHivraEnv = process.env.NEXT_PUBLIC_HIVRA_AGENTS;
@@ -1957,7 +1970,6 @@ describe("AgentPage", () => {
       cpu: 2,
       ram: 4,
       vmid: 1090,
-      proxmox_host: "fixturenode10",
       chat_url: null,
       api_token: null,
     });
@@ -1978,7 +1990,6 @@ describe("AgentPage", () => {
         agentType: "claude-code",
         status: "error",
         vmid: 1090,
-        proxmoxHost: "fixturenode10",
         hasChatUrl: false,
         error: "Proxmox target fixturenode10 is missing target-specific values",
       }),
@@ -2245,6 +2256,70 @@ describe("AgentPage", () => {
       ([url, init]) => String(url).includes("/remote-desktop") && String(init?.body || "").includes('"refresh"'),
     ).length;
     expect(refreshCallsAfter).toBe(1);
+  });
+
+  describe("an agent added to this computer (design 5.8)", () => {
+    const INSTALLATION = "55555555-5555-4555-8555-555555555555";
+    const gateWith = (attachment: Record<string, unknown>) => ({ state: "ready", gate: { attachments: [attachment] } });
+    async function chatTab() {
+      const direct = screen.queryByRole("button", { name: "Chat" });
+      if (direct) return direct;
+      const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
+      if (tools) fireEvent.click(tools);
+      return screen.queryByRole("button", { name: "Chat" }) ?? screen.queryByRole("menuitem", { name: "Chat" });
+    }
+
+    it("gains a Chat tab for it once it is ready, reaching it through the computer's gateway", async () => {
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      mockFetchAttachGate.mockResolvedValue(gateWith({ phase: "attached", installationId: INSTALLATION, agentName: "Codex" }));
+      render(<AgentPage />);
+      await screen.findByTestId("remote-desktop");
+      await waitFor(() => expect(mockFetchAttachGate).toHaveBeenCalledWith("agent_123"));
+      const tab = await waitFor(async () => { const found = await chatTab(); expect(found).not.toBeNull(); return found!; });
+      fireEvent.click(tab);
+      expect(await screen.findByTestId("attached-chat")).toHaveTextContent(`Codex ${INSTALLATION} via https://box.example.com`);
+    });
+
+    it("opens its Chat deep link without first showing the computer's Desktop", async () => {
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "chat" : null);
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      let answer!: (value: unknown) => void;
+      mockFetchAttachGate.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+      render(<AgentPage />);
+      await waitFor(() => expect(mockFetchAttachGate).toHaveBeenCalledWith("agent_123"));
+      // While the computer's attach read is out, the Desktop stays closed: it is
+      // never opened (and a session started) only to be replaced by Chat.
+      expect(await screen.findByText("Checking this computer…")).toBeInTheDocument();
+      const desktop = screen.queryByTestId("remote-desktop");
+      if (desktop) expect(desktop).not.toBeVisible();
+      await act(async () => { answer(gateWith({ phase: "attached", installationId: INSTALLATION, agentName: "Codex" })); });
+      expect(await screen.findByTestId("attached-chat")).toHaveTextContent(`Codex ${INSTALLATION} via https://box.example.com`);
+      const after = screen.queryByTestId("remote-desktop");
+      if (after) expect(after).not.toBeVisible();
+    });
+
+    // Recents and Home keep the added agent as its own resource: its Chat was
+    // recorded as the computer (x-<computer>) on its Desktop.
+    it("records its own visit, a-<attachment id> on Chat, while its Chat is on screen", async () => {
+      const ATTACHMENT = "77777777-7777-4777-8777-777777777777";
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "chat" : null);
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      mockFetchAttachGate.mockResolvedValue(gateWith({ id: ATTACHMENT, phase: "attached", installationId: INSTALLATION, agentName: "Codex" }));
+      render(<AgentPage />);
+      expect(await screen.findByTestId("attached-chat")).toBeInTheDocument();
+      await waitFor(() => expect(listRecents()).toContainEqual({ uid: `a-${ATTACHMENT}`, tab: "chat", usedAt: expect.any(Number) }));
+      expect(lastTabFor("x-agent_123")).not.toBe("chat");
+    });
+
+    it("has no Chat tab while the agent is still being added", async () => {
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      mockFetchAttachGate.mockResolvedValue(gateWith({ phase: "dispatched", installationId: null, agentName: "Codex" }));
+      render(<AgentPage />);
+      await screen.findByTestId("remote-desktop");
+      await waitFor(() => expect(mockFetchAttachGate).toHaveBeenCalled());
+      expect(await chatTab()).toBeNull();
+      expect(screen.queryByTestId("attached-chat")).not.toBeInTheDocument();
+    });
   });
 
   // The sidebar, ⌘K and Home reuse a list of agents read in the last few

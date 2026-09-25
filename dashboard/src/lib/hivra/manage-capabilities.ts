@@ -339,7 +339,9 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
 
   const present: Record<ManageSectionId, boolean> = {
     overview: true,
-    agents: attachAgents,
+    // Every computer Manage shows lists its agents; ComputerAgentsPanel offers
+    // "Add an agent" where attach is available and an honest slot elsewhere.
+    agents: isComputer && variant !== "linux-sandbox",
     model: hasModelSection(row, variant),
     resources: true,
     recovery: capShown(restorePoints) || capShown(folderRecovery),

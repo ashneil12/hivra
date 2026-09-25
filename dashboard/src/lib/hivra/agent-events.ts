@@ -32,7 +32,13 @@ type HivraAgentEvent =
   | "runtime_updated"
   | "snapshot_created"
   | "snapshot_restored"
-  | "deleted";
+  | "deleted"
+  // An agent added to a computer its owner already has (design 5.7): ids and
+  // labels only, never tokens, prompts or paths inside the agent's home.
+  | "agent_attached"
+  | "agent_attach_failed"
+  | "agent_access_changed"
+  | "agent_removed";
 
 interface LogHivraAgentEventArgs {
   userId: string;
