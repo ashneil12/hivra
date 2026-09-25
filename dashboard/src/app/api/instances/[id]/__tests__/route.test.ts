@@ -5,7 +5,7 @@ import { buildLegacyManagedGatewayRunPython, buildManagedGatewayStatusCommand } 
 import { DELETE, GET, PATCH, POST, isAdvancedCloudAccessEligible } from "../route";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { enableServerBackup, getServer, powerOnServer, rebuildServer, shutdownServer } from "@/lib/hetzner/client";
+import { disableServerBackup, enableServerBackup, getServer, powerOnServer, rebuildServer, shutdownServer } from "@/lib/hetzner/client";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-orchestrator";
 import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
@@ -1705,7 +1705,7 @@ describe("POST /api/instances/[id]", () => {
     expect(hostUpdateEqMock).toHaveBeenCalledWith("id", "host-456");
   });
 
-  it("keeps the attached host in provisioning while a shared instance restore is underway", async () => {
+  it("refuses the removed restore_backup action without rebuilding the server", async () => {
     const hostUpdateEqMock = jest.fn().mockResolvedValue({ error: null });
     const hostUpdateMock = jest.fn().mockReturnValue({
       eq: hostUpdateEqMock,
@@ -1770,38 +1770,21 @@ describe("POST /api/instances/[id]", () => {
       throw new Error(`Unexpected table ${table}`);
     });
 
+    // restore_backup rebuilt the owner's server from any caller-supplied
+    // Hetzner image id without checking the image belonged to that server, so
+    // another tenant's backup or snapshot could be booted on the caller's
+    // server. Nothing in the UI used it; the action is gone.
     const response = await POST(
       makeJsonRequest("http://localhost/api/instances/inst-123", { action: "restore_backup", backupId: 99 }, { method: "POST" }),
       { params: Promise.resolve({ id: "inst-123" }) }
     );
     const json = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(json.success).toBe(true);
-    expect(rebuildServer).toHaveBeenCalledWith(42, { image: "99" });
-    expect(instanceUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "redeploying",
-        updated_at: expect.any(String),
-      })
-    );
-    // F055: the instance status mirror is scoped to the TARGET instance only
-    // (not host_id), so a shared-host power action never flips siblings' rows.
-    // The host mirror row (hermes_hosts) still syncs — asserted via hostUpdateEqMock.
-    expect(instanceUpdateEqMock).toHaveBeenCalledWith("id", "inst-123");
-    expect(instanceUpdateEqMock).not.toHaveBeenCalledWith("host_id", "host-456");
-    expect(instanceUpdateNotMock).toHaveBeenCalledWith(
-      "status",
-      "in",
-      '("deleted","scheduled_for_deletion")'
-    );
-    expect(hostUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "provisioning",
-        updated_at: expect.any(String),
-      })
-    );
-    expect(hostUpdateEqMock).toHaveBeenCalledWith("id", "host-456");
+    expect(response.status).toBe(400);
+    expect(json.error).toBe("Unknown action");
+    expect(rebuildServer).not.toHaveBeenCalled();
+    expect(instanceUpdateMock).not.toHaveBeenCalled();
+    expect(hostUpdateMock).not.toHaveBeenCalled();
   });
 
   it("does not update the instance row if the shared host status cannot be synced", async () => {
@@ -2425,6 +2408,29 @@ describe("PATCH /api/instances/[id]", () => {
 
     expect(response.status).toBe(403);
     expect(json.error).toContain("only available on isolated customer VMs");
+    expect(instanceUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to enable paid Hetzner backups from the settings PATCH", async () => {
+    // Backups are a paid add-on enabled only through /api/billing/backup-addon;
+    // the settings PATCH used to turn them on at Hetzner without the charge.
+    instanceRow = {
+      ...instanceRow,
+      hetzner_server_id: 42,
+    };
+
+    const response = await PATCH(
+      new NextRequest("http://localhost/api/instances/inst-123", {
+        method: "PATCH",
+        body: JSON.stringify({ backupsEnabled: true }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(json.error).toContain("paid add-on");
+    expect(enableServerBackup).not.toHaveBeenCalled();
     expect(instanceUpdateMock).not.toHaveBeenCalled();
   });
 
@@ -3257,13 +3263,15 @@ describe("PATCH /api/instances/[id]", () => {
 
   it("does not leak raw Hetzner backup toggle failures", async () => {
     (log.error as jest.Mock).mockClear();
-    (enableServerBackup as jest.Mock).mockRejectedValueOnce(new Error("hetzner-backup-secret"));
+    // Enabling is refused before any Hetzner call (paid add-on only), so the
+    // failure path is exercised through the still-allowed disable toggle.
+    (disableServerBackup as jest.Mock).mockRejectedValueOnce(new Error("hetzner-backup-secret"));
 
     const response = await PATCH(
       new NextRequest("http://localhost/api/instances/inst-123", {
         method: "PATCH",
         body: JSON.stringify({
-          backupsEnabled: true,
+          backupsEnabled: false,
         }),
       }),
       { params: Promise.resolve({ id: "inst-123" }) }

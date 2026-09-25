@@ -20,13 +20,22 @@ interface InstanceUpdateReportRecord {
 // A late/retried/replayed "succeeded" callback must never resurrect an
 // instance that has since been soft-deleted or moved to a terminal/cold
 // lifecycle state. We still record the ops-event, but skip the status write.
+// `scheduled_for_deletion` belongs here too: reviving it to "running" takes
+// the row out of the purge-expired cron's selection, so its VM is never torn
+// down.
 const NON_RESURRECTABLE_STATUSES = new Set([
   "deleted",
+  "scheduled_for_deletion",
   "archived",
   "cold_archived",
   "stopped",
   "suspended",
 ]);
+// PostgREST `not.in` list for the same statuses, so the write itself refuses a
+// row that moved into one of them after we read it.
+const NON_RESURRECTABLE_STATUS_FILTER = `(${[...NON_RESURRECTABLE_STATUSES]
+  .map((status) => `"${status}"`)
+  .join(",")})`;
 
 interface NormalizedUpdateReport {
   status: UpdateStatus;
@@ -121,7 +130,8 @@ async function recordUpdateReport(params: {
     const { error: statusError } = await supabaseAdmin
       .from("hermes_instances")
       .update({ status: nextInstanceStatus, updated_at: new Date().toISOString() })
-      .eq("id", instance.id);
+      .eq("id", instance.id)
+      .not("status", "in", NON_RESURRECTABLE_STATUS_FILTER);
 
     if (statusError) {
       return apiError("Failed to update instance status", 500);
