@@ -7,15 +7,23 @@ import { parseAttachmentArtifactResult, type AttachmentArtifactResult } from "./
 import { parseAttachmentGuestResult, snapshotAttachmentGuestExpectation,
   type AttachmentGuestResult, type ExpectedAttachmentGuestResult } from "./attachment-guest-result";
 import { ATTACHMENT_ACTION_TIMEOUTS, buildAttachmentHostActionScript, type AttachmentGuestAction } from "./attachment-host-action";
+import { parseAttachmentTargetRefusal, parseGuestStepRefusal, type AttachmentTargetRefusal } from "./attachment-host-observation";
 
 type Dependencies = {
   resolveContext: typeof resolveHivraAgentExecutionContext;
   runHostScript: typeof runProxmoxHostScript;
 };
+/** What run-attached-codex-bundle.py names when a fetch, stage or observe raised (design 5.5, T3). */
+export const ATTACHMENT_STAGING_REFUSALS = ["fetch_failed", "staging_failed", "staging_in_progress", "staging_absent",
+  "staging_unresolved", "computer_restarted", "bundle_invalid"] as const;
+export type AttachmentStagingRefusal = typeof ATTACHMENT_STAGING_REFUSALS[number];
 export type AttachmentHostActionResult =
   | { ok: true; action: "fetch"; artifact: AttachmentArtifactResult }
   | { ok: true; action: "stage" | "observe"; staged: AttachmentGuestResult }
-  | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" };
+  | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" }
+  | { ok: false; code: "target_refused"; reason: AttachmentTargetRefusal }
+  /** The program ran in the VM and ended with this refusal: nothing is left to wait for. */
+  | { ok: false; code: "guest_refused"; reason: AttachmentStagingRefusal };
 
 /** Internal transport adapter only, deliberately not called by a route yet.
  * Inputs must be loaded from the owned durable claim/reservation/boot records.
@@ -52,7 +60,12 @@ export async function executeAttachmentGuestAction(
   try {
     const result = await deps.runHostScript(script, { ...context.env },
       { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32 * 1024 });
-    if (!result.ok) return { ok: false, code: "transport_failed" };
+    if (!result.ok) {
+      const refused = parseAttachmentTargetRefusal(result.stdout);
+      if (refused) return { ok: false, code: "target_refused", reason: refused };
+      const named = parseGuestStepRefusal(result.stdout, ATTACHMENT_STAGING_REFUSALS);
+      return named ? { ok: false, code: "guest_refused", reason: named } : { ok: false, code: "transport_failed" };
+    }
     if (action === "fetch") {
       const artifact = parseAttachmentArtifactResult(result.stdout, expected);
       return artifact ? { ok: true, action, artifact } : { ok: false, code: "invalid_result" };

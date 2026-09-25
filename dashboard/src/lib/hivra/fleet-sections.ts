@@ -78,6 +78,8 @@ export function duplicateFleetNames(
  * conversation — so the destination is derived, never guessed at the call site.
  */
 export function fleetEntryHref(agent: UnifiedAgent): string {
+  // An agent added to a computer opens that computer's Chat tab (or its progress).
+  if (agent.attachment && agent.href) return agent.href;
   if (agent.kind === "hermes") {
     return `/dashboard/instances/${encodeURIComponent(agent.id)}`;
   }

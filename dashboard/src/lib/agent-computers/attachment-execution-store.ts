@@ -11,8 +11,8 @@ export class AttachmentExecutionStoreError extends Error {
   constructor() { super("Attachment state could not be confirmed; preserve the operation."); }
 }
 
-/** No route calls this adapter yet. Mutation RPCs remain private in migrations;
- * adding this client never grants the application permission to dispatch.
+/** The staging chain's database calls, driven only by the attach worker. Each
+ * mutation is one owner-bound compare-and-swap in the database.
  */
 export function createAttachmentExecutionStore(db: Database | null = supabaseAdmin) {
   async function rpc(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -49,8 +49,10 @@ export function createAttachmentExecutionStore(db: Database | null = supabaseAdm
     recordBoot(s: AttachmentExecutionSnapshot, bootId: string) {
       return mutation("observe_hivra_attachment_guest", { ...authority(s), p_boot_id: bootId, p_worker_sha256: ATTACHMENT_GUEST_WORKER_SHA256 });
     },
+    // The v2 dispatch counts the owner's plan slots under their lock again and
+    // cancels a claim that went over the limit (design 5.1, T35).
     dispatch(s: AttachmentExecutionSnapshot, dispatchId: string) {
-      return mutation("dispatch_hivra_agent_attachment", { ...authority(s), p_dispatch_id: dispatchId,
+      return mutation("dispatch_hivra_agent_attachment_v2", { ...authority(s), p_dispatch_id: dispatchId,
         p_installer_sha256: ATTACHED_CODEX_STAGER_SHA256 });
     },
     recordStaged(s: AttachmentExecutionSnapshot, result: AttachmentGuestResult) {

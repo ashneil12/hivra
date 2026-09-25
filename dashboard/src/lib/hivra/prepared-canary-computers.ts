@@ -10,6 +10,7 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { ComputerTemplateId } from "./computer-catalog";
+import { resolvePlanAgentSlots } from "./resource-gate";
 
 const Slot = z.object({
   host: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
@@ -168,9 +169,16 @@ const defaults: Dependencies = {
   },
   insert: async row => {
     if (!supabaseAdmin) throw new Error("database_unavailable");
-    const { data, error } = await supabaseAdmin.from("hivra_agents").insert(row).select().single();
-    if (error || !data) throw error ?? new Error("insert_unconfirmed");
-    return data as AgentRow;
+    // A prepared computer is a Hivra-managed row, so the database writes it
+    // only after counting the owner's plan slots under the slot lock (T35).
+    const slots = await resolvePlanAgentSlots(String(row.user_id));
+    if (!slots) throw new Error("plan_access_required");
+    const { data, error } = await supabaseAdmin.rpc("insert_hivra_managed_agent", { p_row: row, p_agent_limit: slots.agentLimit });
+    if (error) throw error;
+    const result = data as { status?: unknown; row?: unknown } | null;
+    if (result?.status === "plan_agent_limit") throw new Error("plan_agent_limit");
+    if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") throw new Error("insert_unconfirmed");
+    return result.row as AgentRow;
   },
   markBindingEnforced: async row => {
     if (!supabaseAdmin) throw new Error("database_unavailable");

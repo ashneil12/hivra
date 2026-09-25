@@ -151,6 +151,11 @@ const nextConfig: NextConfig = {
       "./provisioner/**/*",
       "./provisioner/.gitignore",
     ],
+    // The attach worker sends the pinned staging and lifecycle programs.
+    "/api/cron/progress-agent-attachments": [
+      "./provisioner/**/*",
+      "./provisioner/.gitignore",
+    ],
     // The pinned server setup script. Its routes refuse to serve it if it is
     // missing or hashes differently, so each one must carry it.
     "/enroll": ["./bootstrap/server-enroll.sh"],

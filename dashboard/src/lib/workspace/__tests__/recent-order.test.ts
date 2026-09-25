@@ -48,4 +48,15 @@ describe("recent order", () => {
     expect(switcherGroups(items.slice(0, 2), options([])).map((group) => group.key)).toEqual(["agent"]);
     expect(switcherGroups([], options(visits("x-alpha")))).toEqual([]);
   });
+
+  // Codex added to x-desk is listed right after x-desk, not among the agents.
+  it("lists an agent added to a computer right after that computer", () => {
+    type Hosted = Item & { host?: string };
+    const withAttached: Hosted[] = [...items, { uid: "a-codex", kind: "agent", host: "x-desk" }, { uid: "a-orphan", kind: "agent", host: "x-gone" }];
+    const groups = switcherGroups(withAttached, { ...options(visits()), hostUid: (item: Hosted) => item.host });
+    expect(groups.map((group) => [group.key, group.items.map((item) => item.uid)])).toEqual([
+      ["agent", ["x-alpha", "x-beta", "h-gamma", "a-orphan"]],
+      ["computer", ["x-desk", "a-codex", "x-lab"]],
+    ]);
+  });
 });

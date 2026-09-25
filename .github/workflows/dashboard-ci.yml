@@ -170,9 +170,63 @@ jobs:
       - name: Verify public dashboard artifact boundary
         run: npm run verify:public-artifact
 
+  # The attach helpers need root, mounts and a real kernel (idmapped mounts on
+  # tmpfs need 6.3 or later; ubuntu-latest has 6.8), so they run in owned,
+  # disposable containers on the runner, never on a real computer. The host
+  # step test runs the exact scripts Hivra generates against a fake qm.
+  attach-fixtures:
+    name: Attach host and guest fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      PYTHON_IMAGE: python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
+      DEBIAN_IMAGE: node:22-bookworm@sha256:dd5847a04b0deee391fa145f1f4c6d214196668b6bcc7988ebed67249f226844
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Attached network filter rendering (T5, T36, T37)
+        run: python3 -I -B scripts/test-attached-network-sets.py
+
+      - name: Attached DNS relay (T36)
+        run: docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-dns-relay.py
+
+      - name: Attached workspace helper and the Remove walker (T4, T10, T23, T31)
+        run: docker run --rm --network none --privileged --tmpfs /home --tmpfs /var/lib/hivra -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-workspace-helper.py
+
+      - name: Attached contract read-back (T33)
+        run: docker run --rm --network none --privileged -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-contract-readback.py
+
+      - name: Host allocation lock program
+        run: docker run --rm --network none -v "$PWD/src/lib/agent-computers/attachment-host-observation.ts":/tmp/attachment-host-observation.ts:ro -v "$PWD/scripts":/scripts:ro "$DEBIAN_IMAGE" python3 -I -B /scripts/test-attachment-host-lock.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Attach host steps release the host lock while the guest works (T3, T25)
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/host-step-fixture"
+          HIVRA_HOST_STEP_FIXTURE_DIR="$fixture" npx jest --ci src/lib/agent-computers/__tests__/attachment-host-step.test.ts
+          test -s "$fixture/step-ok.sh"
+          docker run --rm --network none -v "$PWD/scripts":/scripts:ro -v "$fixture":/fixture:ro "$DEBIAN_IMAGE" python3 -I -B /scripts/test-attachment-host-step.py
+
   verify-dashboard:
     name: Verify Dashboard
-    needs: [static-checks, jest, build]
+    needs: [static-checks, jest, build, attach-fixtures]
     # Always report, so a failed or cancelled job fails this check instead of
     # leaving it skipped.
     if: ${{ always() }}

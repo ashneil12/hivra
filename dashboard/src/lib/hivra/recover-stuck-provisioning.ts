@@ -1678,9 +1678,11 @@ export async function runRecoverStuckHivraProvisioningSweep(
     .from("hivra_agents")
     .select(STUCK_AGENT_COLUMNS)
     .not("operation_id", "is", null)
-    // Desktop preparation has its own evidence rules and candidate cap below;
-    // its long-lived leases must not starve this limited lifecycle sweep.
-    .neq("operation_kind", "desktop_prepare")
+    // Desktop preparation has its own evidence rules and candidate cap below,
+    // and an attached agent's steps end only through the attach worker's own
+    // receipts; their long-lived leases must not be cleared by, or starve,
+    // this limited lifecycle sweep.
+    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
     // intentionally retained leases must not fill the oldest-12 snapshot/

@@ -221,15 +221,16 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
         return chain;
       });
       chain.not = jest.fn((col: string, op: string, val: unknown) => {
+        if (col === "operation_kind") {
+          expect([op, val]).toEqual(["in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)"]);
+          excludesDesktopPrepare = true;
+          return chain;
+        }
         filters.push([`${col}:${op}`, val]);
         return chain;
       });
       chain.lt = jest.fn(self);
-      chain.neq = jest.fn((col: string, val: unknown) => {
-        expect([col, val]).toEqual(["operation_kind", "desktop_prepare"]);
-        excludesDesktopPrepare = true;
-        return chain;
-      });
+      chain.neq = jest.fn(self);
       chain.order = jest.fn(self);
       chain.or = jest.fn((filter: string) => {
         if (filter === "computer_profile.is.null,computer_profile.eq.ubuntu-desktop") return chain;
@@ -261,7 +262,8 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
             && row.type === "linux-desktop" && (row.computer_profile ?? "ubuntu-desktop") === "ubuntu-desktop");
           return resolve({ data: prepareRows.slice(0, candidateLimit), error: null });
         }
-        const eligible = excludesDesktopPrepare ? rows.filter(row => row.operation_kind !== "desktop_prepare") : rows;
+        const eligible = excludesDesktopPrepare ? rows.filter(row => !["desktop_prepare", "agent_attach", "agent_access_change", "agent_detach"]
+          .includes(String(row.operation_kind))) : rows;
         const candidates = excludesFolderRecovery ? eligible.filter((row) => row.operation_kind !== "restore"
           || (row.operation_payload as Record<string, unknown> | null)?.folderRecoveryId == null) : eligible;
         return resolve({ data: candidates.slice(0, candidateLimit), error: null });
@@ -599,10 +601,12 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     }));
   });
 
-  it.each(["folder", "desktop_prepare"])("does not let twelve old %s journals starve an unrelated recoverable lifecycle operation", async kind => {
+  // An attached agent's steps (design 5.5) hold the computer's lease until the
+  // attach worker records their own receipt; this sweep never touches them.
+  it.each(["folder", "desktop_prepare", "agent_attach", "agent_access_change", "agent_detach"])("does not let twelve old %s journals starve an unrelated recoverable lifecycle operation", async kind => {
     const folderRows = Array.from({ length: 12 }, (_, index) => buildStuckRow({
       id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
-      operation_kind: kind === "folder" ? "restore" : "desktop_prepare",
+      operation_kind: kind === "folder" ? "restore" : kind,
       operation_payload: kind === "folder" ? { folderRecoveryId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } : {},
       operation_started_at: "2026-06-01T00:00:00Z",
     }));

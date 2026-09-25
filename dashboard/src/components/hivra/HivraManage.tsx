@@ -17,7 +17,8 @@ import { AgentModelSettings } from "./AgentModelSettings";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
-import { ComputerAgentSlot, ComputerContractPanel } from "./ComputerContractPanel";
+import { ComputerContractPanel } from "./ComputerContractPanel";
+import { ComputerAgentsPanel } from "./ComputerAgentsPanel";
 
 import {
   stopAgent, startAgent, restartAgent, updateAgentRuntime, resizeAgent, renameAgent, deleteAgent, browserToggle,
@@ -746,11 +747,12 @@ export function HivraManage({
       </div>
 
       {/* COMPUTER — the agent and its computer as one pair (ATT-11), and what
-          the agent knows about it (the Computer Contract). A computer without
-          an agent shows an honest Agent slot until attach exists. */}
+          the agent knows about it (the Computer Contract). A computer lists
+          the agents added to it, and offers "Add an agent" where attach is
+          available; elsewhere it shows the honest Agent slot. */}
       <div id="manage-computer" className="hm-anchor" />
       {isComputerOnly ? (
-        <ComputerAgentSlot />
+        <ComputerAgentsPanel computerId={agent.id} computerName={agent.name} />
       ) : (
         <ComputerContractPanel agent={agent} runtimeName={def?.name || "This agent"} />
       )}

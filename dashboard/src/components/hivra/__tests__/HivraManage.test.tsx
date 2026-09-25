@@ -722,12 +722,20 @@ describe("HivraManage lifecycle guidance", () => {
       expect(mockFetchComputerContract).toHaveBeenCalledWith("test-agent", expect.anything());
     });
 
-    it("gives a computer an honest Agent slot instead of a contract", () => {
-      render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm" }}
-        def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
-      expect(screen.getByText("No agent works on this computer.")).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
-      expect(mockFetchComputerContract).not.toHaveBeenCalled();
+    it("gives a computer an honest Agent slot instead of a contract where attach is not offered", async () => {
+      // Production answers the attach route with 404: the slot is what it was.
+      const original = global.fetch;
+      global.fetch = jest.fn(async () => ({ status: 404, ok: false, json: async () => ({ success: false, error: "Not found" }) })) as unknown as typeof fetch;
+      try {
+        render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm" }}
+          def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+        expect(await screen.findByText("No agent works on this computer.")).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
+        expect(global.fetch).toHaveBeenCalledWith(`/api/hivra/computers/${agent.id}/agents`, { cache: "no-store" });
+        expect(mockFetchComputerContract).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = original;
+      }
     });
 
     it("offers a section jump strip that scrolls to the chosen section", async () => {

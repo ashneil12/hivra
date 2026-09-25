@@ -72,6 +72,12 @@ async function main() {
     await db.exec(migration('20260830132000_launch_fingerprint_key_separation.sql'));
     await db.exec(migration('20260905140000_managed_provisioner_channels.sql'));
     await db.exec(migration('20260915150000_hivra_resource_envelopes.sql'));
+    // Launch reserves through v3, which counts the owner's plan slots
+    // (20260925100000). This fixture holds no Hermes instances or attachments,
+    // so empty tables with the columns that count reads stand in for them.
+    await db.exec(`create table public.hermes_instances (id uuid primary key, user_id text not null, status text, lifecycle_state text);
+      create table public.hivra_agent_attachments (id uuid primary key, user_id text not null, source_id uuid, phase text)`);
+    await db.exec(migration('20260925100000_hivra_agent_slot_limit.sql'));
     const id = randomUUID(), token = 'a'.repeat(64), accountId = randomUUID();
     await db.query("insert into public.managed_venice_wallet_accounts(id,user_id) values($1,'owner')", [accountId]);
     await db.query(`insert into public.hivra_agents(id,user_id,type,name,status,desired_state,vmid,api_token,cf_hostname,cf_tunnel_id,chat_url)
@@ -104,7 +110,8 @@ async function main() {
           admit_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_binding', 'p_request'],
           claim_hivra_model_key_delivery: ['p_user_id', 'p_agent_id', 'p_operation_id'],
           settle_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_lease_id', 'p_receipt'],
-          reserve_hivra_launch_model_request_v2: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key'],
+          // v3 counts the owner's plan slots under the slot lock (migration 20260925100000).
+          reserve_hivra_launch_model_request_v3: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key','p_agent_limit'],
           claim_hivra_launch_model_attempt: ['p_user_id','p_agent_id','p_request_id','p_automatic'],
           promote_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id','p_attempt_id','p_binding','p_request'],
           cancel_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id'],
@@ -114,7 +121,7 @@ async function main() {
           const result = await db.query(`select public.${identifier(name)}(${parameters.map((_,i) => '$'+(i+1)).join(',')}) as result`, parameters.map(key => args[key]));
           if (name === 'admit_hivra_model_key_operation' && loseAdmission) { loseAdmission = false; throw new Error('Synthetic lost admission reply'); }
           if (name === 'settle_hivra_model_key_operation' && loseSettlement) { loseSettlement = false; throw new Error('Synthetic lost settlement reply'); }
-          if (name === 'reserve_hivra_launch_model_request_v2' && loseReservation) { loseReservation = false; throw new Error('Synthetic lost reservation reply'); }
+          if (name === 'reserve_hivra_launch_model_request_v3' && loseReservation) { loseReservation = false; throw new Error('Synthetic lost reservation reply'); }
           if (name === 'promote_hivra_launch_model_request' && losePromotion) { losePromotion = false; throw new Error('Synthetic lost promotion reply'); }
           return { data: result.rows[0].result, error: null };
         } catch (error) { return { data: null, error }; }
@@ -226,7 +233,7 @@ async function main() {
         deployment_mode:'hivra-managed',computer_substrate:'proxmox-kvm',operation_id:provisionId,infrastructure_binding_token_hash:'c'.repeat(64)};
       reservation.managed_provisioner_channel='default';
       return {requestId,agentId,provisionId,modelId,intent,fingerprints,
-        input:{userId:'owner',requestId,modelOperationId:modelId,fingerprints,agent:reservation,llm}};
+        input:{userId:'owner',requestId,modelOperationId:modelId,fingerprints,agent:reservation,llm,agentLimit:100}};
     }
     async function launchReady(f) {
       await db.query("select public.persist_hivra_agent_provision_identity('owner',$1,$2,$3,'10.240.0.4')",[f.agentId,f.provisionId,vmid++]);
