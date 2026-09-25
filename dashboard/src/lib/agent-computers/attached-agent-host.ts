@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { ATTACHED_HELPERS } from "./attachment-service-units";
 import { logAttachmentTransportFailure } from "./attachment-transport-diagnostic";
@@ -70,11 +70,15 @@ export interface AttachedAgentTarget {
   architecture: "x86_64" | "aarch64";
 }
 
-export function buildAttachedAgentHostScript(action: AttachedAgentAction, inputTarget: AttachedAgentTarget, packet: Record<string, unknown>): string {
+/** The host script and, as its own stdin stream, the bundle: at about 150 KB
+ * the bundle is over the host's argument limit, so it never goes inside the
+ * script. Run them with runProxmoxHostScriptWithStdin. */
+export function buildAttachedAgentHostScript(action: AttachedAgentAction, inputTarget: AttachedAgentTarget,
+  packet: Record<string, unknown>): { script: string; stdin: string } {
   const target = snapshotAttachmentObservationTarget(inputTarget);
   const bundle = buildAttachedAgentBundle({ ...packet, action });
   // No private-IP SSH fallback. The host lock covers the VM check and the start only.
-  return buildAttachmentHostStepScript(target, bundle.program, bundle.stdin, ATTACHED_AGENT_TIMEOUTS[action].guestSeconds);
+  return { script: buildAttachmentHostStepScript(target, bundle.program, ATTACHED_AGENT_TIMEOUTS[action].guestSeconds), stdin: bundle.stdin };
 }
 
 // ── Results ─────────────────────────────────────────────────────────────────
@@ -141,7 +145,7 @@ export const ATTACHED_AGENT_REFUSALS = ["computer_update_required", "workspace_p
   "step_refused"] as const;
 export type AttachedAgentRefusal = typeof ATTACHED_AGENT_REFUSALS[number];
 
-type Dependencies = { resolveContext: typeof resolveHivraAgentExecutionContext; runHostScript: typeof runProxmoxHostScript };
+type Dependencies = { resolveContext: typeof resolveHivraAgentExecutionContext; runHostScript: typeof runProxmoxHostScriptWithStdin };
 export type AttachedAgentHostResult =
   | { ok: true; result: AttachedActivationResult | AttachedAccessResult | AttachedRemoveResult | AttachedStateResult }
   | { ok: false; code: "invalid_target" | "authority_unavailable" | "transport_failed" | "invalid_result" }
@@ -161,16 +165,16 @@ export async function executeAttachedAgentStep(
     || agent.infrastructure_binding_token_enforced !== true || agent.vmid !== target.vmid || agent.ip !== target.guestIp) {
     return { ok: false, code: "invalid_target" };
   }
-  const deps = { resolveContext: resolveHivraAgentExecutionContext, runHostScript: runProxmoxHostScript, ...dependencies };
+  const deps = { resolveContext: resolveHivraAgentExecutionContext, runHostScript: runProxmoxHostScriptWithStdin, ...dependencies };
   let context;
   try { context = await deps.resolveContext(ownerId, agent); } catch { return { ok: false, code: "authority_unavailable" }; }
   if (!context.infrastructureBindingTagEnforced || context.infrastructureBindingTag !== target.bindingTag) {
     return { ok: false, code: "authority_unavailable" };
   }
-  let script: string;
-  try { script = buildAttachedAgentHostScript(action, target, packet); } catch { return { ok: false, code: "invalid_target" }; }
+  let step: { script: string; stdin: string };
+  try { step = buildAttachedAgentHostScript(action, target, packet); } catch { return { ok: false, code: "invalid_target" }; }
   try {
-    const result = await deps.runHostScript(script, { ...context.env },
+    const result = await deps.runHostScript(step.script, step.stdin, { ...context.env },
       { timeoutMs: ATTACHED_AGENT_TIMEOUTS[action].hostMs, maxOutputBytes: 64 * 1024 });
     if (!result.ok) {
       const refused = parseAttachmentTargetRefusal(result.stdout);

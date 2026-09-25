@@ -310,6 +310,16 @@ describe("local-mode round trip through the real loader (T29)", () => {
     }
   });
 
+  it("refuses a script whose login command would be over the host's 128 KiB argument limit", async () => {
+    // 98,281 bytes: under the 96 KiB script cap, but its base64 is 131,044
+    // characters and the whole command is past what Linux takes as one argument.
+    const script = ("# " + "x".repeat(97) + "\n").repeat(982) + "#".repeat(80) + "\n";
+    expect(Buffer.byteLength(script)).toBeLessThanOrEqual(96 * 1024);
+    expect(await runProxmoxHostScriptWithStdin(script, "", login, options))
+      .toEqual({ ok: false, stdout: "", stderr: "", error: "Invalid Proxmox host script or stdin" });
+    expect((await runProxmoxHostScriptWithStdin("echo small\n", "", login, options)).stdout).toBe("small\n");
+  });
+
   it("runs a 96 KB script", async () => {
     const filler = ("# " + "x".repeat(97) + "\n").repeat(960);
     const script = filler + "echo done\n";

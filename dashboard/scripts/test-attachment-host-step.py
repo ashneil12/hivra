@@ -10,6 +10,10 @@ A fake `qm` stands in for Proxmox: it answers status and config from fixture
 files, runs `guest exec` programs in the container as the "guest", and records
 at each call whether the host lock is held. The scripts are the ones Hivra
 generates (written by src/lib/agent-computers/__tests__/attachment-host-step.test.ts).
+A step is a script plus the separate stdin its transport carries: `run` sends
+them the way runProxmoxHostScriptWithStdin does, over a root login (the script
+is one `bash -c` argument, the data is stdin) or the sudo loader (both on
+stdin behind a length prefix).
 
 Run from dashboard/:
   HIVRA_HOST_STEP_FIXTURE_DIR="$PWD/.host-step-fixture" npx jest attachment-host-step
@@ -18,7 +22,9 @@ Run from dashboard/:
 (any Debian image with python3, perl and util-linux; Proxmox VE 8 is Debian 12)
 Never run it on a real Proxmox host: it replaces /usr/sbin/qm.
 """
+import base64
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -115,8 +121,24 @@ def events():
     return [line.split() for line in (STATE / 'events').read_text().splitlines()]
 
 
-def run(name, timeout=120):
-    return subprocess.run(['/bin/bash', '-s'], input=(FIXTURE / name).read_bytes(), capture_output=True, timeout=timeout)
+def transport(name, via):
+    """The command and stdin runProxmoxHostScriptWithStdin sends for a step."""
+    script = (FIXTURE / f'{name}.sh').read_bytes()
+    data = (FIXTURE / f'{name}.in').read_bytes()
+    if via == 'login':
+        encoded = base64.b64encode(script).decode()
+        return ['/bin/sh', '-c', f"/bin/bash -c \"$(printf '%s' '{encoded}' | /usr/bin/base64 --decode)\""], data
+    loader = (FIXTURE / 'sudo-loader.sh').read_text()
+    return ['/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL=C', 'HOME=/root',
+            '/bin/bash', '--noprofile', '--norc', '-c', loader], str(len(script)).encode() + b'\n' + script + data
+
+
+def run(name, timeout=120, via='login'):
+    if name.startswith('observation-'):
+        # Observations carry no stdin: runProxmoxHostScript, `bash -s`.
+        return subprocess.run(['/bin/bash', '-s'], input=(FIXTURE / name).read_bytes(), capture_output=True, timeout=timeout)
+    command, data = transport(name, via)
+    return subprocess.run(command, input=data, capture_output=True, timeout=timeout)
 
 
 def lock_free_within(seconds):
@@ -148,8 +170,12 @@ try:
     #    at once instead of waiting behind the attach.
     reset()
     started = time.monotonic()
-    with open(FIXTURE / 'step-ok.sh', 'rb') as script:
-        step = subprocess.Popen(['/bin/bash', '-s'], stdin=script, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    command, data = transport('step-ok', 'login')
+    stdin_read, stdin_write = os.pipe()
+    os.write(stdin_write, data)
+    os.close(stdin_write)
+    step = subprocess.Popen(command, stdin=stdin_read, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    os.close(stdin_read)
     time.sleep(2)
     assert lock_free_within(2), 'another host operation must get the lock while the guest works'
     other_waited = time.monotonic() - started
@@ -164,11 +190,24 @@ try:
     assert not list(Path('/run').glob('hivra-qga-result.*')), 'result file left behind'
     print('PASS the step holds the host lock for the check and the start only; the guest runs 6 s with the lock free')
 
+    # 1a. A real attached agent bundle is over the host's 128 KiB limit for
+    #     one argument. It reaches the guest program byte for byte over both
+    #     transports (live on Canary it failed as "Argument list too long").
+    large = (FIXTURE / 'step-large.in').read_bytes()
+    assert len(large) > 128 * 1024, len(large)
+    for via in ('login', 'sudo'):
+        reset()
+        done = run('step-large', via=via)
+        assert done.returncode == 0, (via, done.returncode, done.stderr[-2000:])
+        assert done.stdout.decode() == f'HIVRA_FIXTURE_STDIN {len(large)} {hashlib.sha256(large).hexdigest()}\n', (via, done.stdout)
+        assert [e[:2] for e in events() if e[0] in ('status', 'dispatch')] == [['status', 'held'], ['dispatch', 'held']], events()
+    print(f'PASS a {len(large)}-byte attached agent bundle reaches the guest intact over the login and sudo transports')
+
     # 1b. A guest program that raised ends the step with its one named refusal
     #    line, carried through the guest exec and the host script (T3).
     #    Before 2: its late guest job would answer a reused fake pid.
-    for name, line in (('step-refused.sh', 'HIVRA_GUEST_STEP_REFUSED step_refused\n'),
-                       ('stage-refused.sh', 'HIVRA_GUEST_STEP_REFUSED bundle_invalid\n')):
+    for name, line in (('step-refused', 'HIVRA_GUEST_STEP_REFUSED step_refused\n'),
+                       ('stage-refused', 'HIVRA_GUEST_STEP_REFUSED bundle_invalid\n')):
         reset()
         done = run(name)
         assert done.returncode == 1, (name, done)
@@ -178,7 +217,7 @@ try:
 
     # 2. The step's deadline ends the wait (the guest keeps its own deadline).
     reset()
-    done = run('step-deadline.sh')
+    done = run('step-deadline')
     assert done.returncode == 124 and b'HIVRA_QGA_FAILURE await_timeout' in done.stderr, done
     print('PASS the wait ends at the step deadline')
 
@@ -186,7 +225,7 @@ try:
     reset()
     (STATE / 'exec-status-fails').write_text('')
     started = time.monotonic()
-    done = run('step-ok.sh')
+    done = run('step-ok')
     assert done.returncode == 125 and b'HIVRA_QGA_FAILURE status_unavailable' in done.stderr, done
     assert time.monotonic() - started < 40
     print('PASS a guest agent that stops answering ends the wait, and no other VM is asked')
@@ -198,7 +237,7 @@ try:
                            ({'ipconfig': f"ip={target['guestIp']}/33"}, 'address_mismatch'),
                            ({'ipconfig': f"ip={target['guestIp']}"}, 'address_mismatch')]:
         reset(**change)
-        done = run('step-ok.sh')
+        done = run('step-ok')
         assert done.returncode == 3, (change, done)
         assert done.stdout.decode() == f'HIVRA_ATTACHMENT_TARGET_REFUSED {reason}\n', (change, done.stdout)
         assert not any(e[0] == 'dispatch' for e in events()), 'nothing may run in a refused VM'
@@ -206,7 +245,7 @@ try:
 
     # 5. A My server guest on another prefix length is the same guest.
     reset(ipconfig=f"ip={target['guestIp']}/26,gw=10.241.0.1")
-    done = run('step-ok.sh')
+    done = run('step-ok')
     assert done.returncode == 0 and b'"marker":"ok"' in done.stdout, done
     print('PASS the guest address is accepted with a /26 prefix')
 
