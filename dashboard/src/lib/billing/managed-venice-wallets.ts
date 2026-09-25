@@ -24,7 +24,7 @@ type DbUpdateFilter = {
 };
 
 type DbTable = {
-  insert: (...args: unknown[]) => Promise<{ error: QueryError }>;
+  insert: (...args: unknown[]) => Promise<{ error: QueryError }> & { select: (...args: unknown[]) => DbChain };
   select: (...args: unknown[]) => DbChain;
   update: (...args: unknown[]) => DbUpdateFilter;
   upsert: (...args: unknown[]) => DbChain;
@@ -309,26 +309,27 @@ export async function createManagedVeniceReservation(
   }
 
   const account = await ensureManagedVeniceWalletAccount(params.userId, client);
+  // A plain insert, so the balance guard trigger always runs and a reference
+  // already in use (by anyone) fails instead of overwriting that hold. An
+  // upsert on reference_id updated the existing row, skipping the guard
+  // (security review 2026-09, #167 second review).
   const { data, error } = await table(client, "managed_venice_reservations")
-    .upsert(
-      {
-        account_id: account.id,
-        user_id: params.userId,
-        wallet_type: params.walletType,
-        status: "active",
-        reference_id: params.referenceId,
-        estimated_cost_micro_usd: params.estimatedCostMicroUsd ?? params.amountMicroUsd,
-        reserved_micro_usd: params.amountMicroUsd,
-        discount_rate_bps: params.discountRateBps ?? 0,
-        discount_micro_usd: params.discountMicroUsd ?? 0,
-        model: params.model ?? null,
-        endpoint: params.endpoint ?? "/api/v1/chat/completions",
-        expires_at: params.expiresAt || null,
-        metadata: params.metadata || {},
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "reference_id" }
-    )
+    .insert({
+      account_id: account.id,
+      user_id: params.userId,
+      wallet_type: params.walletType,
+      status: "active",
+      reference_id: params.referenceId,
+      estimated_cost_micro_usd: params.estimatedCostMicroUsd ?? params.amountMicroUsd,
+      reserved_micro_usd: params.amountMicroUsd,
+      discount_rate_bps: params.discountRateBps ?? 0,
+      discount_micro_usd: params.discountMicroUsd ?? 0,
+      model: params.model ?? null,
+      endpoint: params.endpoint ?? "/api/v1/chat/completions",
+      expires_at: params.expiresAt || null,
+      metadata: params.metadata || {},
+      updated_at: new Date().toISOString(),
+    })
     .select("id, status, reserved_micro_usd")
     .single();
 
@@ -360,151 +361,71 @@ export async function releaseManagedVeniceReservation(
 
   const captured = asNumber(reservation.captured_micro_usd);
   const released = Math.max(0, reservation.reserved_micro_usd - captured);
-  const { error } = await table(client, "managed_venice_reservations")
+  const { data, error } = await table(client, "managed_venice_reservations")
     .update({
       status: "released",
       released_micro_usd: released,
       released_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", reservation.id);
+    .eq("id", reservation.id)
+    // Only a hold that is still active: a capture that landed since the read
+    // above has already moved the money, and stays captured.
+    .eq("status", "active")
+    .select("id");
 
   if (error) {
     throw new Error(error.message || "Failed to release managed Venice reservation");
+  }
+  if (Array.isArray(data) && data.length === 0) {
+    return { released: false };
   }
 
   return { released: true, releasedMicroUsd: released };
 }
 
-// Token lots are debited with a compare-and-set, never a blind write. The debit
-// reads the lots, then writes each lot's new remaining value ONLY if the lot
-// still holds the value it read. Before this, the write was filtered by id
-// alone, so concurrent captures (ten images sent at once) all read the same
-// $1.00, all wrote $0.95, and the wallet paid for one of them while every hold
-// closed as captured.
-//
-// A debit that loses a lot to a concurrent debit re-reads the lots and carries
-// on with what it still owes. Each lost race is another debit landing, so N
-// concurrent debits on one wallet finish within N attempts. The cap only turns
-// a pathological storm into an error the caller already handles (the media gate
-// files it for reconciliation and keeps the hold), never an endless loop.
-export const MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS = 50;
+// Every wallet debit is one database function call
+// (supabase/migrations/20260925201500_managed_venice_atomic_wallet_debits.sql).
+// Each runs in one transaction under the per-user wallet lock that the
+// reservation and card balance guards take, with the token lots row-locked
+// oldest first, so:
+//   * concurrent debits never lose one another (the pre-launch review's
+//     "token-lot debit race": ten $0.05 captures on a $1.00 lot left $0.95);
+//   * a debit spanning several lots lands whole or not at all;
+//   * a capture debits the wallet and closes its hold together, so retrying
+//     one whose outcome was lost (the stale-hold sweep does) never charges
+//     twice.
+type WalletRpcClient = {
+  rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: QueryError }>;
+};
 
-async function loadDebitableTokenLots(userId: string, db: SupabaseLike) {
-  return (await selectUserRows<TokenLotRow>(db, "managed_venice_token_lots", userId, { status: "active" }))
-    .filter((lot) => lot.status === "active" && lot.remaining_value_micro_usd > 0)
-    .sort((left, right) => {
-      const byCreatedAt = String(left.created_at || "").localeCompare(
-        String(right.created_at || "")
-      );
-      return byCreatedAt || left.id.localeCompare(right.id);
-    });
-}
-
-async function debitHermesosLots(
-  userId: string,
-  amountMicroUsd: number,
-  db: SupabaseLike
+async function callWalletFunction(
+  db: SupabaseLike,
+  fn: "capture_managed_venice_reservation" | "debit_managed_venice_wallet",
+  args: Record<string, unknown>
 ) {
-  let remainingDebit = amountMicroUsd;
-
-  for (let attempt = 1; remainingDebit > 0; attempt += 1) {
-    if (attempt > MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS) {
-      throw new Error(
-        `Managed Venice token lot debit lost ${MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS} races to concurrent ` +
-          `debits; ${remainingDebit} micro-USD of ${amountMicroUsd} is still owed`
-      );
-    }
-
-    // Oldest lot first (FIFO), as read at the start of this attempt.
-    const lots = await loadDebitableTokenLots(userId, db);
-    const total = lots.reduce((sum, lot) => sum + lot.remaining_value_micro_usd, 0);
-    if (total < remainingDebit) {
-      throw new ManagedVeniceInsufficientBalanceError();
-    }
-
-    for (const lot of lots) {
-      if (remainingDebit <= 0) break;
-
-      const previousValue = lot.remaining_value_micro_usd;
-      const consumed = Math.min(previousValue, remainingDebit);
-      const nextValue = previousValue - consumed;
-      const previousTokenRaw = asBigInt(lot.remaining_token_amount_raw);
-      const nextTokenRaw =
-        nextValue === 0
-          ? 0n
-          : (previousTokenRaw * BigInt(nextValue)) / BigInt(previousValue);
-
-      const { data, error } = await table(db, "managed_venice_token_lots")
-        .update({
-          remaining_value_micro_usd: nextValue,
-          remaining_token_amount_raw: nextTokenRaw.toString(),
-          status: nextValue === 0 ? "depleted" : "active",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", lot.id)
-        .eq("status", "active")
-        // The compare-and-set: no row matches if another debit landed on this
-        // lot after this attempt read it. Debits are the only writes to a
-        // lot's remaining value (and its token amount, derived from it), and
-        // every debit lowers it, so an unchanged value means an unchanged lot.
-        .eq("remaining_value_micro_usd", previousValue)
-        .select("id");
-
-      if (error) {
-        throw new Error(error.message || "Failed to debit managed Venice token lot");
-      }
-
-      if (!Array.isArray(data) || data.length === 0) {
-        // Lost this lot to a concurrent debit: re-read and debit what's left.
-        break;
-      }
-
-      remainingDebit -= consumed;
-    }
+  const client = db as SupabaseLike & Partial<WalletRpcClient>;
+  if (typeof client.rpc !== "function") {
+    throw new Error(`Managed Venice wallet debits need a database client that can call ${fn}`);
   }
-}
-
-async function debitCardWallet(
-  params: {
-    userId: string;
-    amountMicroUsd: number;
-    referenceId: string;
-    // A capture spends funds its OWN active reservation is holding, so that
-    // hold must not count against it. Without this, a card user whose hold
-    // covered most of the balance could never be charged: the capture saw
-    // "available = total - (every hold, including this one)" and threw.
-    capturingReservedMicroUsd?: number;
-  },
-  db: SupabaseLike
-) {
-  const summary = await getManagedVeniceWalletSummary(params.userId, db);
-  const otherHoldsMicroUsd = Math.max(
-    0,
-    summary.card.reservedMicroUsd - (params.capturingReservedMicroUsd ?? 0)
-  );
-  if (summary.card.totalValueMicroUsd - otherHoldsMicroUsd < params.amountMicroUsd) {
-    throw new ManagedVeniceInsufficientBalanceError();
-  }
-
-  const account = await ensureManagedVeniceWalletAccount(params.userId, db);
-  const { error } = await table(db, "managed_venice_card_ledger_entries").insert({
-    account_id: account.id,
-    user_id: params.userId,
-    amount_micro_usd: -params.amountMicroUsd,
-    source: "system",
-    actor: "managed_venice_proxy",
-    reason: "managed_venice_debit",
-    reference_id: params.referenceId,
-    metadata: {},
-  });
-
+  const { data, error } = await client.rpc(fn, args);
   if (error) {
     if (isInsufficientBalanceDbError(error)) {
       throw new ManagedVeniceInsufficientBalanceError();
     }
-    throw new Error(error.message || "Failed to debit managed Venice card wallet");
+    const message = error.message || "";
+    if (message.includes("managed_venice_reservation_not_found")) {
+      throw new Error("Managed Venice reservation not found");
+    }
+    if (message.includes("managed_venice_capture_exceeds_reservation")) {
+      throw new Error("Capture amount exceeds reservation");
+    }
+    throw new Error(`${fn} failed: ${message || error.code || "unknown error"}`);
   }
+  if (!data || typeof data !== "object") {
+    throw new Error(`${fn} returned no result`);
+  }
+  return data as Record<string, unknown>;
 }
 
 export async function debitManagedVeniceWallet(
@@ -518,28 +439,18 @@ export async function debitManagedVeniceWallet(
 ) {
   requireUserId(params.userId);
   requirePositiveMicroUsd(params.amountMicroUsd, "debit amount");
-  return debitWallet(params, requireDb(db));
-}
-
-async function debitWallet(
-  params: {
-    userId: string;
-    walletType: ManagedVeniceWalletType;
-    amountMicroUsd: number;
-    referenceId: string;
-    capturingReservedMicroUsd?: number;
-  },
-  client: SupabaseLike
-) {
-  requireUserId(params.userId);
-  requirePositiveMicroUsd(params.amountMicroUsd, "debit amount");
-
-  if (params.walletType === "hermesos") {
-    await debitHermesosLots(params.userId, params.amountMicroUsd, client);
-  } else {
-    await debitCardWallet(params, client);
+  if (!params.referenceId.trim()) {
+    throw new Error("Managed Venice debit reference ID is required");
   }
-
+  const client = requireDb(db);
+  // A debit with no hold behind it (chat overage, multimodal backlog). A card
+  // debit still leaves every active card hold covered.
+  await callWalletFunction(client, "debit_managed_venice_wallet", {
+    p_user_id: params.userId,
+    p_wallet_type: params.walletType,
+    p_amount_micro_usd: params.amountMicroUsd,
+    p_reference_id: params.referenceId,
+  });
   return getManagedVeniceWalletSummary(params.userId, client);
 }
 
@@ -705,53 +616,26 @@ export async function captureManagedVeniceReservation(
 ) {
   requireUserId(params.userId);
   requireNonNegativeMicroUsd(params.captureMicroUsd, "capture amount");
-  const client = requireDb(db);
-  const reservation = await loadReservation(client, params.userId, params.referenceId);
-  if (!reservation) {
-    throw new Error("Managed Venice reservation not found");
+  if (!params.referenceId.trim()) {
+    throw new Error("Managed Venice reservation reference ID is required");
   }
-  if (reservation.status !== "active") {
+  const result = await callWalletFunction(requireDb(db), "capture_managed_venice_reservation", {
+    p_user_id: params.userId,
+    p_reference_id: params.referenceId,
+    p_capture_micro_usd: params.captureMicroUsd,
+  });
+
+  if (result.captured !== true) {
+    // Already captured or released: nothing moved. A retry lands here.
     return {
       captured: false,
-      capturedMicroUsd: asNumber(reservation.captured_micro_usd),
+      capturedMicroUsd: asNumber(result.capturedMicroUsd),
     };
-  }
-  if (params.captureMicroUsd > reservation.reserved_micro_usd) {
-    throw new Error("Capture amount exceeds reservation");
-  }
-
-  if (params.captureMicroUsd > 0) {
-    await debitWallet(
-      {
-        userId: params.userId,
-        walletType: reservation.wallet_type,
-        amountMicroUsd: params.captureMicroUsd,
-        referenceId: params.referenceId,
-        capturingReservedMicroUsd: asNumber(reservation.reserved_micro_usd),
-      },
-      client
-    );
-  }
-
-  const released = Math.max(0, reservation.reserved_micro_usd - params.captureMicroUsd);
-  const { error } = await table(client, "managed_venice_reservations")
-    .update({
-      status: "captured",
-      captured_micro_usd: params.captureMicroUsd,
-      released_micro_usd: released,
-      captured_at: new Date().toISOString(),
-      released_at: released > 0 ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", reservation.id);
-
-  if (error) {
-    throw new Error(error.message || "Failed to capture managed Venice reservation");
   }
 
   return {
     captured: true,
-    capturedMicroUsd: params.captureMicroUsd,
-    releasedMicroUsd: released,
+    capturedMicroUsd: asNumber(result.capturedMicroUsd),
+    releasedMicroUsd: asNumber(result.releasedMicroUsd),
   };
 }

@@ -1,6 +1,6 @@
 import { responsesEstimateRequest, responsesUsageTokens, responsesUsageObserver, responseTerminal, RESPONSES_RECONCILIATION_REASON } from "../responses-protocol";
 import { estimateChatCompletionCost, calculateActualChatCost } from "../cost-estimator";
-import { SWEEPABLE_RECONCILIATION_REASONS } from "../reservation-sweep";
+import { SWEEP_CAPTURE_REASONS, SWEEP_RELEASE_REASONS } from "../reservation-sweep";
 
 const request = { model: "zai-org-glm-4.7", input: "hello", instructions: "Be concise", max_output_tokens: 100 };
 const usage = { input_tokens: 1000, output_tokens: 100, total_tokens: 1100, input_tokens_details: { cached_tokens: 800 }, output_tokens_details: { reasoning_tokens: 60 } };
@@ -74,5 +74,8 @@ it("does not mistake deltas, missing telemetry or [DONE] for usage", () => {
   observer.feed(frame({ type: "response.output_text.delta", delta: "hi" }));
   observer.feed(new TextEncoder().encode("data: [DONE]\n\n")); observer.feed();
   expect(observer.usage()).toBeNull();
-  expect(SWEEPABLE_RECONCILIATION_REASONS).not.toContain(RESPONSES_RECONCILIATION_REASON);
+  // The one delta is still counted: a stream without usage is charged it.
+  expect(observer.outputTokens()).toBe(1);
+  // Responses items are settled by their cause, not by the reason lists.
+  expect([...SWEEP_CAPTURE_REASONS, ...SWEEP_RELEASE_REASONS]).not.toContain(RESPONSES_RECONCILIATION_REASON);
 });

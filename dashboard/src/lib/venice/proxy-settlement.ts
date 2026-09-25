@@ -15,6 +15,15 @@ import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { responsesUsageTokens, VENICE_RESPONSES_ENDPOINT } from "./responses-protocol";
 import {
+  CHAT_RELEASE_FAILED_RECONCILIATION_REASON,
+  MANAGED_VENICE_CHAT_HOLD_TTL_MS,
+  MANAGED_VENICE_OBSERVED_OUTPUT_CAPTURE_POLICY,
+  MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE,
+  holdEstimateMicroUsd,
+  managedVeniceHoldExpiresAt,
+  observedOutputCostMicroUsd,
+} from "./hold-lifecycle";
+import {
   MissingVeniceUsageError,
   calculateActualChatCost,
   estimateChatCompletionCost,
@@ -134,6 +143,28 @@ export async function reserveManagedVeniceChatRequest(
     client
   );
   const subsidyState = params.subsidyState ?? DEFAULT_SUBSIDY_STATE;
+  // What the stale-hold sweep charges this hold if Venice answers but the
+  // exact usage never arrives: the input estimate plus a bounded share of the
+  // output, never more than the estimate itself (hold-lifecycle.ts).
+  const sweepOutputTokens = Math.min(
+    estimate.outputTokens,
+    MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE * estimate.outputChoices
+  );
+  const sweepEstimateMicroUsd = Math.min(
+    estimate.estimatedCostMicroUsd,
+    estimate.inputCostMicroUsd +
+      (estimate.outputTokens > 0
+        ? Math.ceil((estimate.outputCostMicroUsd * sweepOutputTokens) / estimate.outputTokens)
+        : 0)
+  );
+  // The price of a million output tokens, as this estimate priced them. With
+  // the input estimate it prices a stream whose usage never arrived at the
+  // output it delivered (captureManagedVeniceObservedOutput), in the request
+  // or later in the sweep, without a pricing lookup.
+  const outputMicroUsdPerMillion = calculateActualChatCost(
+    { model: params.requestBody.model, promptTokens: 0, completionTokens: 1_000_000 },
+    params.pricingMap
+  ).completionCostMicroUsd;
   const reservation = await createManagedVeniceReservation(
     {
       userId: params.userId,
@@ -145,10 +176,17 @@ export async function reserveManagedVeniceChatRequest(
       discountMicroUsd: 0,
       model: params.requestBody.model,
       endpoint: params.endpoint ?? "/api/v1/chat/completions",
+      // A hold whose settlement never arrives (the function died mid-stream,
+      // the Worker never called back) is captured at its estimate once this
+      // passes (reservation-sweep.ts).
+      expiresAt: managedVeniceHoldExpiresAt(MANAGED_VENICE_CHAT_HOLD_TTL_MS),
       metadata: {
         proxyKeyId: params.proxyKeyId,
         estimatedCostMicroUsd: estimate.estimatedCostMicroUsd,
         reservedCostMicroUsd: estimate.reservedCostMicroUsd,
+        inputEstimateMicroUsd: estimate.inputCostMicroUsd,
+        outputMicroUsdPerMillion,
+        sweepEstimateMicroUsd,
         subsidyState,
         pricingPolicy: "provider_rate_credits_no_usage_discount",
       },
@@ -165,6 +203,193 @@ export async function reserveManagedVeniceChatRequest(
     reservedCostMicroUsd: estimate.reservedCostMicroUsd,
     reservedMicroUsd: estimate.reservedCostMicroUsd,
     discountMicroUsd: 0,
+  };
+}
+
+/**
+ * Debit what a request cost past its hold, as `<reference>:overage`. Call it
+ * only after the capture that closed the hold reported captured=true: a hold
+ * closes once, so its overage is debited once, whether the settlement is
+ * retried or races the stale-hold sweep. "reconciliation_required" when the
+ * wallet cannot cover it; any other failure throws.
+ */
+async function debitManagedVeniceOverage(
+  params: { userId: string; walletType: ManagedVeniceWalletType; referenceId: string; overageMicroUsd: number },
+  client: SupabaseLike
+): Promise<"none" | "captured" | "reconciliation_required"> {
+  if (params.overageMicroUsd <= 0) return "none";
+  try {
+    await debitManagedVeniceWallet(
+      {
+        userId: params.userId,
+        walletType: params.walletType,
+        amountMicroUsd: params.overageMicroUsd,
+        referenceId: `${params.referenceId}:overage`,
+      },
+      client
+    );
+    return "captured";
+  } catch (error) {
+    if (error instanceof ManagedVeniceInsufficientBalanceError) return "reconciliation_required";
+    throw error;
+  }
+}
+
+/**
+ * File an overage Hivra paid Venice for but could not collect. With
+ * `pauseKey` (the wallet could not cover it) the key is paused until the
+ * wallet is funded again (managed-venice-auto-recover.ts).
+ */
+async function fileManagedVeniceUncoveredOverage(
+  params: {
+    userId: string;
+    proxyKeyId: string | null;
+    referenceId: string;
+    model: string | null;
+    reservedMicroUsd: number | null;
+    actualCostMicroUsd: number;
+    overageMicroUsd: number;
+    walletType: string;
+    pauseKey: boolean;
+    cause?: string;
+  },
+  client: SupabaseLike
+) {
+  await markManagedVeniceReconciliationRequired(
+    {
+      userId: params.userId,
+      proxyKeyId: params.proxyKeyId,
+      referenceId: params.referenceId,
+      reason: "managed_venice_overage_uncovered",
+      pauseKey: params.pauseKey,
+      metadata: {
+        model: params.model,
+        reservedMicroUsd: params.reservedMicroUsd,
+        actualCostMicroUsd: params.actualCostMicroUsd,
+        overageMicroUsd: params.overageMicroUsd,
+        walletType: params.walletType,
+        ...(params.cause ? { cause: params.cause } : {}),
+      },
+    },
+    client
+  );
+}
+
+export type ManagedVeniceHoldCostCapture =
+  | { captured: false }
+  | {
+      captured: true;
+      /** What the hold paid: the cost, up to the hold. */
+      capturedMicroUsd: number;
+      /** The cost past the hold. */
+      overageMicroUsd: number;
+      overageStatus: "none" | "captured" | "reconciliation_required" | "debit_failed";
+      /** What the wallet paid in all: the capture plus any overage debited. */
+      chargedMicroUsd: number;
+    };
+
+/**
+ * Charge a hold what its request cost when Venice's usage is not in hand to
+ * capture with captureManagedVeniceChatUsage: the output a request observed,
+ * a reported cost whose capture failed, or an estimate. The hold pays up to
+ * the cost and anything past it is debited as an overage, exactly as a
+ * capture of Venice's usage does. An overage the wallet cannot cover files
+ * managed_venice_overage_uncovered and pauses the key; one whose debit failed
+ * for another reason is filed without pausing it.
+ *
+ * Security review 2026-09 (#167 second review, HIGH): this charge used to
+ * stop at the hold. A request with no output cap holds 4,096 output tokens,
+ * so 120k tokens of Opus ($3.60 at Venice) were charged $0.135.
+ *
+ * The capture debits the wallet and closes the hold in one transaction, and
+ * only the call whose capture closed the hold debits the overage, so a
+ * retried settlement or a racing sweep never charges twice. Returns
+ * captured=false, moving nothing, for a hold that is no longer active. Throws
+ * only when the capture itself fails; once money has moved it never throws.
+ */
+export async function captureManagedVeniceHoldCost(
+  params: {
+    hold: {
+      user_id: string;
+      reference_id: string;
+      reserved_micro_usd: number | string;
+      wallet_type: string;
+      model?: string | null;
+    };
+    proxyKeyId: string | null;
+    costMicroUsd: number;
+    cause: string;
+    source: string;
+  },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<ManagedVeniceHoldCostCapture> {
+  const client = requireDb(db);
+  const { hold } = params;
+  if (!Number.isFinite(params.costMicroUsd)) {
+    throw new Error("Managed Venice hold cost must be a finite number of micro-USD");
+  }
+  const reservedMicroUsd = Number(hold.reserved_micro_usd);
+  const costMicroUsd = Math.max(0, Math.ceil(params.costMicroUsd));
+  const capturedMicroUsd = Math.min(reservedMicroUsd, costMicroUsd);
+  const overageMicroUsd = costMicroUsd - capturedMicroUsd;
+  const walletType = hold.wallet_type as ManagedVeniceWalletType;
+
+  const capture = await captureManagedVeniceReservation(
+    { userId: hold.user_id, referenceId: hold.reference_id, captureMicroUsd: capturedMicroUsd },
+    client
+  );
+  if (!capture.captured) return { captured: false };
+
+  let overageStatus: "none" | "captured" | "reconciliation_required" | "debit_failed";
+  try {
+    overageStatus = await debitManagedVeniceOverage(
+      { userId: hold.user_id, walletType, referenceId: hold.reference_id, overageMicroUsd },
+      client
+    );
+  } catch (error) {
+    overageStatus = "debit_failed";
+    log.error("Managed Venice could not debit the overage past a captured hold", error, {
+      source: params.source,
+      failureType: "managed_venice_overage_debit_failed",
+      userId: hold.user_id,
+      referenceId: hold.reference_id,
+      overageMicroUsd,
+    });
+  }
+  if (overageStatus === "reconciliation_required" || overageStatus === "debit_failed") {
+    try {
+      await fileManagedVeniceUncoveredOverage(
+        {
+          userId: hold.user_id,
+          proxyKeyId: params.proxyKeyId,
+          referenceId: hold.reference_id,
+          model: hold.model ?? null,
+          reservedMicroUsd,
+          actualCostMicroUsd: costMicroUsd,
+          overageMicroUsd,
+          walletType,
+          pauseKey: overageStatus === "reconciliation_required",
+          cause: params.cause,
+        },
+        client
+      );
+    } catch (error) {
+      log.error("Managed Venice could not file an uncovered overage", error, {
+        source: params.source,
+        failureType: "managed_venice_overage_reconciliation_write_failed",
+        userId: hold.user_id,
+        referenceId: hold.reference_id,
+        overageMicroUsd,
+      });
+    }
+  }
+
+  return {
+    captured: true,
+    capturedMicroUsd,
+    overageMicroUsd,
+    overageStatus,
+    chargedMicroUsd: capturedMicroUsd + (overageStatus === "captured" ? overageMicroUsd : 0),
   };
 }
 
@@ -224,7 +449,7 @@ export async function captureManagedVeniceChatUsage(
     actual.actualCostMicroUsd - cappedCaptureMicroUsd
   );
 
-  await captureManagedVeniceReservation(
+  const capture = await captureManagedVeniceReservation(
     {
       userId: params.userId,
       referenceId: params.referenceId,
@@ -232,28 +457,39 @@ export async function captureManagedVeniceChatUsage(
     },
     client
   );
-
-  let overageStatus: "none" | "captured" | "reconciliation_required" = "none";
-  if (overageMicroUsd > 0) {
-    try {
-      await debitManagedVeniceWallet(
-        {
-          userId: params.userId,
-          walletType: params.walletType,
-          amountMicroUsd: overageMicroUsd,
-          referenceId: `${params.referenceId}:overage`,
-        },
-        client
-      );
-      overageStatus = "captured";
-    } catch (error) {
-      if (error instanceof ManagedVeniceInsufficientBalanceError) {
-        overageStatus = "reconciliation_required";
-      } else {
-        throw error;
-      }
-    }
+  if (!capture.captured) {
+    // The hold was already settled: a retried settle (the Worker retries
+    // until it gets a 2xx), or the sweep got there first. Everything this
+    // settlement would do moved money or wrote its record the first time, so
+    // debiting the overage again would charge a token wallet twice.
+    log.warn("Managed Venice chat usage arrived for a hold that is already settled", {
+      source: "venice-proxy-settlement",
+      failureType: "managed_venice_capture_hold_already_settled",
+      userId: params.userId,
+      referenceId: params.referenceId,
+      actualCostMicroUsd: actual.actualCostMicroUsd,
+      capturedMicroUsd: capture.capturedMicroUsd,
+    });
+    return {
+      referenceId: params.referenceId,
+      actualCostMicroUsd: actual.actualCostMicroUsd,
+      chargedMicroUsd: 0,
+      discountMicroUsd: 0,
+      overageMicroUsd: 0,
+      overageStatus: "none" as const,
+      alreadySettled: true as const,
+    };
   }
+
+  const overageStatus = await debitManagedVeniceOverage(
+    {
+      userId: params.userId,
+      walletType: params.walletType,
+      referenceId: params.referenceId,
+      overageMicroUsd,
+    },
+    client
+  );
 
   const chargedMicroUsd =
     overageStatus === "reconciliation_required"
@@ -315,19 +551,17 @@ export async function captureManagedVeniceChatUsage(
   );
 
   if (overageStatus === "reconciliation_required") {
-    await markManagedVeniceReconciliationRequired(
+    await fileManagedVeniceUncoveredOverage(
       {
         userId: params.userId,
         proxyKeyId: params.proxyKeyId,
         referenceId: params.referenceId,
-        reason: "managed_venice_overage_uncovered",
-        metadata: {
-          model: params.model,
-          reservedMicroUsd,
-          actualCostMicroUsd: actual.actualCostMicroUsd,
-          overageMicroUsd,
-          walletType: params.walletType,
-        },
+        model: params.model,
+        reservedMicroUsd,
+        actualCostMicroUsd: actual.actualCostMicroUsd,
+        overageMicroUsd,
+        walletType: params.walletType,
+        pauseKey: true,
       },
       client
     );
@@ -340,7 +574,362 @@ export async function captureManagedVeniceChatUsage(
     discountMicroUsd: 0,
     overageMicroUsd,
     overageStatus,
+    alreadySettled: false as const,
   };
+}
+
+/**
+ * What Venice's reported usage costs, for a reconciliation item filed when
+ * capturing it failed: the sweep then charges this, not an estimate. Null
+ * when the usage block cannot be priced.
+ */
+export function managedVeniceUsageCostMicroUsd(params: {
+  model: string;
+  usage: unknown;
+  endpoint?: string;
+  pricingMap?: import("./cost-estimator").VenicePricingMap;
+}): number | null {
+  try {
+    const tokens =
+      params.endpoint === VENICE_RESPONSES_ENDPOINT ? responsesUsageTokens(params.usage) : readUsageTokens(params.usage);
+    return calculateActualChatCost(
+      {
+        model: params.model,
+        promptTokens: tokens.promptTokens as number | null | undefined,
+        completionTokens: tokens.completionTokens as number | null | undefined,
+        cacheReadTokens: tokens.cacheReadTokens as number | null | undefined,
+        cacheWriteTokens: tokens.cacheWriteTokens as number | null | undefined,
+      },
+      params.pricingMap
+    ).actualCostMicroUsd;
+  } catch {
+    return null;
+  }
+}
+
+interface EstimatedCaptureHold {
+  account_id?: string | null;
+  user_id: string;
+  wallet_type: string;
+  reference_id: string;
+  reserved_micro_usd: number;
+  model?: string | null;
+  endpoint?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
+ * Record a hold captured without Venice's token counts (the output the
+ * request observed, or the sweep's estimate) like any other capture: a usage
+ * row and an immutable usage_capture event, keyed to the hold, so the subsidy
+ * report's ledger check and the user's usage history both see it. Money has
+ * already moved; a failure here is logged, never retried (a retry could not
+ * move money again anyway).
+ */
+export async function recordManagedVeniceEstimatedCapture(
+  params: {
+    hold: EstimatedCaptureHold;
+    proxyKeyId: string | null;
+    amountMicroUsd: number;
+    listMicroUsd: number;
+    pricingPolicy: string;
+    upstreamStatus: number | null;
+    idempotencyKey: string;
+    detailKey: "sweep" | "observedOutput";
+    detail: Record<string, unknown>;
+  },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<void> {
+  const { hold } = params;
+  try {
+    const client = requireDb(db);
+    const { error } = await table(client, "managed_venice_usage_events").insert({
+      account_id: hold.account_id,
+      user_id: hold.user_id,
+      proxy_key_id: params.proxyKeyId,
+      wallet_type: hold.wallet_type,
+      endpoint: hold.endpoint || "/api/v1/chat/completions",
+      model: hold.model || "unknown",
+      estimated_cost_micro_usd: hold.reserved_micro_usd,
+      actual_cost_micro_usd: params.listMicroUsd,
+      charged_micro_usd: params.amountMicroUsd,
+      discount_micro_usd: 0,
+      status: "recorded",
+      upstream_status: params.upstreamStatus,
+      reference_id: hold.reference_id,
+      metadata: { pricingPolicy: params.pricingPolicy, [params.detailKey]: params.detail },
+    });
+    if (error) throw new Error(error.message || "Failed to record the estimated capture's usage");
+
+    await appendManagedVeniceFinancialEvent(
+      {
+        userId: hold.user_id,
+        accountId: hold.account_id ?? null,
+        walletType: hold.wallet_type === "card" ? "card" : "hermesos",
+        eventType: "usage_capture",
+        amountMicroUsd: params.amountMicroUsd,
+        veniceCostMicroUsd: params.listMicroUsd,
+        discountMicroUsd: 0,
+        referenceId: hold.reference_id,
+        idempotencyKey: params.idempotencyKey,
+        metadata: {
+          pricingPolicy: params.pricingPolicy,
+          model: hold.model ?? null,
+          endpoint: hold.endpoint ?? null,
+          proxyKeyId: params.proxyKeyId,
+          [params.detailKey]: params.detail,
+        },
+      },
+      client
+    );
+  } catch (error) {
+    log.error("Managed Venice estimated capture could not be recorded", error, {
+      source: "venice-proxy-settlement",
+      failureType: "managed_venice_estimated_capture_record_failed",
+      userId: hold.user_id,
+      referenceId: hold.reference_id,
+      pricingPolicy: params.pricingPolicy,
+      capturedMicroUsd: params.amountMicroUsd,
+    });
+  }
+}
+
+export type ManagedVeniceObservedOutputOutcome =
+  | "captured"
+  | "already_settled"
+  | "reservation_not_found"
+  | "filed_for_sweep"
+  | "unfiled";
+
+/**
+ * Settle a hold whose request Venice answered 2xx but whose exact usage never
+ * arrived: the stream hit its deadline or broke, or Venice left the usage
+ * out. The charge is the input estimate recorded on the hold plus the output
+ * the request observed (stream-output-meter.ts), captured now so the rest of
+ * the hold goes straight back to the user. A charge past the hold captures the
+ * hold and debits the rest as an overage (captureManagedVeniceHoldCost).
+ *
+ * Security review 2026-09 (#166/#167): these holds used to wait a day and
+ * then be charged a flat estimate, so a client that read a whole long answer
+ * and closed the socket before the usage frame paid a few cents for dollars
+ * of output, and one Stop press locked the whole hold for up to 48 hours.
+ *
+ * Never throws. When the charge cannot be written it files
+ * `reconciliationReason` with the observed output, and the stale-hold sweep
+ * captures the same amount.
+ */
+export async function captureManagedVeniceObservedOutput(
+  params: {
+    userId: string;
+    proxyKeyId: string;
+    referenceId: string;
+    model: string;
+    upstreamStatus: number;
+    observedOutputTokens: number;
+    cause: string;
+    reconciliationReason: string;
+    reconciliationMetadata?: Record<string, unknown>;
+    source: string;
+  },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ outcome: ManagedVeniceObservedOutputOutcome; chargedMicroUsd: number }> {
+  const observedOutputTokens =
+    Number.isSafeInteger(params.observedOutputTokens) && params.observedOutputTokens >= 0
+      ? params.observedOutputTokens
+      : 0;
+  const context = {
+    source: params.source,
+    userId: params.userId,
+    proxyKeyId: params.proxyKeyId,
+    referenceId: params.referenceId,
+    model: params.model,
+    cause: params.cause,
+    observedOutputTokens,
+  };
+  try {
+    const client = requireDb(db);
+    const hold = await loadManagedVeniceReservation(params.userId, params.referenceId, client);
+    if (!hold) {
+      log.error("Managed Venice usage-less response has no hold to charge", undefined, {
+        ...context,
+        failureType: "managed_venice_observed_output_hold_missing",
+      });
+      return { outcome: "reservation_not_found", chargedMicroUsd: 0 };
+    }
+    if (hold.status !== "active") return { outcome: "already_settled", chargedMicroUsd: 0 };
+
+    const holdRow = hold as typeof hold & EstimatedCaptureHold;
+    const observedCost = observedOutputCostMicroUsd(holdRow, observedOutputTokens);
+    // A hold from before holds recorded their input estimate: its estimate.
+    const costMicroUsd = observedCost ?? holdEstimateMicroUsd(holdRow);
+    const basis = observedCost === null ? "pre_request_estimate" : "observed_output";
+    // Past the hold, the rest is debited as an overage (#167 second review).
+    const charge = await captureManagedVeniceHoldCost(
+      { hold: holdRow, proxyKeyId: params.proxyKeyId, costMicroUsd, cause: params.cause, source: params.source },
+      client
+    );
+    if (!charge.captured) return { outcome: "already_settled", chargedMicroUsd: 0 };
+
+    log.warn("Managed Venice charged the observed output of a response whose usage never arrived", {
+      ...context,
+      failureType: "managed_venice_usage_missing_observed_output_charged",
+      chargedMicroUsd: charge.chargedMicroUsd,
+      costMicroUsd,
+      heldMicroUsd: Number(hold.reserved_micro_usd),
+      overageStatus: charge.overageStatus,
+      basis,
+    });
+    await recordManagedVeniceEstimatedCapture(
+      {
+        hold: holdRow,
+        proxyKeyId: params.proxyKeyId,
+        amountMicroUsd: charge.chargedMicroUsd,
+        listMicroUsd: costMicroUsd,
+        pricingPolicy: MANAGED_VENICE_OBSERVED_OUTPUT_CAPTURE_POLICY,
+        upstreamStatus: params.upstreamStatus,
+        // The same key an exact capture writes: a hold is charged once.
+        idempotencyKey: `managed_venice_usage_capture:${params.referenceId}`,
+        detailKey: "observedOutput",
+        detail: {
+          cause: params.cause,
+          basis,
+          observedOutputTokens,
+          inputEstimateMicroUsd: holdRow.metadata?.inputEstimateMicroUsd ?? null,
+          outputMicroUsdPerMillion: holdRow.metadata?.outputMicroUsdPerMillion ?? null,
+          heldMicroUsd: Number(hold.reserved_micro_usd),
+          overageMicroUsd: charge.overageMicroUsd,
+          overageStatus: charge.overageStatus,
+        },
+      },
+      client
+    );
+    return { outcome: "captured", chargedMicroUsd: charge.chargedMicroUsd };
+  } catch (error) {
+    log.error("Managed Venice could not charge the observed output; filing it for the sweep", error, {
+      ...context,
+      failureType: "managed_venice_observed_output_capture_failed",
+    });
+    try {
+      await markManagedVeniceReconciliationRequired(
+        {
+          userId: params.userId,
+          proxyKeyId: params.proxyKeyId,
+          referenceId: params.referenceId,
+          reason: params.reconciliationReason,
+          // Venice answered and the hold still covers the spend.
+          pauseKey: false,
+          metadata: {
+            model: params.model,
+            upstreamStatus: params.upstreamStatus,
+            ...(params.reconciliationMetadata ?? {}),
+            cause: params.cause,
+            observedOutputTokens,
+          },
+        },
+        db
+      );
+      return { outcome: "filed_for_sweep", chargedMicroUsd: 0 };
+    } catch (fileError) {
+      log.error("Managed Venice could not file the observed output for the sweep", fileError, {
+        ...context,
+        failureType: "managed_venice_observed_output_reconciliation_write_failed",
+        reason: params.reconciliationReason,
+      });
+      return { outcome: "unfiled", chargedMicroUsd: 0 };
+    }
+  }
+}
+
+/**
+ * Release the hold of a request Venice refused, or that never reached Venice.
+ * Never throws: when the release fails it files
+ * CHAT_RELEASE_FAILED_RECONCILIATION_REASON and the sweep releases the hold.
+ *
+ * Security review 2026-09 (#167): a failed release used to throw with no
+ * item, so the hold expired a day later and the sweep charged the user for a
+ * request Venice never ran.
+ */
+export async function releaseManagedVeniceChatReservationOrFile(
+  params: {
+    userId: string;
+    proxyKeyId: string | null;
+    referenceId: string;
+    cause: string;
+    source: string;
+    upstreamStatus?: number | null;
+    model?: string | null;
+  },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ released: boolean; filed: boolean; failed: boolean }> {
+  try {
+    const result = await releaseManagedVeniceReservation(
+      { userId: params.userId, referenceId: params.referenceId },
+      requireDb(db)
+    );
+    return { released: result.released, filed: false, failed: false };
+  } catch (error) {
+    const context = {
+      source: params.source,
+      userId: params.userId,
+      proxyKeyId: params.proxyKeyId,
+      referenceId: params.referenceId,
+      cause: params.cause,
+      upstreamStatus: params.upstreamStatus ?? null,
+    };
+    log.error("Managed Venice could not release a refused request's hold; filing it for the sweep", error, {
+      ...context,
+      failureType: "managed_venice_chat_release_failed",
+    });
+    try {
+      await markManagedVeniceReconciliationRequired(
+        {
+          userId: params.userId,
+          proxyKeyId: params.proxyKeyId,
+          referenceId: params.referenceId,
+          reason: CHAT_RELEASE_FAILED_RECONCILIATION_REASON,
+          pauseKey: false,
+          metadata: {
+            cause: params.cause,
+            upstreamStatus: params.upstreamStatus ?? null,
+            model: params.model ?? null,
+          },
+        },
+        db
+      );
+      return { released: false, filed: true, failed: false };
+    } catch (fileError) {
+      log.error("Managed Venice could not file a failed release for the sweep", fileError, {
+        ...context,
+        failureType: "managed_venice_chat_release_reconciliation_write_failed",
+      });
+      return { released: false, filed: false, failed: true };
+    }
+  }
+}
+
+/**
+ * Who a hold belongs to, from its reference alone. The Cloudflare Worker
+ * chooses a request's reference before authorizing it, so when the authorize
+ * response is lost it can still release the hold by that reference.
+ */
+export async function loadManagedVeniceReservationOwner(
+  referenceId: string,
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ userId: string; proxyKeyId: string | null } | null> {
+  const client = requireDb(db);
+  const { data, error } = await (client.from("managed_venice_reservations") as {
+    select: (cols: string) => {
+      eq: (col: string, val: string) => { maybeSingle: () => PromiseLike<{ data: unknown; error: QueryError }> };
+    };
+  })
+    .select("user_id, metadata")
+    .eq("reference_id", referenceId)
+    .maybeSingle();
+  if (error) throw new Error(error.message || "Failed to load managed Venice reservation");
+  const row = data as { user_id?: unknown; metadata?: Record<string, unknown> | null } | null;
+  if (!row || typeof row.user_id !== "string") return null;
+  const proxyKeyId = row.metadata?.proxyKeyId;
+  return { userId: row.user_id, proxyKeyId: typeof proxyKeyId === "string" ? proxyKeyId : null };
 }
 
 export async function releaseManagedVeniceChatReservation(
@@ -353,7 +942,9 @@ export async function releaseManagedVeniceChatReservation(
 export async function markManagedVeniceReconciliationRequired(
   params: {
     userId: string;
-    proxyKeyId: string;
+    // Null only when the key is unknown (a release the Worker sends by
+    // reference alone); such an item never pauses a key.
+    proxyKeyId: string | null;
     referenceId: string;
     reason: string;
     metadata?: Record<string, unknown>;
@@ -392,7 +983,7 @@ export async function markManagedVeniceReconciliationRequired(
     );
   }
 
-  if (params.pauseKey === false) {
+  if (params.pauseKey === false || !params.proxyKeyId) {
     return { status: "open" as const, paused: false as const };
   }
 

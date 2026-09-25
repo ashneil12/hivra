@@ -2,13 +2,15 @@ import { NextRequest } from "next/server";
 
 const mockSettle = jest.fn();
 const mockRelease = jest.fn();
+const mockOwner = jest.fn();
 
 jest.mock("@/lib/venice/proxy-chat-core", () => ({
   settleManagedVeniceChatUsage: (...args: unknown[]) => mockSettle(...args),
 }));
 
 jest.mock("@/lib/venice/proxy-settlement", () => ({
-  releaseManagedVeniceChatReservation: (...args: unknown[]) => mockRelease(...args),
+  releaseManagedVeniceChatReservationOrFile: (...args: unknown[]) => mockRelease(...args),
+  loadManagedVeniceReservationOwner: (...args: unknown[]) => mockOwner(...args),
 }));
 
 import { POST } from "../route";
@@ -50,7 +52,8 @@ describe("/api/managed-venice/internal/settle", () => {
     errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     process.env.MANAGED_VENICE_INTERNAL_SECRET = SECRET;
     mockSettle.mockResolvedValue({ settled: true, reconciled: false });
-    mockRelease.mockResolvedValue({ released: true });
+    mockRelease.mockResolvedValue({ released: true, filed: false, failed: false });
+    mockOwner.mockResolvedValue({ userId: "user_1", proxyKeyId: "key_1" });
   });
 
   afterEach(() => {
@@ -111,16 +114,53 @@ describe("/api/managed-venice/internal/settle", () => {
     const payload = await res.json();
     expect(res.status).toBe(200);
     expect(payload).toMatchObject({ ok: true, released: true });
-    expect(mockRelease).toHaveBeenCalledWith({
-      userId: "user_1",
-      referenceId: "ref_1",
-    });
+    expect(mockRelease).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user_1", referenceId: "ref_1", cause: "worker_release" })
+    );
+    expect(mockOwner).not.toHaveBeenCalled();
     expect(mockSettle).not.toHaveBeenCalled();
   });
 
-  it("400s a release missing userId/referenceId", async () => {
+  it("400s a release missing referenceId", async () => {
     const res = await POST(makeReq({ outcome: "release", userId: "user_1" }));
     expect(res.status).toBe(400);
     expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  // #167 review: a Worker whose authorize response was lost knows only the
+  // reference it chose, and the hold it paid for used to sit until the sweep
+  // charged it.
+  it("releases by reference alone, finding the hold's owner", async () => {
+    const res = await POST(makeReq({ outcome: "release", referenceId: "ref_lost", cause: "authorize_response_unreadable" }));
+    expect(res.status).toBe(200);
+    expect(mockOwner).toHaveBeenCalledWith("ref_lost");
+    expect(mockRelease).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user_1", proxyKeyId: "key_1", referenceId: "ref_lost", cause: "authorize_response_unreadable" })
+    );
+  });
+
+  // #167 second review: an authorize whose connection reset can still commit
+  // its hold after the Worker's release arrives. Answering 200 ended the
+  // Worker's retries, and the sweep charged the hold's estimate for a request
+  // that was never forwarded. A 5xx keeps the Worker retrying while the hold
+  // may still land.
+  it("answers 5xx, so the Worker retries, when no hold has that reference yet", async () => {
+    mockOwner.mockResolvedValueOnce(null);
+    const res = await POST(makeReq({ outcome: "release", referenceId: "ref_not_yet_reserved" }));
+    expect(res.status).toBe(503);
+    expect(mockRelease).not.toHaveBeenCalled();
+  });
+
+  it("answers 5xx, so the Worker retries, when the release could neither land nor be filed", async () => {
+    mockRelease.mockResolvedValueOnce({ released: false, filed: false, failed: true });
+    const res = await POST(makeReq({ outcome: "release", userId: "user_1", referenceId: "ref_1" }));
+    expect(res.status).toBe(503);
+  });
+
+  it("passes the Worker's observed output and cause to settlement", async () => {
+    await POST(makeReq({ ...fullPayload, usage: null, observedOutputTokens: 1_234, cause: "client_cancelled" }));
+    expect(mockSettle).toHaveBeenCalledWith(
+      expect.objectContaining({ usage: null, observedOutputTokens: 1_234, cause: "client_cancelled" })
+    );
   });
 });
