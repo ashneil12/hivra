@@ -79,8 +79,9 @@ afterEach(() => {
 });
 
 /** Run the generated Phase 2 the way Phase 1's nohup line starts it. */
-function runPhase2(options: { vms: StubGuestVm[]; serverHostKey: string }): StubRunResult {
+function runPhase2(options: { vms: StubGuestVm[]; serverHostKey: string; claim?: string }): StubRunResult {
   const { root } = host;
+  const { claim = INSTANCE_ID, ...hostOptions } = options;
   const payloadDir = `${root}/run/hermes-proxmox-phase2-${VMID}`;
   const body = phase2Body(buildProxmoxProvisionScript(PROVISION_PARAMS))
     .replaceAll("/run/hermes-vm-claims", `${root}/run/hermes-vm-claims`)
@@ -92,12 +93,12 @@ function runPhase2(options: { vms: StubGuestVm[]; serverHostKey: string }): Stub
     `export DEPLOY_B64_FILE='${payloadDir}/deploy.b64' BOOTSTRAP_B64_FILE='${payloadDir}/bootstrap.b64'`,
     `export API_SERVER_KEY='${"a".repeat(64)}' READINESS_ATTEMPTS=3 READINESS_INTERVAL_SECONDS=2`,
     `mkdir -p '${root}/run/hermes-vm-claims' "$PHASE2_PAYLOAD_DIR"`,
-    `printf '%s' "$INSTANCE_ID" > '${root}/run/hermes-vm-claims/${VMID}.claim'`,
+    `printf '%s' '${claim}' > '${root}/run/hermes-vm-claims/${VMID}.claim'`,
     `printf '%s' '${b64(`#!/usr/bin/env bash\necho ${BOOTSTRAP_MARKER}\n`)}' > "$BOOTSTRAP_B64_FILE"`,
     `printf '%s' '${b64(DEPLOY_SCRIPT)}' > "$DEPLOY_B64_FILE"`,
     `touch "$SITE_FILE"`,
   ].join("\n");
-  return host.run(`${launch}\n${body}\n`, { ...options, commands: HOST_COMMANDS });
+  return host.run(`${launch}\n${body}\n`, { ...hostOptions, commands: HOST_COMMANDS });
 }
 
 /** Staged payloads and pinned known_hosts left on the host after Phase 2 exits. */
@@ -157,6 +158,19 @@ describe("fresh Proxmox provision Phase 2 guest identity", () => {
     }
     // The post-readiness disk cleanup is one of those pinned calls.
     expect(result.sshCalls.some((call) => call.includes("hermes-disk-cleanup"))).toBe(true);
+  });
+
+  it("never deploys to a VMID a slower provision lost to another instance, and leaves that VM alone", () => {
+    // A provision that wakes late can find its VMID recycled: the claim file
+    // then names the instance that owns the VM now, and even an attested,
+    // pinned connection would hand this box's secrets to that other tenant.
+    const result = runPhase2({ vms: [genuineVm()], serverHostKey: GENUINE_GUEST_HOST_KEY, claim: "inst-someone-else" });
+
+    expect(result.delivered).not.toContain(DEPLOY_SECRET);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`VM ${VMID} is no longer claimed by instance ${INSTANCE_ID}; nothing was sent to it`);
+    expect(result.qmCalls).not.toContain(`destroy ${VMID} --purge 1`);
+    expect(leftovers()).toEqual([]);
   });
 
   it("refuses and tears the VM down when the guest agent never answers", () => {

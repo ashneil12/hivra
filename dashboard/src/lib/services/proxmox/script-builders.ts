@@ -1146,6 +1146,16 @@ run_guest_script bootstrap "$BOOTSTRAP_B64_FILE" ssh "\${UNATTESTED_GUEST_SSH_OP
 # guest's SSH host key through the guest agent over the VMID's virtio channel,
 # and pins SSH to that key; any mismatch exits before a byte is sent and the
 # EXIT trap tears the VM down.
+#
+# A provision that wakes late can find its VMID recycled for another instance.
+# The claim file then names that instance, and even a pinned connection would
+# reach its VM, so check ownership first. The EXIT trap leaves a VM alone when
+# the claim names someone else.
+deploy_claim="$(cat "/run/hermes-vm-claims/$VMID.claim" 2>/dev/null || true)"
+if [ "$deploy_claim" != "$INSTANCE_ID" ]; then
+  echo "VM $VMID is no longer claimed by instance $INSTANCE_ID; nothing was sent to it" >&2
+  exit 1
+fi
 ${phase2GuestSshPrelude}
 ${phase2PinnedSshReadiness}
 run_guest_script deploy "$DEPLOY_B64_FILE" "\${GUEST_SSH[@]}"
