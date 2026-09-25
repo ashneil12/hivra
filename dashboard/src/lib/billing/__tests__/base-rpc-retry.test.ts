@@ -176,12 +176,16 @@ describe("token-holdings: balance read recovers from a transient 429", () => {
 });
 
 describe("refreshVerifiedHermesTokenHoldings: inter-user throttle", () => {
+  // The batch comes from the refresh cursor RPC; each claimed user id is then
+  // refreshed in turn.
+  function claimRpc(userIds: string[]) {
+    return async () => ({ data: userIds.map((user_id) => ({ user_id })), error: null });
+  }
+
   // Self-referential mock query that is ALSO thenable. Every chainable method
-  // returns the same object, and `then` resolves to the wallet rows — so both
-  // shapes work off one mock:
-  //   - the batch list query is `await ...limit()` (resolves to rows), and
-  //   - the per-user verification lookups are `...limit().maybeSingle()` /
-  //     `...maybeSingle()` (resolve to null → no verified wallet).
+  // returns the same object; the per-user verification and latest-snapshot
+  // lookups terminate in `.maybeSingle()` (resolve to null → no verified
+  // wallet, no earlier snapshot to zero).
   function walletQuery(rows: unknown[]) {
     type Q = {
       select: () => Q;
@@ -207,20 +211,16 @@ describe("refreshVerifiedHermesTokenHoldings: inter-user throttle", () => {
   }
 
   it("throttles between users so a fleet-wide sweep does not burst the endpoint", async () => {
-    const wallets = [
-      { id: "w1", user_id: "user_1", address: "0x" + "1".repeat(40), normalized_address: "0x" + "1".repeat(40), chain_type: "evm", chain_id: 8453, is_primary: true, verified_at: "2024-01-01T00:00:00Z" },
-      { id: "w2", user_id: "user_2", address: "0x" + "2".repeat(40), normalized_address: "0x" + "2".repeat(40), chain_type: "evm", chain_id: 8453, is_primary: true, verified_at: "2024-01-02T00:00:00Z" },
-      { id: "w3", user_id: "user_3", address: "0x" + "3".repeat(40), normalized_address: "0x" + "3".repeat(40), chain_type: "evm", chain_id: 8453, is_primary: true, verified_at: "2024-01-03T00:00:00Z" },
-    ];
-
     const db = {
-      from: () => walletQuery(wallets),
+      rpc: claimRpc(["user_1", "user_2", "user_3"]),
+      from: () => walletQuery([]),
     } as never;
 
     const interUserSleeps: number[] = [];
     const refreshed: string[] = [];
 
     const result = await refreshVerifiedHermesTokenHoldings({
+      lane: "token_holdings",
       db,
       // A caller-supplied refreshUserHolding owns its own pacing, so the batch
       // throttle is intentionally suppressed for it. This documents that branch.
@@ -240,24 +240,21 @@ describe("refreshVerifiedHermesTokenHoldings: inter-user throttle", () => {
   });
 
   it("paces the DEFAULT refresher between users (throttle active on the cron path)", async () => {
-    const wallets = [
-      { id: "w1", user_id: "user_1", address: "0x" + "1".repeat(40), normalized_address: "0x" + "1".repeat(40), chain_type: "evm", chain_id: 8453, is_primary: true, verified_at: "2024-01-01T00:00:00Z" },
-      { id: "w2", user_id: "user_2", address: "0x" + "2".repeat(40), normalized_address: "0x" + "2".repeat(40), chain_type: "evm", chain_id: 8453, is_primary: true, verified_at: "2024-01-02T00:00:00Z" },
-    ];
-
-    // Minimal DB: user_wallets list query for the batch, then per-user
+    // Minimal DB: the cursor RPC claims two users, then per-user
     // getTokenVerificationWallet returns null (no primary verified wallet), so
     // the default refresher short-circuits to "no_verified_wallet" WITHOUT any
     // RPC — keeping this test focused purely on the inter-user throttle.
     const db = {
+      rpc: claimRpc(["user_1", "user_2"]),
       from: (name: string) => {
-        if (name === "user_wallets") return walletQuery(wallets);
+        if (name === "user_wallets" || name === "token_holding_snapshots") return walletQuery([]);
         throw new Error(`Unexpected table ${name}`);
       },
     } as never;
 
     const sleeps: number[] = [];
     const result = await refreshVerifiedHermesTokenHoldings({
+      lane: "token_holdings",
       db,
       interUserDelayMs: 40,
       rpcSleepImpl: async (ms: number) => {

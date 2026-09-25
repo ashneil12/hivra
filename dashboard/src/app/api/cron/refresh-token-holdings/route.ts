@@ -10,6 +10,7 @@ import {
   fetchLatestVvvSnapshotsByUser,
 } from "@/lib/billing/token-holding-snapshots";
 import { resolveTokenAccessForUsers } from "@/lib/billing/token-access";
+import { PLATFORM_TOKEN_KEYS, type PlatformTokenKey } from "@/lib/billing/token-registry";
 import {
   evaluateAndRecordTokenTierEligibility,
   type EligibilityResult,
@@ -24,6 +25,16 @@ import {
 import { sendTierEligibilityNotification } from "@/lib/email/tier-eligibility-notifications";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
+
+/**
+ * The balance of an account whose token standing has no verification wallet
+ * behind it: zero in every platform token. Judging it (rather than skipping
+ * it) is what breaches a qualification whose wallet is gone; skipping it left
+ * `currently_eligible` true forever.
+ */
+function zeroPlatformTokenBalances(): Partial<Record<PlatformTokenKey, bigint>> {
+  return Object.fromEntries(PLATFORM_TOKEN_KEYS.map((key) => [key, 0n]));
+}
 
 function parseLimit(req: NextRequest) {
   const raw = new URL(req.url).searchParams.get("limit");
@@ -67,17 +78,27 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const refreshResult = await refreshVerifiedHermesTokenHoldings({ limit: parseLimit(req) });
+    const refreshResult = await refreshVerifiedHermesTokenHoldings({
+      lane: "token_holdings",
+      limit: parseLimit(req),
+    });
 
     // Refresh has run; now drive eligibility evaluation off the freshest
-    // balance per user. Only evaluate users whose refresh succeeded — others
-    // either had no verified wallet or hit a transient RPC error.
+    // balance per user. Users whose refresh succeeded are judged on their
+    // latest snapshot. Users with standing but no verification wallet are
+    // judged at a zero balance. Users whose read failed (transient RPC error)
+    // are left for the next run: a failed read is not a zero balance.
     const refreshedUserIds = (refreshResult.results ?? [])
       .filter((r) => r.status === "refreshed")
       .map((r) => r.userId);
+    const unbackedUserIds = (refreshResult.results ?? [])
+      .filter((r) => r.status === "no_verified_wallet")
+      .map((r) => r.userId);
+    const evaluatedUserIds = [...refreshedUserIds, ...unbackedUserIds];
 
     const balancesByUser = await fetchLatestPlatformTokenBalancesByUser(refreshedUserIds);
-    const accessByUser = await resolveTokenAccessForUsers(refreshedUserIds);
+    for (const userId of unbackedUserIds) balancesByUser.set(userId, zeroPlatformTokenBalances());
+    const accessByUser = await resolveTokenAccessForUsers(evaluatedUserIds);
 
     const transitions: EligibilitySummary[] = [];
     const eligibilityWarnings: string[] = [];
@@ -91,8 +112,8 @@ export async function GET(req: NextRequest) {
     // batching is safe.
     const BATCH_SIZE = 10;
     const allEmailPromises: Promise<unknown>[] = [];
-    for (let i = 0; i < refreshedUserIds.length; i += BATCH_SIZE) {
-      const batch = refreshedUserIds.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < evaluatedUserIds.length; i += BATCH_SIZE) {
+      const batch = evaluatedUserIds.slice(i, i + BATCH_SIZE);
       const evalResults = await Promise.allSettled(
         batch.map(async (userId) => {
           const balances = balancesByUser.get(userId);
@@ -182,8 +203,10 @@ export async function GET(req: NextRequest) {
     try {
       const priceQuote = await fetchVvvPriceUsd();
       const vvvByUser = await fetchLatestVvvSnapshotsByUser(refreshedUserIds);
-      for (let i = 0; i < refreshedUserIds.length; i += BATCH_SIZE) {
-        const batch = refreshedUserIds.slice(i, i + BATCH_SIZE);
+      // No verification wallet: the boost's VVV holding is zero too.
+      for (const userId of unbackedUserIds) vvvByUser.set(userId, 0n);
+      for (let i = 0; i < evaluatedUserIds.length; i += BATCH_SIZE) {
+        const batch = evaluatedUserIds.slice(i, i + BATCH_SIZE);
         const boostResults = await Promise.allSettled(
           batch.map(async (userId) => {
             const balance = vvvByUser.get(userId);

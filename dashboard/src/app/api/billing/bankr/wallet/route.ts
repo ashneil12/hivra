@@ -60,7 +60,6 @@ async function provisionCreditDepositWalletStatus(userId: string) {
     ensureBankrDepositWalletForUser({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     }),
     getBankrDepositWalletCredentialForUser({ userId, purpose: "hermesos_lock" }),
   ]);
