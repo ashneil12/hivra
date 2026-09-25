@@ -2,11 +2,12 @@
  * Cron: refresh $HERMES wallet snapshots → update resource_tier per user.
  *
  * What it does, every run:
- *   1. Refreshes the next page of accounts with token standing via
- *      refreshVerifiedHermesTokenHoldings() on its own cursor lane (pulls live
- *      balances from Base RPC, writes token_holding_snapshots; an account with
- *      no verification wallet gets zero-balance snapshots). Every account is
- *      re-read once per cycle of pages.
+ *   1. Refreshes holdings via refreshVerifiedHermesTokenHoldings() on its own
+ *      lane (pulls live balances from Base RPC, writes token_holding_snapshots;
+ *      an account with no verification wallet gets zero-balance snapshots).
+ *      Every account with Pro/Power, Venice boost or lock-wallet standing is
+ *      read on every run, first; plain verified wallets get the capacity left,
+ *      least recently read first.
  *   2. For each user, derives the new tier from the strongest entitlement,
  *      in resolveEffectiveSubscription's order:
  *        - active Stripe sub → skip (handleSubscriptionChange owns this)
@@ -69,6 +70,11 @@ import {
 // users): 24-72h" design rule.
 const TOKEN_DOWNGRADE_GRACE_HOURS = 48;
 
+// The refresh stops starting reads after its budget, leaving the rest of
+// maxDuration for the tier scan and any live resizes below.
+export const maxDuration = 300;
+const REFRESH_TIME_BUDGET_MS = 150_000;
+
 // Vercel Cron uses GET by default. POST is also accepted for manual
 // triggering with curl/test scripts. Both require the CRON_SECRET bearer.
 async function handle(request: NextRequest) {
@@ -98,13 +104,15 @@ async function handle(request: NextRequest) {
 }
 
 async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
-  // 1. Refresh balances for the next page of accounts on this cron's cursor
-  //    lane (writes to token_holding_snapshots). The helper handles RPC
-  //    errors gracefully.
+  // 1. Refresh balances on this cron's lane (writes to token_holding_snapshots):
+  //    every account with standing, then plain verified wallets with the
+  //    budget left. A failed read is not recorded as judged, so the next run
+  //    reads it ahead of every account judged since.
   const refreshResult = await refreshVerifiedHermesTokenHoldings({
     lane: "token_tiers",
     db,
     fetchImpl: globalThis.fetch,
+    timeBudgetMs: REFRESH_TIME_BUDGET_MS,
   });
 
   // 2. For each user with a Stripe subscription that's NOT active+paid, AND
@@ -473,6 +481,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   return apiSuccess({
     snapshots_refreshed: refreshResult.refreshed ?? 0,
     snapshots_failed: refreshResult.failed ?? 0,
+    snapshots_budget_exhausted: refreshResult.budgetExhausted ?? false,
+    standing_unjudged: refreshResult.cycle?.unjudged ?? null,
     users_scanned: userIds.length,
     venice_boost_eligible: boostByUser.size,
     tier_changes: tierChanges.length,

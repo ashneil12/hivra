@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { POST } from "../route";
+import { POST, maxDuration } from "../route";
 import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings";
@@ -214,6 +214,22 @@ describe("POST /api/cron/refresh-token-tiers", () => {
 
   afterEach(() => {
     process.env = ORIGINAL_ENV;
+  });
+
+  it("refreshes holdings on its own lane within a budget that leaves room for the tier scan", async () => {
+    mockSupabase({ instances: [], snapshots: [], subscriptions: [], qualifications: [] });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith(
+      expect.objectContaining({ lane: "token_tiers", timeBudgetMs: 150_000 })
+    );
+    // A snapshot-only lane: every definitive read counts as judged.
+    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith(
+      expect.not.objectContaining({ judgePage: expect.anything() })
+    );
+    expect(maxDuration).toBe(300);
   });
 
   it("upgrades a Power-qualified token holder from token_base to fleet", async () => {

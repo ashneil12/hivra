@@ -30,6 +30,15 @@ const TERMINAL_CONNECT_TIMEOUT_MS = 15_000;
 const TERMINAL_WEBSOCKET_TOKEN_TTL_MS = 90_000;
 const TERMINAL_ATTACH_ERROR = "Failed to attach to terminal session";
 const TERMINAL_REQUEST_ERROR = "Terminal request failed";
+// Fixed by the dashboard, never copied from the box (see GET).
+const TERMINAL_STREAM_RESPONSE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  "Content-Type": "text/event-stream",
+  "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; sandbox",
+  "Cache-Control": "private, no-cache, no-transform",
+  "Connection": "keep-alive",
+  "X-Accel-Buffering": "no",
+});
 
 const START_SCHEMA = z.object({
   action: z.literal("start"),
@@ -325,14 +334,26 @@ export async function GET(
       );
     }
 
+    // This response is served from the dashboard origin, so the box must not
+    // choose how the browser interprets it: a compromised or prompt-injected
+    // box answering text/html would otherwise run script as the dashboard.
+    // The sidecar always sends an event stream; anything else is logged and
+    // still delivered only as an inert event stream.
+    const upstreamContentType = response.headers.get("content-type");
+    if (upstreamContentType?.split(";", 1)[0].trim().toLowerCase() !== "text/event-stream") {
+      log.warn("terminal sidecar attach stream had an unexpected content type", {
+        source: "terminal-interactive",
+        route: "/api/instances/[id]/terminal/interactive",
+        method: "GET",
+        instanceId: secureInstance.instance.id,
+        upstreamContentType: upstreamContentType?.slice(0, 100) ?? null,
+        failureType: "terminal_sidecar_unexpected_content_type",
+      });
+    }
+
     return new Response(response.body, {
       status: response.status,
-      headers: {
-        "Content-Type": response.headers.get("content-type") || "text/event-stream",
-        "Cache-Control": response.headers.get("cache-control") || "no-cache, no-transform",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
+      headers: TERMINAL_STREAM_RESPONSE_HEADERS,
     });
   } catch {
     return NextResponse.json({ error: TERMINAL_ATTACH_ERROR }, { status: 502 });

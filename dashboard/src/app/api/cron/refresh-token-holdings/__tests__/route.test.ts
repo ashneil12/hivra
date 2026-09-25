@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { GET } from "../route";
+import { GET, maxDuration } from "../route";
 import { fetchLatestHermesSnapshotsByUser } from "@/lib/billing/token-holding-snapshots";
 import {
   HERMESOS_TOKEN_ADDRESS,
@@ -31,30 +31,41 @@ jest.mock("@/lib/billing/price-feed", () => ({
 
 describe("GET /api/cron/refresh-token-holdings", () => {
   const originalEnv = process.env;
+  // What the route's judge returned for the page the mocked run handed it.
+  let judged: string[] | null = null;
 
   beforeEach(() => {
     jest.clearAllMocks();
     process.env = { ...originalEnv, CRON_SECRET: "cron-secret" };
-    (refreshVerifiedHermesTokenHoldings as jest.Mock).mockResolvedValue({
-      checked: 2,
-      refreshed: 1,
-      noVerifiedWallet: 0,
-      failed: 1,
-      results: [
-        {
-          userId: "user_1",
-          walletId: "wallet_1",
-          status: "refreshed",
-          snapshotId: "snapshot_1",
-          qualifiesBaseTier: true,
-        },
-        {
-          userId: "user_2",
-          walletId: "wallet_2",
-          status: "failed",
-        },
-      ],
-    });
+    // The run hands each page of reads to the route's judge, as the real one does.
+    (refreshVerifiedHermesTokenHoldings as jest.Mock).mockImplementation(
+      async (params: { judgePage: (reads: unknown[]) => Promise<string[]> }) => {
+        const results = [
+          {
+            userId: "user_1",
+            walletId: "wallet_1",
+            standing: true,
+            status: "refreshed",
+            snapshotId: "snapshot_1",
+            qualifiesBaseTier: true,
+          },
+          {
+            userId: "user_2",
+            walletId: "wallet_2",
+            standing: false,
+            status: "failed",
+          },
+        ];
+        judged = await params.judgePage(results);
+        return {
+          checked: 2,
+          refreshed: 1,
+          noVerifiedWallet: 0,
+          failed: 1,
+          results,
+        };
+      }
+    );
   });
 
   afterEach(() => {
@@ -92,7 +103,15 @@ describe("GET /api/cron/refresh-token-holdings", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith({ lane: "token_holdings", limit: 25 });
+    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith({
+      lane: "token_holdings",
+      limit: 25,
+      timeBudgetMs: 180_000,
+      judgePage: expect.any(Function),
+    });
+    // No balances could be loaded (no database here), so nothing was
+    // evaluated and nothing is recorded as judged.
+    expect(judged).toEqual([]);
     expect(json.data).toEqual({
       checked: 2,
       refreshed: 1,
@@ -102,6 +121,7 @@ describe("GET /api/cron/refresh-token-holdings", () => {
         {
           userId: "user_1",
           walletId: "wallet_1",
+          standing: true,
           status: "refreshed",
           snapshotId: "snapshot_1",
           qualifiesBaseTier: true,
@@ -109,6 +129,7 @@ describe("GET /api/cron/refresh-token-holdings", () => {
         {
           userId: "user_2",
           walletId: "wallet_2",
+          standing: false,
           status: "failed",
         },
       ],
@@ -132,6 +153,10 @@ describe("GET /api/cron/refresh-token-holdings", () => {
         transitions: [],
       },
     });
+  });
+
+  it("gives the run room to read, judge and close inside the function limit", () => {
+    expect(maxDuration).toBe(300);
   });
 
   it("does not leak backend errors", async () => {
