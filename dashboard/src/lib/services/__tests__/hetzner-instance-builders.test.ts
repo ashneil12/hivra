@@ -116,6 +116,7 @@ function realisticGatewayDeployParams(systemPrompt?: string): Parameters<typeof 
       sessionExpiryHours: 24,
     },
     includeHostTimeSyncRepair: false,
+    includeRegistryCredentialScrub: false,
   };
 }
 
@@ -185,7 +186,8 @@ describe("hetzner-instance-builders", () => {
     // Hetzner's 32 KB cloud-init limit. Same flake bit us again with
     // GHCR_TOKEN (read directly inside the bootstrap template). Lock both
     // down: any env-derived value we want to embed must come in via
-    // params, not via process.env reads inside the builder.
+    // params, not via process.env reads inside the builder. (The registry
+    // token is gone entirely now: see platform-registry-credential.test.ts.)
     const previousShaEnv = process.env.VERCEL_GIT_COMMIT_SHA;
     const previousGhcrEnv = process.env.GHCR_TOKEN;
     process.env.VERCEL_GIT_COMMIT_SHA = "a".repeat(40);
@@ -213,6 +215,8 @@ describe("hetzner-instance-builders", () => {
           enableRootAccess: true,
         },
         includeHostTimeSyncRepair: false,
+        // Fresh-server user_data, as hetzner-instance-service renders it.
+        includeRegistryCredentialScrub: false,
       });
 
       const totalUserDataLength = Buffer.byteLength(
@@ -243,27 +247,6 @@ describe("hetzner-instance-builders", () => {
     expect(hostUserData).toContain("docker images -f dangling=true -q");
     expect(hostUserData).not.toContain("docker system prune -f --volumes");
     expect(hostUserData).not.toContain("--volumes");
-  });
-
-  it("renders the docker-login block when ghcrToken is supplied via params", () => {
-    const { fqdn } = resolveGatewayConfiguration({
-      subdomain: "7c80cbe05e19d9bf24c5",
-      ipv4: "203.0.113.4",
-    });
-    const agentScript = buildAgentDeployScript({
-      instanceId: "inst_ghcr",
-      containerName: "agent-inst_ghcr",
-      apiServerKey: "x".repeat(64),
-      provider: "openrouter",
-      apiKey: "sk-test",
-      model: "anthropic/claude-opus-4.1",
-      fqdn,
-      cpuLimit: 2,
-      ramLimit: 4096,
-      ghcrToken: "ghp_paramtoken",
-    });
-
-    expect(agentScript).toContain('echo "ghp_paramtoken" | docker login ghcr.io');
   });
 
   it("initializes Hermes-owned writable volumes before first boot", () => {

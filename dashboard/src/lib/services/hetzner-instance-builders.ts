@@ -16,6 +16,7 @@ import {
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl, resolveProviderFallbackModel } from "@/lib/services/provider-config";
 import { HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE } from "@/lib/services/sidecar-script";
 import { buildInstanceUpdateReporterShell } from "@/lib/services/update-status-reporting";
+import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
 import { log } from "@/lib/logger";
 import {
   buildEnsureBusyboxAvailableScript,
@@ -1687,13 +1688,6 @@ interface BuildAgentDeployScriptParams {
   profilesToRestore?: { name: string; port: number }[];
   codexAuthBundle?: CodexVaultBundle;
   nousAuthBundle?: NousVaultBundle;
-  // GHCR token to use for `docker login ghcr.io` in the bootstrap.
-  // Caller decides whether to source this from process.env — keeping the
-  // builder pure means the test suite renders deterministic-size output
-  // regardless of the test runner's env (CI sets GHCR_TOKEN; local
-  // jest doesn't), which is what the user_data 32 KB size assertion
-  // depends on. Empty/null/undefined → docker-login block is omitted.
-  ghcrToken?: string | null;
   /**
    * Existing-host/live-update scripts must repair the host clock because no
    * host bootstrap runs. Fresh Hetzner provisioning already runs the repair in
@@ -1701,6 +1695,13 @@ interface BuildAgentDeployScriptParams {
    * user_data ceiling.
    */
   includeHostTimeSyncRepair?: boolean;
+  /**
+   * Remove the ghcr.io login older scripts left in root's Docker config.
+   * Defaults to on: existing hosts and live updates may carry that login. A
+   * fresh server has never run an older script, and its user_data sits close
+   * to the 32 KB ceiling, so its caller turns this off.
+   */
+  includeRegistryCredentialScrub?: boolean;
   /**
    * "heredoc" only when the whole script is compressed before delivery
    * (renderCompressedProvisioningUserData). Defaults to "gzip-base64".
@@ -2145,16 +2146,11 @@ fi
 
 export function buildAgentDeployScript(params: BuildAgentDeployScriptParams): string {
   const { instanceId, containerName, cpuLimit, ramLimit, globalSettings } = params;
-  const ghcrToken = (params.ghcrToken ?? "").trim();
-  // Render the docker-login block only when the caller supplied a token.
-  // Embedding the literal token in user_data is what blew the Hetzner
-  // 32 KB cloud-init budget when env-derived strings of variable length
-  // crept in (cf. the regression test guarding VERCEL_GIT_COMMIT_SHA).
-  // Empty/missing token → render nothing; production keeps working
-  // because the dashboard runtime always passes a value.
-  const ghcrLoginBlock = ghcrToken
-    ? `echo "${ghcrToken}" | docker login ghcr.io -u __token__ --password-stdin 2>/dev/null || true\n`
-    : "";
+  // No registry login: every image this script pulls is a public package, and
+  // a platform registry token must never reach a tenant box. The scrub removes
+  // the ghcr.io login older scripts left in root's Docker config.
+  const registryCredentialScrub =
+    params.includeRegistryCredentialScrub === false ? "" : buildPlatformRegistryCredentialScrubScript();
   const hostTimeSyncRepairScript =
     params.includeHostTimeSyncRepair === false ? "" : buildHostTimeSyncRepairScript();
 
@@ -2312,7 +2308,7 @@ mkdir -p /opt/hermes/instances/${instanceId}
 cd /opt/hermes/instances/${instanceId}
 :>w
 
-${ghcrLoginBlock}
+${registryCredentialScrub}
 ${hostTimeSyncRepairScript}
 
 ${renderEmbeddedFileWrite(".env.new", envFileContent, { encoding: embeddedFileEncoding })}

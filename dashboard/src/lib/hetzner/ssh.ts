@@ -10,6 +10,7 @@ import { createHash } from "crypto";
 import * as fs from "fs";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isSshWarmupError } from "@/lib/ssh-warmup";
+import { buildHermesVmidBoundGuestSshPrelude, isValidGuestSshUser } from "@/lib/proxmox/hermes-guest-ssh";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -86,7 +87,6 @@ async function proxmoxGuestSshExec(
     proxmoxHostConfig?: ProxmoxSshHostConfig | null
 ): Promise<SshResult> {
     const commandB64 = Buffer.from(command, "utf8").toString("base64");
-    const knownHostsId = ip.replace(/\./g, "-");
 
     // When the caller provides stdin payload, ship it base64-encoded
     // alongside the command so it survives the bash -c outer wrapper,
@@ -113,24 +113,37 @@ async function proxmoxGuestSshExec(
     }
     const vmSshUser = proxmoxEnv.PROXMOX_VM_SSH_USER?.trim() || "hermes";
     const vmSshKeyPath = proxmoxEnv.PROXMOX_VM_SSH_KEY_PATH?.trim() || "/etc/hivra/keys/vm-orchestrator";
+    if (!isValidGuestSshUser(vmSshUser) || !vmSshKeyPath.startsWith("/")) {
+        return {
+            ok: false,
+            stdout: "",
+            stderr: "",
+            error: "Refusing Proxmox guest SSH: the configured guest ssh user or key path is invalid",
+        };
+    }
+
+    // Commands and stdin here carry secrets (config.yaml with the Bankr block,
+    // OAuth tokens, integration keys). The host binds the IP to the one running
+    // VM it has configured with it and pins SSH to the host key that VM's guest
+    // agent attests, so a neighbour answering ARP for the IP receives nothing.
+    const hostScriptHead = `#!/usr/bin/env bash
+set -euo pipefail
+VMID=""
+PRIVATE_IP=${shellQuote(ip)}
+VM_SSH_KEY_PATH=${shellQuote(vmSshKeyPath)}
+COMMAND_B64=${shellQuote(commandB64)}`;
+    const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({ sshUser: vmSshUser, quiet: true });
 
     if (stdin !== undefined) {
         const stdinB64 = Buffer.isBuffer(stdin)
             ? stdin.toString("base64")
             : Buffer.from(stdin, "utf8").toString("base64");
         return runProxmoxHostScript(
-            `#!/usr/bin/env bash
-set -euo pipefail
-PRIVATE_IP=${shellQuote(ip)}
-VM_SSH_USER=${shellQuote(vmSshUser)}
-VM_SSH_KEY_PATH=${shellQuote(vmSshKeyPath)}
-COMMAND_B64=${shellQuote(commandB64)}
+            `${hostScriptHead}
 STDIN_B64=${shellQuote(stdinB64)}
-SSH_KNOWN_HOSTS_FILE="/tmp/hermes-proxmox-exec-known-hosts-${knownHostsId}"
-rm -f "$SSH_KNOWN_HOSTS_FILE"
-GUEST_SSH_OPTS=(-i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE" -o LogLevel=ERROR)
+${guestSshPrelude}
 DECODED_CMD=$(printf '%s' "$COMMAND_B64" | base64 -d)
-printf '%s' "$STDIN_B64" | base64 -d | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -c $(printf %q "$DECODED_CMD")"
+printf '%s' "$STDIN_B64" | base64 -d | "\${GUEST_SSH[@]}" "sudo bash -c $(printf %q "$DECODED_CMD")"
 `,
             proxmoxEnv,
             timeoutMs
@@ -138,16 +151,9 @@ printf '%s' "$STDIN_B64" | base64 -d | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER
     }
 
     return runProxmoxHostScript(
-        `#!/usr/bin/env bash
-set -euo pipefail
-PRIVATE_IP=${shellQuote(ip)}
-VM_SSH_USER=${shellQuote(vmSshUser)}
-VM_SSH_KEY_PATH=${shellQuote(vmSshKeyPath)}
-COMMAND_B64=${shellQuote(commandB64)}
-SSH_KNOWN_HOSTS_FILE="/tmp/hermes-proxmox-exec-known-hosts-${knownHostsId}"
-rm -f "$SSH_KNOWN_HOSTS_FILE"
-GUEST_SSH_OPTS=(-i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE" -o LogLevel=ERROR)
-printf '%s' "$COMMAND_B64" | base64 -d | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -s"
+        `${hostScriptHead}
+${guestSshPrelude}
+printf '%s' "$COMMAND_B64" | base64 -d | "\${GUEST_SSH[@]}" "sudo bash -s"
 `,
         proxmoxEnv,
         timeoutMs
