@@ -886,12 +886,110 @@ export async function refreshPrimaryHermesTokenHolding(params: {
   return result;
 }
 
+/**
+ * Cursor lanes for the two crons that refresh holdings. Each keeps its own
+ * position: refresh-token-tiers only refreshes snapshots, so sharing a lane
+ * would let it consume accounts that refresh-token-holdings (the eligibility
+ * evaluator) then skips until the next cycle.
+ */
+export type TokenHoldingRefreshLane = "token_holdings" | "token_tiers";
+
+export const TOKEN_HOLDING_REFRESH_CLAIM_RPC = "claim_token_holding_refresh_batch";
+
+type TokenHoldingRefreshDb = SupabaseLike & {
+  rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
+};
+
+/**
+ * Next page of accounts whose token standing the holdings crons must judge
+ * (supabase/migrations/20260925181500_token_holding_refresh_cursor.sql): a
+ * verified primary wallet, a grandfathered lock wallet, an eligible or
+ * in-grace Pro/Power qualification, or an eligible Venice boost. Pages walk
+ * user ids in order from the lane's saved position and wrap, so every account
+ * is re-read once per cycle while each run stays bounded.
+ */
+async function claimTokenHoldingRefreshBatch(params: {
+  db: TokenHoldingRefreshDb;
+  lane: TokenHoldingRefreshLane;
+  limit: number;
+}): Promise<string[]> {
+  const { data, error } = await params.db.rpc(TOKEN_HOLDING_REFRESH_CLAIM_RPC, {
+    p_lane: params.lane,
+    p_limit: params.limit,
+  });
+  if (error) {
+    const detail = error as { code?: unknown; message?: unknown };
+    const reason = `${String(detail.code ?? "unknown")}: ${String(detail.message ?? "no message")}`;
+    if (process.env.NODE_ENV !== "test") {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[refreshVerifiedHermesTokenHoldings] ${TOKEN_HOLDING_REFRESH_CLAIM_RPC} failed lane=${params.lane}: ${reason}`
+      );
+    }
+    throw new Error(`Failed to claim token holding refresh batch (${reason})`);
+  }
+  const rows = Array.isArray(data) ? (data as Array<{ user_id?: unknown }>) : [];
+  return rows
+    .map((row) => row.user_id)
+    .filter((userId): userId is string => typeof userId === "string" && userId.length > 0);
+}
+
+/**
+ * An account the crons are judging has no verification wallet (its primary is
+ * missing or is a platform deposit wallet). Its verified holding is zero, so
+ * record that for every token whose latest snapshot still shows a balance:
+ * refresh-token-tiers honours the latest snapshot for token_base, and the
+ * snapshot is the audit trail for the zero-balance eligibility evaluation.
+ * Idempotent: once the latest snapshot is zero nothing more is written.
+ */
+async function recordUnbackedTokenHoldings(params: {
+  db: SupabaseLike;
+  userId: string;
+  now: Date;
+}): Promise<number> {
+  let written = 0;
+  for (const token of verifiedTokenBalanceConfigs(params.now)) {
+    const latest = await getLatestTokenHoldingSnapshot(params.userId, token.tokenAddress, params.db);
+    if (!latest || BigInt(latest.balanceRaw) <= 0n) continue;
+
+    const { error } = await table(params.db, "token_holding_snapshots")
+      .insert({
+        user_id: params.userId,
+        wallet_id: null,
+        wallet_address: latest.walletAddress,
+        normalized_wallet_address: latest.normalizedWalletAddress,
+        chain_id: token.chainId,
+        token_address: token.tokenAddress,
+        token_symbol: token.tokenSymbol,
+        token_decimals: token.tokenDecimals,
+        balance_raw: "0",
+        balance_display: "0",
+        qualifies_base_tier: false,
+        block_number: null,
+        source: "admin",
+        metadata: { reason: "no_verification_wallet" },
+        checked_at: params.now.toISOString(),
+      })
+      .select("id")
+      .single();
+    if (error) {
+      throw new Error(`Failed to record zero ${token.tokenSymbol} holding for an account without a verification wallet`);
+    }
+    written += 1;
+  }
+  return written;
+}
+
 export async function refreshVerifiedHermesTokenHoldings(params: {
-  db?: SupabaseLike | null;
+  /** Which cron's cursor to advance (see TokenHoldingRefreshLane). */
+  lane: TokenHoldingRefreshLane;
+  db?: TokenHoldingRefreshDb | null;
+  /** Accounts per run, 1..100. The cursor makes every account reachable. */
   limit?: number;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   refreshUserHolding?: RefreshUserHolding;
+  now?: Date;
   // Base RPC resilience knobs (all optional; sensible defaults). Exposed mainly
   // so tests can inject a fake sleep/random and tighten the retry budget. The
   // retry/backoff/jitter on 429/5xx/network lives in the shared base-rpc-retry
@@ -902,22 +1000,13 @@ export async function refreshVerifiedHermesTokenHoldings(params: {
   rpcSleepImpl?: (ms: number) => Promise<void>;
   rpcRandom?: () => number;
   interUserDelayMs?: number;
-} = {}) {
-  const admin = requireDb(params.db ?? supabaseAdmin);
+}) {
+  const admin = requireDb(
+    params.db ?? (supabaseAdmin as unknown as TokenHoldingRefreshDb | null)
+  );
   const limit = normalizeRefreshLimit(params.limit);
-  const { data, error } = await (table(admin, "user_wallets")
-    .select("id, user_id, address, normalized_address, chain_type, chain_id, is_primary, verified_at")
-    .eq("chain_type", "evm")
-    .eq("is_primary", true)
-    .not("verified_at", "is", null)
-    .order("verified_at", { ascending: true })
-    .limit(limit) as unknown as Promise<{ data: unknown; error: unknown }>);
-
-  if (error) {
-    throw new Error("Failed to load verified wallets for token refresh");
-  }
-
-  const wallets = Array.isArray(data) ? (data as UserWalletRow[]) : [];
+  const now = params.now ?? new Date();
+  const userIds = await claimTokenHoldingRefreshBatch({ db: admin, lane: params.lane, limit });
 
   // Build the per-call RPC options once: retry config + injectable sleep/random
   // ride along with every eth_* call this batch makes (only when the default
@@ -945,43 +1034,41 @@ export async function refreshVerifiedHermesTokenHoldings(params: {
 
   const results: Array<{
     userId: string;
-    walletId: string;
     status: "refreshed" | "no_verified_wallet" | "failed";
     snapshotId?: string;
     qualifiesBaseTier?: boolean;
+    zeroSnapshotsRecorded?: number;
   }> = [];
 
   let refreshed = 0;
   let noVerifiedWallet = 0;
   let failed = 0;
 
-  let walletIndex = 0;
-  for (const wallet of wallets) {
+  let userIndex = 0;
+  for (const userId of userIds) {
     // Throttle between users (not before the first) to keep the per-tick request
     // rate under the public Base RPC endpoint's rate-limit threshold. Skipped
     // when a caller injects its own refreshUserHolding (it owns its pacing).
-    if (walletIndex > 0 && !params.refreshUserHolding && interUserDelayMs > 0) {
+    if (userIndex > 0 && !params.refreshUserHolding && interUserDelayMs > 0) {
       await sleepImpl(interUserDelayMs);
     }
-    walletIndex += 1;
+    userIndex += 1;
     try {
-      const result = await refreshUserHolding(wallet.user_id);
+      const result = await refreshUserHolding(userId);
       if (result.status === "refreshed") {
         refreshed += 1;
         results.push({
-          userId: wallet.user_id,
-          walletId: wallet.id,
+          userId,
           status: "refreshed",
           snapshotId: result.snapshot?.id,
           qualifiesBaseTier: result.snapshot?.qualifiesBaseTier,
         });
       } else {
+        // Standing with no verification wallet behind it: the verified holding
+        // is zero. The caller judges this account at a zero balance.
+        const zeroSnapshotsRecorded = await recordUnbackedTokenHoldings({ db: admin, userId, now });
         noVerifiedWallet += 1;
-        results.push({
-          userId: wallet.user_id,
-          walletId: wallet.id,
-          status: "no_verified_wallet",
-        });
+        results.push({ userId, status: "no_verified_wallet", zeroSnapshotsRecorded });
       }
     } catch (refreshErr) {
       // Diagnostic: gated on non-test so the existing leak tests still
@@ -990,21 +1077,18 @@ export async function refreshVerifiedHermesTokenHoldings(params: {
       if (process.env.NODE_ENV !== "test") {
         // eslint-disable-next-line no-console
         console.error(
-          `[refreshVerifiedHermesTokenHoldings] refresh failed user=${wallet.user_id} wallet=${wallet.id}:`,
+          `[refreshVerifiedHermesTokenHoldings] refresh failed user=${userId} lane=${params.lane}:`,
           refreshErr
         );
       }
       failed += 1;
-      results.push({
-        userId: wallet.user_id,
-        walletId: wallet.id,
-        status: "failed",
-      });
+      results.push({ userId, status: "failed" });
     }
   }
 
   return {
-    checked: wallets.length,
+    lane: params.lane,
+    checked: userIds.length,
     refreshed,
     noVerifiedWallet,
     failed,

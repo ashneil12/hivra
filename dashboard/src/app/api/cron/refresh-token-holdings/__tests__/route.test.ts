@@ -92,7 +92,7 @@ describe("GET /api/cron/refresh-token-holdings", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith({ limit: 25 });
+    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith({ lane: "token_holdings", limit: 25 });
     expect(json.data).toEqual({
       checked: 2,
       refreshed: 1,

@@ -372,5 +372,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260925100600", name: "hivra_agent_attach_refusals" },
   { version: "20260925110000", name: "provider_release_admission_2026_09_24_4" },
   { version: "20260925160000", name: "hivra_attached_agent_program_remove_fix" },
+  { version: "20260925181500", name: "token_holding_refresh_cursor" },
   { version: "20260925181600", name: "bankr_deposit_wallet_primary_repair" },
 ];
