@@ -173,6 +173,9 @@ exit 74
 function runLaunchFixture(params: {
   fail?: "qm" | "pct" | "pvesm";
   stoppedQemuMemoryMb?: number;
+  capacityPolicy?: "reserved" | "active";
+  /** Exit status of the sealed capacity helper under the "active" policy. */
+  helperExit?: number;
   canaryVersion?: string;
   defaultVersion?: string;
   bundle?: BundleState;
@@ -204,6 +207,10 @@ function runLaunchFixture(params: {
   executable(join(paths.canaryProvisioner, "hivra-provision-on-host.sh"),
     `#!/bin/sh\nprintf '%s %s\\n' "$HIVRA_PROV_DIR" "$(cat "$HIVRA_PROV_DIR/VERSION")" > ${JSON.stringify(dispatched)}\nexit 0\n`);
   executable(join(paths.defaultProvisioner, "hivra-provision-on-host.sh"), `#!/bin/sh\ntouch ${JSON.stringify(wrongLane)}\nexit 0\n`);
+  // Stands in for the sealed helper product launches use; records its argv.
+  const helperArgs = join(root, "capacity-helper-args");
+  executable(join(paths.canaryProvisioner, "hivra-host-capacity-admission"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" > ${JSON.stringify(helperArgs)}\n[ "\${HIVRA_TEST_HELPER_EXIT:-0}" = 0 ] || { echo "active memory floors plus host reserve exceed physical memory" >&2; exit 1; }\necho HIVRA_CAPACITY_ADMITTED\n`);
   const bundleManifest = sealBundle(paths.canaryProvisioner, params.bundle ?? "sealed");
   sealBundle(paths.defaultProvisioner, "sealed");
   linkSha256sum(fakeBin);
@@ -251,6 +258,7 @@ exit 74
     subnetPrefix: "10.252.20", gateway: "10.252.20.1", operationId: ledger.operationId,
     bindingTag: ledger.bindingTag, cpu: 2, memoryMb: 4096,
     tunnelToken: "fixture-token", tunnelUrl: "https://deepseek.example.com", bundleManifest,
+    capacityPolicy: params.capacityPolicy,
   })
     .replaceAll("/run/lock", paths.lock)
     .replaceAll("/run/hivra-provision", paths.provision)
@@ -268,11 +276,13 @@ exit 74
       PATH: `${fakeBin}:/usr/bin:/bin`,
       HIVRA_TEST_FAIL: params.fail || "",
       HIVRA_TEST_STOPPED_QEMU_MEMORY_MB: params.stoppedQemuMemoryMb ? String(params.stoppedQemuMemoryMb) : "",
+      HIVRA_TEST_HELPER_EXIT: String(params.helperExit ?? 0),
     },
   });
   return {
     root,
     result,
+    helperArgs,
     claimFile: join(paths.claims, `${ledger.vmid}.claim`),
     secretFile: join(paths.provision, `${ledger.vmid}.env`),
     dispatched,
@@ -639,6 +649,45 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
+  });
+
+  it("admits a lab computer like a product launch only when the operator asks for the active policy", () => {
+    // A stopped guest another owner holds would block the default reserved rule...
+    const active = runLaunchFixture({ stoppedQemuMemoryMb: 4096, capacityPolicy: "active" });
+    try {
+      expect({ status: active.result.status, stderr: active.result.stderr }).toMatchObject({ status: 0 });
+      expect(existsSync(active.dispatched)).toBe(true);
+      // ...but the active rule is the sealed helper product launches run: the
+      // requested floor and maximum, CPU, 2048 MB reserve, observe mode, 1x density.
+      expect(readFileSync(active.helperArgs, "utf8").trim()).toBe("- 4096 4096 2 2048 0 1000 1000");
+    } finally {
+      rmSync(active.root, { recursive: true, force: true });
+    }
+    const refused = runLaunchFixture({ capacityPolicy: "active", helperExit: 1 });
+    try {
+      expect({ status: refused.result.status, stderr: refused.result.stderr }).toMatchObject({
+        status: 8, stderr: expect.stringContaining("HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY active memory floors plus host reserve exceed physical memory"),
+      });
+      expect(existsSync(refused.claimFile)).toBe(false);
+      expect(existsSync(refused.dispatched)).toBe(false);
+    } finally {
+      rmSync(refused.root, { recursive: true, force: true });
+    }
+    // The default never consults the helper.
+    const reserved = runLaunchFixture({ stoppedQemuMemoryMb: 4096 });
+    try {
+      expect(reserved.result.status).toBe(8);
+      expect(existsSync(reserved.helperArgs)).toBe(false);
+    } finally {
+      rmSync(reserved.root, { recursive: true, force: true });
+    }
+  });
+
+  it("parses the capacity policy, defaulting to reserved", () => {
+    const base = ["--launch", "--target", "fixturenode11", "--expected-hostname", "fixturenode11", "--ledger", "/tmp/fixture-ledger.json", "--vmid", "1190", "--octet", "90"];
+    expect(parseDeepSeekCanaryArgs(base).capacityPolicy).toBe("reserved");
+    expect(parseDeepSeekCanaryArgs([...base, "--capacity-policy", "active"]).capacityPolicy).toBe("active");
+    expect(() => parseDeepSeekCanaryArgs([...base, "--capacity-policy", "overcommit"])).toThrow("--capacity-policy");
   });
 
   it("reads access, restarts and tears down only after exact ownership checks", () => {
