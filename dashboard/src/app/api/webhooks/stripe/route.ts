@@ -128,6 +128,9 @@ export async function POST(req: NextRequest) {
           }
           break;
         }
+        // An invoice carries no lane marker; the handlers retrieve the live
+        // subscription, send Workspace Cloud ones to that lane, and touch the
+        // Hivra row only when it is bound to that exact subscription.
         case "invoice.paid":
           await StripeWebhookService.handleInvoicePaid(event.data.object as Stripe.Invoice);
           break;
