@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +61,20 @@ class BundleTests(unittest.TestCase):
             with self.assertRefused('staging_absent'):
                 execute('observe')
         self.assertFalse(Path('/var/lib/hivra/attachment-staging').exists())
+
+    def test_stage_ended_without_a_receipt_is_named_failed(self):
+        # The installer failed: the journal stays "started" and nothing holds
+        # the lock, so the observation names it final (T3), never unresolved.
+        journal = Path('/var/lib/hivra/attachment-staging/staging.json')
+        with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 1)):
+            with self.assertRefused('staging_failed'):
+                execute('stage')
+        try:
+            self.assertEqual(json.loads(journal.read_text())['phase'], 'started')
+            with self.assertRefused('staging_failed'):
+                execute('observe')
+        finally:
+            journal.unlink()
 
     def test_stage_missing_cache_never_downloads_or_starts(self):
         moved = cache.with_suffix('.fixture-hidden')

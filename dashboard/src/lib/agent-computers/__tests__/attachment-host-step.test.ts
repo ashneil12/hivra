@@ -10,11 +10,11 @@
 // guest program runs. With HIVRA_HOST_STEP_FIXTURE_DIR set, this file writes
 // them there for it.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { buildAttachmentHostObservationScript, buildAttachmentHostStepScript,
-  parseAttachmentTargetRefusal } from "../attachment-host-observation";
+  parseAttachmentTargetRefusal, parseGuestStepRefusal } from "../attachment-host-observation";
 
 const target = {
   operationId: "11111111-1111-4111-8111-111111111111", computerId: "22222222-2222-4222-8222-222222222222",
@@ -59,6 +59,12 @@ it("accepts the guest address with any prefix length and names each refusal", ()
   expect(parseAttachmentTargetRefusal("HIVRA_ATTACHMENT_TARGET_REFUSED rm -rf\n")).toBeNull();
   expect(parseAttachmentTargetRefusal("HIVRA_ATTACHMENT_TARGET_REFUSED computer_not_running\nHIVRA_ATTACHMENT_TARGET_REFUSED binding_mismatch")).toBeNull();
   expect(parseAttachmentTargetRefusal(undefined)).toBeNull();
+  // A guest program that raised names its refusal on one line (T3).
+  const names = ["step_refused", "bundle_invalid"] as const;
+  expect(parseGuestStepRefusal("x\nHIVRA_GUEST_STEP_REFUSED step_refused\n", names)).toBe("step_refused");
+  expect(parseGuestStepRefusal("HIVRA_GUEST_STEP_REFUSED staging_failed\n", names)).toBeNull();
+  expect(parseGuestStepRefusal("HIVRA_GUEST_STEP_REFUSED step_refused\nHIVRA_GUEST_STEP_REFUSED step_refused", names)).toBeNull();
+  expect(parseGuestStepRefusal(undefined, names)).toBeNull();
 });
 
 const fixtureDir = process.env.HIVRA_HOST_STEP_FIXTURE_DIR;
@@ -71,5 +77,10 @@ const fixtureDir = process.env.HIVRA_HOST_STEP_FIXTURE_DIR;
   for (const architecture of ["x86_64", "aarch64"] as const) {
     write(`observation-${architecture}.sh`, buildAttachmentHostObservationScript({ ...target, architecture }));
   }
+  // The real pinned runners with a bundle they refuse: their refusal line must
+  // cross the guest exec and the host script unchanged.
+  const runner = (file: string) => readFileSync(path.join(process.cwd(), "provisioner", file), "utf8");
+  write("step-refused.sh", buildAttachmentHostStepScript(target, runner("run-attached-agent-bundle.py"), "{}", 60));
+  write("stage-refused.sh", buildAttachmentHostStepScript(target, runner("run-attached-codex-bundle.py"), "{}", 60));
   writeFileSync(path.join(dir, "target.json"), JSON.stringify(target));
 });

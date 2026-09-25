@@ -164,6 +164,18 @@ try:
     assert not list(Path('/run').glob('hivra-qga-result.*')), 'result file left behind'
     print('PASS the step holds the host lock for the check and the start only; the guest runs 6 s with the lock free')
 
+    # 1b. A guest program that raised ends the step with its one named refusal
+    #    line, carried through the guest exec and the host script (T3).
+    #    Before 2: its late guest job would answer a reused fake pid.
+    for name, line in (('step-refused.sh', 'HIVRA_GUEST_STEP_REFUSED step_refused\n'),
+                       ('stage-refused.sh', 'HIVRA_GUEST_STEP_REFUSED bundle_invalid\n')):
+        reset()
+        done = run(name)
+        assert done.returncode == 1, (name, done)
+        assert done.stdout.decode() == line, (name, done.stdout)
+        assert b'HIVRA_QGA_FAILURE guest_exit_1' in done.stderr, (name, done.stderr)
+    print('PASS a guest program that raised ends the step with its named refusal')
+
     # 2. The step's deadline ends the wait (the guest keeps its own deadline).
     reset()
     done = run('step-deadline.sh')
