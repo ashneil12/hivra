@@ -66,7 +66,7 @@ function createSelectQuery(rows: Array<Record<string, unknown>>) {
   query.limit = jest.fn(() => query);
   query.maybeSingle = jest.fn(async () => ({
     data: rows.find((row) =>
-      Object.entries(filters).every(([column, value]) => row[column] === value)
+      Object.entries(filters).every(([column, value]) => readColumn(row, column) === value)
     ) ?? null,
     error: null,
   }));
@@ -74,9 +74,21 @@ function createSelectQuery(rows: Array<Record<string, unknown>>) {
   return query;
 }
 
+// PostgREST JSON path filters (`metadata->bankr->>purpose`) read into the row.
+function readColumn(row: Record<string, unknown>, column: string): unknown {
+  if (!column.includes("->")) return row[column];
+  const [base, ...path] = column.split(/->>?/);
+  let value: unknown = row[base];
+  for (const key of path) {
+    value = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+  }
+  return value;
+}
+
 function createUpsertQuery(
   rows: Array<Record<string, unknown>>,
-  buildRow: (row: Record<string, unknown>) => Record<string, unknown>
+  buildRow: (row: Record<string, unknown>) => Record<string, unknown>,
+  conflictsWith?: (candidate: Record<string, unknown>, stored: Record<string, unknown>) => boolean
 ) {
   const query: {
     upsert: jest.Mock;
@@ -94,6 +106,7 @@ function createUpsertQuery(
   query.upsert = jest.fn((row: Record<string, unknown>) => {
     const stored = buildRow(row);
     const existingIndex = rows.findIndex((candidate) => {
+      if (conflictsWith) return conflictsWith(candidate, stored);
       if (stored.user_id && stored.purpose && candidate.user_id === stored.user_id && candidate.purpose === stored.purpose) return true;
       if (stored.user_id && !stored.purpose && candidate.user_id === stored.user_id) return true;
       return stored.normalized_address && candidate.normalized_address === stored.normalized_address;
@@ -129,11 +142,19 @@ function createMemoryDb() {
             select: () => createSelectQuery(wallets),
             update: createThenableUpdateTable(wallets),
             upsert: (...args: unknown[]) =>
-              createUpsertQuery(wallets, (row) => ({
-                id: "wallet_1",
-                is_primary: false,
-                ...row,
-              })).upsert(...args),
+              createUpsertQuery(
+                wallets,
+                (row) => ({
+                  id: "wallet_1",
+                  is_primary: false,
+                  ...row,
+                }),
+                // onConflict: "user_id,chain_type,normalized_address"
+                (candidate, stored) =>
+                  candidate.user_id === stored.user_id &&
+                  candidate.chain_type === stored.chain_type &&
+                  candidate.normalized_address === stored.normalized_address
+              ).upsert(...args),
           };
         }
 
@@ -352,5 +373,96 @@ describe("Bankr deposit wallets", () => {
     expect(result.credential?.purpose).toBe("managed_venice_inference");
     expect(result.credential?.allowedRecipientEvm).toBe(normalizedManagedVeniceTreasury);
     expect(result.credential?.apiKeyStatus).toBe("active");
+  });
+
+  // A platform deposit wallet can never back token-tier standing, so it must
+  // never displace the wallet the user proved they own as their primary.
+  // Demoting that wallet left tier eligibility without any wallet the
+  // holdings cron could re-read.
+  describe("never displaces the user's verified wallet as primary", () => {
+    const signedAddress = "0x000000000000000000000000000000000000c0de";
+    const signedWallet = () => ({
+      id: "wallet_signed",
+      user_id: "user_123",
+      chain_type: "evm",
+      chain_id: 8453,
+      address: signedAddress,
+      normalized_address: signedAddress,
+      is_primary: true,
+      verified_at: "2026-04-20T12:00:00.000Z",
+      verification_method: "signature",
+      metadata: {},
+    });
+    const env = {
+      BANKR_PARTNER_KEY: "bk_ptr_secret",
+      BANKR_API_BASE_URL: "https://api.example.test",
+      HERMES_TREASURY_BASE_ADDRESS: treasuryAddress,
+    };
+
+    it("when a new deposit wallet is provisioned", async () => {
+      const { db, wallets } = createMemoryDb();
+      wallets.push(signedWallet());
+      const fetchImpl = jest.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: "wlt_New",
+          evmAddress: depositAddress,
+          solAddress: null,
+          status: "active",
+          createdAt: now.toISOString(),
+          apiKey: "bk_usr_secret_for_sweeping",
+        }),
+      }));
+
+      const result = await ensureBankrDepositWalletForUser({
+        userId: "user_123",
+        purpose: "credit_deposit",
+        db,
+        env,
+        fetchImpl,
+        now,
+      });
+
+      expect(result.status).toBe("provisioned");
+      expect(wallets.find((row) => row.id === "wallet_signed")?.is_primary).toBe(true);
+      const deposit = wallets.find((row) => row.normalized_address === normalizedDepositAddress);
+      expect(deposit?.is_primary).toBe(false);
+    });
+
+    it("when an existing deposit wallet is re-used", async () => {
+      const { db, wallets } = createMemoryDb();
+      wallets.push(signedWallet(), {
+        id: "wallet_deposit",
+        user_id: "user_123",
+        chain_type: "evm",
+        chain_id: 8453,
+        address: normalizedDepositAddress,
+        normalized_address: normalizedDepositAddress,
+        is_primary: false,
+        verified_at: "2026-04-21T12:00:00.000Z",
+        verification_method: "bankr",
+        verification_reference: "wlt_Existing",
+        metadata: { bankr: { walletId: "wlt_Existing", purpose: "credit_deposit" } },
+      });
+      const fetchImpl = jest.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => ({ apiKey: "bk_usr_secret_for_sweeping" }),
+      }));
+
+      const result = await ensureBankrDepositWalletForUser({
+        userId: "user_123",
+        purpose: "credit_deposit",
+        db,
+        env,
+        fetchImpl,
+        now,
+      });
+
+      expect(result.status).toBe("existing");
+      expect(wallets.find((row) => row.id === "wallet_signed")?.is_primary).toBe(true);
+      expect(wallets.find((row) => row.id === "wallet_deposit")?.is_primary).toBe(false);
+    });
   });
 });

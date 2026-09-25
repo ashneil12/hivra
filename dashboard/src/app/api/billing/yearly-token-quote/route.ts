@@ -281,7 +281,7 @@ export async function POST(req: NextRequest) {
       const provisioned = await ensureBankrDepositWalletForUser({
         userId,
         purpose: "credit_deposit",
-        makePrimary: true,
+        makePrimary: false,
       });
       if (provisioned.status === "not_configured") {
         return apiError("Bankr wallet provisioning is not configured.", 503, {

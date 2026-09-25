@@ -434,6 +434,13 @@ export async function ensureBankrDepositWalletForUser(params: {
   env?: Record<string, string | undefined>;
   fetchImpl?: BankrPartnerFetch;
   now?: Date;
+  /**
+   * Make this wallet the account's primary EVM wallet. Defaults to false and
+   * callers pass it explicitly. A platform deposit wallet can never back
+   * token-tier standing (getTokenVerificationWallet skips it), so making it
+   * primary demotes the wallet the user verified and leaves their tier with
+   * no wallet the holdings cron can re-read.
+   */
   makePrimary?: boolean;
 }): Promise<BankrDepositWalletResult | { status: "not_configured" }> {
   const admin = requireDb(params.db ?? supabaseAdmin);
@@ -468,7 +475,7 @@ export async function ensureBankrDepositWalletForUser(params: {
     env: params.env,
     fetchImpl: params.fetchImpl,
     now: params.now,
-    makePrimary: params.makePrimary ?? true,
+    makePrimary: params.makePrimary ?? false,
     walletPurpose: purpose,
     apiKey: existingWallet ? null : apiKeyRequest,
   });
