@@ -26,27 +26,29 @@ live); DigitalOcean Managed Agents (not yet tested against the live DigitalOcean
 API); the Computer Contract; agent work that survives refreshes, closed tabs and
 restarts; the plan's agent limit enforced by the database for Hivra Cloud
 launches; and adding Codex to an Ubuntu Desktop you already have (Canary only;
-the first live add, Change access and Remove passed). hivra.cloud gets the rest
-at the next owner-approved promotion.
+the first live add, Change access and Remove passed). None of this reaches
+hivra.cloud until the owner approves a production promotion; adding Codex to an
+existing computer stays Canary-only even then (see Next, item 5).
 
 **Next**
 
-1. **Sign in with DigitalOcean, and a real DigitalOcean team test.** Needs: a
-   DigitalOcean OAuth app, confirmation that its sign-in can grant Managed
-   Agents access, and a team in DigitalOcean's Managed Agents preview.
-2. **Hivra desktop app for Mac, Windows and Linux.** The current Mac alpha stays
-   until the new app matches it. Needs: engineering, code signing for each
-   platform, and the separate release approval Slice 7 requires.
-3. **Better testing.** Dashboard checks on every merge into `canary`, a check
-   that every test file runs somewhere, size limits for what Hivra sends to a
-   computer, fixtures for computers made by older releases, browser journeys on
-   Canary, and a nightly check on real Canary computers. Needs: engineering, and
-   the owner for required-check settings and a nightly test account.
-4. **Home and office machines through Hivra's relay.** A machine with no open
+1. **Home and office machines through Hivra's relay.** A machine with no open
    inbound port keeps one outbound connection to the approved Cloudflare relay;
    SSH stays end to end. The relay and connector are built (#87, #95). Needs:
    the relay deployed for Canary, the connection transport, `--outbound` in the
    one-command setup, the "At home" path in Connect, and a no-inbound-port test.
+2. **Sign in with DigitalOcean, and a real DigitalOcean team test.** Needs: a
+   DigitalOcean OAuth app, confirmation that its sign-in can grant Managed
+   Agents access, and a team in DigitalOcean's Managed Agents preview.
+3. **Hivra desktop app for Mac, Windows and Linux.** The current Mac alpha stays
+   until the new app matches it. Needs: engineering, code signing for each
+   platform, and the separate release approval Slice 7 requires.
+4. **Better testing.** First, in progress: Dashboard checks on every merge into
+   `canary`, a check that every test file runs somewhere, and size limits for
+   what Hivra sends to a computer. Then fixtures for computers made by older
+   releases, browser journeys on Canary, and a nightly check on real Canary
+   computers. Needs: engineering, and the owner for required-check settings and
+   a nightly test account.
 5. **More agents on computers you already have:** other agents and computers,
    in-place updates, then hivra.cloud. Needs: engineering, real-computer tests.
 6. **Launch follow-ups:** several Hetzner servers per account, updating older
