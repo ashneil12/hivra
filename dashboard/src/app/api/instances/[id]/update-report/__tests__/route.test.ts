@@ -27,6 +27,8 @@ interface InstanceFixture {
 describe("POST /api/instances/[id]/update-report", () => {
   let instanceUpdate: jest.Mock;
   let instanceUpdateEq: jest.Mock;
+  let instanceUpdateNot: jest.Mock;
+  let instanceUpdateIs: jest.Mock;
 
   // The lookup row returned by the select chain. Tests mutate this to exercise
   // soft-deleted / terminal-status cases. The route's query chains
@@ -36,7 +38,9 @@ describe("POST /api/instances/[id]/update-report", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    instanceUpdateEq = jest.fn().mockResolvedValue({ error: null });
+    instanceUpdateIs = jest.fn().mockResolvedValue({ error: null });
+    instanceUpdateNot = jest.fn().mockReturnValue({ is: instanceUpdateIs });
+    instanceUpdateEq = jest.fn().mockReturnValue({ not: instanceUpdateNot });
     instanceUpdate = jest.fn().mockReturnValue({ eq: instanceUpdateEq });
 
     instanceFixture = {
@@ -161,6 +165,44 @@ describe("POST /api/instances/[id]/update-report", () => {
       })
     );
     expect(instanceUpdateEq).toHaveBeenCalledWith("id", "inst-123");
+    // The write itself refuses a row that became non-resurrectable after the
+    // read, so a concurrent delete or deletion schedule cannot be undone.
+    expect(instanceUpdateNot).toHaveBeenCalledWith(
+      "status",
+      "in",
+      expect.stringContaining('"scheduled_for_deletion"')
+    );
+    expect(instanceUpdateIs).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("does not revive an instance scheduled for deletion on a succeeded callback", async () => {
+    // Reviving it to "running" would take the row out of the purge-expired
+    // cron's selection, so its VM would never be torn down.
+    instanceFixture = {
+      id: "inst-123",
+      user_id: "user-123",
+      api_server_key_encrypted: "gateway-secret",
+      status: "scheduled_for_deletion",
+      deleted_at: null,
+    };
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "succeeded",
+          runType: "manual",
+        }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdate).not.toHaveBeenCalled();
   });
 
   it("does not resurrect a soft-deleted instance on a replayed succeeded callback", async () => {
