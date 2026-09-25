@@ -14,11 +14,12 @@ export const runtime = "nodejs";
 /**
  * Internal settle endpoint for the off-Vercel chat proxy (Cloudflare Worker).
  *
- * After the Worker finishes streaming a completion to the box, it POSTs the
- * `usage` frame here (or `usage:null` if none was seen, with the output it
- * forwarded as `observedOutputTokens`). This captures the actual cost against
- * the reservation, or the input estimate plus the observed output, keeping
- * the proxy key live. The Worker retries until it gets a 2xx, so a 5xx here
+ * After the Worker finishes reading a completion from Venice (to its usage
+ * frame, even when the box disconnected), it POSTs the `usage` frame here (or
+ * `usage:null` if none was seen, with the output it read as
+ * `observedOutputTokens`). This captures the actual cost against the
+ * reservation, or the input estimate plus the observed output, with any cost
+ * past the hold debited as an overage, keeping the proxy key live. The Worker retries until it gets a 2xx, so a 5xx here
  * means nothing was written and the call is safe to repeat: a hold that is
  * already settled is never charged again. If the Worker never reaches here,
  * the hold expires a day after the request and the stale-hold sweep captures
@@ -58,7 +59,16 @@ export async function POST(req: NextRequest) {
     const owner = userId
       ? { userId, proxyKeyId }
       : await loadManagedVeniceReservationOwner(referenceId);
-    if (!owner) return Response.json({ ok: true, released: false });
+    if (!owner) {
+      // No hold yet. An authorize whose connection broke can still commit it
+      // after this call, so answer 5xx and let the Worker retry rather than
+      // leave a hold for a request that never ran to be charged a day later
+      // (#167 second review). When authorize never reserved, the Worker
+      // gives up after its retries and nothing is held.
+      return apiError("No hold has this reference yet.", 503, {
+        failureType: "managed_venice_internal_release_hold_not_found",
+      });
+    }
     const result = await releaseManagedVeniceChatReservationOrFile({
       userId: owner.userId,
       proxyKeyId: owner.proxyKeyId ?? null,
@@ -105,7 +115,7 @@ export async function POST(req: NextRequest) {
     model,
     upstreamStatus,
     usage,
-    // Sent by a Worker that counts the output it forwarded (and why the
+    // Sent by a Worker that counts the output it read (and why the
     // stream ended); an older Worker sends neither.
     ...(observedOutputTokens !== null ? { observedOutputTokens } : {}),
     ...(cause !== null ? { cause } : {}),

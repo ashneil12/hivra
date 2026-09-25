@@ -161,35 +161,33 @@ for (const streaming of [false, true]) {
   });
 }
 
-// Security review 2026-09 (#167): with a tee, a box that disconnected left the
-// Worker draining Venice until waitUntil's grace ran out, and the hold was
-// then charged a flat estimate a day later.
-test('a box that disconnects mid-stream stops Venice and is charged the output forwarded', async (t) => {
-  const streamBody = { ...body, stream: true };
-  const frame = (text) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
-  // Venice keeps generating (the disconnect is only seen when the Worker next
-  // writes to the box) until the test has its answer.
-  let stopped = false;
-  let produced = 0;
-  const harness = await create(t, chatUpstream(() => new Response(new ReadableStream({
+const sseFrame = (value) => `data: ${JSON.stringify(value)}\n\n`;
+const contentFrame = (text) => sseFrame({ choices: [{ delta: { content: text } }] });
+
+// Venice sends one frame every `everyMs`, then ends.
+function pacedSse(frames, everyMs = 20) {
+  let sent = 0;
+  const stream = new ReadableStream({
     async pull(controller) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      produced += 1;
-      if (stopped || produced > 100) controller.close();
-      else controller.enqueue(new TextEncoder().encode(frame('abcd')));
+      await new Promise((resolve) => setTimeout(resolve, everyMs));
+      if (sent < frames.length) controller.enqueue(new TextEncoder().encode(frames[sent++]));
+      else controller.close();
     },
-  }), { headers: { 'content-type': 'text/event-stream' } }), streamBody, { checkReference: false }));
-  // A raw socket, so the disconnect is a real one (a fetch client may keep
-  // reading the body to reuse its connection).
-  const url = new URL('/v1/chat/completions', await harness.mf.ready);
-  await new Promise((resolve, reject) => {
+  });
+  return { response: new Response(stream, { headers: { 'content-type': 'text/event-stream' } }), sent: () => sent };
+}
+
+// A box on a raw socket (a fetch client may keep reading the body to reuse its
+// connection), which disconnects once `leave(seen)` says so.
+function boxThatLeaves(url, streamBody, leave) {
+  return new Promise((resolve, reject) => {
     const request = http.request(url, {
       method: 'POST', headers: { authorization: 'Bearer test-client-key', 'content-type': 'application/json' },
     }, (response) => {
       let seen = '';
       response.on('data', (chunk) => {
         seen += chunk.toString();
-        if ((seen.match(/"content"/g) ?? []).length >= 3) {
+        if (leave(seen)) {
           request.destroy();
           resolve();
         }
@@ -199,17 +197,75 @@ test('a box that disconnects mid-stream stops Venice and is charged the output f
     request.on('error', (error) => (error.code === 'ECONNRESET' ? undefined : reject(error)));
     request.end(JSON.stringify(streamBody));
   });
+}
+
+// Security review 2026-09 (#167 second review, HIGH): the Worker stopped
+// reading Venice when the box disconnected and charged the output it had
+// forwarded, so a reasoning model's hidden thinking was never paid for. It now
+// keeps reading Venice, without forwarding, to the usage frame.
+test('a box that disconnects mid-stream: the Worker reads Venice to its usage frame and settles the exact usage', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const finalUsage = { prompt_tokens: 12, completion_tokens: 20_003, total_tokens: 20_015 };
+  const upstream = pacedSse([
+    ...Array.from({ length: 20 }, () => contentFrame('abcd')),
+    sseFrame({ choices: [], usage: finalUsage }),
+    'data: [DONE]\n\n',
+  ]);
+  const harness = await create(t, chatUpstream(() => upstream.response, streamBody, { checkReference: false }));
+  const url = new URL('/v1/chat/completions', await harness.mf.ready);
+  await boxThatLeaves(url, streamBody, (seen) => (seen.match(/"content"/g) ?? []).length >= 3);
   const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
-  stopped = true;
   assert.equal(settlement.outcome, 'settle');
   assert.equal(settlement.referenceId, auth.referenceId);
+  assert.deepEqual(settlement.usage, finalUsage);
+  assert.equal(settlement.cause, 'client_cancelled');
+  assert.equal(settlement.observedOutputTokens, undefined);
+  assert.ok(upstream.sent() >= 21, `Venice sent ${upstream.sent()} frames`);
+  assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
+});
+
+test('a box that disconnects from a stream Venice ends without usage is settled with every token read', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const upstream = pacedSse(Array.from({ length: 30 }, () => contentFrame('abcd')), 10);
+  const harness = await create(t, chatUpstream(() => upstream.response, streamBody, { checkReference: false }));
+  const url = new URL('/v1/chat/completions', await harness.mf.ready);
+  await boxThatLeaves(url, streamBody, (seen) => (seen.match(/"content"/g) ?? []).length >= 3);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
   assert.equal(settlement.usage, null);
   assert.equal(settlement.cause, 'client_cancelled');
-  // Every frame the Worker read counts (the disconnect is seen on the next
-  // write, so a frame or two may follow the third).
-  assert.ok(settlement.observedOutputTokens >= 3, `observed ${settlement.observedOutputTokens}`);
-  assert.ok(settlement.observedOutputTokens < 50, `observed ${settlement.observedOutputTokens}`);
+  assert.equal(settlement.observedOutputTokens, 30);
   assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
+});
+
+// #167 second review: the wait for Venice's headers ran in the request
+// context, so a box that left before Venice answered could leave the hold for
+// the sweep's day-late estimate.
+test('a box that disconnects before Venice answers still has its hold settled with the exact usage', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const finalUsage = { prompt_tokens: 12, completion_tokens: 40, total_tokens: 52 };
+  const upstream = chatUpstream(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return new Response(`${contentFrame('late')}${sseFrame({ choices: [], usage: finalUsage })}data: [DONE]\n\n`, {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  }, streamBody, { checkReference: false });
+  let upstreamCalled;
+  const reached = new Promise((resolve) => (upstreamCalled = resolve));
+  const harness = await create(t, (call) => {
+    if (call.url === auth.upstreamUrl) upstreamCalled();
+    return upstream(call);
+  });
+  const url = new URL('/v1/chat/completions', await harness.mf.ready);
+  const request = http.request(url, {
+    method: 'POST', headers: { authorization: 'Bearer test-client-key', 'content-type': 'application/json' },
+  });
+  request.on('error', () => undefined);
+  request.end(JSON.stringify(streamBody));
+  await reached;
+  request.destroy();
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.outcome, 'settle');
+  assert.deepEqual(settlement.usage, finalUsage);
 });
 
 test('a stream that ends without a usage frame is settled with the output it forwarded', async (t) => {
@@ -223,6 +279,19 @@ test('a stream that ends without a usage frame is settled with the output it for
   assert.equal(settlement.usage, null);
   assert.equal(settlement.cause, 'completed');
   assert.equal(settlement.observedOutputTokens, 2);
+});
+
+// #167 second review: UTF-8 size / 4 counted batched CJK at 0.75 of a token.
+test('a usage-less stream counts every non-ASCII character as a token', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const sse = `${contentFrame('日本語の文章です')}${contentFrame('abcdabcd')}data: [DONE]\n\n`;
+  const harness = await create(t, chatUpstream(() => new Response(sse, {
+    headers: { 'content-type': 'text/event-stream' },
+  }), streamBody, { checkReference: false }));
+  assert.equal(await (await chat(harness.mf, streamBody)).text(), sse);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal(settlement.usage, null);
+  assert.equal(settlement.observedOutputTokens, 10);
 });
 
 // #167 review: callSettle ignored a non-2xx settle and never retried, so the

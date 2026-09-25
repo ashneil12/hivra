@@ -16,6 +16,7 @@ box → Worker /v1/chat/completions
              {plaintextKey, body}  →  {referenceId, upstreamKey, upstreamUrl, walletType, userId, proxyKeyId, model}
         2. fetch(api.venice.ai, Bearer upstreamKey)   ← Worker holds this stream
         3. forward Venice's bytes to the box, counting the output and keeping the usage frame
+           (after a disconnect: keep reading, without forwarding, to the usage frame)
         4. POST {VERCEL_BASE_URL}/api/managed-venice/internal/settle
              {outcome:"settle", referenceId, usage, observedOutputTokens, cause, ...}
              (or {outcome:"release", referenceId, cause} on any failure after authorize)
@@ -36,11 +37,18 @@ Settlement rules (security review 2026-09):
 - Settle and release are retried with backoff until Vercel answers 2xx (at most
   5 tries). Both are safe to repeat: a settled hold is never charged or released
   again.
-- A stream without a usage frame, including one the box disconnected from, is
-  settled with `observedOutputTokens` (the larger of the frames that carried text
-  and the text's UTF-8 size / 4) and charged the input estimate plus that
-  output. When the box disconnects, the Worker stops reading Venice. The count
-  mirrors `dashboard/src/lib/venice/stream-output-meter.ts`.
+- When the box disconnects, the Worker stops forwarding but keeps reading Venice
+  to its usage frame, for up to 20 s (Cloudflare allows 30 s of `waitUntil` work
+  after the client leaves), so the exact usage is charged, hidden reasoning
+  included. Everything after authorize, the wait for Venice's answer included,
+  runs under `waitUntil`.
+- A stream without a usage frame is settled with `observedOutputTokens` (the
+  larger of the frames that carried text and a token per 4 ASCII characters
+  plus a token per other character) and charged the input estimate plus that
+  output, past the hold as an overage. The count mirrors
+  `dashboard/src/lib/venice/stream-output-meter.ts`.
+- A release by reference that finds no hold yet gets a 503, so the Worker keeps
+  retrying while a slow authorize may still commit the hold.
 
 ## Local verification
 

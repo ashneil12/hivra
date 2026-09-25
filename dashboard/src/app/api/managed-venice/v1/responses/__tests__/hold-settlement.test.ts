@@ -49,7 +49,14 @@ jest.mock("@/lib/venice/live-pricing", () => ({
   })),
 }));
 
+// The route's 270 s deadline, shortened so a test can reach it.
+jest.mock("@/lib/venice/hold-lifecycle", () => ({
+  ...jest.requireActual("@/lib/venice/hold-lifecycle"),
+  MANAGED_VENICE_STREAM_DEADLINE_MS: 400,
+}));
+
 import { POST } from "../route";
+import { calculateActualChatCost } from "@/lib/venice/cost-estimator";
 import { sweepStaleManagedVeniceReservations } from "@/lib/venice/reservation-sweep";
 
 const responsesBody = { model: "claude-opus-4-8", input: "write a long story", stream: true, max_output_tokens: 60_000 };
@@ -80,8 +87,32 @@ function openUpstreamStream(chunks: string[]) {
 const delta = (text: string) =>
   `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`;
 
+// A Venice stream that sends one chunk every couple of milliseconds, so
+// events keep arriving after the client has gone, then ends. (Well inside the
+// route deadline, which these tests shorten to 400 ms.)
+function pacedUpstreamStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (sent < chunks.length) controller.enqueue(encoder.encode(chunks[sent++]));
+      else controller.close();
+    },
+  });
+  return { stream, sent: () => sent };
+}
+
 async function settleMicrotasks() {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 3_000) {
+  const startedAt = Date.now();
+  while (!check()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for the settlement");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function reservation() {
@@ -131,7 +162,7 @@ describe("managed Venice Responses: every hold after a 200 is settled in the req
     jest.restoreAllMocks();
   });
 
-  it("charges the output streamed when the client cancels, and frees the rest of the hold", async () => {
+  it("charges the output read when the client cancels and Venice never sends the terminal event", async () => {
     const FRAMES = 200;
     const upstream = openUpstreamStream(Array.from({ length: FRAMES }, () => delta("abcd")));
     mockFetch.mockResolvedValueOnce(
@@ -144,7 +175,9 @@ describe("managed Venice Responses: every hold after a 200 is settled in the req
     const client = response.body!.getReader();
     for (let read = 0; read < FRAMES; read += 1) await client.read();
     await client.cancel();
-    await settleMicrotasks();
+    // Venice is still read after the client leaves, up to the route deadline.
+    expect(upstream.wasCancelled()).toBe(false);
+    await waitFor(() => reservation().status !== "active");
 
     const expected = meta.inputEstimateMicroUsd + FRAMES * OUTPUT_MICRO_USD_PER_TOKEN;
     expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: expected });
@@ -160,8 +193,9 @@ describe("managed Venice Responses: every hold after a 200 is settled in the req
     expect(upstream.wasCancelled()).toBe(true);
   });
 
-  // The route's 270 s abort (and a request abort) take the same path.
-  it("charges the output streamed when the stream is aborted before the terminal usage event", async () => {
+  // A request abort is the client leaving: Venice is still read, here to the
+  // route's deadline, since its terminal event never comes.
+  it("keeps reading after the request aborts and charges the output read at the deadline", async () => {
     const upstream = openUpstreamStream([delta("abcd"), delta("abcd"), delta("abcd")]);
     mockFetch.mockResolvedValueOnce(
       new Response(upstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
@@ -173,16 +207,44 @@ describe("managed Venice Responses: every hold after a 200 is settled in the req
     const client = response.body!.getReader();
     for (let read = 0; read < 3; read += 1) await client.read();
     abort.abort();
-    await client.read().catch(() => undefined);
-    await settleMicrotasks();
+    expect(upstream.wasCancelled()).toBe(false);
+    await waitFor(() => reservation().status !== "active");
 
     expect(reservation()).toMatchObject({
       status: "captured",
       captured_micro_usd: meta.inputEstimateMicroUsd + 3 * OUTPUT_MICRO_USD_PER_TOKEN,
     });
     expect(mockMemory.tables.managed_venice_usage_events[0].metadata).toMatchObject({
-      observedOutput: expect.objectContaining({ cause: "stream_aborted", observedOutputTokens: 3 }),
+      observedOutput: expect.objectContaining({ cause: "client_cancelled", observedOutputTokens: 3 }),
     });
+    expect(upstream.wasCancelled()).toBe(true);
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
+  // #167 second review (HIGH): Responses reasoning is encrypted, never
+  // streamed as text. A client that closed the socket after the first line
+  // paid for that line; Venice billed every reasoning token.
+  it("keeps reading Venice after the client cancels and charges the terminal usage, reasoning included", async () => {
+    const usage = { input_tokens: 40, output_tokens: 20_010, output_tokens_details: { reasoning_tokens: 20_000 } };
+    const upstream = pacedUpstreamStream([
+      delta("42"),
+      ...Array.from({ length: 10 }, () => delta(" filler")),
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_1", status: "completed", usage } })}\n\n`,
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+    );
+
+    const response = await POST(makeReq());
+    const client = response.body!.getReader();
+    await client.read();
+    await client.cancel();
+    await waitFor(() => reservation().status !== "active");
+
+    const exact = calculateActualChatCost({ model: "claude-opus-4-8", promptTokens: 40, completionTokens: 20_010 }).actualCostMicroUsd;
+    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: exact });
+    expect(lotValue()).toBe(BALANCE - exact);
+    expect(upstream.sent()).toBe(12);
     expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
 
@@ -238,8 +300,21 @@ describe("managed Venice Responses: every hold after a 200 is settled in the req
     expect(lotValue()).toBe(BALANCE);
   });
 
-  it("leaves a 5xx with an unknown outcome for an operator until the hold expires, then releases it", async () => {
+  // #167 second review (MEDIUM): a 5xx left the hold active for a day, while
+  // the chat route and the Worker released it; Codex retries a 5xx.
+  it("releases the hold of a Venice 5xx at once", async () => {
     mockFetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+
+    const response = await POST(makeReq());
+
+    expect(response.status).toBe(502);
+    expect(reservation().status).toBe("released");
+    expect(lotValue()).toBe(BALANCE);
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
+  it("leaves a dispatch whose outcome is unknown to an operator for an hour, then releases it", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("socket hang up"));
 
     const response = await POST(makeReq());
 
@@ -248,15 +323,14 @@ describe("managed Venice Responses: every hold after a 200 is settled in the req
     expect(items).toEqual([
       expect.objectContaining({
         reason: "managed_venice_responses_ambiguous_usage",
-        metadata: expect.objectContaining({ cause: "upstream_outcome_unknown" }),
+        metadata: expect.objectContaining({ cause: "dispatch_outcome_unknown" }),
       }),
     ]);
-    items[0].created_at = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    items[0].created_at = new Date(Date.now() - 30 * 60_000).toISOString();
     await sweepStaleManagedVeniceReservations({}, mockMemory.db);
     expect(reservation().status).toBe("active");
 
-    reservation().expires_at = new Date(Date.now() - 60_000).toISOString();
-    items[0].created_at = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    items[0].created_at = new Date(Date.now() - 61 * 60_000).toISOString();
     await sweepStaleManagedVeniceReservations({}, mockMemory.db);
 
     expect(reservation().status).toBe("released");

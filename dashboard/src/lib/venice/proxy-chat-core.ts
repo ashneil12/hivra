@@ -23,11 +23,11 @@ import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
   captureManagedVeniceChatUsage,
   captureManagedVeniceObservedOutput,
+  loadManagedVeniceReservationOwner,
   managedVeniceUsageCostMicroUsd,
   markManagedVeniceReconciliationRequired,
   reserveManagedVeniceChatRequest,
 } from "@/lib/venice/proxy-settlement";
-import { loadManagedVeniceReservation } from "@/lib/billing/managed-venice-wallets";
 
 // SCRIPTURE_ANCHOR: venice-stream | Proverbs 18:4 | Verse: The words of a man's mouth are like deep waters. The fountain of wisdom is like a flowing brook.
 export const VENICE_CHAT_COMPLETIONS_URL =
@@ -90,14 +90,21 @@ export type AuthorizeManagedVeniceChatResult =
   // (and, through the Worker, to the box). OpenAI-compatible bodies preserved.
   | { ok: false; response: Response };
 
+const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requestsStrippedThinking(body: Record<string, unknown>): boolean {
+  const veniceParameters = body.venice_parameters;
+  if (!veniceParameters || typeof veniceParameters !== "object" || Array.isArray(veniceParameters)) return false;
+  const strip = (veniceParameters as Record<string, unknown>).strip_thinking_response;
+  return strip !== undefined && strip !== null && strip !== false;
+}
+
 /**
  * Verify the proxy key, validate the model, fetch live pricing, reserve wallet
  * funds (enforcing balance + spend caps), and resolve the upstream Venice key.
  * Everything up to — but not including — the upstream fetch. Returns either an
  * authorized context or the exact error Response to relay.
  */
-const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export async function authorizeManagedVeniceChat(params: {
   plaintextKey: string | null;
   body: Record<string, unknown>;
@@ -130,6 +137,19 @@ export async function authorizeManagedVeniceChat(params: {
 
   if (typeof body.model !== "string" || !body.model.trim()) {
     return { ok: false, response: apiError("Model is required.", 400) };
+  }
+  // Venice leaves a reasoning model's thinking out of the stream when asked
+  // to strip it, so a stream whose usage frame never arrives could not be
+  // charged for it (security review 2026-09, #167 second review).
+  if (requestsStrippedThinking(body)) {
+    return {
+      ok: false,
+      response: apiError(
+        "venice_parameters.strip_thinking_response is not supported on managed Venice. Use disable_thinking to skip reasoning.",
+        400,
+        { failureType: "managed_venice_strip_thinking_unsupported" }
+      ),
+    };
   }
   const endpoint = params.protocol === "responses" ? VENICE_RESPONSES_ENDPOINT : "/api/v1/chat/completions";
   const estimateBody = params.protocol === "responses" ? responsesEstimateRequest(body) : body as { model: string; [key: string]: unknown };
@@ -182,9 +202,10 @@ export async function authorizeManagedVeniceChat(params: {
   }
 
   const referenceId = params.referenceId ?? randomUUID();
-  // A caller-chosen reference must be new: reusing one would find the old
-  // (possibly settled) hold and forward a request with nothing held for it.
-  if (params.referenceId && (await loadManagedVeniceReservation(verifiedKey.userId, params.referenceId))) {
+  // A caller-chosen reference must be new, for every user: reusing one would
+  // find the old (possibly settled) hold and forward a request with nothing
+  // held for it, or touch another user's hold (#167 second review).
+  if (params.referenceId && (await loadManagedVeniceReservationOwner(params.referenceId))) {
     return {
       ok: false,
       response: apiError("Duplicate request reference.", 409, {
@@ -297,8 +318,8 @@ export async function authorizeManagedVeniceChat(params: {
  * settlement of the chat route (stream-settlement.ts):
  *  - usage present  -> capture actual cost (closes the hold; overage debited)
  *  - usage missing  -> capture the input estimate plus `observedOutputTokens`,
- *                      the output the Worker forwarded, never more than the
- *                      hold; key stays live
+ *                      the output the Worker read from Venice (past the hold,
+ *                      as an overage); key stays live
  *  - capture throws -> file reconciliation with the reported cost (the
  *                      stale-hold sweep charges it); key stays live
  * A Worker from before observed output was counted sends no

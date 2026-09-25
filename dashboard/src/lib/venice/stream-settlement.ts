@@ -3,14 +3,21 @@
 //
 //   * Venice's usage frame arrived: capture the exact cost (an overage past
 //     the hold is debited on top).
-//   * It never arrived (the client closed the stream, the stream hit the
-//     route's deadline or broke, or Venice left the frame out): capture the
-//     input estimate plus the output that was streamed, never more than the
-//     hold (captureManagedVeniceObservedOutput). The rest of the hold goes
-//     back to the user at once.
+//   * It never arrived (the stream hit the route's deadline or broke, or
+//     Venice left the frame out): capture the input estimate plus the output
+//     read from Venice, with anything past the hold debited as an overage
+//     (captureManagedVeniceObservedOutput). The rest of the hold goes back to
+//     the user at once.
 //   * Writing the charge failed: file a reconciliation item carrying the
 //     number, and the hourly stale-hold sweep captures it.
 // A 200 stream is never released: Venice generated, and billed Hivra, for it.
+//
+// When the client disconnects, the routes stop forwarding but keep reading
+// Venice until its usage frame (or the deadline), so the request is charged
+// what Venice billed, hidden reasoning included (security review 2026-09, #167
+// second review). settleAfterResponse keeps the function alive for that.
+
+import { after } from "next/server";
 
 import type { ManagedVeniceWalletType } from "@/lib/billing/managed-venice-wallets";
 import { log } from "@/lib/logger";
@@ -30,6 +37,8 @@ export interface ManagedVeniceStreamSettlement {
   meter: ManagedVeniceOutputMeter;
   /** Keep the latest usage block a frame carried. */
   observeUsage(usage: unknown): void;
+  /** Whether Venice's usage block has arrived. */
+  hasUsage(): boolean;
   /**
    * Settle exactly once. Resolves to the error of a failed exact capture (so a
    * completed stream can still fail), otherwise null. Never rejects.
@@ -97,6 +106,9 @@ export function createManagedVeniceStreamSettlement(params: {
     observeUsage(next) {
       if (next) usage = next;
     },
+    hasUsage() {
+      return Boolean(usage);
+    },
     settle(outcome) {
       settlement ??= (async () => {
         try {
@@ -151,4 +163,28 @@ export function createManagedVeniceStreamSettlement(params: {
  */
 export function managedVeniceStreamDeadline(ms: number): AbortSignal {
   return AbortSignal.timeout(ms);
+}
+
+/**
+ * Keep the function running until `settled` resolves, even after the client
+ * has gone (next/server `after`, which Vercel runs with waitUntil, bounded by
+ * the route's maxDuration). A route whose client disconnects keeps reading
+ * Venice to the usage frame; without this the platform may stop the function
+ * before that read, and the settlement, finish.
+ */
+export function settleAfterResponse(
+  settled: Promise<unknown>,
+  context: { source: string; route: string; referenceId: string }
+): void {
+  try {
+    after(settled);
+  } catch (error) {
+    // Only outside a request scope (a unit test calling the handler). The
+    // settlement still runs; nothing keeps the function alive for it.
+    log.warn("Managed Venice settlement could not be kept alive past the response", {
+      ...context,
+      failureType: "managed_venice_settlement_after_unavailable",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

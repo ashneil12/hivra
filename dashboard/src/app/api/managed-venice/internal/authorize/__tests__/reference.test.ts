@@ -94,6 +94,28 @@ describe("/api/managed-venice/internal/authorize: the Worker's reference", () =>
     expect(mockMemory.tables.managed_venice_reservations).toHaveLength(1);
   });
 
+  // #167 second review: the duplicate check looked only at this user, and
+  // the create was an upsert on reference_id, so a reference another user's
+  // hold already had would overwrite that hold, skipping the balance guard.
+  it("refuses a reference another user's hold already has, and leaves that hold alone", async () => {
+    mockMemory.tables.managed_venice_reservations.push({
+      id: "other_hold",
+      user_id: "user_other",
+      wallet_type: "card",
+      status: "active",
+      reference_id: REFERENCE,
+      reserved_micro_usd: 5_000,
+      metadata: {},
+    });
+
+    const res = await authorize({ plaintextKey: "hven_live_fixture", body: chatBody, referenceId: REFERENCE });
+
+    expect(res.status).toBe(409);
+    expect(mockMemory.tables.managed_venice_reservations).toEqual([
+      expect.objectContaining({ id: "other_hold", user_id: "user_other", reserved_micro_usd: 5_000, status: "active" }),
+    ]);
+  });
+
   it("refuses a reference that is not a UUID", async () => {
     const res = await authorize({ plaintextKey: "hven_live_fixture", body: chatBody, referenceId: "ref_1" });
     expect(res.status).toBe(400);

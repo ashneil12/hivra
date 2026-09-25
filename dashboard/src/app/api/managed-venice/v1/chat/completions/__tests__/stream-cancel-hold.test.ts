@@ -53,11 +53,12 @@ jest.mock("@/lib/venice/live-pricing", () => ({
 // The route's 270 s deadline, shortened so a test can reach it.
 jest.mock("@/lib/venice/hold-lifecycle", () => ({
   ...jest.requireActual("@/lib/venice/hold-lifecycle"),
-  MANAGED_VENICE_STREAM_DEADLINE_MS: 150,
+  MANAGED_VENICE_STREAM_DEADLINE_MS: 400,
 }));
 
 import { POST } from "../route";
 import { getManagedVeniceWalletSummary } from "@/lib/billing/managed-venice-wallets";
+import { calculateActualChatCost } from "@/lib/venice/cost-estimator";
 import { sweepStaleManagedVeniceReservations } from "@/lib/venice/reservation-sweep";
 
 const requestBody = {
@@ -87,6 +88,47 @@ function openUpstreamStream(chunks: string[]) {
     },
   });
   return { stream, wasCancelled: () => cancelled };
+}
+
+// A Venice stream that sends one chunk every couple of milliseconds, so
+// frames keep arriving after the client has gone, then ends. (Well inside the
+// route deadline, which these tests shorten to 400 ms.)
+function pacedUpstreamStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  let sent = 0;
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (sent < chunks.length) controller.enqueue(encoder.encode(chunks[sent++]));
+      else controller.close();
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { stream, wasCancelled: () => cancelled, sent: () => sent };
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 3_000) {
+  const startedAt = Date.now();
+  while (!check()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for the settlement");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+const usageFrame = (usage: Record<string, number>) => `data: ${JSON.stringify({ choices: [], usage })}\n\n`;
+
+// A Venice stream that ends after `chunks`.
+function closedUpstreamStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
 }
 
 const contentFrame = (text: string) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
@@ -146,8 +188,9 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
 
   // #167 review probe: a client read all 120k tokens of an Opus answer, then
   // closed the socket before the usage frame, and was charged a $0.12
-  // estimate for a $3.60 Venice bill.
-  it("charges the input estimate plus every token forwarded when the client leaves before the usage frame", async () => {
+  // estimate for a $3.60 Venice bill. When Venice never sends the usage frame
+  // either, the route reads to its deadline and charges every token read.
+  it("charges the input estimate plus every token read when the usage frame never arrives after the client leaves", async () => {
     const FRAMES = 10_000;
     const upstream = openUpstreamStream(Array.from({ length: FRAMES }, () => contentFrame("abcd")));
     mockFetch.mockResolvedValueOnce(
@@ -171,7 +214,9 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     }
     expect(frames).toBe(FRAMES);
     await client.cancel();
-    await settleMicrotasks();
+    // Venice is still read after the client leaves, up to the route deadline.
+    expect(upstream.wasCancelled()).toBe(false);
+    await waitFor(() => reservation().status !== "active");
 
     // Settled in the request, not left for a sweep a day later.
     expect(reservation().status).toBe("captured");
@@ -207,12 +252,49 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     expect(upstream.wasCancelled()).toBe(true);
   });
 
+  // #167 second review probe (HIGH): Opus with no output cap holds 4,096
+  // output tokens. 10,000 tokens streamed without a usage frame were charged
+  // exactly the hold; nothing past it was ever debited.
+  it("charges output streamed past the hold as an overage when the usage frame never arrives", async () => {
+    const FRAMES = 10_000;
+    mockFetch.mockResolvedValueOnce(
+      new Response(closedUpstreamStream(Array.from({ length: FRAMES }, () => contentFrame("abcd"))), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+    const uncappedBody: Record<string, unknown> = { ...requestBody };
+    delete uncappedBody.max_completion_tokens;
+
+    const response = await POST(makeReq({ ...uncappedBody, model: "claude-opus-4-8" }));
+    await response.text();
+
+    const row = reservation();
+    const held = Number(row.reserved_micro_usd);
+    const meta = row.metadata as Record<string, number>;
+    const cost = meta.inputEstimateMicroUsd + FRAMES * OPUS_OUTPUT_MICRO_USD_PER_TOKEN;
+    expect(cost).toBeGreaterThan(2 * held);
+    expect(row).toMatchObject({ status: "captured", captured_micro_usd: held });
+    const summary = await getManagedVeniceWalletSummary(USER_ID, mockMemory.db);
+    expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: STARTING_BALANCE_MICRO_USD - cost, reservedMicroUsd: 0 });
+    expect(mockMemory.tables.managed_venice_usage_events).toEqual([
+      expect.objectContaining({ charged_micro_usd: cost }),
+    ]);
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
   // #167 review probe: $2 wallet on Opus, one Stop press. $1.99997 stayed held
-  // until the daily sweep, and the next request got a 402.
-  it("gives the rest of the hold back at once, so one Stop press does not lock a small wallet", async () => {
+  // until the daily sweep, and the next request got a 402. The hold now goes
+  // back as soon as Venice finishes the answer the client left.
+  it("gives the rest of the hold back once Venice finishes, so one Stop press does not lock a small wallet", async () => {
     mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = 2_000_000;
     const bigRequest = { ...requestBody, model: "claude-opus-4-8", max_completion_tokens: 60_000 };
-    const first = openUpstreamStream([contentFrame("Once"), contentFrame(" upon")]);
+    const first = pacedUpstreamStream([
+      contentFrame("Once"),
+      contentFrame(" upon"),
+      usageFrame({ prompt_tokens: 5, completion_tokens: 20 }),
+      "data: [DONE]\n\n",
+    ]);
     mockFetch.mockResolvedValueOnce(
       new Response(first.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
     );
@@ -222,10 +304,10 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     const client = response.body!.getReader();
     await client.read();
     await client.cancel();
-    await settleMicrotasks();
+    await waitFor(() => reservation().status !== "active");
 
-    expect(reservation().status).toBe("captured");
-    expect(Number(reservation().captured_micro_usd)).toBeLessThan(1_000);
+    // Venice's exact usage: 5 input tokens at $6 and 20 output tokens at $30 per million.
+    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: 30 + 600 });
 
     const second = openUpstreamStream([contentFrame("hi")]);
     mockFetch.mockResolvedValueOnce(
@@ -286,7 +368,7 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
       seen += new TextDecoder().decode(next.value);
     }
     await client.cancel();
-    await settleMicrotasks();
+    await waitFor(() => reservation().status !== "active");
 
     const row = reservation();
     expect(row.status).toBe("captured");
@@ -297,6 +379,70 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     expect(summary.hermesos.totalValueMicroUsd).toBe(STARTING_BALANCE_MICRO_USD - captured);
     expect(mockMemory.tables.managed_venice_usage_events).toHaveLength(1);
     expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
+  // #167 second review probe (HIGH): GPT-5.5 reasons 20k tokens it never
+  // streams. The client asked for the answer on the first line, read it and
+  // closed the socket: 213 µUSD was charged against a Venice bill of 750,850,
+  // and the hold went straight back, so it repeated. The route now keeps
+  // reading Venice to the usage frame and charges exactly what Venice billed.
+  it("keeps reading Venice after the client leaves and charges the exact usage, hidden reasoning included", async () => {
+    const usage = { prompt_tokens: 16, completion_tokens: 20_003 };
+    const upstream = pacedUpstreamStream([
+      contentFrame("42\n"),
+      ...Array.from({ length: 8 }, () => contentFrame("filler ")),
+      usageFrame(usage),
+      "data: [DONE]\n\n",
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+    );
+
+    const response = await POST(
+      makeReq({ ...requestBody, model: "openai-gpt-55", max_completion_tokens: 64_000 })
+    );
+    const client = response.body!.getReader();
+    const first = await client.read();
+    expect(new TextDecoder().decode(first.value)).toContain("42");
+    await client.cancel();
+    await waitFor(() => reservation().status !== "active");
+
+    const exact = calculateActualChatCost({
+      model: "openai-gpt-55",
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+    }).actualCostMicroUsd;
+    expect(exact).toBeGreaterThan(750_000);
+    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: exact });
+    const summary = await getManagedVeniceWalletSummary(USER_ID, mockMemory.db);
+    expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: STARTING_BALANCE_MICRO_USD - exact, reservedMicroUsd: 0 });
+    // Venice was read to its usage frame, not cut off when the client left.
+    expect(upstream.sent()).toBeGreaterThanOrEqual(10);
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
+  it("rejects venice_parameters.strip_thinking_response before holding anything", async () => {
+    const response = await POST(
+      makeReq({ ...requestBody, venice_parameters: { strip_thinking_response: true, character_slug: "x" } })
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("strip_thinking_response");
+    expect(reservations()).toHaveLength(0);
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    // Other Venice parameters (Hermes sends character_slug) still pass.
+    mockFetch.mockResolvedValueOnce(
+      new Response(closedUpstreamStream([contentFrame("hi"), usageFrame({ prompt_tokens: 1, completion_tokens: 1 })]), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+    const allowed = await POST(
+      makeReq({ ...requestBody, venice_parameters: { strip_thinking_response: false, character_slug: "x" } })
+    );
+    expect(allowed.status).toBe(200);
+    await allowed.text();
   });
 
   // #167 review probe: Venice answered 429, the release hit one DB error, the
@@ -335,6 +481,39 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     const summary = await getManagedVeniceWalletSummary(USER_ID, mockMemory.db);
     expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: STARTING_BALANCE_MICRO_USD, reservedMicroUsd: 0 });
     expect(mockMemory.tables.managed_venice_usage_events).toHaveLength(0);
+  });
+
+  // #167 second review: a non-streamed answer whose capture failed was a 500
+  // with no item, and the hold was charged an estimate a day later.
+  it("delivers a 200 JSON answer whose capture failed and files its reported cost for the sweep", async () => {
+    const answer = {
+      id: "chatcmpl_2",
+      choices: [{ message: { role: "assistant", content: "hello" } }],
+      usage: { prompt_tokens: 40, completion_tokens: 900 },
+    };
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify(answer), { status: 200, headers: { "Content-Type": "application/json" } })
+    );
+    mockMemory.failNext({ table: "capture_managed_venice_reservation", op: "rpc" });
+
+    const response = await POST(makeReq({ ...requestBody, stream: false }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(answer);
+    expect(reservation().status).toBe("active");
+    const items = mockMemory.tables.managed_venice_reconciliation_items;
+    // 40 input tokens at $0.20/M + 900 output tokens at $0.90/M.
+    expect(items).toEqual([
+      expect.objectContaining({
+        reason: "managed_venice_stream_settlement_failed",
+        metadata: expect.objectContaining({ referenceId: reservation().reference_id, usageCostMicroUsd: 8 + 810 }),
+      }),
+    ]);
+    expect(mockMemory.tables.managed_venice_proxy_keys[0].status).toBe("active");
+
+    items[0].created_at = new Date(Date.now() - 60 * 60_000).toISOString();
+    await sweepStaleManagedVeniceReservations({}, mockMemory.db);
+    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: 8 + 810 });
   });
 
   it("delivers a 200 JSON answer that has no usage block and charges its observed output", async () => {

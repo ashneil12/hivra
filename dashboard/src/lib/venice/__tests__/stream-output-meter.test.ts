@@ -16,7 +16,7 @@ describe("createManagedVeniceOutputMeter", () => {
     expect(meter.outputTokens()).toBe(4);
   });
 
-  it("falls back to UTF-8 size / 4 when frames batch several tokens", () => {
+  it("falls back to four ASCII characters a token when frames batch several tokens", () => {
     const meter = createManagedVeniceOutputMeter();
     meter.observeChatSseFrame(sse({ choices: [{ delta: { content: "x".repeat(400) } }] }));
     expect(meter.outputTokens()).toBe(100);
@@ -62,9 +62,59 @@ describe("createManagedVeniceOutputMeter", () => {
     expect(body.outputTokens()).toBe(12);
   });
 
-  it("counts multi-byte text by its UTF-8 size", () => {
+  // #167 second review: UTF-8 size / 4 counted batched CJK at 0.75 of a
+  // token per character.
+  it("counts every non-ASCII character as a token, and ASCII at four characters a token", () => {
     const meter = createManagedVeniceOutputMeter();
     meter.observeUnparsedText("日本語の文章です"); // 8 characters, 24 bytes
-    expect(meter.outputTokens()).toBe(6);
+    expect(meter.outputTokens()).toBe(8);
+
+    const batched = createManagedVeniceOutputMeter();
+    for (let frame = 0; frame < 100; frame += 1) {
+      batched.observeChatSseFrame(sse({ choices: [{ delta: { content: "これは長い日本語の文章" } }] }));
+    }
+    expect(batched.outputTokens()).toBe(1_100);
+
+    const mixed = createManagedVeniceOutputMeter();
+    mixed.observeUnparsedText(`${"abcd".repeat(10)}é😀`);
+    expect(mixed.outputTokens()).toBe(12);
+  });
+
+  // #167 second review: 40 KB of function-call arguments sent only in the
+  // done event (about 10k tokens) were charged 30 µUSD.
+  it("counts Responses output that arrives only in done events, once", () => {
+    const meter = createManagedVeniceOutputMeter();
+    const args = "x".repeat(40_000);
+    meter.observeResponsesEvent({ type: "response.function_call_arguments.delta", item_id: "fc_1", output_index: 0, delta: "{" });
+    meter.observeResponsesEvent({ type: "response.function_call_arguments.done", item_id: "fc_1", output_index: 0, arguments: args });
+    meter.observeResponsesEvent({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: { id: "fc_1", type: "function_call", name: "f", arguments: args },
+    });
+    // The arguments once: the delta, then the rest from the done event; the
+    // item event repeats them and adds nothing.
+    expect(meter.outputTokens()).toBe(10_000);
+
+    const deltas = createManagedVeniceOutputMeter();
+    for (let index = 0; index < 10; index += 1) {
+      deltas.observeResponsesEvent({ type: "response.output_text.delta", item_id: "msg_1", output_index: 0, content_index: 0, delta: "abcd" });
+    }
+    deltas.observeResponsesEvent({ type: "response.output_text.done", item_id: "msg_1", output_index: 0, content_index: 0, text: "abcd".repeat(10) });
+    deltas.observeResponsesEvent({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: { id: "msg_1", type: "message", content: [{ type: "output_text", text: "abcd".repeat(10) }] },
+    });
+    // Ten deltas, and the done events repeat them: nothing is counted twice.
+    expect(deltas.outputTokens()).toBe(10);
+
+    const itemOnly = createManagedVeniceOutputMeter();
+    itemOnly.observeResponsesEvent({
+      type: "response.output_item.done",
+      output_index: 1,
+      item: { id: "ct_1", type: "custom_tool_call", name: "apply_patch", input: "y".repeat(400) },
+    });
+    expect(itemOnly.outputTokens()).toBe(100);
   });
 });

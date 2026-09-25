@@ -139,11 +139,15 @@ describe("/api/managed-venice/internal/settle", () => {
     );
   });
 
-  it("answers 200 with nothing released when no hold has that reference", async () => {
+  // #167 second review: an authorize whose connection reset can still commit
+  // its hold after the Worker's release arrives. Answering 200 ended the
+  // Worker's retries, and the sweep charged the hold's estimate for a request
+  // that was never forwarded. A 5xx keeps the Worker retrying while the hold
+  // may still land.
+  it("answers 5xx, so the Worker retries, when no hold has that reference yet", async () => {
     mockOwner.mockResolvedValueOnce(null);
-    const res = await POST(makeReq({ outcome: "release", referenceId: "ref_never_reserved" }));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, released: false });
+    const res = await POST(makeReq({ outcome: "release", referenceId: "ref_not_yet_reserved" }));
+    expect(res.status).toBe(503);
     expect(mockRelease).not.toHaveBeenCalled();
   });
 

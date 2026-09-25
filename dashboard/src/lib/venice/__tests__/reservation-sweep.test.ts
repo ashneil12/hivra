@@ -214,6 +214,53 @@ describe("sweepStaleManagedVeniceReservations: holds after Venice answered 200",
     expect(world.cardBalanceMicroUsd(USER)).toBe(10_000_000 - 1_234_567);
   });
 
+  // #167 second review (HIGH): the sweep capped both numbers at the hold, so
+  // output past it was never charged.
+  it.each([
+    ["observed output", { cause: "client_cancelled", observedOutputTokens: 100_000 }, 2_000 + 3_000_000, "observed_output"],
+    ["reported usage", { cause: "settlement_failed", usageCostMicroUsd: 2_500_000 }, 2_500_000, "reported_usage"],
+  ])("charges %s past the hold as an overage", async (_label, metadata, cost, basis) => {
+    world.fundHermesos(USER, 10_000_000);
+    await chatHold("ref_past", "hermesos", { estimate: 100_000, inputEstimate: 2_000 });
+    const held = Number(hold("ref_past").reserved_micro_usd);
+    const item = await fileItem("ref_past", "managed_venice_stream_settlement_failed", { metadata });
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold("ref_past")).toMatchObject({ status: "captured", captured_micro_usd: held });
+    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(10_000_000 - cost);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ disposition: "captured_hold", basis, capturedMicroUsd: cost, overageMicroUsd: cost - held }),
+    ]);
+    expect(world.usageEvents()).toEqual([expect.objectContaining({ charged_micro_usd: cost, actual_cost_micro_usd: cost })]);
+    expect(item.status).toBe("resolved");
+  });
+
+  it("files an uncovered overage and pauses the key when the wallet cannot pay past the hold", async () => {
+    world.insertRow("managed_venice_proxy_keys", { id: KEY_ID, user_id: USER, status: "active" });
+    world.fundCard(USER, 200_000);
+    await chatHold("ref_uncovered", "card", { estimate: 100_000, inputEstimate: 2_000 });
+    const held = Number(hold("ref_uncovered").reserved_micro_usd);
+    await fileItem("ref_uncovered", "managed_venice_chat_stream_cancelled", {
+      metadata: { cause: "client_cancelled", observedOutputTokens: 100_000 },
+    });
+
+    await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold("ref_uncovered")).toMatchObject({ status: "captured", captured_micro_usd: held });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(200_000 - held);
+    expect(world.tables.managed_venice_reconciliation_items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: "managed_venice_overage_uncovered",
+          status: "open",
+          metadata: expect.objectContaining({ referenceId: "ref_uncovered", overageMicroUsd: 2_000 + 3_000_000 - held }),
+        }),
+      ])
+    );
+    expect(world.tables.managed_venice_proxy_keys[0]).toMatchObject({ status: "paused" });
+  });
+
   it("charges a hold that recorded no output price its estimate, and a legacy cancelled stream without a day's wait", async () => {
     world.fundHermesos(USER, 1_000_000);
     await chatHold("ref_cancel", "hermesos");
@@ -261,16 +308,18 @@ describe("sweepStaleManagedVeniceReservations: holds after Venice answered 200",
     expect(item.status).toBe("resolved");
   });
 
+  // #167 second review (MEDIUM): these waited for the hold to expire, a day
+  // later, so Codex retrying through an outage locked a wallet for a day.
   it.each(["upstream_outcome_unknown", "dispatch_outcome_unknown"])(
-    "leaves a Responses hold whose outcome is unknown (%s) until it expires, then releases it",
+    "leaves a Responses hold whose outcome is unknown (%s) to an operator for an hour, then releases it",
     async (cause) => {
       world.fundCard(USER, 1_000_000);
       await chatHold("ref_unknown", "card", {
         endpoint: "/api/v1/responses",
-        expiresAt: new Date(Date.now() + 2 * HOUR_MS).toISOString(),
+        expiresAt: new Date(Date.now() + 23 * HOUR_MS).toISOString(),
       });
       const item = await fileItem("ref_unknown", "managed_venice_responses_ambiguous_usage", {
-        createdAt: hoursAgo(22),
+        createdAt: hoursAgo(0.5),
         metadata: { cause },
       });
 
@@ -278,8 +327,7 @@ describe("sweepStaleManagedVeniceReservations: holds after Venice answered 200",
       expect(hold("ref_unknown").status).toBe("active");
       expect(item.status).toBe("open");
 
-      hold("ref_unknown").expires_at = hoursAgo(0.1);
-      item.created_at = hoursAgo(24.2);
+      item.created_at = hoursAgo(1.1);
       const summary = await sweepStaleManagedVeniceReservations({}, world.db);
 
       expect(hold("ref_unknown").status).toBe("released");
@@ -441,10 +489,10 @@ describe("sweepStaleManagedVeniceReservations: media holds", () => {
     world.tables.managed_venice_reconciliation_items[0].created_at = new Date().toISOString();
     hold(gate.hold.referenceId).expires_at = hoursAgo(0.5);
     // A Responses hold whose upstream outcome only an operator can judge,
-    // with its item not yet a day old.
+    // with its item not yet an hour old.
     await chatHold("ref_unknown", "card", { endpoint: "/api/v1/responses", expiresAt: hoursAgo(1) });
     await fileItem("ref_unknown", "managed_venice_responses_ambiguous_usage", {
-      createdAt: hoursAgo(2),
+      createdAt: hoursAgo(0.5),
       metadata: { cause: "dispatch_outcome_unknown" },
     });
     // A hold from before holds expired.

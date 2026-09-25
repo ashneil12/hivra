@@ -1,6 +1,6 @@
 // Reconciliation reason for a streamed chat completion whose client went away
-// after Venice had answered 200 but before a usage frame arrived, and whose
-// in-request charge (the input estimate plus the output forwarded,
+// after Venice had answered 200 and whose in-request charge (Venice's usage,
+// read after the client left, or the input estimate plus the output read,
 // stream-settlement.ts) could not be written.
 //
 // Venice was already generating, and billing Hivra, for that request, so the

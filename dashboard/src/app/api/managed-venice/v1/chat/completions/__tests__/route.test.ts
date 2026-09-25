@@ -38,6 +38,12 @@ jest.mock("@/lib/venice/proxy-settlement", () => ({
   markManagedVeniceReconciliationRequired: (...args: unknown[]) => mockReconcile(...args),
 }));
 
+// The route's 270 s deadline, shortened so a test can reach it.
+jest.mock("@/lib/venice/hold-lifecycle", () => ({
+  ...jest.requireActual("@/lib/venice/hold-lifecycle"),
+  MANAGED_VENICE_STREAM_DEADLINE_MS: 100,
+}));
+
 jest.mock("@/lib/venice/live-pricing", () => ({
   getVenicePricingMap: jest.fn(async () => ({
     map: new Map(),
@@ -81,6 +87,14 @@ function openUpstreamStream(chunks: string[]) {
 
 async function settleMicrotasks() {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 3_000) {
+  const startedAt = Date.now();
+  while (!check()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for the settlement");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 const body = {
@@ -413,9 +427,10 @@ describe("/api/managed-venice/v1/chat/completions", () => {
   // generating, and billing Hivra, for this request. A client that closes the
   // connection before the final usage frame used to get the whole hold
   // released, so every streamed completion was free. A disconnect must never
-  // release the hold: it charges the input estimate plus the output
-  // forwarded (security review 2026-09, #167).
-  it("charges the observed output, never releases, when the client disconnects mid-stream after upstream answered 200", async () => {
+  // release the hold. The route keeps reading Venice for its usage frame
+  // (#167 second review); one that never comes is charged the input estimate
+  // plus the output read, at the deadline.
+  it("keeps reading after the client disconnects, then charges the observed output, never releases, when no usage arrives", async () => {
     const upstream = openUpstreamStream([
       'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
     ]);
@@ -433,6 +448,10 @@ describe("/api/managed-venice/v1/chat/completions", () => {
     expect(new TextDecoder().decode(first.value)).toContain('"content":"hi"');
     await client.cancel();
     await settleMicrotasks();
+    // The client leaving does not stop the read: Venice's usage may follow.
+    expect(upstream.wasCancelled()).toBe(false);
+    expect(mockObserved).not.toHaveBeenCalled();
+    await waitFor(() => mockObserved.mock.calls.length > 0);
 
     expect(mockRelease).not.toHaveBeenCalled();
     expect(mockCapture).not.toHaveBeenCalled();
@@ -449,7 +468,7 @@ describe("/api/managed-venice/v1/chat/completions", () => {
         reconciliationReason: "managed_venice_chat_stream_cancelled",
       })
     );
-    // Stop Venice generating (and billing) for a reader that has gone away.
+    // The read stops at the route deadline.
     expect(upstream.wasCancelled()).toBe(true);
   });
 

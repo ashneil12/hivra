@@ -10,6 +10,8 @@ import {
 import {
   captureManagedVeniceChatUsage,
   captureManagedVeniceObservedOutput,
+  managedVeniceUsageCostMicroUsd,
+  markManagedVeniceReconciliationRequired,
   releaseManagedVeniceChatReservationOrFile,
 } from "@/lib/venice/proxy-settlement";
 import { CHAT_STREAM_CANCELLED_RECONCILIATION_REASON } from "@/lib/venice/chat-stream-reconciliation";
@@ -18,6 +20,7 @@ import { createManagedVeniceOutputMeter } from "@/lib/venice/stream-output-meter
 import {
   createManagedVeniceStreamSettlement,
   managedVeniceStreamDeadline,
+  settleAfterResponse,
   type ManagedVeniceStreamOutcome,
 } from "@/lib/venice/stream-settlement";
 // Shared authorize/settle core — keeps the in-Vercel route and the off-Vercel
@@ -28,7 +31,7 @@ import { authorizeManagedVeniceChat } from "@/lib/venice/proxy-chat-core";
 const ROUTE = "/api/managed-venice/v1/chat/completions";
 
 // The stream stops at MANAGED_VENICE_STREAM_DEADLINE_MS (270 s) and settles
-// what it forwarded, so the platform never kills a request with its hold
+// what it read, so the platform never kills a request with its hold
 // unsettled (security review 2026-09).
 export const maxDuration = 300;
 
@@ -62,18 +65,21 @@ function createSettlingStream(params: {
   upstreamStatus: number;
   pricingMap: VenicePricingMap;
   deadline: AbortSignal;
-}) {
+}): { stream: ReadableStream<Uint8Array>; settled: Promise<void> } {
   const decoder = new TextDecoder();
   const reader = params.upstream.getReader();
   let buffer = "";
-  let cancelled = false;
+  // The client disconnected. Forwarding stops; reading Venice does not.
+  let clientGone = false;
   // Venice answered 200 before this stream was built, so it is generating,
-  // and billing Hivra, for this request. The hold is never released: a
-  // stream without a usage frame is charged its input estimate plus the
-  // output forwarded so far (stream-settlement.ts). Counting that output is
-  // what stops a client reading a whole answer and closing the socket just
-  // before the usage frame from paying a flat estimate instead
-  // (security review 2026-09).
+  // and billing Hivra, for this request. The hold is never released. The
+  // stream is read to Venice's usage frame even after the client leaves, so
+  // the exact usage is charged, hidden reasoning included: a client that
+  // closed the socket after the first line of a long reasoning answer used
+  // to pay for the one line it saw (security review 2026-09, #167 second
+  // review). Only when the usage never arrives (the deadline, a broken
+  // stream, Venice leaving it out) is the stream charged its input estimate
+  // plus the output read (stream-settlement.ts).
   const settlement = createManagedVeniceStreamSettlement({
     userId: params.verifiedKey.userId,
     proxyKeyId: params.verifiedKey.id,
@@ -118,15 +124,27 @@ function createSettlingStream(params: {
         referenceId: params.referenceId,
         model: params.model,
         observedOutputTokens: settlement.meter.outputTokens(),
+        usageArrived: settlement.hasUsage(),
       });
     }
     return settlement.settle(outcome);
   }
 
-  return new ReadableStream<Uint8Array>({
+  let markSettled!: () => void;
+  const settled = new Promise<void>((resolve) => (markSettled = resolve));
+
+  const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const forward = (value: Uint8Array) => {
+        if (clientGone) return;
+        try {
+          controller.enqueue(value);
+        } catch {
+          clientGone = true;
+        }
+      };
       // At the deadline stop reading Venice (which stops it generating) and
-      // settle what was forwarded.
+      // settle what was read.
       const onDeadline = () => void reader.cancel().catch(() => undefined);
       params.deadline.addEventListener("abort", onDeadline, { once: true });
       if (params.deadline.aborted) onDeadline();
@@ -134,10 +152,16 @@ function createSettlingStream(params: {
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done || cancelled || params.deadline.aborted) break;
+          if (done || params.deadline.aborted) break;
           if (!value) continue;
           observe(value);
-          controller.enqueue(value);
+          forward(value);
+          // The client has gone and Venice's usage is in hand: nothing is
+          // left to forward or to charge.
+          if (clientGone && settlement.hasUsage()) {
+            void reader.cancel().catch(() => undefined);
+            break;
+          }
         }
         buffer += decoder.decode();
         // A usage frame that arrived without its trailing blank line still counts.
@@ -149,40 +173,44 @@ function createSettlingStream(params: {
         params.deadline.removeEventListener("abort", onDeadline);
       }
 
-      // Once the client has gone, cancel() owns settlement; the controller is
-      // already closed, so there is nothing left to close or error here.
-      if (cancelled) {
-        await settlement.settle("client_cancelled");
-        return;
+      try {
+        // The client's departure decides the outcome once it has happened:
+        // there is no one left to close or error the stream for.
+        if (clientGone) {
+          await settle("client_cancelled");
+          return;
+        }
+        if (params.deadline.aborted) {
+          await settle("deadline");
+          controller.error(new Error("Managed Venice stream reached its time limit"));
+          return;
+        }
+        if (upstreamError) {
+          await settle("upstream_failed");
+          controller.error(upstreamError);
+          return;
+        }
+        const settlementError = await settle("completed");
+        if (settlementError) {
+          controller.error(settlementError);
+          return;
+        }
+        controller.close();
+      } catch {
+        // The client went away while settlement ran.
+      } finally {
+        markSettled();
       }
-      if (params.deadline.aborted) {
-        await settle("deadline");
-        controller.error(new Error("Managed Venice stream reached its time limit"));
-        return;
-      }
-      if (upstreamError) {
-        await settle("upstream_failed");
-        controller.error(upstreamError);
-        return;
-      }
-      const settlementError = await settle("completed");
-      if (settlementError) {
-        controller.error(settlementError);
-        return;
-      }
-      controller.close();
     },
-    async cancel() {
-      cancelled = true;
-      // A usage frame that arrived without its trailing blank line still counts.
-      if (buffer) settlement.observeUsage(settlement.meter.observeChatSseFrame(buffer));
-      buffer = "";
-      const settled = settle("client_cancelled");
-      // Stop reading so Venice stops generating for a reader that has gone.
-      await reader.cancel().catch(() => undefined);
-      await settled;
+    cancel() {
+      // The client has gone. Keep reading Venice to its usage frame (or the
+      // deadline) and charge what it billed; start() settles when it ends.
+      clientGone = true;
+      // Venice's usage is already in hand: stop reading now.
+      if (settlement.hasUsage()) void reader.cancel().catch(() => undefined);
     },
   });
+  return { stream, settled };
 }
 
 export async function POST(req: NextRequest) {
@@ -294,22 +322,23 @@ export async function POST(req: NextRequest) {
       return jsonResponseFromText(upstreamText, upstreamResponse.status);
     }
 
-    return new Response(
-      createSettlingStream({
-        upstream: upstreamResponse.body,
-        verifiedKey,
-        walletType,
-        referenceId,
-        model,
-        upstreamStatus: upstreamResponse.status,
-        pricingMap,
-        deadline,
-      }),
-      {
-        status: upstreamResponse.status,
-        headers: { "Content-Type": "text/event-stream" },
-      }
-    );
+    const { stream, settled } = createSettlingStream({
+      upstream: upstreamResponse.body,
+      verifiedKey,
+      walletType,
+      referenceId,
+      model,
+      upstreamStatus: upstreamResponse.status,
+      pricingMap,
+      deadline,
+    });
+    // Settlement can outlast the response: a client that disconnects leaves
+    // the route reading Venice to its usage frame.
+    settleAfterResponse(settled, { source: "managed-venice-chat", route: ROUTE, referenceId });
+    return new Response(stream, {
+      status: upstreamResponse.status,
+      headers: { "Content-Type": "text/event-stream" },
+    });
   }
 
   let upstreamText: string;
@@ -362,7 +391,30 @@ export async function POST(req: NextRequest) {
       pricingMap,
     });
   } catch (error) {
-    if (!(error instanceof MissingVeniceUsageError)) throw error;
+    if (!(error instanceof MissingVeniceUsageError)) {
+      // Venice answered, and billed Hivra, but writing the charge failed. The
+      // user gets the answer they are paying for, and the sweep charges the
+      // reported cost from the item. Only when even the item cannot be
+      // written does the request fail, leaving the hold to expire (#167
+      // second review: this used to 500 with no item and an estimate a day
+      // later).
+      await markManagedVeniceReconciliationRequired({
+        userId,
+        proxyKeyId,
+        referenceId,
+        reason: "managed_venice_stream_settlement_failed",
+        pauseKey: false,
+        metadata: {
+          model,
+          upstreamStatus: upstreamResponse.status,
+          cause: "settlement_failed",
+          stream: false,
+          errorType: error instanceof Error ? error.name : typeof error,
+          usageCostMicroUsd: managedVeniceUsageCostMicroUsd({ model, usage, pricingMap }),
+        },
+      });
+      return jsonResponseFromText(upstreamText, upstreamResponse.status);
+    }
     // Venice answered 2xx without a usable usage block. Charge the input
     // estimate plus the output in the body, and deliver the body: the user
     // pays for this answer, so they get it. The key stays live.

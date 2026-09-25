@@ -4,15 +4,16 @@
 //
 // A hold is created right before Hivra forwards a request to Venice and is
 // captured or released when Venice answers. When Venice answered but the exact
-// usage never arrived (the client closed the stream before the usage frame,
-// the stream hit its deadline, Venice left the frame out), the request path
-// charges what it saw: the input estimate plus the output it streamed
-// (stream-output-meter.ts), never more than the hold. Only when that charge
-// cannot be written does the hold wait for the sweep, which charges the same
-// number from the reconciliation item. A hold nothing settled at all (the
-// function was killed mid-request, the Worker never called back) expires, and
-// the sweep then captures an estimate: nothing proves Venice did not run the
-// request, and Venice bills Hivra when it does.
+// usage never arrived (the stream hit its deadline or broke, Venice left the
+// frame out), the request path charges what it saw: the input estimate plus
+// the output it read from Venice (stream-output-meter.ts). A charge past the
+// hold captures the hold and debits the rest as an overage, exactly as a
+// capture of Venice's usage does. Only when that charge cannot be written does
+// the hold wait for the sweep, which charges the same number from the
+// reconciliation item. A hold nothing settled at all (the function was killed
+// mid-request, the Worker never called back) expires, and the sweep then
+// captures an estimate: nothing proves Venice did not run the request, and
+// Venice bills Hivra when it does.
 //
 // Kept separate from reservation-sweep.ts so the chat reconciliation cron can
 // read these markers without loading the sweep.
@@ -90,22 +91,22 @@ export function readObservedOutputTokens(value: unknown): number | null {
 }
 
 /**
- * What a chat hold is charged when Venice answered but its usage never
- * arrived: the input estimate recorded on the hold plus the output that was
- * observed, at the output price recorded on the hold, never more than the
- * hold. Null for a hold that predates those records.
+ * What a chat request whose usage never arrived cost: the input estimate
+ * recorded on its hold plus the output that was observed, at the output price
+ * recorded on the hold. It can exceed the hold (a request without an output
+ * cap holds 4,096 output tokens); the part past the hold is debited as an
+ * overage (security review 2026-09, #167 second review). Null for a hold that
+ * predates those records.
  */
-export function observedOutputChargeMicroUsd(
-  hold: { reserved_micro_usd: number | string; metadata?: Record<string, unknown> | null },
+export function observedOutputCostMicroUsd(
+  hold: { metadata?: Record<string, unknown> | null },
   observedOutputTokens: number
 ): number | null {
   const meta = hold.metadata ?? {};
   const input = readMicroUsd(meta.inputEstimateMicroUsd);
   const perMillion = readMicroUsd(meta.outputMicroUsdPerMillion);
-  const reserved = readMicroUsd(hold.reserved_micro_usd);
-  if (input === null || perMillion === null || reserved === null) return null;
-  const output = calculateVeniceTokenCostMicroUsd(observedOutputTokens, perMillion);
-  return Math.min(reserved, input + output);
+  if (input === null || perMillion === null) return null;
+  return input + calculateVeniceTokenCostMicroUsd(observedOutputTokens, perMillion);
 }
 
 /**

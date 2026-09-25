@@ -230,7 +230,7 @@ describe("managed Venice wallet accounting", () => {
         if (name !== "managed_venice_reservations") return base;
         return {
           ...base,
-          upsert: () => ({
+          insert: () => ({
             select: () => ({
               single: async () => ({
                 data: null,

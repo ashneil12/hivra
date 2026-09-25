@@ -74,14 +74,46 @@ it("preserves streaming bytes before completion and settles nested usage once", 
   expect(capture).toHaveBeenCalledWith(expect.objectContaining({ usage, endpoint: "/api/v1/responses", referenceId: "reference" }));
   expect(release).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
 });
-it("charges the observed output on cancellation after output; it never refunds a 200", async () => {
+const settled = async () => { for (let i = 0; i < 20; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+// #167 second review: a cancel no longer stops the read, so Venice's
+// terminal usage (hidden reasoning included) is still charged.
+it("keeps reading after the client cancels and charges Venice's terminal usage; it never refunds a 200", async () => {
   const source = upstream(), response = await POST(req()), reader = response.body!.getReader();
   source.control().enqueue(frame({ type: "response.output_text.delta", delta: "hi" }));
   await reader.read(); await reader.cancel();
+  await settled();
+  expect(source.cancel).not.toHaveBeenCalled();
+  expect(capture).not.toHaveBeenCalled(); expect(observed).not.toHaveBeenCalled();
+  source.control().enqueue(frame({ type: "response.output_text.delta", delta: " more" }));
+  source.control().enqueue(frame({ type: "response.completed", response: terminal }));
+  await settled();
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(capture).toHaveBeenCalledWith(expect.objectContaining({ usage, referenceId: "reference" }));
+  expect(release).not.toHaveBeenCalled(); expect(observed).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
+});
+it("charges the observed output when Venice ends without terminal usage after the client cancels", async () => {
+  const source = upstream(), response = await POST(req()), reader = response.body!.getReader();
+  source.control().enqueue(frame({ type: "response.output_text.delta", delta: "hi" }));
+  await reader.read(); await reader.cancel();
+  source.control().enqueue(frame({ type: "response.output_text.delta", delta: "abcd" }));
+  source.control().close();
+  await settled();
   expect(observed).toHaveBeenCalledTimes(1);
-  expect(observed).toHaveBeenCalledWith(expect.objectContaining({ referenceId: "reference", cause: "client_cancelled", observedOutputTokens: 1,
+  expect(observed).toHaveBeenCalledWith(expect.objectContaining({ referenceId: "reference", cause: "client_cancelled", observedOutputTokens: 2,
     reconciliationReason: "managed_venice_responses_ambiguous_usage" }));
   expect(release).not.toHaveBeenCalled(); expect(capture).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
+});
+// #167 second review: one bad frame after response.completed settled the
+// stream with no usage (60 µUSD against an exact 600,060).
+it("charges the terminal usage already seen when a later frame cannot be read", async () => {
+  const source = upstream(), response = await POST(req());
+  source.control().enqueue(frame({ type: "response.completed", response: terminal }));
+  source.control().enqueue(new TextEncoder().encode("data: {not json\n\n"));
+  source.control().close();
+  await response.text().catch(() => undefined);
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(capture).toHaveBeenCalledWith(expect.objectContaining({ usage }));
+  expect(observed).not.toHaveBeenCalled();
 });
 it.each([["missing", "missing_terminal_usage"], ["malformed", "invalid_or_interrupted_stream"]])("charges the observed output on %s usage", async (failure, cause) => {
   const source = upstream(), response = await POST(req());
@@ -109,11 +141,21 @@ it("supports nonstreaming terminal usage and releases only explicit rejection", 
   jest.mocked(fetch).mockResolvedValueOnce(new Response("upstream secret", { status: 400 }));
   expect((await POST(req())).status).toBe(400); expect(release).toHaveBeenCalledTimes(1);
 });
-it("does not release on transport errors or 5xx with ambiguous generation", async () => {
+it("files a transport error for an operator, which the sweep releases an hour later", async () => {
   jest.mocked(fetch).mockRejectedValueOnce(new Error("private details"));
   const response = await POST(req());
   expect(response.status).toBe(502); expect(await response.text()).not.toContain("private details");
-  jest.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 503 }));
-  await POST(req());
-  expect(reconcile).toHaveBeenCalledTimes(2); expect(release).not.toHaveBeenCalled();
+  expect(reconcile).toHaveBeenCalledTimes(1);
+  expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ cause: "dispatch_outcome_unknown" }) }));
+  expect(release).not.toHaveBeenCalled();
+});
+// #167 second review (MEDIUM): a 5xx held the hold for a day while chat and
+// the Worker released it; Codex retries 5xx, each retry with its own hold.
+it.each([500, 502, 503, 504])("releases the hold of a Venice %s at once", async status => {
+  jest.mocked(fetch).mockResolvedValueOnce(new Response(null, { status }));
+  const response = await POST(req());
+  expect(response.status).toBe(502);
+  expect(release).toHaveBeenCalledTimes(1);
+  expect(release).toHaveBeenCalledWith(expect.objectContaining({ referenceId: "reference", upstreamStatus: status }));
+  expect(reconcile).not.toHaveBeenCalled();
 });

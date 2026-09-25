@@ -24,7 +24,7 @@ type DbUpdateFilter = {
 };
 
 type DbTable = {
-  insert: (...args: unknown[]) => Promise<{ error: QueryError }>;
+  insert: (...args: unknown[]) => Promise<{ error: QueryError }> & { select: (...args: unknown[]) => DbChain };
   select: (...args: unknown[]) => DbChain;
   update: (...args: unknown[]) => DbUpdateFilter;
   upsert: (...args: unknown[]) => DbChain;
@@ -309,26 +309,27 @@ export async function createManagedVeniceReservation(
   }
 
   const account = await ensureManagedVeniceWalletAccount(params.userId, client);
+  // A plain insert, so the balance guard trigger always runs and a reference
+  // already in use (by anyone) fails instead of overwriting that hold. An
+  // upsert on reference_id updated the existing row, skipping the guard
+  // (security review 2026-09, #167 second review).
   const { data, error } = await table(client, "managed_venice_reservations")
-    .upsert(
-      {
-        account_id: account.id,
-        user_id: params.userId,
-        wallet_type: params.walletType,
-        status: "active",
-        reference_id: params.referenceId,
-        estimated_cost_micro_usd: params.estimatedCostMicroUsd ?? params.amountMicroUsd,
-        reserved_micro_usd: params.amountMicroUsd,
-        discount_rate_bps: params.discountRateBps ?? 0,
-        discount_micro_usd: params.discountMicroUsd ?? 0,
-        model: params.model ?? null,
-        endpoint: params.endpoint ?? "/api/v1/chat/completions",
-        expires_at: params.expiresAt || null,
-        metadata: params.metadata || {},
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "reference_id" }
-    )
+    .insert({
+      account_id: account.id,
+      user_id: params.userId,
+      wallet_type: params.walletType,
+      status: "active",
+      reference_id: params.referenceId,
+      estimated_cost_micro_usd: params.estimatedCostMicroUsd ?? params.amountMicroUsd,
+      reserved_micro_usd: params.amountMicroUsd,
+      discount_rate_bps: params.discountRateBps ?? 0,
+      discount_micro_usd: params.discountMicroUsd ?? 0,
+      model: params.model ?? null,
+      endpoint: params.endpoint ?? "/api/v1/chat/completions",
+      expires_at: params.expiresAt || null,
+      metadata: params.metadata || {},
+      updated_at: new Date().toISOString(),
+    })
     .select("id, status, reserved_micro_usd")
     .single();
 

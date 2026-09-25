@@ -54,7 +54,7 @@ describe("holdManagedVeniceMediaSpend", () => {
 
   it("fails closed (503, nothing held) when the balance can't be checked", async () => {
     world.fundCard(USER_ID, 1_000_000);
-    world.failNext({ table: "managed_venice_reservations", op: "upsert" });
+    world.failNext({ table: "managed_venice_reservations", op: "insert" });
     const result = await holdManagedVeniceMediaSpend({ key: KEY, operation: QWEN, source: "test" }, world.db);
     expect(result.ok).toBe(false);
     if (result.ok) return;

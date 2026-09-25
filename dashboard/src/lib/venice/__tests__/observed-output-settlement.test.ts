@@ -119,13 +119,59 @@ describe("captureManagedVeniceObservedOutput", () => {
     expect(world.usageEvents()).toHaveLength(1);
   });
 
-  it("never charges more than the hold", async () => {
-    world.fundCard(USER, 1_000_000);
-    await reserve("ref_cap", "card", 1_000);
+  // #167 second review (HIGH): the charge stopped at the hold, so output past
+  // it was free. A request without an output cap holds 4,096 output tokens:
+  // 120k tokens of Opus cost $3.60 at Venice and were charged $0.135.
+  it("charges output past the hold as an overage, once, as an exact capture does", async () => {
+    world.fundHermesos(USER, 5_000_000);
+    await reserve("ref_over", "hermesos", 1_000);
+    const held = Number(hold("ref_over").reserved_micro_usd);
+    // 600 input + 50,000 output tokens at $30 per million.
+    const cost = 600 + 1_500_000;
+    expect(cost).toBeGreaterThan(held);
 
-    const result = await observed("ref_cap", 50_000);
+    const first = await observed("ref_over", 50_000);
+    const again = await observed("ref_over", 50_000);
 
-    expect(result.chargedMicroUsd).toBe(Number(hold("ref_cap").reserved_micro_usd));
+    expect(first).toEqual({ outcome: "captured", chargedMicroUsd: cost });
+    expect(again).toEqual({ outcome: "already_settled", chargedMicroUsd: 0 });
+    expect(hold("ref_over")).toMatchObject({ status: "captured", captured_micro_usd: held });
+    expect(lotValue()).toBe(5_000_000 - cost);
+    expect(world.usageEvents()).toEqual([
+      expect.objectContaining({
+        charged_micro_usd: cost,
+        actual_cost_micro_usd: cost,
+        metadata: expect.objectContaining({
+          observedOutput: expect.objectContaining({ overageMicroUsd: cost - held, overageStatus: "captured" }),
+        }),
+      }),
+    ]);
+    expect(
+      world.tables.managed_venice_financial_events.filter((event) => event.event_type === "usage_capture")
+    ).toEqual([expect.objectContaining({ amount_micro_usd: cost })]);
+    expect(world.tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
+
+  it("files an uncovered overage and pauses the key when the wallet cannot pay past the hold", async () => {
+    world.fundCard(USER, 40_000);
+    await reserve("ref_short", "card", 1_000);
+    const held = Number(hold("ref_short").reserved_micro_usd);
+
+    const result = await observed("ref_short", 50_000);
+
+    expect(result).toEqual({ outcome: "captured", chargedMicroUsd: held });
+    expect(hold("ref_short")).toMatchObject({ status: "captured", captured_micro_usd: held });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(40_000 - held);
+    expect(world.tables.managed_venice_reconciliation_items).toEqual([
+      expect.objectContaining({
+        reason: "managed_venice_overage_uncovered",
+        metadata: expect.objectContaining({ referenceId: "ref_short", overageMicroUsd: 600 + 1_500_000 - held }),
+      }),
+    ]);
+    expect(world.tables.managed_venice_proxy_keys[0]).toMatchObject({
+      status: "paused",
+      paused_reason: "managed_venice_overage_uncovered",
+    });
   });
 
   it("files the observed output when the charge cannot be written, and the sweep charges the same amount", async () => {

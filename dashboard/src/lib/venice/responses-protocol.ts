@@ -4,10 +4,11 @@ import { createManagedVeniceOutputMeter } from "./stream-output-meter";
 export const VENICE_RESPONSES_ENDPOINT = "/api/v1/responses";
 export const VENICE_RESPONSES_URL = "https://api.venice.ai/api/v1/responses";
 export const RESPONSES_RECONCILIATION_REASON = "managed_venice_responses_ambiguous_usage";
-/** Responses outcomes an operator settles: Venice's answer never arrived, or
- * was a 5xx that may or may not follow generation. The stale-hold sweep
- * releases their holds once the hold expires. Every other Responses item
- * follows a 200 and is captured. */
+/** Responses outcomes an operator settles: Venice's answer never arrived.
+ * The stale-hold sweep releases their holds an hour after the item. Every
+ * other Responses item follows a 200 and is captured. A Venice 5xx is released
+ * in the request (#167 second review); upstream_outcome_unknown is kept only
+ * for items filed before that. */
 export const RESPONSES_UNKNOWN_OUTCOME_CAUSES = ["upstream_outcome_unknown", "dispatch_outcome_unknown"] as const;
 export const RESPONSES_MAX_REQUEST_BYTES = 1024 * 1024;
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));

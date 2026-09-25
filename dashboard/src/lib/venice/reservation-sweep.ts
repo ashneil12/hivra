@@ -1,6 +1,5 @@
 import {
   ManagedVeniceInsufficientBalanceError,
-  captureManagedVeniceReservation,
   loadManagedVeniceReservation,
   releaseManagedVeniceReservation,
 } from "@/lib/billing/managed-venice-wallets";
@@ -9,15 +8,14 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { CHAT_STREAM_CANCELLED_RECONCILIATION_REASON } from "./chat-stream-reconciliation";
 import {
   CHAT_RELEASE_FAILED_RECONCILIATION_REASON,
-  MANAGED_VENICE_CHAT_HOLD_TTL_MS,
   MANAGED_VENICE_SWEEP_CAPTURE_POLICY,
   MEDIA_CAPTURE_FAILED_RECONCILIATION_REASON,
   MEDIA_RELEASE_FAILED_RECONCILIATION_REASON,
   holdEstimateMicroUsd,
-  observedOutputChargeMicroUsd,
+  observedOutputCostMicroUsd,
   readObservedOutputTokens,
 } from "./hold-lifecycle";
-import { recordManagedVeniceEstimatedCapture } from "./proxy-settlement";
+import { captureManagedVeniceHoldCost, recordManagedVeniceEstimatedCapture } from "./proxy-settlement";
 import { RESPONSES_RECONCILIATION_REASON, RESPONSES_UNKNOWN_OUTCOME_CAUSES } from "./responses-protocol";
 
 type QueryError = { code?: string; message?: string } | null;
@@ -30,14 +28,16 @@ type SupabaseLike = { from: (table: string) => unknown };
 //   * Venice answered 2xx (or nothing proves it didn't): CAPTURE, at the
 //     number the request path recorded: Venice's reported usage when only
 //     writing it failed, the input estimate plus the output the request
-//     observed, or a media request's catalog price. Only a hold with none of
-//     those on record (the function died mid-request) is charged an
-//     estimate: input plus at most MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE
-//     output tokens per choice.
+//     observed, or a media request's catalog price. A reported or observed
+//     cost past the hold captures the hold and debits the rest as an
+//     overage, as the request path does. Only a hold with none of those on
+//     record (the function died mid-request) is charged an estimate: input
+//     plus at most MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE output tokens
+//     per choice.
 //   * Venice refused the request (or it never reached Venice) and the
 //     in-request release failed: RELEASE.
-//   * Venice's outcome is unknown (a Responses 5xx, a dispatch that threw):
-//     left for an operator until the hold expires, then RELEASED.
+//   * Venice's outcome is unknown (a Responses dispatch that threw): left
+//     for an operator for UNKNOWN_OUTCOME_AGE_HOURS, then RELEASED.
 // No hold is left active for good. Captures go through
 // capture_managed_venice_reservation, which debits and closes the hold in one
 // transaction, so retrying a capture whose outcome was lost, or two sweeps
@@ -77,27 +77,27 @@ export const SWEEP_RELEASE_REASONS = [
 
 // Responses items (RESPONSES_RECONCILIATION_REASON) are captured like the
 // capture reasons above, except RESPONSES_UNKNOWN_OUTCOME_CAUSES: Venice's
-// answer never arrived, or was a 5xx that may or may not follow generation.
-// An operator can settle those from Venice's records while the hold lasts;
-// once it expires the sweep releases it.
+// answer never arrived. An operator can settle those from Venice's records
+// within UNKNOWN_OUTCOME_AGE_HOURS; after that the sweep releases them.
 export { RESPONSES_UNKNOWN_OUTCOME_CAUSES };
 
 // A request whose in-request settlement did not finish is over well within
 // this: the Vercel routes stop at MANAGED_VENICE_STREAM_DEADLINE_MS and the
 // Worker files its item when its stream ends.
 const STALE_RECONCILIATION_AGE_HOURS = 0.25;
-// Unknown-outcome items are due when their hold expires, a day after the
-// request; an item is filed within minutes of its hold, so no item younger
-// than this can be due. Filtering on it keeps not-yet-due items out of the
-// run's budget.
-const UNKNOWN_OUTCOME_AGE_HOURS = MANAGED_VENICE_CHAT_HOLD_TTL_MS / (60 * 60 * 1000);
+// Unknown-outcome items are released once this old. They used to wait for
+// the hold to expire, a day after the request: Codex retries a failed request
+// and each retry holds its own worst case, so an outage locked a wallet for a
+// day (security review 2026-09, #167 second review). With the hourly sweep a
+// hold is released one to two hours after its request.
+const UNKNOWN_OUTCOME_AGE_HOURS = 1;
 
 const PER_RUN_ITEM_CAP = 500;
 // Expired holds with no item have their own budget, so a backlog of items
 // can never starve them.
 const PER_RUN_EXPIRED_HOLD_CAP = 500;
 
-const OPEN_DISPOSITIONS = new Set<string>(["capture_failed", "release_failed", "waiting_for_hold_expiry"]);
+const OPEN_DISPOSITIONS = new Set<string>(["capture_failed", "release_failed", "waiting_for_unknown_outcome"]);
 
 interface ReconciliationItemRow {
   id: string;
@@ -135,7 +135,7 @@ export type SweepDisposition =
   | "missing_reference_id"
   | "capture_failed"
   | "release_failed"
-  | "waiting_for_hold_expiry"
+  | "waiting_for_unknown_outcome"
   | "left_for_open_item";
 
 export type SweepCaptureBasis = "catalog_price" | "reported_usage" | "observed_output" | "pre_request_estimate";
@@ -146,9 +146,12 @@ export interface ReservationSweepResult {
   reason: string | null;
   referenceId: string | null;
   disposition: SweepDisposition;
+  /** What the wallet paid: the hold's capture plus any overage debited. */
   capturedMicroUsd: number;
   releasedMicroUsd: number;
   basis?: SweepCaptureBasis;
+  /** The cost past the hold, debited on top of it (or filed when uncovered). */
+  overageMicroUsd?: number;
 }
 
 export interface ReservationSweepSummary {
@@ -270,11 +273,13 @@ async function hasOpenItem(db: SupabaseLike, hold: ReservationRow): Promise<bool
 //   3. the input estimate plus the output the request observed;
 //   4. the hold's estimate (holdEstimateMicroUsd), for a hold nothing
 //      recorded anything about.
-// Never more than the hold.
+// The reported and observed costs can exceed the hold: captureHold debits
+// the part past it as an overage. The catalog price and the estimate never
+// do.
 function captureAmount(
   hold: ReservationRow,
   item: ReconciliationItemRow | null
-): { amountMicroUsd: number; listMicroUsd: number; basis: SweepCaptureBasis } {
+): { costMicroUsd: number; listMicroUsd: number; basis: SweepCaptureBasis } {
   const reserved = hold.reserved_micro_usd;
   const holdMeta = hold.metadata ?? {};
   const itemMeta = item?.metadata ?? {};
@@ -282,20 +287,19 @@ function captureAmount(
   if (catalog !== null && catalog <= reserved) {
     const list =
       readMicroUsd(holdMeta.captureOnSuccessListMicroUsd) ?? readMicroUsd(itemMeta.listCostMicroUsd) ?? catalog;
-    return { amountMicroUsd: catalog, listMicroUsd: list, basis: "catalog_price" };
+    return { costMicroUsd: catalog, listMicroUsd: list, basis: "catalog_price" };
   }
   const usageCost = readMicroUsd(itemMeta.usageCostMicroUsd);
   if (usageCost !== null) {
-    const amount = Math.min(reserved, usageCost);
-    return { amountMicroUsd: amount, listMicroUsd: amount, basis: "reported_usage" };
+    return { costMicroUsd: usageCost, listMicroUsd: usageCost, basis: "reported_usage" };
   }
   const observedTokens = readObservedOutputTokens(itemMeta.observedOutputTokens);
-  const observed = observedTokens === null ? null : observedOutputChargeMicroUsd(hold, observedTokens);
+  const observed = observedTokens === null ? null : observedOutputCostMicroUsd(hold, observedTokens);
   if (observed !== null) {
-    return { amountMicroUsd: observed, listMicroUsd: observed, basis: "observed_output" };
+    return { costMicroUsd: observed, listMicroUsd: observed, basis: "observed_output" };
   }
   const amount = holdEstimateMicroUsd(hold);
-  return { amountMicroUsd: amount, listMicroUsd: amount, basis: "pre_request_estimate" };
+  return { costMicroUsd: amount, listMicroUsd: amount, basis: "pre_request_estimate" };
 }
 
 async function closeItem(
@@ -324,6 +328,7 @@ async function closeItem(
           disposition: result.disposition,
           basis: result.basis ?? null,
           capturedMicroUsd: result.capturedMicroUsd,
+          overageMicroUsd: result.overageMicroUsd ?? 0,
           releasedMicroUsd: result.releasedMicroUsd,
           referenceId: result.referenceId,
           sweptAt,
@@ -345,16 +350,22 @@ async function captureHold(
   sweptAt: string
 ): Promise<Omit<ReservationSweepResult, "itemId" | "userId" | "reason" | "referenceId">> {
   const price = captureAmount(hold, item);
+  const proxyKeyId =
+    (typeof item?.proxy_key_id === "string" && item.proxy_key_id) ||
+    (typeof hold.metadata?.proxyKeyId === "string" ? hold.metadata.proxyKeyId : null);
+  let charge: Awaited<ReturnType<typeof captureManagedVeniceHoldCost>>;
   try {
-    const captured = await captureManagedVeniceReservation(
-      { userId: hold.user_id, referenceId: hold.reference_id, captureMicroUsd: price.amountMicroUsd },
+    // Past the hold, the rest is debited as an overage (#167 second review).
+    charge = await captureManagedVeniceHoldCost(
+      {
+        hold,
+        proxyKeyId,
+        costMicroUsd: price.costMicroUsd,
+        cause: `sweep_${price.basis}`,
+        source: "managed-venice-reservation-sweep",
+      },
       db
     );
-    if (!captured.captured) {
-      // Settled between the read and the capture (another sweep, a late
-      // in-request settlement). The function moved no money.
-      return { disposition: "reservation_already_captured", capturedMicroUsd: 0, releasedMicroUsd: 0 };
-    }
   } catch (error) {
     log.error("Managed Venice sweep could not capture a stale hold", error, {
       source: "managed-venice-reservation-sweep",
@@ -364,19 +375,21 @@ async function captureHold(
           : "managed_venice_sweep_capture_failed",
       userId: hold.user_id,
       referenceId: hold.reference_id,
-      captureMicroUsd: price.amountMicroUsd,
+      costMicroUsd: price.costMicroUsd,
       reason: item?.reason ?? null,
     });
     return { disposition: "capture_failed", capturedMicroUsd: 0, releasedMicroUsd: 0, basis: price.basis };
   }
-  const proxyKeyId =
-    (typeof item?.proxy_key_id === "string" && item.proxy_key_id) ||
-    (typeof hold.metadata?.proxyKeyId === "string" ? hold.metadata.proxyKeyId : null);
+  if (!charge.captured) {
+    // Settled between the read and the capture (another sweep, a late
+    // in-request settlement). The function moved no money.
+    return { disposition: "reservation_already_captured", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
   await recordManagedVeniceEstimatedCapture(
     {
       hold,
       proxyKeyId,
-      amountMicroUsd: price.amountMicroUsd,
+      amountMicroUsd: charge.chargedMicroUsd,
       listMicroUsd: price.listMicroUsd,
       pricingPolicy: MANAGED_VENICE_SWEEP_CAPTURE_POLICY,
       upstreamStatus: readStatus(item?.metadata?.upstreamStatus),
@@ -388,12 +401,20 @@ async function captureHold(
         reason: item?.reason ?? null,
         itemId: item?.id ?? null,
         heldMicroUsd: hold.reserved_micro_usd,
+        overageMicroUsd: charge.overageMicroUsd,
+        overageStatus: charge.overageStatus,
         sweptAt,
       },
     },
     db
   );
-  return { disposition, capturedMicroUsd: price.amountMicroUsd, releasedMicroUsd: 0, basis: price.basis };
+  return {
+    disposition,
+    capturedMicroUsd: charge.chargedMicroUsd,
+    releasedMicroUsd: 0,
+    basis: price.basis,
+    overageMicroUsd: charge.overageMicroUsd,
+  };
 }
 
 async function releaseHold(
@@ -420,19 +441,16 @@ async function releaseHold(
   }
 }
 
-function holdHasExpired(hold: ReservationRow, item: ReconciliationItemRow, nowMs: number, fallbackCutoffMs: number) {
-  const expiresAt = hold.expires_at ? Date.parse(hold.expires_at) : Number.NaN;
-  if (Number.isFinite(expiresAt)) return expiresAt <= nowMs;
-  // A hold from before holds expired: a day after its item.
+function unknownOutcomeIsDue(item: ReconciliationItemRow, cutoffMs: number) {
   const filedAt = item.created_at ? Date.parse(item.created_at) : Number.NaN;
-  return Number.isFinite(filedAt) && filedAt <= fallbackCutoffMs;
+  return Number.isFinite(filedAt) && filedAt <= cutoffMs;
 }
 
 async function settleItem(
   db: SupabaseLike,
   item: ReconciliationItemRow,
   sweptAt: string,
-  clock: { nowMs: number; unknownOutcomeCutoffMs: number }
+  clock: { unknownOutcomeCutoffMs: number }
 ): Promise<ReservationSweepResult> {
   const referenceId = readReferenceId(item.metadata);
   const base = { itemId: item.id, userId: item.user_id, reason: item.reason, referenceId };
@@ -451,8 +469,8 @@ async function settleItem(
   }
 
   if (isUnknownOutcome(item)) {
-    if (!holdHasExpired(hold, item, clock.nowMs, clock.unknownOutcomeCutoffMs)) {
-      return { ...base, disposition: "waiting_for_hold_expiry", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+    if (!unknownOutcomeIsDue(item, clock.unknownOutcomeCutoffMs)) {
+      return { ...base, disposition: "waiting_for_unknown_outcome", capturedMicroUsd: 0, releasedMicroUsd: 0 };
     }
     return { ...base, ...(await releaseHold(db, item, referenceId, "released_unknown_outcome")) };
   }
@@ -467,8 +485,8 @@ async function settleItem(
  * this file:
  *   1. open items with SWEEP_CAPTURE_REASONS or SWEEP_RELEASE_REASONS, and
  *      Responses items with a known outcome, once `ageHours` old;
- *   2. Responses items with an unknown outcome once their hold expires
- *      (looked up only once `unknownOutcomeAgeHours` old), released;
+ *   2. Responses items with an unknown outcome once `unknownOutcomeAgeHours`
+ *      old, released;
  *   3. then, on their own budget, active holds past their `expires_at` with
  *      no open item, which nothing settled at all (the function died
  *      mid-request): captured.
@@ -485,7 +503,7 @@ export async function sweepStaleManagedVeniceReservations(
   const cutoff = (hours: number) => new Date(now - hours * 60 * 60 * 1_000).toISOString();
   const staleCutoff = cutoff(params.ageHours ?? STALE_RECONCILIATION_AGE_HOURS);
   const unknownOutcomeCutoff = cutoff(params.unknownOutcomeAgeHours ?? UNKNOWN_OUTCOME_AGE_HOURS);
-  const clock = { nowMs: now, unknownOutcomeCutoffMs: Date.parse(unknownOutcomeCutoff) };
+  const clock = { unknownOutcomeCutoffMs: Date.parse(unknownOutcomeCutoff) };
   let budget = params.limit ?? PER_RUN_ITEM_CAP;
 
   const items: ReconciliationItemRow[] = [];

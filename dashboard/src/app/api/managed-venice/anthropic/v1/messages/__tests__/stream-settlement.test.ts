@@ -49,7 +49,14 @@ jest.mock("@/lib/venice/live-pricing", () => ({
   })),
 }));
 
+// The route's 270 s deadline, shortened so a test can reach it.
+jest.mock("@/lib/venice/hold-lifecycle", () => ({
+  ...jest.requireActual("@/lib/venice/hold-lifecycle"),
+  MANAGED_VENICE_STREAM_DEADLINE_MS: 400,
+}));
+
 import { POST } from "../route";
+import { calculateActualChatCost } from "@/lib/venice/cost-estimator";
 import { sweepStaleManagedVeniceReservations } from "@/lib/venice/reservation-sweep";
 
 function makeReq(body: Record<string, unknown>) {
@@ -84,8 +91,28 @@ function openUpstreamStream(chunks: string[]) {
 const contentFrame = (text: string) =>
   `data: ${JSON.stringify({ id: "c1", choices: [{ index: 0, delta: { content: text } }] })}\n\n`;
 
-async function settleMicrotasks() {
-  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
+// A Venice stream that sends one chunk every couple of milliseconds, so
+// frames keep arriving after the client has gone, then ends. (Well inside the
+// route deadline, which these tests shorten to 400 ms.)
+function pacedUpstreamStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (sent < chunks.length) controller.enqueue(encoder.encode(chunks[sent++]));
+      else controller.close();
+    },
+  });
+  return { stream, sent: () => sent };
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 3_000) {
+  const startedAt = Date.now();
+  while (!check()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for the settlement");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function reservation() {
@@ -131,7 +158,7 @@ describe("managed Venice Anthropic shim: holds are settled in the request", () =
     jest.restoreAllMocks();
   });
 
-  it("charges the output streamed when the client disconnects before the usage frame", async () => {
+  it("charges the output read when the client disconnects and Venice never sends the usage frame", async () => {
     const FRAMES = 500;
     const upstream = openUpstreamStream(Array.from({ length: FRAMES }, () => contentFrame("abcd")));
     mockFetch.mockResolvedValueOnce(
@@ -149,7 +176,9 @@ describe("managed Venice Anthropic shim: holds are settled in the request", () =
       seen += new TextDecoder().decode(next.value);
     }
     await client.cancel();
-    await settleMicrotasks();
+    // Venice is still read after the client leaves, up to the route deadline.
+    expect(upstream.wasCancelled()).toBe(false);
+    await waitFor(() => reservation().status !== "active");
 
     const expected = meta.inputEstimateMicroUsd + FRAMES * OUTPUT_MICRO_USD_PER_TOKEN;
     expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: expected });
@@ -162,6 +191,42 @@ describe("managed Venice Anthropic shim: holds are settled in the request", () =
     ]);
     expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
     expect(upstream.wasCancelled()).toBe(true);
+  });
+
+  // #167 second review (HIGH): a client that closed the socket after the
+  // first line of a reasoning answer paid for the line it saw.
+  it("keeps reading Venice after the client disconnects and charges the exact usage", async () => {
+    const usage = { prompt_tokens: 30, completion_tokens: 20_000 };
+    const upstream = pacedUpstreamStream([
+      contentFrame("42"),
+      ...Array.from({ length: 10 }, () => contentFrame(" filler")),
+      `data: ${JSON.stringify({ id: "c1", choices: [], usage })}\n\n`,
+      "data: [DONE]\n\n",
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+    );
+
+    const response = await POST(makeReq(messagesBody));
+    const client = response.body!.getReader();
+    let seen = "";
+    while (!seen.includes('"42"')) {
+      const next = await client.read();
+      if (next.done) break;
+      seen += new TextDecoder().decode(next.value);
+    }
+    await client.cancel();
+    await waitFor(() => reservation().status !== "active");
+
+    const exact = calculateActualChatCost({
+      model: "claude-opus-4-8",
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+    }).actualCostMicroUsd;
+    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: exact });
+    expect(mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(BALANCE - exact);
+    expect(upstream.sent()).toBeGreaterThanOrEqual(12);
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
 
   it("files a failed release for the sweep, which releases the hold of a refused request", async () => {

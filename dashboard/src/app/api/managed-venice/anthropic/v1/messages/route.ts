@@ -11,7 +11,7 @@
 
 export const runtime = "nodejs";
 // The stream stops at MANAGED_VENICE_STREAM_DEADLINE_MS (270 s) and settles
-// what it forwarded, so the platform never kills a request with its hold
+// what it read, so the platform never kills a request with its hold
 // unsettled (security review 2026-09).
 export const maxDuration = 300;
 
@@ -37,7 +37,11 @@ import {
 import { MissingVeniceUsageError } from "@/lib/venice/cost-estimator";
 import { MANAGED_VENICE_STREAM_DEADLINE_MS } from "@/lib/venice/hold-lifecycle";
 import { createManagedVeniceOutputMeter } from "@/lib/venice/stream-output-meter";
-import { createManagedVeniceStreamSettlement, managedVeniceStreamDeadline } from "@/lib/venice/stream-settlement";
+import {
+  createManagedVeniceStreamSettlement,
+  managedVeniceStreamDeadline,
+  settleAfterResponse,
+} from "@/lib/venice/stream-settlement";
 import { ManagedVeniceInsufficientBalanceError } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import {
@@ -47,6 +51,7 @@ import {
 } from "@/lib/venice/anthropic-openai-translate";
 
 const VENICE_CHAT_COMPLETIONS_URL = "https://api.venice.ai/api/v1/chat/completions";
+const ANTHROPIC_ROUTE = "/api/managed-venice/anthropic/v1/messages";
 
 // Claude Code authenticates with `x-api-key`; also accept Bearer for parity
 // with the rest of the gateway.
@@ -174,7 +179,7 @@ export async function POST(req: NextRequest) {
       source: "managed-venice-anthropic",
     });
   // Venice answered 2xx but its usage never arrived: charge the input
-  // estimate plus the output observed, never more than the hold.
+  // estimate plus the output observed (past the hold, as an overage).
   const chargeObserved = (observedOutputTokens: number, cause: string) =>
     captureManagedVeniceObservedOutput({
       userId: verifiedKey.userId,
@@ -282,13 +287,14 @@ export async function POST(req: NextRequest) {
   const decoder = new TextDecoder();
   const reader = upstream.getReader();
   let buffer = "";
-  let cancelled = false;
-  // Venice answered 200, so the hold is never released. A stream without a
-  // usage frame (the client disconnected, the deadline passed, Venice left
-  // it out) is charged its input estimate plus the output forwarded so far
-  // (stream-settlement.ts), not a flat estimate: a client that read a whole
-  // answer and dropped the socket before the usage frame used to pay cents
-  // for dollars of output (security review 2026-09).
+  // The client disconnected. Forwarding stops; reading Venice does not.
+  let clientGone = false;
+  // Venice answered 200, so the hold is never released. The stream is read to
+  // Venice's usage frame even after the client leaves, so the exact usage is
+  // charged, hidden reasoning included (security review 2026-09, #167 second
+  // review). Only a stream whose usage never arrives (the deadline, a broken
+  // stream, Venice leaving it out) is charged its input estimate plus the
+  // output read (stream-settlement.ts).
   const settlement = createManagedVeniceStreamSettlement({
     userId: verifiedKey.userId,
     proxyKeyId: verifiedKey.id,
@@ -298,87 +304,102 @@ export async function POST(req: NextRequest) {
     upstreamStatus: upstreamResponse.status,
     pricingMap,
     source: "managed-venice-anthropic",
-    route: "/api/managed-venice/anthropic/v1/messages",
+    route: ANTHROPIC_ROUTE,
     reasons: {
       usageMissing: () => "managed_venice_anthropic_missing_usage",
       captureFailed: () => "managed_venice_anthropic_stream_capture_failed",
     },
   });
 
-  const translate = (frame: string, controller: ReadableStreamDefaultController<Uint8Array>) => {
-    for (const line of frame.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      const chunk = safeJsonParse(data);
-      if (!chunk) continue;
-      settlement.meter.observeChatChunk(chunk);
-      if (chunk.usage) settlement.observeUsage(chunk.usage);
-      const out = translator.chunk(chunk);
-      if (out) controller.enqueue(encoder.encode(out));
-    }
-  };
+  let markSettled!: () => void;
+  const settled = new Promise<void>((resolve) => (markSettled = resolve));
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const send = (text: string) => {
+        if (clientGone || !text) return;
+        try {
+          controller.enqueue(encoder.encode(text));
+        } catch {
+          clientGone = true;
+        }
+      };
+      const translate = (frame: string) => {
+        for (const line of frame.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          const chunk = safeJsonParse(data);
+          if (!chunk) continue;
+          settlement.meter.observeChatChunk(chunk);
+          if (chunk.usage) settlement.observeUsage(chunk.usage);
+          send(translator.chunk(chunk) ?? "");
+        }
+      };
       const onDeadline = () => void reader.cancel().catch(() => undefined);
       deadline.addEventListener("abort", onDeadline, { once: true });
       if (deadline.aborted) onDeadline();
       let failed = false;
       try {
-        controller.enqueue(encoder.encode(translator.start()));
+        send(translator.start());
         while (true) {
           const { done, value } = await reader.read();
-          if (done || cancelled || deadline.aborted) break;
+          if (done || deadline.aborted) break;
           buffer += decoder.decode(value, { stream: true });
           const frames = buffer.split(/\r?\n\r?\n/);
           buffer = frames.pop() ?? "";
-          for (const frame of frames) translate(frame, controller);
+          for (const frame of frames) translate(frame);
+          // The client has gone and Venice's usage is in hand: nothing is
+          // left to forward or to charge.
+          if (clientGone && settlement.hasUsage()) {
+            void reader.cancel().catch(() => undefined);
+            break;
+          }
         }
-        if (!cancelled && !deadline.aborted) {
+        if (!deadline.aborted) {
           buffer += decoder.decode();
-          if (buffer) translate(buffer, controller);
+          if (buffer) translate(buffer);
           buffer = "";
-          controller.enqueue(encoder.encode(translator.finish()));
+          send(translator.finish());
         }
       } catch (error) {
         failed = true;
-        if (!cancelled) {
-          log.warn("managed Venice anthropic stream transform failed mid-stream", {
-            source: "managed-venice-anthropic",
-            route: "/api/managed-venice/anthropic/v1/messages",
-            failureType: "managed_venice_anthropic_stream_error",
-            userId: verifiedKey.userId,
-            proxyKeyId: verifiedKey.id,
-            referenceId,
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
-        }
+        log.warn("managed Venice anthropic stream transform failed mid-stream", {
+          source: "managed-venice-anthropic",
+          route: ANTHROPIC_ROUTE,
+          failureType: "managed_venice_anthropic_stream_error",
+          userId: verifiedKey.userId,
+          proxyKeyId: verifiedKey.id,
+          referenceId,
+          clientGone,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         deadline.removeEventListener("abort", onDeadline);
       }
-      // Once the client has gone, cancel() owns settlement and the
-      // controller is already closed.
-      if (cancelled) {
-        await settlement.settle("client_cancelled");
-        return;
-      }
-      await settlement.settle(deadline.aborted ? "deadline" : failed ? "upstream_failed" : "completed");
       try {
-        controller.close();
+        await settlement.settle(
+          clientGone ? "client_cancelled" : deadline.aborted ? "deadline" : failed ? "upstream_failed" : "completed"
+        );
+        if (!clientGone) controller.close();
       } catch {
         // The client went away while settlement ran.
+      } finally {
+        markSettled();
       }
     },
-    async cancel() {
-      cancelled = true;
-      const settled = settlement.settle("client_cancelled");
-      // Stop reading so Venice stops generating for a reader that has gone.
-      await reader.cancel().catch(() => undefined);
-      await settled;
+    cancel() {
+      // The client has gone. Keep reading Venice to its usage frame (or the
+      // deadline) and charge what it billed; start() settles when it ends.
+      clientGone = true;
+      // Venice's usage is already in hand: stop reading now.
+      if (settlement.hasUsage()) void reader.cancel().catch(() => undefined);
     },
   });
+  // Settlement can outlast the response: a client that disconnects leaves
+  // the route reading Venice to its usage frame.
+  settleAfterResponse(settled, { source: "managed-venice-anthropic", route: ANTHROPIC_ROUTE, referenceId });
 
   return new Response(stream, {
     status: 200,

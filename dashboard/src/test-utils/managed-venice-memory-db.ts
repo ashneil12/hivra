@@ -121,6 +121,10 @@ const UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
   managed_venice_wallet_accounts: [
     columnIndex("managed_venice_wallet_accounts_user_id_key", ["user_id"], () => true),
   ],
+  // 20260512180000: reference_id text not null unique.
+  managed_venice_reservations: [
+    columnIndex("managed_venice_reservations_reference_id_key", ["reference_id"], (row) => row.reference_id != null),
+  ],
 };
 
 function sameIndexKey(left: unknown[] | null, right: unknown[] | null) {
