@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.09.24.3.json";
+import release from "../../../../provisioner-releases/2026.09.24.4.json";
+import terminalSocketsRelease from "../../../../provisioner-releases/2026.09.24.3.json";
 import persistentSessionsRelease from "../../../../provisioner-releases/2026.09.24.2.json";
 import detachedRunsRelease from "../../../../provisioner-releases/2026.09.24.1.json";
 import desktopPlannerRelease from "../../../../provisioner-releases/2026.09.22.2.json";
@@ -81,10 +82,26 @@ it("ships the detached chat-run supervisor with the gateway, never into the seal
   expect(supportsModelSettingsProvisionerVersion("2026.09.22.2")).toBe(true);
 });
 
+it("ships the socket-aware terminal checks in 2026.09.24.4, keeping 2026.09.24.3 admitted", () => {
+  expect(release.version).toBe("2026.09.24.4");
+  const updater = readFileSync(path.join(process.cwd(), "provisioner/hivra-update-guest-runtime.sh"), "utf8");
+  expect(updater).toContain("terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1");
+  const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
+  expect(server).toContain("return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };");
+  for (const file of ["hivra-update-guest-runtime.sh", "hivra-chat/server.js"]) {
+    const current = release.files.find(entry => entry.path === file)!;
+    const prior = terminalSocketsRelease.files.find(entry => entry.path === file)!;
+    expect(current.sha256).not.toBe(prior.sha256);
+  }
+  expect(isCompatibleProxmoxProvisionerVersion("2026.09.24.3")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.09.24.3")).toBe(true);
+});
+
 it("ships the computer hardening (git routes off, ttyd on owner-only sockets) as a new release", () => {
   // The current release's gateway answers /api/git/* with 404 on a computer,
   // and its terminal units listen on unix sockets, not loopback ports.
-  expect(release.version).toBe("2026.09.24.3");
+  // Introduced in 2026.09.24.3 and carried by every later release.
+  expect(terminalSocketsRelease.version).toBe("2026.09.24.3");
   const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
   expect(server).toContain("git_unavailable_on_computer");
   for (const [file, socket] of [["bux-ttyd-base-path.conf", "/run/hivra-terminal/ttyd.sock"], ["bux-box-ttyd.service", "/run/hivra-box-terminal/ttyd.sock"]]) {
@@ -103,7 +120,7 @@ it("ships the computer hardening (git routes off, ttyd on owner-only sockets) as
   expect(persistentSessionsRelease.version).toBe("2026.09.24.2");
   for (const file of persistentSessionsRelease.files.map(entry => entry.path)) expect(release.files.map(entry => entry.path)).toContain(file);
   // The prior releases stay admitted and fully compatible.
-  for (const version of ["2026.09.24.2", "2026.09.24.1"]) {
+  for (const version of ["2026.09.24.3", "2026.09.24.2", "2026.09.24.1"]) {
     expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
     expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
     expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
@@ -141,9 +158,10 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   // SQL admission stopped at 2026.09.08.3, so their provider computers could
   // never be admitted or keep a valid identity.
   const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
-    "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql"]
+    "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
+    "20260925110000_provider_release_admission_2026_09_24_4.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])

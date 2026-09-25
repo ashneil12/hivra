@@ -130,6 +130,18 @@ async function main() {
       assert.equal(occurrences(definition, "'2026.09.24.3'"), 1, `${admissionFunctions[index]} admits 2026.09.24.3`));
     await db.exec(migration(ADMISSION));
     assert.deepEqual(await admissionDefinitions(), admittedOnce, "re-applying the 2026.09.24.3 admission changes nothing");
+    // 2026.09.24.4 anchors on the 2026.09.24.3 entry, which the two releases
+    // above leave in place exactly once in either order; idempotent too.
+    const NEXT_ADMISSION = migration("20260925110000_provider_release_admission_2026_09_24_4.sql");
+    await db.exec(NEXT_ADMISSION);
+    const admittedNext = await admissionDefinitions();
+    admittedNext.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(NEXT_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedNext, "re-applying the 2026.09.24.4 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";
