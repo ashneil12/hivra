@@ -1,9 +1,9 @@
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
-jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScriptWithStdin: jest.fn() }));
 
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScriptWithStdin as runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { executeAttachmentGuestAction } from "../attachment-host-executor";
 import { ATTACHMENT_ACTION_TIMEOUTS } from "../attachment-host-action";
@@ -34,8 +34,9 @@ it.each(["fetch", "stage", "observe"] as const)("executes one bounded %s action 
   expect(await executeAttachmentGuestAction("owner", agent, action, expected)).toEqual(action === "fetch"
     ? { ok: true, action, artifact } : { ok: true, action, staged: captured });
   expect(runProxmoxHostScript).toHaveBeenCalledTimes(1);
-  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"), context.env,
-    { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32768 });
+  // The bundle travels as the script's own stdin stream, not inside the script.
+  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"), expect.stringContaining(`"action":"${action}"`),
+    context.env, { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32768 });
 });
 
 it("snapshots nested expectations and target before awaiting context resolution", async () => {
@@ -51,7 +52,8 @@ it("snapshots nested expectations and target before awaiting context resolution"
   mutableExpected.bootId = expected.identity.sourceId;
   resolve(context);
   expect(await pending).toEqual({ ok: true, action: "stage", staged: captured });
-  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"), context.env, expect.anything());
+  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"),
+    expect.stringContaining(`"bootId":"${expected.bootId}"`), context.env, expect.anything());
 });
 
 it.each([{ user_id: "other" }, { id: expected.identity.computerId }, { operation_id: null }, { operation_kind: "restart" },

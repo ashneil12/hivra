@@ -1,7 +1,7 @@
 import "server-only";
 
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { parseAttachmentArtifactResult, type AttachmentArtifactResult } from "./attachment-artifact-result";
 import { parseAttachmentGuestResult, snapshotAttachmentGuestExpectation,
@@ -12,7 +12,7 @@ import { logAttachmentTransportFailure } from "./attachment-transport-diagnostic
 
 type Dependencies = {
   resolveContext: typeof resolveHivraAgentExecutionContext;
-  runHostScript: typeof runProxmoxHostScript;
+  runHostScript: typeof runProxmoxHostScriptWithStdin;
 };
 /** What run-attached-codex-bundle.py names when a fetch, stage or observe raised (design 5.5, T3). */
 export const ATTACHMENT_STAGING_REFUSALS = ["fetch_failed", "staging_failed", "staging_in_progress", "staging_absent",
@@ -47,19 +47,19 @@ export async function executeAttachmentGuestAction(
     || agent.infrastructure_binding_token_enforced !== true || agent.vmid == null || agent.ip == null) {
     return { ok: false, code: "invalid_target" };
   }
-  const deps = { resolveContext: resolveHivraAgentExecutionContext, runHostScript: runProxmoxHostScript, ...dependencies };
+  const deps = { resolveContext: resolveHivraAgentExecutionContext, runHostScript: runProxmoxHostScriptWithStdin, ...dependencies };
   let context;
   try { context = await deps.resolveContext(ownerId, agent); }
   catch { return { ok: false, code: "authority_unavailable" }; }
   if (!context.infrastructureBindingTagEnforced) return { ok: false, code: "authority_unavailable" };
   const { operationId, computerId, sourceId, architecture } = expected.identity;
-  let script;
+  let step;
   try {
-    script = buildAttachmentHostActionScript(action, { operationId, computerId, sourceId, architecture,
+    step = buildAttachmentHostActionScript(action, { operationId, computerId, sourceId, architecture,
       vmid: agent.vmid, guestIp: agent.ip, bindingTag: context.infrastructureBindingTag }, expected);
   } catch { return { ok: false, code: "invalid_target" }; }
   try {
-    const result = await deps.runHostScript(script, { ...context.env },
+    const result = await deps.runHostScript(step.script, step.stdin, { ...context.env },
       { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32 * 1024 });
     if (!result.ok) {
       const refused = parseAttachmentTargetRefusal(result.stdout);
