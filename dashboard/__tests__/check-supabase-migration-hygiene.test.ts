@@ -108,4 +108,65 @@ describe("check-supabase-migration-hygiene", () => {
       "Existing migration was modified"
     );
   });
+
+  describe("when the base branch gains migrations after the branch point", () => {
+    // Mirrors PR #132: canary merged 20260924231500_hivra_desktop_prepare_abandon.sql
+    // after the PR branched, and a base..head diff reported it as deleted.
+    function divergedRepo() {
+      const repoRoot = makeTempRepo();
+      const migrationsDir = path.join(repoRoot, "dashboard/supabase/migrations");
+      writeFile(
+        path.join(migrationsDir, "20260401000000_initial_schema.sql"),
+        "create table demo(id int);\n"
+      );
+      const branchPoint = commitAll(repoRoot, "branch point");
+      const baseBranch = run("git", ["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
+
+      run("git", ["checkout", "-b", "feature"], repoRoot);
+      writeFile(path.join(repoRoot, "dashboard/README.md"), "feature work\n");
+      commitAll(repoRoot, "feature");
+
+      run("git", ["checkout", baseBranch], repoRoot);
+      writeFile(
+        path.join(migrationsDir, "20260402000000_base_only.sql"),
+        "create table base_only(id int);\n"
+      );
+      const base = commitAll(repoRoot, "base gains a migration");
+      run("git", ["checkout", "feature"], repoRoot);
+
+      return { repoRoot, migrationsDir, branchPoint, base };
+    }
+
+    it("does not report the base-only migration as deleted", () => {
+      const { repoRoot, branchPoint, base } = divergedRepo();
+      const head = run("git", ["rev-parse", "HEAD"], repoRoot);
+
+      const output = runGuard(repoRoot, base, head);
+      expect(output).toContain("Supabase migration hygiene check passed");
+      expect(output).toContain(`(${branchPoint}...${head})`);
+    });
+
+    it("still fails when the branch deletes a migration that existed at the branch point", () => {
+      const { repoRoot, migrationsDir, base } = divergedRepo();
+      fs.rmSync(path.join(migrationsDir, "20260401000000_initial_schema.sql"));
+      const head = commitAll(repoRoot, "delete migration");
+
+      expect(() => runGuard(repoRoot, base, head)).toThrow(
+        "Existing migration was deleted: dashboard/supabase/migrations/20260401000000_initial_schema.sql"
+      );
+    });
+
+    it("still fails when the branch modifies a migration that existed at the branch point", () => {
+      const { repoRoot, migrationsDir, base } = divergedRepo();
+      writeFile(
+        path.join(migrationsDir, "20260401000000_initial_schema.sql"),
+        "create table demo(id bigint);\n"
+      );
+      const head = commitAll(repoRoot, "modify migration");
+
+      expect(() => runGuard(repoRoot, base, head)).toThrow(
+        "Existing migration was modified"
+      );
+    });
+  });
 });
