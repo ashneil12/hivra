@@ -77,6 +77,15 @@ These are the extra protections added to close the remaining “tests are green 
 2. `.github/workflows/live-instance-smoke.yml` now supports both manual dispatch and weekly scheduled smoke runs, using GitHub variables for target selection and secrets for auth material.
 3. `test:smoke-contracts` now also includes the gateway helper tests and the instance health / browser-session / instance-action route tests so the fast CI layer catches more runtime-boundary regressions before full verify.
 
+## Phase 8 every test is run, and the merged result is verified
+
+Added 2026-09-25, after an audit found 21 test files in `dashboard/scripts` that nothing ran, one of them failing since it was published:
+
+1. `dashboard/scripts/check-test-wiring.cjs` runs in the Dashboard CI static checks. Every test file in the repository must be discovered by jest, started by a jest wrapper, named by a workflow that runs on push, pull request or merge queue, or run by a package script such a workflow calls. Anything else needs an entry in `dashboard/scripts/test-wiring-exemptions.json` with a category (`vm`, `live`, `helper`, `needs-artifact`, or `not-in-ci` for suites whose runner has no CI job yet) and a reason. An exemption for a file that is now run, or gone, fails the check.
+2. New script tests follow the existing jest-wrapper pattern: run the script as a child process and assert its own `PASS` line (`node:test` files: the TAP `# fail 0` summary). Add the suite's hosted-runner seconds to `dashboard/scripts/jest-shard-weights.json` when it takes more than about a second.
+3. `dashboard-ci.yml` also runs on every push to `canary` and on `merge_group`, and only pull-request runs cancel each other, so each merged commit gets a complete run.
+4. Owner setting, not code: "Verify Dashboard" is not yet a required check on `canary` or `main`. Making it required (and optionally enabling a merge queue) is what turns these runs into a merge gate. Dashboard CI is path-filtered for pull requests, so a required check also needs a plan for PRs that touch no dashboard paths.
+
 ## Hosted enforcement limitation
 
 The current GitHub repository plan for this private repo does not expose classic branch protection or rulesets through the API. That means this repo cannot currently rely on hosted required-status-check enforcement the normal way.

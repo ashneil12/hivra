@@ -61,6 +61,9 @@ jobs:
       - name: Preserve exact portable release bytes including bundled documentation
         run: node --test scripts/release/portable-bundle-immutability.test.mjs
 
+      - name: Guard the production migration risk and schema diff helpers
+        run: node --test scripts/release/prod-migration-risk.test.mjs scripts/release/prod-schema-diff.test.mjs
+
       - name: Export exact tracked tree
         shell: bash
         run: |
