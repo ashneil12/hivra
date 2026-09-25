@@ -22,8 +22,19 @@ import {
   resolveEffectiveSubscription,
   type EffectiveSubscription,
 } from "@/lib/billing/instance-entitlement";
+import {
+  handleWorkspaceCloudInvoiceEvent,
+  isWorkspaceCloudSubscription,
+} from "@/lib/services/workspace-cloud-billing-service";
 
 const LOG_SOURCE = "stripe-webhook-service";
+
+type InvoiceBoundSubscriptionRow = {
+  plan: string | null;
+  status: string | null;
+  grace_period_ends_at: string | null;
+  stripe_subscription_id: string | null;
+};
 
 // Reversibility switch for the suspend-not-delete billing change. When a
 // payment fails or a subscription is canceled we now SUSPEND instances (route
@@ -931,8 +942,12 @@ export class StripeWebhookService {
         status: 'active',
       });
       
-      // Filter subs that belong to this user (in case the customer is shared, which shouldn't happen, but just to be safe)
-      const hermesSubs = activeSubs.data.filter(s => s.metadata?.user_id === userId);
+      // Filter subs that belong to this user (in case the customer is shared, which shouldn't happen, but just to be safe).
+      // Workspace Cloud checkout reuses the same Stripe customer and user_id
+      // metadata; its subscriptions are another lane, never a Hivra duplicate.
+      const hermesSubs = activeSubs.data.filter(
+        (s) => s.metadata?.user_id === userId && !isWorkspaceCloudSubscription(s)
+      );
       
       if (hermesSubs.length > 1) {
         // Sort oldest first
@@ -1628,6 +1643,64 @@ export class StripeWebhookService {
     }
   }
 
+  /**
+   * The Hivra row an invoice event may act on: the user's hermes_subscriptions
+   * row, and only when it is bound to exactly this Stripe subscription.
+   *
+   * Invoice events used to write the row by user id alone. A pending row from
+   * an abandoned /api/billing/subscribe checkout already carries the target
+   * plan's limits (only `status` gates it), so any other paid subscription for
+   * the same user (a Workspace Cloud one, a stale duplicate) switched those
+   * limits on, and any other failed one suspended the user's computers.
+   * Binding a subscription to the row stays the job of checkout.session.* and
+   * customer.subscription.* (handleSubscriptionChange), which also activate,
+   * resume and grant; an invoice event only confirms or lapses the payment of
+   * the subscription the row already records.
+   *
+   * Returns null, logged, when the row is missing or bound elsewhere. A failed
+   * read throws so the webhook answers 500 and Stripe redelivers, rather than
+   * dropping a real renewal.
+   */
+  private static async findRowBoundToSubscription(
+    userId: string,
+    subscriptionId: string,
+    trigger: "invoice_paid" | "invoice_payment_failed"
+  ): Promise<InvoiceBoundSubscriptionRow | null> {
+    if (!supabaseAdmin) return null;
+
+    const { data: row, error } = await supabaseAdmin
+      .from("hermes_subscriptions")
+      .select("plan, status, grace_period_ends_at, stripe_subscription_id")
+      .eq("user_id", userId)
+      .maybeSingle<InvoiceBoundSubscriptionRow>();
+
+    if (error) {
+      log.error("failed to read the subscription row for an invoice event", new Error(error.message), {
+        source: LOG_SOURCE,
+        failureType: "invoice_subscription_row_read_failed",
+        trigger,
+        subscriptionId,
+        userId,
+      });
+      throw new Error(error.message || "failed to read hermes_subscriptions for invoice event");
+    }
+
+    if (!row || row.stripe_subscription_id !== subscriptionId) {
+      log.warn("invoice event for a subscription not bound to the user's Hivra row; leaving the row untouched", {
+        source: LOG_SOURCE,
+        failureType: "invoice_subscription_not_bound",
+        trigger,
+        subscriptionId,
+        userId,
+        rowSubscriptionId: row?.stripe_subscription_id ?? null,
+        rowStatus: row?.status ?? null,
+      });
+      return null;
+    }
+
+    return row;
+  }
+
   static async handleInvoicePaid(invoice: Stripe.Invoice) {
     if (!supabaseAdmin) return;
 
@@ -1636,6 +1709,15 @@ export class StripeWebhookService {
 
     const stripe = getStripe();
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+    // Invoices carry no lane marker; the subscription's metadata does. A
+    // Workspace Cloud payment belongs to workspace_cloud_subscriptions and
+    // must never activate, resume or credit anything on the Hivra side.
+    if (isWorkspaceCloudSubscription(subscription)) {
+      await handleWorkspaceCloudInvoiceEvent(subscription);
+      return;
+    }
+
     const userId = subscription.metadata?.user_id;
     const planKey = subscription.metadata?.plan as PlanKey | undefined;
 
@@ -1671,26 +1753,54 @@ export class StripeWebhookService {
     // Conditional-set: never clobber the period with null on the rare invoice
     // whose subscription doesn't carry a period.
     const { periodStart, periodEnd } = getSubscriptionPeriod(subscription);
+    const subscriptionPlan = planKey && PLANS[planKey] ? planKey : null;
 
-    await supabaseAdmin.from("hermes_subscriptions").update({
-      status: "active",
-      grace_period_ends_at: null,
-      ...(periodStart
-        ? { current_period_start: new Date(periodStart * 1000).toISOString() }
-        : {}),
-      ...(periodEnd
-        ? { current_period_end: new Date(periodEnd * 1000).toISOString() }
-        : {}),
-      updated_at: new Date().toISOString(),
-    }).eq("user_id", userId);
+    const boundRow = await this.findRowBoundToSubscription(userId, subscriptionId, "invoice_paid");
+    if (boundRow && subscriptionPlan && boundRow.plan !== subscriptionPlan) {
+      // The row records this subscription but a different plan: an abandoned
+      // checkout for another plan rewrote the limits on a row that kept its
+      // old subscription id. Paying the old subscription must not switch the
+      // other plan's limits on. customer.subscription.updated for this
+      // payment rewrites plan + limits from Stripe and activates the row.
+      log.warn("invoice.paid for a subscription whose plan differs from its row; not activating", {
+        source: LOG_SOURCE,
+        failureType: "invoice_paid_plan_mismatch",
+        subscriptionId,
+        userId,
+        rowPlan: boundRow.plan,
+        rowStatus: boundRow.status,
+        subscriptionPlan,
+      });
+    } else if (boundRow) {
+      await supabaseAdmin
+        .from("hermes_subscriptions")
+        .update({
+          status: "active",
+          grace_period_ends_at: null,
+          ...(periodStart
+            ? { current_period_start: new Date(periodStart * 1000).toISOString() }
+            : {}),
+          ...(periodEnd
+            ? { current_period_end: new Date(periodEnd * 1000).toISOString() }
+            : {}),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId)
+        // Conditional on the binding, so a checkout that rebinds the row
+        // between the read above and this write is never overwritten.
+        .eq("stripe_subscription_id", subscriptionId);
 
-    await this.restoreScheduledDeletions(userId);
-    await this.resumeBillingSuspendedInstances(userId);
+      await this.restoreScheduledDeletions(userId);
+      await this.resumeBillingSuspendedInstances(userId);
+    }
 
-    if (planKey && PLANS[planKey]) {
+    // Cycle credits follow the paid Hivra subscription itself (idempotent per
+    // subscription + period), not the row: a paid cycle whose binding lands
+    // later via checkout/subscription events is still credited exactly once.
+    if (subscriptionPlan) {
       await grantSubscriptionCycleCredits({
         userId,
-        planKey,
+        planKey: subscriptionPlan,
         subscriptionId,
         periodStart,
         periodEnd,
@@ -1706,6 +1816,15 @@ export class StripeWebhookService {
 
     const stripe = getStripe();
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+    // A failed Workspace Cloud invoice lapses only the lane's own row. It must
+    // never mark the Hivra row past_due, suspend Hivra computers or send the
+    // Hivra dunning email.
+    if (isWorkspaceCloudSubscription(subscription)) {
+      await handleWorkspaceCloudInvoiceEvent(subscription);
+      return;
+    }
+
     const userId = subscription.metadata?.user_id;
 
     if (!userId) return;
@@ -1733,25 +1852,35 @@ export class StripeWebhookService {
     // the dunning cutoff the entitlement resolver enforces. Only set the anchor
     // when the row isn't already carrying a live grace timestamp; otherwise
     // preserve the existing one so the 48h clock runs from the first decline.
-    const { data: existingSub } = await supabaseAdmin
-      .from("hermes_subscriptions")
-      .select("status, grace_period_ends_at")
-      .eq("user_id", userId)
-      .maybeSingle<{ status: string | null; grace_period_ends_at: string | null }>();
+    //
+    // Only the row bound to this exact subscription lapses. A failure on any
+    // other subscription (a stale duplicate, or a first invoice that raced
+    // ahead of its checkout binding) says nothing about the plan the row
+    // records, so it neither marks the row past_due nor suspends computers.
+    const existingSub = await this.findRowBoundToSubscription(
+      userId,
+      subscriptionId,
+      "invoice_payment_failed"
+    );
+    if (!existingSub) return;
 
     const alreadyAnchored =
-      existingSub?.status === "past_due" &&
+      existingSub.status === "past_due" &&
       typeof existingSub.grace_period_ends_at === "string";
 
     const gracePeriodEnd = alreadyAnchored
-      ? existingSub!.grace_period_ends_at!
+      ? existingSub.grace_period_ends_at!
       : new Date(Date.now() + TRIAL_GRACE_HOURS * 60 * 60 * 1000).toISOString();
 
-    await supabaseAdmin.from("hermes_subscriptions").update({
-      status: "past_due",
-      grace_period_ends_at: gracePeriodEnd,
-      updated_at: new Date().toISOString(),
-    }).eq("user_id", userId);
+    await supabaseAdmin
+      .from("hermes_subscriptions")
+      .update({
+        status: "past_due",
+        grace_period_ends_at: gracePeriodEnd,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("stripe_subscription_id", subscriptionId);
 
     // A failed invoice is often a transient decline; Stripe smart-retries over
     // the next several days. NEVER arm VM destruction here — suspend instead so
