@@ -233,6 +233,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* "Update available" under an agent's name: its Claude Code / Codex is behind
+   the version Hivra has tested (or its connection service is older). */
+.agentSoftware {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid var(--gold-leaf, var(--etched-border));
+  color: var(--ink-black);
+  font:
+    10.5px var(--font-mono),
+    monospace;
+  white-space: nowrap;
+}
+.agentSoftware[data-badge="update_failed"] {
+  border-color: #c0392b;
+}
 .agentResources {
   color: var(--text-secondary);
   font-size: 11px;

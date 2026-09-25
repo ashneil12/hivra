@@ -148,6 +148,10 @@ const EVENT_LABEL: Record<string, string> = {
   bankr_wallet_provisioned: "Wallet provisioned",
   snapshot_created: "Snapshot created",
   snapshot_restored: "Snapshot restored",
+  runtime_updated: "Connection service updated",
+  agent_cli_updated: "Agent software updated",
+  agent_cli_update_failed: "Agent software update didn't finish",
+  agent_cli_auto_update_changed: "Automatic updates changed",
 };
 
 function eventLabel(event: string): string {

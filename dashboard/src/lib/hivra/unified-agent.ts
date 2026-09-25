@@ -12,6 +12,7 @@ import type { HivraAgent } from "./agent-api";
 import { getAgent as catalogAgent } from "./agent-catalog";
 import { getComputerTemplate } from "./computer-catalog";
 import { agentComputerPair, type AgentComputerPair } from "@/lib/agent-computers/agent-surfaces";
+import type { AgentSoftwareSummary } from "./agent-cli-status";
 
 export type UnifiedKind = "hermes" | "hivra";
 type UnifiedState = "running" | "updating" | "provisioning" | "stopped" | "error" | "other";
@@ -63,6 +64,9 @@ export interface UnifiedAgent {
   /** An agent's linked computer: where it runs and its size, from the stored
    *  lifecycle binding (ATT-11). Null for computers and Hermes. */
   computerPair?: AgentComputerPair | null;
+  /** Its Claude Code / Codex (or connection service) against what Hivra has
+   *  tested, from the list's stored summary. Null when there is nothing to say. */
+  software?: AgentSoftwareSummary | null;
 }
 
 const STATE_LABELS: Record<UnifiedState, string> = {
@@ -118,6 +122,7 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
     surfaceKind: def?.surface,
     cpu: a.cpu, ram: a.ram, model: null, provider: null, agentType: a.type,
     computerPair: resourceKind === "agent" ? agentComputerPair(a) : null,
+    software: resourceKind === "agent" && a.agent_software?.badge ? a.agent_software : null,
   };
 }
 

@@ -7,6 +7,7 @@ import { refreshDesktopCapability, resetDesktopSessionLaneForTests } from "@/lib
 import { lastTabFor, listRecents, recordVisit } from "@/lib/workspace/recents";
 import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { resetAgentSoftwareForTests } from "@/components/hivra/useAgentSoftware";
 
 const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
@@ -106,15 +107,19 @@ jest.mock("@/components/hivra/HivraTelegram", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraManage", () => ({
-  HivraManage: ({ agent, plan, onChanged, onDestroyed, onConnectionServiceRestarted, chatReadiness }: {
+  HivraManage: ({ agent, plan, onChanged, onDestroyed, onConnectionServiceRestarted, chatReadiness, sectionRequest, softwareChipInHeader }: {
     agent?: { manage?: { power?: { stop?: { state?: string } } } };
     plan?: { usage?: { usedCpu: number } } | null;
     onChanged: () => void;
     onDestroyed: () => void;
     onConnectionServiceRestarted?: () => void;
     chatReadiness?: string | null;
+    sectionRequest?: { section: string; id: number } | null;
+    softwareChipInHeader?: boolean;
   }) => <>
     <div>Manage panel</div>
+    <output data-testid="manage-section-request">{sectionRequest ? `${sectionRequest.section}#${sectionRequest.id}` : "none"}</output>
+    <output data-testid="manage-software-chip">{String(softwareChipInHeader)}</output>
     <output data-testid="manage-usage">{plan?.usage?.usedCpu ?? "unknown"}</output>
     <output data-testid="manage-stop">{agent?.manage?.power?.stop?.state ?? "unknown"}</output>
     <output data-testid="manage-sign-in">{chatReadiness ?? "unknown"}</output>
@@ -201,6 +206,7 @@ describe("AgentPage", () => {
     jest.clearAllMocks();
     // Desktop proofs are shared per tab; each test is a new tab.
     resetDesktopSessionLaneForTests();
+    resetAgentSoftwareForTests();
     window.history.replaceState(null, "", "/dashboard/agent/agent_123");
     mockAgentId = "agent_123";
     requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => undefined);
@@ -298,6 +304,45 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: button }));
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+  });
+
+  // "There's no way to see that you need to update your Codex": the agent's
+  // name says so wherever the owner is, and opens Manage › Updates.
+  it("shows Update available beside a Codex agent's name and opens Manage at Updates", async () => {
+    const row = {
+      id: "agent_123", type: "codex", name: "CODEX_AGENT", status: "running", cpu: 2, ram: 4,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
+      deployment_mode: "hivra-managed", infrastructure_binding_token_enforced: true, desired_state: "running",
+    };
+    mockGetAgent.mockResolvedValue({ ...row, manage: manageCapabilitiesFor(row, { preparedMatch: true }) });
+    const defaultFetch = (global.fetch as jest.Mock).getMockImplementation();
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => String(url).includes("/agent-software")
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: {
+          supported: true, cli: "codex", view: { kind: "behind", installed: "0.140.0" }, tested: "0.149.1", observedAt: null,
+          update: null, lastRequest: null, autoUpdate: { mode: "off", enabled: true, source: "default", pausedFor: null },
+        } }) })
+      : defaultFetch?.(url, init));
+    render(<AgentPage />);
+    const chip = await screen.findByRole("button", { name: /^Update available: Codex 0\.140\.0 is installed and Hivra has tested 0\.149\.1\./ });
+    // Asked of Hivra's server, never of the computer itself.
+    expect(global.fetch).toHaveBeenCalledWith("/api/hivra/agents/agent_123/agent-software", expect.objectContaining({ credentials: "same-origin" }));
+    expect(screen.getByText("Chat panel")).toBeInTheDocument();
+    fireEvent.click(chip);
+    expect(await screen.findByText("Manage panel")).toBeVisible();
+    expect(screen.getByTestId("manage-section-request")).toHaveTextContent("updates#1");
+    // The page's own chip shows beside the name, so Manage's header leaves it out.
+    expect(screen.getByTestId("manage-software-chip")).toHaveTextContent("false");
+    const url = new URL(window.location.href);
+    expect(url.searchParams.get("tab")).toBe("manage");
+    expect(url.searchParams.get("section")).toBe("updates");
+    expect(url.hash).toBe("#agent-software");
+  });
+
+  it("asks nothing about software for a computer or an agent the server sends no capability map for", async () => {
+    render(<AgentPage />);
+    expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/agent-software"), expect.anything());
+    expect(screen.queryByTestId("agent-software-chip")).not.toBeInTheDocument();
   });
 
   it("keeps Manage mounted, with its drafts, while the owner uses Chat", async () => {
