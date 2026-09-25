@@ -121,7 +121,7 @@ it("does not open the gate without the deep link", async () => {
 it.each([
   ["computer_not_ready", "This computer isn't ready yet. Add Codex once it has finished starting."],
   ["computer_not_running", "Start the computer to add Codex."],
-  ["computer_update_required", "This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex."],
+  ["computer_update_required", "This computer's Hivra service is older than Codex needs. In Manage, choose Update connection service, then add Codex."],
 ])("refuses Add on a computer that is not running and ready (%s), with no Review", async (reason, message) => {
   serve(ready(gate({ available: false, reason, message, reviews: null })));
   render(<ComputerAgentsPanel computerId={COMPUTER} computerName="MY_UBUNTU_DESKTOP" autoOpenAdd />);
@@ -134,10 +134,10 @@ it.each<[string, string, string | null]>([
   ["computer_not_running", "Codex wasn't added: this computer wasn't running. Nothing was installed.", null],
   ["install_failed", "Adding Codex didn't finish. Hivra removed what it had installed", null],
   ["computer_update_required", "Codex wasn't added: this computer's Hivra service is older than Codex needs. Nothing was installed. "
-    + "In Manage, choose Update & restart, then add Codex again.", null],
+    + "In Manage, choose Update connection service, then add Codex again.", null],
   ["download_failed", "Codex wasn't added: this computer couldn't download it. Nothing was installed.", null],
   ["install_failed", "Adding Codex didn't finish: this computer's Hivra service is older than Codex needs. Hivra removed what it had "
-    + "installed; your files in ~/Hivra were not touched. In Manage, choose Update & restart, then add Codex again.", "computer_update_required"],
+    + "installed; your files in ~/Hivra were not touched. In Manage, choose Update connection service, then add Codex again.", "computer_update_required"],
   ["install_failed", "Adding Codex didn't finish: ~/Hivra on this computer isn't a plain folder", "workspace_path_not_plain"],
   ["install_failed", "Adding Codex didn't finish: this computer changed while it was stopped (it was moved or restored).", "computer_changed"],
 ])("ends a refused or failed add as failed with its reason (%s), and offers Add again", async (endReason, copy, failureCode) => {

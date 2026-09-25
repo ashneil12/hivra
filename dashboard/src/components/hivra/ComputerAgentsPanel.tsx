@@ -115,7 +115,7 @@ function openOperation(attachment: AttachGateAttachment) {
 /** Why an install that was sent to the computer failed, and what the owner can do (5.8). */
 const FAILURES: Record<string, { why: string; next?: string }> = {
   computer_update_required: { why: `this computer's Hivra service is older than ${ATTACH_RUNTIME_NAME} needs`,
-    next: `In Manage, choose Update & restart, then add ${ATTACH_RUNTIME_NAME} again.` },
+    next: `In Manage, choose Update connection service, then add ${ATTACH_RUNTIME_NAME} again.` },
   workspace_path_not_plain: { why: "~/Hivra on this computer isn't a plain folder (a link or something else is there)",
     next: `Make ~/Hivra a plain folder, or add ${ATTACH_RUNTIME_NAME} without the shared folder.` },
   computer_changed: { why: "this computer changed while it was stopped (it was moved or restored)",
@@ -148,7 +148,7 @@ function endedLine(attachment: AttachGateAttachment): string | null {
       return `${ATTACH_RUNTIME_NAME} wasn't added: this computer wasn't ready and didn't answer Hivra. Nothing was installed. Add ${ATTACH_RUNTIME_NAME} again once it has finished starting.`;
     }
     if (attachment.endReason === "computer_update_required") {
-      return `${ATTACH_RUNTIME_NAME} wasn't added: this computer's Hivra service is older than ${ATTACH_RUNTIME_NAME} needs. Nothing was installed. In Manage, choose Update & restart, then add ${ATTACH_RUNTIME_NAME} again.`;
+      return `${ATTACH_RUNTIME_NAME} wasn't added: this computer's Hivra service is older than ${ATTACH_RUNTIME_NAME} needs. Nothing was installed. In Manage, choose Update connection service, then add ${ATTACH_RUNTIME_NAME} again.`;
     }
     if (attachment.endReason === "download_failed") {
       return `${ATTACH_RUNTIME_NAME} wasn't added: this computer couldn't download it. Nothing was installed. Check that the computer can reach the internet, then add ${ATTACH_RUNTIME_NAME} again.`;
