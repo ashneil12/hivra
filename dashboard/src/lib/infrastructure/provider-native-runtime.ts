@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.09.24.3.json";
+import currentRelease from "../../../provisioner-releases/2026.09.24.4.json";
+import terminalSocketsRelease from "../../../provisioner-releases/2026.09.24.3.json";
 import persistentSessionsRelease from "../../../provisioner-releases/2026.09.24.2.json";
 import detachedRunsRelease from "../../../provisioner-releases/2026.09.24.1.json";
 import desktopPlannerRelease from "../../../provisioner-releases/2026.09.22.2.json";
@@ -81,8 +82,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.09.24.3"
+  const release = identity.bundle.provisionerVersion === "2026.09.24.4"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.09.24.3"
+      ? terminalSocketsRelease
     : identity.bundle.provisionerVersion === "2026.09.24.2"
       ? persistentSessionsRelease
     : identity.bundle.provisionerVersion === "2026.09.24.1"

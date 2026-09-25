@@ -330,6 +330,11 @@ const recipes = Object.freeze({
     workerSha256: "f1dded06ac1c7660d29e51552112dad37cc9ba0d89442ecdc4cfbf5452c76273",
     workerSize: 45185,
   }),
+  "2026.09.24.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release counts socket clients before restarting a terminal and never falls back to its port.
+    workerSha256: "24ce646e64b79de0e7b54971f9c3127628d9ec7755919036e6ff11c11db65042",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;
