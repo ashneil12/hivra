@@ -14,11 +14,42 @@ no rows of customer data were read and nothing was written. No live/network prob
 Hivra domains was performed (the container's egress policy blocks `*.hermesos.cloud`;
 recorded as a gap).
 
-> **This session produced findings only. No fix PRs were merged.** Every finding below
-> is **OPEN**. See the companion handoff `docs/security/PRE-LAUNCH-REVIEW-2026-09-HANDOFF.md`
-> for the recommended fix order and reproduction proofs. Fixes, regression tests, and the
-> served-on-canary confirmation required by the task's acceptance boundary (b) remain to
-> be done.
+> **Status is tracked in the table below (updated 2026-09-25).** The finding write-ups
+> further down are the original 2026-09-24 text and still say "OPEN" in their headings;
+> the table is authoritative. Every fix listed was re-verified by an independent reviewer
+> against `origin/canary` (`82a88924`) before this update. The next steps are in
+> `docs/security/PRE-LAUNCH-REVIEW-2026-09-HANDOFF.md`.
+
+## Status (2026-09-25)
+
+**All critical and high findings are fixed in code on canary.** What remains before
+Promote is owner work (database migrations, auth settings, a token rotation), listed in
+the handoff's "Before Promote" section.
+
+| Severity | Finding | Status | Fix |
+|---|---|---|---|
+| CRITICAL | Managed-Venice media & passthrough spend with no balance check | **Fixed** | #160, #161 |
+| HIGH | Chat stream cancel released the hold (free chat) | **Fixed** | #150, #167 |
+| HIGH | Passthrough exposed Venice account-management endpoints | **Fixed** (allowlist) | #160 |
+| HIGH | `/clerk-assets` proxied any npm package (XSS) | **Fixed** | #154 |
+| HIGH | Workspace-Cloud `invoice.paid` cross-lane tier grant | **Fixed** | #153, #169 |
+| HIGH | Token-tier eligibility could become permanent | **Fixed** | #158, #168 |
+| HIGH | Holdings crons only refreshed the 100 oldest wallets | **Fixed** | #158, #168 |
+| HIGH | Platform `GHCR_TOKEN` shipped to tenant VMs | **Fixed in code**; token copies already on boxes, in old Hetzner `user_data` and in backups stay valid until the owner rotates it | #152, #171 |
+| HIGH | Hermes-lane wallet keys over unpinned SSH | **Fixed for the Hermes lane**; the same pattern remains in three other lanes (next-week list) | #157, #172 |
+| HIGH | `authenticated` JWT could write `hermes_instances` / `hermes_hosts` and other tables | **Fixed in migrations**; the owner must apply them and confirm the Supabase auth settings | #155, #174 |
+| MEDIUM | Venice overage (no `max_tokens` reservation) | **In progress** in another session | #166 (open), #170 (open) |
+| MEDIUM | Token-lot debit race | **Fixed** | #167 |
+| MEDIUM | Top-up reconcile starvation | **Mitigated** (fair queue; delay is now bounded); rate limit still to do | #164 |
+| MEDIUM | Price gate weak for a young pool | **Fixed** | #164 |
+| MEDIUM | Managed-Venice token sweep had no claim | **Fixed**; legacy `failed` rows need an owner check | #164 |
+| MEDIUM | `/api/ops/events` admin paging, `/api/health` uncached, `getIP()` header trust | **Fixed** | #163 |
+| MEDIUM | Prod: 5 anon-executable SECURITY DEFINER functions | **Owner**: apply `20260923001301` to prod | — |
+| MEDIUM | Apple IAP attach accepts revoked transactions | **Open** (lane dormant; must fix before the iOS app ships) | next week |
+| MEDIUM | Withdrawal destination step-up / any-recipient withdraw | **Fixed** for Hivra's withdraw paths; Hivra-provisioned agent-wallet keys on boxes are still unrestricted (owner decision) | #165 |
+| MEDIUM | Same-site CSRF; terminal proxy Content-Type | **Fixed** | #162 |
+| LOW | `restore_backup` image-id trust; PATCH `backupsEnabled`; update-report revives `scheduled_for_deletion` | **Fixed** | #173 |
+| LOW | `/api/reserve` ILIKE; template slug; canary bypass secret on guests; WebUI handoff key in URL; CI secret scanning history + custom rules | **Open** | next week |
 
 Severity reflects **real exploitability on canary/prod today** where it could be
 established. Several high-impact items are gated behind a production configuration flag
