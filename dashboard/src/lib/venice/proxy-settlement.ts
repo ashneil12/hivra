@@ -359,7 +359,8 @@ export async function captureManagedVeniceChatUsage(
   if (surcharge?.reconciliationReason) {
     // Charged, but not from Venice's own figure (X search results can't be
     // counted) or clamped to the published rates: ops compares it with
-    // Venice's billing. The request is paid for, so the key stays live.
+    // Venice's billing. The request is paid for, so the key stays live, and
+    // a failure to file the item must not fail a charged request.
     await markManagedVeniceReconciliationRequired(
       {
         userId: params.userId,
@@ -377,7 +378,17 @@ export async function captureManagedVeniceChatUsage(
         pauseKey: false,
       },
       client
-    );
+    ).catch((error) => {
+      log.error("Managed Venice chat surcharge reconciliation item could not be filed", error, {
+        source: "managed-venice-chat",
+        failureType: "managed_venice_surcharge_reconciliation_write_failed",
+        userId: params.userId,
+        proxyKeyId: params.proxyKeyId,
+        referenceId: params.referenceId,
+        reason: surcharge.reconciliationReason,
+        surchargeMicroUsd: surcharge.surchargeMicroUsd,
+      });
+    });
   }
 
   if (overageStatus === "reconciliation_required") {
