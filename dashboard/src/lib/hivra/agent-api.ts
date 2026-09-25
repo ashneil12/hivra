@@ -12,6 +12,7 @@ import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import type { HivraAgentActivity } from "./agent-authority";
 import type { ManageCapabilities } from "./manage-sections";
 import type { ComputerHistoryEvent } from "./computer-history";
+import { ComputerUsageViewSchema, type ComputerUsageView } from "./computer-usage-contract";
 import type { ProviderAgentReadinessStage } from "./provider-readiness-contract";
 import type { ProviderAgentPowerStage } from "./provider-power-contract";
 import {
@@ -545,7 +546,7 @@ export class AgentActionError extends Error {
   }
 }
 
-async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
+async function agentActionData(id: string, action: string, extra?: Record<string, unknown>): Promise<Record<string, unknown>> {
   const r = await fetch(`/api/hivra/agents/${id}/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -553,10 +554,38 @@ async function agentAction(id: string, action: string, extra?: Record<string, un
   });
   const j = await readJson(r);
   if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
+  const data = j.data;
+  return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
 }
-export const stopAgent = (id: string) => agentAction(id, "stop");
+async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
+  await agentActionData(id, action, extra);
+}
+
+/**
+ * How a power action ended. `switchedOff`: the computer didn't shut down
+ * within `waitedSeconds`, so Hivra switched it off (Stop and Restart), or the
+ * owner asked for that (Force off and Force restart).
+ */
+export interface PowerOutcome {
+  switchedOff: boolean;
+  waitedSeconds: number | null;
+}
+
+function powerOutcome(data: Record<string, unknown>): PowerOutcome {
+  const waited = Number(data.waitedSeconds);
+  return {
+    switchedOff: data.forced === true,
+    waitedSeconds: Number.isInteger(waited) && waited > 0 ? waited : null,
+  };
+}
+
+export const stopAgent = async (id: string): Promise<PowerOutcome> => powerOutcome(await agentActionData(id, "stop"));
 export const startAgent = (id: string) => agentAction(id, "start");
-export const restartAgent = (id: string) => agentAction(id, "restart");
+export const restartAgent = async (id: string): Promise<PowerOutcome> => powerOutcome(await agentActionData(id, "restart"));
+/** Switch the computer off at once, like pulling the plug. */
+export const forceStopAgent = (id: string) => agentAction(id, "force_stop");
+/** Switch the computer off at once, then start it again. */
+export const forceRestartAgent = (id: string) => agentAction(id, "force_restart");
 export const updateAgentRuntime = (id: string) => agentAction(id, "update_runtime");
 export const resizeAgent = (
   id: string,
@@ -641,6 +670,35 @@ export async function confirmProviderResize(input: {
   });
   const data = await providerResizeResponse(response);
   return ProviderResizeOperationViewSchema.parse(data.operation);
+}
+
+/** Why a usage read failed, with the HTTP status and any Retry-After. */
+export class ComputerUsageError extends Error {
+  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null) {
+    super(message);
+    this.name = "ComputerUsageError";
+  }
+}
+
+/**
+ * The computer's live usage (Manage › Overview). `cached` returns what Hivra
+ * last read without reading the host again.
+ */
+export async function getComputerUsage(id: string, options: { cached?: boolean; signal?: AbortSignal } = {}): Promise<ComputerUsageView> {
+  const query = options.cached ? "?cached=1" : "";
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/usage${query}`, { cache: "no-store", signal: options.signal });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) {
+    const retry = Number(r.headers.get("Retry-After"));
+    throw new ComputerUsageError(
+      r.status === 429 ? "Usage was refreshed a lot just now." : (j?.error as string) || "Hivra couldn't read this computer's usage.",
+      r.status,
+      Number.isFinite(retry) && retry > 0 ? retry : null,
+    );
+  }
+  const parsed = ComputerUsageViewSchema.safeParse(j.data);
+  if (!parsed.success) throw new ComputerUsageError("Hivra couldn't read this computer's usage.", 502, null);
+  return parsed.data;
 }
 
 /** The computer's last lifecycle events, newest first (Manage › Advanced). */

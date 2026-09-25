@@ -62,8 +62,11 @@ describe("prepared Canary computers", () => {
 
   it.each([
     ["start", 1, "if [ \"$CURRENT_STATUS\" = stopped ]; then qm start"],
-    ["restart", 1, "qm shutdown \"$VMID\" --timeout 60 || qm stop"],
+    // Stop and Restart report whether the shutdown finished or qm stop had to run.
+    ["restart", 1, "if qm shutdown \"$VMID\" --timeout 60; then\n    echo \"HIVRA_STOP_MODE graceful\"\n  else\n    qm stop \"$VMID\"\n    echo \"HIVRA_STOP_MODE forced 60\""],
     ["stop", 0, "EXPECTED_STATUS=stopped"],
+    ["force_stop", 0, "qm stop \"$VMID\" --overrule-shutdown 1 --timeout 30 || qm stop \"$VMID\" --timeout 30\nfi\nEXPECTED_STATUS=stopped"],
+    ["force_restart", 1, "qm stop \"$VMID\" --overrule-shutdown 1 --timeout 30 || qm stop \"$VMID\" --timeout 30\nfi\nqm start \"$VMID\" 8>&-"],
   ] as const)("builds an identity-bound %s lifecycle with persistent onboot=%i", (action, onboot, transition) => {
     const slot = readPreparedCanarySlot("windows");
     expect(slot).not.toBeNull();
@@ -111,10 +114,26 @@ with tempfile.NamedTemporaryFile() as lock, tempfile.TemporaryDirectory() as com
     expect(result.status).toBe(0);
   });
 
-  it.each(["start", "stop", "restart"] as const)("emits a newline-delimited %s receipt", action => {
+  it.each(["force_stop", "force_restart"] as const)("never asks the computer to shut down for %s", action => {
+    const script = preparedCanaryLifecycleScript("windows", readPreparedCanarySlot("windows")!, action);
+    expect(script).not.toContain("qm shutdown");
+    expect(script).not.toContain("HIVRA_STOP_MODE");
+  });
+
+  it.each([["0", "graceful"], ["1", "forced 60"]] as const)("a Stop whose shutdown exits %s reports %s", (shutdownExit, mode) => {
+    const script = preparedCanaryLifecycleScript("windows", readPreparedCanarySlot("windows")!, "stop");
+    const transition = script.slice(script.indexOf('if [ "$CURRENT_STATUS" != stopped ]'), script.indexOf("EXPECTED_STATUS=stopped"));
+    const result = spawnSync("bash", ["-euo", "pipefail", "-c", `qm() { [ "$1" = shutdown ] && return ${shutdownExit}; return 0; }
+VMID=2098; CURRENT_STATUS=running
+${transition}`], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`HIVRA_STOP_MODE ${mode}\n`);
+  });
+
+  it.each(["start", "stop", "restart", "force_stop", "force_restart"] as const)("emits a newline-delimited %s receipt", action => {
     const script = preparedCanaryLifecycleScript("omarchy", readPreparedCanarySlot("omarchy")!, action);
     const receipt = script.split("\n").find(line => line.includes("printf 'HIVRA_PREPARED_LIFECYCLE"))!;
-    const status = action === "stop" ? "stopped" : "running";
+    const status = action === "stop" || action === "force_stop" ? "stopped" : "running";
     const result = spawnSync("bash", ["-s"], { encoding: "utf8", input: `CURRENT_STATUS=${status}\n${receipt}\n` });
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(`HIVRA_PREPARED_LIFECYCLE omarchy ${action} ${status}\n`);

@@ -20,6 +20,8 @@ export const COMPUTER_HISTORY_LABELS: Record<string, string> = {
   started: "Started",
   stopped: "Stopped",
   restarted: "Restarted",
+  force_stopped: "Forced off",
+  force_restarted: "Forced restart",
   resized: "Resized",
   runtime_updated: "Connection service updated",
   snapshot_created: "Restore point created",
@@ -44,12 +46,22 @@ const FAILED_REASON_LABELS: Record<string, string> = {
   stuck_provisioning_vm_missing: "Didn't come online",
 };
 
+/**
+ * A Stop or Restart that switched the computer off because it didn't shut
+ * down in time records reason shutdown_timeout, so History says so.
+ */
+const SWITCHED_OFF_LABELS: Record<string, string> = {
+  stopped: "Stopped (switched off: it didn't shut down in time)",
+  restarted: "Restarted (switched off first: it didn't shut down in time)",
+};
+
 /** The owner's label for one event, or null for an event History doesn't show. */
 export function computerHistoryLabel(event: string, reason?: unknown): string | null {
   if (!Object.hasOwn(COMPUTER_HISTORY_LABELS, event)) return null;
   if (event === "failed" && typeof reason === "string" && Object.hasOwn(FAILED_REASON_LABELS, reason)) {
     return FAILED_REASON_LABELS[reason];
   }
+  if (reason === "shutdown_timeout" && Object.hasOwn(SWITCHED_OFF_LABELS, event)) return SWITCHED_OFF_LABELS[event];
   return COMPUTER_HISTORY_LABELS[event];
 }
 

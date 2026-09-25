@@ -1,6 +1,9 @@
-// Hivra agent lifecycle: stop / start / restart / update_runtime / resize /
-// snapshot / restore / rename.
-// stop: qm shutdown -> status=stopped. start/restart/resize: re-run the host
+// Hivra agent lifecycle: stop / start / restart / force_stop / force_restart /
+// update_runtime / resize / snapshot / restore / rename.
+// stop: qm shutdown (qm stop if it hasn't shut down after 50 s; the response
+// says so) -> status=stopped. force_stop: qm stop at once, under the stop
+// lease. force_restart: qm stop at once, then the start helper, under the
+// restart lease. start/restart/resize: re-run the host
 // start helper (qm start + re-establish the box tunnel + rewrite the prov log)
 // and set status=provisioning so the existing [id] poll captures the (new)
 // chat_url. update_runtime: refresh the guest's Hivra runtime in place (no VM
@@ -84,6 +87,7 @@ import {
 } from "@/lib/hivra/prepared-canary-computers";
 import {
   doSessionActionFor,
+  isForcePowerAction,
   isGvisorAction,
   isPreparedAction,
   isPreparedProfile,
@@ -173,12 +177,29 @@ flock -w 60 8 || { echo "timed out waiting for the Hivra lifecycle lock" >&2; ex
 ${vmAuthority}`;
 }
 
+// How a stop ended, printed by the host: "graceful" (the computer shut itself
+// down in time), "forced <seconds>" (it hadn't after that long, so qm stop
+// switched it off) or "already" (it was off). Only "forced" changes what the
+// owner is told, with the wait the script itself used.
+const STOP_MODE_LINE = /^HIVRA_STOP_MODE (graceful|forced|already)(?: (\d{1,4}))?$/m;
+
+function stopOutcome(stdout: string | undefined): { forced: true; waitedSeconds?: number } | null {
+  const match = STOP_MODE_LINE.exec(stdout || "");
+  if (match?.[1] !== "forced") return null;
+  const waited = Number(match[2]);
+  return { forced: true, ...(Number.isInteger(waited) && waited > 0 ? { waitedSeconds: waited } : {}) };
+}
+
 function verifiedStopVmBody(vmid: number, timeoutSeconds: number): string {
   return `VMID=${vmid}
+STOP_MODE=already
 CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
 if [ "$CURRENT_STATUS" != "stopped" ]; then
-  if ! qm shutdown "$VMID" --timeout ${timeoutSeconds}; then
+  if qm shutdown "$VMID" --timeout ${timeoutSeconds}; then
+    STOP_MODE=graceful
+  else
     qm stop "$VMID"
+    STOP_MODE="forced ${timeoutSeconds}"
   fi
 fi
 FINAL_STATUS="$(qm status "$VMID" | awk '{print $2}')"
@@ -186,7 +207,31 @@ if [ "$FINAL_STATUS" != "stopped" ]; then
   echo "VMID $VMID did not stop (status=$FINAL_STATUS)" >&2
   exit 1
 fi
-echo "stopped $VMID"`;
+echo "stopped $VMID"
+echo "HIVRA_STOP_MODE $STOP_MODE"`;
+}
+
+// Force off: switch the computer off at once, without asking it to shut
+// down. --overrule-shutdown also ends a shutdown already under way (PVE 8.1
+// and later); an older host without that option still gets a plain qm stop.
+// Success is only the final status read back as stopped, reported by the
+// exact receipt line for this VM.
+const FORCE_STOPPED_RECEIPT = "HIVRA_FORCE_STOPPED";
+
+function forcedStopVmBody(vmid: number): string {
+  return `VMID=${vmid}
+CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
+if [ "$CURRENT_STATUS" != "stopped" ]; then
+  if ! qm stop "$VMID" --overrule-shutdown 1 --timeout 30; then
+    qm stop "$VMID" --timeout 30 || echo "qm stop did not complete for VMID $VMID" >&2
+  fi
+fi
+FINAL_STATUS="$(qm status "$VMID" | awk '{print $2}')"
+if [ "$FINAL_STATUS" != "stopped" ]; then
+  echo "VMID $VMID did not switch off (status=$FINAL_STATUS)" >&2
+  exit 1
+fi
+echo "${FORCE_STOPPED_RECEIPT} vmid=$VMID"`;
 }
 
 function verifiedStopVmScript(vmid: number, timeoutSeconds: number, bindingTag: string | null): string {
@@ -394,7 +439,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!isProxmoxAction(action)) {
       return apiError("Unknown action", 400);
     }
-    if (["update_runtime", "snapshot", "restore"].includes(action) && !isSameOriginMutationRequest(req)) {
+    if ((["update_runtime", "snapshot", "restore"].includes(action) || isForcePowerAction(action)) && !isSameOriginMutationRequest(req)) {
       return apiError("Same-origin request required.", 403);
     }
     // A DeepSeek guest also runs a native adapter and service generation that
@@ -421,6 +466,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return false;
     };
     const desktopInvalidationFailure = () => apiError("The desktop capability could not be invalidated. No lifecycle command was sent.", 503);
+    // Force off and Force restart are rarer than Stop and can lose unsaved
+    // work, so they have their own tighter limit on top of the adapter's.
+    const forcePowerLimit = () => enforceAuthenticatedRouteRateLimit(req, {
+      routeKey: "hivra_agent_force_power",
+      userId,
+      limit: 6,
+      windowMs: 10 * 60_000,
+    });
+    const FORCE_BUSY = "Hivra is still finishing another change to this computer. Wait for it to finish, then try again.";
 
     const preparedProfile = isPreparedProfile(agent);
     const preparedComputer = matchPreparedCanaryComputer(agent);
@@ -445,22 +499,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         windowMs: 15 * 60_000,
       });
       if (limited) return limited;
+      const forced = isForcePowerAction(action);
+      if (forced) {
+        const forceLimited = forcePowerLimit();
+        if (forceLimited) return forceLimited;
+      }
       const env = resolveProxmoxTargetConfiguration(process.env, preparedComputer.slot.host).env;
       if (action === "start") {
         const cap = await checkHostWakeCapacity(Number(agent.ram) * 1024, env);
         if (!cap.ok) return apiError("Host is at capacity — try again shortly", 503);
       }
       const operationId = randomUUID();
-      const desiredState = action === "stop" ? "stopped" : "running";
+      const stopping = action === "stop" || action === "force_stop";
+      const desiredState = stopping ? "stopped" : "running";
+      // Force off and Force restart take the same lease kinds as Stop and Restart.
+      const operationKind = action === "force_stop" ? "stop" : action === "force_restart" ? "restart" : action;
       const claimed = await claimHivraAgentOperation({
         userId,
         agentId: String(agent.id),
         operationId,
-        operationKind: action,
+        operationKind,
         desiredState,
         operationPayload: null,
       });
-      if (!claimed) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!claimed) return apiError(forced ? FORCE_BUSY : "Another lifecycle operation is already in progress.", 409);
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const result = await runProxmoxHostScript(
         preparedCanaryLifecycleScript(preparedComputer.profile, preparedComputer.slot, action),
@@ -493,13 +555,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }).catch(() => false);
         return apiError("The computer reached its requested power state, but its durable status was superseded. Refresh before trying another action.", 409);
       }
+      const switchedOff = forced ? null : stopOutcome(result.stdout);
       await logHivraAgentEvent({
         userId,
-        event: action === "stop" ? "stopped" : action === "restart" ? "restarted" : "started",
+        event: action === "force_stop" ? "force_stopped"
+          : action === "force_restart" ? "force_restarted"
+            : action === "stop" ? "stopped" : action === "restart" ? "restarted" : "started",
         agentId: agent.id,
         agentType: agent.type,
+        ...(switchedOff ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
       });
-      return apiSuccess({ status: desiredState });
+      return apiSuccess({
+        status: desiredState,
+        ...(forced ? { forced: true } : switchedOff ?? {}),
+      });
     }
     if (agent.computer_substrate === "provider-vm") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
@@ -551,8 +620,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // and persisted channel have an admitted VERSION, intact manifest, and
     // exact-result-path capability before claiming an operation lease or issuing
     // any VM command. Explicit runtime updates require the current version. Stop
-    // does not call the helper and deliberately remains available for stale hosts.
-    if (executionContext.kind === "managed" && action !== "stop") {
+    // and Force off do not call the helper and deliberately remain available for
+    // stale hosts.
+    if (executionContext.kind === "managed" && action !== "stop" && action !== "force_stop") {
       const readiness = await checkManagedHivraHostReadiness({
         targetId: executionContext.host,
         env,
@@ -976,8 +1046,48 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         });
         return apiError("The VM stopped, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
       }
-      await logHivraAgentEvent({ userId, event: "stopped", agentId: agent.id, agentType: agent.type });
-      return apiSuccess({ status: "stopped" });
+      // Stop asks the computer to shut down and switches it off only if it
+      // hasn't in time; say which happened.
+      const switchedOff = stopOutcome(r.stdout);
+      await logHivraAgentEvent({
+        userId, event: "stopped", agentId: agent.id, agentType: agent.type,
+        ...(switchedOff ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
+      });
+      return apiSuccess({ status: "stopped", ...switchedOff });
+    }
+
+    if (action === "force_stop") {
+      const limited = forcePowerLimit();
+      if (limited) return limited;
+      const operationId = await claimProviderOperation("stop", "stopped");
+      if (!operationId) return apiError(FORCE_BUSY, 409);
+      if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
+      const r = await runProxmoxHostScript(`${lifecyclePrelude}\n${forcedStopVmBody(vmid)}`, env);
+      if (!r.ok || !(r.stdout || "").split(/\r?\n/).includes(`${FORCE_STOPPED_RECEIPT} vmid=${vmid}`)) {
+        // Sent but unconfirmed: keep the lease for the reconciler, as Stop does.
+        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Force off outcome is unknown"));
+        return apiError("Hivra couldn't confirm the computer switched off. Refresh before trying again.", 502);
+      }
+      const completed = await completeHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "stopped",
+        status: "stopped",
+      });
+      if (!completed) {
+        await releaseProviderOperation(operationId, "Force off completion was superseded.", false);
+        log.error("hivra agent forced off but operation completion was superseded", new Error("Operation CAS failed"), {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_force_stop_status_persist_failed",
+          userId,
+          agentId: agent.id,
+          vmid,
+        });
+        return apiError("The computer switched off, but a newer change superseded it. Refresh before trying again.", 409);
+      }
+      await logHivraAgentEvent({ userId, event: "force_stopped", agentId: agent.id, agentType: agent.type });
+      return apiSuccess({ status: "stopped", forced: true });
     }
 
     if (action === "start") {
@@ -1055,8 +1165,49 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         });
         return apiError("The VM restart began, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
       }
-      await logHivraAgentEvent({ userId, event: "restarted", agentId: agent.id, agentType: agent.type });
-      return apiSuccess({ status: "provisioning" });
+      const switchedOff = stopOutcome(r.stdout);
+      await logHivraAgentEvent({
+        userId, event: "restarted", agentId: agent.id, agentType: agent.type,
+        ...(switchedOff ? { detail: { forced: true, reason: "shutdown_timeout" } } : {}),
+      });
+      return apiSuccess({ status: "provisioning", ...switchedOff });
+    }
+
+    if (action === "force_restart") {
+      const limited = forcePowerLimit();
+      if (limited) return limited;
+      const operationId = await claimProviderOperation("restart", "running");
+      if (!operationId) return apiError(FORCE_BUSY, 409);
+      if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
+      const r = await runProxmoxHostScript(
+        `${lifecyclePrelude}\n${forcedStopVmBody(vmid)}\nsleep 2\n${startKickoff(operationId)}`,
+        env,
+      );
+      if (!r.ok || !(r.stdout || "").split(/\r?\n/).includes(`${FORCE_STOPPED_RECEIPT} vmid=${vmid}`)) {
+        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Force restart outcome is unknown"));
+        return apiError("Hivra couldn't confirm the forced restart. Refresh before trying again.", 502);
+      }
+      await recordActivityCredentialIssued(r);
+      const continued = await continueHivraAgentOperation({
+        userId,
+        agentId: String(agent.id),
+        operationId,
+        expectedDesiredState: "running",
+        status: "provisioning",
+      });
+      if (!continued) {
+        await retainUnknownProviderOperation(operationId, "Force restart convergence was superseded before its provider outcome was verified.");
+        log.error("hivra agent force restart kicked off but operation completion was superseded", new Error("Operation CAS failed"), {
+          source: "hivra/agents/[id]/action",
+          failureType: "hivra_agent_force_restart_status_persist_failed",
+          userId,
+          agentId: agent.id,
+          vmid,
+        });
+        return apiError("The forced restart began, but a newer change superseded it. Refresh before trying again.", 409);
+      }
+      await logHivraAgentEvent({ userId, event: "force_restarted", agentId: agent.id, agentType: agent.type });
+      return apiSuccess({ status: "provisioning", forced: true });
     }
 
     if (action === "update_runtime") {

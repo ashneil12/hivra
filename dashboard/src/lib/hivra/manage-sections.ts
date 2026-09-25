@@ -72,10 +72,23 @@ export interface ManageCapabilities {
     stop: ManageCap;
     /** null: this kind of computer has no restart control. */
     restart: ManageCap | null;
+    /**
+     * Force off and Force restart (Advanced): switch the computer off at once
+     * instead of asking it to shut down. null: this kind of computer has no
+     * such control (a Linux Sandbox or a DigitalOcean session).
+     */
+    forceStop: ManageCap | null;
+    forceRestart: ManageCap | null;
     /** DigitalOcean sessions pause and resume rather than stop and start. */
     labels?: { start: "Resume"; stop: "Pause" };
   };
   resize: { kind: ManageResizeKind; cap: ManageCap };
+  /**
+   * Live usage and uptime (Overview), read from the computer's host by
+   * GET /api/hivra/agents/[id]/usage. Unavailable where Hivra has no way to
+   * read it; the reason says what the owner can use instead.
+   */
+  usage: ManageCap | null;
   restorePoints: (ManageCap & { maximum?: number }) | null;
   folderRecovery: ManageCap | null;
   /** Static eligibility; the panel still reports the live connection. */
@@ -118,7 +131,8 @@ export function capReason(cap: ManageCap | null | undefined): string | null {
 export function manageAwaitsOperation(map: ManageCapabilities | null | undefined): boolean {
   if (!map) return false;
   const caps: Array<ManageCap | null | undefined> = [
-    map.power.start, map.power.stop, map.power.restart, map.resize.cap, map.restorePoints,
+    map.power.start, map.power.stop, map.power.restart, map.power.forceStop, map.power.forceRestart,
+    map.resize.cap, map.restorePoints,
     map.folderRecovery, map.privateNetwork, map.connectionServiceUpdate, map.export, map.destroy.cap,
   ];
   return caps.some((cap) => cap?.state === "blocked" && cap.code === "operation_in_progress");

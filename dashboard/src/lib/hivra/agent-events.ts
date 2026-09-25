@@ -27,6 +27,8 @@ type HivraAgentEvent =
   | "stopped"
   | "started"
   | "restarted"
+  | "force_stopped"
+  | "force_restarted"
   | "runtime_updated"
   | "snapshot_created"
   | "snapshot_restored"

@@ -84,6 +84,18 @@ describe("GET /api/hivra/agents/[id]/events", () => {
     if (reason) expect(JSON.stringify(body)).not.toContain(reason);
   });
 
+  it.each([
+    ["force_stopped", undefined, "Forced off"],
+    ["force_restarted", undefined, "Forced restart"],
+    ["stopped", "shutdown_timeout", "Stopped (switched off: it didn't shut down in time)"],
+    ["restarted", "shutdown_timeout", "Restarted (switched off first: it didn't shut down in time)"],
+    ["stopped", undefined, "Stopped"],
+  ])("labels %s (reason %s) as %s", async (event, reason, label) => {
+    mockEvents = [{ event, created_at: "2026-09-24T12:00:00.000Z", reason }];
+    const body = await (await get()).json();
+    expect(body.data.events).toEqual([{ event, createdAt: "2026-09-24T12:00:00.000Z", label }]);
+  });
+
   it("never lets a reason on another event change its label", async () => {
     mockEvents = [{ event: "restarted", created_at: "2026-09-24T12:00:00.000Z", reason: "delete_destroy_failed" }];
     const body = await (await get()).json();

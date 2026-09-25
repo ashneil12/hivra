@@ -17,6 +17,12 @@ import {
   telegramConnect,
   telegramStatus,
   telegramDisconnect,
+  ComputerUsageError,
+  forceRestartAgent,
+  forceStopAgent,
+  getComputerUsage,
+  restartAgent,
+  stopAgent,
 } from "../agent-api";
 
 describe("listBoxSessions", () => {
@@ -671,5 +677,59 @@ describe("telegram box calls are bounded (regression: silent hang)", () => {
       expect.stringContaining("/api/telegram/disconnect"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+});
+
+describe("power actions and live usage", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
+  const respond = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+    ({ ok: status < 400, status, headers: new Headers(headers), json: async () => body }) as Response;
+
+  // Regression: Stop's answer was dropped, so Manage couldn't say the computer
+  // had to be switched off after it didn't shut down in time.
+  it("returns how a Stop or Restart ended", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(respond(200, { success: true, data: { status: "stopped", forced: true, waitedSeconds: 50 } }))
+      .mockResolvedValueOnce(respond(200, { success: true, data: { status: "provisioning" } }));
+    await expect(stopAgent("agent-1")).resolves.toEqual({ switchedOff: true, waitedSeconds: 50 });
+    await expect(restartAgent("agent-1")).resolves.toEqual({ switchedOff: false, waitedSeconds: null });
+  });
+
+  it("sends Force off and Force restart as their own actions", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(respond(200, { success: true, data: { status: "stopped", forced: true } }));
+    global.fetch = fetchMock;
+    await forceStopAgent("agent-1");
+    await forceRestartAgent("agent-1");
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init.body)))).toEqual([{ action: "force_stop" }, { action: "force_restart" }]);
+  });
+
+  it("reads usage, asking for the stored read only when told to", async () => {
+    const view = {
+      supported: true, source: "proxmox", observedAt: "2026-09-25T12:00:00.000Z", ageSeconds: 3, stale: false, refreshing: false,
+      power: { observed: "running", recorded: "running", matches: true }, uptimeSeconds: 60,
+      cpu: { percent: 1.1, vcpus: 4 }, memory: { usedBytes: 1, maximumBytes: 2, includesCache: true },
+      disk: { usedBytes: 1, sizeBytes: 2, allocatedBytes: 3, filesystem: "ext4", guestReported: true }, notes: [],
+    };
+    const fetchMock = jest.fn().mockResolvedValue(respond(200, { success: true, data: view }));
+    global.fetch = fetchMock;
+    await expect(getComputerUsage("agent-1", { cached: true })).resolves.toEqual(view);
+    await getComputerUsage("agent-1");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/hivra/agents/agent-1/usage?cached=1", "/api/hivra/agents/agent-1/usage"]);
+  });
+
+  it("refuses an answer that isn't a usage view", async () => {
+    global.fetch = jest.fn().mockResolvedValue(respond(200, { success: true, data: { supported: true, host: "fixturenode11" } }));
+    await expect(getComputerUsage("agent-1")).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("carries the status, message and Retry-After of a refusal", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(respond(409, { success: false, error: "Hivra couldn't confirm this computer belongs to you, so it didn't read it." }))
+      .mockResolvedValueOnce(respond(429, { success: false, error: "Too Many Requests" }, { "Retry-After": "42" }));
+    await expect(getComputerUsage("agent-1")).rejects.toMatchObject({ status: 409, message: "Hivra couldn't confirm this computer belongs to you, so it didn't read it." });
+    const limited = await getComputerUsage("agent-1").catch((error: unknown) => error);
+    expect(limited).toBeInstanceOf(ComputerUsageError);
+    expect(limited).toMatchObject({ status: 429, retryAfterSeconds: 42, message: "Usage was refreshed a lot just now." });
   });
 });

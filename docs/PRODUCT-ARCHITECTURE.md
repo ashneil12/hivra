@@ -488,8 +488,34 @@ progress and opens Manage once the computer is ready. While another operation
 holds a computer, the page reads it again every 5 s so the controls it blocks
 come back when it ends. Not built: the Agents section's attach panel (its
 extension point is empty until attach lands), the agent-software version and
-automatic updates in Updates, live usage and disk, force power off, disk grow,
-Hetzner power-off, and power or resize for Windows on My server.
+automatic updates in Updates, disk grow, Hetzner power-off, and power or resize
+for Windows on My server.
+
+**Live usage, Force off and a truthful Stop (2026-09-25, code on this branch,
+not yet accepted live; the cache migration is not applied anywhere).**
+Overview shows a Proxmox computer's power state, uptime, CPU, memory and disk
+(`GET /api/hivra/agents/[id]/usage`). One read-only host script runs
+`qm config`, `pvesh get /cluster/resources` and the guest agent's
+`get-fsinfo`; it takes no lock and no lease, checks the computer's binding tag
+(an older unbound Hivra Cloud computer: its exact VM name; a prepared computer:
+its claim marker) before printing anything, and a Perl filter on the host keeps
+one whitelisted line for that VM only. Memory is the host's figure and includes
+the guest's file cache, and the page says so. Reads are cached in
+`hivra_computer_usage` (migration `20260925130000`): at most one host read per
+computer per 20 s across server instances (a claim on the database clock), the
+last read is kept when the host can't be reached, and a read made before the
+computer's last state change is read again rather than reported as a mismatch.
+My cloud, Linux Sandbox and DigitalOcean computers show why live usage isn't
+available (no new provider calls). Advanced offers Force off and Force restart
+for Proxmox and prepared computers (`qm stop --overrule-shutdown`, falling back
+to a plain `qm stop` on hosts older than PVE 8.1), behind a confirmation that
+unsaved work is lost; they reuse the Stop and Restart leases and receipts, so an
+operation in progress (an in-place update, say) makes them wait instead of
+breaking its lease. A My cloud computer is sent to its provider's console. Stop
+and Restart now report when the computer didn't shut down in time and Hivra
+switched it off, and Manage and History say so. Verified by tests only
+(including the host script run against captured Proxmox VE 9.2 output); not
+yet run against a live host from this code.
 
 The current portable code can inspect a generic Linux host, inventory an owner's
 Hetzner Cloud project, create a policy-bounded provider VM after explicit billing

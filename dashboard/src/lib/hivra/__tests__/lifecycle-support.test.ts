@@ -1,6 +1,7 @@
 import {
   doSessionActionFor,
   folderRecoveryEligible,
+  isForcePowerAction,
   isGvisorAction,
   isPreparedAction,
   isProxmoxAction,
@@ -25,6 +26,18 @@ describe("action lists", () => {
     expect(["start", "stop", "restart", "resize", "update_runtime"].filter(isPreparedAction)).toEqual(["start", "stop", "restart"]);
     expect(["stop", "start", "restart", "update_runtime", "resize", "snapshot", "restore", "rename", "delete"].filter(isProxmoxAction))
       .toEqual(["stop", "start", "restart", "update_runtime", "resize", "snapshot", "restore"]);
+  });
+
+  it("accepts Force off and Force restart on Proxmox and prepared computers only", () => {
+    const force = ["force_stop", "force_restart"];
+    expect(force.filter(isProxmoxAction)).toEqual(force);
+    expect(force.filter(isPreparedAction)).toEqual(force);
+    expect(force.filter(isGvisorAction)).toEqual([]);
+    expect(force.map(doSessionActionFor)).toEqual([null, null]);
+    expect(force.filter(isForcePowerAction)).toEqual(force);
+    expect(["stop", "restart", "force"].filter(isForcePowerAction)).toEqual([]);
+    expect(providerRefusalFor("force_stop")).toMatch(/use your provider's console to force it off/i);
+    expect(providerRefusalFor("force_restart")).toMatch(/use your provider's console to force it off/i);
   });
 
   it("refuses My cloud actions with the route's exact messages", () => {

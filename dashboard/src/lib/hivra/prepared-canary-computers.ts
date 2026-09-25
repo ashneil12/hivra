@@ -21,7 +21,7 @@ const Slot = z.object({
 const Slots = z.object({ omarchy: Slot, windows: Slot }).strict();
 export type PreparedCanaryProfile = "omarchy" | "windows";
 export type PreparedCanarySlot = z.infer<typeof Slot>;
-export type PreparedCanaryLifecycleAction = "start" | "stop" | "restart";
+export type PreparedCanaryLifecycleAction = "start" | "stop" | "restart" | "force_stop" | "force_restart";
 
 type PreparedCanaryComputerRow = {
   type?: unknown;
@@ -65,19 +65,32 @@ export function preparedCanaryLifecycleScript(
 ): string {
   const encodedMarker = `hivra-${profile}-operation%3A${slot.claim}`;
   const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
-  const desiredOnboot = action === "stop" ? 0 : 1;
+  const desiredOnboot = action === "stop" || action === "force_stop" ? 0 : 1;
+  // Stop and Restart ask the computer to shut down and switch it off only if
+  // it hasn't after 60 s, and say which (HIVRA_STOP_MODE, with that wait).
+  // Force off and Force restart switch it off at once.
+  const shutdown = `if [ "$CURRENT_STATUS" != stopped ]; then
+  if qm shutdown "$VMID" --timeout 60; then
+    echo "HIVRA_STOP_MODE graceful"
+  else
+    qm stop "$VMID"
+    echo "HIVRA_STOP_MODE forced 60"
+  fi
+fi`;
+  const switchOff = `if [ "$CURRENT_STATUS" != stopped ]; then
+  qm stop "$VMID" --overrule-shutdown 1 --timeout 30 || qm stop "$VMID" --timeout 30
+fi`;
   const transition = action === "stop"
-    ? `if [ "$CURRENT_STATUS" != stopped ]; then
-  qm shutdown "$VMID" --timeout 60 || qm stop "$VMID"
-fi
+    ? `${shutdown}
 EXPECTED_STATUS=stopped`
-    : action === "restart"
-      ? `if [ "$CURRENT_STATUS" != stopped ]; then
-  qm shutdown "$VMID" --timeout 60 || qm stop "$VMID"
-fi
+    : action === "force_stop"
+      ? `${switchOff}
+EXPECTED_STATUS=stopped`
+      : action === "restart" || action === "force_restart"
+        ? `${action === "restart" ? shutdown : switchOff}
 qm start "$VMID" 8>&-
 EXPECTED_STATUS=running`
-      : `if [ "$CURRENT_STATUS" = stopped ]; then qm start "$VMID" 8>&-; fi
+        : `if [ "$CURRENT_STATUS" = stopped ]; then qm start "$VMID" 8>&-; fi
 EXPECTED_STATUS=running`;
   return `set -euo pipefail
 VMID=${slot.vmid}

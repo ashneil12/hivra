@@ -101,15 +101,17 @@ function operationInProgress(row: ManageCapabilitiesRow): boolean {
   return row.status === "provisioning" || row.operation_id != null || row.operation_kind != null;
 }
 
+const MY_CLOUD_FORCE = "Hivra can't force a My cloud computer off. Use your provider's console to force it off.";
+
 function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: ManageCapabilitiesContext): ManageCapabilities["power"] {
   if (variant === "windows-my-server") {
     const reason = "Hivra can't start, stop or restart a Windows computer on your own server yet. Use your server's console for now.";
     const cap = unavailable("windows_my_server", reason);
-    return { start: cap, stop: cap, restart: cap };
+    return { start: cap, stop: cap, restart: cap, forceStop: cap, forceRestart: cap };
   }
   if (variant === "prepared" && !ctx.preparedMatch) {
     const cap = unavailable("prepared_mismatch", "This prepared computer no longer matches the setup Hivra has on record, so its power controls are off. Contact support.");
-    return { start: cap, stop: cap, restart: cap };
+    return { start: cap, stop: cap, restart: cap, forceStop: cap, forceRestart: cap };
   }
   const busy = operationInProgress(row);
   const stopped = row.status === "stopped";
@@ -119,9 +121,44 @@ function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Mana
     : stopped ? blocked("already_stopped", "This computer is already stopped.") : available;
   const restartCap = busy ? blocked("operation_in_progress", WAIT)
     : stopped ? blocked("stopped", "Start this computer first.") : available;
-  if (variant === "digitalocean") return { start, stop, restart: null, labels: { start: "Resume", stop: "Pause" } };
-  if (variant === "linux-sandbox") return { start, stop, restart: null };
-  return { start, stop, restart: restartCap };
+  if (variant === "digitalocean") return { start, stop, restart: null, forceStop: null, forceRestart: null, labels: { start: "Resume", stop: "Pause" } };
+  if (variant === "linux-sandbox") return { start, stop, restart: null, forceStop: null, forceRestart: null };
+  if (variant === "my-cloud" || variant === "my-cloud-agent") {
+    // The Hetzner power client never forces power; the route refuses both.
+    const cap = unavailable("my_cloud", MY_CLOUD_FORCE);
+    return { start, stop, restart: restartCap, forceStop: cap, forceRestart: cap };
+  }
+  // Force off takes the same lease as Stop, so it waits for the same things.
+  return { start, stop, restart: restartCap, forceStop: stop, forceRestart: restartCap };
+}
+
+const USAGE_NOT_BOUND = "Live usage isn't available for this computer. It was created before Hivra recorded ownership checks.";
+
+/**
+ * Live usage (the usage route): Proxmox computers only, read from their host
+ * behind the same ownership checks as Stop. Elsewhere, say where to look.
+ */
+function usageCap(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: ManageCapabilitiesContext): ManageCap {
+  switch (variant) {
+    case "digitalocean":
+      return unavailable("digitalocean", "Live usage isn't available for DigitalOcean sessions. Status and last activity come from DigitalOcean.");
+    case "linux-sandbox":
+      return unavailable("linux_sandbox", "Live usage isn't available for Linux Sandboxes yet.");
+    case "my-cloud":
+    case "my-cloud-agent":
+      return unavailable("my_cloud", "Live usage isn't available for My cloud computers yet. Your provider's console shows it.");
+    case "prepared":
+      if (!ctx.preparedMatch) return unavailable("prepared_mismatch", "This prepared computer no longer matches the setup Hivra has on record, so Hivra doesn't read its usage.");
+      break;
+    default:
+      break;
+  }
+  // My server rows are always bound; an unbound one can't be read safely.
+  if (row.deployment_mode === "self-managed" && !hasOwnershipBinding(row)) return unavailable("not_bound", USAGE_NOT_BOUND);
+  if (!Number.isSafeInteger(row.vmid) || Number(row.vmid) < 100) {
+    return blocked("not_ready", "Usage appears once this computer is set up.");
+  }
+  return available;
 }
 
 function resizeCap(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["resize"] {
@@ -257,6 +294,8 @@ function detailsFor(row: ManageCapabilitiesRow, variant: ManageVariant, isComput
 }
 
 const NOT_AVAILABLE_LABEL = {
+  usage: "Live usage",
+  forcePower: "Force off",
   restorePoints: "Restore points",
   folderRecovery: "Folder recovery",
   privateNetwork: "Private network",
@@ -276,6 +315,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
 
   const power = powerCaps(row, variant, ctx);
   const resize = resizeCap(row, variant);
+  const usage = usageCap(row, variant, ctx);
   const restorePoints = restorePointsCap(row, variant, ctx);
   const folderRecovery = folderRecoveryCap(row, variant);
   const privateNetwork = privateNetworkCap(row, isComputer);
@@ -289,6 +329,9 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     if (cap?.state === "unavailable") notAvailable.push({ capability, reason: cap.reason });
   };
   if (power.start.state === "unavailable") note(NOT_AVAILABLE_LABEL.power, power.start);
+  // Listed once: where no power control works, the line above already says why.
+  else note(NOT_AVAILABLE_LABEL.forcePower, power.forceStop);
+  note(NOT_AVAILABLE_LABEL.usage, usage);
   note(NOT_AVAILABLE_LABEL.restorePoints, restorePoints);
   note(NOT_AVAILABLE_LABEL.folderRecovery, folderRecovery);
   note(NOT_AVAILABLE_LABEL.privateNetwork, privateNetwork);
@@ -316,6 +359,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     rename: available,
     power,
     resize,
+    usage,
     restorePoints,
     folderRecovery,
     privateNetwork,

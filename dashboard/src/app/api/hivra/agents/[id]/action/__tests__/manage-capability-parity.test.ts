@@ -93,7 +93,8 @@ const rows: Record<string, Record<string, unknown>> = {
 };
 const preparedSlotMatches = (name: string) => name === "preparedWindows";
 
-type Action = "start" | "stop" | "restart" | "resize" | "snapshot" | "update_runtime";
+type Action = "start" | "stop" | "restart" | "resize" | "snapshot" | "update_runtime" | "force_stop" | "force_restart";
+const ACTIONS: Action[] = ["start", "stop", "restart", "resize", "snapshot", "update_runtime", "force_stop", "force_restart"];
 
 function capFor(name: string, action: Action): ManageCap | null {
   const row = action === "start" ? { ...rows[name], status: "stopped", desired_state: "stopped" } : rows[name];
@@ -108,6 +109,8 @@ function capFor(name: string, action: Action): ManageCap | null {
           : manage.resize.cap;
     case "snapshot": return manage.restorePoints;
     case "update_runtime": return manage.connectionServiceUpdate;
+    case "force_stop": return manage.power.forceStop;
+    case "force_restart": return manage.power.forceRestart;
   }
 }
 
@@ -153,7 +156,7 @@ beforeEach(() => {
 
 const cases: Array<[string, Action]> = [];
 for (const name of Object.keys(rows)) {
-  for (const action of ["start", "stop", "restart", "resize", "snapshot", "update_runtime"] as Action[]) cases.push([name, action]);
+  for (const action of ACTIONS) cases.push([name, action]);
 }
 
 describe("Manage capability map ↔ lifecycle route", () => {
@@ -178,5 +181,12 @@ describe("Manage capability map ↔ lifecycle route", () => {
     expect(await windows.json()).toMatchObject({ error: expect.not.stringMatching(/canary/i) });
     // DeepSeek's in-place update.
     expect((await send("deepseek", "update_runtime")).status).toBe(409);
+  });
+
+  it("sends Force off on a My cloud computer to the provider's console, as the map says", async () => {
+    expect(capFor("hetzner", "force_stop")).toMatchObject({ state: "unavailable", reason: expect.stringMatching(/provider's console/) });
+    const response = await send("hetzner", "force_stop");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: expect.stringMatching(/provider's console/) });
   });
 });
