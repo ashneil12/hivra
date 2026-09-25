@@ -17,8 +17,10 @@ export const runtime = "nodejs";
  *
  * Responses:
  *  - 200 `{ ok:true, referenceId, upstreamKey, upstreamUrl, walletType, ..., bodyPatch }`
- *    The Worker must forward `{ ...body, ...bodyPatch }`: the patch lowers the
- *    output cap to what was held. It is always `{}` unless the Worker sent
+ *    The Worker must forward `{ ...body, ...bodyPatch }`: the patch sets the
+ *    output cap to what was held (lower when the wallet cannot cover the
+ *    model maximum, or written out when that maximum is only the static
+ *    catalog's). It is always `{}` unless the Worker sent
  *    `acceptsBodyPatch: true`.
  *  - 401/400/402/503 — relay-able errors (bad key, bad model, no balance, not
  *    configured). The Worker forwards these to the box verbatim.

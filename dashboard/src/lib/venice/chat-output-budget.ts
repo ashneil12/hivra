@@ -19,10 +19,18 @@
 //   3. Below MIN_CLAMPED_OUTPUT_TOKENS the request is refused with 402: an
 //      answer truncated that short is not worth sending, and every request that
 //      the old 4,096-token hold admitted still clears this floor.
+//   4. The model maximum is only trusted when Venice published it (the live
+//      /v1/models refresh). While that refresh is down the proxy prices from
+//      the static catalog, whose maximum can lag Venice's (it listed
+//      zai-org-glm-5-1 at 24,000 while Venice allowed 80,000). So when the
+//      maximum came from the catalog, the cap the hold covers is always written
+//      into the forwarded request, even when it equals that maximum.
 //
 // A caller that cannot rewrite the forwarded body (an older Cloudflare Worker
 // that forwards its own copy) gets rule 1 only: the full worst-case hold, or a
-// 402. It never gets a lower cap it would not apply.
+// 402. It never gets a lower cap it would not apply. With a catalog maximum
+// nothing enforces that maximum, so its worst case is bounded by the model's
+// context window instead.
 
 import {
   ManagedVeniceInsufficientBalanceError,
@@ -39,6 +47,7 @@ import {
   type VeniceChatEstimateRequest,
   type VenicePricingMap,
 } from "./cost-estimator";
+import type { VeniceChatModelPrice } from "./pricing";
 import { VENICE_RESPONSES_ENDPOINT, responsesEstimateRequest } from "./responses-protocol";
 
 export type ManagedVeniceChatProtocol = "chat" | "responses";
@@ -94,16 +103,22 @@ function requestedOutputCap(protocol: ManagedVeniceChatProtocol, body: Record<st
   return values.find((value): value is number => value !== null) ?? null;
 }
 
+/** True when Venice itself published the model's output maximum. */
+function outputMaximumConfirmed(price: Pick<VeniceChatModelPrice, "maxOutputTokensSource">) {
+  return price.maxOutputTokensSource === "venice_live";
+}
+
 /**
  * The fields to overwrite so the forwarded body runs with output cap `cap`:
- * every cap field the caller sent becomes `cap`, and when none was sent and
- * `cap` is below the model maximum (Venice's default), one is added.
+ * every cap field the caller sent becomes `cap`. When none was sent, one is
+ * added unless `cap` is Venice's own published maximum (its default): below
+ * it, or whenever the maximum is only the catalog's guess.
  */
 export function managedVeniceOutputCapPatch(
   protocol: ManagedVeniceChatProtocol,
   body: Record<string, unknown>,
   cap: number,
-  modelMaxOutputTokens: number
+  price: Pick<VeniceChatModelPrice, "maxOutputTokens" | "maxOutputTokensSource">
 ): ManagedVeniceOutputCapPatch {
   const patch: ManagedVeniceOutputCapPatch = {};
   let sent = false;
@@ -112,8 +127,30 @@ export function managedVeniceOutputCapPatch(
     sent = true;
     if (body[field] !== cap) patch[field] = cap;
   }
-  if (!sent && cap < modelMaxOutputTokens) patch[INJECTED_FIELD[protocol]] = cap;
+  if (!sent && (cap < price.maxOutputTokens || !outputMaximumConfirmed(price))) {
+    patch[INJECTED_FIELD[protocol]] = cap;
+  }
   return patch;
+}
+
+/**
+ * The price row, and a pricing map carrying it, to hold a request whose body
+ * cannot be changed. With a catalog maximum nothing enforces that maximum, so
+ * output is bounded by the model's context window instead.
+ */
+function unpatchedRequestPricing(
+  modelId: string,
+  price: VeniceChatModelPrice,
+  pricingMap: VenicePricingMap
+): { price: VeniceChatModelPrice; pricingMap: VenicePricingMap } {
+  if (outputMaximumConfirmed(price)) return { price, pricingMap };
+  const bounded: VeniceChatModelPrice = {
+    ...price,
+    maxOutputTokens: Math.max(price.maxOutputTokens, price.contextWindow),
+  };
+  const map = new Map(pricingMap);
+  map.set(modelId, bounded);
+  return { price: bounded, pricingMap: map };
 }
 
 /**
@@ -169,10 +206,11 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   route: string;
 }): Promise<ManagedVeniceChatBudgetedReservation> {
   const { protocol, body, pricingMap } = params;
-  const price = resolveVeniceChatPrice(String(body.model), pricingMap);
+  const modelId = String(body.model);
+  const price = resolveVeniceChatPrice(modelId, pricingMap);
   const modelMaxOutputTokens = price.maxOutputTokens;
 
-  const reserve = (patch: ManagedVeniceOutputCapPatch) =>
+  const reserve = (patch: ManagedVeniceOutputCapPatch, holdPricing: VenicePricingMap = pricingMap) =>
     reserveManagedVeniceChatRequest({
       userId: params.userId,
       proxyKeyId: params.proxyKeyId,
@@ -180,25 +218,27 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
       referenceId: params.referenceId,
       requestBody: managedVeniceChatEstimateBody(protocol, body, patch),
       ...(protocol === "responses" ? { endpoint: VENICE_RESPONSES_ENDPOINT } : {}),
-      pricingMap,
+      pricingMap: holdPricing,
     });
 
   if (!params.allowBodyRewrite) {
     // Forwarded exactly as sent: hold its worst case (the larger cap field,
-    // or the model maximum), or refuse.
-    const reservation = await reserve({});
+    // or the model maximum, or with a catalog maximum the context window), or
+    // refuse.
+    const unpatched = unpatchedRequestPricing(modelId, price, pricingMap);
+    const reservation = await reserve({}, unpatched.pricingMap);
     return {
       reservation,
       bodyPatch: {},
-      outputCap: worstCaseVeniceChatOutputCap(managedVeniceChatEstimateBody(protocol, body), price),
-      modelMaxOutputTokens,
+      outputCap: worstCaseVeniceChatOutputCap(managedVeniceChatEstimateBody(protocol, body), unpatched.price),
+      modelMaxOutputTokens: unpatched.price.maxOutputTokens,
       clampedToBalance: false,
     };
   }
 
   const requested = requestedOutputCap(protocol, body);
   const fullCap = Math.min(requested ?? modelMaxOutputTokens, modelMaxOutputTokens);
-  const fullPatch = managedVeniceOutputCapPatch(protocol, body, fullCap, modelMaxOutputTokens);
+  const fullPatch = managedVeniceOutputCapPatch(protocol, body, fullCap, price);
   try {
     const reservation = await reserve(fullPatch);
     return {
@@ -227,7 +267,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
     throw new ManagedVeniceInsufficientBalanceError();
   }
   const outputCap = Math.min(affordable, fullCap);
-  const bodyPatch = managedVeniceOutputCapPatch(protocol, body, outputCap, modelMaxOutputTokens);
+  const bodyPatch = managedVeniceOutputCapPatch(protocol, body, outputCap, price);
   // A concurrent request can still take the balance first; the reservation
   // then throws ManagedVeniceInsufficientBalanceError and the caller 402s.
   const reservation = await reserve(bodyPatch);
@@ -244,6 +284,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
       outputCap,
       requestedOutputCap: fullCap,
       modelMaxOutputTokens,
+      modelMaxOutputTokensSource: price.maxOutputTokensSource,
       reservedMicroUsd: reservation.reservedMicroUsd,
     });
   }
