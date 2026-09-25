@@ -21,6 +21,9 @@ import { VENICE_CHAT_MODEL_PRICES } from "@/lib/venice/pricing";
 
 let mockMemory: ManagedVeniceSpendWorld;
 const mockVerifyKey = jest.fn();
+// "live": rows as the live /v1/models refresh builds them (output limit
+// confirmed by Venice). "fallback": the static catalog alone.
+let mockPricingSource: "live" | "fallback" = "live";
 
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
@@ -31,12 +34,26 @@ jest.mock("@/lib/venice/proxy-keys", () => ({
   verifyManagedVeniceProxyKey: (...args: unknown[]) => mockVerifyKey(...args),
 }));
 jest.mock("@/lib/venice/live-pricing", () => ({
-  getVenicePricingMap: jest.fn(async () => ({
-    map: new Map(VENICE_CHAT_MODEL_PRICES.map((entry) => [entry.model, entry])),
-    source: "fallback",
-    fetchedAt: Date.now(),
-    liveModelCount: 0,
-  })),
+  getVenicePricingMap: jest.fn(async () =>
+    mockPricingSource === "live"
+      ? {
+          map: new Map(
+            VENICE_CHAT_MODEL_PRICES.map((entry) => [
+              entry.model,
+              { ...entry, maxOutputTokensSource: "venice_live" },
+            ])
+          ),
+          source: "merged",
+          fetchedAt: Date.now(),
+          liveModelCount: VENICE_CHAT_MODEL_PRICES.length,
+        }
+      : {
+          map: new Map(VENICE_CHAT_MODEL_PRICES.map((entry) => [entry.model, entry])),
+          source: "fallback",
+          fetchedAt: Date.now(),
+          liveModelCount: 0,
+        }
+  ),
 }));
 jest.mock("@/lib/logger", () => ({
   log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -72,6 +89,7 @@ describe("managed-Venice Responses: the hold covers everything the request can s
   let venice: ReturnType<typeof createWorstCaseVenice>;
 
   beforeEach(() => {
+    mockPricingSource = "live";
     mockMemory = createManagedVeniceSpendWorld();
     mockVerifyKey.mockResolvedValue({
       id: KEY_ID,
@@ -143,5 +161,26 @@ describe("managed-Venice Responses: the hold covers everything the request can s
     expect(res.status).toBe(402);
     expect(venice.calls).toHaveLength(0);
     expect(mockMemory.reservations()).toHaveLength(0);
+  });
+
+  // Review of #166: while live pricing is down the catalog maximum is only a
+  // guess (it listed zai-org-glm-5-1 at 24,000 against Venice's 80,000), so
+  // the cap the hold covers is always written, even when it equals that guess.
+  it("while live pricing is down, no max_output_tokens: the held cap is written into the request", async () => {
+    mockPricingSource = "fallback";
+    venice = createWorstCaseVenice({ veniceMaxOutputTokens: { "claude-opus-4-8": 256_000 } });
+    global.fetch = venice.fetch as unknown as typeof fetch;
+    mockMemory.fundCard(USER_ID, 20 * USD);
+
+    const res = await POST(responsesReq(JSON.stringify(codexTurn())));
+    await res.text();
+
+    expect(res.status).toBe(200);
+    expect(venice.calls[0].body.max_output_tokens).toBe(128_000);
+    expect({ ...venice.calls[0].body, max_output_tokens: undefined }).toEqual({
+      ...codexTurn(),
+      max_output_tokens: undefined,
+    });
+    expectEveryCallCoveredByItsHold(mockMemory, venice, USER_ID);
   });
 });

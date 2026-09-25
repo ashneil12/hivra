@@ -10,7 +10,10 @@
  *     means "the model's default maximum" (the swagger text for `max_tokens`).
  *   - Responses: `max_output_tokens` bounds the output, else the model maximum.
  *   - The model maximum is the published `maxCompletionTokens`
- *     (`VeniceChatModelPrice.maxOutputTokens`); output never exceeds it.
+ *     (`VeniceChatModelPrice.maxOutputTokens`); output never exceeds it. A test
+ *     can say Venice's real maximum differs from the static catalog
+ *     (`veniceMaxOutputTokens`), the drift the catalog has had before
+ *     (zai-org-glm-5-1: 24,000 in the catalog, 80,000 on Venice).
  *   - `n` choices each generate that many tokens.
  * Prompt tokens are a realistic ~4 characters per token of the forwarded body.
  *
@@ -52,18 +55,25 @@ function json(value: unknown, status = 200) {
   });
 }
 
-export function createWorstCaseVenice() {
+export function createWorstCaseVenice(
+  options: {
+    /** Venice's real per-model output maximum, where it is not the catalog's. */
+    veniceMaxOutputTokens?: Record<string, number>;
+  } = {}
+) {
   const calls: FakeVeniceCall[] = [];
 
   async function fetchImpl(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const rawBody = typeof init?.body === "string" ? init.body : "";
     const body = JSON.parse(rawBody || "{}") as Record<string, unknown>;
-    const price = getVeniceChatModelPrice(String(body.model));
+    const model = String(body.model);
+    const modelMax =
+      options.veniceMaxOutputTokens?.[model] ?? getVeniceChatModelPrice(model).maxOutputTokens;
     const promptTokens = Math.ceil(rawBody.length / 4);
 
     if (url.endsWith("/api/v1/responses")) {
-      const completionTokens = responsesOutputTokens(body, price.maxOutputTokens);
+      const completionTokens = responsesOutputTokens(body, modelMax);
       calls.push({ url, body, rawBody, promptTokens, completionTokens });
       const usage = {
         input_tokens: promptTokens,
@@ -74,7 +84,7 @@ export function createWorstCaseVenice() {
     }
 
     if (url.endsWith("/api/v1/chat/completions")) {
-      const completionTokens = chatOutputTokens(body, price.maxOutputTokens);
+      const completionTokens = chatOutputTokens(body, modelMax);
       calls.push({ url, body, rawBody, promptTokens, completionTokens });
       const usage = {
         prompt_tokens: promptTokens,
