@@ -88,7 +88,7 @@ async function main() {
         "20260908090000_desktop_handoff_latency_release.sql",
         "20260922201510_provider_release_admission_2026_09_22.sql",
         "20260924180000_provider_release_admission_2026_09_24.sql",
-        "20260924220000_provider_release_admission_2026_09_24_2.sql",
+        // 2026.09.24.2's admission (#124) is applied below, in both orders with 2026.09.24.3's.
         // Legacy (2026.08.27.1) computers must keep every check after arm-at-start.
         "20260924190000_hetzner_first_boot_arm_at_start.sql",
       ].includes(name)).sort()) {
@@ -99,28 +99,15 @@ async function main() {
       "public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)", "public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)"];
     const admissionDefinitions = async () => Promise.all(admissionFunctions.map(async (fn) =>
       (await db.query("select pg_get_functiondef($1::regprocedure) as result", [fn])).rows[0].result));
-    // 2026.09.24.2 is a sibling release (persistent sessions, not in this tree)
-    // whose admission anchors on the 2026.09.24.1 entry the same way. Its shape
-    // is copied here with a fixture digest: whichever of the two applies first,
-    // both releases must end up admitted exactly once.
-    const clause = (digest, version) =>
-      `(p_identity->''bundle''->>''bundleSha256''=''${digest}'' and p_identity->''bundle''->>''provisionerVersion''=''${version}'')`;
-    const detachedRuns = clause("23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04", "2026.09.24.1");
-    const sibling = `${detachedRuns} or ${clause("e".repeat(64), "2026.09.24.2")}`;
-    const siblingAdmission = `do $m$ declare signature text; definition text; anchor text; addition text; begin
-      for signature, anchor, addition in select * from (values
-        ('${admissionFunctions[0]}', '''2026.09.22.2'',''2026.09.24.1''', '''2026.09.22.2'',''2026.09.24.1'',''2026.09.24.2'''),
-        ('${admissionFunctions[1]}', '${detachedRuns}', '${sibling}'),
-        ('${admissionFunctions[2]}', '${detachedRuns}', '${sibling}')
-      ) as patches(signature, anchor, addition) loop
-        definition := pg_get_functiondef(signature::regprocedure);
-        if (length(definition) - length(replace(definition, anchor, ''))) / length(anchor) <> 1 then
-          raise exception 'sibling anchor mismatch: %', signature; end if;
-        execute replace(definition, anchor, addition);
-      end loop; end; $m$;`;
+    // 2026.09.24.2 is the persistent-sessions release (#124), merged first;
+    // 2026.09.24.3 is sealed on top of it. Both admissions anchor on the
+    // 2026.09.24.1 entry: whichever of the two real files applies first, both
+    // releases must end up admitted exactly once.
+    const SIBLING = "20260924220000_provider_release_admission_2026_09_24_2.sql";
+    const siblingAdmission = migration(SIBLING);
     const occurrences = (text, needle) => text.split(needle).length - 1;
     const beforeAdmission = await admissionDefinitions();
-    for (const [order, steps] of [["sibling first", [siblingAdmission, migration(ADMISSION)]],
+    for (const [order, steps] of [["2026.09.24.2 first", [siblingAdmission, migration(ADMISSION)]],
       ["2026.09.24.3 first", [migration(ADMISSION), siblingAdmission]]]) {
       for (const step of steps) await db.exec(step);
       const admitted = await admissionDefinitions();
@@ -134,7 +121,9 @@ async function main() {
       for (const definition of beforeAdmission) await db.exec(definition);
     }
     assert.deepEqual(await admissionDefinitions(), beforeAdmission, "the admission functions are restored");
-    // The 2026.09.24.3 admission alone, and idempotent: applied again, nothing grows.
+    // The tree's own order (2026.09.24.2, then 2026.09.24.3), and idempotent:
+    // applied again, nothing grows.
+    await db.exec(siblingAdmission);
     await db.exec(migration(ADMISSION));
     const admittedOnce = await admissionDefinitions();
     admittedOnce.forEach((definition, index) =>
