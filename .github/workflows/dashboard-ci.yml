@@ -207,6 +207,9 @@ jobs:
       - name: Attached workspace helper and the Remove walker (T4, T10, T23, T31)
         run: docker run --rm --network none --privileged --tmpfs /home --tmpfs /var/lib/hivra -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-workspace-helper.py
 
+      - name: Attached agent Remove before any activation (T3, T31)
+        run: docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 -I -B /src/scripts/test-attached-agent-remove.py
+
       - name: Attached contract read-back (T33)
         run: docker run --rm --network none --privileged -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-contract-readback.py
 
