@@ -3,17 +3,10 @@ import "@testing-library/jest-dom";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { render, screen } from "@testing-library/react";
-import FounderSection, { FOUNDER_EXCERPTS } from "../FounderSection";
 import TokenomicsSection from "../FullTokenomicsSection";
 
 const litepaper = readFileSync(path.resolve(__dirname, "../../../../../LITEPAPER.md"), "utf8");
 
-test("homepage founder note uses complete Litepaper excerpts and links the full piece", () => {
- const {container}=render(<FounderSection />);
- for (const paragraph of FOUNDER_EXCERPTS) { expect(screen.getByText(paragraph)).toBeVisible(); expect(litepaper).toContain(paragraph); }
- expect(container.querySelectorAll("blockquote p")).toHaveLength(5);
- expect(screen.getByRole("link",{name:/Read why I'm building Hivra/})).toHaveAttribute("href","/why-hivra");
-});
 test("token access is distinct from an optional claim and does not promise a conversion ratio", () => {
   render(<TokenomicsSection />);
   expect(screen.getByText(/The amount you need is fixed when your holding first qualifies/)).toBeVisible();

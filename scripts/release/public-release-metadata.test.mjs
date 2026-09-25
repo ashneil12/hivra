@@ -185,19 +185,20 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.match(credentialEvidenceBuilder, /current-authorization-boundary-reconciled/);
   assert.equal(assetPolicy.format, 'hivra-asset-provenance-policy-v1');
   assert.equal(assetPolicy.releaseApproved, false);
-  assert.equal(assetPolicy.assets.length, 28);
-  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 28);
+  assert.equal(assetPolicy.assets.length, 31);
+  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 31);
   assert.ok(assetPolicy.assets.every((entry) => entry.redistributionDecision === 'include'));
   assert.ok(assetPolicy.assets.some((entry) => entry.rightsStatus === 'documented-project-generated'));
   assert.equal(assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-third-party-font').length, 4);
   assert.equal(assetPolicy.assets.filter(
     (entry) => entry.rightsStatus === 'documented-owner-asserted-original-artwork',
-  ).length, 18);
-  // Eleven of those are resized exports of the approved logo (token image,
-  // listing-site logos and app icons) and two are launch-banner drafts.
+  ).length, 21);
+  // Twelve of those are resized exports of the approved logo (token image,
+  // listing-site logos, app icons and the homepage mark) and two are
+  // launch-banner drafts.
   assert.equal(assetPolicy.assets.filter(
     (entry) => entry.class === 'owner-asserted-brand-artwork-export',
-  ).length, 11);
+  ).length, 12);
   assert.equal(assetPolicy.assets.filter(
     (entry) => entry.class === 'owner-asserted-brand-artwork-draft',
   ).length, 2);
@@ -210,7 +211,7 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.ok(fontEvidence.fonts.every((entry) => entry.sha256 === entry.upstreamDownloadedSha256));
   assert.equal(assetPolicy.rightsReview.fontLicenseEvidenceSha256, sha256('docs/release/font-license-evidence.json'));
   assert.equal(ownerAssertions.format, 'hivra-asset-owner-assertions-v1');
-  assert.equal(ownerAssertions.assertions.length, 18);
+  assert.equal(ownerAssertions.assertions.length, 21);
   assert.equal(ownerAssertions.assertions.filter(
     (entry) => entry.independentEvidenceLevel === 'owner-supplied-original-byte-match',
   ).length, 1);
@@ -380,7 +381,7 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
 
   const fingerprints = read('.gitleaksignore').split(/\r?\n/)
     .filter((line) => line && !line.startsWith('#'));
-  assert.equal(fingerprints.length, 45);
+  assert.equal(fingerprints.length, 44);
   assert.equal(new Set(fingerprints).size, fingerprints.length);
   for (const fingerprint of fingerprints) {
     assert.match(fingerprint, /^[^:\r\n]+:(?:curl-auth-header|discord-client-id|generic-api-key|private-key|stripe-access-token):\d+$/);
@@ -404,7 +405,6 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
     .filter((file) => !/(?:__tests__|\/tests\/)/.test(file));
   assert.deepEqual([...new Set(reviewedNonTestPaths)].sort(), [
     'dashboard/auth.ts',
-    'dashboard/src/components/landing/DemoVideoSection.tsx',
     'dashboard/src/data/curated-skills.ts',
     'dashboard/src/lib/blog/articles/hermes-agent-telegram-discord-setup.ts',
     'dashboard/src/lib/encryption-rotation.ts',

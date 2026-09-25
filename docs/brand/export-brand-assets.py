@@ -2,7 +2,7 @@
 """Export the $HIVRA token image and Hivra app icons from the approved logo.
 
 Every output is a plain resize of docs/brand/hivra-logo.jpg (4096x4096, square,
-opaque). Nothing is cropped, padded, recoloured, redrawn or made transparent:
+opaque), saved as PNG, or as WebP where a page only needs a light copy. Nothing is cropped, padded, recoloured, redrawn or made transparent:
 the dark field is part of the approved mark, so the same full-bleed square is
 used for the token image, the listing-site logos, the favicon, the Apple touch
 icon and the PWA icons.
@@ -65,6 +65,12 @@ PNG_OUTPUTS = [
     (APP / "icon.png", 192),
     (APP / "apple-icon.png", 180),
 ]
+# (output path, edge length in pixels, WebP quality). Lighter copies for pages
+# that draw the mark as artwork rather than as an icon.
+WEBP_OUTPUTS = [
+    # The homepage closing mark: 96 CSS px, sharp up to 4x displays.
+    (PUBLIC_BRAND / "hivra-icon-384.webp", 384, 86),
+]
 FAVICON = APP / "favicon.ico"
 FAVICON_SIZES = (16, 32, 48)
 
@@ -100,6 +106,17 @@ def png_bytes(source: Image.Image, edge: int) -> bytes:
     buffer = io.BytesIO()
     resized(source, edge).save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+def webp_bytes(source: Image.Image, edge: int, quality: int) -> bytes:
+    buffer = io.BytesIO()
+    resized(source, edge).save(buffer, format="WEBP", quality=quality, method=6)
+    return buffer.getvalue()
+
+
+def output_paths() -> list[Path]:
+    """Every file main() writes."""
+    return [path for path, _edge in PNG_OUTPUTS] + [path for path, _edge, _quality in WEBP_OUTPUTS] + [FAVICON]
 
 
 def favicon_bytes(source: Image.Image) -> bytes:
@@ -152,6 +169,7 @@ def write_exports(root: Path, exports: list[tuple[Path, bytes]]) -> None:
 def main(root: Path = ROOT) -> None:
     source = load_source(root)
     exports = [(path, png_bytes(source, edge)) for path, edge in PNG_OUTPUTS]
+    exports += [(path, webp_bytes(source, edge, quality)) for path, edge, quality in WEBP_OUTPUTS]
     exports.append((FAVICON, favicon_bytes(source)))
     write_exports(root, exports)
 

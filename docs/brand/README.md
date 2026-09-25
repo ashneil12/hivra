@@ -17,14 +17,15 @@ The repository README uses this image.
 ## Exports
 
 [`export-brand-assets.py`](export-brand-assets.py) resizes this logo into every
-deployed brand image. It only resizes: no crop, padding, colour change, redraw or
-transparency.
+deployed brand image, as PNG or, for the lighter homepage copy, WebP. It only
+resizes: no crop, padding, colour change, redraw or transparency.
 
 | Output | Size | Used for |
 |---|---|---|
 | `dashboard/public/brand/hivra-token-{1024,512,256}.png` | 1024, 512, 256 px | $HIVRA token image (see [TOKEN-IMAGE.md](TOKEN-IMAGE.md)) and the homepage structured-data logo |
 | `dashboard/public/brand/hivra-token-{200,64,32}.png` | 200, 64, 32 px | Listing-site logos: 200 px for CoinGecko, 64 px and 32 px for BaseScan |
 | `dashboard/public/brand/hivra-icon-{192,512}.png` | 192, 512 px | Web app manifest icons (any and maskable), the Open Graph card mark and the site header mark |
+| `dashboard/public/brand/hivra-icon-384.webp` | 384 px, WebP quality 86 | The mark that assembles at the end of the homepage |
 | `dashboard/src/app/favicon.ico` | 16, 32, 48 px | Browser favicon |
 | `dashboard/src/app/icon.png` | 192 px | `<link rel="icon">` |
 | `dashboard/src/app/apple-icon.png` | 180 px | Apple touch icon |

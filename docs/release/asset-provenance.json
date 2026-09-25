@@ -8,7 +8,7 @@
     "fontLicenseEvidence": "docs/release/font-license-evidence.json",
     "fontLicenseEvidenceSha256": "f1ab8fdea33a532394e2218d886f353e42dc6227730f3a640dee588355856b1a",
     "ownerAssertions": "docs/release/asset-owner-assertions.json",
-    "ownerAssertionsSha256": "2da199b6f9a7d006263113988a31ff42f0bf0d33355df69316688c4949c0de25",
+    "ownerAssertionsSha256": "4075c13b376c0ef2963b31c03978146f76f1ea9c34d7cda51ea04241bddf892c",
     "openAiTermsUrl": "https://openai.com/policies/terms-of-use/",
     "finding": "The earlier generated-asset review remains byte-bound. Four retained font files now have exact official-upstream byte matches and adjacent OFL-1.1 evidence. Five artwork files have repository-owner originality assertions recorded separately from independent evidence; only the selected Hivra logo has an independently verified owner-supplied original byte match. Eleven token-image, listing-logo and app-icon files are resized exports of that logo and carry its assertion. Two launch-banner drafts are composites of the logo and the owner-asserted litepaper artwork and carry both assertions. No missing prompts, generation tools, or receipts are inferred.",
     "publicSnapshotBasis": "Retained asset bytes are also bound to the first public root commit; original creation, generation and licensing evidence remains in the corresponding origin records. This is a public snapshot identity, not a new authorship claim."
@@ -185,6 +185,16 @@
       "redistributionDecision": "include"
     },
     {
+      "path": "dashboard/public/brand/hivra-icon-384.webp",
+      "sha256": "afcc34b4f0f502bf0da6bf7a279389db89874bf36914acd4ffbcf6800b7b4b7b",
+      "bytes": 9058,
+      "class": "owner-asserted-brand-artwork-export",
+      "origin": "Resized export of the owner-asserted docs/brand/hivra-logo.jpg by docs/brand/export-brand-assets.py; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "f0ca5e4bb5b8e179382742bf0d9bdc099eddcb35",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
       "path": "dashboard/public/brand/hivra-token-1024.png",
       "sha256": "1a5518f79b5ebc1357f7d47b9457d03d89cefc8cba672663320f0c63d17f70ce",
       "bytes": 905157,
@@ -291,6 +301,26 @@
       "class": "owner-asserted-brand-artwork-draft",
       "origin": "Draft composite of the owner-asserted docs/litepaper/assets/boundary-monolith-v5.png and docs/brand/hivra-logo.jpg by docs/brand/make-launch-banners.py, with text in the repository's OFL-1.1 fonts; the owner assertions and derivation are recorded in docs/release/asset-owner-assertions.json.",
       "provenanceCommit": "440fae2db8034889ee239fa72e7d3190b342ab26",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/images/home/monolith-1600.webp",
+      "sha256": "757953a8f72c81d8e63696876a3b31602596e0d633a0c1364f393ce21f6fd17c",
+      "bytes": 57418,
+      "class": "owner-asserted-original-artwork",
+      "origin": "Resized WebP export of docs/litepaper/assets/boundary-monolith-v5.png; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "f0ca5e4bb5b8e179382742bf0d9bdc099eddcb35",
+      "rightsStatus": "documented-owner-asserted-original-artwork",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "dashboard/public/images/home/monolith-900.webp",
+      "sha256": "fe4136000971311389b05070aaf3181bbc31ea9ec7a643db0c113d0c40740a04",
+      "bytes": 22466,
+      "class": "owner-asserted-original-artwork",
+      "origin": "Resized WebP export of docs/litepaper/assets/boundary-monolith-v5.png; the owner assertion and derivation are recorded in docs/release/asset-owner-assertions.json.",
+      "provenanceCommit": "f0ca5e4bb5b8e179382742bf0d9bdc099eddcb35",
       "rightsStatus": "documented-owner-asserted-original-artwork",
       "redistributionDecision": "include"
     }

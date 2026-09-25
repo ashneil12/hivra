@@ -1,33 +1,31 @@
 import type { Metadata } from "next";
 import { auth } from "@clerk/nextjs/server";
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import PublicSite from "@/components/public-site/PublicSite";
-import styles from "@/components/landing/home.module.css";
 import StructuredData from "@/components/StructuredData";
-import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { OG_IMAGE } from "@/lib/og-meta";
 import { officialProfileLinks } from "@/lib/public-project-links";
 import { SITE_URL } from "@/lib/seo-urls";
-import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
+import { ENTRY_PLAN_PRICE, LARGER_PLAN_PRICE } from "@/lib/blog/plan-facts";
+import { HOSTED_SIZES } from "@/app/pricing/pricing-content";
 
-import HeroSection from "@/components/landing/HeroSection";
-import TickerStrip from "@/components/landing/TickerStrip";
-import ComputerScene from "@/components/landing/ComputerScene";
-import ComputersSection from "@/components/landing/ComputersSection";
-import HostingSection from "@/components/landing/HostingSection";
-import { HOMEPAGE_FAQ } from "@/components/landing/public-home-content";
-import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
-import LaunchSection from "@/components/landing/LaunchSection";
-import OpenSourceSection from "@/components/landing/OpenSourceSection";
-import ChooseAgentSection from "@/components/landing/ChooseAgentSection";
-import DashboardShowcaseSection from "@/components/landing/DashboardShowcaseSection";
-import PricingSection from "@/components/landing/PricingSection";
-import WhatsComingSection from "@/components/landing/WhatsComingSection";
-import FounderSection from "@/components/landing/FounderSection";
-import FAQSection from "@/components/landing/FAQSection";
+import { HomeMotion } from "@/components/landing/home/motion";
+import Hero from "@/components/landing/home/Hero";
+import Reach from "@/components/landing/home/Reach";
+import Agents from "@/components/landing/home/Agents";
+import How from "@/components/landing/home/How";
+import OpenSource from "@/components/landing/home/OpenSource";
+import Pricing from "@/components/landing/home/Pricing";
+import Founder from "@/components/landing/home/Founder";
+import Faq from "@/components/landing/home/Faq";
+import Closing from "@/components/landing/home/Closing";
+import StickyCta from "@/components/landing/home/StickyCta";
+import HomeAnalytics from "@/components/landing/home/HomeAnalytics";
+import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, STICKY } from "@/components/landing/home/content";
+import styles from "@/components/landing/home/home.module.css";
 
 // "Hermes OS" stays at the front of the homepage title and description: in
 // Search Console (Jun-Sep 2026) about three quarters of hivra.cloud's clicks came
@@ -87,14 +85,29 @@ const homepageSchema = {
       description:
         homepageDescription,
       url: SITE_URL,
-      offers: {
-        "@type": "Offer",
-        name: "Free platform with your own infrastructure",
-        price: "0",
-        priceCurrency: "USD",
-        description: "Use Hivra with your own server or cloud. Hosted compute and model-provider usage are paid separately.",
-        url: `${SITE_URL}/#pricing`,
-      },
+      offers: [
+        {
+          "@type": "Offer",
+          name: "Self-host Hivra",
+          price: "0",
+          priceCurrency: "USD",
+          description: "Run the platform yourself from the Apache 2.0 source. You provide the server and pay for it and your model usage.",
+          url: `${SITE_URL}/#pricing`,
+        },
+        ...HOSTED_SIZES.map(size => ({
+          "@type": "Offer",
+          name: `Hivra Cloud, ${size.cpu} vCPU and ${size.ramGb} GB`,
+          price: (size.price === ENTRY_PLAN_PRICE ? ENTRY_PLAN_PRICE : LARGER_PLAN_PRICE).replace("$", ""),
+          priceCurrency: "USD",
+          priceSpecification: {
+            "@type": "UnitPriceSpecification",
+            price: size.price.replace("$", ""),
+            priceCurrency: "USD",
+            billingDuration: "P1M",
+          },
+          url: `${SITE_URL}/#pricing`,
+        })),
+      ],
       featureList: [
         "Launch a computer with or without an agent",
         "Ubuntu, with Windows and Omarchy in private preview",
@@ -126,15 +139,6 @@ const homepageSchema = {
   ],
 };
 
-async function getLandingLocale(explicitLocale: string | null, headerStore: Pick<Headers, "get">) {
-  const cookieStore = await cookies();
-  return resolveRequestLocale({
-    explicitLocale,
-    cookieLocale: cookieStore.get(LOCALE_COOKIE_NAME)?.value,
-    acceptLanguage: headerStore.get("accept-language"),
-  });
-}
-
 /**
  * Header and footer links such as /#pricing come from this site. A signed-in
  * visitor following one wants that section, not the dashboard; direct visits
@@ -155,45 +159,35 @@ function isSameSiteNavigation(headerStore: Pick<Headers, "get">): boolean {
   }
 }
 
-export default async function LandingPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ lang?: string | string[]; locale?: string | string[] }>;
-}) {
+// English only, like /pricing, /blog and /agents: no LocaleProvider, which
+// would also rewrite a visitor's saved language for the rest of the site.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export default async function LandingPage(_props: { searchParams?: Promise<{ lang?: string | string[]; locale?: string | string[] }> }) {
   const { userId } = await auth();
-  const resolvedSearchParams = await searchParams;
-  const explicitLocale =
-    typeof resolvedSearchParams?.lang === "string"
-      ? resolvedSearchParams.lang
-      : typeof resolvedSearchParams?.locale === "string"
-        ? resolvedSearchParams.locale
-        : null;
   const headerStore = await headers();
-  const locale = await getLandingLocale(explicitLocale, headerStore);
 
   if (userId && !isSameSiteNavigation(headerStore)) {
     redirect("/dashboard");
   }
 
   return (
-    <LocaleProvider initialLocale={locale}>
-      {/* No ClerkProvider refreshes the session here: an expired token reads as
-          signed out, so leave that case to the header's session hint. */}
-      <PublicSite variant="home" isSignedIn={userId ? true : undefined}>
-        <StructuredData schema={homepageSchema} />
-        <main id="main-content" className={styles.home}>
-          <HeroSection agentsCounter={<ComputerScene />} liveStat={<AgentsDeployedStat />} />
-          <TickerStrip />
-          <LaunchSection agents={<ChooseAgentSection embedded />} computers={<ComputersSection embedded />} />
-          <DashboardShowcaseSection />
-          <HostingSection />
-          <div className={styles.pricingWrap}><PricingSection /></div>
-          <OpenSourceSection />
-          <div className={styles.comingWrap}><WhatsComingSection /></div>
-          <FounderSection />
-          <FAQSection />
-        </main>
-      </PublicSite>
-    </LocaleProvider>
+    <PublicSite variant="home" isSignedIn={userId ? true : undefined}>
+      <StructuredData schema={homepageSchema} />
+      <main id="main-content" className={styles.home}>
+        <HomeMotion>
+          <Hero />
+          <Reach />
+          <Agents />
+          <How />
+          <OpenSource />
+          <Pricing />
+          <Founder />
+          <Faq />
+          <Closing />
+          <StickyCta href={AGENT_LAUNCH_HREF} label={STICKY.cta} note={STICKY.note} />
+          <HomeAnalytics />
+        </HomeMotion>
+      </main>
+    </PublicSite>
   );
 }

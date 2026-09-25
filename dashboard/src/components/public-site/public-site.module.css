@@ -1,8 +1,17 @@
 /* Architectural editorial: variance 8 / motion 5 / density 4. Public scope only. */
 @font-face{font-family:"Hivra Manrope";src:url("/fonts/Manrope-Variable.ttf") format("truetype");font-style:normal;font-weight:200 800;font-display:swap}
 @font-face{font-family:"Hivra Plex Mono";src:url("/fonts/IBMPlexMono-Regular.ttf") format("truetype");font-style:normal;font-weight:400;font-display:swap}
-.site,.header,.footer{--public-bg:#f1f0eb;--public-surface:#e7e7e1;--public-text:#1a1d20;--public-muted:#555d63;--public-line:#c7cbc9;--public-accent:#bd342d;--public-accent-ink:#fff;--public-font:"Hivra Manrope","Helvetica Neue",Arial,sans-serif;--public-mono:"Hivra Plex Mono",monospace;--public-gutter:max(clamp(22px,5.3vw,100px),env(safe-area-inset-left,0px),env(safe-area-inset-right,0px));--public-max:1440px;--public-ease:cubic-bezier(.16,1,.3,1);font-family:var(--public-font);color:var(--public-text);background:var(--public-bg)}
+/* Arial resized to Manrope, so text laid out before the web font arrives keeps its line breaks when Manrope swaps in.
+   next/font's fallback formula, applied to the Manrope instance each face stands in for: 400 against Arial, 600 against Arial Bold.
+   font-fallback.test.ts recomputes these from the font files. */
+@font-face{font-family:"Hivra Manrope Fallback";src:local("Arial"),local("ArialMT");font-style:normal;font-weight:200 500;size-adjust:103.77%;ascent-override:102.73%;descent-override:28.91%;line-gap-override:0%}
+@font-face{font-family:"Hivra Manrope Fallback";src:local("Arial Bold"),local("Arial-BoldMT");font-style:normal;font-weight:501 800;size-adjust:99.26%;ascent-override:107.39%;descent-override:30.22%;line-gap-override:0%}
+.site,.header,.footer{--public-bg:#f1f0eb;--public-surface:#e7e7e1;--public-text:#1a1d20;--public-muted:#555d63;--public-line:#c7cbc9;--public-accent:#bd342d;--public-accent-ink:#fff;--public-font:"Hivra Manrope","Hivra Manrope Fallback","Helvetica Neue",Arial,sans-serif;--public-mono:"Hivra Plex Mono",monospace;--public-gutter:max(clamp(22px,5.3vw,100px),env(safe-area-inset-left,0px),env(safe-area-inset-right,0px));--public-max:1440px;--public-ease:cubic-bezier(.16,1,.3,1);font-family:var(--public-font);color:var(--public-text);background:var(--public-bg)}
 :global(.dark) .site,:global(.dark) .header,:global(.dark) .footer{--public-bg:#0d0e10;--public-surface:#191c20;--public-text:#f0efe9;--public-muted:#b4b8ba;--public-line:#343a40;--public-accent:#fb5148;--public-accent-ink:#101113}
+/* The homepage is dark by design, like the litepaper, whatever the site theme. */
+.site[data-variant="home"],.site[data-variant="home"] .header,.site[data-variant="home"] .footer{--public-bg:#0b0c0e;--public-surface:#15171a;--public-text:#f0efe9;--public-muted:#a4a9ae;--public-line:#262a30;--public-accent:#fb5148;--public-accent-ink:#120607;color-scheme:dark}
+.site[data-variant="home"] .header{background:rgba(11,12,14,.78);backdrop-filter:blur(14px)}
+.site[data-variant="home"] .themeControl{display:none}
 .site{--vellum-bg:var(--public-bg);--bg-primary:var(--public-bg);--bg-surface:var(--public-surface);--bg-elevated:var(--public-surface);--ink-black:var(--public-text);--text-primary:var(--public-text);--text-secondary:var(--public-muted);--text-muted:var(--public-muted);--etched-border:var(--public-line);--border-subtle:var(--public-line);--border:var(--public-line);--gold-leaf:var(--public-accent);--hivra-red:var(--public-accent);--font-outfit:var(--public-font);--font-grotesk:var(--public-font);--font-playfair:var(--public-font);--font-mono:var(--public-mono);position:relative;isolation:isolate;min-height:100dvh;line-height:1.75}
 .site :where(h1,h2,h3,h4){font-family:var(--public-font);letter-spacing:-.05em;font-weight:550}
 .site :where(button,input,textarea,select){font-family:inherit}
@@ -73,7 +82,7 @@
 .footerCompact .footerColumns { margin-top:0; max-width:920px; }
 
 /* Funnel bar: sign-in, sign-up and get-started carry the brand and a way home. */
-.funnelBar{--public-text:var(--ink-black);position:relative;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:calc(56px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) max(clamp(16px,3vw,40px),env(safe-area-inset-right,0px)) 0 max(clamp(16px,3vw,40px),env(safe-area-inset-left,0px));border-bottom:1px solid var(--etched-border);background:var(--vellum-bg);font-family:"Hivra Manrope","Helvetica Neue",Arial,sans-serif}
+.funnelBar{--public-text:var(--ink-black);position:relative;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:calc(56px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) max(clamp(16px,3vw,40px),env(safe-area-inset-right,0px)) 0 max(clamp(16px,3vw,40px),env(safe-area-inset-left,0px));border-bottom:1px solid var(--etched-border);background:var(--vellum-bg);font-family:"Hivra Manrope","Hivra Manrope Fallback","Helvetica Neue",Arial,sans-serif}
 .funnelBar .brand{font-size:22px}.funnelBar .brand img{width:28px;height:28px}
 .funnelBar :where(a,button):focus-visible{outline:2px solid var(--hivra-red);outline-offset:3px}
 .funnelTools{display:flex;align-items:center;gap:8px;min-width:0}

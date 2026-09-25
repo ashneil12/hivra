@@ -18,10 +18,10 @@ jest.mock("@/components/public-site/PublicSite", () => ({
 
 import LandingPage from "../page";
 
-/** The page returns <LocaleProvider><PublicSite isSignedIn=…>; read the header's auth input. */
+/** The page returns <PublicSite isSignedIn=…> (English only, no locale provider); read the header's auth input. */
 async function renderedHeaderAuth() {
   const page = await LandingPage({});
-  return page.props.children.props.isSignedIn;
+  return page.props.isSignedIn;
 }
 
 describe("homepage redirect for signed-in visitors", () => {
