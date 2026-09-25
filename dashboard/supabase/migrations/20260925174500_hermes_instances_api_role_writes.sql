@@ -7,7 +7,9 @@
 -- JWT with role=authenticated insert, update and delete its own rows, including
 -- the columns that the lifecycle crons act on (status, hetzner_server_id,
 -- proxmox_vmid, gateway_url, resource tier). This migration removes every write
--- path for the API roles and keeps reads as they are.
+-- path for the API roles. Dropping that FOR ALL policy also removes the
+-- authenticated read path; nothing uses it, because every read goes through the
+-- service role.
 --
 -- Class: replace grants/policies. Backward compatible: the service role keeps
 -- all of its privileges, so no deployed code changes behaviour.
