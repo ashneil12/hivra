@@ -103,6 +103,25 @@ there, following the steps in the file's header.
 |---|---|---|
 | `hivra_agent_slot_writer_guard.sql` (plan agent limit, migration B) | `*_hivra_agent_slot_limit.sql` is applied and the code that writes Hivra-managed agents through `insert_hivra_managed_agent` and `reserve_hivra_launch_model_request_v3` is serving on that environment | Launch smoke test; start and restart of an existing agent, including one in `error` (the file's header lists every status writer it was audited against) |
 
+## Provisioner releases in flight
+
+A provisioner release (`dashboard/provisioner/VERSION`, its sealed manifest and
+its digest-bound admission migration) is sealed on the bundle it was built on.
+When two open pull requests each carry one, whichever merges second is sealed
+again on top of the other, at a number after it, before it merges; the one that
+merged first keeps its number. A lower number is never shipped after a higher
+one: hosts install the newest sealed bundle and a runtime update moves a
+computer to it, so an older-numbered bundle released later would take back what
+the higher release shipped.
+
+Open now: 2026.09.24.3 (attach, `claude/agent-computer`) and 2026.09.24.2
+(persistent sessions, #124). If #124 merges first, 2026.09.24.3 is sealed again
+on top of it. If the attach release merges first, #124 is sealed again as
+2026.09.24.4 on top of 2026.09.24.3; shipped as 2026.09.24.2 it would put new
+installs and runtime updates back on the loopback terminals and remove the
+gateway proxy that attached agents use. #124 and #130 both use migration version
+`20260924220000`; one of them moves before both merge.
+
 ## Feature acceptance
 
 A contributor may propose a new adapter or optional capability without it becoming
