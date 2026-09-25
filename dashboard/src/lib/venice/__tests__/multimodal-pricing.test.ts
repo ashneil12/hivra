@@ -212,6 +212,41 @@ describe("Venice multimodal price catalog", () => {
     expect(edit({})).toMatchObject({ priced: true, tier: null, listCostMicroUsd: 100_000 });
   });
 
+  // Third review: the Hermes agent's Venice image plugin offers these models
+  // next to its qwen-image-2 default. None was in the catalog, so a funded
+  // user who picked one got a 402 on every image. Prices are Venice's
+  // (docs pricing page and GET /models, 2026-09-25).
+  it("prices every image model the Hermes agent's Venice plugin offers", () => {
+    const generate = (model: string, metadata: Record<string, unknown> = {}) =>
+      computeVeniceMultimodalCost({ endpoint: "/api/v1/image/generate", model, metadata });
+
+    expect(generate("qwen-image-2", { aspectRatio: "1:1" })).toMatchObject({ priced: true, listCostMicroUsd: 50_000 });
+    expect(generate("venice-sd35", { width: 1024, height: 1024 })).toMatchObject({
+      priced: true,
+      tier: null,
+      listCostMicroUsd: 10_000,
+    });
+
+    const tiered: Array<[string, Record<string, number>]> = [
+      ["nano-banana-pro", { "1K": 180_000, "2K": 230_000, "4K": 350_000 }],
+      ["gpt-image-2", { "1K": 270_000, "2K": 510_000, "4K": 840_000 }],
+      ["grok-imagine-image", { "1K": 30_000, "2K": 40_000 }],
+    ];
+    for (const [model, prices] of tiered) {
+      for (const [resolution, listCostMicroUsd] of Object.entries(prices)) {
+        expect(generate(model, { resolution })).toMatchObject({
+          priced: true,
+          tier: resolution.toLowerCase(),
+          listCostMicroUsd,
+        });
+      }
+      // No resolution: Venice runs 1K.
+      expect(generate(model)).toMatchObject({ priced: true, tier: null, listCostMicroUsd: prices["1K"] });
+    }
+    // Grok Imagine has no 4K tier on Venice.
+    expect(generate("grok-imagine-image", { resolution: "4K" })).toEqual({ priced: false, reason: "invalid_tier" });
+  });
+
   // Second review: an unrecognised scale ("3", "4.0", "04") was held at 4x
   // but charged at 2x while Venice ran it as sent.
   it("maps an upscale factor to the published tier Venice bills, rounding up between tiers", () => {
@@ -335,6 +370,9 @@ describe("computeVeniceMultimodalHoldCost (pre-forward ceiling)", () => {
   it("holds an absent tier at the most expensive published tier and refuses an unpublished one", () => {
     expect(cost("/api/v1/image/generate", "nano-banana-2")).toBe(190_000);
     expect(cost("/api/v1/image/edit", "nano-banana-2-edit")).toBe(190_000);
+    expect(cost("/api/v1/image/generate", "nano-banana-pro")).toBe(350_000);
+    expect(cost("/api/v1/image/generate", "gpt-image-2")).toBe(840_000);
+    expect(cost("/api/v1/image/generate", "grok-imagine-image")).toBe(40_000);
     expect(cost("/api/v1/image/generate", "nano-banana-2", { resolution: "2K" })).toBe(140_000);
     expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: "3" })).toBe(80_000);
     expect(cost("/api/v1/image/upscale", "venice-upscaler", { scale: 2 })).toBe(20_000);
@@ -359,6 +397,11 @@ describe("computeVeniceMultimodalHoldCost (pre-forward ceiling)", () => {
       ["/api/v1/image/upscale", "venice-upscaler", {}],
       ["/api/v1/image/edit", "nano-banana-2-edit", {}],
       ["/api/v1/image/edit", "nano-banana-2-edit", { resolution: "4K" }],
+      ["/api/v1/image/generate", "nano-banana-pro", {}],
+      ["/api/v1/image/generate", "gpt-image-2", {}],
+      ["/api/v1/image/generate", "gpt-image-2", { resolution: "2K", variants: 2 }],
+      ["/api/v1/image/generate", "grok-imagine-image", {}],
+      ["/api/v1/image/generate", "venice-sd35", { variants: 4 }],
       ["/api/v1/audio/speech", "tts-kokoro", { inputLength: 12_345 }],
       ["/api/v1/augment/search", "venice-search-brave", {}],
     ];
