@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
+import { mediaModelField, mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import {
   holdManagedVeniceMediaSpend,
   readNumericField,
@@ -23,10 +24,13 @@ import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 //
 // Every request goes to Venice with HIVRA's upstream key, so this route only
 // forwards an explicit ALLOWLIST (below). Anything else — Venice account
-// management (api_keys*, billing*, characters, ...), unknown or new paths,
-// case/encoding variants, alternate methods — is refused and never fetched.
+// management (api_keys*, billing*, ...), unknown or new paths, case/encoding
+// variants, alternate methods — is refused and never fetched.
 // Paid operations are forwarded only under a wallet hold (media-spend-gate.ts);
-// one the price catalog can't price is refused with a 402.
+// one the price catalog can't price is refused with a 402. A paid request must
+// be JSON or multipart that parses, its pricing fields must be unambiguous
+// (media-request-fields.ts), and what is forwarded is rebuilt from the parsed
+// fields, so Venice runs exactly the request that was priced.
 const VENICE_API_BASE = "https://api.venice.ai/api/v1";
 
 // Each segment must be plain lower-case path text. Next hands the catch-all
@@ -72,6 +76,8 @@ const FREE_RULES: FreeRule[] = [
   { kind: "free", method: "GET", path: "image/styles" },
   // tools/venice_extras_tool.py network list.
   { kind: "free", method: "GET", path: "crypto/rpc/networks" },
+  // tools/venice_characters_tool.py: Venice's public persona list.
+  { kind: "free", method: "GET", path: "characters" },
   // Job polling — the generation was held/billed at queue time.
   // plugins/video_gen/venice, tools/audio_generate_tool.py.
   { kind: "free", method: "POST", path: "video/retrieve" },
@@ -101,9 +107,10 @@ const METERED_RULES: MeteredRule[] = [
     kind: "metered",
     path: "image/edit",
     endpoint: fixedEndpoint("image/edit"),
-    // Venice's documented default edit model when the field is omitted.
+    // `modelId` is Venice's deprecated alias; firered is its documented
+    // default when neither is sent.
     operation: (fields) => ({
-      model: stringField(fields, "model") ?? stringField(fields, "modelId") ?? "firered-image-edit",
+      model: mediaModelField(fields) ?? "firered-image-edit",
       metadata: { resolution: stringField(fields, "resolution"), aspectRatio: stringField(fields, "aspect_ratio") },
     }),
   },
@@ -121,7 +128,7 @@ const METERED_RULES: MeteredRule[] = [
     path: "image/multi-edit",
     endpoint: fixedEndpoint("image/multi-edit"),
     operation: (fields) => ({
-      model: stringField(fields, "modelId") ?? stringField(fields, "model") ?? "firered-image-edit",
+      model: mediaModelField(fields) ?? "firered-image-edit",
       metadata: {},
     }),
   },
@@ -217,27 +224,62 @@ function refused(method: string, segments: string[]) {
   return response;
 }
 
-async function readBodyFields(bodyBuf: ArrayBuffer, contentType: string): Promise<BodyFields> {
-  if (!bodyBuf.byteLength) return {};
-  const type = contentType.toLowerCase();
-  try {
-    if (type.includes("application/json")) {
-      const parsed = JSON.parse(new TextDecoder().decode(bodyBuf)) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as BodyFields) : {};
+type MeteredBody =
+  | { ok: true; fields: BodyFields; forward: { body: string | FormData; contentType: string | null } }
+  | { ok: false; response: Response };
+
+function bodyRefused(message: string, status: 400 | 415) {
+  const response = apiError(message, status);
+  response.headers.set("Cache-Control", "no-store");
+  return { ok: false as const, response };
+}
+
+/**
+ * Parse a PAID request's body and rebuild what gets forwarded from the parsed
+ * fields. A body Hivra can't read is refused rather than priced as if it
+ * named no fields, and the rebuilt body means Venice sees the same fields the
+ * hold was priced from (one value per key, no parser differences).
+ */
+async function readMeteredBody(bodyBuf: ArrayBuffer, contentType: string): Promise<MeteredBody> {
+  const mediaType = contentType.split(";")[0].trim().toLowerCase();
+
+  if (mediaType === "application/json") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyBuf));
+    } catch {
+      return bodyRefused("Invalid JSON body.", 400);
     }
-    if (type.includes("multipart/form-data")) {
-      // Parse a copy so the original bytes (and boundary) forward untouched.
-      const form = await new Response(bodyBuf, { headers: { "Content-Type": contentType } }).formData();
-      const fields: BodyFields = {};
-      form.forEach((value, name) => {
-        if (typeof value === "string") fields[name] = value;
-      });
-      return fields;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return bodyRefused("The JSON body must be an object.", 400);
     }
-  } catch {
-    // Unparseable body: priced as if no fields were sent; Venice will 400 it.
+    const fieldError = mediaPricingFieldError(parsed as BodyFields);
+    if (fieldError) return bodyRefused(fieldError, 400);
+    return {
+      ok: true,
+      fields: parsed as BodyFields,
+      forward: { body: JSON.stringify(parsed), contentType: "application/json" },
+    };
   }
-  return {};
+
+  if (mediaType === "multipart/form-data") {
+    let form: FormData;
+    try {
+      form = await new Response(bodyBuf, { headers: { "Content-Type": contentType } }).formData();
+    } catch {
+      return bodyRefused("Invalid multipart/form-data body.", 400);
+    }
+    const fieldError = mediaPricingFieldError(form);
+    if (fieldError) return bodyRefused(fieldError, 400);
+    const fields: BodyFields = {};
+    form.forEach((value, name) => {
+      if (typeof value === "string") fields[name] = value;
+    });
+    // fetch writes a fresh boundary for the rebuilt form.
+    return { ok: true, fields, forward: { body: form, contentType: null } };
+  }
+
+  return bodyRefused("Paid Venice requests must be application/json or multipart/form-data.", 415);
 }
 
 async function handle(req: NextRequest, segments: string[]) {
@@ -261,16 +303,22 @@ async function handle(req: NextRequest, segments: string[]) {
   const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey });
   if (!verifiedKey) return apiError("Unauthorized", 401);
 
-  // Raw bytes so JSON *and* multipart/form-data (voice clone, document
-  // parser, image edit) keep their boundaries intact. GET has no body.
+  // GET has no body. Free POSTs forward their raw bytes and type; paid ones
+  // forward the body rebuilt from what was priced.
   const reqContentType = req.headers.get("content-type") || "";
   const bodyBuf = method === "POST" ? await req.arrayBuffer() : undefined;
+  let forwardBody: ArrayBuffer | string | FormData | undefined = bodyBuf;
+  let forwardContentType: string | null = reqContentType || null;
 
   let operation: { model: string; metadata: Record<string, unknown> } | null = null;
   if (rule.kind === "metered") {
-    const described = rule.operation(await readBodyFields(bodyBuf ?? new ArrayBuffer(0), reqContentType));
+    const parsed = await readMeteredBody(bodyBuf ?? new ArrayBuffer(0), reqContentType);
+    if (!parsed.ok) return parsed.response;
+    const described = rule.operation(parsed.fields);
     if ("error" in described) return apiError(described.error, 400);
     operation = described;
+    forwardBody = parsed.forward.body;
+    forwardContentType = parsed.forward.contentType;
   }
 
   const serverKey = resolveManagedVeniceUpstreamKey({
@@ -298,9 +346,9 @@ async function handle(req: NextRequest, segments: string[]) {
     Authorization: `Bearer ${serverKey}`,
     Accept: req.headers.get("accept") || "application/json",
   };
-  if (reqContentType) headers["Content-Type"] = reqContentType;
+  if (forwardContentType) headers["Content-Type"] = forwardContentType;
   const send = () =>
-    fetch(upstreamUrl, { method, headers, body: bodyBuf, redirect: "error" });
+    fetch(upstreamUrl, { method, headers, body: forwardBody, redirect: "error" });
 
   let upstream: Response;
   let upstreamBuf: ArrayBuffer;

@@ -197,7 +197,7 @@ describe("readCaptureDroughtCounts", () => {
     }
   });
 
-  it("counts only chat holds, so media holds the billing-off gate releases are not read as failures", async () => {
+  it("counts only chat holds, so released media holds are not read as a chat capture drought", async () => {
     const { db, filters } = makeReservationDb({ attempts: 7, captured: 2 });
     await readCaptureDroughtCounts(db, {
       windowStartIso: "2026-07-16T00:00:00.000Z",

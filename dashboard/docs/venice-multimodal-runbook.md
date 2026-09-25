@@ -32,9 +32,11 @@ Every managed-Venice request goes to Venice with **Hivra's** upstream key, so Ve
 
 1. **Price before forwarding.** The request is priced from the in-code catalog [`lib/venice/multimodal-pricing.ts`](../src/lib/venice/multimodal-pricing.ts) as a conservative ceiling (`computeVeniceMultimodalHoldCost`: unrecorded tiers hold at the most expensive published tier, variant counts round up). An operation the catalog can't price (today: video, music, STT, embeddings, multi-edit, background removal, text parser, voice clone, crypto RPC, and any image/edit model not in the catalog) is **refused with a 402** and never sent to Venice.
 2. **Hold.** The ceiling (after `MANAGED_VENICE_MULTIMODAL_MARKUP`) is reserved on the key's wallet with the same reservation table, DB balance trigger and monthly spend cap as chat. A wallet that can't cover it gets a 402 (`managed_venice_insufficient_balance`) and Venice is never called. If the balance can't be checked, the request fails closed with a 503.
-3. **Settle.** Venice error or no answer → the hold is released. A 2xx with `MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED=true` → the catalog's settlement price is captured from the hold and a `status='recorded'` usage row + `usage_capture` financial event are written (the offline settlement cron skips recorded rows). A 2xx with the flag off → the hold is released and the old `status='reconciliation_required'`, `charged=0` row is written, exactly as before.
+3. **Settle.** Venice error or no answer → the hold is released and nothing is charged. A 2xx → the catalog's settlement price (the published floor for what was requested, never more than the hold) is captured from the hold, and a `status='recorded'` usage row + `usage_capture` financial event are written.
 
-The flag only decides whether a **funded** wallet is charged. It never lets an unfunded wallet spend: the gate in steps 1–2 runs either way.
+A successful paid request is **always charged**. `MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED` does not affect the gate: it only switches the retroactive settlement of old `status='reconciliation_required'` rows written before the gate existed (`settleManagedVeniceMultimodalUsage`, reached from `/api/ops/managed-venice/invoice-reconciliation`; flag off = dry run). If a success released its hold, the gate would only prove the wallet was non-empty, and one small top-up would buy unlimited media on Hivra's key.
+
+**The priced request is the forwarded request.** Before any hold, every paid route refuses (400) a request whose pricing fields (`model`, `modelId`, `scale`, `enhance`, `resolution`, `variants`, `duration`) are repeated, are files, arrays or objects, or where `modelId` (Venice's deprecated alias) names a different model from `model` ([`lib/venice/media-request-fields.ts`](../src/lib/venice/media-request-fields.ts)). On image edit and multi-edit, whichever of `model` / `modelId` is sent is the model priced. JSON bodies are re-serialized after parsing, so a repeated JSON key reaches Venice as the one value that was priced.
 
 ### The passthrough is an allowlist
 
@@ -45,12 +47,15 @@ The flag only decides whether a **funded** wallet is charged. It never lets an u
 | GET | `models` | model discovery (normally served by the dedicated `/v1/models` route) |
 | GET | `image/styles` | `venice_extras_tool` style list; free |
 | GET | `crypto/rpc/networks` | `venice_extras_tool` network list; free |
+| GET | `characters` | `venice_characters_tool` public persona list; free |
 | POST | `video/retrieve`, `audio/retrieve` | job polling; the generation was held at queue time |
 | POST | `video/quote`, `audio/quote` | free price previews |
 | POST | `image/generate`, `image/edit`, `image/upscale` | paid; forwarded only under a wallet hold |
 | POST | `image/multi-edit`, `image/background-remove`, `video/queue`, `video/transcriptions`, `audio/voices`, `augment/text-parser`, `crypto/rpc/{network}` | paid; routed through the gate, which refuses them (402) until the catalog prices them |
 
-Everything else — Venice account management (`api_keys*`, `billing*`, `characters`, ...), unknown paths, upper-case or percent-encoded variants, dot or empty segments, and any other method — gets a 404 and is never fetched.
+Everything else — Venice account management (`api_keys*`, `billing*`, ...), unknown paths, upper-case or percent-encoded variants, dot or empty segments, and any other method — gets a 404 and is never fetched.
+
+A paid passthrough request must be `application/json` or `multipart/form-data` and must parse; anything else gets a 415 (wrong type) or 400 (unreadable body) with no hold and no fetch, rather than being priced as if it named no fields. The body forwarded to Venice is rebuilt from the parsed fields (re-serialized JSON, or the parsed form with a fresh boundary). Free POSTs (`*/retrieve`, `*/quote`) still forward their original bytes.
 
 ### Why the chat reconciliation cron skips multi-modal
 

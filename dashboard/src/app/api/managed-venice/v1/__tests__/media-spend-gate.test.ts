@@ -57,6 +57,21 @@ function jsonReq(path: string, body: unknown) {
   }) as unknown as NextRequest;
 }
 
+/** Multipart with repeatable entries, so a test can send a field twice. */
+function entriesReq(path: string, entries: Array<[string, string | Blob]>, fileField = "image") {
+  const form = new FormData();
+  for (const [name, value] of entries) {
+    if (typeof value === "string") form.append(name, value);
+    else form.append(name, value, `${name}.bin`);
+  }
+  form.set(fileField, new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }), "x.png");
+  return new Request(`${BASE}/${path}`, {
+    method: "POST",
+    headers: { Authorization: "Bearer hven_live_fixture" },
+    body: form,
+  }) as unknown as NextRequest;
+}
+
 function formReq(path: string, fields: Record<string, string>, fileField = "image") {
   const form = new FormData();
   for (const [name, value] of Object.entries(fields)) form.set(name, value);
@@ -145,28 +160,36 @@ describe("managed-Venice paid media routes: hold before forward", () => {
       mockMemory.fundCard(USER_ID, 1_000_000); // $1.00
     });
 
-    it("holds the estimate before forwarding, then releases it and files the usage row when billing is off", async () => {
-      fetchMock.mockImplementationOnce(async () => {
-        // The hold must already exist when Venice is called.
-        const active = mockMemory.reservations().filter((row) => row.status === "active");
-        expect(active).toHaveLength(1);
-        expect(active[0].reserved_micro_usd).toBe(50_000);
-        return okJson({ id: "req_fixture", images: ["b64"] });
-      });
+    it.each([
+      ["unset", undefined],
+      ["false", "false"],
+    ])(
+      "holds the estimate before forwarding, then charges the catalog price with the billing flag %s",
+      async (_label, flag) => {
+        if (flag !== undefined) process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED = flag;
+        fetchMock.mockImplementationOnce(async () => {
+          // The hold must already exist when Venice is called.
+          const active = mockMemory.reservations().filter((row) => row.status === "active");
+          expect(active).toHaveLength(1);
+          expect(active[0].reserved_micro_usd).toBe(50_000);
+          return okJson({ id: "req_fixture", images: ["b64"] });
+        });
 
-      const res = await imagesGenerate(jsonReq("images/generate", { model: "qwen-image-2", prompt: "a cat" }));
+        const res = await imagesGenerate(jsonReq("images/generate", { model: "qwen-image-2", prompt: "a cat" }));
 
-      expect(res.status).toBe(200);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [reservation] = mockMemory.reservations();
-      expect(reservation.status).toBe("released");
-      expect(reservation.endpoint).toBe("/api/v1/image/generate");
-      const [usage] = mockMemory.usageEvents();
-      expect(usage.status).toBe("reconciliation_required");
-      expect(usage.charged_micro_usd).toBe(0);
-      expect(usage.reference_id).toBe(reservation.reference_id);
-      expect(mockMemory.cardBalanceMicroUsd(USER_ID)).toBe(1_000_000);
-    });
+        expect(res.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const [reservation] = mockMemory.reservations();
+        expect(reservation.status).toBe("captured");
+        expect(reservation.captured_micro_usd).toBe(50_000);
+        expect(reservation.endpoint).toBe("/api/v1/image/generate");
+        const [usage] = mockMemory.usageEvents();
+        expect(usage.status).toBe("recorded");
+        expect(usage.charged_micro_usd).toBe(50_000);
+        expect(usage.reference_id).toBe(reservation.reference_id);
+        expect(mockMemory.cardBalanceMicroUsd(USER_ID)).toBe(950_000);
+      }
+    );
 
     it("captures the priced charge in-request when multimodal billing is on", async () => {
       process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED = "true";
@@ -241,6 +264,107 @@ describe("managed-Venice paid media routes: hold before forward", () => {
     it("fails closed for a model with no known price, even with funds", async () => {
       const res = await imagesGenerate(jsonReq("images/generate", { model: "some-new-model", prompt: "a cat" }));
       expect(res.status).toBe(402);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockMemory.reservations()).toHaveLength(0);
+    });
+  });
+
+  // Review finding: with the billing flag off, a successful request released
+  // its hold, so one small top-up bought unlimited media on Hivra's key.
+  it("a $0.05 card wallet gets one $0.05 image, then 402s: one top-up does not buy unlimited media", async () => {
+    mockMemory.fundCard(USER_ID, 50_000);
+    const statuses: number[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const res = await imagesGenerate(jsonReq("images/generate", { model: "qwen-image-2", prompt: `cat ${i}` }));
+      statuses.push(res.status);
+    }
+    expect(statuses[0]).toBe(200);
+    expect(new Set(statuses.slice(1))).toEqual(new Set([402]));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockMemory.cardBalanceMicroUsd(USER_ID)).toBe(0);
+  });
+
+  // Review finding: the dedicated multipart routes priced the FIRST copy of a
+  // repeated field (formData.get) but forwarded every copy, and ignored the
+  // deprecated `modelId` alias, so Venice could run a different model or tier
+  // than the one held.
+  describe("the request Hivra prices is the request Venice receives", () => {
+    beforeEach(() => {
+      mockMemory.fundCard(USER_ID, 1_000_000);
+    });
+
+    it.each<[string, Handler, Array<[string, string | Blob]>]>([
+      ["images/upscale scale twice", imagesUpscale, [["scale", "2"], ["scale", "4"]]],
+      ["images/upscale enhance twice", imagesUpscale, [["scale", "2"], ["enhance", "false"], ["enhance", "true"]]],
+      ["images/upscale scale as a file", imagesUpscale, [["scale", new Blob(["4"])]]],
+      [
+        "images/edit model twice",
+        imagesEdit,
+        [["prompt", "x"], ["model", "firered-image-edit"], ["model", "nano-banana-2-edit"]],
+      ],
+      [
+        "images/edit model vs modelId",
+        imagesEdit,
+        [["prompt", "x"], ["model", "firered-image-edit"], ["modelId", "nano-banana-pro-edit"]],
+      ],
+      ["images/edit modelId twice", imagesEdit, [["prompt", "x"], ["modelId", "seedream-v4-edit"], ["modelId", "nano-banana-pro-edit"]]],
+      ["images/edit resolution twice", imagesEdit, [["prompt", "x"], ["resolution", "1K"], ["resolution", "4K"]]],
+      ["images/edit model as a file", imagesEdit, [["prompt", "x"], ["model", new Blob(["nano-banana-pro-edit"])]]],
+    ])("%s is refused with 400 before any hold or fetch", async (_label, handler, entries) => {
+      const res = await handler(entriesReq(_label.split(" ")[0], entries));
+      expect(res.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockMemory.reservations()).toHaveLength(0);
+    });
+
+    it("images/edit prices the model named by modelId when model is absent", async () => {
+      fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200, headers: { "Content-Type": "image/png" } }));
+      const res = await imagesEdit(entriesReq("images/edit", [["prompt", "x"], ["modelId", "seedream-v4-edit"]]));
+      expect(res.status).toBe(200);
+      const [reservation] = mockMemory.reservations();
+      expect(reservation.model).toBe("seedream-v4-edit");
+      expect(reservation.reserved_micro_usd).toBe(50_000);
+    });
+
+    it("images/edit refuses a modelId the catalog can't price instead of pricing the default model", async () => {
+      const res = await imagesEdit(entriesReq("images/edit", [["prompt", "x"], ["modelId", "nano-banana-pro-edit"]]));
+      expect(res.status).toBe(402);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("images/upscale forwards exactly the one scale it priced", async () => {
+      fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200, headers: { "Content-Type": "image/png" } }));
+      const res = await imagesUpscale(entriesReq("images/upscale", [["scale", "4"]]));
+      expect(res.status).toBe(200);
+      const sent = fetchMock.mock.calls[0][1].body as FormData;
+      expect(sent.getAll("scale")).toEqual(["4"]);
+      expect(mockMemory.reservations()[0].reserved_micro_usd).toBe(80_000);
+    });
+
+    it.each<[string, Handler, () => NextRequest]>([
+      [
+        "images/generate",
+        imagesGenerate,
+        () => jsonReq("images/generate", { model: "qwen-image-2", modelId: "nano-banana-2", prompt: "a cat" }),
+      ],
+      [
+        "images/multi-edit",
+        imagesMultiEdit,
+        () => jsonReq("images/multi-edit", { model: "nano-banana-2-edit", modelId: "firered-image-edit", prompt: "x", images: ["aGk="] }),
+      ],
+      [
+        "images/generate",
+        imagesGenerate,
+        () => jsonReq("images/generate", { model: "qwen-image-2", prompt: "a cat", variants: [4] }),
+      ],
+      [
+        "images/generate",
+        imagesGenerate,
+        () => jsonReq("images/generate", { model: "nano-banana-2", prompt: "a cat", resolution: { tier: "4K" } }),
+      ],
+    ])("%s refuses a JSON body whose pricing fields disagree or aren't plain values", async (_path, handler, build) => {
+      const res = await handler(build());
+      expect(res.status).toBe(400);
       expect(fetchMock).not.toHaveBeenCalled();
       expect(mockMemory.reservations()).toHaveLength(0);
     });

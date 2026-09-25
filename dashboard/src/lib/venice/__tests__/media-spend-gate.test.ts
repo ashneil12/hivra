@@ -107,6 +107,26 @@ describe("holdManagedVeniceMediaSpend", () => {
     expect(world.cardBalanceMicroUsd(USER_ID)).toBe(1_000_000);
   });
 
+  // Review finding: with the flag off, settle() released the hold and wrote a
+  // charged=0 row, so a funded wallet was never charged for media.
+  it.each([["unset", undefined], ["false", "false"], ["true", "true"]])(
+    "captures the catalog price on a 2xx whatever the billing flag says (%s)",
+    async (_label, flag) => {
+      if (flag !== undefined) process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED = flag;
+      world.fundCard(USER_ID, 1_000_000);
+      const result = await holdManagedVeniceMediaSpend({ key: KEY, operation: QWEN, source: "test" }, world.db);
+      if (!result.ok) throw new Error("expected a hold");
+
+      await result.hold.complete({ ok: true, upstreamStatus: 200, upstreamRequestId: "req_1" });
+
+      expect(world.reservations()[0]).toMatchObject({ status: "captured", captured_micro_usd: 50_000 });
+      expect(world.usageEvents()).toEqual([
+        expect.objectContaining({ status: "recorded", charged_micro_usd: 50_000, upstream_request_id: "req_1" }),
+      ]);
+      expect(world.cardBalanceMicroUsd(USER_ID)).toBe(950_000);
+    }
+  );
+
   it("charges a hermesos wallet from its token lots when billing is on", async () => {
     process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED = "true";
     world.fundHermesos(USER_ID, 60_000);

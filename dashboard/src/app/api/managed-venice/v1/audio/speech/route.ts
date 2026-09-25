@@ -4,6 +4,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-speech | Isaiah 50:4 | Verse: The Lord God hath given me the tongue of the learned, that I should know how to speak a word in season to him that is weary.
@@ -30,6 +31,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return apiError("Invalid JSON body.", 400);
   }
+
+  const fieldError = mediaPricingFieldError(body);
+  if (fieldError) return apiError(fieldError, 400);
 
   if (typeof body.model !== "string" || !body.model.trim()) {
     return apiError("Model is required.", 400);

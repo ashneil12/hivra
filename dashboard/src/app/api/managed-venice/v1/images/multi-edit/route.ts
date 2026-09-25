@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { mediaModelField, mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-image-compose | Ecclesiastes 4:12 | Verse: A threefold cord is not quickly broken.
@@ -31,9 +32,10 @@ export async function POST(req: NextRequest) {
     return apiError("Invalid JSON body.", 400);
   }
 
-  const modelId = typeof body.modelId === "string" && body.modelId.trim()
-    ? body.modelId.trim()
-    : "firered-image-edit";
+  // `model` and `modelId` can't name different models; either one is priced.
+  const fieldError = mediaPricingFieldError(body);
+  if (fieldError) return apiError(fieldError, 400);
+  const modelId = mediaModelField(body) ?? "firered-image-edit";
   if (typeof body.prompt !== "string" || !body.prompt.trim()) {
     return apiError("prompt is required.", 400);
   }
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
 
   const serverKey = resolveManagedVeniceUpstreamKey({
     proxyKeyId: verifiedKey.id,
-    model: typeof body.model === "string" ? body.model : null,
+    model: modelId,
     endpoint: "/api/v1/image/multi-edit",
   })?.key;
   if (!serverKey) {

@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { mediaModelField, mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-image-edit | Jeremiah 18:6 | Verse: As the clay is in the potter's hand, so are ye in mine hand.
@@ -31,10 +32,12 @@ export async function POST(req: NextRequest) {
     return apiError("Expected multipart/form-data body.", 400);
   }
 
-  const modelField = formData.get("model");
-  const model = typeof modelField === "string" && modelField.trim()
-    ? modelField.trim()
-    : "firered-image-edit";
+  // The model and tier Venice runs must be the ones priced: one value per
+  // pricing field, and `modelId` (Venice's deprecated alias) can't disagree
+  // with `model`.
+  const fieldError = mediaPricingFieldError(formData);
+  if (fieldError) return apiError(fieldError, 400);
+  const model = mediaModelField(formData) ?? "firered-image-edit";
   const promptField = formData.get("prompt");
   if (typeof promptField !== "string" || !promptField.trim()) {
     return apiError("prompt is required.", 400);

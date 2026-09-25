@@ -189,10 +189,11 @@ interface CountFilterChain extends PromiseLike<CountResult> {
   in(column: string, values: readonly string[]): CountFilterChain;
 }
 
-// Only chat holds (chat completions, Anthropic messages, Responses) are
-// captured on success. Media holds are RELEASED on success while multimodal
-// billing is off (lib/venice/media-spend-gate.ts), so counting them would read
-// healthy media traffic as a capture drought.
+// Only chat holds (chat completions, Anthropic messages, Responses) count.
+// Media holds (lib/venice/media-spend-gate.ts) are a different population: they
+// are released whenever Venice rejects a media request (bad prompt, content
+// filter, bad input), which is ordinary client-error traffic, so mixing them in
+// would make the ratio track media usage instead of chat capture health.
 export const CAPTURE_DROUGHT_ENDPOINTS = ["/api/v1/chat/completions", "/api/v1/responses"] as const;
 
 type ReservationCountTable = {

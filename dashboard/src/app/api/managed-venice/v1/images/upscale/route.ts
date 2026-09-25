@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-upscale | Isaiah 40:31 | Verse: They shall mount up with wings as eagles; they shall run, and not be weary.
@@ -34,6 +35,9 @@ export async function POST(req: NextRequest) {
   if (!formData.get("image")) {
     return apiError("image is required.", 400);
   }
+  // One scale and one enhance, so the tier held is the tier Venice runs.
+  const fieldError = mediaPricingFieldError(formData);
+  if (fieldError) return apiError(fieldError, 400);
 
   const referenceId = randomUUID();
   const serverKey = resolveManagedVeniceUpstreamKey({

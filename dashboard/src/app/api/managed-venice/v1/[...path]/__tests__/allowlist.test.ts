@@ -45,6 +45,29 @@ function request(method: string, rawSuffix: string, body?: BodyInit, contentType
   return new Request(ORIGIN + rawSuffix, { method, headers, body }) as unknown as NextRequest;
 }
 
+function multipartRequest(suffix: string, entries: Array<[string, string | Blob]>) {
+  const form = new FormData();
+  for (const [name, value] of entries) {
+    if (typeof value === "string") form.append(name, value);
+    else form.append(name, value, `${name}.bin`);
+  }
+  form.set("image", new Blob([new Uint8Array([7, 7, 7])], { type: "image/png" }), "x.png");
+  return new Request(ORIGIN + suffix, {
+    method: "POST",
+    headers: { Authorization: "Bearer hven_live_fixture" },
+    body: form,
+  }) as unknown as NextRequest;
+}
+
+function rawRequest(suffix: string, body: string, contentType: string | null) {
+  const headers: Record<string, string> = { Authorization: "Bearer hven_live_fixture" };
+  if (contentType !== null) headers["Content-Type"] = contentType;
+  const req = new Request(ORIGIN + suffix, { method: "POST", headers, body });
+  // A string body makes fetch default the type to text/plain; drop it to test "no type".
+  if (contentType === null) req.headers.delete("content-type");
+  return req as unknown as NextRequest;
+}
+
 /** Segments exactly as Next decodes them for the catch-all. */
 function segmentsFor(rawSuffix: string): string[] {
   const match = matchCatchAll("/api/managed-venice/v1/" + rawSuffix.split("?")[0]);
@@ -93,7 +116,8 @@ describe("/api/managed-venice/v1/[...path] allowlist", () => {
       ["POST", "api_keys/generate_web3_key"],
       ["GET", "billing/usage"],
       ["GET", "billing/balance"],
-      ["GET", "characters"],
+      ["POST", "characters"],
+      ["GET", "characters/some-slug"],
     ] as const)("%s %s is refused without calling Venice", async (method, suffix) => {
       const res = await call(method, suffix, method === "POST" ? JSON.stringify({ description: "x" }) : undefined);
       expect(res.status).toBe(404);
@@ -189,6 +213,18 @@ describe("/api/managed-venice/v1/[...path] allowlist", () => {
       }
     );
 
+    // The agent's venice_characters tool lists Venice's public personas with
+    // GET {VENICE_BASE_URL}/characters (tools/venice_characters_tool.py).
+    it("GET characters is forwarded and not billed", async () => {
+      fetchMock.mockResolvedValueOnce(okJson({ data: [{ name: "Fixture", slug: "fixture" }] }));
+      const res = await call("GET", "characters");
+      expect(res.status).toBe(200);
+      expect(fetchMock.mock.calls[0][0]).toBe("https://api.venice.ai/api/v1/characters");
+      expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+      expect(mockMemory.reservations()).toHaveLength(0);
+      expect(mockMemory.usageEvents()).toHaveLength(0);
+    });
+
     it("GET crypto/rpc/networks is forwarded", async () => {
       const res = await call("GET", "crypto/rpc/networks");
       expect(res.status).toBe(200);
@@ -240,32 +276,42 @@ describe("/api/managed-venice/v1/[...path] allowlist", () => {
       expect(mockMemory.cardBalanceMicroUsd(USER_ID)).toBe(950_000);
     });
 
-    it("a multipart image/edit is priced from its form fields and forwarded byte-exact", async () => {
+    it("a multipart image/edit is priced from its form fields and forwarded as exactly those fields", async () => {
       mockMemory.fundCard(USER_ID, 1_000_000);
-      const form = new FormData();
-      form.set("model", "seedream-v4-edit");
-      form.set("prompt", "make it blue");
-      form.set("image", new Blob([new Uint8Array([7, 7, 7])], { type: "image/png" }), "x.png");
-      const req = new Request(ORIGIN + "image/edit", {
-        method: "POST",
-        headers: { Authorization: "Bearer hven_live_fixture" },
-        body: form,
-      });
-      const contentType = req.headers.get("content-type") || "";
-      const sentBytes = new Uint8Array(await req.clone().arrayBuffer());
+      const req = multipartRequest("image/edit", [
+        ["model", "seedream-v4-edit"],
+        ["prompt", "make it blue"],
+      ]);
       fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), { status: 200, headers: { "Content-Type": "image/png" } }));
 
-      const res = await POST(req as unknown as NextRequest, ctx(["image", "edit"]));
+      const res = await POST(req, ctx(["image", "edit"]));
 
       expect(res.status).toBe(200);
       const init = fetchMock.mock.calls[0][1];
-      expect((init.headers as Record<string, string>)["Content-Type"]).toBe(contentType);
-      expect(Array.from(new Uint8Array(init.body as ArrayBuffer))).toEqual(Array.from(sentBytes));
+      // Rebuilt from the parsed form: fetch writes its own boundary.
+      expect((init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+      const sent = init.body as FormData;
+      expect(sent).toBeInstanceOf(FormData);
+      expect(sent.getAll("model")).toEqual(["seedream-v4-edit"]);
+      expect(sent.get("prompt")).toBe("make it blue");
+      const image = sent.get("image") as File;
+      expect(image.name).toBe("x.png");
+      expect(image.type).toBe("image/png");
+      expect(Array.from(new Uint8Array(await image.arrayBuffer()))).toEqual([7, 7, 7]);
       const [reservation] = mockMemory.reservations();
       expect(reservation.reserved_micro_usd).toBe(50_000);
       expect(reservation.model).toBe("seedream-v4-edit");
-      expect(reservation.status).toBe("released"); // billing flag off: hold released, row left for settlement
-      expect(mockMemory.usageEvents()[0].status).toBe("reconciliation_required");
+      expect(reservation.status).toBe("captured");
+      expect(mockMemory.usageEvents()[0]).toMatchObject({ status: "recorded", charged_micro_usd: 50_000 });
+    });
+
+    it("a funded key is charged even with the billing flag off", async () => {
+      mockMemory.fundCard(USER_ID, 1_000_000);
+      const res = await call("POST", "image/generate", JSON.stringify({ model: "qwen-image-2", prompt: "a cat" }));
+      expect(res.status).toBe(200);
+      expect(mockMemory.reservations()[0]).toMatchObject({ status: "captured", captured_micro_usd: 50_000 });
+      expect(mockMemory.usageEvents()[0]).toMatchObject({ status: "recorded", charged_micro_usd: 50_000 });
+      expect(mockMemory.cardBalanceMicroUsd(USER_ID)).toBe(950_000);
     });
 
     it("upstream failure releases the hold", async () => {
@@ -275,6 +321,100 @@ describe("/api/managed-venice/v1/[...path] allowlist", () => {
       expect(res.status).toBe(503);
       expect(mockMemory.reservations()[0].status).toBe("released");
       expect(mockMemory.usageEvents()).toHaveLength(0);
+    });
+  });
+
+  // Review finding: the passthrough priced the LAST copy of a repeated
+  // multipart field and `model ?? modelId` / `modelId ?? model`, then
+  // forwarded the original bytes, so Venice could run a different model or
+  // tier than the one held.
+  describe("the request Hivra prices is the request Venice receives", () => {
+    beforeEach(() => {
+      mockMemory.fundCard(USER_ID, 1_000_000);
+    });
+
+    it.each<[string, Array<[string, string | Blob]>]>([
+      ["image/upscale", [["scale", "4"], ["scale", "2"]]],
+      ["image/upscale", [["scale", "2"], ["enhance", "true"], ["enhance", "false"]]],
+      ["image/edit", [["prompt", "x"], ["model", "firered-image-edit"], ["modelId", "nano-banana-pro-edit"]]],
+      ["image/edit", [["prompt", "x"], ["model", "firered-image-edit"], ["model", "nano-banana-pro-edit"]]],
+      ["image/edit", [["prompt", "x"], ["model", new Blob(["nano-banana-pro-edit"])]]],
+      ["image/generate", [["prompt", "x"], ["model", "qwen-image-2"], ["variants", "1"], ["variants", "4"]]],
+      ["image/generate", [["prompt", "x"], ["model", "nano-banana-2"], ["resolution", "1K"], ["resolution", "4K"]]],
+      ["image/multi-edit", [["prompt", "x"], ["modelId", "firered-image-edit"], ["model", "nano-banana-2-edit"]]],
+    ])("multipart %s %j is refused with 400 before any hold or fetch", async (suffix, entries) => {
+      const res = await POST(multipartRequest(suffix, entries), ctx(suffix.split("/")));
+      expect(res.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockMemory.reservations()).toHaveLength(0);
+    });
+
+    it.each([
+      ["image/edit", { prompt: "x", model: "firered-image-edit", modelId: "nano-banana-pro-edit" }],
+      ["image/multi-edit", { prompt: "x", modelId: "firered-image-edit", model: "nano-banana-2-edit", images: ["aGk="] }],
+      ["image/generate", { prompt: "x", model: "qwen-image-2", modelId: "nano-banana-2" }],
+      ["image/generate", { prompt: "x", model: "qwen-image-2", variants: [4] }],
+      ["image/upscale", { image: "aGk=", scale: ["4"] }],
+    ])("JSON %s %j is refused with 400 before any hold or fetch", async (suffix, body) => {
+      const res = await call("POST", suffix, JSON.stringify(body));
+      expect(res.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockMemory.reservations()).toHaveLength(0);
+    });
+
+    it("a JSON body with a repeated key is forwarded as the one value that was priced", async () => {
+      const raw = '{"model":"nano-banana-2","prompt":"a cat","model":"qwen-image-2"}';
+      const res = await call("POST", "image/generate", raw);
+      expect(res.status).toBe(200);
+      const init = fetchMock.mock.calls[0][1];
+      expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+      expect(typeof init.body).toBe("string");
+      expect(init.body).not.toContain("nano-banana-2");
+      expect(JSON.parse(init.body as string)).toEqual({ model: "qwen-image-2", prompt: "a cat" });
+      expect(mockMemory.reservations()[0].model).toBe("qwen-image-2");
+    });
+  });
+
+  // Review finding: a paid path with a body the passthrough couldn't parse
+  // (urlencoded, text/plain JSON, broken JSON) was priced as if no fields were
+  // sent — the default model — and then forwarded anyway.
+  describe("paid paths need a body Hivra can read", () => {
+    beforeEach(() => {
+      mockMemory.fundCard(USER_ID, 1_000_000);
+    });
+
+    it.each([
+      ["application/x-www-form-urlencoded", "model=nano-banana-pro-edit&prompt=x"],
+      ["text/plain", JSON.stringify({ model: "nano-banana-pro-edit", prompt: "x" })],
+      ["text/plain; x=application/json", JSON.stringify({ model: "nano-banana-pro-edit", prompt: "x" })],
+      [null, JSON.stringify({ model: "nano-banana-pro-edit", prompt: "x" })],
+    ])("image/edit with Content-Type %s is refused with 415", async (contentType, body) => {
+      const res = await POST(rawRequest("image/edit", body, contentType), ctx(["image", "edit"]));
+      expect(res.status).toBe(415);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockMemory.reservations()).toHaveLength(0);
+    });
+
+    it.each([
+      ["application/json", "{not json"],
+      ["application/json", "[1, 2]"],
+      ["application/json", "null"],
+      ["application/json", ""],
+      ["multipart/form-data; boundary=fixture", "not a multipart body"],
+    ])("image/edit with %s body %j is refused with 400", async (contentType, body) => {
+      const res = await POST(rawRequest("image/edit", body, contentType), ctx(["image", "edit"]));
+      expect(res.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mockMemory.reservations()).toHaveLength(0);
+    });
+
+    it("free POST paths still forward their body untouched", async () => {
+      const body = "queue_id=q1";
+      const res = await POST(rawRequest("audio/retrieve", body, "application/x-www-form-urlencoded"), ctx(["audio", "retrieve"]));
+      expect(res.status).toBe(200);
+      const init = fetchMock.mock.calls[0][1];
+      expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/x-www-form-urlencoded");
+      expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body);
     });
   });
 });

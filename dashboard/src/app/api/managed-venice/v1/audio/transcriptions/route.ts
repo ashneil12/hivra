@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-transcribe | Job 33:32 | Verse: If thou hast anything to say, answer me: speak, for I desire to justify thee.
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest) {
     return apiError("Expected multipart/form-data body.", 400);
   }
 
+  const fieldError = mediaPricingFieldError(formData);
+  if (fieldError) return apiError(fieldError, 400);
   const modelField = formData.get("model");
   const model = typeof modelField === "string" && modelField.trim()
     ? modelField.trim()

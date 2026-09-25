@@ -416,71 +416,15 @@ export async function markManagedVeniceReconciliationRequired(
 }
 
 /**
- * Record a managed-Venice multi-modal request (image/video/audio) without
- * deducting from the user's wallet.
+ * Settlement pass for the multi-modal (image/video/audio/embeddings/search)
+ * BACKLOG: rows written with ``status='reconciliation_required'`` before the
+ * media spend gate (media-spend-gate.ts) started charging in-request. New
+ * media requests are held, captured and recorded as ``status='recorded'``
+ * at request time whatever the flag below says, so this pass never sees them.
  *
- * Phase 1 of multi-modal support uses offline reconciliation: each call
- * is logged with ``status='reconciliation_required'`` and zero cost, and
- * the existing invoice-reconciliation cron settles the wallet against
- * Venice's actual invoice once per billing cycle. This sidesteps the
- * elaborate per-model pricing catalog the chat path needs (image and
- * video pricing changes more often and is harder to extract from a
- * response body) while still keeping a per-request audit trail.
- *
- * The proxy key is **not** paused — that's the difference vs
- * :func:`markManagedVeniceReconciliationRequired`, which is for
- * settlement *failures*, not for routes that are intentionally
- * unmetered at the route level.
- */
-export async function recordManagedVeniceMultimodalUsage(
-  params: {
-    userId: string;
-    proxyKeyId: string;
-    walletType: ManagedVeniceWalletType;
-    referenceId: string;
-    endpoint: string;
-    model: string;
-    upstreamStatus: number;
-    upstreamRequestId?: string | null;
-    metadata?: Record<string, unknown>;
-  },
-  db: SupabaseLike | null | undefined = supabaseAdmin
-) {
-  const client = requireDb(db);
-  const account = await ensureManagedVeniceWalletAccount(params.userId, client);
-  const { error } = await table(client, "managed_venice_usage_events").insert({
-    account_id: account.id,
-    user_id: params.userId,
-    proxy_key_id: params.proxyKeyId,
-    wallet_type: params.walletType,
-    endpoint: params.endpoint,
-    model: params.model,
-    actual_cost_micro_usd: 0,
-    charged_micro_usd: 0,
-    discount_micro_usd: 0,
-    status: "reconciliation_required",
-    upstream_status: params.upstreamStatus,
-    upstream_request_id: params.upstreamRequestId ?? null,
-    reference_id: params.referenceId,
-    metadata: {
-      pricingPolicy: "multimodal_offline_reconciliation",
-      ...(params.metadata || {}),
-    },
-  });
-  if (error) {
-    throw new Error(
-      error.message || "Failed to record managed Venice multi-modal usage"
-    );
-  }
-}
-
-/**
- * Settlement pass for multi-modal (image/video/audio/embeddings/search)
- * usage recorded by :func:`recordManagedVeniceMultimodalUsage`.
- *
- * Closes the F176 cost leak: multimodal rows are written with
+ * Closes the F176 cost leak: multimodal rows were written with
  * ``actual_cost=0``, ``charged=0``, ``status='reconciliation_required'`` and
- * previously nothing settled them, so multi-modal was free to users. This
+ * nothing settled them, so multi-modal was free to users. This
  * pass prices each pending row against the in-code catalog in
  * ``multimodal-pricing.ts`` and — only when billing is enabled — debits the
  * user's wallet through the SAME ledger primitives the chat path uses
@@ -488,9 +432,10 @@ export async function recordManagedVeniceMultimodalUsage(
  * then flips the row to ``status='recorded'`` with the real cost.
  *
  * SAFETY:
- *   * ``MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED`` defaults OFF. Flag off =
- *     a pure dry-run: rows are read and classified, the summary reports what
- *     WOULD be charged, and nothing is written anywhere.
+ *   * ``MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED`` defaults OFF and only
+ *     governs this retroactive pass. Flag off = a pure dry-run: rows are read
+ *     and classified, the summary reports what WOULD be charged, and nothing
+ *     is written anywhere.
  *   * Unknown (endpoint, model) pairs and priced operations with underivable
  *     quantities are NEVER guessed at: the row is skipped (stays
  *     ``reconciliation_required``), the skip is tallied in the summary, and —

@@ -131,7 +131,10 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
     expect(usage.endpoint).toBe("/api/v1/image/generate");
     expect(usage.model).toBe("qwen-image-2");
     expect(usage.upstream_request_id).toBe("req_1");
-    expect(mockWorld.reservations()[0].status).toBe("released");
+    // Charged in-request even with MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED unset.
+    expect(usage.status).toBe("recorded");
+    expect(mockWorld.reservations()[0].status).toBe("captured");
+    expect(mockWorld.cardBalanceMicroUsd("user_1")).toBe(950_000);
   });
 
   it("forwards the query string for GET reads and does NOT bill them", async () => {

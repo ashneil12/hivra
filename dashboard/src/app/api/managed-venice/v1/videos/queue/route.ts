@@ -4,6 +4,7 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-video | Habakkuk 2:2 | Verse: Write the vision, and make it plain upon tables, that he may run that readeth it.
@@ -33,6 +34,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return apiError("Invalid JSON body.", 400);
   }
+
+  const fieldError = mediaPricingFieldError(body);
+  if (fieldError) return apiError(fieldError, 400);
 
   if (typeof body.model !== "string" || !body.model.trim()) {
     return apiError("Model is required.", 400);

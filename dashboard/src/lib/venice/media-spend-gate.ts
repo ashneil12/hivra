@@ -15,16 +15,16 @@
 //      trigger and spend cap as chat). A wallet that can't cover it gets a 402
 //      and Venice is never called;
 //   3. after Venice answers, settle:
-//        - error / no answer            -> release the hold, charge nothing;
-//        - 2xx, multimodal billing ON   -> capture the settlement price (the
-//          catalog's published floor) from the hold, write a 'recorded' usage
-//          row + financial event, so the offline settlement cron skips it;
-//        - 2xx, multimodal billing OFF  -> release the hold and write the same
-//          'reconciliation_required' usage row as before (the documented
-//          dry-run semantics of MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED).
+//        - error / no answer -> release the hold, charge nothing;
+//        - 2xx               -> capture the settlement price (the catalog's
+//          published floor) from the hold and write a 'recorded' usage row +
+//          financial event, so the offline settlement pass skips it.
 //
-// The balance gate in steps 1-2 runs regardless of that flag: the flag decides
-// whether a funded user is charged, never whether an unfunded one may spend.
+// A 2xx is ALWAYS charged. MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED does not
+// apply here: it only switches the retroactive settlement of old
+// 'reconciliation_required' rows (settleManagedVeniceMultimodalUsage). If a
+// success released its hold instead, the gate would only prove the wallet was
+// non-empty, and one small top-up would buy unlimited media on Hivra's key.
 
 import { randomUUID } from "node:crypto";
 
@@ -52,11 +52,7 @@ import {
   resolveVeniceMultimodalMarkup,
 } from "./multimodal-pricing";
 import { managedVeniceTopUpUrl } from "./proxy-chat-core";
-import {
-  isManagedVeniceMultimodalBillingEnabled,
-  markManagedVeniceReconciliationRequired,
-  recordManagedVeniceMultimodalUsage,
-} from "./proxy-settlement";
+import { markManagedVeniceReconciliationRequired } from "./proxy-settlement";
 
 type SupabaseLike = { from: (table: string) => unknown };
 type InsertTable = { insert: (row: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }> };
@@ -266,32 +262,6 @@ export async function holdManagedVeniceMediaSpend(
 
   const settle = async (outcome: ManagedVeniceMediaOutcome) => {
     const rowMetadata = { ...metadata, ...(outcome.metadata ?? {}) };
-
-    if (!isManagedVeniceMultimodalBillingEnabled()) {
-      await release("multimodal_billing_disabled");
-      try {
-        await recordManagedVeniceMultimodalUsage(
-          {
-            userId: key.userId,
-            proxyKeyId: key.id,
-            walletType,
-            referenceId,
-            endpoint: operation.endpoint,
-            model: operation.model,
-            upstreamStatus: outcome.upstreamStatus,
-            upstreamRequestId: outcome.upstreamRequestId ?? null,
-            metadata: { ...rowMetadata, spendGate: { heldMicroUsd, released: true } },
-          },
-          db
-        );
-      } catch (error) {
-        log.error("Managed Venice media usage record failed", error, {
-          ...logContext,
-          failureType: "managed_venice_media_usage_record_failed",
-        });
-      }
-      return;
-    }
 
     // Settlement price = the catalog's published floor for what was recorded
     // (the same number the offline settlement cron would charge), bounded by
