@@ -538,6 +538,23 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.09.24.3` builds on `2026.09.24.2` and hardens the computer for
+agents added to it. Both terminals keep their persistent tmux session slots
+and `KillMode=process`, and now listen on unix sockets in bux-owned `0700`
+runtime folders (`/run/hivra-terminal`, `/run/hivra-box-terminal`) instead of
+loopback ports, so no other local user or service can open a shell as bux; the
+gateway proxies to a socket only when it and its folder are its own, falls back
+to the loopback port for a terminal whose unit predates the move, and reports
+which it uses in `/api/meta` (bearer only). The runtime updater restarts an
+idle terminal onto its socket and checks it through the gateway; a busy one
+moves at its next start. On a computer the gateway answers `/api/git/*` with
+404 before any process starts, and it serves an agent added to the computer
+through `/agents/<installation id>/` (a fixed route allowlist, JSON only, none
+of the agent's headers forwarded, CSP sandbox, no WebSocket), advertising
+`attachedAgents: "hivra-attached-agent-v1"` in `/api/meta`; the attached
+instance itself listens only on the socket systemd passes it. This source
+release does not deploy, install, or establish Canary acceptance.
+
 Release `2026.09.24.1` builds on `2026.09.22.2` and makes agent chat turns
 survive the browser going away. `hivra-chat/chat-runs.cjs` runs each turn under
 a detached runner that owns the Claude Code/Codex CLI and records its stream and

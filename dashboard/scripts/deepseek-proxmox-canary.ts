@@ -125,6 +125,24 @@ export interface CliArgs {
   octet: number | null;
   cpu: number;
   memoryMb: number;
+  capacityPolicy: DeepSeekCapacityPolicy;
+}
+
+/**
+ * "reserved" (the default) admits a lab computer only if every non-template
+ * guest on the host, stopped ones included, still fits its configured memory
+ * afterwards. "active" admits it exactly as a product launch is admitted: the
+ * sealed hivra-host-capacity-admission helper from the verified Canary bundle
+ * counts running guests plus the host reserve (observe mode). Use "active"
+ * only on a shared Canary host whose stopped guests are other owners' and
+ * would be admitted by that same rule when they start.
+ */
+export type DeepSeekCapacityPolicy = "reserved" | "active";
+
+// Mirrors DEFAULT_PROXMOX_HOST_CAPACITY_POLICY (observe, 2048 MB reserve, 1x).
+// It inspects every guest's status, so inventory allows it several minutes.
+function activeCapacityAdmission(memoryMb: number, cpu: number): string {
+  return `bash "$PROVISIONER_DIR/hivra-host-capacity-admission" - ${memoryMb} ${memoryMb} ${cpu} 2048 0 1000 1000`;
 }
 
 function valueAfter(argv: string[], flag: string): string | undefined {
@@ -168,7 +186,14 @@ export function parseDeepSeekCanaryArgs(argv = process.argv.slice(2)): CliArgs {
     octet: valueAfter(argv, "--octet") ? integer(valueAfter(argv, "--octet"), "--octet", 2, 254) : needsIdentity ? integer(undefined, "--octet", 2, 254) : null,
     cpu: integer(valueAfter(argv, "--cpu") || "2", "--cpu", 1, 64),
     memoryMb: integer(valueAfter(argv, "--memory-mb") || "4096", "--memory-mb", 1024, 262_144),
+    capacityPolicy: capacityPolicy(valueAfter(argv, "--capacity-policy")),
   };
+}
+
+function capacityPolicy(value: string | undefined): DeepSeekCapacityPolicy {
+  if (value === undefined || value === "reserved") return "reserved";
+  if (value === "active") return "active";
+  throw new Error("Invalid --capacity-policy (reserved or active).");
 }
 
 function canaryOrigin(env: Record<string, string | undefined>): string {
@@ -246,6 +271,7 @@ export function buildDeepSeekInventoryScript(params: {
   ipLastOctetStart: number;
   subnetPrefix: string;
   bundleManifest: string;
+  capacityPolicy?: DeepSeekCapacityPolicy;
 }): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -310,7 +336,9 @@ storage_available_kb="$(printf '%s\n' "$storage_status" | awk '$1=="${DEEPSEEK_C
 [[ "$host_total_mb" =~ ^[0-9]+$ && "$storage_available_kb" =~ ^[0-9]+$ ]] \
   || { echo "HIVRA_DEEPSEEK_CAPACITY_INVENTORY_UNKNOWN" >&2; exit 7; }
 capacity_admits_4gb=false
-[ $((qemu_claimed_mb + lxc_claimed_mb + 4096 + 2048)) -le "$host_total_mb" ] && [ "$storage_available_kb" -ge $((45 * 1024 * 1024)) ] && capacity_admits_4gb=true
+${params.capacityPolicy === "active"
+    ? `${activeCapacityAdmission(4096, 2)} >/dev/null 2>&1 && [ "$storage_available_kb" -ge $((45 * 1024 * 1024)) ] && capacity_admits_4gb=true`
+    : `[ $((qemu_claimed_mb + lxc_claimed_mb + 4096 + 2048)) -le "$host_total_mb" ] && [ "$storage_available_kb" -ge $((45 * 1024 * 1024)) ] && capacity_admits_4gb=true`}
 printf 'HIVRA_DEEPSEEK_INVENTORY {"hostname":"%s","candidateVmid":%s,"candidateIp":"%s.%s","hostMemoryMb":%s,"claimedVmMemoryMb":%s,"claimedLxcMemoryMb":%s,"storageAvailableKb":%s,"capacityAdmits4Gb":%s,"provisionerVersion":"%s"}\n' \
   "$EXPECTED_HOSTNAME" "$candidate_vmid" "$SUBNET_PREFIX" "$candidate_octet" "$host_total_mb" "$qemu_claimed_mb" "$lxc_claimed_mb" "$storage_available_kb" "$capacity_admits_4gb" ${shellQuote(DEEPSEEK_CANARY_VERSION)}
 `;
@@ -330,6 +358,7 @@ export function buildDeepSeekLaunchScript(params: {
   tunnelToken: string;
   tunnelUrl: string;
   bundleManifest: string;
+  capacityPolicy?: DeepSeekCapacityPolicy;
 }): string {
   const operationTag = `hivra-op-${params.operationId.replace(/-/g, "")}`;
   const claim = `${params.operationId}|${params.bindingTag}|${params.expectedHostname}|${params.vmid}|${params.ip}`;
@@ -401,8 +430,11 @@ for id in $(printf '%s\n' "$pct_inventory" | awk 'NR>1 {print $1}'); do
 done
 [[ "$host_total_mb" =~ ^[0-9]+$ && "$qemu_claimed_mb" =~ ^[0-9]+$ && "$lxc_claimed_mb" =~ ^[0-9]+$ ]] \
   || { echo "HIVRA_DEEPSEEK_MEMORY_INVENTORY_UNKNOWN" >&2; exit 8; }
-[ $((qemu_claimed_mb + lxc_claimed_mb + ${params.memoryMb} + 2048)) -le "$host_total_mb" ] \
-  || { echo "HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY" >&2; exit 8; }
+${params.capacityPolicy === "active"
+    ? `capacity_refusal="$(${activeCapacityAdmission(params.memoryMb, params.cpu)} 2>&1 >/dev/null)" \\
+  || { echo "HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY $capacity_refusal" >&2; exit 8; }`
+    : `[ $((qemu_claimed_mb + lxc_claimed_mb + ${params.memoryMb} + 2048)) -le "$host_total_mb" ] \\
+  || { echo "HIVRA_DEEPSEEK_INSUFFICIENT_RESERVED_MEMORY" >&2; exit 8; }`}
 storage_available_kb="$(pvesm status --content images | awk '$1=="${DEEPSEEK_CANARY_RUNTIME_PATHS.storage}" && $3=="active" {print $6; exit}')"
 [[ "$storage_available_kb" =~ ^[0-9]+$ ]] || { echo "HIVRA_DEEPSEEK_STORAGE_INVENTORY_UNKNOWN" >&2; exit 8; }
 [ "$storage_available_kb" -ge $((45 * 1024 * 1024)) ] || { echo "HIVRA_DEEPSEEK_INSUFFICIENT_STORAGE" >&2; exit 8; }
@@ -671,7 +703,7 @@ export async function launchDeepSeekCanary(args: CliArgs): Promise<void> {
     const stdout = await runHost(buildDeepSeekLaunchScript({
       expectedHostname: args.expectedHostname, vmid, ip, octet: args.octet!, subnetPrefix: network.subnetPrefix,
       gateway: network.gateway, operationId, bindingTag, cpu: args.cpu, memoryMb: args.memoryMb,
-      tunnelToken: tunnel.token, tunnelUrl: tunnel.url, bundleManifest,
+      tunnelToken: tunnel.token, tunnelUrl: tunnel.url, bundleManifest, capacityPolicy: args.capacityPolicy,
     }), target.env, 30 * 60_000);
     const result = JSON.parse(stdout.trim().split(/\r?\n/).filter(line => line.startsWith("{")).at(-1) || "null") as Record<string, unknown> | null;
     if (!result || result.vmid !== vmid || result.ip !== ip || result.agent_kind !== "deepseek-harness" || result.chat_url !== tunnel.url || result.ready !== true) {
@@ -703,7 +735,7 @@ async function main(): Promise<void> {
   const { target, network, vmidStart, vmidEnd, ipLastOctetStart } = targetContext(args);
   if (args.mode === "inspect") {
     const bundleManifest = await loadDeepSeekCanaryBundleManifest();
-    const stdout = await runHost(buildDeepSeekInventoryScript({ expectedHostname: args.expectedHostname, vmidStart, vmidEnd, ipLastOctetStart, subnetPrefix: network.subnetPrefix, bundleManifest }), target.env, 60_000);
+    const stdout = await runHost(buildDeepSeekInventoryScript({ expectedHostname: args.expectedHostname, vmidStart, vmidEnd, ipLastOctetStart, subnetPrefix: network.subnetPrefix, bundleManifest, capacityPolicy: args.capacityPolicy }), target.env, 180_000);
     console.log(JSON.stringify({ mode: "inspect", target: args.target, ...resultJson(stdout, "HIVRA_DEEPSEEK_INVENTORY") }));
     return;
   }

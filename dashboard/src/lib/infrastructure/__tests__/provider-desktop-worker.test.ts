@@ -89,7 +89,7 @@ describe("staged private desktop provider controller", () => {
   });
   it("keeps .05.7 recovery pinned while admitting the bounded cold-start release", () => {
     const request = recovery();
-    expect(request.identity.bundle.provisionerVersion).toBe("2026.09.24.2");
+    expect(request.identity.bundle.provisionerVersion).toBe("2026.09.24.3");
     const prior = parseProviderDesktopWorkerIdentity({ ...request.identity, bundle: { ...request.identity.bundle,
       provisionerVersion: "2026.09.05.7", bundleSha256: "d3631ea66b7d74084e1f29e7795f2459e6e215c4f97a6e231ccf480f3cb9ba9b" } });
     const oldClock = { ...clock, boottimeMs: Number.MAX_SAFE_INTEGER - 480_000 };

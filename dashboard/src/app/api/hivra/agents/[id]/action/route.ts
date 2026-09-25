@@ -890,6 +890,19 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       if (!snapshot || snapshot.status !== "ready" || typeof snapshot.snapshot_config_sha256 !== "string") {
         return apiError("That restore point is not ready to restore.", 409);
       }
+      // A restore would roll the computer back under an agent added to it
+      // (design 5.5); the database refuses it too. Say why before claiming.
+      const { data: attached, error: attachedError } = await supabaseAdmin
+        .from("hivra_agent_attachments")
+        .select("id")
+        .eq("source_id", agent.id)
+        .eq("user_id", userId)
+        .in("phase", ["claimed", "dispatched", "attached"])
+        .limit(1);
+      if (attachedError) return apiError("Could not check this computer's agents.", 503);
+      if (Array.isArray(attached) && attached.length > 0) {
+        return apiError("Remove Codex from this computer first. A restore would roll the computer back under it.", 409);
+      }
       const operationId = randomUUID();
       const claimed = await beginHivraAgentSnapshotRestore({
         userId,

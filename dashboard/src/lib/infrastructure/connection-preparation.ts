@@ -23,6 +23,7 @@ import {
   type LoadedInfrastructureConnection,
 } from "./connection-store";
 import type { ProxmoxPreflightResult } from "./contracts";
+import { PROXMOX_NEEDS_ROOT_COPY, PROXMOX_SUDO_TRANSPORT_READY } from "./sudo-transport-gate";
 import {
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_DIRECTORY,
@@ -161,7 +162,7 @@ function preparationErrorCopy(code: InfrastructurePreparationErrorCode): { messa
 }
 
 const CAUSE_MESSAGES: Record<PreparationFailureCause, string> = {
-  root_required: "Setup needs a root login on this server.",
+  root_required: `Setup needs a root login on this server. ${PROXMOX_NEEDS_ROOT_COPY}`,
   proxmox_version_unsupported: "Setup needs Proxmox VE 8 or 9 on this server.",
   kvm_unavailable: "Setup stopped because KVM isn't available on this server.",
   storage_unavailable: "Setup couldn't find active Proxmox storage for virtual machines.",
@@ -462,6 +463,10 @@ export async function prepareSimpleProxmoxConnection(
   if (connection.setupMode !== "simple") {
     return failure(connectionId, "SIMPLE_MODE_REQUIRED");
   }
+  // Release gate T43: Proxmox provisioning over sudo isn't proven yet.
+  if (connection.endpoint.sshPrivilege === "sudo" && !PROXMOX_SUDO_TRANSPORT_READY) {
+    return failure(connectionId, "PREPARATION_FAILED", "root_required");
+  }
 
   let destination;
   try {
@@ -511,6 +516,8 @@ export async function prepareSimpleProxmoxConnection(
       sshUser: current.endpoint.sshUser,
       sshHostFingerprintSha256: current.endpoint.sshHostFingerprintSha256,
       sshPrivateKey: current.credentials.sshPrivateKey,
+      sshPrivilege: current.endpoint.sshPrivilege,
+      sshHostKeyType: current.endpoint.sshHostKeyType,
       vmidStart: PORTABLE_HIVRA_SIMPLE_VMID_RANGE.start,
       vmidEnd: PORTABLE_HIVRA_SIMPLE_VMID_RANGE.end,
       bridge: PORTABLE_HIVRA_SIMPLE_BRIDGE,

@@ -89,6 +89,37 @@ can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database
 migrations or external side effects; those require a separately reviewed plan.
 
+## Queued database steps
+
+Some database changes break the code that is serving until the new code serves.
+They are kept in `dashboard/supabase/_pending_destructive_migrations/`, outside
+`dashboard/supabase/migrations/`, so no "apply every pending migration" run
+(including the production schema catch-up at the first Promote) can apply one
+early. Each is an explicit, ordered step in the Canary release record and in the
+Promote packet, applied per environment only after the code it needs serves
+there, following the steps in the file's header.
+
+| Queued file | Apply only after | Check before and after |
+|---|---|---|
+| `hivra_agent_slot_writer_guard.sql` (plan agent limit, migration B) | `*_hivra_agent_slot_limit.sql` is applied and the code that writes Hivra-managed agents through `insert_hivra_managed_agent` and `reserve_hivra_launch_model_request_v3` is serving on that environment | Launch smoke test; start and restart of an existing agent, including one in `error` (the file's header lists every status writer it was audited against) |
+
+## Provisioner releases in flight
+
+A provisioner release (`dashboard/provisioner/VERSION`, its sealed manifest and
+its digest-bound admission migration) is sealed on the bundle it was built on.
+When two open pull requests each carry one, whichever merges second is sealed
+again on top of the other, at a number after it, before it merges; the one that
+merged first keeps its number. A lower number is never shipped after a higher
+one: hosts install the newest sealed bundle and a runtime update moves a
+computer to it, so an older-numbered bundle released later would take back what
+the higher release shipped.
+
+Last pair: #124 (persistent sessions, 2026.09.24.2) merged first, so the
+attach release (`claude/agent-computer`) is sealed again as 2026.09.24.3 on top
+of it. Had the attach release merged first, #124 would have become 2026.09.24.4.
+#130, which also used migration version `20260924220000`, moved to
+`20260924231500` before it merged.
+
 ## Feature acceptance
 
 A contributor may propose a new adapter or optional capability without it becoming

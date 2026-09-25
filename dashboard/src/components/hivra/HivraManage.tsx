@@ -19,13 +19,14 @@ import { AgentModelSettings } from "./AgentModelSettings";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
-import { ComputerAgentSlot, ComputerContractPanel } from "./ComputerContractPanel";
+import { ComputerContractPanel } from "./ComputerContractPanel";
+import { ComputerAgentsPanel } from "./ComputerAgentsPanel";
 import { ManageLayout, ManageNotice, ManagePanel, type ManageFeedback } from "./ManageLayout";
 import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
-import { AgentSoftwareSlot, ComputerAgentsSlot, ManageHeaderChipsSlot } from "./manage/ManageExtensionSlots";
+import { AgentSoftwareSlot, ManageHeaderChipsSlot } from "./manage/ManageExtensionSlots";
 import {
   manageButtonDark as btnDark, manageButtonGhost as btnGhost, manageCard as card, manageError as errorStyle,
   manageLabel as label, manageMuted, manageValue as valStyle,
@@ -782,20 +783,18 @@ function HivraManageContent({
           </div>
 
           {/* The agent and its computer as one pair (ATT-11), and what the agent
-              knows about it. A computer without an agent shows an honest Agent
-              slot, unless the Agents section offers adding one. */}
-          {isComputerOnly ? (
-            manage?.attachAgents ? null : <ComputerAgentSlot />
-          ) : (
+              knows about it. A computer's agents live in its Agents section. */}
+          {isComputerOnly ? null : (
             <ComputerContractPanel agent={agent} runtimeName={def?.name || "This agent"} />
           )}
         </div>
       </ManagePanel>
 
-      {/* AGENTS — the agents working on this computer (the attach work fills it). */}
+      {/* AGENTS — the agents added to this computer, and "Add an agent" where
+          attach is available; elsewhere the panel shows the honest Agent slot. */}
       {sections.includes("agents") ? (
         <ManagePanel id="agents" selected={selected}>
-          <ComputerAgentsSlot agent={agent} autoOpenAdd={addAgentRequested} />
+          <ComputerAgentsPanel computerId={agent.id} computerName={agent.name} autoOpenAdd={addAgentRequested} />
         </ManagePanel>
       ) : null}
 

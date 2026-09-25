@@ -596,6 +596,40 @@ describe("preflightInfrastructureConnection", () => {
     expect(deps.runPreflight).not.toHaveBeenCalled();
   });
 
+  it("tells a non-root Proxmox login that launches need root while the sudo gate is off", async () => {
+    const deps = dependencies(report({
+      connectionReady: false,
+      capabilities: { ...report().capabilities, directRootAccess: false },
+      unmetRequirements: [{
+        code: "PROXMOX_ROOT_PERMISSION_REQUIRED",
+        message: "The SSH account must have effective UID 0 for direct Proxmox lifecycle commands",
+      }],
+    }));
+
+    const result = await preflightInfrastructureConnection("user_1", CONNECTION_ID, deps);
+
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.error.remediation).toBe(
+      "Proxmox launches need a root login for now. Edit the connection, set the SSH user to root, then check again.",
+    );
+  });
+
+  it("refuses a sudo Proxmox connection before any SSH while the T43 gate is off", async () => {
+    const deps = dependencies();
+    deps.loadConnection.mockResolvedValue(connection({
+      endpoint: { ...connection().endpoint!, sshUser: "hivra", sshPrivilege: "sudo" },
+    }));
+
+    const result = await preflightInfrastructureConnection("user_1", CONNECTION_ID, deps);
+
+    expect(result).toMatchObject({ ok: false, error: { code: "PROXMOX_PERMISSION_UNAVAILABLE" } });
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.error.remediation).toMatch(/^Proxmox launches need a root login for now\./);
+    expect(deps.beginPreflight).not.toHaveBeenCalled();
+    expect(deps.resolveDestination).not.toHaveBeenCalled();
+    expect(deps.runPreflight).not.toHaveBeenCalled();
+  });
+
   it("maps a non-root SSH account to the stable permission error", async () => {
     const deps = dependencies(report({
       connectionReady: false,

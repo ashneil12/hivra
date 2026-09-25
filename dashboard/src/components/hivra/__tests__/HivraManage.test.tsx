@@ -553,7 +553,7 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByText(`${name} · Hivra Cloud`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Resources", "Advanced"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Advanced"]);
     openSection("Resources");
     expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent(`This ${name} preview has a fixed size of 2 CPU / 4 GB. Hivra can't resize prepared computers yet.`);
     expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
@@ -815,12 +815,23 @@ describe("HivraManage lifecycle guidance", () => {
       expect(mockFetchComputerContract).toHaveBeenCalledWith("test-agent", expect.anything());
     });
 
-    it("gives a computer an honest Agent slot instead of a contract", () => {
-      render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm" }}
-        def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
-      expect(screen.getByText("No agent works on this computer.")).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
-      expect(mockFetchComputerContract).not.toHaveBeenCalled();
+    it("gives a computer an honest Agent slot instead of a contract where attach is not offered", async () => {
+      // Production answers the attach route with 404: the slot is what it was.
+      const original = global.fetch;
+      global.fetch = jest.fn(async () => ({ status: 404, ok: false, json: async () => ({ success: false, error: "Not found" }) })) as unknown as typeof fetch;
+      try {
+        render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm" }}
+          def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+        // A computer's agents live in its Agents section, not in Overview.
+        openSection("Agents");
+        const panel = screen.getByRole("tabpanel", { name: "Agents" });
+        expect(await within(panel).findByText("No agent works on this computer.")).toBeInTheDocument();
+        expect(within(panel).getByRole("link", { name: "Launch an agent" })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
+        expect(global.fetch).toHaveBeenCalledWith(`/api/hivra/computers/${agent.id}/agents`, { cache: "no-store" });
+        expect(mockFetchComputerContract).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = original;
+      }
     });
 
     it("lists an agent's sections from the server's map, in order", async () => {
@@ -838,7 +849,7 @@ describe("HivraManage lifecycle guidance", () => {
         def={getAgent("linux-desktop")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
       const nav = screen.getByRole("tablist", { name: "Computer settings" });
       expect(within(nav).getAllByRole("tab").map((tab) => tab.textContent))
-        .toEqual(["Overview", "Resources", "Recovery", "Private network", "Updates", "Advanced"]);
+        .toEqual(["Overview", "Agents", "Resources", "Recovery", "Private network", "Updates", "Advanced"]);
     });
 
     it("keeps every section's targets at least 40px", () => {

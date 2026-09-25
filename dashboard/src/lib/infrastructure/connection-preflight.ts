@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { PROXMOX_NEEDS_ROOT_COPY, PROXMOX_SUDO_TRANSPORT_READY } from "./sudo-transport-gate";
 
 import {
   buildUserProxmoxEnvironment,
@@ -102,7 +103,7 @@ const PUBLIC_ERROR_COPY: Record<
   },
   PROXMOX_PERMISSION_UNAVAILABLE: {
     message: "The SSH account cannot run the required Proxmox lifecycle commands.",
-    remediation: "Hivra needs a root login on this Proxmox server. Edit the connection, set the SSH user to root, then check again.",
+    // Gate-dependent; see preflightErrorCopy.
   },
   NODE_UNAVAILABLE: {
     message: "The Proxmox node could not be inspected.",
@@ -163,6 +164,14 @@ function preflightErrorCopy(
   const copy = PUBLIC_ERROR_COPY[code];
   if (code === "HOST_ADDRESS_BLOCKED") return { ...copy, remediation: blockedAddressRemediation() };
   if (code === "PREFLIGHT_INTERNAL_ERROR") return { ...copy, remediation: internalFailureRemediation() };
+  if (code === "PROXMOX_PERMISSION_UNAVAILABLE") {
+    return {
+      ...copy,
+      remediation: PROXMOX_SUDO_TRANSPORT_READY
+        ? "Connect as root, or as a user with passwordless sudo, then check again."
+        : `${PROXMOX_NEEDS_ROOT_COPY} Edit the connection, set the SSH user to root, then check again.`,
+    };
+  }
   const advanced = setupMode === "advanced" ? ADVANCED_REMEDIATION[code] : undefined;
   return advanced ? { ...copy, remediation: advanced } : copy;
 }
@@ -601,6 +610,11 @@ export async function preflightInfrastructureConnection(
   ) {
     return supersededFailure(connectionId, checkedAt);
   }
+  // Release gate T43: Proxmox preflight refuses sudo connections before any
+  // SSH until early finish is proven under sudo.
+  if (connection.endpoint.sshPrivilege === "sudo" && !PROXMOX_SUDO_TRANSPORT_READY) {
+    return publicFailure(connectionId, checkedAt, "PROXMOX_PERMISSION_UNAVAILABLE");
+  }
 
   const runId = deps.newRunId();
   let leaseClaimed = false;
@@ -624,6 +638,8 @@ export async function preflightInfrastructureConnection(
         sshUser: connection.endpoint.sshUser,
         sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256,
         sshPrivateKey: connection.credentials.sshPrivateKey,
+        sshPrivilege: connection.endpoint.sshPrivilege,
+        sshHostKeyType: connection.endpoint.sshHostKeyType,
         node: connection.configuration?.node,
         templateId: connection.configuration?.template?.vmid,
         vmidStart: input.vmidRange.start,

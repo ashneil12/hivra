@@ -107,5 +107,14 @@ export function canonicalComputerContractInput(input: ComputerContractInput): st
     surfaces: [...input.surfaces],
     browser: input.browser,
     tools: input.tools,
+    // Only attached inputs carry this key, so an own-computer input keeps the
+    // exact canonical bytes (and digest) it had before attach existed.
+    ...(input.attached ? { attached: {
+      computerLabel: input.attached.computerLabel,
+      installationId: input.attached.installationId,
+      account: input.attached.account,
+      workspace: input.attached.workspace,
+      memoryMaxMb: input.attached.memoryMaxMb,
+    } } : {}),
   });
 }

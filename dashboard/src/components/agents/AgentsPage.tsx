@@ -12,6 +12,7 @@ import {
 import { AGENTS, getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { buildLaunchHref, launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
 import { getHivraPreview } from "@/lib/hivra/preview-catalog";
+import { AttachedAgentsList } from "./AttachedAgentsList";
 import styles from "./AgentsPage.module.css";
 
 const deepSeekHarness = getCatalogAgent("deepseek-harness");
@@ -119,6 +120,7 @@ export function AgentsPage() {
           router.push(`/dashboard/instances/${encodeURIComponent(id)}/console`)
         }
       />
+      <AttachedAgentsList />
       <details
         className={styles.catalog}
         onToggle={(event) => {

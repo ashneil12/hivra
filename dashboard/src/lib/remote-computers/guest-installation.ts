@@ -22,6 +22,7 @@ import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { beginDesktopPrepare, dispatchDesktopPrepare, cancelUndispatchedDesktopPrepare, completeDesktopPrepare,
   desktopPrepareAuthority, DESKTOP_PREPARE_KIND, DESKTOP_PREPARE_PENDING } from "./desktop-prepare-operation";
 import { desktopPrepareGuestCommand, parseDesktopPrepareReceipt } from "./desktop-prepare-guest";
+import { DESKTOP_PREPARE_FENCE_DIRECTORY } from "./desktop-prepare-recovery";
 import { recordHivraAgentOperationFailure } from "@/lib/hivra/agent-operation-store";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -239,6 +240,10 @@ set_install_phase lifecycle_lock
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { printf 'HIVRA_REMOTE_DESKTOP_HOST_FAILURE lifecycle_lock\n' >&2; exit 1; }
+# Stale-lease recovery fences an operation under this lock once it has proven
+# the guest installer quiescent and released the lease; never dispatch it again.
+set_install_phase operation_fence
+[ ! -e ${shellQuote(DESKTOP_PREPARE_FENCE_DIRECTORY)}/"$OPERATION_ID" ]
 # Recheck the exact identity only after acquiring the same lock as Destroy and Restart.
 set_install_phase target_vmid
 [[ "$VMID" =~ ^[0-9]+$ ]] && [ "$VMID" -ge 100 ]

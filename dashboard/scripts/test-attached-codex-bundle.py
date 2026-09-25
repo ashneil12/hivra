@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -30,6 +31,10 @@ def execute(action, **changes):
 
 
 class BundleTests(unittest.TestCase):
+    def assertRefused(self, code):
+        """The runner's named refusal, the one line the host reads (T3)."""
+        return self.assertRaisesRegex(bundle.Refused, '^' + code + '$')
+
     def test_invalid_assets_actions_and_shapes_never_load(self):
         for change in ({'version': True}, {'action': 'arbitrary'}, {'extra': True},
                        {'assets': dict(request['assets'], worker=base64.b64encode(b'bad source').decode())}):
@@ -53,15 +58,29 @@ class BundleTests(unittest.TestCase):
         with patch.object(os, 'open', side_effect=readonly_open), \
                 patch.object(Path, 'mkdir', side_effect=AssertionError('no mkdir')), \
                 patch('subprocess.run', side_effect=AssertionError('no subprocess')):
-            with self.assertRaises(FileNotFoundError):
+            with self.assertRefused('staging_absent'):
                 execute('observe')
         self.assertFalse(Path('/var/lib/hivra/attachment-staging').exists())
+
+    def test_stage_ended_without_a_receipt_is_named_failed(self):
+        # The installer failed: the journal stays "started" and nothing holds
+        # the lock, so the observation names it final (T3), never unresolved.
+        journal = Path('/var/lib/hivra/attachment-staging/staging.json')
+        with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 1)):
+            with self.assertRefused('staging_failed'):
+                execute('stage')
+        try:
+            self.assertEqual(json.loads(journal.read_text())['phase'], 'started')
+            with self.assertRefused('staging_failed'):
+                execute('observe')
+        finally:
+            journal.unlink()
 
     def test_stage_missing_cache_never_downloads_or_starts(self):
         moved = cache.with_suffix('.fixture-hidden')
         cache.rename(moved)
         try:
-            with self.assertRaises(FileNotFoundError):
+            with self.assertRefused('staging_failed'):
                 execute('stage')
             self.assertFalse(Path('/var/lib/hivra/attachment-staging/staging.json').exists())
         finally:
@@ -99,18 +118,18 @@ class BundleTests(unittest.TestCase):
         lock = root / 'installer.lock'
         with lock.open('rb') as held:
             fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with self.assertRaises(BlockingIOError):
+            with self.assertRefused('staging_in_progress'):
                 execute('observe')
         for path in (lock, journal):
             moved = path.with_suffix('.fixture-hidden')
             path.rename(moved)
             try:
-                with self.assertRaises(FileNotFoundError):
+                with self.assertRefused('staging_absent'):
                     execute('observe')
                 self.assertFalse(path.exists())
                 path.symlink_to(moved)
                 try:
-                    with self.assertRaises(OSError):
+                    with self.assertRefused('staging_unresolved'):
                         execute('observe')
                 finally:
                     path.unlink()
@@ -141,7 +160,7 @@ class BundleTests(unittest.TestCase):
             output.write(b'preserve existing bytes')
         try:
             with patch.object(bundle.secrets, 'token_hex', return_value='collision'):
-                with self.assertRaises(FileExistsError):
+                with self.assertRefused('staging_failed'):
                     execute('stage')
             self.assertEqual(collision.read_bytes(), b'preserve existing bytes')
         finally:
@@ -150,7 +169,7 @@ class BundleTests(unittest.TestCase):
     def test_wrong_boot_cannot_create_a_temporary_stager(self):
         before = list(Path('/run').glob('hivra-attachment-stager-*'))
         with patch.object(os, 'open', side_effect=AssertionError('no os.open before boot validation')):
-            with self.assertRaises(ValueError):
+            with self.assertRefused('computer_restarted'):
                 execute('stage', bootId='99999999-9999-4999-8999-999999999999')
         self.assertEqual(list(Path('/run').glob('hivra-attachment-stager-*')), before)
 
