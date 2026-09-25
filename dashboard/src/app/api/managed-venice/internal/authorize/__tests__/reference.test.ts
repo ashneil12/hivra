@@ -14,7 +14,7 @@ import {
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const KEY_ID = "22222222-2222-4222-8222-222222222222";
 const SECRET = "test-internal-secret";
-const REFERENCE = "8a2b3c4d-1111-4222-8333-944455556666";
+const REFERENCE = "00000000-0000-4000-8000-000000000167";
 
 let mockMemory: ManagedVeniceMemoryDb;
 
