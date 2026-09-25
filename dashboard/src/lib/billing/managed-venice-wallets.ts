@@ -18,6 +18,8 @@ type DbChain = {
 
 type DbUpdateFilter = {
   eq: (...args: unknown[]) => DbUpdateFilter;
+  // PostgREST returns the rows the update actually changed.
+  select: (...args: unknown[]) => PromiseLike<{ data: unknown; error: QueryError }>;
   then: Promise<{ error: QueryError }>["then"];
 };
 
@@ -374,18 +376,22 @@ export async function releaseManagedVeniceReservation(
   return { released: true, releasedMicroUsd: released };
 }
 
-async function debitHermesosLots(
-  userId: string,
-  amountMicroUsd: number,
-  db: SupabaseLike
-) {
-  let remainingDebit = amountMicroUsd;
-  const lots = (await selectUserRows<TokenLotRow>(
-    db,
-    "managed_venice_token_lots",
-    userId,
-    { status: "active" }
-  ))
+// Token lots are debited with a compare-and-set, never a blind write. The debit
+// reads the lots, then writes each lot's new remaining value ONLY if the lot
+// still holds the value it read. Before this, the write was filtered by id
+// alone, so concurrent captures (ten images sent at once) all read the same
+// $1.00, all wrote $0.95, and the wallet paid for one of them while every hold
+// closed as captured.
+//
+// A debit that loses a lot to a concurrent debit re-reads the lots and carries
+// on with what it still owes. Each lost race is another debit landing, so N
+// concurrent debits on one wallet finish within N attempts. The cap only turns
+// a pathological storm into an error the caller already handles (the media gate
+// files it for reconciliation and keeps the hold), never an endless loop.
+export const MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS = 50;
+
+async function loadDebitableTokenLots(userId: string, db: SupabaseLike) {
+  return (await selectUserRows<TokenLotRow>(db, "managed_venice_token_lots", userId, { status: "active" }))
     .filter((lot) => lot.status === "active" && lot.remaining_value_micro_usd > 0)
     .sort((left, right) => {
       const byCreatedAt = String(left.created_at || "").localeCompare(
@@ -393,38 +399,69 @@ async function debitHermesosLots(
       );
       return byCreatedAt || left.id.localeCompare(right.id);
     });
+}
 
-  const total = lots.reduce((sum, lot) => sum + lot.remaining_value_micro_usd, 0);
-  if (total < amountMicroUsd) {
-    throw new ManagedVeniceInsufficientBalanceError();
-  }
+async function debitHermesosLots(
+  userId: string,
+  amountMicroUsd: number,
+  db: SupabaseLike
+) {
+  let remainingDebit = amountMicroUsd;
 
-  for (const lot of lots) {
-    if (remainingDebit <= 0) break;
-
-    const previousValue = lot.remaining_value_micro_usd;
-    const consumed = Math.min(previousValue, remainingDebit);
-    const nextValue = previousValue - consumed;
-    const previousTokenRaw = asBigInt(lot.remaining_token_amount_raw);
-    const nextTokenRaw =
-      nextValue === 0
-        ? 0n
-        : (previousTokenRaw * BigInt(nextValue)) / BigInt(previousValue);
-
-    const { error } = await table(db, "managed_venice_token_lots")
-      .update({
-        remaining_value_micro_usd: nextValue,
-        remaining_token_amount_raw: nextTokenRaw.toString(),
-        status: nextValue === 0 ? "depleted" : "active",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", lot.id);
-
-    if (error) {
-      throw new Error(error.message || "Failed to debit managed Venice token lot");
+  for (let attempt = 1; remainingDebit > 0; attempt += 1) {
+    if (attempt > MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS) {
+      throw new Error(
+        `Managed Venice token lot debit lost ${MANAGED_VENICE_TOKEN_LOT_DEBIT_MAX_ATTEMPTS} races to concurrent ` +
+          `debits; ${remainingDebit} micro-USD of ${amountMicroUsd} is still owed`
+      );
     }
 
-    remainingDebit -= consumed;
+    // Oldest lot first (FIFO), as read at the start of this attempt.
+    const lots = await loadDebitableTokenLots(userId, db);
+    const total = lots.reduce((sum, lot) => sum + lot.remaining_value_micro_usd, 0);
+    if (total < remainingDebit) {
+      throw new ManagedVeniceInsufficientBalanceError();
+    }
+
+    for (const lot of lots) {
+      if (remainingDebit <= 0) break;
+
+      const previousValue = lot.remaining_value_micro_usd;
+      const consumed = Math.min(previousValue, remainingDebit);
+      const nextValue = previousValue - consumed;
+      const previousTokenRaw = asBigInt(lot.remaining_token_amount_raw);
+      const nextTokenRaw =
+        nextValue === 0
+          ? 0n
+          : (previousTokenRaw * BigInt(nextValue)) / BigInt(previousValue);
+
+      const { data, error } = await table(db, "managed_venice_token_lots")
+        .update({
+          remaining_value_micro_usd: nextValue,
+          remaining_token_amount_raw: nextTokenRaw.toString(),
+          status: nextValue === 0 ? "depleted" : "active",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", lot.id)
+        .eq("status", "active")
+        // The compare-and-set: no row matches if another debit landed on this
+        // lot after this attempt read it. Debits are the only writes to a
+        // lot's remaining value (and its token amount, derived from it), and
+        // every debit lowers it, so an unchanged value means an unchanged lot.
+        .eq("remaining_value_micro_usd", previousValue)
+        .select("id");
+
+      if (error) {
+        throw new Error(error.message || "Failed to debit managed Venice token lot");
+      }
+
+      if (!Array.isArray(data) || data.length === 0) {
+        // Lost this lot to a concurrent debit: re-read and debit what's left.
+        break;
+      }
+
+      remainingDebit -= consumed;
+    }
   }
 }
 
