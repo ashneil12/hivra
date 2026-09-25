@@ -1,0 +1,377 @@
+{
+  "about": [
+    "Sizes of shipped payloads that cross a host or guest transport, against that transport's limit.",
+    "Checked by transport-payload-budgets.test.ts; the limits are proven by host-transport-size-limits.test.ts.",
+    "Each payload must stay within budgetFraction of its limit unless overBudget names it with a reason.",
+    "After an intended change: UPDATE_TRANSPORT_BUDGETS=1 npx jest src/lib/services/__tests__/transport-payload-budgets.test.ts"
+  ],
+  "budgetFraction": 0.75,
+  "limits": {
+    "linux-argument": {
+      "bytes": 131071,
+      "what": "One argument to exec on Linux: MAX_ARG_STRLEN is 131,072 bytes including the NUL. Applies to every argv word on the host (python3 -c, qm guest exec, ssh) and in a Linux guest."
+    },
+    "host-script-with-stdin.script": {
+      "bytes": 98259,
+      "what": "runProxmoxHostScriptWithStdin: the largest script whose base64 login command is still one Linux argument (the 96 KiB script check never binds first)."
+    },
+    "host-script-with-stdin.stdin": {
+      "bytes": 1048576,
+      "what": "runProxmoxHostScriptWithStdin: stdin, counted in UTF-8 bytes."
+    },
+    "guest-exec-stdin": {
+      "bytes": 1048576,
+      "what": "Proxmox qm guest exec --pass-stdin forwards at most 1 MiB to the guest agent."
+    },
+    "sudo-transport-script": {
+      "bytes": 999999,
+      "what": "runProxmoxHostScript on a user's server with a sudo login: the loader's length prefix allows 999,999 bytes of script. A root login (the managed fleet) sends the script to bash -s with no limit."
+    },
+    "provider-guest-seed": {
+      "bytes": 1048576,
+      "what": "runProviderGuestSeed: the largest guest seed script sent over a provider VM's enrolled SSH pin."
+    },
+    "windows-command-line": {
+      "bytes": 32766,
+      "what": "Windows CreateProcess: 32,767 characters including the NUL. qemu-ga starts powershell.exe through GLib, whose spawn helper adds its own arguments, so real headroom is a little lower."
+    },
+    "cloud-init-user-data": {
+      "bytes": 32768,
+      "what": "Hetzner Cloud user_data limit, also renderFirstBootCloudInit's own check."
+    }
+  },
+  "overBudget": {
+    "windows-rdp-preparation commandLine": "Measured, not yet run on a Windows guest: the whole PowerShell program is one -EncodedCommand argument (UTF-16LE base64, about 2.7 characters per program character), so about 460 more program characters would pass Windows' command-line limit. Owner follow-up: send the program on stdin as windows-rdp-capability does.",
+    "bankr-skills proxmoxHostScript": "Only on a user's server with a sudo login (the managed fleet uses bash -s with no limit). The skill files are base64 twice and not compressed; the provider-VM lane gzips the same suite to 27%. Owner follow-up: compress it here too."
+  },
+  "payloads": {
+    "attached-agent/access": {
+      "script": {
+        "bytes": 12972,
+        "limit": "host-script-with-stdin.script",
+        "percent": 13.2
+      },
+      "stepArgument": {
+        "bytes": 10398,
+        "limit": "linux-argument",
+        "percent": 7.9
+      },
+      "guestProgram": {
+        "bytes": 4043,
+        "limit": "linux-argument",
+        "percent": 3.1
+      },
+      "stdin": {
+        "bytes": 160218,
+        "limit": "guest-exec-stdin",
+        "percent": 15.3
+      }
+    },
+    "attached-agent/activate": {
+      "script": {
+        "bytes": 12972,
+        "limit": "host-script-with-stdin.script",
+        "percent": 13.2
+      },
+      "stepArgument": {
+        "bytes": 10398,
+        "limit": "linux-argument",
+        "percent": 7.9
+      },
+      "guestProgram": {
+        "bytes": 4043,
+        "limit": "linux-argument",
+        "percent": 3.1
+      },
+      "stdin": {
+        "bytes": 156327,
+        "limit": "guest-exec-stdin",
+        "percent": 14.9
+      }
+    },
+    "attached-agent/observe": {
+      "script": {
+        "bytes": 12971,
+        "limit": "host-script-with-stdin.script",
+        "percent": 13.2
+      },
+      "stepArgument": {
+        "bytes": 10397,
+        "limit": "linux-argument",
+        "percent": 7.9
+      },
+      "guestProgram": {
+        "bytes": 4043,
+        "limit": "linux-argument",
+        "percent": 3.1
+      },
+      "stdin": {
+        "bytes": 150983,
+        "limit": "guest-exec-stdin",
+        "percent": 14.4
+      }
+    },
+    "attached-agent/remove": {
+      "script": {
+        "bytes": 12972,
+        "limit": "host-script-with-stdin.script",
+        "percent": 13.2
+      },
+      "stepArgument": {
+        "bytes": 10398,
+        "limit": "linux-argument",
+        "percent": 7.9
+      },
+      "guestProgram": {
+        "bytes": 4043,
+        "limit": "linux-argument",
+        "percent": 3.1
+      },
+      "stdin": {
+        "bytes": 150704,
+        "limit": "guest-exec-stdin",
+        "percent": 14.4
+      }
+    },
+    "attached-agent/state": {
+      "script": {
+        "bytes": 12971,
+        "limit": "host-script-with-stdin.script",
+        "percent": 13.2
+      },
+      "stepArgument": {
+        "bytes": 10397,
+        "limit": "linux-argument",
+        "percent": 7.9
+      },
+      "guestProgram": {
+        "bytes": 4043,
+        "limit": "linux-argument",
+        "percent": 3.1
+      },
+      "stdin": {
+        "bytes": 150786,
+        "limit": "guest-exec-stdin",
+        "percent": 14.4
+      }
+    },
+    "attachment-observation": {
+      "script": {
+        "bytes": 5999,
+        "limit": "sudo-transport-script",
+        "percent": 0.6
+      },
+      "stepArgument": {
+        "bytes": 4466,
+        "limit": "linux-argument",
+        "percent": 3.4
+      },
+      "guestProgram": {
+        "bytes": 518,
+        "limit": "linux-argument",
+        "percent": 0.4
+      }
+    },
+    "attachment-staging/fetch": {
+      "script": {
+        "bytes": 21895,
+        "limit": "host-script-with-stdin.script",
+        "percent": 22.3
+      },
+      "stepArgument": {
+        "bytes": 18124,
+        "limit": "linux-argument",
+        "percent": 13.8
+      },
+      "guestProgram": {
+        "bytes": 11370,
+        "limit": "linux-argument",
+        "percent": 8.7
+      },
+      "stdin": {
+        "bytes": 35941,
+        "limit": "guest-exec-stdin",
+        "percent": 3.4
+      }
+    },
+    "attachment-staging/observe": {
+      "script": {
+        "bytes": 21894,
+        "limit": "host-script-with-stdin.script",
+        "percent": 22.3
+      },
+      "stepArgument": {
+        "bytes": 18123,
+        "limit": "linux-argument",
+        "percent": 13.8
+      },
+      "guestProgram": {
+        "bytes": 11370,
+        "limit": "linux-argument",
+        "percent": 8.7
+      },
+      "stdin": {
+        "bytes": 35943,
+        "limit": "guest-exec-stdin",
+        "percent": 3.4
+      }
+    },
+    "attachment-staging/stage": {
+      "script": {
+        "bytes": 21895,
+        "limit": "host-script-with-stdin.script",
+        "percent": 22.3
+      },
+      "stepArgument": {
+        "bytes": 18124,
+        "limit": "linux-argument",
+        "percent": 13.8
+      },
+      "guestProgram": {
+        "bytes": 11370,
+        "limit": "linux-argument",
+        "percent": 8.7
+      },
+      "stdin": {
+        "bytes": 35941,
+        "limit": "guest-exec-stdin",
+        "percent": 3.4
+      }
+    },
+    "bankr-skills": {
+      "proxmoxHostScript": {
+        "bytes": 762909,
+        "limit": "sudo-transport-script",
+        "percent": 76.3
+      },
+      "providerSeedScript": {
+        "bytes": 283347,
+        "limit": "provider-guest-seed",
+        "percent": 27
+      }
+    },
+    "first-boot": {
+      "userData": {
+        "bytes": 16681,
+        "limit": "cloud-init-user-data",
+        "percent": 50.9
+      }
+    },
+    "omarchy-capability": {
+      "script": {
+        "bytes": 23690,
+        "limit": "sudo-transport-script",
+        "percent": 2.4
+      },
+      "guestArgument": {
+        "bytes": 19452,
+        "limit": "linux-argument",
+        "percent": 14.8
+      }
+    },
+    "omarchy-preparation": {
+      "script": {
+        "bytes": 245175,
+        "limit": "sudo-transport-script",
+        "percent": 24.5
+      },
+      "stdin": {
+        "bytes": 231280,
+        "limit": "guest-exec-stdin",
+        "percent": 22.1
+      },
+      "guestProgram": {
+        "bytes": 9311,
+        "limit": "linux-argument",
+        "percent": 7.1
+      }
+    },
+    "remote-desktop-capability": {
+      "script": {
+        "bytes": 37285,
+        "limit": "sudo-transport-script",
+        "percent": 3.7
+      },
+      "guestArgument": {
+        "bytes": 33992,
+        "limit": "linux-argument",
+        "percent": 25.9
+      }
+    },
+    "remote-desktop-install": {
+      "script": {
+        "bytes": 15362,
+        "limit": "sudo-transport-script",
+        "percent": 1.5
+      },
+      "broker.cjs argument": {
+        "bytes": 54988,
+        "limit": "linux-argument",
+        "percent": 42
+      },
+      "install-guest.py argument": {
+        "bytes": 82188,
+        "limit": "linux-argument",
+        "percent": 62.7
+      },
+      "server.cjs argument": {
+        "bytes": 3496,
+        "limit": "linux-argument",
+        "percent": 2.7
+      },
+      "prepareProgram": {
+        "bytes": 2562,
+        "limit": "linux-argument",
+        "percent": 2
+      }
+    },
+    "remote-desktop-prepare-recovery": {
+      "guestProgram": {
+        "bytes": 1241,
+        "limit": "linux-argument",
+        "percent": 0.9
+      }
+    },
+    "tailscale-connect": {
+      "script": {
+        "bytes": 6617,
+        "limit": "host-script-with-stdin.script",
+        "percent": 6.7
+      },
+      "guestLoginCommand": {
+        "bytes": 4068,
+        "limit": "linux-argument",
+        "percent": 3.1
+      }
+    },
+    "windows-rdp-capability": {
+      "script": {
+        "bytes": 22422,
+        "limit": "sudo-transport-script",
+        "percent": 2.2
+      },
+      "stdin": {
+        "bytes": 17672,
+        "limit": "guest-exec-stdin",
+        "percent": 1.7
+      },
+      "commandLine": {
+        "bytes": 1242,
+        "limit": "windows-command-line",
+        "percent": 3.8
+      }
+    },
+    "windows-rdp-preparation": {
+      "script": {
+        "bytes": 34764,
+        "limit": "sudo-transport-script",
+        "percent": 3.5
+      },
+      "commandLine": {
+        "bytes": 31538,
+        "limit": "windows-command-line",
+        "percent": 96.3
+      }
+    }
+  }
+}
