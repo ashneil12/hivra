@@ -1,8 +1,14 @@
 import { MissingVeniceUsageError } from "./cost-estimator";
+import { createManagedVeniceOutputMeter } from "./stream-output-meter";
 
 export const VENICE_RESPONSES_ENDPOINT = "/api/v1/responses";
 export const VENICE_RESPONSES_URL = "https://api.venice.ai/api/v1/responses";
 export const RESPONSES_RECONCILIATION_REASON = "managed_venice_responses_ambiguous_usage";
+/** Responses outcomes an operator settles: Venice's answer never arrived, or
+ * was a 5xx that may or may not follow generation. The stale-hold sweep
+ * releases their holds once the hold expires. Every other Responses item
+ * follows a 200 and is captured. */
+export const RESPONSES_UNKNOWN_OUTCOME_CAUSES = ["upstream_outcome_unknown", "dispatch_outcome_unknown"] as const;
 export const RESPONSES_MAX_REQUEST_BYTES = 1024 * 1024;
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const toolName = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 128;
@@ -87,15 +93,18 @@ export function responseTerminal(value: unknown): { id: string; usage: unknown }
 }
 
 /** Incremental SSE observer. Original bytes are forwarded separately. No
- * prompt, tool content or full response is retained or logged. */
+ * prompt, tool content or full response is retained or logged. It also
+ * counts the output streamed so far (stream-output-meter.ts), which is what a
+ * stream without a terminal usage event is charged for. */
 export function responsesUsageObserver() {
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder(), meter = createManagedVeniceOutputMeter();
   let buffer = "", terminal: ReturnType<typeof responseTerminal> = null, responseId: string | null = null;
   function frame(text: string) {
     const data = text.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
     if (!data || data === "[DONE]") return;
     const event: unknown = JSON.parse(data);
     if (!record(event)) throw new MissingVeniceUsageError();
+    meter.observeResponsesEvent(event);
     if (record(event.response) && typeof event.response.id === "string") {
       if (responseId && responseId !== event.response.id) throw new MissingVeniceUsageError();
       responseId = event.response.id;
@@ -113,5 +122,5 @@ export function responsesUsageObserver() {
     if (buffer.length > RESPONSES_MAX_REQUEST_BYTES) throw new MissingVeniceUsageError();
     if (!bytes && buffer) { frame(buffer); buffer = ""; }
   }
-  return { feed, usage: () => terminal?.usage ?? null };
+  return { feed, usage: () => terminal?.usage ?? null, outputTokens: () => meter.outputTokens() };
 }

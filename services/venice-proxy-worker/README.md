@@ -15,9 +15,10 @@ box → Worker /v1/chat/completions
         1. POST {VERCEL_BASE_URL}/api/managed-venice/internal/authorize
              {plaintextKey, body}  →  {referenceId, upstreamKey, upstreamUrl, walletType, userId, proxyKeyId, model}
         2. fetch(api.venice.ai, Bearer upstreamKey)   ← Worker holds this stream
-        3. tee → client gets tokens; sniff branch extracts usage
+        3. forward Venice's bytes to the box, counting the output and keeping the usage frame
         4. POST {VERCEL_BASE_URL}/api/managed-venice/internal/settle
-             {outcome:"settle", referenceId, usage, ...}   (or {outcome:"release"} on upstream failure)
+             {outcome:"settle", referenceId, usage, observedOutputTokens, cause, ...}
+             (or {outcome:"release", referenceId, cause} on any failure after authorize)
 
 box → Worker /v1/embeddings (and all other /v1/*)  →  reverse-proxied to Vercel verbatim
 ```
@@ -26,6 +27,20 @@ Auth/error relay rules:
 - authorize `403` → Worker misconfig (wrong shared secret) → Worker returns `502` (does NOT blame the box's key).
 - authorize `401/402/400/503` → relayed to the box verbatim (bad key / no balance / bad model / not configured).
 - Worker never holds Venice keys at rest — `authorize` returns the pool-selected key per request.
+
+Settlement rules (security review 2026-09):
+- The Worker sends authorize a fresh UUID `referenceId` and the hold is made
+  under it, so after ANY failure that follows authorize (authorize unreachable,
+  a 5xx, an unreadable response, Venice refusing or unreachable) the Worker
+  releases the hold by that reference, even when it never learned the user.
+- Settle and release are retried with backoff until Vercel answers 2xx (at most
+  5 tries). Both are safe to repeat: a settled hold is never charged or released
+  again.
+- A stream without a usage frame, including one the box disconnected from, is
+  settled with `observedOutputTokens` (the larger of the frames that carried text
+  and the text's UTF-8 size / 4) and charged the input estimate plus that
+  output. When the box disconnects, the Worker stops reading Venice. The count
+  mirrors `dashboard/src/lib/venice/stream-output-meter.ts`.
 
 ## Local verification
 

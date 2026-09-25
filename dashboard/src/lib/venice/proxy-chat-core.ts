@@ -22,9 +22,12 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
   captureManagedVeniceChatUsage,
+  captureManagedVeniceObservedOutput,
+  managedVeniceUsageCostMicroUsd,
   markManagedVeniceReconciliationRequired,
   reserveManagedVeniceChatRequest,
 } from "@/lib/venice/proxy-settlement";
+import { loadManagedVeniceReservation } from "@/lib/billing/managed-venice-wallets";
 
 // SCRIPTURE_ANCHOR: venice-stream | Proverbs 18:4 | Verse: The words of a man's mouth are like deep waters. The fountain of wisdom is like a flowing brook.
 export const VENICE_CHAT_COMPLETIONS_URL =
@@ -93,11 +96,27 @@ export type AuthorizeManagedVeniceChatResult =
  * Everything up to — but not including — the upstream fetch. Returns either an
  * authorized context or the exact error Response to relay.
  */
+const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function authorizeManagedVeniceChat(params: {
   plaintextKey: string | null;
   body: Record<string, unknown>;
   protocol?: "responses";
+  /**
+   * The Cloudflare Worker chooses the hold's reference (a fresh UUID) before
+   * it calls authorize, so it can release the hold even when the authorize
+   * response never reaches it. Omitted, a reference is generated here.
+   */
+  referenceId?: string;
 }): Promise<AuthorizeManagedVeniceChatResult> {
+  if (params.referenceId !== undefined && !REFERENCE_ID_PATTERN.test(params.referenceId)) {
+    return {
+      ok: false,
+      response: apiError("Invalid request reference.", 400, {
+        failureType: "managed_venice_invalid_reference_id",
+      }),
+    };
+  }
   const { plaintextKey, body } = params;
 
   if (!plaintextKey) {
@@ -162,7 +181,17 @@ export async function authorizeManagedVeniceChat(params: {
     );
   }
 
-  const referenceId = randomUUID();
+  const referenceId = params.referenceId ?? randomUUID();
+  // A caller-chosen reference must be new: reusing one would find the old
+  // (possibly settled) hold and forward a request with nothing held for it.
+  if (params.referenceId && (await loadManagedVeniceReservation(verifiedKey.userId, params.referenceId))) {
+    return {
+      ok: false,
+      response: apiError("Duplicate request reference.", 409, {
+        failureType: "managed_venice_duplicate_reference_id",
+      }),
+    };
+  }
   const serverKey = resolveManagedVeniceUpstreamKey({
     referenceId,
     proxyKeyId: verifiedKey.id,
@@ -265,10 +294,19 @@ export async function authorizeManagedVeniceChat(params: {
 /**
  * Settle a streamed chat completion against its reservation, given the `usage`
  * frame the streamer extracted (or null if none was seen). Mirrors the inline
- * settlement semantics of `createSettlingStream`:
+ * settlement of the chat route (stream-settlement.ts):
  *  - usage present  -> capture actual cost (closes the hold; overage debited)
- *  - usage missing  -> file reconciliation, KEEP key live (telemetry gap)
- *  - capture throws -> file reconciliation, KEEP key live (our bug, not theirs)
+ *  - usage missing  -> capture the input estimate plus `observedOutputTokens`,
+ *                      the output the Worker forwarded, never more than the
+ *                      hold; key stays live
+ *  - capture throws -> file reconciliation with the reported cost (the
+ *                      stale-hold sweep charges it); key stays live
+ * A Worker from before observed output was counted sends no
+ * `observedOutputTokens`; its usage-less streams are filed for the sweep,
+ * which charges the hold's estimate.
+ *
+ * Throws only when nothing could be written (not even the reconciliation
+ * item), so the settle route answers 5xx and the Worker retries.
  *
  * Used by the off-Vercel Worker via /api/managed-venice/internal/settle. The
  * `pricingMap` defaults to the live (module-cached) map; within the 5-minute
@@ -283,13 +321,16 @@ export async function settleManagedVeniceChatUsage(params: {
   model: string;
   upstreamStatus: number;
   usage: unknown;
+  observedOutputTokens?: number | null;
+  cause?: string | null;
   pricingMap?: VenicePricingMap;
 }): Promise<{ settled: boolean; reconciled: boolean }> {
   const pricingMap =
     params.pricingMap ?? (await getVenicePricingMap()).map;
+  const cause = params.cause || "completed";
 
-  try {
-    if (params.usage != null) {
+  if (params.usage != null) {
+    try {
       await captureManagedVeniceChatUsage({
         userId: params.userId,
         proxyKeyId: params.proxyKeyId,
@@ -301,37 +342,63 @@ export async function settleManagedVeniceChatUsage(params: {
         pricingMap,
       });
       return { settled: true, reconciled: false };
+    } catch (error) {
+      await markManagedVeniceReconciliationRequired({
+        userId: params.userId,
+        proxyKeyId: params.proxyKeyId,
+        referenceId: params.referenceId,
+        reason: "managed_venice_stream_settlement_failed",
+        metadata: {
+          model: params.model,
+          upstreamStatus: params.upstreamStatus,
+          cause,
+          errorType: error instanceof Error ? error.name : typeof error,
+          usageCostMicroUsd: managedVeniceUsageCostMicroUsd({ model: params.model, usage: params.usage, pricingMap }),
+          observedOutputTokens: params.observedOutputTokens ?? null,
+        },
+        // Our settlement code threw on an otherwise-successful stream. That's
+        // our bug to reconcile, not the user's to be denied service over.
+        pauseKey: false,
+      });
+      return { settled: false, reconciled: true };
     }
-
-    await markManagedVeniceReconciliationRequired({
-      userId: params.userId,
-      proxyKeyId: params.proxyKeyId,
-      referenceId: params.referenceId,
-      reason: "managed_venice_missing_stream_usage",
-      metadata: { model: params.model, upstreamStatus: params.upstreamStatus },
-      // Upstream succeeded; we just couldn't read a usage frame. The
-      // reservation is still held and the invoice cron settles offline —
-      // don't brick the key over a telemetry gap.
-      pauseKey: false,
-    });
-    return { settled: false, reconciled: true };
-  } catch (error) {
-    await markManagedVeniceReconciliationRequired({
-      userId: params.userId,
-      proxyKeyId: params.proxyKeyId,
-      referenceId: params.referenceId,
-      reason: "managed_venice_stream_settlement_failed",
-      metadata: {
-        model: params.model,
-        upstreamStatus: params.upstreamStatus,
-        errorType: error instanceof Error ? error.name : typeof error,
-      },
-      // Our settlement code threw on an otherwise-successful stream. That's
-      // our bug to reconcile, not the user's to be denied service over.
-      pauseKey: false,
-    });
-    return { settled: false, reconciled: true };
   }
+
+  const reconciliationReason =
+    cause === "completed" ? "managed_venice_missing_stream_usage" : "managed_venice_stream_settlement_failed";
+  if (typeof params.observedOutputTokens === "number") {
+    const observed = await captureManagedVeniceObservedOutput({
+      userId: params.userId,
+      proxyKeyId: params.proxyKeyId,
+      referenceId: params.referenceId,
+      model: params.model,
+      upstreamStatus: params.upstreamStatus,
+      observedOutputTokens: params.observedOutputTokens,
+      cause,
+      reconciliationReason,
+      source: "managed-venice-internal-settle",
+    });
+    if (observed.outcome === "unfiled") {
+      throw new Error("Managed Venice could not charge or file a usage-less stream");
+    }
+    return {
+      settled: observed.outcome === "captured" || observed.outcome === "already_settled",
+      reconciled: observed.outcome === "filed_for_sweep",
+    };
+  }
+
+  await markManagedVeniceReconciliationRequired({
+    userId: params.userId,
+    proxyKeyId: params.proxyKeyId,
+    referenceId: params.referenceId,
+    reason: reconciliationReason,
+    metadata: { model: params.model, upstreamStatus: params.upstreamStatus, cause },
+    // Upstream succeeded; we just couldn't read a usage frame. The hold is
+    // still held and the stale-hold sweep charges its estimate. Don't brick
+    // the key over a telemetry gap.
+    pauseKey: false,
+  });
+  return { settled: false, reconciled: true };
 }
 
 /** Shared SSE usage-frame extraction (used by the in-Vercel streamer + Worker). */

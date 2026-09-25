@@ -300,7 +300,9 @@ describe("GET /api/cron/managed-venice-reconciliation", () => {
   // The stale-hold sweep captures a pre-request estimate for a 200 chat that
   // never reported usage. That row has no token counts, so re-costing it would
   // "find" the whole charge as an overcharge and refund it.
-  it("does not re-cost or refund a chat the stale-hold sweep captured at an estimate", async () => {
+  // The same goes for a chat charged in the request for the output it
+  // observed because Venice's usage never arrived.
+  it("does not re-cost or refund a chat the sweep or the request charged without Venice's usage", async () => {
     usageRowsForRun = [
       usage({
         id: "ue_swept",
@@ -310,6 +312,18 @@ describe("GET /api/cron/managed-venice-reconciliation", () => {
         actual_cost_micro_usd: 100_000,
         charged_micro_usd: 100_000,
         metadata: { pricingPolicy: "managed_venice_hold_sweep_capture", sweep: { basis: "pre_request_estimate" } },
+      }),
+      usage({
+        id: "ue_observed",
+        reference_id: "ref_observed",
+        prompt_tokens: null,
+        completion_tokens: null,
+        actual_cost_micro_usd: 300_036,
+        charged_micro_usd: 300_036,
+        metadata: {
+          pricingPolicy: "managed_venice_observed_output_capture",
+          observedOutput: { cause: "client_cancelled", observedOutputTokens: 10_000 },
+        },
       }),
       usage({ id: "ue_normal", reference_id: "ref_normal", charged_micro_usd: 2_500 }),
     ];
@@ -327,6 +341,19 @@ describe("GET /api/cron/managed-venice-reconciliation", () => {
     expect(mockCalculateActualChatCost).toHaveBeenCalledTimes(1);
     expect(body.data.refundedCount).toBe(0);
     expect(body.data.totalOverchargeMicroUsd).toBe(0);
-    expect(body.data.sweepEstimateRowsSkipped).toBe(1);
+    expect(body.data.sweepEstimateRowsSkipped).toBe(2);
+  });
+
+  // #167 review: run daily, the sweep held a user's balance for up to two
+  // days. It runs hourly on /api/cron/managed-venice-hold-sweep instead.
+  it("leaves the stale-hold sweep to the hourly hold-sweep cron", async () => {
+    const { sweepStaleManagedVeniceReservations } = jest.requireMock("@/lib/venice/reservation-sweep") as {
+      sweepStaleManagedVeniceReservations: jest.Mock;
+    };
+
+    const response = await GET(req());
+
+    expect(response.status).toBe(200);
+    expect(sweepStaleManagedVeniceReservations).not.toHaveBeenCalled();
   });
 });

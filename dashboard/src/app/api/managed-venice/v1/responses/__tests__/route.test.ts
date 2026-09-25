@@ -1,11 +1,11 @@
 import type { NextRequest } from "next/server";
 import { POST } from "../route";
 import { authorizeManagedVeniceChat } from "@/lib/venice/proxy-chat-core";
-import { captureManagedVeniceChatUsage, markManagedVeniceReconciliationRequired, releaseManagedVeniceChatReservation } from "@/lib/venice/proxy-settlement";
+import { captureManagedVeniceChatUsage, captureManagedVeniceObservedOutput, markManagedVeniceReconciliationRequired, releaseManagedVeniceChatReservationOrFile } from "@/lib/venice/proxy-settlement";
 jest.mock("@/lib/venice/proxy-chat-core", () => ({ authorizeManagedVeniceChat: jest.fn() }));
-jest.mock("@/lib/venice/proxy-settlement", () => ({ captureManagedVeniceChatUsage: jest.fn(), markManagedVeniceReconciliationRequired: jest.fn(), releaseManagedVeniceChatReservation: jest.fn() }));
+jest.mock("@/lib/venice/proxy-settlement", () => ({ captureManagedVeniceChatUsage: jest.fn(), captureManagedVeniceObservedOutput: jest.fn(), managedVeniceUsageCostMicroUsd: jest.fn(), markManagedVeniceReconciliationRequired: jest.fn(), releaseManagedVeniceChatReservationOrFile: jest.fn() }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
-const authorize = jest.mocked(authorizeManagedVeniceChat), capture = jest.mocked(captureManagedVeniceChatUsage), reconcile = jest.mocked(markManagedVeniceReconciliationRequired), release = jest.mocked(releaseManagedVeniceChatReservation);
+const authorize = jest.mocked(authorizeManagedVeniceChat), capture = jest.mocked(captureManagedVeniceChatUsage), observed = jest.mocked(captureManagedVeniceObservedOutput), reconcile = jest.mocked(markManagedVeniceReconciliationRequired), release = jest.mocked(releaseManagedVeniceChatReservationOrFile);
 const originalFetch = global.fetch;
 const usage = { input_tokens: 10, output_tokens: 5, total_tokens: 15 };
 const terminal = { id: "resp_1", status: "completed", usage };
@@ -74,21 +74,33 @@ it("preserves streaming bytes before completion and settles nested usage once", 
   expect(capture).toHaveBeenCalledWith(expect.objectContaining({ usage, endpoint: "/api/v1/responses", referenceId: "reference" }));
   expect(release).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
 });
-it("retains the reservation on cancellation after output; it never refunds an unknown bill", async () => {
+it("charges the observed output on cancellation after output; it never refunds a 200", async () => {
   const source = upstream(), response = await POST(req()), reader = response.body!.getReader();
   source.control().enqueue(frame({ type: "response.output_text.delta", delta: "hi" }));
   await reader.read(); await reader.cancel();
-  expect(reconcile).toHaveBeenCalledTimes(1);
-  expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ reason: "managed_venice_responses_ambiguous_usage", pauseKey: false }));
-  expect(release).not.toHaveBeenCalled(); expect(capture).not.toHaveBeenCalled();
+  expect(observed).toHaveBeenCalledTimes(1);
+  expect(observed).toHaveBeenCalledWith(expect.objectContaining({ referenceId: "reference", cause: "client_cancelled", observedOutputTokens: 1,
+    reconciliationReason: "managed_venice_responses_ambiguous_usage" }));
+  expect(release).not.toHaveBeenCalled(); expect(capture).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
 });
-it.each(["missing", "malformed", "settlement"])("retains a reviewable hold on %s usage", async failure => {
+it.each([["missing", "missing_terminal_usage"], ["malformed", "invalid_or_interrupted_stream"]])("charges the observed output on %s usage", async (failure, cause) => {
   const source = upstream(), response = await POST(req());
-  if (failure === "settlement") capture.mockRejectedValueOnce(new Error("private details"));
-  source.control().enqueue(frame(failure === "missing" ? { type: "response.output_text.delta", delta: "hi" } : { type: "response.completed", response: failure === "malformed" ? { ...terminal, usage: {} } : terminal }));
+  source.control().enqueue(frame(failure === "missing" ? { type: "response.output_text.delta", delta: "hi" } : { type: "response.completed", response: { ...terminal, usage: {} } }));
   source.control().close();
   await response.text().catch(() => undefined);
-  expect(reconcile).toHaveBeenCalledTimes(1); expect(release).not.toHaveBeenCalled();
+  expect(observed).toHaveBeenCalledTimes(1); expect(observed).toHaveBeenCalledWith(expect.objectContaining({ cause }));
+  expect(release).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
+});
+it("files the reported usage for the sweep when settling it throws", async () => {
+  const source = upstream(), response = await POST(req());
+  capture.mockRejectedValueOnce(new Error("private details"));
+  source.control().enqueue(frame({ type: "response.completed", response: terminal }));
+  source.control().close();
+  await response.text().catch(() => undefined);
+  expect(reconcile).toHaveBeenCalledTimes(1);
+  expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ reason: "managed_venice_responses_ambiguous_usage", pauseKey: false,
+    metadata: expect.objectContaining({ cause: "settlement_failed" }) }));
+  expect(release).not.toHaveBeenCalled(); expect(observed).not.toHaveBeenCalled();
 });
 it("supports nonstreaming terminal usage and releases only explicit rejection", async () => {
   jest.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(terminal)));
