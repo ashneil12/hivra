@@ -1445,13 +1445,16 @@ describe("StripeWebhookService", () => {
   // Helper: capture every hermes_instances UPDATE payload while letting the
   // chain resolve. Mirrors the suspend/resume query shape
   // (.update().eq().neq()/.in().not().is().select()).
-  function mockInstanceUpdateCapture(rows: Array<{ id: string }> = [{ id: "inst_1" }]) {
+  function mockInstanceUpdateCapture(
+    rows: Array<{ id: string }> = [{ id: "inst_1" }],
+    subscriptionRow: Record<string, unknown> = { stripe_subscription_id: "sub_1" }
+  ) {
     const payloads: Array<Record<string, unknown>> = [];
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       const builder = createMockBuilder();
       if (table === "hermes_subscriptions") {
         builder.maybeSingle.mockImplementation(() =>
-          Promise.resolve({ data: { stripe_subscription_id: "sub_1" } })
+          Promise.resolve({ data: subscriptionRow })
         );
       }
       if (table === "hermes_instances") {
@@ -1465,6 +1468,17 @@ describe("StripeWebhookService", () => {
       return builder;
     });
     return payloads;
+  }
+
+  // Invoice events only act on the hermes_subscriptions row bound to that
+  // exact Stripe subscription, so their fixtures carry one.
+  function boundSubscriptionRow(subscriptionId: string): Record<string, unknown> {
+    return {
+      plan: "operator",
+      status: "active",
+      grace_period_ends_at: null,
+      stripe_subscription_id: subscriptionId,
+    };
   }
 
   describe("handleSubscriptionDeleted", () => {
@@ -1523,7 +1537,7 @@ describe("StripeWebhookService", () => {
         id: "sub_pf",
         metadata: { user_id: "user_pf" },
       });
-      const payloads = mockInstanceUpdateCapture();
+      const payloads = mockInstanceUpdateCapture(undefined, boundSubscriptionRow("sub_pf"));
 
       await StripeWebhookService.handlePaymentFailed({
         subscription: "sub_pf",
@@ -1564,7 +1578,7 @@ describe("StripeWebhookService", () => {
         id: "sub_pf2",
         metadata: { user_id: "user_pf2" },
       });
-      const payloads = mockInstanceUpdateCapture();
+      const payloads = mockInstanceUpdateCapture(undefined, boundSubscriptionRow("sub_pf2"));
 
       await StripeWebhookService.handlePaymentFailed({
         subscription: "sub_pf2",
@@ -1589,6 +1603,7 @@ describe("StripeWebhookService", () => {
         id: "sub_pf3",
         metadata: { user_id: "user_pf3" },
       });
+      mockInstanceUpdateCapture(undefined, boundSubscriptionRow("sub_pf3"));
       const invoice = {
         id: "in_pf3",
         subscription: "sub_pf3",
@@ -1613,7 +1628,7 @@ describe("StripeWebhookService", () => {
       (maybeSendPaymentFailedRecoveryEmail as jest.Mock).mockRejectedValueOnce(
         new Error("resend exploded")
       );
-      const payloads = mockInstanceUpdateCapture();
+      const payloads = mockInstanceUpdateCapture(undefined, boundSubscriptionRow("sub_pf4"));
 
       await expect(
         StripeWebhookService.handlePaymentFailed({
@@ -1690,7 +1705,11 @@ describe("StripeWebhookService", () => {
         if (table === "hermes_subscriptions") {
           // No prior anchor: an active row transitioning to past_due.
           builder.maybeSingle.mockResolvedValue({
-            data: { status: "active", grace_period_ends_at: null },
+            data: {
+              ...boundSubscriptionRow("sub_first"),
+              status: "active",
+              grace_period_ends_at: null,
+            },
             error: null,
           });
           builder.update.mockImplementation((payload: Record<string, unknown>) => {
@@ -1733,7 +1752,11 @@ describe("StripeWebhookService", () => {
         const builder = createMockBuilder();
         if (table === "hermes_subscriptions") {
           builder.maybeSingle.mockResolvedValue({
-            data: { status: "past_due", grace_period_ends_at: EXISTING_ANCHOR },
+            data: {
+              ...boundSubscriptionRow("sub_retry"),
+              status: "past_due",
+              grace_period_ends_at: EXISTING_ANCHOR,
+            },
             error: null,
           });
           builder.update.mockImplementation((payload: Record<string, unknown>) => {
@@ -1870,7 +1893,7 @@ describe("StripeWebhookService", () => {
         metadata: { user_id: "user_pf_apple" },
       });
       (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce(APPLE_PRO);
-      const payloads = mockInstanceUpdateCapture();
+      const payloads = mockInstanceUpdateCapture(undefined, boundSubscriptionRow("sub_pf_apple"));
 
       await StripeWebhookService.handlePaymentFailed({
         subscription: "sub_pf_apple",
@@ -1990,7 +2013,7 @@ describe("StripeWebhookService", () => {
         id: "sub_ok",
         metadata: { user_id: "user_ok" },
       });
-      const payloads = mockInstanceUpdateCapture();
+      const payloads = mockInstanceUpdateCapture(undefined, boundSubscriptionRow("sub_ok"));
 
       await StripeWebhookService.handleInvoicePaid({
         subscription: "sub_ok",
@@ -2019,6 +2042,10 @@ describe("StripeWebhookService", () => {
       (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
         const builder = createMockBuilder();
         if (table === "hermes_subscriptions") {
+          builder.maybeSingle.mockResolvedValue({
+            data: boundSubscriptionRow("sub_renew"),
+            error: null,
+          });
           builder.update.mockImplementation((payload: Record<string, unknown>) => {
             subscriptionUpdate = payload;
             return builder;
@@ -2036,6 +2063,339 @@ describe("StripeWebhookService", () => {
         grace_period_ends_at: null,
         current_period_start: new Date(1000 * 1000).toISOString(),
         current_period_end: new Date(2000 * 1000).toISOString(),
+      });
+    });
+  });
+
+  // invoice.paid / invoice.payment_failed carry no lane marker of their own:
+  // the lane lives on the subscription's metadata, which the handlers only see
+  // after retrieving it. These events used to write hermes_subscriptions by
+  // user id alone, so a Workspace Cloud invoice could activate (or suspend) a
+  // Hivra plan row it had nothing to do with. Fixtures cover both lanes and an
+  // abandoned Hivra checkout row that already carries a paid plan's limits.
+  describe("invoice events stay in their billing lane", () => {
+    type RecordedWrite = {
+      table: string;
+      op: "update" | "upsert";
+      payload: Record<string, unknown>;
+      filters: Array<[string, unknown]>;
+    };
+
+    const USER = "user_lane";
+
+    // Pending row written by /api/billing/subscribe for a Fleet checkout that
+    // was never paid: it already carries Fleet's limits, only status gates it.
+    const ABANDONED_FLEET_ROW = {
+      plan: "fleet",
+      status: "pending",
+      stripe_subscription_id: null,
+      grace_period_ends_at: null,
+      instance_limit: PLANS.fleet.maxAgents,
+    };
+    // Same abandoned checkout, on a row that kept an earlier Hivra
+    // subscription id (cancellation keeps plan + sub id on the row).
+    const ABANDONED_FLEET_ROW_WITH_OLD_SUB = {
+      ...ABANDONED_FLEET_ROW,
+      stripe_subscription_id: "sub_hivra_old",
+    };
+    const ACTIVE_OPERATOR_ROW = {
+      plan: "operator",
+      status: "active",
+      stripe_subscription_id: "sub_hivra",
+      grace_period_ends_at: null,
+      instance_limit: PLANS.operator.maxAgents,
+    };
+
+    function workspaceCloudSubscription(
+      status: Stripe.Subscription.Status
+    ): Stripe.Subscription {
+      return {
+        id: "sub_wc",
+        status,
+        customer: "cus_shared",
+        // Exactly what /api/workspace-cloud/billing/subscribe stamps.
+        metadata: {
+          user_id: USER,
+          plan: "ws_cloud_pro",
+          cadence: "monthly",
+          surface: "workspace_cloud",
+        },
+        items: {
+          data: [
+            {
+              price: { id: "price_shared_operator" },
+              current_period_start: 1000,
+              current_period_end: 2000,
+            },
+          ],
+        },
+      } as unknown as Stripe.Subscription;
+    }
+
+    function hivraSubscription(
+      id: string,
+      plan: string,
+      status: Stripe.Subscription.Status = "active"
+    ): Stripe.Subscription {
+      return {
+        id,
+        status,
+        customer: "cus_shared",
+        metadata: { user_id: USER, plan, cadence: "monthly" },
+        items: {
+          data: [
+            {
+              price: { id: "price_shared_operator" },
+              current_period_start: 1000,
+              current_period_end: 2000,
+            },
+          ],
+        },
+      } as unknown as Stripe.Subscription;
+    }
+
+    function mockBillingTables(
+      hermesRow: Record<string, unknown> | null,
+      readError: { message: string } | null = null
+    ) {
+      const writes: RecordedWrite[] = [];
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = createMockBuilder();
+        let current: RecordedWrite | null = null;
+        const record =
+          (op: RecordedWrite["op"]) => (payload: Record<string, unknown>) => {
+            current = { table, op, payload, filters: [] };
+            writes.push(current);
+            return builder;
+          };
+        builder.update.mockImplementation(record("update"));
+        builder.upsert.mockImplementation(record("upsert"));
+        builder.eq.mockImplementation((column: string, value: unknown) => {
+          current?.filters.push([column, value]);
+          return builder;
+        });
+        if (table === "hermes_subscriptions") {
+          builder.maybeSingle.mockImplementation(() =>
+            Promise.resolve({ data: readError ? null : hermesRow, error: readError })
+          );
+        }
+        return builder;
+      });
+      return {
+        writes,
+        to: (table: string) => writes.filter((w) => w.table === table),
+      };
+    }
+
+    function retrieveReturns(subscription: Stripe.Subscription) {
+      const stripe = getStripe();
+      (stripe.subscriptions.retrieve as jest.Mock).mockResolvedValue(subscription);
+    }
+
+    function invoiceFor(subscriptionId: string): Stripe.Invoice {
+      return { id: `in_${subscriptionId}`, subscription: subscriptionId } as unknown as Stripe.Invoice;
+    }
+
+    describe("Workspace Cloud subscription", () => {
+      it.each([
+        ["with no Stripe subscription", ABANDONED_FLEET_ROW],
+        ["that kept an old Hivra subscription id", ABANDONED_FLEET_ROW_WITH_OLD_SUB],
+      ])(
+        "invoice.paid never activates an abandoned Hivra Fleet row %s",
+        async (_label, hermesRow) => {
+          retrieveReturns(workspaceCloudSubscription("active"));
+          const db = mockBillingTables(hermesRow);
+
+          await StripeWebhookService.handleInvoicePaid(invoiceFor("sub_wc"));
+
+          expect(db.to("hermes_subscriptions")).toEqual([]);
+          expect(db.to("hermes_instances")).toEqual([]);
+          expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
+          // The payment still lands on the lane's own row.
+          expect(db.to("workspace_cloud_subscriptions")).toEqual([
+            expect.objectContaining({
+              op: "upsert",
+              payload: expect.objectContaining({
+                user_id: USER,
+                plan: "ws_cloud_pro",
+                status: "active",
+                stripe_subscription_id: "sub_wc",
+              }),
+            }),
+          ]);
+        }
+      );
+
+      it("invoice.payment_failed never marks the Hivra row past_due or suspends Hivra computers", async () => {
+        retrieveReturns(workspaceCloudSubscription("past_due"));
+        const db = mockBillingTables(ACTIVE_OPERATOR_ROW);
+
+        await StripeWebhookService.handlePaymentFailed(invoiceFor("sub_wc"));
+
+        expect(db.to("hermes_subscriptions")).toEqual([]);
+        expect(db.to("hermes_instances")).toEqual([]);
+        expect(maybeSendPaymentFailedRecoveryEmail).not.toHaveBeenCalled();
+        expect(db.to("workspace_cloud_subscriptions")).toEqual([
+          expect.objectContaining({
+            op: "upsert",
+            payload: expect.objectContaining({
+              user_id: USER,
+              status: "past_due",
+              stripe_subscription_id: "sub_wc",
+            }),
+          }),
+        ]);
+      });
+
+      it("invoice.payment_failed on a canceled lane subscription cancels only the lane row", async () => {
+        retrieveReturns(workspaceCloudSubscription("canceled"));
+        const deletedSpy = jest.spyOn(StripeWebhookService, "handleSubscriptionDeleted");
+        const db = mockBillingTables(ACTIVE_OPERATOR_ROW);
+
+        try {
+          await StripeWebhookService.handlePaymentFailed(invoiceFor("sub_wc"));
+
+          expect(deletedSpy).not.toHaveBeenCalled();
+          expect(db.to("hermes_subscriptions")).toEqual([]);
+          expect(db.to("hermes_instances")).toEqual([]);
+          expect(db.to("workspace_cloud_subscriptions")).toEqual([
+            expect.objectContaining({
+              op: "update",
+              payload: expect.objectContaining({ status: "canceled" }),
+              filters: [["stripe_subscription_id", "sub_wc"]],
+            }),
+          ]);
+        } finally {
+          deletedSpy.mockRestore();
+        }
+      });
+    });
+
+    describe("Hivra subscription", () => {
+      it.each([
+        ["an abandoned row with no subscription", ABANDONED_FLEET_ROW],
+        ["a row bound to another subscription", ACTIVE_OPERATOR_ROW],
+      ])(
+        "invoice.paid leaves %s untouched",
+        async (_label, hermesRow) => {
+          retrieveReturns(hivraSubscription("sub_hivra_unbound", "fleet"));
+          const db = mockBillingTables(hermesRow);
+
+          await StripeWebhookService.handleInvoicePaid(invoiceFor("sub_hivra_unbound"));
+
+          expect(db.to("hermes_subscriptions")).toEqual([]);
+          expect(db.to("hermes_instances")).toEqual([]);
+          expect(log.warn).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+              failureType: "invoice_subscription_not_bound",
+              subscriptionId: "sub_hivra_unbound",
+              userId: USER,
+            })
+          );
+        }
+      );
+
+      it("invoice.paid does not activate a bound row that carries another plan's limits", async () => {
+        // The abandoned Fleet checkout kept the old Operator subscription id.
+        // Paying that Operator subscription must not switch the Fleet limits
+        // on; customer.subscription.updated rewrites the plan from Stripe.
+        retrieveReturns(hivraSubscription("sub_hivra_old", "operator"));
+        const db = mockBillingTables(ABANDONED_FLEET_ROW_WITH_OLD_SUB);
+
+        await StripeWebhookService.handleInvoicePaid(invoiceFor("sub_hivra_old"));
+
+        expect(db.to("hermes_subscriptions")).toEqual([]);
+        expect(db.to("hermes_instances")).toEqual([]);
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            failureType: "invoice_paid_plan_mismatch",
+            subscriptionId: "sub_hivra_old",
+            rowPlan: "fleet",
+            subscriptionPlan: "operator",
+          })
+        );
+      });
+
+      it("invoice.paid activates only the row bound to that exact subscription", async () => {
+        retrieveReturns(hivraSubscription("sub_hivra", "operator"));
+        const db = mockBillingTables({ ...ACTIVE_OPERATOR_ROW, status: "past_due" });
+
+        await StripeWebhookService.handleInvoicePaid(invoiceFor("sub_hivra"));
+
+        expect(db.to("hermes_subscriptions")).toEqual([
+          expect.objectContaining({
+            op: "update",
+            payload: expect.objectContaining({ status: "active", grace_period_ends_at: null }),
+            filters: expect.arrayContaining([
+              ["user_id", USER],
+              ["stripe_subscription_id", "sub_hivra"],
+            ]),
+          }),
+        ]);
+        // Payment recovered: the bound row's billing-suspended computers resume.
+        expect(
+          db.to("hermes_instances").find((w) => w.payload.entitlement_state === "ok")
+        ).toBeTruthy();
+        expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: USER, planKey: "operator", subscriptionId: "sub_hivra" })
+        );
+        expect(db.to("workspace_cloud_subscriptions")).toEqual([]);
+      });
+
+      it("invoice.payment_failed for a subscription not bound to the row leaves the row and computers alone", async () => {
+        retrieveReturns(hivraSubscription("sub_hivra_stale", "operator", "past_due"));
+        const db = mockBillingTables(ACTIVE_OPERATOR_ROW);
+
+        await StripeWebhookService.handlePaymentFailed(invoiceFor("sub_hivra_stale"));
+
+        expect(db.to("hermes_subscriptions")).toEqual([]);
+        expect(db.to("hermes_instances")).toEqual([]);
+        expect(maybeSendPaymentFailedRecoveryEmail).not.toHaveBeenCalled();
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            failureType: "invoice_subscription_not_bound",
+            subscriptionId: "sub_hivra_stale",
+            userId: USER,
+          })
+        );
+      });
+
+      it("a failed row read throws for Stripe redelivery instead of dropping a real renewal", async () => {
+        retrieveReturns(hivraSubscription("sub_hivra", "operator"));
+        const db = mockBillingTables(null, { message: "connection reset" });
+
+        await expect(
+          StripeWebhookService.handleInvoicePaid(invoiceFor("sub_hivra"))
+        ).rejects.toThrow("connection reset");
+
+        expect(db.to("hermes_subscriptions")).toEqual([]);
+        expect(db.to("hermes_instances")).toEqual([]);
+      });
+
+      it("invoice.payment_failed marks only the row bound to that exact subscription past_due", async () => {
+        retrieveReturns(hivraSubscription("sub_hivra", "operator", "past_due"));
+        const db = mockBillingTables(ACTIVE_OPERATOR_ROW);
+
+        await StripeWebhookService.handlePaymentFailed(invoiceFor("sub_hivra"));
+
+        expect(db.to("hermes_subscriptions")).toEqual([
+          expect.objectContaining({
+            op: "update",
+            payload: expect.objectContaining({ status: "past_due" }),
+            filters: expect.arrayContaining([
+              ["user_id", USER],
+              ["stripe_subscription_id", "sub_hivra"],
+            ]),
+          }),
+        ]);
+        expect(
+          db.to("hermes_instances").find((w) => w.payload.entitlement_state === "suspended")
+        ).toBeTruthy();
+        expect(maybeSendPaymentFailedRecoveryEmail).toHaveBeenCalledTimes(1);
+        expect(db.to("workspace_cloud_subscriptions")).toEqual([]);
       });
     });
   });
