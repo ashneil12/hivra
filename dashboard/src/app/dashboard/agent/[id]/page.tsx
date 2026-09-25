@@ -24,7 +24,7 @@ import {
   type AgentSurfaceId,
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
-import { manageAwaitsOperation } from "@/lib/hivra/manage-sections";
+import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
@@ -854,9 +854,13 @@ export default function AgentPage() {
     });
   }, [agent]);
 
-  // Load + poll while provisioning, and while another operation holds the
-  // computer (a desktop preparation, say): Manage's map blocks its controls
-  // until that ends, and only a fresh read unblocks them.
+  // Load + poll. Converging (provisioning, or another operation holding the
+  // computer, such as a desktop preparation) reads every few seconds: on
+  // Hivra-managed computers this read is what completes the operation, and
+  // Manage's map blocks its controls until a fresh read unblocks them. A
+  // settled page keeps reading slowly while visible, because a Start or Stop
+  // can come from another tab, the computer list or the API; a page that
+  // stopped at Error or Stopped left that operation open until a reload.
   //
   // getAgent returns null for BOTH "not found" and transient failures
   // (network blip, cold start, auth hiccup) — a single
@@ -866,18 +870,29 @@ export default function AgentPage() {
   // after the initial load fails repeatedly.
   useEffect(() => {
     let alive = true;
+    let reading = false;
     let initialFailures = 0;
+    const visible = () => document.visibilityState === "visible";
+    const schedule = (delay: number | null) => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      timerRef.current = delay == null ? null : window.setTimeout(() => void tick(), delay);
+    };
     const tick = async () => {
-      const a = await getAgent(id);
+      if (reading) return;
+      reading = true;
+      timerRef.current = null;
+      let a: HivraAgent | null;
+      try { a = await getAgent(id); } finally { reading = false; }
       if (!alive) return;
       if (a) {
         initialFailures = 0;
-        setAgent(a);
+        const fresh = a;
+        // An unchanged settled read keeps the same object so effects keyed
+        // on the agent don't re-run every poll.
+        setAgent((previous) => previous && JSON.stringify(previous) === JSON.stringify(fresh) ? previous : fresh);
         setStatusObservation({ agentId: id, receivedAt: Date.now(), unavailable: false });
         setLoaded(true);
-        if (a.status === "provisioning" || manageAwaitsOperation(a.manage)) {
-          timerRef.current = window.setTimeout(tick, 5000);
-        }
+        schedule(nextAgentStatusPollMs(fresh, visible()));
         return;
       }
       const last = agentRef.current;
@@ -885,25 +900,31 @@ export default function AgentPage() {
         setStatusObservation((previous) => previous?.agentId === id
           ? { ...previous, unavailable: true }
           : null);
-        // Transient blip: keep the stale agent rendered; keep polling if the
-        // flip is what we're waiting on.
-        if (last.status === "provisioning" || manageAwaitsOperation(last.manage)) {
-          timerRef.current = window.setTimeout(tick, 5000);
-        }
+        // Transient blip: keep the stale agent rendered and keep reading.
+        schedule(nextAgentStatusPollMs(last, visible()));
         return;
       }
       initialFailures += 1;
       if (initialFailures < 3) {
-        timerRef.current = window.setTimeout(tick, 2000);
+        schedule(2000);
         return;
       }
       setAgent(null);
       setLoaded(true);
     };
+    // A hidden settled page pauses; coming back reads at once.
+    const onVisibility = () => {
+      if (!visible() || reading) return;
+      schedule(null);
+      void tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     void tick();
     return () => {
       alive = false;
+      document.removeEventListener("visibilitychange", onVisibility);
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
     };
   }, [id, reloadKey]);
 
@@ -1275,7 +1296,7 @@ export default function AgentPage() {
             {activity.freshLaunch && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
           </div>
         ) : agent.status === "error" ? (
-          <Stub title="Provisioning failed" body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
+          <Stub title={agent.provisioned_at ? "Computer isn’t ready" : "Provisioning failed"} body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
         ) : effectiveTab === "aeon" ? (
           !agent.chat_url ? (
             <Stub title="Dashboard not reachable" body="The computer is up but its dashboard isn't connected yet. Give it a moment." />
