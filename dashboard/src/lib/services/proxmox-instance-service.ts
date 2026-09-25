@@ -1897,6 +1897,12 @@ export async function runProxmoxHostScriptWithStdin(
   }
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const command = `/bin/bash -c "$(printf '%s' '${encoded}' | /usr/bin/base64 --decode)"`;
+  // A root login runs this command as one argument to its shell, and Linux
+  // refuses any one argument of 128 KiB or more: a script near 96 KiB would
+  // fail on the host as "Argument list too long".
+  if (Buffer.byteLength(command) > 128 * 1024 - 1) {
+    return { ok: false, stdout: "", stderr: "", error: "Invalid Proxmox host script or stdin" };
+  }
   return runProxmoxHostInvocation(
     { loginCommand: command, loginInput: stdin, script, stdin },
     env,

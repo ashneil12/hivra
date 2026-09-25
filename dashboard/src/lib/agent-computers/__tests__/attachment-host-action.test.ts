@@ -16,7 +16,7 @@ const target = { operationId: expected.identity.operationId, computerId: expecte
   vmid: 1234, guestIp: "10.241.0.44", bindingTag: "hivra-bind-" + "a".repeat(32) };
 
 it.each(["fetch", "stage", "observe"] as const)("checks the VM and starts the %s step inside the allocation lock, then waits outside it", action => {
-  const script = buildAttachmentHostActionScript(action, target, expected);
+  const { script, stdin } = buildAttachmentHostActionScript(action, target, expected);
   expect(spawnSync("bash", ["-n"], { input: script, encoding: "utf8", timeout: 5000 }).status).toBe(0);
   expect(script).toContain('fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)');
   expect(script).toContain('VMID=1234');
@@ -28,10 +28,12 @@ it.each(["fetch", "stage", "observe"] as const)("checks the VM and starts the %s
     `await_vmid_bound_guest_exec "$HIVRA_GUEST_PID" ${ATTACHMENT_ACTION_TIMEOUTS[action].guestSeconds}`));
   expect(script).toContain('qm guest exec "$VMID" --synchronous 0 --pass-stdin 1 -- "$@"');
   expect(script.match(/qm\(\) \{ command timeout/g)).toHaveLength(1);
-  expect(script).toContain(`"action":"${action}"`);
-  expect(script).toContain(`"bootId":"${expected.bootId}"`);
+  // The bundle is the script's own stdin stream, never inside the script.
+  expect(JSON.parse(stdin)).toMatchObject({ action, bootId: expected.bootId });
+  expect(script).not.toContain(`"bootId":"${expected.bootId}"`);
+  expect(script).toContain("<&8)");
   expect(script).not.toContain('ssh ');
-  expect(Buffer.byteLength(script)).toBeLessThan(120_000);
+  expect(Buffer.byteLength(script)).toBeLessThan(32 * 1024);
 });
 
 it("rejects cross-target and malformed requests before producing a script", () => {
