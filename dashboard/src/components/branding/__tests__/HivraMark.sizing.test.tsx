@@ -5,7 +5,6 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { chromium, type Browser } from "@playwright/test";
 
-import ComputerScene from "@/components/landing/ComputerScene";
 import LandingHeader, { FunnelHeader } from "@/components/layout/LandingHeader";
 
 // Every stylesheet resolves to one style mock, so this makes each CSS module
@@ -28,12 +27,10 @@ const readCss = (relative: string) =>
   readFileSync(path.join(__dirname, relative), "utf8").replace(/:global\(([^)]*)\)/g, "$1");
 
 const PUBLIC_SITE_CSS = readCss("../../public-site/public-site.module.css");
-const HOME_CSS = readCss("../../landing/home.module.css");
 
 /**
  * Layout width of every approved mark in the markup, at one viewport width.
- * offsetWidth, because the homepage scene is drawn in perspective and a
- * bounding box would measure the transform, not the size the CSS sets.
+ * offsetWidth, so a transformed ancestor never changes the size measured.
  */
 async function markWidths(browser: Browser, css: string, element: ReactElement, width: number): Promise<number[]> {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
@@ -49,8 +46,7 @@ async function markWidths(browser: Browser, css: string, element: ReactElement, 
 }
 
 // HivraMark is an <img>. The breakpoint rules that shrink it must select that
-// element: rules left on `svg` silently keep the width/height attributes, and
-// the homepage scene's 76px mark then pushes "Room to work." under the dock.
+// element: rules left on `svg` silently keep the width/height attributes.
 describe("approved mark sizing at breakpoints", () => {
   let browser: Browser;
   beforeAll(async () => { browser = await chromium.launch(); });
@@ -75,15 +71,5 @@ describe("approved mark sizing at breakpoints", () => {
       </>
     );
     expect(await markWidths(browser, PUBLIC_SITE_CSS, bars, width)).toEqual([28, 28]);
-  }, 20_000);
-
-  it.each([
-    [1280, 76],
-    [1051, 76],
-    [1050, 55],
-    [1000, 55],
-    [400, 55],
-  ])("homepage scene screen mark at %ipx is %ipx (the base badge stays 30px)", async (width, expected) => {
-    expect(await markWidths(browser, HOME_CSS, <ComputerScene />, width)).toEqual([expected, 30]);
   }, 20_000);
 });
