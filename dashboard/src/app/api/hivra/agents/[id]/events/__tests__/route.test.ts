@@ -42,8 +42,9 @@ beforeEach(() => {
   mockAuth.mockResolvedValue({ userId: "owner" });
   mockAgent = { id: ID };
   mockEventsError = null;
+  // What the query returns: the event, its time and (aliased) the failure's reason.
   mockEvents = [
-    { event: "failed", created_at: "2026-09-24T12:00:00.000Z", detail: { reason: "provisioner_reported_failure", proxmox_host: "fixturenode11", error: "raw host text" } },
+    { event: "failed", created_at: "2026-09-24T12:00:00.000Z", reason: "provisioner_reported_failure", detail: { reason: "provisioner_reported_failure", proxmox_host: "fixturenode11", error: "raw host text" } },
     { event: "runtime_updated", created_at: "2026-09-24T11:00:00.000Z", detail: { inPlace: true } },
     { event: "restarted", created_at: "2026-09-24T10:00:00.000Z", detail: {} },
   ];
@@ -63,8 +64,30 @@ describe("GET /api/hivra/agents/[id]/events", () => {
     const text = JSON.stringify(body);
     expect(text).not.toContain("fixturenode11");
     expect(text).not.toContain("raw host text");
-    // The query asks for the event and time only.
-    expect(calls.find((call) => call.table === "hivra_agent_events" && call.method === "select")?.args[0]).toBe("event, created_at");
+    expect(text).not.toContain("provisioner_reported_failure");
+    // The query asks for the event, its time and a failure's reason, never the whole detail.
+    expect(calls.find((call) => call.table === "hivra_agent_events" && call.method === "select")?.args[0]).toBe("event, created_at, reason:detail->>reason");
+  });
+
+  // Regression: every failure read "Didn't come online", including a delete
+  // that failed and left the computer in place.
+  it.each([
+    ["delete_destroy_failed", "Couldn't delete"],
+    ["cpu_limit_apply", "Setup failed"],
+    ["stuck_provisioning_vm_missing", "Didn't come online"],
+    ["stale_operation_provider_ownership_mismatch", "Something went wrong"],
+    [null, "Something went wrong"],
+  ])("labels a failure with reason %s as %s, without sending the reason", async (reason, label) => {
+    mockEvents = [{ event: "failed", created_at: "2026-09-24T12:00:00.000Z", reason }];
+    const body = await (await get()).json();
+    expect(body.data.events).toEqual([{ event: "failed", createdAt: "2026-09-24T12:00:00.000Z", label }]);
+    if (reason) expect(JSON.stringify(body)).not.toContain(reason);
+  });
+
+  it("never lets a reason on another event change its label", async () => {
+    mockEvents = [{ event: "restarted", created_at: "2026-09-24T12:00:00.000Z", reason: "delete_destroy_failed" }];
+    const body = await (await get()).json();
+    expect(body.data.events).toEqual([{ event: "restarted", createdAt: "2026-09-24T12:00:00.000Z", label: "Restarted" }]);
   });
 
   it("scopes both reads to the signed-in owner and reads at most 20 lifecycle events, newest first", async () => {
