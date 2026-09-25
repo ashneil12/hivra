@@ -8,6 +8,7 @@ import { parseAttachmentGuestResult, snapshotAttachmentGuestExpectation,
   type AttachmentGuestResult, type ExpectedAttachmentGuestResult } from "./attachment-guest-result";
 import { ATTACHMENT_ACTION_TIMEOUTS, buildAttachmentHostActionScript, type AttachmentGuestAction } from "./attachment-host-action";
 import { parseAttachmentTargetRefusal, parseGuestStepRefusal, type AttachmentTargetRefusal } from "./attachment-host-observation";
+import { logAttachmentTransportFailure } from "./attachment-transport-diagnostic";
 
 type Dependencies = {
   resolveContext: typeof resolveHivraAgentExecutionContext;
@@ -64,7 +65,9 @@ export async function executeAttachmentGuestAction(
       const refused = parseAttachmentTargetRefusal(result.stdout);
       if (refused) return { ok: false, code: "target_refused", reason: refused };
       const named = parseGuestStepRefusal(result.stdout, ATTACHMENT_STAGING_REFUSALS);
-      return named ? { ok: false, code: "guest_refused", reason: named } : { ok: false, code: "transport_failed" };
+      if (named) return { ok: false, code: "guest_refused", reason: named };
+      logAttachmentTransportFailure(action, { sourceId, vmid: agent.vmid }, result);
+      return { ok: false, code: "transport_failed" };
     }
     if (action === "fetch") {
       const artifact = parseAttachmentArtifactResult(result.stdout, expected);
@@ -72,5 +75,8 @@ export async function executeAttachmentGuestAction(
     }
     const staged = parseAttachmentGuestResult(result.stdout, expected);
     return staged ? { ok: true, action, staged } : { ok: false, code: "invalid_result" };
-  } catch { return { ok: false, code: "transport_failed" }; }
+  } catch (error) {
+    logAttachmentTransportFailure(action, { sourceId, vmid: agent.vmid }, error);
+    return { ok: false, code: "transport_failed" };
+  }
 }
