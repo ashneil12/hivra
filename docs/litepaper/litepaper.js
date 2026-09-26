@@ -81,6 +81,33 @@
     { passive: true },
   );
 
+  // Wrap each word in a mask so a scene can raise it into place. The words
+  // read and look exactly the same when nothing animates.
+  function splitWords(element) {
+    if (!element || element.classList.contains("split-words")) return;
+    element.classList.add("split-words");
+    [...element.childNodes].forEach((node) => {
+      if (node.nodeType !== Node.TEXT_NODE) return;
+      const fragment = document.createDocumentFragment();
+      node.textContent.split(/(\s+)/).forEach((part) => {
+        if (!part) return;
+        if (/^\s+$/.test(part)) {
+          fragment.append(part);
+          return;
+        }
+        const word = document.createElement("span");
+        const inner = document.createElement("span");
+        word.className = "w";
+        inner.className = "wi";
+        inner.textContent = part;
+        word.append(inner);
+        fragment.append(word);
+      });
+      node.replaceWith(fragment);
+    });
+  }
+  all(".passage-room, .passage-decide").forEach(splitWords);
+
   function refreshLayout() {
     if (!motionAvailable || refreshFrame) return;
     refreshFrame = requestAnimationFrame(() => {
@@ -314,19 +341,136 @@
     }),
   );
 
-  all("[data-boundary]").forEach((button) =>
-    button.addEventListener("click", () => {
-      const separated = button.dataset.boundary === "separate";
-      const lab = query(".boundary-lab");
-      if (lab) lab.dataset.separated = String(separated);
-      all("[data-boundary]").forEach((control) => {
+  // The boundary lab: the three setups from the "Try it" copy. Lines show what
+  // sits within the agent's reach and stop where a boundary cuts them off.
+  const lab = query(".boundary-lab");
+  if (lab) {
+    const svg = query(".reach-map", lab);
+    const agent = query(".agent-core", lab);
+    const gate = query(".boundary-gate", lab);
+    const items = all(".lab-item", lab);
+    const readout = query(".lab-readout", lab);
+    const NS = "http://www.w3.org/2000/svg";
+    const lines = items.map(() => {
+      const line = document.createElementNS(NS, "path");
+      const cut = document.createElementNS(NS, "path");
+      cut.setAttribute("class", "cut");
+      svg.append(line, cut);
+      return { line, cut };
+    });
+    const statusFor = (mode, resource) =>
+      mode === "shared"
+        ? "Beside the agent"
+        : mode === "project" && resource === "project"
+          ? "Shared with the agent"
+          : "Outside its computer";
+    let followUntil = 0;
+    let followFrame = 0;
+    let demo = [];
+    const centre = (element, box) => {
+      const rect = element.getBoundingClientRect();
+      return [
+        rect.left + rect.width / 2 - box.left,
+        rect.top + rect.height / 2 - box.top,
+      ];
+    };
+    function drawReach() {
+      const box = lab.getBoundingClientRect();
+      if (!box.width) return;
+      svg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+      const [ax, ay] = centre(agent, box);
+      const gateX = gate.getBoundingClientRect().left - box.left + 7;
+      const mode = lab.dataset.mode;
+      items.forEach((item, index) => {
+        const [x, y] = centre(item, box);
+        const { line, cut } = lines[index];
+        const open =
+          mode === "shared" ||
+          (mode === "project" && item.dataset.resource === "project");
+        if (open || ax <= gateX || x >= gateX) {
+          line.setAttribute("class", open ? "reach" : "blocked is-hidden");
+          line.setAttribute("d", `M${ax} ${ay}L${x} ${y}`);
+          cut.classList.add("is-hidden");
+          return;
+        }
+        // The line runs from the agent to the boundary and stops there.
+        const cy = ay + ((y - ay) * (ax - gateX)) / (ax - x);
+        line.setAttribute("class", "blocked");
+        line.setAttribute("d", `M${ax} ${ay}L${gateX} ${cy}`);
+        cut.setAttribute("d", `M${gateX} ${cy - 6}L${gateX} ${cy + 6}`);
+        cut.classList.remove("is-hidden");
+      });
+    }
+    function followReach(duration = 1000) {
+      followUntil = performance.now() + duration;
+      if (followFrame) return;
+      const step = (now) => {
+        drawReach();
+        followFrame = now < followUntil ? requestAnimationFrame(step) : 0;
+      };
+      followFrame = requestAnimationFrame(step);
+    }
+    function setLabMode(mode) {
+      lab.dataset.mode = mode;
+      all("[data-boundary]").forEach((control) =>
         control.setAttribute(
           "aria-pressed",
-          String(control.dataset.boundary === button.dataset.boundary),
-        );
+          String(control.dataset.boundary === mode),
+        ),
+      );
+      items.forEach((item) => {
+        item.dataset.status = statusFor(mode, item.dataset.resource);
       });
-    }),
-  );
+      const selected = items.find(
+        (item) => item.getAttribute("aria-pressed") === "true",
+      );
+      if (selected)
+        readout.textContent = `${selected.textContent}: ${selected.dataset.status}.`;
+      followReach();
+    }
+    function stopDemo() {
+      demo.forEach(clearTimeout);
+      demo = [];
+    }
+    all("[data-boundary]").forEach((button) =>
+      button.addEventListener("click", () => {
+        stopDemo();
+        setLabMode(button.dataset.boundary);
+      }),
+    );
+    items.forEach((item) =>
+      item.addEventListener("click", () => {
+        stopDemo();
+        const pressed = item.getAttribute("aria-pressed") !== "true";
+        items.forEach((other) =>
+          other.setAttribute("aria-pressed", String(pressed && other === item)),
+        );
+        readout.textContent = pressed
+          ? `${item.textContent}: ${item.dataset.status}.`
+          : "";
+      }),
+    );
+    setLabMode(lab.dataset.mode || "shared");
+    if ("ResizeObserver" in window) new ResizeObserver(() => drawReach()).observe(lab);
+    if (document.fonts?.ready) document.fonts.ready.then(drawReach);
+    // Once, when a reader first reaches it with motion on, the lab walks
+    // through its three setups. Any touch of the controls takes over.
+    if ("IntersectionObserver" in window) {
+      const firstView = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry.isIntersecting) return;
+          firstView.disconnect();
+          if (!shouldAnimate()) return;
+          demo = [
+            setTimeout(() => setLabMode("separate"), 1500),
+            setTimeout(() => setLabMode("project"), 3500),
+          ];
+        },
+        { threshold: 0.6 },
+      );
+      firstView.observe(lab);
+    }
+  }
 
   // The canvas is a decorative layer. It owns one cancellable, 30 fps loop only while visible.
   const particles = (() => {
@@ -549,33 +693,100 @@
           },
         );
 
-        if (passage)
-          all(".passage-lines i", passage).forEach((line, index) => {
-            gsap.fromTo(
-              line,
-              {
-                rotationX: 24,
-                rotationY: -18,
-                rotationZ: (index - 3.5) * 2,
-                z: -250 - index * 34,
-                scale: 0.72,
-              },
-              {
-                rotationX: -15,
-                rotationY: 20,
-                rotationZ: (index - 3.5) * -3,
-                z: 100 + index * 25,
-                scale: 1.14,
-                ease: "none",
-                scrollTrigger: {
-                  trigger: passage,
-                  start: "top bottom",
-                  end: "bottom top",
-                  scrub: 1,
+        if (passage) {
+          const frames = all(".passage-lines i", passage);
+          const roomWords = all(".passage-room .wi", passage);
+          const decideWords = all(".passage-decide .wi", passage);
+          // Room, then a decision: the frames open out loose around the first
+          // line, then square up and close in as the second line lands.
+          const passageScene = (timeline, unit) =>
+            timeline
+              .fromTo(
+                frames,
+                {
+                  scale: (index) => 0.12 + index * 0.02,
+                  rotation: (index) => (index % 2 ? 1 : -1) * (18 + index * 4),
+                  opacity: 0,
                 },
-              },
-            );
+                {
+                  scale: (index) => 1.3 + (index % 3) * 0.06,
+                  rotation: (index) => (index % 2 ? 1 : -1) * (4 + index * 1.4),
+                  opacity: 0.55,
+                  duration: 0.42 * unit,
+                  stagger: 0.016 * unit,
+                  ease: "power2.out",
+                },
+                0,
+              )
+              .fromTo(
+                roomWords,
+                { yPercent: 118 },
+                {
+                  yPercent: 0,
+                  duration: 0.22 * unit,
+                  stagger: 0.035 * unit,
+                  ease: "power3.out",
+                },
+                0.05 * unit,
+              )
+              .to(
+                frames,
+                {
+                  scale: 1,
+                  rotation: 0,
+                  opacity: 0.6,
+                  duration: 0.3 * unit,
+                  stagger: { each: 0.02 * unit, from: "end" },
+                  ease: "power3.inOut",
+                },
+                0.48 * unit,
+              )
+              .fromTo(
+                decideWords,
+                { yPercent: 118 },
+                {
+                  yPercent: 0,
+                  duration: 0.22 * unit,
+                  stagger: 0.04 * unit,
+                  ease: "power3.out",
+                },
+                0.62 * unit,
+              )
+              .fromTo(
+                frames[6],
+                { "--glow": 0 },
+                { "--glow": 1, opacity: 1, duration: 0.12 * unit },
+                0.8 * unit,
+              );
+          motionMedia.add("(min-width: 1000px) and (min-height: 700px)", () => {
+            gsap.set(passage, { height: "100vh" });
+            passageScene(
+              gsap.timeline({
+                defaults: { ease: "none" },
+                scrollTrigger: {
+                  id: "hivra-passage",
+                  trigger: passage,
+                  start: "top top",
+                  end: () => `+=${Math.round(innerHeight * 1.5)}`,
+                  scrub: 0.8,
+                  pin: true,
+                  anticipatePin: 1,
+                  invalidateOnRefresh: true,
+                },
+              }),
+              1,
+            ).to({}, { duration: 0.14 });
           });
+          motionMedia.add("(max-width: 999px), (max-height: 699px)", () => {
+            const scene = passageScene(gsap.timeline({ paused: true }), 2.6);
+            ScrollTrigger.create({
+              trigger: passage,
+              start: "top 68%",
+              once: true,
+              onEnter: () => scene.play(),
+            });
+          });
+        }
         if (open)
           all(".open-frame", open).forEach((frame, index) => {
             gsap.fromTo(

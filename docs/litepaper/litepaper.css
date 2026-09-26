@@ -704,7 +704,8 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   background:var(--accent)
 }
 .boundary-lab {
-  height:420px;
+  --lab-ease:.9s var(--ease);
+  height:440px;
   position:relative;
   background:var(--surface);
   border:1px solid var(--line);
@@ -717,12 +718,49 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   font:10px var(--mono);
   color:var(--faint)
 }
+.reach-map {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  pointer-events:none
+}
+.reach-map path {
+  fill:none;
+  stroke-width:1.2;
+  vector-effect:non-scaling-stroke;
+  transition:opacity .35s
+}
+.reach-map .reach {
+  stroke:var(--accent);
+  stroke-dasharray:5 6;
+  animation:reach-flow 1.1s linear infinite
+}
+.reach-map .blocked {
+  stroke:var(--faint);
+  stroke-dasharray:2 6;
+  opacity:.75
+}
+.reach-map .cut {
+  stroke:var(--accent);
+  stroke-width:2
+}
+.reach-map .is-hidden {
+  opacity:0
+}
+@keyframes reach-flow {
+  to {
+    stroke-dashoffset:-22
+  }
+}
 .personal-zone {
   position:absolute;
-  inset:85px 25px 38px;
+  left:4%;
+  top:17%;
+  width:92%;
+  height:76%;
   border:1px solid var(--faint);
-  transform-origin:left center;
-  transition:transform .9s var(--ease)
+  transition:width var(--lab-ease)
 }
 .zone-label {
   position:absolute;
@@ -731,112 +769,175 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   background:var(--surface);
   padding:0 9px;
   font:10px var(--mono);
-  white-space:nowrap;
-  transform-origin:left center
-}
-.personal-item {
-  position:absolute;
-  padding:10px 12px;
-  background:var(--surface-raised);
-  border:1px solid var(--line);
-  font:11px var(--mono);
-  transform-origin:left center;
-  transition:top .9s var(--ease),left .9s var(--ease),transform .9s var(--ease)
-}
-.files {
-  top:15%;
-  left:8%
-}
-.sessions {
-  top:15%;
-  right:8%
-}
-.keys {
-  bottom:13%;
-  left:8%
-}
-.life {
-  bottom:13%;
-  right:8%
+  white-space:nowrap
 }
 .agent-zone {
   position:absolute;
-  inset:153px 36% 124px;
-  display:grid;
-  place-items:center;
-  border:1px solid transparent;
-  transition:transform .9s var(--ease),border-color .5s
+  left:56%;
+  top:17%;
+  width:40%;
+  height:76%;
+  border:1px solid var(--accent);
+  opacity:0;
+  transform:scale(.92);
+  transition:opacity .5s,transform var(--lab-ease)
 }
 .agent-zone>.zone-label {
-  opacity:0;
-  transition:opacity .5s;
-  left:5px;
-  font-size:9px;
-  background:var(--surface)
-}
-.agent-core {
-  display:grid;
-  justify-items:center;
-  gap:10px;
-  font-size:14px
-}
-.core-mark {
-  display:block;
-  width:43px;
-  height:51px;
-  border:1px solid var(--accent);
-  transform:rotate(-9deg);
-  background:linear-gradient(135deg,var(--accent),#a3222730);
-  box-shadow:0 0 35px #fb514811
+  color:var(--accent)
 }
 .boundary-gate {
   position:absolute;
-  left:46%;
-  width:9%;
-  top:52%;
-  height:1px;
+  left:52.5%;
+  top:17%;
+  width:1px;
+  height:76%;
   background:var(--accent);
   opacity:0;
-  transition:opacity .4s
+  transform:scaleY(0);
+  transform-origin:top;
+  transition:opacity .4s,transform var(--lab-ease)
 }
-.boundary-lab[data-separated=true] .personal-zone {
-  transform:scaleX(.47)
+.agent-core {
+  position:absolute;
+  left:50%;
+  top:55%;
+  translate:-50% -50%;
+  display:grid;
+  justify-items:center;
+  gap:9px;
+  font-size:14px;
+  z-index:1;
+  transition:left var(--lab-ease)
 }
-.boundary-lab[data-separated=true] .personal-zone>.zone-label {
-  transform:scaleX(2.12766);
-  font-size:9px;
-  left:10px
+.core-mark {
+  display:block;
+  width:40px;
+  height:48px;
+  border:1px solid var(--accent);
+  transform:rotate(-9deg);
+  background:linear-gradient(135deg,var(--accent),#a3222730);
+  box-shadow:0 0 35px #fb514822
 }
-.boundary-lab[data-separated=true] .personal-item {
-  left:9%;
-  right:auto;
-  bottom:auto;
-  transform:scaleX(2.12766);
-  padding:7px 8px;
-  font-size:10px
+.lab-item {
+  position:absolute;
+  left:var(--x);
+  top:var(--y);
+  translate:-50% -50%;
+  z-index:2;
+  padding:9px 12px;
+  background:var(--surface-raised);
+  border:1px solid var(--line);
+  font:11px var(--mono);
+  white-space:nowrap;
+  transition:left var(--lab-ease),top var(--lab-ease),border-color .3s,color .3s,opacity .3s
 }
-.boundary-lab[data-separated=true] .files {
-  top:12%
+.lab-item:before {
+  content:'';
+  position:absolute;
+  top:-3px;
+  right:-3px;
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:var(--accent);
+  transition:transform .35s var(--ease)
 }
-.boundary-lab[data-separated=true] .sessions {
-  top:32%
+.lab-item:hover,.lab-item[aria-pressed=true] {
+  border-color:var(--text)
 }
-.boundary-lab[data-separated=true] .keys {
-  top:52%
+.lab-item[aria-pressed=true]:after {
+  content:attr(data-status);
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 9px);
+  translate:-50% 0;
+  padding:5px 8px;
+  background:var(--text);
+  color:var(--bg);
+  font:9px var(--mono);
+  white-space:nowrap;
+  pointer-events:none
 }
-.boundary-lab[data-separated=true] .life {
-  top:72%
+.lab-item[data-resource=files] {
+  --x:19%;
+  --y:32%
 }
-.boundary-lab[data-separated=true] .agent-zone {
-  transform:translateX(107%) scale(1.05);
+.lab-item[data-resource=sessions] {
+  --x:81%;
+  --y:32%
+}
+.lab-item[data-resource=keys] {
+  --x:19%;
+  --y:79%
+}
+.lab-item[data-resource=life] {
+  --x:81%;
+  --y:79%
+}
+.lab-item[data-resource=project] {
+  --x:50%;
+  --y:83%
+}
+.boundary-lab:not([data-mode=shared]) .personal-zone {
+  width:45%
+}
+.boundary-lab:not([data-mode=shared]) .agent-zone {
+  opacity:1;
+  transform:none
+}
+.boundary-lab:not([data-mode=shared]) .boundary-gate {
+  opacity:1;
+  transform:none
+}
+.boundary-lab:not([data-mode=shared]) .agent-core {
+  left:76%
+}
+.boundary-lab:not([data-mode=shared]) .lab-item {
+  --x:26.5%;
+  color:var(--muted)
+}
+.boundary-lab:not([data-mode=shared]) .lab-item:before {
+  transform:scale(0)
+}
+.boundary-lab:not([data-mode=shared]) [data-resource=files] {
+  --y:30%
+}
+.boundary-lab:not([data-mode=shared]) [data-resource=sessions] {
+  --y:43%
+}
+.boundary-lab:not([data-mode=shared]) [data-resource=keys] {
+  --y:56%
+}
+.boundary-lab:not([data-mode=shared]) [data-resource=life] {
+  --y:69%
+}
+.boundary-lab:not([data-mode=shared]) [data-resource=project] {
+  --y:82%
+}
+/* One folder crosses to the boundary; the gate opens only around it. */
+.boundary-lab[data-mode=project] [data-resource=project] {
+  --x:52.5%;
+  color:var(--text);
   border-color:var(--accent)
 }
-.boundary-lab[data-separated=true] .agent-zone>.zone-label,.boundary-lab[data-separated=true] .boundary-gate {
-  opacity:1
+.boundary-lab[data-mode=project] [data-resource=project]:before {
+  transform:none
+}
+.boundary-lab[data-mode=project] .boundary-gate {
+  -webkit-mask:linear-gradient(#000 0 77%,transparent 77% 93%,#000 93%);
+  mask:linear-gradient(#000 0 77%,transparent 77% 93%,#000 93%)
+}
+.lab-readout {
+  position:absolute;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+  clip-path:inset(50%);
+  margin:0
 }
 .boundary-actions {
   display:grid;
-  grid-template-columns:1fr 1fr;
+  grid-template-columns:repeat(3,1fr);
   border:1px solid var(--line);
   border-top:0;
   padding:6px;
@@ -929,7 +1030,8 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   place-items:center;
   overflow:hidden;
   perspective:1100px;
-  border-block:1px solid var(--line)
+  border-block:1px solid var(--line);
+  font-size:clamp(36px,5vw,78px)
 }
 .passage-lines {
   position:absolute;
@@ -938,45 +1040,42 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   display:grid;
   place-items:center
 }
+/* Rings sized in the principle's own type, so the red one always closes
+   around the words and the rest step outward from it. */
 .passage-lines i {
   position:absolute;
-  width:72%;
-  height:65%;
+  width:calc(10.6em + var(--r,0)*1.1em);
+  height:calc(3.25em + var(--r,0)*.62em);
   border:1px solid var(--line);
-  transform:translateZ(calc(var(--i,0)*-60px));
   opacity:.6
 }
+.passage-lines i:nth-child(1) {
+  --r:7
+}
 .passage-lines i:nth-child(2) {
-  width:65%;
-  height:58%
+  --r:6
 }
 .passage-lines i:nth-child(3) {
-  width:58%;
-  height:51%
+  --r:5
 }
 .passage-lines i:nth-child(4) {
-  width:51%;
-  height:44%
+  --r:4
 }
 .passage-lines i:nth-child(5) {
-  width:44%;
-  height:37%
+  --r:3
 }
 .passage-lines i:nth-child(6) {
-  width:37%;
-  height:30%
+  --r:2
 }
 .passage-lines i:nth-child(7) {
-  width:30%;
-  height:23%;
+  --r:0;
   border-color:var(--accent)
 }
 .passage-lines i:nth-child(8) {
-  width:23%;
-  height:16%
+  --r:1
 }
 .boundary-passage p {
-  font-size:clamp(36px,5vw,78px);
+  font-size:1em;
   line-height:1.16;
   letter-spacing:-.06em;
   text-align:center;
@@ -984,8 +1083,23 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   background:radial-gradient(ellipse,var(--bg),transparent 70%);
   padding:30px
 }
-.boundary-passage p span {
+.boundary-passage .passage-decide {
   color:var(--accent)
+}
+/* Words rise from a mask. The clip reaches past the sides and top so
+   tight letter-spacing and the red glow never lose a pixel. */
+.split-words .w {
+  display:inline-block;
+  vertical-align:bottom;
+  padding-bottom:.12em;
+  margin-bottom:-.12em;
+  clip-path:inset(-.6em -.25em 0 -.25em)
+}
+.split-words .wi {
+  display:inline-block
+}
+.passage-lines i:nth-child(7) {
+  box-shadow:0 0 calc(var(--glow,0)*42px) rgba(251,81,72,calc(var(--glow,0)*.5)),inset 0 0 calc(var(--glow,0)*24px) rgba(251,81,72,calc(var(--glow,0)*.28))
 }
 /* Two ways into the same workspace */
 .doors {
@@ -2150,37 +2264,22 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     grid-template-columns:1fr 1fr
   }
   .boundary-lab {
-    height:370px
-  }
-  .personal-zone {
-    inset:80px 18px 30px
-  }
-  .agent-zone {
-    inset:145px 36% 96px
+    height:390px
   }
   .lab-caption {
     left:20px
   }
-  .personal-item {
+  .lab-item {
     font-size:9px;
-    padding:8px
+    padding:7px 8px
   }
   .zone-label {
-    font-size:9px;
+    font-size:8px;
     left:6px;
     padding:0 5px
   }
-  .boundary-lab[data-separated=true] .personal-item {
-    font-size:9px;
-    padding:6px
-  }
-  .boundary-lab[data-separated=true] .personal-zone>.zone-label {
-    font-size:8px;
-    left:4px
-  }
-  .agent-zone>.zone-label {
-    font-size:7px;
-    left:0
+  .boundary-actions button {
+    font-size:11px
   }
   .interaction-invitation {
     align-items:flex-start;
@@ -2204,9 +2303,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     font-size:46px
   }
   .boundary-passage {
-    height:480px
-  }
-  .boundary-passage p {
+    height:480px;
     font-size:40px
   }
   .door {
@@ -2561,33 +2658,23 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     width:100%
   }
   .boundary-lab {
-    height:350px
-  }
-  .personal-zone {
-    inset:76px 18px 30px
-  }
-  .agent-zone {
-    inset:138px 36% 95px
+    height:380px
   }
   .boundary-actions button {
-    font-size:11px;
-    min-height:47px
-  }
-  .personal-item {
     font-size:10px;
-    padding:8px 10px
+    min-height:52px;
+    padding-inline:5px
+  }
+  .lab-item {
+    font-size:9px;
+    padding:7px 8px
   }
   .zone-label {
-    font-size:9px
-  }
-  .boundary-lab[data-separated=true] .personal-item {
-    font-size:9px
-  }
-  .boundary-lab[data-separated=true] .personal-zone>.zone-label {
     font-size:8px
   }
-  .agent-zone>.zone-label {
-    font-size:8px
+  .core-mark {
+    width:32px;
+    height:39px
   }
   .interaction-invitation {
     font-size:11px;
@@ -2637,16 +2724,12 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     padding-block:8px
   }
   .boundary-passage {
-    height:380px
+    height:380px;
+    font-size:30px
   }
   .boundary-passage p {
-    font-size:30px;
     line-height:1.22;
     padding:20px
-  }
-  .passage-lines i {
-    width:85%;
-    height:70%
   }
   .doors {
     display:block;
