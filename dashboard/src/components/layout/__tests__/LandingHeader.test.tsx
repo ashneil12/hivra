@@ -20,7 +20,7 @@ jest.mock("next/link", () => {
     onClick?: React.MouseEventHandler;
     [key: string]: unknown;
   }) => (
-    <a href={href} onClick={onClick} {...rest}>
+    <a data-next-link href={href} onClick={onClick} {...rest}>
       {children}
     </a>
   );
@@ -117,7 +117,10 @@ describe("LandingHeader", () => {
     expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/blog");
     expect(screen.getByRole("link", { name: "Ecosystem" })).toHaveAttribute("href", "/ecosystem");
     expect(screen.queryByRole("link", { name: "Token" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
+    // The litepaper is a static file: a plain link, so no Server Components prefetch 404s.
+    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
+    expect(screen.getByRole("link", { name: "Litepaper" })).not.toHaveAttribute("data-next-link");
+    expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("data-next-link");
     expect(screen.getByRole("link", { name: "Hivra on GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
@@ -219,7 +222,8 @@ describe("LandingHeader", () => {
     const dialog = screen.getByRole("dialog", { name: "Open menu" });
     const register = within(dialog).getByRole("link", { name: "Register" });
     const litepaper = within(dialog).getByRole("link", { name: "Read the litepaper" });
-    expect(litepaper).toHaveAttribute("href", "/docs/litepaper/");
+    expect(litepaper).toHaveAttribute("href", "/docs/litepaper/index.html");
+    expect(litepaper).not.toHaveAttribute("data-next-link");
     expect(litepaper.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(dialog).getByRole("link", { name: "Agents" }).compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

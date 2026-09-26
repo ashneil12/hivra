@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
+import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
 import styles from "../public-site/public-site.module.css";
 
 const COLUMNS = [
@@ -17,7 +18,7 @@ const COLUMNS = [
     { label: "Open source", href: "/#open-source" },
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
-    { label: "Litepaper", href: "/docs/litepaper/" },
+    { label: "Litepaper", href: LITEPAPER_HREF },
     { label: "Blog", href: "/blog" },
     { label: "Free tools", href: "/tools" },
     { label: "Download the app", href: "/download" },
@@ -42,9 +43,9 @@ export default function Footer() {
             <nav key={column.title} aria-label={column.title}>
               <h2>{column.title}</h2>
               {column.links.map(({ label, href }) => (
-                <Link key={href} href={href} {...(href.startsWith("https://") ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
+                <PublicLink key={href} href={href} {...(href.startsWith("https://") ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
                   {label}{href.startsWith("https://") && <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" />}
-                </Link>
+                </PublicLink>
               ))}
             </nav>
           ))}
