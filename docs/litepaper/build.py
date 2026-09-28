@@ -43,6 +43,32 @@ BRAND_MARK = '<img class="brand-mark" src="/brand/hivra-icon-192.png" alt="" wid
 MONOLITH_WEBP = "/images/home/monolith-900.webp 900w, /images/home/monolith-1600.webp 1600w"
 
 
+def delegation_figure():
+    """The constitution's rule as a chain: each step holds what it was given, and
+    a permission nobody granted is refused. Labels come from the approved copy:
+    the project (the problem), free on Tuesday (Your information), refunding an
+    order and changing payouts (Gate)."""
+    grants = {"project": "The project", "tuesday": "Free on Tuesday", "refund": "Refund an order"}
+    holdings = [
+        ("you", "You", ["project", "tuesday", "refund"]),
+        ("agent", "Your agent", ["project", "tuesday", "refund"]),
+        ("helper", "A helper agent", ["refund"]),
+        ("service", "A service", ["refund"]),
+    ]
+    nodes = []
+    for index, (node, label, chips) in enumerate(holdings):
+        chip_html = "".join(f'<span class="chain-chip" data-chip="{chip}">{grants[chip]}</span>' for chip in chips)
+        if node == "helper":
+            chip_html += '<span class="chain-chip chain-refused" data-chip="payouts">Change payouts</span>'
+        nodes.append(f'<div class="chain-node" data-node="{node}"><span class="chain-index">{index + 1:02d}</span><strong>{label}</strong><div class="chain-slot">{chip_html}</div></div>')
+    links = ['<i class="chain-link"></i>', '<i class="chain-link"></i>', '<i class="chain-link chain-guarded"><span class="chain-stop">No new permission</span></i>']
+    chain = nodes[0] + "".join(link + node for link, node in zip(links, nodes[1:]))
+    return f'<figure class="delegation" aria-hidden="true"><div class="chain">{chain}</div><figcaption>An illustration of the rule above.</figcaption></figure>'
+
+
+DELEGATION = delegation_figure()
+
+
 def monolith(attributes, sizes):
     """The monolith render as WebP where supported, with the PNG as fallback."""
     return ('<picture><source type="image/webp" srcset="{}" sizes="{}">'
@@ -399,7 +425,7 @@ def build_page():
 <section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{''.join('<i></i>' for _ in range(8))}</div><p><span class="passage-room">Give it room to work.</span><br><span class="passage-decide">Decide what it can reach.</span></p></section>
 <section class="doors-section chapter shell" id="experience" data-chapter="Agent or computer"><div class="chapter-heading"><h2>Start with an agent.<br>Or a computer.</h2><div class="intro-copy">{blocks(doors)}</div></div><div class="doors"><article class="door door-agent scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol">&gt;_</span></div><h3>Launch an agent</h3>{blocks(doors_sub['Launch an agent'])}</article><article class="door door-computer scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol"><svg viewBox="0 0 80 70"><rect x="7" y="5" width="66" height="44" rx="3"/><path d="M40 50v12M24 64h32"/></svg></span></div><h3>Launch a computer</h3>{blocks(doors_sub['Launch a computer'])}</article></div><div class="two-column-copy"><div><h3>Keep several running</h3>{blocks(doors_sub['Keep several running'])}</div><div id="operation"><h3>Choose who runs it</h3>{blocks(launch_body)}</div></div><div class="launch-journey"><p>The launch:</p>{blocks(launch_list)}</div></section>
 <section class="qualities chapter" id="observability" data-chapter="The product bar"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
-<section class="constitution chapter shell" id="security" data-chapter="The constitution"><div class="chapter-heading"><h2>Keeping a mistake<br>from reaching everything</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The constitution</p><blockquote>{inline(quote)}</blockquote></div></div><div class="constitution-foot">{blocks(after_quote)}</div></section>
+<section class="constitution chapter shell" id="security" data-chapter="The constitution"><div class="chapter-heading"><h2>Keeping a mistake<br>from reaching everything</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The constitution</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
 <section class="roadmap chapter" id="future" data-chapter="The ecosystem"><div class="shell chapter-heading"><h2>What we're building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div><div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers · Available now</h3>{blocks(stages['Agent Computers · Available now'])}</div></div><div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div><div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div><div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg><div class="atlas-core" aria-hidden="true">{BRAND_MARK}<strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren't implemented connections.</p></div><div class="product-panels">{panel_html}</div></div><div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>
 <section class="economy chapter shell" id="economy" data-chapter="The economy"><div class="chapter-heading"><h2>The economy</h2></div><div class="economy-intro prose">{blocks(economy)}</div><div class="economy-visual scene-reveal" aria-hidden="true"><span class="economy-wordmark">HIVRA</span><div class="economy-token">{BRAND_MARK}</div><div class="economy-visual-caption"><span>COMPUTE · TOOLS · WORK · KNOWLEDGE</span><span>ONE CONNECTED ECONOMY</span></div></div>{economy_html}</section>
 <section class="reading-room chapter shell" id="reading-room" data-chapter="Read further"><h2>Read further</h2><div class="prose">{blocks(reading_copy)}</div><div class="reading-actions"><p class="source-links">{source_reading_links}</p><button class="text-link reading-toggle" aria-pressed="false">Continuous reading <span aria-hidden="true">↗</span></button></div></section>

@@ -913,6 +913,108 @@
             );
         }
 
+        const chain = query(".delegation");
+        if (chain) {
+          // Each step's chips fly in from the step before, so the picture shows
+          // access being handed on and narrowing. A permission nobody granted
+          // tries to pass the last step and is refused.
+          const chip = (node, name) =>
+            query(`[data-node="${node}"] [data-chip="${name}"]`, chain);
+          const gap = (from, to) => {
+            const a = from.getBoundingClientRect();
+            const b = to.getBoundingClientRect();
+            return { x: a.left - b.left, y: a.top - b.top };
+          };
+          const across = () => {
+            const helper = query('[data-node="helper"]', chain).getBoundingClientRect();
+            const service = query('[data-node="service"]', chain).getBoundingClientRect();
+            return service.left > helper.right - 1;
+          };
+          const scene = gsap.timeline({ paused: true });
+          // Explicit from and to values throughout: the scene is invalidated
+          // just before it plays, so the flights measure the final layout, and
+          // a from() tween would then record its hidden start as its end.
+          scene
+            .fromTo(
+              all(".chain-node", chain),
+              { opacity: 0, y: 26 },
+              { opacity: 1, y: 0, duration: 0.6, stagger: 0.12, ease: "power3.out" },
+            )
+            .fromTo(
+              all(".chain-link", chain),
+              { opacity: 0, scale: 0 },
+              { opacity: 1, scale: 1, duration: 0.45, stagger: 0.12 },
+              0.2,
+            )
+            .fromTo(
+              all('[data-node="you"] .chain-chip', chain),
+              { opacity: 0, scale: 0.6 },
+              { opacity: 1, scale: 1, duration: 0.4, stagger: 0.08, ease: "back.out(2)" },
+              0.55,
+            );
+          [
+            ["agent", "you", 1.05],
+            ["helper", "agent", 2.05],
+            ["service", "helper", 4.15],
+          ].forEach(([node, from, at]) => {
+            all(`[data-node="${node}"] .chain-chip:not(.chain-refused)`, chain).forEach(
+              (target, index) => {
+                const source = chip(from, target.dataset.chip);
+                if (!source) return;
+                scene.fromTo(
+                  target,
+                  {
+                    x: () => gap(source, target).x,
+                    y: () => gap(source, target).y,
+                    opacity: 0,
+                  },
+                  { x: 0, y: 0, opacity: 1, duration: 0.85, ease: "power2.inOut" },
+                  at + index * 0.1,
+                );
+              },
+            );
+          });
+          const refused = query(".chain-refused", chain);
+          scene
+            .fromTo(
+              refused,
+              { opacity: 0, scale: 0.6, "--strike": 0 },
+              { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2)" },
+              2.8,
+            )
+            .fromTo(
+              refused,
+              { x: 0, y: 0 },
+              {
+                x: () => (across() ? 44 : 0),
+                y: () => (across() ? 0 : 30),
+                duration: 0.32,
+                ease: "power2.in",
+                immediateRender: false,
+              },
+              3.2,
+            )
+            .fromTo(query(".chain-stop", chain), { opacity: 0 }, { opacity: 1, duration: 0.2 }, "<0.22")
+            .fromTo(
+              refused,
+              { x: () => (across() ? 44 : 0), y: () => (across() ? 0 : 30) },
+              { x: 0, y: 0, duration: 0.55, ease: "back.out(2.2)", immediateRender: false },
+              3.52,
+            )
+            .fromTo(
+              refused,
+              { "--strike": 0 },
+              { "--strike": 1, duration: 0.35, ease: "power2.out", immediateRender: false },
+              "<0.1",
+            );
+          ScrollTrigger.create({
+            trigger: chain,
+            start: "top 72%",
+            once: true,
+            onEnter: () => scene.invalidate().play(),
+          });
+        }
+
         all(
           ".chapter-heading h2, .founder-heading h2, .open-copy h2, .reading-room h2, .finale h2",
         ).forEach((heading) => {
