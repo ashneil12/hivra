@@ -102,7 +102,7 @@ export const FIT = {
     { label: "Stays on when your laptop closes", cells: ["No", "Yes", "Yes", "Yes"] },
     { label: "You choose the agent", cells: ["Yes", "No", "Yes", "Yes"] },
     { label: "You bring your own model account", cells: ["Yes", "No", "Yes", "Yes"] },
-    { label: "A full desktop you can use yourself", cells: ["Yes", "No", "Some", "Yes"] },
+    { label: "Pick the system: Linux, Windows or Omarchy", cells: ["Yours", "Theirs", "Linux", "Yes"] },
     { label: "You can read the code", cells: ["Depends", "No", "No", "Yes"] },
     { label: "You can run it on your own hardware", cells: ["Yes", "No", "No", "Yes"] },
   ],

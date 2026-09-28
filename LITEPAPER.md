@@ -88,7 +88,7 @@ They need a computer that stays on. Today there are three places to get one.
 
 Hivra is the one you can check. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
 
-And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays on when your laptop closes. Use it yourself, or put your agent on it and let it work the desktop the way it would work yours, then open the same screen and take over. You get computer use without handing over your own machine.
+And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays on when your laptop closes. Launch it on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. You get computer use without handing over your own machine.
 
 | | Your own computer | The maker's computer | A hosted agent computer | Hivra |
 |---|---|---|---|---|
@@ -96,7 +96,7 @@ And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays o
 | Stays on when your laptop closes | No | Yes | Yes | Yes |
 | You choose the agent | Yes | No | Yes | Yes |
 | You bring your own model account | Yes | No | Yes | Yes |
-| A full desktop you can use yourself | Yes | No | Some | Yes |
+| Pick the system: Linux, Windows or Omarchy | Yours | Theirs | Linux | Yes |
 | You can read the code | Depends | No | No | Yes |
 | You can run it on your own hardware | Yes | No | No | Yes |
 
