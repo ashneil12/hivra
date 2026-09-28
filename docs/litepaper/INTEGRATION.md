@@ -2,8 +2,8 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`f6f0e044efbcc967c3282d489958bce171f61ec1c1065ff47a427257edabdad7`
-(v2.3, approved 28 September 2026). v2.3 rewrites the page in plainer, shorter
+`1cedd4c558a479a26a870dffd5f3bf837a6608854ab91ac181bfe4f9388098ee`
+(v2.4, approved 28 September 2026). v2.4 opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
 language, treats every surface it names as live (no preview labels, at Ash's
 direction), adds Windows desktops to the positioning, simplifies "Keeping a
 mistake from reaching everything", trims the 15 product stories and drops the token section's closing line.
