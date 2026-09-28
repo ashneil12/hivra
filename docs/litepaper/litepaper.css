@@ -3265,6 +3265,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   margin-top:26px;
   padding:9px 14px 9px 12px;
   border:1px solid var(--line);
+  background:var(--bg);
   font:10px/1.4 var(--mono);
   letter-spacing:.12em;
   text-transform:uppercase;
