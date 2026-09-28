@@ -47,7 +47,6 @@ export default function Pricing() {
         <article id="own-server" className={`${styles.priceCard} ${styles.priceSide}`} aria-labelledby="price-server">
           <div className={styles.priceTop}>
             <h3 id="price-server">{server.name}</h3>
-            <span className={styles.priceChip}>{server.chip}</span>
           </div>
           <p className={styles.priceBody}>{server.body}</p>
           <a href={server.href} className={styles.textCta} data-cta="pricing-server">
@@ -58,7 +57,6 @@ export default function Pricing() {
         <article className={`${styles.priceCard} ${styles.priceSide}`} aria-labelledby="price-self">
           <div className={styles.priceTop}>
             <h3 id="price-self">{selfHost.name}</h3>
-            <span className={styles.priceChip}>{selfHost.chip}</span>
           </div>
           <p className={styles.priceFigure} data-small="">
             <strong>{selfHost.price}</strong>

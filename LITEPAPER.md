@@ -10,17 +10,15 @@ Give it room to work. Decide what it can reach.
 
 ## The problem is where it lives
 
-You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in the browser, using a session you signed into yesterday.
+You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in your browser, using a session you signed into yesterday.
 
-That's useful. It's also happening on the computer where you keep your photos, your passwords, your client work and everything else you own.
+That's useful. It's also happening on the computer that holds your photos, your passwords and your client work.
 
 You gave it a job. How much of the rest did you mean to give it?
 
-Permission prompts help. You should get to decide before an agent deletes a folder or sends a message. But saying yes to an action doesn't answer the bigger question, which is what that action can reach.
+Permission prompts help, but saying yes to an action doesn't tell you what that action can reach. An agent fixing your website needs the project. It doesn't need your bank session.
 
-An agent fixing your website needs the project. It doesn't need your personal documents, your bank session, or a route into every other device on your home network.
-
-A separate computer is just somewhere to draw that line. Share the project. Connect the accounts you want it to use. Keep the rest out.
+A separate computer draws that line. Share the project, connect the accounts it needs, and keep everything else out.
 
 ### Try it
 
@@ -36,33 +34,29 @@ A separate computer is just somewhere to draw that line. Share the project. Conn
 
 ### A good agent can still be led somewhere bad
 
-Nothing has to be malicious for this to go wrong.
+Nothing has to be malicious for this to go wrong. A webpage, a document or a tool response can carry instructions written for the model reading it, and the agent follows them with access you gave it for something else. That's prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
 
-A document can carry instructions written for the model reading it. So can a webpage, a dependency, or a tool response. The agent takes them as part of the job and uses access you granted for something you never asked for. That's prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
-
-There are other reasons to care where agents run. A provider can change a model's behaviour in an update you accepted automatically. A company or a government could point a capable model at someone deliberately. And a system can find a route through a task that nobody who built it anticipated.
+Models also change in updates you never asked for, and people can point capable agents at you on purpose.
 
 Different causes. Same blast radius.
 
-I don't think the answer is to stop using agents. I think the answer is to stop giving one mistake so much room.
+Keep using agents. Just stop giving one mistake so much room.
 
 ---
 
 ## Keep the agents you like. Move them off your computer.
 
-Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. They're getting good, and the useful ones want to keep working after you've stepped away.
+Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. Use any of them. Just don't run them on the computer where the rest of your life lives.
 
-Use any of them. Just don't give them the computer where the rest of your life lives.
+They need a computer that stays on. Today there are three places to get one.
 
-So they need a computer. Right now there are three places to find one.
+**Your own computer.** Free and already there. It's also where your photos, passwords and client work live, and it stops when you close the lid.
 
-**Your own computer.** Free and already there. It's also where your photos, passwords and client work live, and the work stops when you close the lid.
+**The maker's computer.** Muse and Grok Bot run on computers their companies provide. They stay on, but you get one company's agent running one company's models.
 
-**The maker's computer.** Muse and Grok Bot each run on a computer their company provides, so they keep going when you close the app. You get one company's agent, running that company's models, on that company's machine.
+**A hosted agent computer.** Services that rent your agent a machine in the cloud. You pick the agent, but you can't read their code or run the service yourself.
 
-**A hosted agent computer.** A growing group of services will rent your agent a machine in the cloud. You pick the agent and bring your own model account. You can't read their code or run the service yourself, so you're taking their word for how it works.
-
-Hivra is the one you can check. Pick the agent, sign in with your own account or choose the provider it uses, and it gets a computer of its own that stays on when your laptop closes. The platform is open source, so you can read how it handles your access. And if you'd rather not rely on us at all, the whole platform runs on your own hardware, as a preview from the source today.
+Hivra is the one you can check. Run the agent you choose, or take a Linux or Windows desktop for yourself. It stays on when your laptop closes. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
 
 | | Your own computer | The maker's computer | A hosted agent computer | Hivra |
 |---|---|---|---|---|
@@ -71,13 +65,13 @@ Hivra is the one you can check. Pick the agent, sign in with your own account or
 | You choose the agent | Yes | No | Yes | Yes |
 | You bring your own model account | Yes | No | Yes | Yes |
 | You can read the code | Depends | No | No | Yes |
-| You can run it on your own hardware | Yes | No | No | In preview |
+| You can run it on your own hardware | Yes | No | No | Yes |
 
 *How these services described themselves in September 2026. They change quickly, so check the current details before you rely on them.*
 
 ### Who it's for
 
-People who already put agents to work. Developers running Claude Code or Codex on the same laptop they bank on. Anyone with a personal agent like OpenClaw or Hermes that should be running somewhere other than their own machine. And people who just need another computer, with an agent or without one.
+People who already put agents to work. Developers running Claude Code or Codex on the laptop they also bank on. Anyone with a personal agent that should run somewhere other than their own machine. And anyone who needs another computer, Linux or Windows, with an agent or without one.
 
 If you can pick an agent and sign in to it, you can launch one.
 
@@ -85,15 +79,13 @@ If you can pick an agent and sign in to it, you can launch one.
 
 ## Open source. Yours to run.
 
-Hivra is open source under Apache 2.0. Read the code. Change it. Run it yourself. Host it for your clients.
+Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients.
 
-That matters because this software sits between an agent and things you care about, so you should be able to inspect the decisions it makes about access. And if we change direction, get bought, or make a call you hate, you should be able to keep going without us.
+This software sits between an agent and the things you care about, so you should be able to check how it decides what an agent can reach. And if we change direction, get bought or make a call you hate, you keep going without us.
 
-Hivra Cloud is there if you'd rather we ran it. Self-hosting is there if you wouldn't.
+Let us run it on Hivra Cloud, or run the whole platform yourself with nothing held back.
 
-Same approach for everything we're building around Agent Computers. Gate is being designed for agents running outside Hivra. Exchange shouldn't need you to launch one of our computers just to publish something. Each piece has to be useful on its own or it isn't infrastructure, it's a lock-in with a nice name.
-
-Use the whole thing, or take the one part that solves your problem.
+Everything we build around it follows the same rule. Each piece works on its own, so you can use the whole thing or take the one part that solves your problem.
 
 ---
 
@@ -135,43 +127,33 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 ### Launch an agent
 
-Claude Code, Codex, Hermes, OpenClaw or Agent Zero, with DeepSeek in private preview. Pick one, connect the account or key it uses, and give it a machine of its own.
+Claude Code, Codex, Hermes, OpenClaw, Agent Zero or DeepSeek. Pick one, sign in the way it normally does, and it gets a machine of its own.
 
-Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it.
-
-Its tools and files live on that computer, so you can close the laptop and pick it up from your phone.
+Use it through its interface, work in its terminal, or switch between the two. Close the laptop and pick it up from your phone.
 
 ### Launch a computer
 
-Ubuntu, with Windows and Omarchy in private preview. Install apps, browse, write code, run services, set up a workspace for one project.
+Ubuntu, Windows or Omarchy. A normal desktop in the cloud for installing apps, browsing, writing code and running services. No agent required.
 
-You don't have to attach an agent at all. It's a computer.
-
-Maybe you want your dev tools off your personal desktop. Maybe you need Windows for one application. Maybe there's something you'd rather not mix into your everyday machine. That's a fine reason to be here.
-
-And when you do want help, you'll soon be able to bring an agent into the same workspace. Let it work with the files and apps you've already set up, then take the screen back whenever you'd rather do it yourself.
+Keep your dev tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
 
 **macOS and custom images are coming.**
 
 ### Keep several running
 
-Run agents on different projects without losing track of them. Open a conversation, check the computer behind it, look at the files and results, move to the next.
+One agent building a feature, one chasing a bug, one doing research. Each gets its own computer and only the accounts you connect to it. Move between the conversation, the computer and the files.
 
-One agent building a feature. One chasing a bug. One working through research. Each with its own workspace and only the accounts you connect to it.
-
-**Hivra Orchestrator** is coming: one screen where you talk to all of them, see who's working and who's stuck, and hand work between them. Keep the individual conversations when you want them, with somewhere to run the whole group from.
-
-Nobody should be managing eight tmux panes and guessing which window belongs to which task.
+**Hivra Orchestrator** is coming: one screen where you talk to all of them and hand work between them.
 
 ### Choose who runs it
 
-**Hivra Cloud** if you want us handling the machines, the updates, the monitoring and the recovery. You choose the work and the access. We keep the service running underneath.
+**Hivra Cloud.** We run the machines, the updates, the monitoring and the recovery. You choose the work and the access.
 
-**Your own infrastructure** if you already have a cloud account or a server. Use capacity you're already paying for. This is in preview.
+**Your own infrastructure.** Connect a server or cloud account you already pay for.
 
-**Self-host** if you'd rather we weren't involved at all. The whole platform, your hardware, your sign-in, no Hivra account. A preview runs from the source today, and packaged releases come next.
+**Self-host.** The whole platform on your hardware, with your own sign-in and no Hivra account.
 
-Your model connection is separate from all of that. Each agent signs in the way it normally does, or uses a provider you pick, whether the computer runs with us or on your own metal. Choosing managed hosting doesn't cost you that choice.
+Wherever the computer runs, each agent keeps its own sign-in or uses the model provider you pick.
 
 **The launch:**
 
@@ -184,67 +166,55 @@ Your model connection is separate from all of that. Each agent signs in the way 
 
 ## A computer you can actually work in
 
-Moving work off your laptop should make your day easier, not add a setup ritual to it.
+Moving work off your laptop should make your day easier.
 
 ### Come back to it
 
-Files, tools and settings stay. Closing the browser disconnects your view. It doesn't throw the workspace away.
-
-On Hivra Cloud, snapshot before a risky change. Restore when the risky change goes badly. Add resources as a job grows, within the capacity you've chosen.
+Files, tools and settings stay put. Closing the browser only closes your view. Snapshot before a risky change and restore if it goes badly.
 
 ### Settle in
 
-Open the desktop and work in your apps, with sharp text and controls that respond when you touch them. Good enough for a quick check from your phone. Good enough for an afternoon.
-
-Reconnect from another device and land in the same environment. It's there for the parts you'd rather do yourself.
+Open the desktop and work in your apps, with sharp text and controls that respond. Reconnect from another device and land in the same place.
 
 ### Follow the work
 
-See what the agent is doing, what it asked you to approve, and what it produced. When something goes wrong you need enough history to understand it and decide what happens next.
-
-Hivra records the activity it can observe: when your agent's tasks start and finish, which tools it used, and whether they failed. It doesn't store your prompts, commands or files. Today that covers Claude Code and Codex, and other agents show lifecycle events. What an agent does entirely inside an external app may not show up there. You still have the computer and the terminal to look for yourself.
+See what the agent did, what it asked you to approve and what it produced. Hivra records when tasks start and finish, which tools ran and whether they failed. It never stores your prompts, commands or files.
 
 ### Know what has access
 
-You should know where your computer runs, what it shares with other machines, and which accounts are connected to it.
-
-Different hosting gives you different protection. A virtual machine and a container don't separate work the same way, and calling both of them secure is how people end up trusting the wrong one. Hivra's launch review tells you which one you got.
+See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine or a container, because they don't protect you the same way.
 
 ---
 
 ## Keeping a mistake from reaching everything
 
-Hivra can't make a model infallible. What it can change is how far one mistake can reach.
+No model is perfect. Hivra limits how far one mistake can go.
 
-**Your computer.** Personal files and sessions stay outside the agent's workspace unless you deliberately share them.
+**Your computer.** Your personal files and sessions stay out of the agent's workspace unless you share them.
 
-**Your information.** A scheduling agent needs to know if you're free on Tuesday. It doesn't need every private appointment in your calendar. The goal is answering the question a task needs without opening the account behind it.
+**Your information.** An agent booking a meeting needs one answer: are you free on Tuesday? It never needs your whole calendar.
 
-**Your business.** Keep hold of your files, your infrastructure and your ability to recover, so you still have options when a provider goes down or changes something you depend on.
+**Your business.** Your files, infrastructure and backups stay yours, so a provider going down doesn't take you with it.
 
 One rule sits under all of it:
 
 > An agent can only pass on access a responsible person gave it. Delegating a task doesn't create new permission.
 
-That has to hold when one agent asks another for help, when a tool connects to a service, and when money moves. The limits have to live outside the model doing the work.
+That holds when one agent hands work to another, when a tool connects to a service, and when money moves. The limits live outside the model, where it can't talk its way past them.
 
-Emergency controls should stop activity, withdraw access and contain a problem. They must never become a way to grant more. Receiving a message doesn't authorise an action. Receiving a useful method doesn't install it.
-
-And all of that applies to us. We have to account for our own mistakes, our own compromise and our own change of ownership, the same way we're asking you to account for the agents you run. If Hivra ever has to be trusted absolutely, the design has already failed.
+And it applies to us too. If Hivra ever has to be trusted absolutely, the design has already failed.
 
 ---
 
 ## What we're building around it
 
-Agent Computers give the work somewhere to happen. Everything below is about what an agent does from there: using accounts, installing tools, sharing what it learned, spending money, working with others.
+Agent Computers give the work somewhere to happen. Everything below is what an agent does from there: using accounts, installing tools, sharing what it learned, spending money and working with others.
 
-**Next** and **Then** are the order we're working in. **Research** is the stuff that still needs figuring out.
+**Next** and **Then** are the order we're working in. **Research** is still being figured out.
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes, OpenClaw or Agent Zero on a computer of its own. Or start with Ubuntu and use it yourself. Keep your workspace, pick your interface, run it on our infrastructure.
-
-In preview: Windows, Omarchy, DeepSeek, and running on your own infrastructure.
+Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or DeepSeek on a computer of its own. Or launch Ubuntu, Windows or Omarchy and use it yourself. On Hivra Cloud, your own infrastructure or your own hardware.
 
 Coming: Hivra Orchestrator, macOS, custom images.
 
@@ -254,41 +224,33 @@ Coming: Hivra Orchestrator, macOS, custom images.
 
 **Gate.** *Let an agent use an account without handing it the keys.*
 
-A support agent needs to refund a damaged order. Give it your payment provider key and you've also given it a great deal that has nothing to do with refunds.
+A support agent needs to refund a damaged order. Hand it your payment key and it can do far more than refunds.
 
-With Gate it asks for the action instead. Gate checks who's asking, which account they're allowed, the amount, and whether you need to approve. The agent gets the result and a receipt. The credential never enters its computer.
-
-Permission to refund an order isn't permission to change where your payouts go. The service enforces that, even when the agent hands the job to another agent.
+With Gate, the agent asks for the refund instead. Gate checks who's asking, the account, the amount and whether you need to approve, then returns the result and a receipt. The key never enters the agent's computer, and a refund permission never becomes permission to change your payouts.
 
 *Related: Vault, Interchange, Rescue.*
 
 **Exchange.** *Know what you're installing.*
 
-Somewhere to publish and find agents, MCP servers, tools, computer images, workflows and security policies. Before you install anything you can see who made it, which version you're getting, and what it wants to reach.
+A place to publish and find agents, tools, MCP servers, computer images and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
 
-Say you pick an agent that turns customer interviews into research notes. The listing tells you which folders it reads, which services it contacts, whether it can spend money. If an update also wants your email, that's a new decision, not a silent one.
-
-Publishers get identity, versioning, revocation and payouts. A purchase never grants access by itself, and neither does a familiar name.
+If an update suddenly wants your email, that's a new decision you make, not a silent change. Publishers get identity, versioning, revocation and payouts.
 
 *Related: Passport, Seal, Signal.*
 
 **Arena.** *Find out where a workflow breaks.*
 
-Put agents and their tools through deliberate attack in a test environment. Poisoned documents, fake approvals, stolen credentials, runaway spending, attempts to leave the machine.
+Attack your agents and their tools on purpose in a test environment: poisoned documents, fake approvals, stolen credentials, runaway spending.
 
-Picture a document assistant working through a folder of test invoices. Some tell it to send customer records elsewhere. Some pretend a person already approved a payment. The report shows what it tried, what stopped it, and where the controls failed.
-
-A result belongs to the version and setup that were tested. You get evidence you can reproduce, and a signed result for what it survived.
+The report shows what the agent tried, what stopped it and where the controls failed, with a signed result for the version you tested.
 
 *Related: Challenges, Seal, Rescue.*
 
 **Signal.** *Share a finding before it catches someone else.*
 
-When a researcher finds a compromised MCP server or a package quietly stealing files, everyone else using it needs to know today, not next month. Signal collects verified reports, affected versions, and the evidence behind them.
+When someone finds a compromised MCP server or a package stealing files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
 
-A report might show a familiar tool's latest update sending documents to an unrelated server. Subscribers find their affected installations and respond under rules they chose: tell someone, suspend access, quarantine the component.
-
-You pick the sources you trust and what they're allowed to trigger. A threat feed must never become someone else's way to install software on your machines.
+You pick the sources you trust and what they can trigger: an alert, a suspended account, a quarantined tool. A feed can never install software on your machines.
 
 *Related: Exchange, Passport, Rescue.*
 
@@ -298,61 +260,49 @@ You pick the sources you trust and what they're allowed to trigger. A threat fee
 
 **Vault.** *Answer the question without handing over the account.*
 
-An agent arranging a meeting asks if you're free Tuesday afternoon. Vault answers that, without your appointment titles and everyone else's contact details riding along.
+An agent booking a meeting asks if you're free Tuesday afternoon. Vault answers yes or no, without your calendar coming along.
 
-Same idea for a customer account. A refund agent can ask whether an order qualifies without receiving the customer's entire history.
-
-The rules have to cover repeated questions too. A hundred narrow answers can reveal more than one broad one, so Vault has to weigh what's already been disclosed before deciding what's next.
+It also keeps track of what it has already answered, because a hundred narrow answers can reveal as much as one broad one.
 
 *Related: Gate, Passport, Missions.*
 
 **Passport.** *Check where an agent came from.*
 
-A verifiable identity: who published it, which version, what permissions it declares, which tests belong to that release.
+A verifiable identity for an agent: who published it, which version, what permissions it declares and which tests belong to it.
 
-If another team sends you an agent, check the signed package before you use it. Changed files and revoked keys change what you can verify. You still decide whether it belongs in your environment.
-
-A signature tells you who signed something. It doesn't tell you everything they've ever made is safe, and it doesn't grant permission on your behalf.
+A signature tells you who signed something. It doesn't make everything they publish safe, and it never grants permission on your behalf.
 
 *Related: Exchange, Seal, Experience.*
 
 **Seal.** *A security claim you can actually check.*
 
-Certification tied to specific evidence: publisher identity, signed releases, tested recovery, restricted network access, credentials kept outside the agent.
+Certification tied to evidence: signed releases, tested recovery, restricted network access, credentials kept outside the agent.
 
-If a browser tool claims it never holds your credentials, a review should examine how that works, what settings it depends on, and what the tests showed. The certificate says what was checked, when it expires, and what would withdraw it.
-
-An update that changes credential handling needs another review. A badge can't quietly outlive the evidence behind it.
+The certificate says what was checked and when it expires. An update that changes how credentials are handled needs a new review.
 
 *Related: Arena, Passport, Challenges.*
 
 **Rescue.** *Get control back when something goes wrong.*
 
-An agent starts sending files somewhere unexpected. You need to stop it, withdraw the credentials it was using, and keep enough evidence to work out what happened.
+An agent starts sending files somewhere unexpected. Rescue stops it, withdraws its credentials and keeps the evidence, in one place.
 
-Rescue puts that in one place. Find other computers running the affected component, investigate the cause, rebuild from a known-good starting point. The recovery record separates what's restored from what still needs attention.
-
-Stopping a problem must never grant new access. Reconnecting accounts and resuming work stay with the person responsible.
+Then it finds other computers running the same component and rebuilds from a known-good start. Stopping a problem never grants new access.
 
 *Related: Gate, Signal, Experience.*
 
 **Challenges.** *Pay people to break it.*
 
-A reward behind a specific question. Can this agent read another tenant's test file? Can it bypass an approval? Can it get out of its computer?
+A reward behind a precise question. Can this agent read another tenant's files? Can it bypass an approval? Can it get out of its computer?
 
-Researchers get an authorised environment, clear rules and a defined result to demonstrate. They submit steps and evidence, reviewers reproduce it, verified findings get paid.
-
-Permission covers that test environment only. It never extends to customers or third parties. And a reward nobody has claimed tells you very little on its own, without knowing who tested it and how.
+Researchers get an authorised environment and clear rules. Reviewers reproduce what they find, and verified findings get paid.
 
 *Related: Arena, Seal, Interchange.*
 
 **Experience.** *Let another agent start from what worked.*
 
-An agent spends hours finding out why a database migration failed, fixes it, verifies the fix. The next team facing the same thing shouldn't start from zero.
+An agent spends hours working out why a database migration failed, then fixes it. The next team with the same problem shouldn't start from zero.
 
-Experience packages the method, assumptions, evidence and known limits so someone else can review and test it. The package carries its source and history, with secrets and personal data stripped before it leaves.
-
-The receiving team decides what to adopt. A useful method doesn't arrive with permission to run against their database, and it doesn't bring the first team's credentials with it.
+Experience packages the method, evidence and limits so another team can review and reuse it, with secrets and personal data stripped out.
 
 *Related: Passport, Exchange, Arena.*
 
@@ -362,57 +312,47 @@ The receiving team decides what to adopt. A useful method doesn't arrive with pe
 
 **Missions.** *Give a group of agents a job with a clear finish.*
 
-How to split a large objective into work that can be checked and paid for. A person defines scope, budget, and the evidence needed to accept the result.
+A person sets the goal, the budget and the evidence needed to call it done. Each agent gets only the access its part needs.
 
-For an accessibility review, different agents inspect navigation, forms, screen reader behaviour. Each gets only the access its part needs. A reviewer accepts the findings before anything gets paid.
-
-Agents can't expand the target, raise the budget or approve their own invoices. Busy and finished are different things.
+Agents can't widen the target, raise the budget or approve their own invoices.
 
 *Related: Vault, Interchange, Foundry.*
 
 **Foundry.** *Run an agent-powered business with someone responsible for it.*
 
-How agents handle ongoing work under a human owner's direction. The owner sets what the business offers, what it can spend, and which commitments need approval.
+Agents handle ongoing work under a human owner, who sets what the business offers, what it can spend and what needs approval.
 
-A research service might use agents to gather sources, draft reports and prepare replies. Launching another service, opening an account, or spending past the agreed budget comes back to the owner.
-
-Agents do the work inside that agreement. They don't own the company and they don't get to authorise their own expansion.
+Agents do the work. They don't own the business and can't approve their own growth.
 
 *Related: Missions, Interchange, Ports.*
 
 **Colony.** *Study how agents work together over time.*
 
-Persistent groups of agents in worlds we can reset, so we can study cooperation, conflict and failure before connecting anything like this to real customers and real money.
+Groups of agents in simulated worlds we can reset, like a repair shop with stock and customers, to study cooperation and failure safely.
 
-A fictional repair shop with simulated stock, customer requests, and several agents making decisions across repeated sessions. Change the rules, compare results, start again.
-
-Resources stay capped, participation is explicit, a person can stop it, and permission inside the simulation never crosses into the world outside.
+Nothing inside the simulation carries into the real world.
 
 *Related: Foundry, Experience, Arena.*
 
 **Interchange.** *Give it a budget you can take back.*
 
-Payments that let an agent buy what a job needs while your main financial key stays somewhere else. You set the purpose, the merchant, the limit and the expiry.
+Let an agent pay for what a job needs while your main payment method stays somewhere else. You set the purpose, the limit and the expiry.
 
-An agent buying compute for an approved task uses that allowance. If it needs more, it asks. Splitting a purchase into smaller ones or handing it to another agent must not get around the total.
-
-Controls sit outside the agent and you can withdraw the allowance. Permission to pay for one job never becomes permission to spend anywhere.
+If it needs more, it asks. Splitting a purchase or handing it to another agent can't get around the limit.
 
 *Related: Gate, Missions, Foundry.*
 
 **Ports.** *Connect a digital task to something physical.*
 
-Narrow connections to approved devices, services and human operators. Physical actions need a named owner, hard limits, and a way for a person to refuse.
+Narrow links to approved devices, services and people, like sending a document to a local print shop within a set budget.
 
-An office agent prepares a print job for a local service. A person chooses the document, the destination, the spending limit, and whether collection needs confirmation. A different document or destination needs its own permission.
-
-Sending a message never gives an agent authority over a device or a person. That has to come from whoever is responsible for the action.
+Every physical action has a named owner and hard limits, and a person can always say no.
 
 *Related: Gate, Interchange, Rescue.*
 
 ---
 
-We're not putting dates on the map. AI compresses building. It doesn't compress licences, provider access, security review, or evidence that hasn't been gathered yet. We'll show the work as it develops and say clearly when something is ready to use.
+We're not putting dates on the map. AI speeds up building, but it doesn't speed up licences, security review or evidence nobody has gathered yet. We'll show the work as it develops and say clearly when something is ready.
 
 ---
 
@@ -505,8 +445,6 @@ Fee amounts, spending rules, wallets and signing authority get published before 
 **No company ownership.** Holding the token isn't owning Hivra.
 
 **No manufactured activity.** No wash trading, no circular treasury transactions, no rewards designed to make a chart look busy.
-
-We want to pay for software people use, findings they can verify, and work they can check.
 
 ---
 

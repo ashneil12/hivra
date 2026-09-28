@@ -88,6 +88,4 @@ Fee amounts, spending rules, wallets and signing authority get published before 
 
 **No manufactured activity.** No wash trading, no circular treasury transactions, no rewards designed to make a chart look busy.
 
-We want to pay for software people use, findings they can verify, and work they can check.
-
 ---
