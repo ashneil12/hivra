@@ -472,6 +472,35 @@
     }
   }
 
+  // Where it fits: one red frame around Hivra's column, measured from the
+  // table so it follows the layout at every width.
+  const fitTable = query(".fit-table");
+  let fitFrame = null;
+  function placeFitFrame() {
+    const head = fitTable && query("thead th.is-hivra", fitTable);
+    const cells = fitTable ? all("td.is-hivra", fitTable) : [];
+    if (!head || !cells.length) return;
+    if (!fitFrame) {
+      fitFrame = document.createElement("div");
+      fitFrame.className = "fit-frame";
+      fitFrame.setAttribute("aria-hidden", "true");
+      fitTable.append(fitFrame);
+    }
+    const base = fitTable.getBoundingClientRect();
+    const top = head.getBoundingClientRect();
+    const bottom = cells[cells.length - 1].getBoundingClientRect();
+    fitFrame.style.left = `${top.left - base.left + fitTable.scrollLeft}px`;
+    fitFrame.style.top = `${top.top - base.top}px`;
+    fitFrame.style.width = `${top.width}px`;
+    fitFrame.style.height = `${bottom.bottom - top.top}px`;
+  }
+  if (fitTable) {
+    placeFitFrame();
+    if ("ResizeObserver" in window)
+      new ResizeObserver(placeFitFrame).observe(fitTable);
+    if (document.fonts?.ready) document.fonts.ready.then(placeFitFrame);
+  }
+
   // The canvas is a decorative layer. It owns one cancellable, 30 fps loop only while visible.
   const particles = (() => {
     const canvas = query("#field-canvas");
@@ -812,6 +841,77 @@
               },
             );
           });
+
+        const fit = query(".fit");
+        if (fit) {
+          const options = all(".fit-option", fit);
+          gsap
+            .timeline({
+              scrollTrigger: {
+                trigger: query(".fit-options", fit),
+                start: "top 80%",
+                once: true,
+              },
+            })
+            .from(options, {
+              y: 40,
+              opacity: 0,
+              duration: 0.8,
+              stagger: 0.14,
+              ease: "power3.out",
+            })
+            .fromTo(
+              options,
+              { "--fill": 0 },
+              { "--fill": 1, duration: 0.9, stagger: 0.14, ease: "power2.inOut" },
+              0.15,
+            );
+          gsap.from(query(".fit-verdict", fit), {
+            y: 34,
+            opacity: 0,
+            duration: 0.9,
+            ease: "power3.out",
+            scrollTrigger: {
+              trigger: query(".fit-verdict", fit),
+              start: "top 82%",
+              once: true,
+            },
+          });
+          const frame = query(".fit-frame", fit);
+          const scene = gsap
+            .timeline({
+              scrollTrigger: {
+                trigger: query(".fit-table", fit),
+                start: "top 76%",
+                once: true,
+              },
+            })
+            .from(all(".fit-table tbody tr", fit), {
+              opacity: 0,
+              x: -20,
+              duration: 0.55,
+              stagger: 0.09,
+              ease: "power3.out",
+            })
+            .fromTo(
+              all(".fit-table td.is-hivra", fit),
+              { "--pop": 0 },
+              {
+                "--pop": 1,
+                duration: 0.45,
+                stagger: 0.09,
+                ease: "back.out(2.6)",
+              },
+              0.3,
+            );
+          if (frame)
+            scene.fromTo(
+              frame,
+              { clipPath: "inset(0 0 100% 0)" },
+              { clipPath: "inset(0 0 0% 0)", duration: 1, ease: "power2.inOut" },
+              0.2,
+            );
+        }
 
         all(
           ".chapter-heading h2, .founder-heading h2, .open-copy h2, .reading-room h2, .finale h2",

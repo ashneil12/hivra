@@ -224,6 +224,14 @@ class LitepaperContentTests(unittest.TestCase):
         missing = missing_blocks(blocks, element.text())
         self.assertFalse(missing, label + " lost source copy:\n" + "\n".join(missing))
 
+    def test_positioning_and_open_source_come_before_the_founder_letter(self):
+        order = [node.attrs["id"] for node in self.page.elements if node.tag == "section" and node.attrs.get("id")]
+        self.assertEqual(order[:5], ["beginning", "opportunity", "fit", "platform", "founder"])
+        table = next(node for node in self.page.elements if node.tag == "table")
+        self.assertIn("Hivra", table.text())
+        cover = self.by_id["beginning"]
+        self.assertIn("Open source", cover.text())
+
     def test_the_reader_can_launch_from_the_dock_and_the_finale(self):
         def links(element):
             found = [element] if element.tag == "a" else []

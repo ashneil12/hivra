@@ -268,7 +268,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   display:block;
   width:27px;
   height:27px;
-  border-radius:6px;
   flex:none
 }
 .site-header nav {
@@ -339,8 +338,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   background:color-mix(in srgb,var(--bg) 92%,transparent);
   border:1px solid var(--line);
   box-shadow:0 10px 40px #0002;
-  backdrop-filter:blur(15px);
-  border-radius:5px
+  backdrop-filter:blur(15px)
 }
 .chapter-dock a {
   font:10px var(--mono);
@@ -474,7 +472,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   width:48px;
   height:48px;
   border:1px solid var(--line);
-  border-radius:50%;
   display:grid;
   place-items:center;
   transition:background .3s,transform .5s var(--ease),border-color .3s
@@ -700,7 +697,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   content:'';
   width:5px;
   height:5px;
-  border-radius:50%;
   background:var(--accent)
 }
 .boundary-lab {
@@ -838,7 +834,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   right:-3px;
   width:6px;
   height:6px;
-  border-radius:50%;
   background:var(--accent);
   transition:transform .35s var(--ease)
 }
@@ -1544,8 +1539,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 }
 .atlas-core .brand-mark {
   width:26px;
-  height:26px;
-  border-radius:5px
+  height:26px
 }
 .atlas-node {
   position:absolute;
@@ -2499,8 +2493,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   }
   .brand-mark {
     width:24px;
-    height:24px;
-    border-radius:5px
+    height:24px
   }
   .reader-tools {
     gap:1px
@@ -3264,6 +3257,275 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     font-size:25px
   }
 }
+/* Where it fits: three places an agent can live, then the one you can check. */
+.hero-open {
+  display:inline-flex;
+  align-items:center;
+  gap:12px;
+  margin-top:26px;
+  padding:9px 14px 9px 12px;
+  border:1px solid var(--line);
+  font:10px/1.4 var(--mono);
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--muted);
+  transition:color .25s,border-color .25s
+}
+.hero-open:hover {
+  color:var(--text);
+  border-color:var(--accent)
+}
+.hero-open-dot {
+  width:6px;
+  height:6px;
+  background:var(--accent);
+  box-shadow:0 0 12px var(--accent)
+}
+.fit .chapter-heading h2 {
+  max-width:1200px
+}
+.fit-options {
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  border-top:1px solid var(--line);
+  border-left:1px solid var(--line)
+}
+.fit-option {
+  position:relative;
+  padding:34px 32px 38px;
+  border-right:1px solid var(--line);
+  border-bottom:1px solid var(--line);
+  background:var(--bg);
+  overflow:hidden
+}
+.fit-option:before {
+  content:'';
+  position:absolute;
+  inset:0 auto auto 0;
+  height:2px;
+  width:100%;
+  background:var(--faint);
+  transform:scaleX(var(--fill,1));
+  transform-origin:left
+}
+.fit-option-mark {
+  display:block;
+  margin-bottom:26px;
+  font:10px var(--mono);
+  color:var(--faint);
+  letter-spacing:.1em
+}
+.fit-option p {
+  margin:0;
+  font-size:16px;
+  line-height:1.75;
+  color:var(--muted)
+}
+.fit-option strong {
+  display:block;
+  margin-bottom:14px;
+  font-size:clamp(22px,2vw,28px);
+  line-height:1.1;
+  letter-spacing:-.045em;
+  font-weight:550;
+  color:var(--text)
+}
+.fit-verdict {
+  position:relative;
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:34px;
+  align-items:start;
+  margin:74px 0 58px
+}
+.fit-verdict-rule {
+  width:54px;
+  height:2px;
+  margin-top:22px;
+  background:var(--accent)
+}
+.fit-verdict .prose {
+  max-width:980px
+}
+.fit-verdict p {
+  font-size:clamp(22px,2.3vw,33px);
+  line-height:1.38;
+  letter-spacing:-.035em;
+  color:var(--text)
+}
+.fit-table {
+  position:relative;
+  overflow-x:auto;
+  border:1px solid var(--line);
+  background:var(--surface)
+}
+.fit-table table {
+  width:100%;
+  min-width:680px;
+  border-collapse:collapse;
+  font-size:14px
+}
+.fit-table th,.fit-table td {
+  padding:18px 20px;
+  border-bottom:1px solid var(--line);
+  text-align:center;
+  vertical-align:middle
+}
+.fit-table tbody tr:last-child th,.fit-table tbody tr:last-child td {
+  border-bottom:0
+}
+.fit-table thead th {
+  font:10px/1.5 var(--mono);
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--faint);
+  font-weight:400;
+  width:15%
+}
+.fit-table thead th:first-child {
+  width:auto
+}
+.fit-table tbody th {
+  text-align:left;
+  font-weight:500;
+  color:var(--text);
+  letter-spacing:-.01em
+}
+.fit-table td {
+  font:11px var(--mono);
+  color:var(--faint);
+  letter-spacing:.04em
+}
+.fit-table td.is-yes,.fit-table td.is-no {
+  font-size:0
+}
+.fit-table td.is-yes:before,.fit-table td.is-no:before {
+  display:inline-block;
+  font:14px/1 var(--mono);
+  letter-spacing:0
+}
+.fit-table td.is-yes:before {
+  content:'';
+  width:11px;
+  height:6px;
+  margin-top:-4px;
+  border-left:1.5px solid var(--muted);
+  border-bottom:1.5px solid var(--muted);
+  rotate:-45deg
+}
+.fit-table td.is-no:before {
+  content:'\00d7';
+  color:var(--faint);
+  font-size:18px
+}
+.fit-table .is-hivra {
+  position:relative;
+  background:color-mix(in srgb,var(--accent) 9%,transparent);
+  color:var(--text)
+}
+.fit-table thead th.is-hivra {
+  color:var(--accent);
+  font-size:12px;
+  font-weight:600
+}
+.fit-table td.is-hivra.is-yes:before {
+  border-color:var(--accent);
+  border-width:0 0 2px 2px;
+  transform:scale(var(--pop,1));
+  opacity:var(--pop,1)
+}
+.fit-table td.is-hivra.is-partial {
+  color:var(--accent)
+}
+/* The red frame around Hivra's column, drawn by one element so it can animate. */
+.fit-frame {
+  position:absolute;
+  pointer-events:none;
+  border:1px solid var(--accent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent),0 0 38px color-mix(in srgb,var(--accent) 18%,transparent)
+}
+.fit-table + p {
+  margin:16px 0 0;
+  font-size:11px;
+  line-height:1.7;
+  color:var(--faint);
+  max-width:70ch
+}
+.fit-who {
+  display:grid;
+  grid-template-columns:1.1fr 1fr;
+  gap:7%;
+  margin-top:90px;
+  padding-top:60px;
+  border-top:1px solid var(--line)
+}
+.fit-who h3 {
+  font-size:clamp(34px,3.8vw,60px)
+}
+.fit-who .prose p:last-child {
+  margin-top:26px;
+  font-size:24px;
+  line-height:1.4;
+  letter-spacing:-.03em;
+  color:var(--text)
+}
+@media(max-width:999px) {
+  .fit-options {
+    grid-template-columns:1fr
+  }
+  .fit-option {
+    padding:28px 24px 30px
+  }
+  .fit-verdict {
+    grid-template-columns:1fr;
+    gap:22px;
+    margin:54px 0 44px
+  }
+  .fit-verdict-rule {
+    margin-top:0
+  }
+  .fit-who {
+    grid-template-columns:1fr;
+    gap:24px;
+    margin-top:64px;
+    padding-top:44px
+  }
+}
+@media(max-width:680px) {
+  .hero-open {
+    margin-top:20px;
+    font-size:9px;
+    letter-spacing:.08em
+  }
+  .fit-table table {
+    min-width:0;
+    font-size:12px
+  }
+  .fit-table th,.fit-table td {
+    padding:13px 6px
+  }
+  .fit-table thead th {
+    font-size:8px;
+    letter-spacing:.04em
+  }
+  .fit-table tbody th {
+    padding-left:12px;
+    width:34%
+  }
+  .fit-table thead th.is-hivra {
+    font-size:9px
+  }
+  .fit-table td {
+    font-size:9px;
+    letter-spacing:0
+  }
+  .fit-who .prose p:last-child {
+    font-size:20px
+  }
+}
+.reading-mode .fit-frame {
+  display:none
+}
 /* One ask: launch from the dock or the closing scene. */
 picture {
   display:contents
@@ -3274,7 +3536,6 @@ picture {
   padding-inline:15px;
   background:var(--accent);
   color:var(--accent-ink);
-  border-radius:3px;
   transition:filter .2s
 }
 .chapter-dock a.dock-launch:hover {
@@ -3298,7 +3559,6 @@ picture {
   gap:16px;
   min-height:56px;
   padding-inline:24px;
-  border-radius:3px;
   font-size:16px;
   font-weight:650;
   letter-spacing:-.025em;
