@@ -3689,6 +3689,13 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     display:none
   }
 }
+/* Between phone and wide desktop the dock keeps its first chapters and the
+   ask; the Index still lists every chapter. */
+@media(min-width:681px) and (max-width:1099px) {
+  .chapter-dock a[href="#security"],.chapter-dock a[href="#future"] {
+    display:none
+  }
+}
 /* One ask: launch from the dock or the closing scene. */
 picture {
   display:contents
