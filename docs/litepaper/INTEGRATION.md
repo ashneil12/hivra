@@ -2,11 +2,11 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`f90546918de620123d1dacdda20bf81027168b36362ecb15d01acc73c9120b8e`
+`f6f0e044efbcc967c3282d489958bce171f61ec1c1065ff47a427257edabdad7`
 (v2.3, approved 28 September 2026). v2.3 rewrites the page in plainer, shorter
 language, treats every surface it names as live (no preview labels, at Ash's
 direction), adds Windows desktops to the positioning, simplifies "Keeping a
-mistake from reaching everything" and drops the token section's closing line.
+mistake from reaching everything", trims the 15 product stories and drops the token section's closing line.
 v2.2 (same day) added "Keep the agents you like. Move them off your computer."
 and moved open source ahead of the founder letter; v2.1 (23 September) was
 `8ccc34344b3a00884e6f37295ebefa9208a43c0826632508ea9a68d185dddca7`. `test_content.py` checks the source against

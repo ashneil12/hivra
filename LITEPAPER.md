@@ -224,41 +224,33 @@ Coming: Hivra Orchestrator, macOS, custom images.
 
 **Gate.** *Let an agent use an account without handing it the keys.*
 
-A support agent needs to refund a damaged order. Give it your payment provider key and you've also given it a great deal that has nothing to do with refunds.
+A support agent needs to refund a damaged order. Hand it your payment key and it can do far more than refunds.
 
-With Gate it asks for the action instead. Gate checks who's asking, which account they're allowed, the amount, and whether you need to approve. The agent gets the result and a receipt. The credential never enters its computer.
-
-Permission to refund an order isn't permission to change where your payouts go. The service enforces that, even when the agent hands the job to another agent.
+With Gate, the agent asks for the refund instead. Gate checks who's asking, the account, the amount and whether you need to approve, then returns the result and a receipt. The key never enters the agent's computer, and a refund permission never becomes permission to change your payouts.
 
 *Related: Vault, Interchange, Rescue.*
 
 **Exchange.** *Know what you're installing.*
 
-Somewhere to publish and find agents, MCP servers, tools, computer images, workflows and security policies. Before you install anything you can see who made it, which version you're getting, and what it wants to reach.
+A place to publish and find agents, tools, MCP servers, computer images and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
 
-Say you pick an agent that turns customer interviews into research notes. The listing tells you which folders it reads, which services it contacts, whether it can spend money. If an update also wants your email, that's a new decision, not a silent one.
-
-Publishers get identity, versioning, revocation and payouts. A purchase never grants access by itself, and neither does a familiar name.
+If an update suddenly wants your email, that's a new decision you make, not a silent change. Publishers get identity, versioning, revocation and payouts.
 
 *Related: Passport, Seal, Signal.*
 
 **Arena.** *Find out where a workflow breaks.*
 
-Put agents and their tools through deliberate attack in a test environment. Poisoned documents, fake approvals, stolen credentials, runaway spending, attempts to leave the machine.
+Attack your agents and their tools on purpose in a test environment: poisoned documents, fake approvals, stolen credentials, runaway spending.
 
-Picture a document assistant working through a folder of test invoices. Some tell it to send customer records elsewhere. Some pretend a person already approved a payment. The report shows what it tried, what stopped it, and where the controls failed.
-
-A result belongs to the version and setup that were tested. You get evidence you can reproduce, and a signed result for what it survived.
+The report shows what the agent tried, what stopped it and where the controls failed, with a signed result for the version you tested.
 
 *Related: Challenges, Seal, Rescue.*
 
 **Signal.** *Share a finding before it catches someone else.*
 
-When a researcher finds a compromised MCP server or a package quietly stealing files, everyone else using it needs to know today, not next month. Signal collects verified reports, affected versions, and the evidence behind them.
+When someone finds a compromised MCP server or a package stealing files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
 
-A report might show a familiar tool's latest update sending documents to an unrelated server. Subscribers find their affected installations and respond under rules they chose: tell someone, suspend access, quarantine the component.
-
-You pick the sources you trust and what they're allowed to trigger. A threat feed must never become someone else's way to install software on your machines.
+You pick the sources you trust and what they can trigger: an alert, a suspended account, a quarantined tool. A feed can never install software on your machines.
 
 *Related: Exchange, Passport, Rescue.*
 
@@ -268,61 +260,49 @@ You pick the sources you trust and what they're allowed to trigger. A threat fee
 
 **Vault.** *Answer the question without handing over the account.*
 
-An agent arranging a meeting asks if you're free Tuesday afternoon. Vault answers that, without your appointment titles and everyone else's contact details riding along.
+An agent booking a meeting asks if you're free Tuesday afternoon. Vault answers yes or no, without your calendar coming along.
 
-Same idea for a customer account. A refund agent can ask whether an order qualifies without receiving the customer's entire history.
-
-The rules have to cover repeated questions too. A hundred narrow answers can reveal more than one broad one, so Vault has to weigh what's already been disclosed before deciding what's next.
+It also keeps track of what it has already answered, because a hundred narrow answers can reveal as much as one broad one.
 
 *Related: Gate, Passport, Missions.*
 
 **Passport.** *Check where an agent came from.*
 
-A verifiable identity: who published it, which version, what permissions it declares, which tests belong to that release.
+A verifiable identity for an agent: who published it, which version, what permissions it declares and which tests belong to it.
 
-If another team sends you an agent, check the signed package before you use it. Changed files and revoked keys change what you can verify. You still decide whether it belongs in your environment.
-
-A signature tells you who signed something. It doesn't tell you everything they've ever made is safe, and it doesn't grant permission on your behalf.
+A signature tells you who signed something. It doesn't make everything they publish safe, and it never grants permission on your behalf.
 
 *Related: Exchange, Seal, Experience.*
 
 **Seal.** *A security claim you can actually check.*
 
-Certification tied to specific evidence: publisher identity, signed releases, tested recovery, restricted network access, credentials kept outside the agent.
+Certification tied to evidence: signed releases, tested recovery, restricted network access, credentials kept outside the agent.
 
-If a browser tool claims it never holds your credentials, a review should examine how that works, what settings it depends on, and what the tests showed. The certificate says what was checked, when it expires, and what would withdraw it.
-
-An update that changes credential handling needs another review. A badge can't quietly outlive the evidence behind it.
+The certificate says what was checked and when it expires. An update that changes how credentials are handled needs a new review.
 
 *Related: Arena, Passport, Challenges.*
 
 **Rescue.** *Get control back when something goes wrong.*
 
-An agent starts sending files somewhere unexpected. You need to stop it, withdraw the credentials it was using, and keep enough evidence to work out what happened.
+An agent starts sending files somewhere unexpected. Rescue stops it, withdraws its credentials and keeps the evidence, in one place.
 
-Rescue puts that in one place. Find other computers running the affected component, investigate the cause, rebuild from a known-good starting point. The recovery record separates what's restored from what still needs attention.
-
-Stopping a problem must never grant new access. Reconnecting accounts and resuming work stay with the person responsible.
+Then it finds other computers running the same component and rebuilds from a known-good start. Stopping a problem never grants new access.
 
 *Related: Gate, Signal, Experience.*
 
 **Challenges.** *Pay people to break it.*
 
-A reward behind a specific question. Can this agent read another tenant's test file? Can it bypass an approval? Can it get out of its computer?
+A reward behind a precise question. Can this agent read another tenant's files? Can it bypass an approval? Can it get out of its computer?
 
-Researchers get an authorised environment, clear rules and a defined result to demonstrate. They submit steps and evidence, reviewers reproduce it, verified findings get paid.
-
-Permission covers that test environment only. It never extends to customers or third parties. And a reward nobody has claimed tells you very little on its own, without knowing who tested it and how.
+Researchers get an authorised environment and clear rules. Reviewers reproduce what they find, and verified findings get paid.
 
 *Related: Arena, Seal, Interchange.*
 
 **Experience.** *Let another agent start from what worked.*
 
-An agent spends hours finding out why a database migration failed, fixes it, verifies the fix. The next team facing the same thing shouldn't start from zero.
+An agent spends hours working out why a database migration failed, then fixes it. The next team with the same problem shouldn't start from zero.
 
-Experience packages the method, assumptions, evidence and known limits so someone else can review and test it. The package carries its source and history, with secrets and personal data stripped before it leaves.
-
-The receiving team decides what to adopt. A useful method doesn't arrive with permission to run against their database, and it doesn't bring the first team's credentials with it.
+Experience packages the method, evidence and limits so another team can review and reuse it, with secrets and personal data stripped out.
 
 *Related: Passport, Exchange, Arena.*
 
@@ -332,57 +312,47 @@ The receiving team decides what to adopt. A useful method doesn't arrive with pe
 
 **Missions.** *Give a group of agents a job with a clear finish.*
 
-How to split a large objective into work that can be checked and paid for. A person defines scope, budget, and the evidence needed to accept the result.
+A person sets the goal, the budget and the evidence needed to call it done. Each agent gets only the access its part needs.
 
-For an accessibility review, different agents inspect navigation, forms, screen reader behaviour. Each gets only the access its part needs. A reviewer accepts the findings before anything gets paid.
-
-Agents can't expand the target, raise the budget or approve their own invoices. Busy and finished are different things.
+Agents can't widen the target, raise the budget or approve their own invoices.
 
 *Related: Vault, Interchange, Foundry.*
 
 **Foundry.** *Run an agent-powered business with someone responsible for it.*
 
-How agents handle ongoing work under a human owner's direction. The owner sets what the business offers, what it can spend, and which commitments need approval.
+Agents handle ongoing work under a human owner, who sets what the business offers, what it can spend and what needs approval.
 
-A research service might use agents to gather sources, draft reports and prepare replies. Launching another service, opening an account, or spending past the agreed budget comes back to the owner.
-
-Agents do the work inside that agreement. They don't own the company and they don't get to authorise their own expansion.
+Agents do the work. They don't own the business and can't approve their own growth.
 
 *Related: Missions, Interchange, Ports.*
 
 **Colony.** *Study how agents work together over time.*
 
-Persistent groups of agents in worlds we can reset, so we can study cooperation, conflict and failure before connecting anything like this to real customers and real money.
+Groups of agents in simulated worlds we can reset, like a repair shop with stock and customers, to study cooperation and failure safely.
 
-A fictional repair shop with simulated stock, customer requests, and several agents making decisions across repeated sessions. Change the rules, compare results, start again.
-
-Resources stay capped, participation is explicit, a person can stop it, and permission inside the simulation never crosses into the world outside.
+Nothing inside the simulation carries into the real world.
 
 *Related: Foundry, Experience, Arena.*
 
 **Interchange.** *Give it a budget you can take back.*
 
-Payments that let an agent buy what a job needs while your main financial key stays somewhere else. You set the purpose, the merchant, the limit and the expiry.
+Let an agent pay for what a job needs while your main payment method stays somewhere else. You set the purpose, the limit and the expiry.
 
-An agent buying compute for an approved task uses that allowance. If it needs more, it asks. Splitting a purchase into smaller ones or handing it to another agent must not get around the total.
-
-Controls sit outside the agent and you can withdraw the allowance. Permission to pay for one job never becomes permission to spend anywhere.
+If it needs more, it asks. Splitting a purchase or handing it to another agent can't get around the limit.
 
 *Related: Gate, Missions, Foundry.*
 
 **Ports.** *Connect a digital task to something physical.*
 
-Narrow connections to approved devices, services and human operators. Physical actions need a named owner, hard limits, and a way for a person to refuse.
+Narrow links to approved devices, services and people, like sending a document to a local print shop within a set budget.
 
-An office agent prepares a print job for a local service. A person chooses the document, the destination, the spending limit, and whether collection needs confirmation. A different document or destination needs its own permission.
-
-Sending a message never gives an agent authority over a device or a person. That has to come from whoever is responsible for the action.
+Every physical action has a named owner and hard limits, and a person can always say no.
 
 *Related: Gate, Interchange, Rescue.*
 
 ---
 
-We're not putting dates on the map. AI compresses building. It doesn't compress licences, provider access, security review, or evidence that hasn't been gathered yet. We'll show the work as it develops and say clearly when something is ready to use.
+We're not putting dates on the map. AI speeds up building, but it doesn't speed up licences, security review or evidence nobody has gathered yet. We'll show the work as it develops and say clearly when something is ready.
 
 ---
 
