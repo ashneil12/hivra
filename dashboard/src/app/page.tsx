@@ -15,6 +15,7 @@ import { HOSTED_SIZES } from "@/app/pricing/pricing-content";
 import { HomeMotion } from "@/components/landing/home/motion";
 import Hero from "@/components/landing/home/Hero";
 import Reach from "@/components/landing/home/Reach";
+import Fit from "@/components/landing/home/Fit";
 import Agents from "@/components/landing/home/Agents";
 import How from "@/components/landing/home/How";
 import OpenSource from "@/components/landing/home/OpenSource";
@@ -177,6 +178,7 @@ export default async function LandingPage(_props: { searchParams?: Promise<{ lan
         <HomeMotion>
           <Hero />
           <Reach />
+          <Fit />
           <Agents />
           <How />
           <OpenSource />

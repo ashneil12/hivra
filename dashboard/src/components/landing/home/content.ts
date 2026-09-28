@@ -85,6 +85,31 @@ export interface HomeAgent {
   screen: string[];
 }
 
+/**
+ * Where Hivra fits. The columns and rows quote the litepaper's comparison
+ * table word for word (home-copy.test.ts checks them against LITEPAPER.md).
+ */
+export const FIT = {
+  eyebrow: "Where it fits",
+  title: "Keep the agents you like.",
+  titleTail: "Move them off your computer.",
+  lead: "Use any of them. Just don't give them the computer where the rest of your life lives.",
+  columns: ["Your own computer", "The maker's computer", "A hosted agent computer", "Hivra"],
+  examples: ["Your laptop", "Muse, Grok Bot", "Rented in the cloud", "Open source"],
+  rows: [
+    { label: "Keeps your personal computer out of it", cells: ["No", "Yes", "Yes", "Yes"] },
+    { label: "Stays on when your laptop closes", cells: ["No", "Yes", "Yes", "Yes"] },
+    { label: "You choose the agent", cells: ["Yes", "No", "Yes", "Yes"] },
+    { label: "You bring your own model account", cells: ["Yes", "No", "Yes", "Yes"] },
+    { label: "You can read the code", cells: ["Depends", "No", "No", "Yes"] },
+    { label: "You can run it on your own hardware", cells: ["Yes", "No", "No", "In preview"] },
+  ],
+  verdict: "Hivra is the one you can check.",
+  more: "How Hivra compares",
+  moreHref: "/docs/litepaper/index.html#fit",
+  note: "How these services described themselves in September 2026. They change quickly, so check the current details before you rely on them.",
+} as const;
+
 export const AGENTS_SECTION = {
   eyebrow: "Agents",
   title: "Pick your agent.",

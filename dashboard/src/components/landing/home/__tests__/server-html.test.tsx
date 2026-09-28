@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Hero from "../Hero";
 import Pricing from "../Pricing";
 import Faq from "../Faq";
-import { HOMEPAGE_FAQ } from "../content";
+import Fit from "../Fit";
+import { FIT, HOMEPAGE_FAQ } from "../content";
 
 const HIDDEN = /style="[^"]*(?:opacity:\s*0(?:;|")|visibility:\s*hidden|display:\s*none)/;
 
@@ -33,4 +34,15 @@ test("every answer is in the server HTML, with the first one open", () => {
   expect(markup.match(/<details\b/g)).toHaveLength(HOMEPAGE_FAQ.length);
   expect(markup.match(/<details[^>]*\bopen\b/g)).toHaveLength(1);
   for (const { a } of HOMEPAGE_FAQ) expect(markup).toContain(a.replace(/'/g, "&#x27;"));
+});
+
+test("the comparison ships complete in server HTML, with words behind every mark", () => {
+  const markup = renderToStaticMarkup(<Fit />);
+  expect(markup.match(/<tbody>[\s\S]*<\/tbody>/)?.[0].match(/<tr\b/g)).toHaveLength(FIT.rows.length);
+  for (const column of FIT.columns) expect(markup).toContain(`${column.replace(/'/g, "&#x27;")}<small>`);
+  // Marks are decoration; each Yes and No is still in the text a screen reader reads.
+  const marked = FIT.rows.flatMap(row => row.cells).filter(cell => cell === "Yes" || cell === "No").length;
+  expect(markup.match(/<i[^>]*aria-hidden="true"[^>]*><\/i><span[^>]*>(Yes|No)<\/span>/g)).toHaveLength(marked);
+  expect(markup).toContain("In preview");
+  expect(markup).not.toMatch(HIDDEN);
 });

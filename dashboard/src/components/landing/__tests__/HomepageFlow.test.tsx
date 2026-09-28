@@ -28,7 +28,7 @@ test("the first screen says what it is, who it is for, what it costs, and asks o
 
 test("every section the header and footer link to is still on the page", async () => {
   await renderHome();
-  for (const id of ["why", "launch", "agents", "computers", "workspace", "open-source", "pricing", "hosting", "founder", "faq", "start"]) {
+  for (const id of ["why", "fit", "launch", "agents", "computers", "workspace", "open-source", "pricing", "hosting", "founder", "faq", "start"]) {
     expect(document.getElementById(id)).not.toBeNull();
   }
 });
