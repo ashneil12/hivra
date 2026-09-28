@@ -48,6 +48,55 @@ I don't think the answer is to stop using agents. I think the answer is to stop 
 
 ---
 
+## Keep the agents you like. Move them off your computer.
+
+Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. They're getting good, and the useful ones want to keep working after you've stepped away.
+
+Use any of them. Just don't give them the computer where the rest of your life lives.
+
+So they need a computer. Right now there are three places to find one.
+
+**Your own computer.** Free and already there. It's also where your photos, passwords and client work live, and the work stops when you close the lid.
+
+**The maker's computer.** Muse and Grok Bot each run on a computer their company provides, so they keep going when you close the app. You get one company's agent, running that company's models, on that company's machine.
+
+**A hosted agent computer.** A growing group of services will rent your agent a machine in the cloud. You pick the agent and bring your own model account. You can't read their code or run the service yourself, so you're taking their word for how it works.
+
+Hivra is the one you can check. Pick the agent, sign in with your own account or choose the provider it uses, and it gets a computer of its own that stays on when your laptop closes. The platform is open source, so you can read how it handles your access. And if you'd rather not rely on us at all, the whole platform runs on your own hardware, as a preview from the source today.
+
+| | Your own computer | The maker's computer | A hosted agent computer | Hivra |
+|---|---|---|---|---|
+| Keeps your personal computer out of it | No | Yes | Yes | Yes |
+| Stays on when your laptop closes | No | Yes | Yes | Yes |
+| You choose the agent | Yes | No | Yes | Yes |
+| You bring your own model account | Yes | No | Yes | Yes |
+| You can read the code | Depends | No | No | Yes |
+| You can run it on your own hardware | Yes | No | No | In preview |
+
+*How these services described themselves in September 2026. They change quickly, so check the current details before you rely on them.*
+
+### Who it's for
+
+People who already put agents to work. Developers running Claude Code or Codex on the same laptop they bank on. Anyone with a personal agent like OpenClaw or Hermes that should be running somewhere other than their own machine. And people who just need another computer, with an agent or without one.
+
+If you can pick an agent and sign in to it, you can launch one.
+
+---
+
+## Open source. Yours to run.
+
+Hivra is open source under Apache 2.0. Read the code. Change it. Run it yourself. Host it for your clients.
+
+That matters because this software sits between an agent and things you care about, so you should be able to inspect the decisions it makes about access. And if we change direction, get bought, or make a call you hate, you should be able to keep going without us.
+
+Hivra Cloud is there if you'd rather we ran it. Self-hosting is there if you wouldn't.
+
+Same approach for everything we're building around Agent Computers. Gate is being designed for agents running outside Hivra. Exchange shouldn't need you to launch one of our computers just to publish something. Each piece has to be useful on its own or it isn't infrastructure, it's a lock-in with a nice name.
+
+Use the whole thing, or take the one part that solves your problem.
+
+---
+
 ## Why I'm building it
 
 I run agents every day. I build software with them, dig through problems with them, and get through work that would otherwise take a week. I want to keep doing that as they get better.
@@ -86,7 +135,7 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 ### Launch an agent
 
-Claude Code, Codex, Hermes or Agent Zero, with DeepSeek in preview. Pick one, connect the account or key it uses, and give it a machine of its own.
+Claude Code, Codex, Hermes, OpenClaw or Agent Zero, with DeepSeek in private preview. Pick one, connect the account or key it uses, and give it a machine of its own.
 
 Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it.
 
@@ -122,7 +171,7 @@ Nobody should be managing eight tmux panes and guessing which window belongs to 
 
 **Self-host** if you'd rather we weren't involved at all. The whole platform, your hardware, your sign-in, no Hivra account. A preview runs from the source today, and packaged releases come next.
 
-Your model connection is separate from all of that. Bring your own API key whether the computer runs with us or on your own metal. Choosing managed hosting doesn't cost you that choice.
+Your model connection is separate from all of that. Each agent signs in the way it normally does, or uses a provider you pick, whether the computer runs with us or on your own metal. Choosing managed hosting doesn't cost you that choice.
 
 **The launch:**
 
@@ -163,20 +212,6 @@ Different hosting gives you different protection. A virtual machine and a contai
 
 ---
 
-## Open source. Yours to run.
-
-Hivra is open source under Apache 2.0. Read the code. Change it. Run it yourself. Host it for your clients.
-
-That matters because this software sits between an agent and things you care about, so you should be able to inspect the decisions it makes about access. And if we change direction, get bought, or make a call you hate, you should be able to keep going without us.
-
-Hivra Cloud is there if you'd rather we ran it. Self-hosting is there if you wouldn't.
-
-Same approach for everything we're building around Agent Computers. Gate is being designed for agents running outside Hivra. Exchange shouldn't need you to launch one of our computers just to publish something. Each piece has to be useful on its own or it isn't infrastructure, it's a lock-in with a nice name.
-
-Use the whole thing, or take the one part that solves your problem.
-
----
-
 ## Keeping a mistake from reaching everything
 
 Hivra can't make a model infallible. What it can change is how far one mistake can reach.
@@ -207,7 +242,7 @@ Agent Computers give the work somewhere to happen. Everything below is about wha
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes or Agent Zero on a computer of its own. Or start with Ubuntu and use it yourself. Keep your workspace, pick your interface, run it on our infrastructure.
+Run Claude Code, Codex, Hermes, OpenClaw or Agent Zero on a computer of its own. Or start with Ubuntu and use it yourself. Keep your workspace, pick your interface, run it on our infrastructure.
 
 In preview: Windows, Omarchy, DeepSeek, and running on your own infrastructure.
 

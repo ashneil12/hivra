@@ -5,6 +5,7 @@ import {
   AGENTS_SECTION,
   CLOSING,
   COMPUTERS,
+  FIT,
   FOUNDER,
   GUARANTEE_LINE,
   HERO,
@@ -46,7 +47,7 @@ const WINDOWS_PREVIEW_SENTENCE = "Windows and Omarchy are in private preview.";
 
 // Links and the literal `git clone` command are not claims: the "clones" rule
 // is about computer cloning, which is not shipped, not about cloning a repo.
-const VISIBLE_COPY = [HERO, REACH, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, HOW, OPEN_SOURCE, PRICING, FOUNDER, HOMEPAGE_FAQ, CLOSING, STICKY, GUARANTEE_LINE]
+const VISIBLE_COPY = [HERO, REACH, FIT, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, HOW, OPEN_SOURCE, PRICING, FOUNDER, HOMEPAGE_FAQ, CLOSING, STICKY, GUARANTEE_LINE]
   .flatMap(strings)
   .filter(text => !text.startsWith("/") && !text.startsWith("https://") && text !== OPEN_SOURCE.clone);
 
@@ -97,6 +98,14 @@ describe("homepage copy", () => {
     ];
     for (const line of quoted) expect(litepaperText).toContain(line);
     expect(litepaperText).toContain(`${REACH.titleB} ${REACH.bodyB}`);
+  });
+
+  it("compares Hivra with the litepaper's own table, cell for cell", () => {
+    const table = litepaper.split("\n").filter(line => line.startsWith("|"));
+    const [header, , ...rows] = table.map(line => line.split("|").slice(1, -1).map(cell => cell.trim()));
+    expect(header.slice(1)).toEqual([...FIT.columns]);
+    expect(rows.map(([label, ...cells]) => ({ label, cells }))).toEqual(FIT.rows.map(row => ({ label: row.label, cells: [...row.cells] })));
+    for (const line of [FIT.lead, FIT.verdict, FIT.note, `${FIT.title} ${FIT.titleTail}`]) expect(litepaperText).toContain(line);
   });
 
   it("sends each agent card to Launch with that agent chosen", () => {
