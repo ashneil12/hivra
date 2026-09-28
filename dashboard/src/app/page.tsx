@@ -34,7 +34,7 @@ import styles from "@/components/landing/home/home.module.css";
 // the retired site's "Hermes OS is now Hivra" title earned 20-26% CTR at
 // positions 1-3. Dropping the old name at the cutover would put that at risk.
 const homepageTitle = "Hermes OS is now Hivra | A computer for you and your agents";
-const homepageDescription = "Hermes OS is now Hivra. Launch Ubuntu, with Windows and Omarchy in private preview. Run Claude Code, Codex, Hermes and more on a computer of their own.";
+const homepageDescription = "Hermes OS is now Hivra. Run Claude Code, Codex, Hermes and more on a computer of their own, or launch Ubuntu, Windows or Omarchy for yourself.";
 
 export const metadata: Metadata = {
   title: homepageTitle,
@@ -92,7 +92,7 @@ const homepageSchema = {
           name: "Self-host Hivra",
           price: "0",
           priceCurrency: "USD",
-          description: "Run the platform yourself from the Apache 2.0 source. You provide the server and pay for it and your model usage.",
+          description: "Run the whole platform yourself from the open source code. You provide the server and pay for it and your model usage.",
           url: `${SITE_URL}/#pricing`,
         },
         ...HOSTED_SIZES.map(size => ({
@@ -111,7 +111,7 @@ const homepageSchema = {
       ],
       featureList: [
         "Launch a computer with or without an agent",
-        "Ubuntu, with Windows and Omarchy in private preview",
+        "Ubuntu, Windows or Omarchy",
         "Terminal and graphical interfaces",
         "Persistent files, tools and settings",
         "Use Hivra Cloud or your own infrastructure",

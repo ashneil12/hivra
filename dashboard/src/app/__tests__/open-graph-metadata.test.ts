@@ -29,11 +29,11 @@ function getTwitterValue(metadataValue: unknown, key: string): unknown {
 
 describe('route Open Graph metadata', () => {
   it('reflects the current homepage computer choices in metadata', () => {
-    expect(homeMetadata.description).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
+    expect(homeMetadata.description).toContain('launch Ubuntu, Windows or Omarchy for yourself');
     expect(String(homeMetadata.description)).not.toMatch(/launching now/i);
     // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
     expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
-    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
+    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('launch Ubuntu, Windows or Omarchy for yourself');
   });
 
   it('keeps the Hermes OS brand bridge on the homepage, where most search clicks come from', () => {
