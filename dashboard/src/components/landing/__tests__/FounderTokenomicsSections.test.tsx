@@ -23,7 +23,11 @@ test("token access is distinct from an optional claim and does not promise a con
 test("the full founder source retains the faith, accountability and reference paragraphs", () => {
  const full=readFileSync(path.resolve(__dirname,"../../../../../THOUGHTS.md"),"utf8");
  for(const text of ["I'm also a Christian", "scripture already described", "Someone has to be answerable", "https://projectzero.google/", "https://www.anthropic.com/"]) expect(full).toContain(text);
- expect(litepaper).toContain(full.split("\n\n")[1]);
+ // The litepaper carries a shorter founder letter that links here, with the
+ // scripture passage word for word; THOUGHTS.md keeps the full version.
+ expect(litepaper).toContain("](THOUGHTS.md)");
+ const scripture = full.split("\n\n").find(paragraph => paragraph.includes("scripture already described"));
+ expect(litepaper).toContain(scripture);
 });
 test("proposed uses and treasury retain their boundaries and direct reading links", () => {
   render(<TokenomicsSection />);

@@ -83,16 +83,19 @@ PRODUCT_GROUPS = {
     "Interchange": "Horizon", "Ports": "Horizon",
 }
 FIT_TITLE = "Keep the agents you like. Move them off your computer."
+THREAT_TITLE = "This is not a future problem"
+BOUNDARY_TITLE = "The boundary lives outside the model"
 REQUIRED_SECTIONS = {
     "Your agent needs a computer. It doesn't need yours.",
-    "The problem is where it lives", FIT_TITLE, "Why I'm building it",
+    "The problem is where it lives", THREAT_TITLE, FIT_TITLE, "Why I'm building it",
     "Start with an agent. Or a computer.", "A computer you can actually work in",
-    "Open source. Yours to run.", "Keeping a mistake from reaching everything",
+    "Open source. Yours to run.", BOUNDARY_TITLE,
     "What we're building around it", "The economy", "Read further",
     "Somewhere better to work",
 }
 REQUIRED_SUBSECTIONS = {
-    "The problem is where it lives": {"Try it", "A good agent can still be led somewhere bad"},
+    "The problem is where it lives": {"Try it", "Instructions are not boundaries"},
+    THREAT_TITLE: {"Safety training is not proof", "Think about what we're doing"},
     FIT_TITLE: {"Who it's for"},
     "Start with an agent. Or a computer.": {
         "Launch an agent", "Launch a computer", "Keep several running", "Choose who runs it",
@@ -286,6 +289,7 @@ def slug(value):
 def build_page():
     sections, products, roadmap_tail = load_inputs()
     problem, sub = split_sub(sections["The problem is where it lives"])
+    threat_intro, threat_sub = split_sub(sections[THREAT_TITLE])
     fit_intro, fit_sub = split_sub(sections[FIT_TITLE])
     fit_blocks = re.split(r"\n\s*\n", fit_intro.strip())
     fit_table_at = next(index for index, block in enumerate(fit_blocks) if block.startswith("|"))
@@ -358,13 +362,13 @@ def build_page():
         stage_label = 'Research' if group == 'Horizon' else group
         panel_html += f'<article class="product-panel" id="product-{s}" tabindex="-1" data-stage="{group}"><button class="back-to-atlas">{explore_arrow} All products</button><p class="product-stage">{stage_label}</p><h3>{p["name"]}.</h3><p class="product-summary">{inline(p["summary"])}</p>{extra}<div class="product-pagination"><button data-product="{slug(products[(i-1)%15]["name"])}" aria-label="Previous product: {products[(i-1)%15]["name"]}">← Previous</button><span>{i+1:02d} / 15</span><button data-product="{slug(products[(i+1)%15]["name"])}" aria-label="Next product: {products[(i+1)%15]["name"]}">Next →</button></div></article>'
     boundary_markup = (OUTPUT.parent / "boundary.html").read_text(encoding="utf-8")
-    protection = sections['Keeping a mistake from reaching everything']
+    protection = sections[BOUNDARY_TITLE]
     before_quote, quote_and_after = protection.split('\n\n> ', 1)
     quote, after_quote = quote_and_after.split('\n\n', 1)
     problem_paragraphs = problem.split('\n\n')
     problem_opening = '\n\n'.join(problem_paragraphs[:3])
     problem_context = '\n\n'.join(problem_paragraphs[3:])
-    chapter_links = [('opportunity', 'The problem'), ('fit', 'Where it fits'), ('platform', 'Open source'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
+    chapter_links = [('opportunity', 'The problem'), ('threat', 'Not a future problem'), ('fit', 'Where it fits'), ('platform', 'Open source'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
     index_links = ''.join(f'<a href="#{target}"><span class="index-number">{i+1:02d}</span><span>{label}</span>{explore_arrow}</a>' for i, (target, label) in enumerate(chapter_links))
     share_width, share_height = png_size(OUTPUT.parent / SHARE_IMAGE)
     HERO_SIZES = "(max-width: 999px) 100vw, 62vw"
@@ -411,15 +415,16 @@ def build_page():
 </section>
 <section class="problem chapter shell" id="opportunity" data-chapter="The problem">
 <div class="chapter-heading"><h2>The problem is<br>where it lives</h2></div>
-<div class="prose problem-intro">{blocks(problem_opening)}</div><div class="problem-layout">{boundary_markup}<div class="prose problem-context">{blocks(problem_context)}<h3>Try it</h3>{try_it_copy}</div></div><div class="problem-prose"><h3>A good agent can still be led somewhere bad</h3><div class="prose">{blocks(sub["A good agent can still be led somewhere bad"])}</div></div>
+<div class="prose problem-intro">{blocks(problem_opening)}</div><div class="problem-layout">{boundary_markup}<div class="prose problem-context">{blocks(problem_context)}<h3>Try it</h3>{try_it_copy}</div></div><div class="problem-prose"><h3>Instructions are not boundaries</h3><div class="prose">{blocks(sub["Instructions are not boundaries"])}</div></div>
 </section>
+<section class="threat chapter shell" id="threat" data-chapter="Not a future problem"><div class="chapter-heading"><h2>This is not<br><span class="muted-text">a future problem</span></h2></div><div class="prose threat-intro">{blocks(threat_intro)}</div><div class="problem-prose threat-turn"><h3>Safety training is not proof</h3><div class="prose">{blocks(threat_sub["Safety training is not proof"])}</div></div><div class="problem-prose threat-turn threat-close"><h3>Think about what we're doing</h3><div class="prose">{blocks(threat_sub["Think about what we're doing"])}</div></div></section>
 <section class="fit chapter shell" id="fit" data-chapter="Where it fits"><div class="chapter-heading"><h2>Keep the agents you like.<br><span class="muted-text">Move them off your computer.</span></h2><div class="intro-copy">{blocks(fit_lead)}</div></div><div class="fit-options">{fit_option_html}</div><div class="fit-verdict"><span class="fit-verdict-rule" aria-hidden="true"></span><div class="prose">{blocks(fit_close)}</div></div>{blocks(fit_table)}<div class="fit-who"><h3>Who it's for</h3><div class="prose">{blocks(fit_sub["Who it's for"])}</div></div></section>
 <section class="open-section chapter shell" id="platform" data-chapter="Open source"><div class="open-visual" aria-hidden="true"><div class="open-frame frame-one"></div><div class="open-frame frame-two"></div><div class="open-frame frame-three"></div><span>OPEN.</span></div><div class="open-copy"><h2>Open source.<br>Yours to run.</h2><div class="prose">{blocks(sections['Open source. Yours to run.'])}</div></div></section>
 <section class="founder chapter shell" id="founder" data-chapter="Why I’m building it"><div class="founder-heading"><span class="founder-rule" aria-hidden="true"></span><h2>Why I'm<br>building it</h2></div><div class="prose founder-copy">{blocks(sections["Why I'm building it"])}</div></section>
 <section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{''.join('<i></i>' for _ in range(8))}</div><p><span class="passage-room">Give it room to work.</span><br><span class="passage-decide">Decide what it can reach.</span></p></section>
 <section class="doors-section chapter shell" id="experience" data-chapter="Agent or computer"><div class="chapter-heading"><h2>Start with an agent.<br>Or a computer.</h2><div class="intro-copy">{blocks(doors)}</div></div><div class="doors"><article class="door door-agent scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol">&gt;_</span></div><h3>Launch an agent</h3>{blocks(doors_sub['Launch an agent'])}</article><article class="door door-computer scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol"><svg viewBox="0 0 80 70"><rect x="7" y="5" width="66" height="44" rx="3"/><path d="M40 50v12M24 64h32"/></svg></span></div><h3>Launch a computer</h3>{blocks(doors_sub['Launch a computer'])}</article></div><div class="two-column-copy"><div><h3>Keep several running</h3>{blocks(doors_sub['Keep several running'])}</div><div id="operation"><h3>Choose who runs it</h3>{blocks(launch_body)}</div></div><div class="launch-journey"><p>The launch:</p>{blocks(launch_list)}</div></section>
 <section class="qualities chapter" id="observability" data-chapter="The product bar"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
-<section class="constitution chapter shell" id="security" data-chapter="The constitution"><div class="chapter-heading"><h2>Keeping a mistake<br>from reaching everything</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The constitution</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
+<section class="constitution chapter shell" id="security" data-chapter="The constitution"><div class="chapter-heading"><h2>The boundary lives<br>outside the model</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The constitution</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
 <section class="roadmap chapter" id="future" data-chapter="The ecosystem"><div class="shell chapter-heading"><h2>What we're building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div><div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers · Available now</h3>{blocks(stages['Agent Computers · Available now'])}</div></div><div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div><div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div><div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg><div class="atlas-core" aria-hidden="true">{BRAND_MARK}<strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren't implemented connections.</p></div><div class="product-panels">{panel_html}</div></div><div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>
 <section class="economy chapter shell" id="economy" data-chapter="The economy"><div class="chapter-heading"><h2>The economy</h2></div><div class="economy-intro prose">{blocks(economy)}</div><div class="economy-visual scene-reveal" aria-hidden="true"><span class="economy-wordmark">HIVRA</span><div class="economy-token">{BRAND_MARK}</div><div class="economy-visual-caption"><span>COMPUTE · TOOLS · WORK · KNOWLEDGE</span><span>ONE CONNECTED ECONOMY</span></div></div>{economy_html}</section>
 <section class="reading-room chapter shell" id="reading-room" data-chapter="Read further"><h2>Read further</h2><div class="prose">{blocks(reading_copy)}</div><div class="reading-actions"><p class="source-links">{source_reading_links}</p><button class="text-link reading-toggle" aria-pressed="false">Continuous reading <span aria-hidden="true">↗</span></button></div></section>
@@ -429,7 +434,7 @@ def build_page():
 <nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#fit" aria-label="Where it fits">Where it fits</a><a href="#platform" aria-label="Open source">Open source</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The constitution">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><a class="dock-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><div class="reading-progress" aria-hidden="true"></div></nav>
 </body></html>'''
     # Chapter markers are navigational metadata; the approved narrative stays intact.
-    markers = iter(('The problem', 'Where it fits', 'The computer', 'The experience', 'The boundary', 'The ecosystem', 'The economy'))
+    markers = iter(('The problem', 'Not a future problem', 'Where it fits', 'The computer', 'The experience', 'The boundary', 'The ecosystem', 'The economy'))
     marker_number = 0
     def masthead(match):
         nonlocal marker_number

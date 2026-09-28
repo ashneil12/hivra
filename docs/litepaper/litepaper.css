@@ -3630,6 +3630,40 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     display:none
   }
 }
+/* Not a future problem: the evidence, then the turn. */
+.threat {
+  border-top:1px solid var(--line)
+}
+.threat-intro {
+  max-width:900px;
+  margin-left:auto
+}
+.threat-intro p:first-child {
+  font-size:clamp(24px,2.4vw,34px);
+  line-height:1.35;
+  letter-spacing:-.035em;
+  color:var(--text)
+}
+.threat-intro p:last-child,.threat-close .prose p:last-child {
+  font-size:clamp(26px,2.8vw,42px);
+  line-height:1.25;
+  letter-spacing:-.04em;
+  color:var(--text)
+}
+.threat-close .prose p:last-child {
+  color:var(--accent)
+}
+.problem-intro p:first-child {
+  grid-column:1/-1;
+  font-size:clamp(30px,3.4vw,52px);
+  line-height:1.15;
+  letter-spacing:-.045em;
+  color:var(--text);
+  margin-bottom:10px
+}
+.problem-intro p:nth-child(3) {
+  color:var(--text)
+}
 /* One ask: launch from the dock or the closing scene. */
 picture {
   display:contents

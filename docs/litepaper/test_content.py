@@ -226,7 +226,7 @@ class LitepaperContentTests(unittest.TestCase):
 
     def test_positioning_and_open_source_come_before_the_founder_letter(self):
         order = [node.attrs["id"] for node in self.page.elements if node.tag == "section" and node.attrs.get("id")]
-        self.assertEqual(order[:5], ["beginning", "opportunity", "fit", "platform", "founder"])
+        self.assertEqual(order[:6], ["beginning", "opportunity", "threat", "fit", "platform", "founder"])
         table = next(node for node in self.page.elements if node.tag == "table")
         self.assertIn("Hivra", table.text())
         cover = self.by_id["beginning"]

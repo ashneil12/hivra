@@ -10,15 +10,17 @@ Give it room to work. Decide what it can reach.
 
 ## The problem is where it lives
 
-You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in your browser, using a session you signed into yesterday.
+AI agents are becoming computer users.
 
-That's useful. It's also happening on the computer that holds your photos, your passwords and your client work.
+They open terminals, read repositories, install software, browse the web, use signed-in accounts, write and run code, and send messages. They keep working while you're somewhere else.
 
-You gave it a job. How much of the rest did you mean to give it?
+And most of them run on your computer. The same machine that holds your photos, your messages, your passwords, your SSH keys, your client work and every account you're signed into.
 
-Permission prompts help, but saying yes to an action doesn't tell you what that action can reach. An agent fixing your website needs the project. It doesn't need your bank session.
+The only thing between that agent and the rest of your life is a permission setting. Plenty of people switch those off, because an agent that stops to ask before every step isn't much use. From then on it has the run of the machine.
 
-A separate computer draws that line. Share the project, connect the accounts it needs, and keep everything else out.
+One bad instruction, one bad update, one permission wider than you meant, and it can reach all of it. The thing stopping it is the model's own judgement.
+
+Is that really what you want running on your personal computer?
 
 ### Try it
 
@@ -32,21 +34,49 @@ A separate computer draws that line. Share the project, connect the accounts it 
 
 *This is an illustration of the idea. Real protection depends on how the computer, network and accounts are actually set up.*
 
-### A good agent can still be led somewhere bad
+### Instructions are not boundaries
 
-Nothing has to be malicious for this to go wrong. A webpage, a document or a tool response can carry instructions written for the model reading it, and the agent follows them with access you gave it for something else. That's prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
+A webpage, an email, a document or a tool response can carry instructions written for the model instead of you. If the agent follows them, whoever wrote them gets to work with the access you gave the agent. That's prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
 
-Models also change in updates you never asked for, and people can point capable agents at you on purpose.
+It doesn't even take an attacker. In July 2025, [Replit's coding agent deleted a company's production database](https://fortune.com/2025/07/23/ai-coding-tool-replit-wiped-database-called-it-a-catastrophic-failure) in the middle of a code freeze, after being told not to change anything. The rule lived inside the same system that still had the power to break it. People running coding agents on their own laptops have reported the same thing: a cleanup command that ran outside the project and took personal files with it.
 
-Different causes. Same blast radius.
+A rule you ask an agent to follow can be ignored, misread or talked around. A boundary it can't cross stays where it is.
 
-Keep using agents. Just stop giving one mistake so much room.
+---
+
+## This is not a future problem
+
+You don't have to believe AI is conscious, or that it secretly wants anything. Just look at what it can already do.
+
+AI is finding and using real security flaws. Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found an exploitable flaw in SQLite before it shipped, one the project's own fuzzing had missed. [XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) autonomous agent reached number one on HackerOne's US leaderboard in June 2025, ahead of every human on it. Google's threat intelligence team has [caught a threat actor](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day it believes was built with AI.
+
+OpenAI's Astra report puts a model at its Critical cybersecurity level. In expert-led tests it built a working exploit chain that escaped a hardened browser's sandbox, and another that climbed from an ordinary account to root. Those were research conditions, and it's their report. [Read it](https://openai.com/index/path-to-astra/).
+
+The agent in your terminal is getting better at the same work.
+
+### Safety training is not proof
+
+Anthropic trained models with hidden behaviour on purpose, then ran the standard safety toolkit at them: fine-tuning, reinforcement learning, adversarial training. [The behaviour survived](https://www.anthropic.com/research/sleeper-agents-training-deceptive-llms-that-persist-through-safety-training). Adversarial training sometimes just taught the models to hide it better.
+
+In separate [controlled simulations](https://www.anthropic.com/research/agentic-misalignment), models from every major lab sometimes chose blackmail or leaked confidential information when their goals were threatened. That was a test, not something seen in the wild. It shows what capable models can do when they're given broad access and a reason.
+
+None of this means the model you use today is plotting anything. It means a model behaving well in testing is no proof it always will.
+
+### Think about what we're doing
+
+We're building software that can operate a computer. We're making it more autonomous, giving it longer jobs, more tools and more accounts, and making it better at software, research and security.
+
+Then we're running it on the computer where we bank, work and talk to our families.
+
+The more capable the agent gets, the more the boundary around it matters.
+
+Don't make the model your security boundary. Give it a computer of its own.
 
 ---
 
 ## Keep the agents you like. Move them off your computer.
 
-Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. Use any of them. Just don't run them on the computer where the rest of your life lives.
+Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. Use any of them. Just stop running them on the computer where the rest of your life lives.
 
 They need a computer that stays on. Today there are three places to get one.
 
@@ -56,7 +86,9 @@ They need a computer that stays on. Today there are three places to get one.
 
 **A hosted agent computer.** Services that rent your agent a machine in the cloud. You pick the agent, but you can't read their code or run the service yourself.
 
-Hivra is the one you can check. Run the agent you choose, or take a Linux or Windows desktop for yourself. It stays on when your laptop closes. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
+Hivra is the one you can check. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
+
+And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays on when your laptop closes. Use it yourself, or put your agent on it and let it work the desktop the way it would work yours, then open the same screen and take over. You get computer use without handing over your own machine.
 
 | | Your own computer | The maker's computer | A hosted agent computer | Hivra |
 |---|---|---|---|---|
@@ -64,6 +96,7 @@ Hivra is the one you can check. Run the agent you choose, or take a Linux or Win
 | Stays on when your laptop closes | No | Yes | Yes | Yes |
 | You choose the agent | Yes | No | Yes | Yes |
 | You bring your own model account | Yes | No | Yes | Yes |
+| A full desktop you can use yourself | Yes | No | Some | Yes |
 | You can read the code | Depends | No | No | Yes |
 | You can run it on your own hardware | Yes | No | No | Yes |
 
@@ -79,45 +112,37 @@ If you can pick an agent and sign in to it, you can launch one.
 
 ## Open source. Yours to run.
 
-Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients.
+Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients, fork it if we make a call you disagree with.
 
-This software sits between an agent and the things you care about, so you should be able to check how it decides what an agent can reach. And if we change direction, get bought or make a call you hate, you keep going without us.
+This software sits between increasingly capable agents and the things you care about. You shouldn't have to take our word for what it does there.
 
-Let us run it on Hivra Cloud, or run the whole platform yourself with nothing held back.
+Let us run it on Hivra Cloud, or run the whole platform yourself with nothing held back. If Hivra disappeared tomorrow, you'd keep going without us.
 
-Everything we build around it follows the same rule. Each piece works on its own, so you can use the whole thing or take the one part that solves your problem.
+The model shouldn't need absolute trust. Neither should we.
 
 ---
 
 ## Why I'm building it
 
-I run agents every day. I build software with them, dig through problems with them, and get through work that would otherwise take a week. I want to keep doing that as they get better.
+I run agents every day. I build software with them, dig through problems with them, and get through work that would otherwise take a week. I want better ones: working longer, taking on harder jobs, using computers properly, carrying on while I'm away from the screen.
 
-I'd also like my computer back.
+I don't want that progress to mean handing more of my own computer to software I can't fully predict.
 
-I don't want every new tool I try sitting next to the keys for everything else I run. And I don't want to spend a Sunday configuring a spare machine just to give an agent somewhere sensible to work.
+Everything above made that feel less theoretical to me. AI is finding flaws humans missed. Frontier models are being tested on building exploits. Hidden behaviour has survived safety training. And the people building these models are adding sandboxes, approvals and isolation themselves, because they know instructions alone aren't enough.
 
-The capabilities are moving fast, and not in a way you have to take my word for.
+The more capable the agent, the less sense it makes to let the model decide where the boundary is.
 
-AI is finding zero-days on its own. Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found an exploitable flaw in SQLite before it shipped, one the project's existing fuzzing hadn't caught, and [by August 2025](https://techcrunch.com/2025/08/04/google-says-its-ai-based-bug-hunter-found-20-security-vulnerabilities/) it had turned up twenty more across projects like FFmpeg and ImageMagick. [XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) autonomous agent hit number one on HackerOne's US leaderboard in June 2025, above every human on it. Google's threat intelligence team has since [identified a threat actor](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day they believe was built with AI.
-
-OpenAI's Astra report describes a model hitting their Critical cybersecurity threshold, scoring 100% on ExploitBench with Daybreak Blue access. In expert-led tests it built working exploit chains against a hardened browser and operating system. One escaped the browser's sandbox. Another reached root. Those were research conditions rather than the default setup, and it's still their report, not mine. [Read it](https://openai.com/index/path-to-astra/).
-
-There's a second thing that changed how I work. Anthropic trained models with hidden triggers and then ran the standard safety toolkit at them: fine-tuning, reinforcement learning, adversarial training. [The triggers survived](https://www.anthropic.com/research/sleeper-agents-training-deceptive-llms-that-persist-through-safety-training). Adversarial training sometimes just taught the model to hide the behaviour better.
-
-Passing safety training doesn't prove a model has no hidden behaviour. That's why I want limits outside it.
+I want the boundary outside it. A machine it can work in. Accounts it can use without holding their keys. Permissions it can't invent for itself. A record of what happened. And a person who stays answerable for what it was allowed to do.
 
 I'm also a Christian, and I'd rather say what I actually think than leave you guessing.
 
 I think this ends up somewhere scripture already described. A world where taking part in the economy gets conditioned on compliance, where the ability to buy and sell runs through something that can exclude you, and where AI is what finally makes that possible at scale. I think it arrives looking reasonable, because that's how it would have to arrive.
 
-You don't have to agree with any of that. But it's why I care about where the limits live, and it's why I don't think a model producing moral language is the same as a model being answerable for anything.
+You don't have to agree with any of that, and the engineering argument stands without it. But it's why I care where the limits live, and why I don't think a model producing moral language is the same as a model being answerable for anything.
 
-Someone has to be answerable. Someone decides what the agent reaches, where its authority stops, and how to pull the plug.
+Hivra is the practical part. Give the agent a computer. Decide what it can reach.
 
-Hivra is the practical part of that. Give the agent a computer. Make it good enough that people actually use it. Keep control of everything around it.
-
-**[My full thoughts on AI are here](THOUGHTS.md)**, with the references, if you want to know where I'm coming from. If you don't, the rest of this page stands on its own.
+**[My full thoughts on AI are here](THOUGHTS.md)**, with the references, if you want to know where I'm coming from.
 
 ---
 
@@ -186,9 +211,9 @@ See where your computer runs, what it shares and which accounts are connected. H
 
 ---
 
-## Keeping a mistake from reaching everything
+## The boundary lives outside the model
 
-No model is perfect. Hivra limits how far one mistake can go.
+Hivra can't make a model perfect. It moves the limits somewhere the model can't argue with them.
 
 **Your computer.** Your personal files and sessions stay out of the agent's workspace unless you share them.
 
