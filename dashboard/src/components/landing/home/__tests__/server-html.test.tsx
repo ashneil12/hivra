@@ -43,6 +43,5 @@ test("the comparison ships complete in server HTML, with words behind every mark
   // Marks are decoration; each Yes and No is still in the text a screen reader reads.
   const marked = FIT.rows.flatMap(row => row.cells).filter(cell => cell === "Yes" || cell === "No").length;
   expect(markup.match(/<i[^>]*aria-hidden="true"[^>]*><\/i><span[^>]*>(Yes|No)<\/span>/g)).toHaveLength(marked);
-  expect(markup).toContain("In preview");
   expect(markup).not.toMatch(HIDDEN);
 });

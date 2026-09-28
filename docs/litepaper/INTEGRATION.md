@@ -2,12 +2,13 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`4fed35127096f0633a5f2298a9020db38a218d2eabe85db116bed3f7c929f96e`
-(v2.2, approved 28 September 2026). v2.2 adds "Keep the agents you like. Move
-them off your computer." (where Hivra fits, with a comparison table and who it's
-for) after the problem, moves "Open source. Yours to run." ahead of the founder
-letter, lists OpenClaw among the launchable agents, labels DeepSeek as private
-preview and describes model sign-in per agent. v2.1 (23 September) was
+`f90546918de620123d1dacdda20bf81027168b36362ecb15d01acc73c9120b8e`
+(v2.3, approved 28 September 2026). v2.3 rewrites the page in plainer, shorter
+language, treats every surface it names as live (no preview labels, at Ash's
+direction), adds Windows desktops to the positioning, simplifies "Keeping a
+mistake from reaching everything" and drops the token section's closing line.
+v2.2 (same day) added "Keep the agents you like. Move them off your computer."
+and moved open source ahead of the founder letter; v2.1 (23 September) was
 `8ccc34344b3a00884e6f37295ebefa9208a43c0826632508ea9a68d185dddca7`. `test_content.py` checks the source against
 that pin. The founder section, all 15 product stories and all 12 token utilities
 are intact. The linked `THOUGHTS.md` publishes the founder section and its

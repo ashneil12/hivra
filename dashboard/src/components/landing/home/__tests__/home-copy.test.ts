@@ -41,9 +41,9 @@ function strings(value: unknown): string[] {
   return [];
 }
 
-// Windows is not generally available: it may appear only in the sentence that
-// says it is in private preview, and as the name on its private-preview chip.
-const WINDOWS_PREVIEW_SENTENCE = "Windows and Omarchy are in private preview.";
+// Ash treats Windows and Omarchy computers as live (2026-09-28), so the shared
+// rule that keeps "Windows" off other public pages does not apply here.
+const HOMEPAGE_ALLOWED = /Windows computers are not generally available/;
 
 // Links and the literal `git clone` command are not claims: the "clones" rule
 // is about computer cloning, which is not shipped, not about cloning a repo.
@@ -54,17 +54,17 @@ const VISIBLE_COPY = [HERO, REACH, FIT, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, 
 describe("homepage copy", () => {
   it("makes none of the claims public pages are barred from making", () => {
     const hits = VISIBLE_COPY.flatMap(text => {
-      const scoped = text === "Windows" ? "" : text.split(WINDOWS_PREVIEW_SENTENCE).join("");
-      return findBannedClaims(scoped).map(hit => `${hit.match} in "${text}": ${hit.why}`);
+      return findBannedClaims(text)
+        .filter(hit => !HOMEPAGE_ALLOWED.test(hit.why))
+        .map(hit => `${hit.match} in "${text}": ${hit.why}`);
     });
     expect(hits).toEqual([]);
     expect(VISIBLE_COPY.flatMap(falseCliRunClaims)).toEqual([]);
   });
 
-  it("only names Windows as a private preview", () => {
-    const mentions = VISIBLE_COPY.filter(text => /\bWindows\b/.test(text));
-    expect(mentions.every(text => text === "Windows" || text.includes(WINDOWS_PREVIEW_SENTENCE))).toBe(true);
-    expect(COMPUTERS.body).toContain(WINDOWS_PREVIEW_SENTENCE);
+  it("labels nothing as a preview and names no licence", () => {
+    expect(VISIBLE_COPY.filter(text => /preview|Apache/i.test(text))).toEqual([]);
+    expect(COMPUTERS.body).toContain("Windows");
   });
 
   it("states the prices and sizes checkout sells, with the guarantee", () => {

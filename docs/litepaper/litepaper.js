@@ -654,31 +654,6 @@
           }
         });
         motionMedia.add(
-          "(min-width: 1000px) and (min-height: 700px)",
-          () => {
-            const stage = query(".quality-stage");
-            const track = query(".quality-track");
-            if (stage && track) {
-              const distance = () =>
-                Math.max(0, track.scrollWidth - window.innerWidth);
-              gsap.to(track, {
-                x: () => -distance(),
-                ease: "none",
-                scrollTrigger: {
-                  id: "hivra-qualities",
-                  trigger: stage,
-                  start: "top top",
-                  end: () => `+=${Math.max(1, distance())}`,
-                  pin: true,
-                  scrub: 1,
-                  anticipatePin: 1,
-                  invalidateOnRefresh: true,
-                },
-              });
-            }
-          },
-        );
-        motionMedia.add(
           { compact: "(max-width: 999px)", tall: "(min-height: 600px)" },
           (context) => {
             if (!hero || !context.conditions.compact) return;
@@ -913,107 +888,55 @@
             );
         }
 
-        const chain = query(".delegation");
-        if (chain) {
-          // Each step's chips fly in from the step before, so the picture shows
-          // access being handed on and narrowing. A permission nobody granted
-          // tries to pass the last step and is refused.
-          const chip = (node, name) =>
-            query(`[data-node="${node}"] [data-chip="${name}"]`, chain);
-          const gap = (from, to) => {
-            const a = from.getBoundingClientRect();
-            const b = to.getBoundingClientRect();
-            return { x: a.left - b.left, y: a.top - b.top };
-          };
-          const across = () => {
-            const helper = query('[data-node="helper"]', chain).getBoundingClientRect();
-            const service = query('[data-node="service"]', chain).getBoundingClientRect();
-            return service.left > helper.right - 1;
-          };
-          const scene = gsap.timeline({ paused: true });
-          // Explicit from and to values throughout: the scene is invalidated
-          // just before it plays, so the flights measure the final layout, and
-          // a from() tween would then record its hidden start as its end.
-          scene
-            .fromTo(
-              all(".chain-node", chain),
-              { opacity: 0, y: 26 },
-              { opacity: 1, y: 0, duration: 0.6, stagger: 0.12, ease: "power3.out" },
-            )
-            .fromTo(
-              all(".chain-link", chain),
-              { opacity: 0, scale: 0 },
-              { opacity: 1, scale: 1, duration: 0.45, stagger: 0.12 },
-              0.2,
-            )
-            .fromTo(
-              all('[data-node="you"] .chain-chip', chain),
-              { opacity: 0, scale: 0.6 },
-              { opacity: 1, scale: 1, duration: 0.4, stagger: 0.08, ease: "back.out(2)" },
-              0.55,
+        const rule = query(".delegation");
+        if (rule) {
+          // Each step lands in turn, and the blocked one is struck through last.
+          gsap
+            .timeline({
+              scrollTrigger: { trigger: rule, start: "top 78%", once: true },
+            })
+            .from(all(".rule-step", rule), {
+              y: 34,
+              opacity: 0,
+              duration: 0.7,
+              stagger: 0.28,
+              ease: "power3.out",
+            })
+            .from(
+              all(".rule-verdict", rule),
+              { opacity: 0, x: -10, duration: 0.4, stagger: 0.28 },
+              0.35,
             );
-          [
-            ["agent", "you", 1.05],
-            ["helper", "agent", 2.05],
-            ["service", "helper", 4.15],
-          ].forEach(([node, from, at]) => {
-            all(`[data-node="${node}"] .chain-chip:not(.chain-refused)`, chain).forEach(
-              (target, index) => {
-                const source = chip(from, target.dataset.chip);
-                if (!source) return;
-                scene.fromTo(
-                  target,
-                  {
-                    x: () => gap(source, target).x,
-                    y: () => gap(source, target).y,
-                    opacity: 0,
-                  },
-                  { x: 0, y: 0, opacity: 1, duration: 0.85, ease: "power2.inOut" },
-                  at + index * 0.1,
-                );
-              },
-            );
-          });
-          const refused = query(".chain-refused", chain);
-          scene
-            .fromTo(
-              refused,
-              { opacity: 0, scale: 0.6, "--strike": 0 },
-              { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2)" },
-              2.8,
-            )
-            .fromTo(
-              refused,
-              { x: 0, y: 0 },
-              {
-                x: () => (across() ? 44 : 0),
-                y: () => (across() ? 0 : 30),
-                duration: 0.32,
-                ease: "power2.in",
-                immediateRender: false,
-              },
-              3.2,
-            )
-            .fromTo(query(".chain-stop", chain), { opacity: 0 }, { opacity: 1, duration: 0.2 }, "<0.22")
-            .fromTo(
-              refused,
-              { x: () => (across() ? 44 : 0), y: () => (across() ? 0 : 30) },
-              { x: 0, y: 0, duration: 0.55, ease: "back.out(2.2)", immediateRender: false },
-              3.52,
-            )
-            .fromTo(
-              refused,
-              { "--strike": 0 },
-              { "--strike": 1, duration: 0.35, ease: "power2.out", immediateRender: false },
-              "<0.1",
-            );
-          ScrollTrigger.create({
-            trigger: chain,
-            start: "top 72%",
-            once: true,
-            onEnter: () => scene.invalidate().play(),
-          });
         }
+
+        // The four scenes stack; each image eases in and its word drifts.
+        all(".quality-panel").forEach((panel) => {
+          const word = query(".quality-word", panel);
+          const figure = query(".quality-layout figure", panel);
+          if (word)
+            gsap.fromTo(
+              word,
+              { xPercent: -3 },
+              {
+                xPercent: 3,
+                ease: "none",
+                scrollTrigger: {
+                  trigger: panel,
+                  start: "top bottom",
+                  end: "bottom top",
+                  scrub: 1,
+                },
+              },
+            );
+          if (figure)
+            gsap.from(query("img", figure), {
+              scale: 1.14,
+              opacity: 0,
+              duration: 1.2,
+              ease: "power3.out",
+              scrollTrigger: { trigger: panel, start: "top 70%", once: true },
+            });
+        });
 
         all(
           ".chapter-heading h2, .founder-heading h2, .open-copy h2, .reading-room h2, .finale h2",

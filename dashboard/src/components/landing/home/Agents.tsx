@@ -44,12 +44,12 @@ export default function Agents() {
             <ArrowUpRight size={16} aria-hidden="true" />
           </span>
         </a>
-        <ul className={styles.previewChips} aria-label="Private preview computers">
+        <ul className={styles.previewChips} aria-label="More computers">
           {COMPUTERS.previews.map(preview => (
             <li key={preview.name}>
               <a href={preview.href}>
                 <strong>{preview.name}</strong>
-                <small>Private preview</small>
+                <small>Launch</small>
               </a>
             </li>
           ))}

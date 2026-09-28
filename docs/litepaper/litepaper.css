@@ -1255,7 +1255,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   position:absolute;
   top:20px;
   left:var(--gutter);
-  font-size:clamp(120px,23vw,360px);
+  font-size:clamp(90px,16vw,270px);
   font-weight:600;
   letter-spacing:-.09em;
   line-height:1;
@@ -1303,18 +1303,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   font-size:16px;
   line-height:1.8;
   color:var(--muted)
-}
-@media(min-width:1000px) and (min-height:700px) {
-  .motion-enabled:not(.reading-mode) .quality-track {
-    display:flex;
-    width:max-content
-  }
-  .motion-enabled:not(.reading-mode) .quality-panel {
-    width:100vw;
-    height:100svh;
-    min-height:660px;
-    flex-shrink:0
-  }
 }
 /* Source and authority */
 .open-section {
@@ -3276,12 +3264,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   color:var(--text);
   border-color:var(--accent)
 }
-.hero-open-dot {
-  width:6px;
-  height:6px;
-  background:var(--accent);
-  box-shadow:0 0 12px var(--accent)
-}
 .fit .chapter-heading h2 {
   max-width:1200px
 }
@@ -3527,168 +3509,119 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .reading-mode .fit-frame {
   display:none
 }
-/* The constitution as a chain: access can only narrow as it's passed on. */
+/* The constitution's rule in three plain steps. */
 .delegation {
-  margin:90px 0 0
+  margin:80px 0 0
 }
-.chain {
+.rule-steps {
   display:grid;
-  grid-template-columns:1fr 44px 1fr 44px 1fr 116px 1fr;
-  align-items:stretch
+  grid-template-columns:repeat(3,1fr);
+  gap:0;
+  margin:0;
+  padding:0;
+  list-style:none;
+  counter-reset:rule
 }
-.chain-node {
+.rule-step {
   position:relative;
   display:flex;
   flex-direction:column;
-  gap:10px;
-  min-height:210px;
-  padding:22px 20px 24px;
+  gap:14px;
+  padding:28px 30px 30px;
   border:1px solid var(--line);
   background:var(--surface)
 }
-.chain-index {
+.rule-step+.rule-step {
+  border-left:0
+}
+.rule-step+.rule-step:before {
+  content:'';
+  position:absolute;
+  left:-9px;
+  top:50%;
+  width:16px;
+  height:16px;
+  border-top:1px solid var(--faint);
+  border-right:1px solid var(--faint);
+  background:var(--surface);
+  rotate:45deg;
+  translate:0 -50%
+}
+.rule-who {
   font:10px var(--mono);
-  color:var(--faint);
-  letter-spacing:.1em
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--faint)
 }
-.chain-node strong {
-  font-size:22px;
-  line-height:1.1;
-  letter-spacing:-.045em;
-  font-weight:550
+.rule-step p {
+  margin:0;
+  font-size:clamp(20px,1.8vw,26px);
+  line-height:1.25;
+  letter-spacing:-.035em;
+  color:var(--text)
 }
-.chain-slot {
-  display:flex;
-  flex-direction:column;
-  align-items:flex-start;
-  gap:7px;
-  margin-top:auto
+.rule-verdict {
+  display:inline-flex;
+  align-items:center;
+  gap:9px;
+  margin-top:auto;
+  font:11px var(--mono);
+  letter-spacing:.04em;
+  color:var(--muted)
 }
-.chain-chip {
-  position:relative;
-  padding:6px 9px;
-  border:1px solid var(--line);
-  background:var(--surface-raised);
-  font:10px var(--mono);
-  white-space:nowrap
+.rule-verdict:before {
+  content:'';
+  width:8px;
+  height:8px;
+  background:var(--faint)
 }
-.chain-chip[data-chip=refund] {
-  border-color:var(--accent);
+.rule-step[data-state=allowed] .rule-verdict:before {
+  background:var(--text)
+}
+.rule-step[data-state=blocked] {
+  border-color:var(--accent)
+}
+.rule-step[data-state=blocked] p {
+  text-decoration:line-through;
+  text-decoration-color:var(--accent);
+  text-decoration-thickness:2px
+}
+.rule-step[data-state=blocked] .rule-verdict {
   color:var(--accent)
 }
-.chain-refused {
-  color:var(--faint);
-  border-style:dashed
-}
-.chain-refused:after {
-  content:'';
-  position:absolute;
-  left:-4px;
-  right:-4px;
-  top:50%;
-  height:1.5px;
-  background:var(--accent);
-  transform:scaleX(var(--strike,1));
-  transform-origin:left
-}
-.chain-link {
-  align-self:center;
-  position:relative;
-  height:1px;
-  background:var(--line)
-}
-.chain-link:after {
-  content:'';
-  position:absolute;
-  right:0;
-  top:-3px;
-  border-left:6px solid var(--line);
-  border-block:3.5px solid transparent
-}
-.chain-guarded {
+.rule-step[data-state=blocked] .rule-verdict:before {
   background:var(--accent)
-}
-.chain-guarded:after {
-  border-left-color:var(--accent)
-}
-.chain-guarded:before {
-  content:'';
-  position:absolute;
-  left:50%;
-  top:-14px;
-  width:2px;
-  height:28px;
-  background:var(--accent)
-}
-.chain-stop {
-  position:absolute;
-  left:50%;
-  top:24px;
-  translate:-50% 0;
-  width:104px;
-  text-align:center;
-  font:9px/1.4 var(--mono);
-  color:var(--accent);
-  text-transform:uppercase;
-  letter-spacing:.06em
 }
 .delegation figcaption {
-  margin-top:18px;
+  margin-top:16px;
   font-size:11px;
   color:var(--faint)
 }
 @media(max-width:999px) {
-  .chain {
-    grid-template-columns:1fr;
-    grid-template-rows:auto 36px auto 36px auto 64px auto
+  .rule-steps {
+    grid-template-columns:1fr
   }
-  .chain-node {
-    min-height:0
+  .rule-step+.rule-step {
+    border-left:1px solid var(--line);
+    border-top:0
   }
-  .chain-slot {
-    flex-direction:row;
-    flex-wrap:wrap;
-    margin-top:8px
+  .rule-step[data-state=blocked] {
+    border-top:1px solid var(--accent)
   }
-  .chain-link {
-    justify-self:center;
-    width:1px;
-    height:100%
-  }
-  .chain-link:after {
-    right:-3px;
-    top:auto;
-    bottom:0;
-    border-left:3.5px solid transparent;
-    border-right:3.5px solid transparent;
-    border-top:6px solid var(--line);
-    border-bottom:0
-  }
-  .chain-guarded:after {
-    border-top-color:var(--accent);
-    border-left-color:transparent
-  }
-  .chain-guarded:before {
-    left:-14px;
-    top:50%;
-    width:28px;
-    height:2px
-  }
-  .chain-stop {
-    left:22px;
-    top:50%;
-    translate:0 -50%;
-    max-width:none;
-    text-align:left
+  .rule-step+.rule-step:before {
+    left:50%;
+    top:-9px;
+    rotate:135deg;
+    translate:-50% 0
   }
 }
 .reading-mode .delegation {
-  display:none
+  margin-top:40px
 }
-@media print {
-  .delegation {
-    display:none
-  }
+.hero-open-icon {
+  width:15px;
+  height:15px;
+  flex:none
 }
 /* Between phone and wide desktop the dock keeps its first chapters and the
    ask; the Index still lists every chapter. */

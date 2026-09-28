@@ -39,31 +39,25 @@ SITE_ROOT_FILES = {
 SITE_ROUTES = {"/dashboard/launch"}
 AGENT_LAUNCH = "/dashboard/launch?kind=agent&start=1"
 COMPUTER_LAUNCH = "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop"
+# Tabler's MIT brand-github path; attribution is in vendor/NOTICE.md.
+GITHUB_MARK = '<svg class="hero-open-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5"/></svg>'
 BRAND_MARK = '<img class="brand-mark" src="/brand/hivra-icon-192.png" alt="" width="192" height="192" decoding="async">'
 MONOLITH_WEBP = "/images/home/monolith-900.webp 900w, /images/home/monolith-1600.webp 1600w"
 
 
 def delegation_figure():
-    """The constitution's rule as a chain: each step holds what it was given, and
-    a permission nobody granted is refused. Labels come from the approved copy:
-    the project (the problem), free on Tuesday (Your information), refunding an
-    order and changing payouts (Gate)."""
-    grants = {"project": "The project", "tuesday": "Free on Tuesday", "refund": "Refund an order"}
-    holdings = [
-        ("you", "You", ["project", "tuesday", "refund"]),
-        ("agent", "Your agent", ["project", "tuesday", "refund"]),
-        ("helper", "A helper agent", ["refund"]),
-        ("service", "A service", ["refund"]),
+    """The constitution's rule in three plain steps, using the refund and payouts
+    example from Gate."""
+    steps = [
+        ("You", "Give your agent one job: refunding orders.", "granted", "Granted"),
+        ("Your agent", "Asks a helper agent to refund one order.", "allowed", "Allowed"),
+        ("The helper", "Tries to change where your payouts go.", "blocked", "Blocked. Nobody gave it that."),
     ]
-    nodes = []
-    for index, (node, label, chips) in enumerate(holdings):
-        chip_html = "".join(f'<span class="chain-chip" data-chip="{chip}">{grants[chip]}</span>' for chip in chips)
-        if node == "helper":
-            chip_html += '<span class="chain-chip chain-refused" data-chip="payouts">Change payouts</span>'
-        nodes.append(f'<div class="chain-node" data-node="{node}"><span class="chain-index">{index + 1:02d}</span><strong>{label}</strong><div class="chain-slot">{chip_html}</div></div>')
-    links = ['<i class="chain-link"></i>', '<i class="chain-link"></i>', '<i class="chain-link chain-guarded"><span class="chain-stop">No new permission</span></i>']
-    chain = nodes[0] + "".join(link + node for link, node in zip(links, nodes[1:]))
-    return f'<figure class="delegation" aria-hidden="true"><div class="chain">{chain}</div><figcaption>An illustration of the rule above.</figcaption></figure>'
+    cards = "".join(
+        f'<li class="rule-step" data-state="{state}"><span class="rule-who">{who}</span><p>{what}</p><span class="rule-verdict">{verdict}</span></li>'
+        for who, what, state, verdict in steps
+    )
+    return f'<figure class="delegation"><ol class="rule-steps">{cards}</ol><figcaption>An example of the rule above.</figcaption></figure>'
 
 
 DELEGATION = delegation_figure()
@@ -411,7 +405,7 @@ def build_page():
 <main id="main">
 <section class="hero" id="beginning" data-chapter="The beginning">
 <div class="hero-art" aria-hidden="true"><div class="hero-object-stage"><div class="hero-object">{monolith('alt="" width="1672" height="940" fetchpriority="high"', HERO_SIZES)}<div class="hero-object-edge"></div></div><div class="hero-coordinate coordinate-top">HIVRA / AGENT COMPUTERS</div><div class="hero-coordinate coordinate-bottom">A place of its own.</div></div><div class="hero-shade"></div><canvas id="field-canvas"></canvas></div><div class="hero-watermark" aria-hidden="true">HIVRA</div>
-<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><a class="hero-open" href="#platform"><span class="hero-open-dot" aria-hidden="true"></span>Open source · Apache 2.0 · Run it yourself</a></div>
+<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><a class="hero-open" href="https://github.com/ashneil12/hivra">{GITHUB_MARK}Open source · Run it yourself</a></div>
 <div class="hero-caption"><span class="hero-caption-mark" aria-hidden="true">H—</span>{hero_caption}<span class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE<span></span></span></div>
 <div class="hero-transition" aria-hidden="true">Give it room<br>to work.</div>
 </section>

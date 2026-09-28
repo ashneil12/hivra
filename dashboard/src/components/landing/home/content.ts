@@ -7,7 +7,8 @@
 // - Keep-running claims come from lib/blog/runtime-facts.ts, verbatim.
 // - Lines quoted from the litepaper are copied from LITEPAPER.md, verbatim.
 // - No em or en dashes, no plan names, no annual prices, no trial, and
-//   "Windows" only in the private-preview sentence.
+//   no "preview" labels: Ash treats every surface named here as live
+//   (2026-09-28), including Windows and Omarchy computers and self-hosting.
 
 import {
   ENTRY_PLAN_PRICE,
@@ -44,7 +45,7 @@ export const HERO = {
   proof: [
     "Your Claude or ChatGPT login, or your own API key",
     "Hivra Cloud, your own server, or self-hosted",
-    "Apache 2.0. Source on GitHub.",
+    "Open source on GitHub.",
   ],
 } as const;
 
@@ -53,12 +54,12 @@ export const REACH = {
   eyebrow: "The problem",
   titleA: "Right now, your agent works where your life is.",
   bodyA: [
-    "You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in the browser, using a session you signed into yesterday.",
-    "That's useful. It's also happening on the computer where you keep your photos, your passwords, your client work and everything else you own.",
+    "You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in your browser, using a session you signed into yesterday.",
+    "That's useful. It's also happening on the computer that holds your photos, your passwords and your client work.",
   ],
   kicker: "You gave it a job. How much of the rest did you mean to give it?",
-  titleB: "A separate computer is just somewhere to draw that line.",
-  bodyB: "Share the project. Connect the accounts you want it to use. Keep the rest out.",
+  titleB: "A separate computer draws that line.",
+  bodyB: "Share the project, connect the accounts it needs, and keep everything else out.",
   states: [
     { id: "shared", label: "Shared machine", caption: "The agent works beside your personal files and signed-in apps. What it can reach comes down to whatever permissions you set." },
     { id: "separate", label: "Separate computer", caption: "The agent has its own files, apps and sessions. You decide what comes in." },
@@ -93,7 +94,7 @@ export const FIT = {
   eyebrow: "Where it fits",
   title: "Keep the agents you like.",
   titleTail: "Move them off your computer.",
-  lead: "Use any of them. Just don't give them the computer where the rest of your life lives.",
+  lead: "Use any of them. Just don't run them on the computer where the rest of your life lives.",
   columns: ["Your own computer", "The maker's computer", "A hosted agent computer", "Hivra"],
   examples: ["Your laptop", "Muse, Grok Bot", "Rented in the cloud", "Open source"],
   rows: [
@@ -102,7 +103,7 @@ export const FIT = {
     { label: "You choose the agent", cells: ["Yes", "No", "Yes", "Yes"] },
     { label: "You bring your own model account", cells: ["Yes", "No", "Yes", "Yes"] },
     { label: "You can read the code", cells: ["Depends", "No", "No", "Yes"] },
-    { label: "You can run it on your own hardware", cells: ["Yes", "No", "No", "In preview"] },
+    { label: "You can run it on your own hardware", cells: ["Yes", "No", "No", "Yes"] },
   ],
   verdict: "Hivra is the one you can check.",
   more: "How Hivra compares",
@@ -172,7 +173,7 @@ export const HOME_AGENTS: HomeAgent[] = [
 
 export const COMPUTERS = {
   title: "Just need a computer?",
-  body: "Ubuntu is ready now. Windows and Omarchy are in private preview. No agent required.",
+  body: "Ubuntu, Windows or Omarchy, with an agent or without one.",
   ubuntu: { label: "Launch Ubuntu", href: computerLaunchHref("ubuntu-desktop") },
   previews: [
     { name: "Windows", href: computerLaunchHref("windows") },
@@ -211,7 +212,7 @@ export const OPEN_SOURCE = {
   title: "Read every line.",
   titleTail: "Run it yourself.",
   body: [
-    "The complete Hivra platform uses Apache 2.0. Read the code. Change it. Run it yourself.",
+    "Every line of Hivra is open source. Read the code. Change it. Run it yourself.",
     "This software sits between an agent and things you care about. You should be able to inspect its decisions about access, and keep going without us if we change direction.",
   ],
   repoOwner: "ashneil12",
@@ -244,16 +245,14 @@ export const PRICING = {
   },
   server: {
     name: "Your own server",
-    chip: "Preview",
     body: "Connect a server you already pay for and launch Hivra computers on it. You pay your server provider directly.",
     cta: "Connect your server",
     href: PUBLIC_START_HREF,
   },
   selfHost: {
     name: "Self-host Hivra",
-    chip: "Preview",
     price: "$0",
-    body: "Run the whole platform yourself from the Apache 2.0 source, as a preview for a single operator. You provide the server and pay for it and your model usage.",
+    body: "Run the whole platform yourself from the open source code. You provide the server and pay for it and your model usage.",
     cta: "View on GitHub",
     href: SELF_HOST_SOURCE_URL,
   },
@@ -293,7 +292,7 @@ export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Where can it run?",
-    a: "On Hivra Cloud, where we run the computer for you. On a server you already have, in preview. Or self-host the whole platform from the Apache 2.0 source, in preview for a single operator.",
+    a: "On Hivra Cloud, where we run the computer for you. On a server you already have. Or self-host the whole platform from the open source code.",
   },
   {
     q: "How much does it cost?",

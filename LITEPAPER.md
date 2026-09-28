@@ -10,17 +10,15 @@ Give it room to work. Decide what it can reach.
 
 ## The problem is where it lives
 
-You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in the browser, using a session you signed into yesterday.
+You ask an agent to fix something. It opens the terminal, reads your project, installs a package. A few minutes later it's in your browser, using a session you signed into yesterday.
 
-That's useful. It's also happening on the computer where you keep your photos, your passwords, your client work and everything else you own.
+That's useful. It's also happening on the computer that holds your photos, your passwords and your client work.
 
 You gave it a job. How much of the rest did you mean to give it?
 
-Permission prompts help. You should get to decide before an agent deletes a folder or sends a message. But saying yes to an action doesn't answer the bigger question, which is what that action can reach.
+Permission prompts help, but saying yes to an action doesn't tell you what that action can reach. An agent fixing your website needs the project. It doesn't need your bank session.
 
-An agent fixing your website needs the project. It doesn't need your personal documents, your bank session, or a route into every other device on your home network.
-
-A separate computer is just somewhere to draw that line. Share the project. Connect the accounts you want it to use. Keep the rest out.
+A separate computer draws that line. Share the project, connect the accounts it needs, and keep everything else out.
 
 ### Try it
 
@@ -36,33 +34,29 @@ A separate computer is just somewhere to draw that line. Share the project. Conn
 
 ### A good agent can still be led somewhere bad
 
-Nothing has to be malicious for this to go wrong.
+Nothing has to be malicious for this to go wrong. A webpage, a document or a tool response can carry instructions written for the model reading it, and the agent follows them with access you gave it for something else. That's prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
 
-A document can carry instructions written for the model reading it. So can a webpage, a dependency, or a tool response. The agent takes them as part of the job and uses access you granted for something you never asked for. That's prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
-
-There are other reasons to care where agents run. A provider can change a model's behaviour in an update you accepted automatically. A company or a government could point a capable model at someone deliberately. And a system can find a route through a task that nobody who built it anticipated.
+Models also change in updates you never asked for, and people can point capable agents at you on purpose.
 
 Different causes. Same blast radius.
 
-I don't think the answer is to stop using agents. I think the answer is to stop giving one mistake so much room.
+Keep using agents. Just stop giving one mistake so much room.
 
 ---
 
 ## Keep the agents you like. Move them off your computer.
 
-Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. They're getting good, and the useful ones want to keep working after you've stepped away.
+Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. Use any of them. Just don't run them on the computer where the rest of your life lives.
 
-Use any of them. Just don't give them the computer where the rest of your life lives.
+They need a computer that stays on. Today there are three places to get one.
 
-So they need a computer. Right now there are three places to find one.
+**Your own computer.** Free and already there. It's also where your photos, passwords and client work live, and it stops when you close the lid.
 
-**Your own computer.** Free and already there. It's also where your photos, passwords and client work live, and the work stops when you close the lid.
+**The maker's computer.** Muse and Grok Bot run on computers their companies provide. They stay on, but you get one company's agent running one company's models.
 
-**The maker's computer.** Muse and Grok Bot each run on a computer their company provides, so they keep going when you close the app. You get one company's agent, running that company's models, on that company's machine.
+**A hosted agent computer.** Services that rent your agent a machine in the cloud. You pick the agent, but you can't read their code or run the service yourself.
 
-**A hosted agent computer.** A growing group of services will rent your agent a machine in the cloud. You pick the agent and bring your own model account. You can't read their code or run the service yourself, so you're taking their word for how it works.
-
-Hivra is the one you can check. Pick the agent, sign in with your own account or choose the provider it uses, and it gets a computer of its own that stays on when your laptop closes. The platform is open source, so you can read how it handles your access. And if you'd rather not rely on us at all, the whole platform runs on your own hardware, as a preview from the source today.
+Hivra is the one you can check. Run the agent you choose, or take a Linux or Windows desktop for yourself. It stays on when your laptop closes. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
 
 | | Your own computer | The maker's computer | A hosted agent computer | Hivra |
 |---|---|---|---|---|
@@ -71,13 +65,13 @@ Hivra is the one you can check. Pick the agent, sign in with your own account or
 | You choose the agent | Yes | No | Yes | Yes |
 | You bring your own model account | Yes | No | Yes | Yes |
 | You can read the code | Depends | No | No | Yes |
-| You can run it on your own hardware | Yes | No | No | In preview |
+| You can run it on your own hardware | Yes | No | No | Yes |
 
 *How these services described themselves in September 2026. They change quickly, so check the current details before you rely on them.*
 
 ### Who it's for
 
-People who already put agents to work. Developers running Claude Code or Codex on the same laptop they bank on. Anyone with a personal agent like OpenClaw or Hermes that should be running somewhere other than their own machine. And people who just need another computer, with an agent or without one.
+People who already put agents to work. Developers running Claude Code or Codex on the laptop they also bank on. Anyone with a personal agent that should run somewhere other than their own machine. And anyone who needs another computer, Linux or Windows, with an agent or without one.
 
 If you can pick an agent and sign in to it, you can launch one.
 
@@ -85,15 +79,13 @@ If you can pick an agent and sign in to it, you can launch one.
 
 ## Open source. Yours to run.
 
-Hivra is open source under Apache 2.0. Read the code. Change it. Run it yourself. Host it for your clients.
+Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients.
 
-That matters because this software sits between an agent and things you care about, so you should be able to inspect the decisions it makes about access. And if we change direction, get bought, or make a call you hate, you should be able to keep going without us.
+This software sits between an agent and the things you care about, so you should be able to check how it decides what an agent can reach. And if we change direction, get bought or make a call you hate, you keep going without us.
 
-Hivra Cloud is there if you'd rather we ran it. Self-hosting is there if you wouldn't.
+Let us run it on Hivra Cloud, or run the whole platform yourself with nothing held back.
 
-Same approach for everything we're building around Agent Computers. Gate is being designed for agents running outside Hivra. Exchange shouldn't need you to launch one of our computers just to publish something. Each piece has to be useful on its own or it isn't infrastructure, it's a lock-in with a nice name.
-
-Use the whole thing, or take the one part that solves your problem.
+Everything we build around it follows the same rule. Each piece works on its own, so you can use the whole thing or take the one part that solves your problem.
 
 ---
 
@@ -135,43 +127,33 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 ### Launch an agent
 
-Claude Code, Codex, Hermes, OpenClaw or Agent Zero, with DeepSeek in private preview. Pick one, connect the account or key it uses, and give it a machine of its own.
+Claude Code, Codex, Hermes, OpenClaw, Agent Zero or DeepSeek. Pick one, sign in the way it normally does, and it gets a machine of its own.
 
-Run a terminal agent through an interface, work directly in its terminal, or move between the two. Agents that come with their own interface keep it.
-
-Its tools and files live on that computer, so you can close the laptop and pick it up from your phone.
+Use it through its interface, work in its terminal, or switch between the two. Close the laptop and pick it up from your phone.
 
 ### Launch a computer
 
-Ubuntu, with Windows and Omarchy in private preview. Install apps, browse, write code, run services, set up a workspace for one project.
+Ubuntu, Windows or Omarchy. A normal desktop in the cloud for installing apps, browsing, writing code and running services. No agent required.
 
-You don't have to attach an agent at all. It's a computer.
-
-Maybe you want your dev tools off your personal desktop. Maybe you need Windows for one application. Maybe there's something you'd rather not mix into your everyday machine. That's a fine reason to be here.
-
-And when you do want help, you'll soon be able to bring an agent into the same workspace. Let it work with the files and apps you've already set up, then take the screen back whenever you'd rather do it yourself.
+Keep your dev tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
 
 **macOS and custom images are coming.**
 
 ### Keep several running
 
-Run agents on different projects without losing track of them. Open a conversation, check the computer behind it, look at the files and results, move to the next.
+One agent building a feature, one chasing a bug, one doing research. Each gets its own computer and only the accounts you connect to it. Move between the conversation, the computer and the files.
 
-One agent building a feature. One chasing a bug. One working through research. Each with its own workspace and only the accounts you connect to it.
-
-**Hivra Orchestrator** is coming: one screen where you talk to all of them, see who's working and who's stuck, and hand work between them. Keep the individual conversations when you want them, with somewhere to run the whole group from.
-
-Nobody should be managing eight tmux panes and guessing which window belongs to which task.
+**Hivra Orchestrator** is coming: one screen where you talk to all of them and hand work between them.
 
 ### Choose who runs it
 
-**Hivra Cloud** if you want us handling the machines, the updates, the monitoring and the recovery. You choose the work and the access. We keep the service running underneath.
+**Hivra Cloud.** We run the machines, the updates, the monitoring and the recovery. You choose the work and the access.
 
-**Your own infrastructure** if you already have a cloud account or a server. Use capacity you're already paying for. This is in preview.
+**Your own infrastructure.** Connect a server or cloud account you already pay for.
 
-**Self-host** if you'd rather we weren't involved at all. The whole platform, your hardware, your sign-in, no Hivra account. A preview runs from the source today, and packaged releases come next.
+**Self-host.** The whole platform on your hardware, with your own sign-in and no Hivra account.
 
-Your model connection is separate from all of that. Each agent signs in the way it normally does, or uses a provider you pick, whether the computer runs with us or on your own metal. Choosing managed hosting doesn't cost you that choice.
+Wherever the computer runs, each agent keeps its own sign-in or uses the model provider you pick.
 
 **The launch:**
 
@@ -184,67 +166,55 @@ Your model connection is separate from all of that. Each agent signs in the way 
 
 ## A computer you can actually work in
 
-Moving work off your laptop should make your day easier, not add a setup ritual to it.
+Moving work off your laptop should make your day easier.
 
 ### Come back to it
 
-Files, tools and settings stay. Closing the browser disconnects your view. It doesn't throw the workspace away.
-
-On Hivra Cloud, snapshot before a risky change. Restore when the risky change goes badly. Add resources as a job grows, within the capacity you've chosen.
+Files, tools and settings stay put. Closing the browser only closes your view. Snapshot before a risky change and restore if it goes badly.
 
 ### Settle in
 
-Open the desktop and work in your apps, with sharp text and controls that respond when you touch them. Good enough for a quick check from your phone. Good enough for an afternoon.
-
-Reconnect from another device and land in the same environment. It's there for the parts you'd rather do yourself.
+Open the desktop and work in your apps, with sharp text and controls that respond. Reconnect from another device and land in the same place.
 
 ### Follow the work
 
-See what the agent is doing, what it asked you to approve, and what it produced. When something goes wrong you need enough history to understand it and decide what happens next.
-
-Hivra records the activity it can observe: when your agent's tasks start and finish, which tools it used, and whether they failed. It doesn't store your prompts, commands or files. Today that covers Claude Code and Codex, and other agents show lifecycle events. What an agent does entirely inside an external app may not show up there. You still have the computer and the terminal to look for yourself.
+See what the agent did, what it asked you to approve and what it produced. Hivra records when tasks start and finish, which tools ran and whether they failed. It never stores your prompts, commands or files.
 
 ### Know what has access
 
-You should know where your computer runs, what it shares with other machines, and which accounts are connected to it.
-
-Different hosting gives you different protection. A virtual machine and a container don't separate work the same way, and calling both of them secure is how people end up trusting the wrong one. Hivra's launch review tells you which one you got.
+See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine or a container, because they don't protect you the same way.
 
 ---
 
 ## Keeping a mistake from reaching everything
 
-Hivra can't make a model infallible. What it can change is how far one mistake can reach.
+No model is perfect. Hivra limits how far one mistake can go.
 
-**Your computer.** Personal files and sessions stay outside the agent's workspace unless you deliberately share them.
+**Your computer.** Your personal files and sessions stay out of the agent's workspace unless you share them.
 
-**Your information.** A scheduling agent needs to know if you're free on Tuesday. It doesn't need every private appointment in your calendar. The goal is answering the question a task needs without opening the account behind it.
+**Your information.** An agent booking a meeting needs one answer: are you free on Tuesday? It never needs your whole calendar.
 
-**Your business.** Keep hold of your files, your infrastructure and your ability to recover, so you still have options when a provider goes down or changes something you depend on.
+**Your business.** Your files, infrastructure and backups stay yours, so a provider going down doesn't take you with it.
 
 One rule sits under all of it:
 
 > An agent can only pass on access a responsible person gave it. Delegating a task doesn't create new permission.
 
-That has to hold when one agent asks another for help, when a tool connects to a service, and when money moves. The limits have to live outside the model doing the work.
+That holds when one agent hands work to another, when a tool connects to a service, and when money moves. The limits live outside the model, where it can't talk its way past them.
 
-Emergency controls should stop activity, withdraw access and contain a problem. They must never become a way to grant more. Receiving a message doesn't authorise an action. Receiving a useful method doesn't install it.
-
-And all of that applies to us. We have to account for our own mistakes, our own compromise and our own change of ownership, the same way we're asking you to account for the agents you run. If Hivra ever has to be trusted absolutely, the design has already failed.
+And it applies to us too. If Hivra ever has to be trusted absolutely, the design has already failed.
 
 ---
 
 ## What we're building around it
 
-Agent Computers give the work somewhere to happen. Everything below is about what an agent does from there: using accounts, installing tools, sharing what it learned, spending money, working with others.
+Agent Computers give the work somewhere to happen. Everything below is what an agent does from there: using accounts, installing tools, sharing what it learned, spending money and working with others.
 
-**Next** and **Then** are the order we're working in. **Research** is the stuff that still needs figuring out.
+**Next** and **Then** are the order we're working in. **Research** is still being figured out.
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes, OpenClaw or Agent Zero on a computer of its own. Or start with Ubuntu and use it yourself. Keep your workspace, pick your interface, run it on our infrastructure.
-
-In preview: Windows, Omarchy, DeepSeek, and running on your own infrastructure.
+Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or DeepSeek on a computer of its own. Or launch Ubuntu, Windows or Omarchy and use it yourself. On Hivra Cloud, your own infrastructure or your own hardware.
 
 Coming: Hivra Orchestrator, macOS, custom images.
 
@@ -505,8 +475,6 @@ Fee amounts, spending rules, wallets and signing authority get published before 
 **No company ownership.** Holding the token isn't owning Hivra.
 
 **No manufactured activity.** No wash trading, no circular treasury transactions, no rewards designed to make a chart look busy.
-
-We want to pay for software people use, findings they can verify, and work they can check.
 
 ---
 

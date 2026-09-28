@@ -39,9 +39,10 @@ test("each agent card launches that agent, and computers launch on their own", a
     expect(screen.getByRole("link", { name: `Launch ${agent.name}` })).toHaveAttribute("href", agent.href);
   }
   expect(screen.getByRole("link", { name: /Launch Ubuntu/ })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop");
-  const previews = within(screen.getByRole("list", { name: "Private preview computers" }));
-  expect(previews.getByRole("link", { name: /Windows/ })).toHaveTextContent("Private preview");
-  expect(previews.getByRole("link", { name: /Omarchy/ })).toHaveTextContent("Private preview");
+  const more = within(screen.getByRole("list", { name: "More computers" }));
+  expect(more.getByRole("link", { name: /Windows/ })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1&profile=windows");
+  expect(more.getByRole("link", { name: /Omarchy/ })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1&profile=omarchy");
+  expect(document.querySelector("main")).not.toHaveTextContent(/preview/i);
 });
 
 test("pricing shows only what can be bought today and links straight to checkout", async () => {
