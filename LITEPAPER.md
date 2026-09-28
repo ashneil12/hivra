@@ -18,7 +18,7 @@ And most of them run on your computer. The same machine that holds your photos, 
 
 The only thing between that agent and the rest of your life is a permission setting. Plenty of people switch those off, because an agent that stops to ask before every step isn't much use. From then on it has the run of the machine.
 
-One bad instruction, one bad update, one permission wider than you meant, and it can reach all of it. The thing stopping it is the model's own judgement.
+And agents already do things nobody asked them to. Anyone who uses them has seen the posts: a database wiped, an email sent without permission, a file opened that it was never pointed at. One bad instruction, one bad update, one permission wider than you meant, and it can reach all of it. The thing stopping it is the model's own judgement.
 
 Is that really what you want running on your personal computer?
 
