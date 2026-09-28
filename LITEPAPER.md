@@ -88,7 +88,7 @@ They need a computer that stays on. Today there are three places to get one.
 
 Hivra is the one you can check. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
 
-And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays on when your laptop closes. Launch it on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. You get computer use without handing over your own machine.
+And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays on when your laptop closes. Launch it on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. You get computer use without handing over your own machine. And your plan is a pool you divide however you like, so one plan can run several agents and a desktop, not just one agent in one box.
 
 | | Your own computer | The maker's computer | A hosted agent computer | Hivra |
 |---|---|---|---|---|
@@ -167,6 +167,8 @@ Keep your dev tools off your personal machine, run that one Windows app, or give
 ### Keep several running
 
 One agent building a feature, one chasing a bug, one doing research. Each gets its own computer and only the accounts you connect to it. Move between the conversation, the computer and the files.
+
+Your plan is a pool of compute, not one fixed machine. Put all of it into one powerful agent, or split it: OpenClaw and Hermes side by side, or a Windows desktop with both of them connected to it. Change the split as your work changes.
 
 **Hivra Orchestrator** is coming: one screen where you talk to all of them and hand work between them.
 
