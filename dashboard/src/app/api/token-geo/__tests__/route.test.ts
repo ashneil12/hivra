@@ -92,6 +92,7 @@ describe("GET /api/token-geo", () => {
     await expect(response.json()).resolves.toEqual({
       blocked: true,
       notice: "Token features aren't available to people in the United Kingdom.",
+      existingAccess: false,
     });
   });
 
@@ -121,8 +122,98 @@ describe("GET /api/token-geo", () => {
     await expect((await GET(request("GB"))).json()).resolves.toEqual({
       blocked: true,
       notice: "Token features aren't available to people in the United Kingdom.",
+      existingAccess: false,
     });
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: null });
     await expect((await GET(request("GB"))).json()).resolves.toMatchObject({ blocked: true });
+  });
+});
+
+describe("GET /api/token-geo: existingAccess for a blocked user", () => {
+  // A table-aware database: the stored sign-up country (what blocks a user whose IP
+  // is elsewhere) plus the two reads behind hasExistingTokenHolderAccess.
+  function database(options: {
+    tierRows?: unknown[] | "error";
+    wallets?: unknown[];
+  }) {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "signup_risk_assessments") {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { country_code: "GB" }, error: null }) }) }),
+        };
+      }
+      if (table === "token_tier_qualifications") {
+        return {
+          select: () => ({
+            eq: () => ({
+              limit: async () =>
+                options.tierRows === "error"
+                  ? { data: null, error: { message: "boom" } }
+                  : { data: options.tierRows ?? [], error: null },
+            }),
+          }),
+        };
+      }
+      if (table === "user_wallets") {
+        return {
+          select: () => ({
+            eq: () => ({ eq: () => ({ not: () => ({ limit: async () => ({ data: options.wallets ?? [], error: null }) }) }) }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+  }
+
+  beforeEach(() => {
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_holder" });
+  });
+
+  it("says a blocked user with a tier row already holds access, so the wallet page can keep their panels", async () => {
+    database({ tierRows: [{ id: "row_1" }] });
+    await expect((await GET(request("GB"))).json()).resolves.toEqual({
+      blocked: true,
+      notice: "Token features aren't available to people in the United Kingdom.",
+      existingAccess: true,
+    });
+  });
+
+  it("says a blocked user with only a self-verified wallet holds access", async () => {
+    database({ wallets: [{ verification_method: "signature", metadata: null }] });
+    await expect((await GET(request("GB"))).json()).resolves.toMatchObject({ blocked: true, existingAccess: true });
+  });
+
+  it("says a blocked user with no tier row and no token wallet holds none", async () => {
+    // A credit-deposit Bankr wallet every crypto payment provisions is not token access.
+    database({ wallets: [{ verification_method: "bankr", metadata: { bankr: { purpose: "credit_deposit" } } }] });
+    await expect((await GET(request("GB"))).json()).resolves.toMatchObject({ blocked: true, existingAccess: false });
+  });
+
+  it("answers false, and logs, when the holding cannot be read", async () => {
+    database({ tierRows: "error" });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    await expect((await GET(request("GB"))).json()).resolves.toMatchObject({ blocked: true, existingAccess: false });
+    warn.mockRestore();
+  });
+
+  it("never reads the holding for a user who is not blocked, and adds no field to that answer", async () => {
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_abroad" });
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "signup_risk_assessments") {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { country_code: "US" }, error: null }) }) }),
+        };
+      }
+      throw new Error(`a user who is not blocked must not cause a read of ${table}`);
+    });
+    await expect((await GET(request("US"))).json()).resolves.toEqual({ blocked: false, notice: null });
+  });
+
+  it("never reads the holding for a signed-out visitor", async () => {
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: null });
+    mockFrom.mockImplementation((table: string) => {
+      throw new Error(`a signed-out visitor must not cause a read of ${table}`);
+    });
+    await expect((await GET(request("GB"))).json()).resolves.toMatchObject({ blocked: true, existingAccess: false });
   });
 });

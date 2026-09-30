@@ -102,7 +102,7 @@ describe("FreeTierCardVerification", () => {
     });
 
     it.each([
-      ["a viewer the token geo-policy blocks", { status: "blocked", notice: "Token features aren't available to people in the United Kingdom." }],
+      ["a viewer the token geo-policy blocks", { status: "blocked", notice: "Token features aren't available to people in the United Kingdom.", existingAccess: false }],
       ["a viewer the server has not answered for yet", { status: "checking", notice: null }],
       ["a viewer whose geo check failed", { status: "unavailable", notice: null }],
     ])("names no crypto or token route to %s, even with crypto billing on", async (_name, access) => {

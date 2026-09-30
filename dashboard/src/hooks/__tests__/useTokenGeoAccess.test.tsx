@@ -36,9 +36,23 @@ describe("useTokenGeoAccess", () => {
       expect(result.current).toEqual({
         status: "blocked",
         notice: "Token features aren't available to people in the United Kingdom.",
+        existingAccess: false,
       }),
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/token-geo", { cache: "no-store" });
+  });
+
+  it("carries whether a blocked user already holds token access, and reads anything but true as no access", async () => {
+    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+    const notice = "Token features aren't available to people in the United Kingdom.";
+    answer({ blocked: true, notice, existingAccess: true });
+    const holder = renderHook(() => useTokenGeoAccess());
+    await waitFor(() => expect(holder.result.current).toEqual({ status: "blocked", notice, existingAccess: true }));
+
+    _resetTokenGeoAccessForTests();
+    answer({ blocked: true, notice, existingAccess: "yes" });
+    const odd = renderHook(() => useTokenGeoAccess());
+    await waitFor(() => expect(odd.result.current).toEqual({ status: "blocked", notice, existingAccess: false }));
   });
 
   it("is 'allowed' when the server says so, and 'unavailable' (still hidden) when it can't answer", async () => {

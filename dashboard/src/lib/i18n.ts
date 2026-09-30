@@ -357,6 +357,11 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Free tier always works without token verification.",
         priceUnavailable: "Token price unavailable — please try again later.",
+        restricted: {
+          eyebrow: "Wallet",
+          title: "Your wallets.",
+          intro: "Your agents' wallets are listed here.",
+        },
         buyToken: {
           ariaLabel: "Buy $HermesOS",
           eyebrow: "Get $HermesOS",
@@ -908,6 +913,11 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "自行持有 $HermesOS 和 VVV，然后签名验证所有权。免费层级始终无需代币验证即可使用。",
         priceUnavailable: "代币价格暂不可用，请稍后重试。",
+        restricted: {
+          eyebrow: "钱包",
+          title: "你的钱包。",
+          intro: "你的 Agent 的钱包都列在这里。",
+        },
         buyToken: {
           ariaLabel: "购买 $HermesOS",
           eyebrow: "获取 $HermesOS",
@@ -1488,6 +1498,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecta tu propia billetera",
         "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. El plan gratuito siempre funciona sin verificación de token.",
         "priceUnavailable": "El precio del token no está disponible. Inténtalo de nuevo más tarde.",
+        "restricted": {
+          "eyebrow": "Billetera",
+          "title": "Tus billeteras.",
+          "intro": "Aquí se muestran las billeteras de tus agentes.",
+        },
         "buyToken": {
           "ariaLabel": "Comprar $HermesOS",
           "eyebrow": "Obtener $HermesOS",
@@ -2021,6 +2036,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecte sua própria carteira",
         "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. O plano gratuito sempre funciona sem verificação de token.",
         "priceUnavailable": "Preço do token indisponível — tente novamente mais tarde.",
+        "restricted": {
+          "eyebrow": "Carteira",
+          "title": "Suas carteiras.",
+          "intro": "As carteiras dos seus agentes aparecem aqui.",
+        },
         "buyToken": {
           "ariaLabel": "Comprar $HermesOS",
           "eyebrow": "Obter $HermesOS",
@@ -2554,6 +2574,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Connectez votre propre portefeuille",
         "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Le tier Free fonctionne toujours sans vérification de token.",
         "priceUnavailable": "Prix du token indisponible — veuillez réessayer plus tard.",
+        "restricted": {
+          "eyebrow": "Portefeuille",
+          "title": "Vos portefeuilles.",
+          "intro": "Les portefeuilles de vos agents sont listés ici.",
+        },
         "buyToken": {
           "ariaLabel": "Acheter $HermesOS",
           "eyebrow": "Obtenir $HermesOS",
@@ -3087,6 +3112,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Verbinde deine eigene Wallet",
         "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Der Free-Tier funktioniert immer ohne Token-Verifizierung.",
         "priceUnavailable": "Token-Preis nicht verfügbar — bitte später erneut versuchen.",
+        "restricted": {
+          "eyebrow": "Krypto-Wallet",
+          "title": "Deine Wallets.",
+          "intro": "Hier siehst du die Wallets deiner Agents.",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS kaufen",
           "eyebrow": "$HermesOS erwerben",
@@ -3620,6 +3650,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "自分のウォレットを接続",
         "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。Free プランはトークン認証なしで常時利用可能です。",
         "priceUnavailable": "トークン価格を取得できません —— しばらくしてから再試行してください。",
+        "restricted": {
+          "eyebrow": "ウォレット",
+          "title": "あなたのウォレット。",
+          "intro": "エージェントのウォレットをここに表示します。",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS を購入",
           "eyebrow": "$HermesOS を手に入れる",
@@ -4153,6 +4188,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "내 지갑 연결",
         "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. Free 티어는 토큰 인증 없이 항상 이용 가능합니다.",
         "priceUnavailable": "토큰 가격을 불러올 수 없습니다 — 나중에 다시 시도하세요.",
+        "restricted": {
+          "eyebrow": "지갑",
+          "title": "내 지갑.",
+          "intro": "에이전트의 지갑이 여기에 표시됩니다.",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS 구매",
           "eyebrow": "$HermesOS 구하기",
