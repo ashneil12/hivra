@@ -190,9 +190,9 @@ export default function KeepMacAwakeTool() {
             Your command
           </span>
           <span className={styles.citeActions}>
-            <CopyButton text={result.script} label="Copy command" ariaLabel="Copy the command" />
-            <CopyButton text={result.agentPrompt} label="Copy for agent" ariaLabel="Copy this as a prompt for Claude Code or Codex" />
-            <CopyButton text={() => absoluteLinkFor(search)} label="Copy link" ariaLabel="Copy a link to this setup" />
+            <CopyButton text={result.script} label="Copy command" />
+            <CopyButton text={result.agentPrompt} label="Copy for agent" ariaLabel="Copy for agent (a prompt for Claude Code or Codex)" />
+            <CopyButton text={() => absoluteLinkFor(search)} label="Copy link" ariaLabel="Copy link to this setup" />
           </span>
         </div>
         <pre className={styles.pre} data-testid="kma-script">

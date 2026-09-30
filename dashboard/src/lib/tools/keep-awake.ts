@@ -28,7 +28,7 @@ export const KEEP_AWAKE_FACTS = {
       url: "https://keith.github.io/xcode-man-pages/pmset.1.html",
     },
     appleLidClosed: {
-      label: "Apple Support: using a MacBook with the lid closed and external displays",
+      label: "Apple Support: dual monitors with a MacBook Air or MacBook Pro with M3 chip",
       url: "https://support.apple.com/en-in/117373",
     },
     appleDisplayGuide: {
@@ -226,7 +226,7 @@ function buildVerdict(input: KeepAwakeInput): KeepAwakeResult["verdict"] {
           level: "caveat",
           title: "caffeinate alone will not cover a closed lid",
           detail:
-            "Apple documents lid-closed use only with an external display, power connected and an external keyboard and mouse or trackpad. Without those, plan on the lid sleeping the Mac.",
+            "Apple describes lid-closed use with an external display, power connected and an external keyboard and mouse or trackpad. Without those, plan on the lid sleeping the Mac.",
         }
       : {
           level: "wont",
@@ -271,7 +271,7 @@ function buildPmset(input: KeepAwakeInput): KeepAwakeResult["pmset"] {
   const source = input.power === "plugged" ? "-c" : "-b";
   return {
     lines: ["pmset -g custom", `sudo pmset ${source} sleep 0`],
-    note: `Only if you want it to last. The first line shows your current settings, so note the sleep value. The second turns the ${input.power === "plugged" ? "plugged-in" : "battery"} sleep timer off until you set it back. pmset does not stop a closed lid from sleeping the Mac, and a forgotten setting drains the battery, so caffeinate is usually cleaner.`,
+    note: `Only if you want it to last. The first line shows your current settings, so note the sleep value. The second turns the ${input.power === "plugged" ? "plugged-in" : "battery"} sleep timer off until you set it back. a sleep timer of 0 does not stop a closed lid from sleeping the Mac, and a forgotten setting drains the battery, so caffeinate is usually cleaner.`,
   };
 }
 
@@ -280,8 +280,8 @@ function buildNotCovered(input: KeepAwakeInput): string[] {
   if (input.os === "macos") {
     out.push(
       input.lid === "closed"
-        ? "A closed lid. caffeinate is not closed-display mode, and Apple documents closed-lid use only with an external display, power connected and an external keyboard and mouse or trackpad."
-        : "A closed lid. If you shut it, expect the Mac to sleep: Apple documents closed-lid use only with an external display, power connected and an external keyboard and mouse or trackpad."
+        ? "A closed lid. caffeinate is not closed-display mode, and Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad."
+        : "A closed lid. If you shut it, expect the Mac to sleep: Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad."
     );
     out.push(
       input.power === "plugged"

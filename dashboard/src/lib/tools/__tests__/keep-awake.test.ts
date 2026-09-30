@@ -73,7 +73,7 @@ describe("keep-awake builder: macOS", () => {
     expect(plugged.verify.command).toBe("pmset -g assertions");
     expect(plugged.verify.hint).toMatch(/caffeinate command-line tool/);
     expect(plugged.pmset?.lines).toEqual(["pmset -g custom", "sudo pmset -c sleep 0"]);
-    expect(plugged.pmset?.note).toMatch(/does not stop a closed lid from sleeping the Mac/);
+    expect(plugged.pmset?.note).toMatch(/sleep timer of 0 does not stop a closed lid from sleeping the Mac/);
 
     const battery = buildKeepAwake(input({ power: "battery" }));
     expect(battery.pmset?.lines).toEqual(["pmset -g custom", "sudo pmset -b sleep 0"]);

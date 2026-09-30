@@ -15,8 +15,8 @@ export default function CiteBlock({ sentence, html }: { sentence: string; html: 
           Cite this page
         </span>
         <span className={styles.citeActions}>
-          <CopyButton text={sentence} label="Copy citation" ariaLabel="Copy the citation sentence" />
-          <CopyButton text={html} label="Copy HTML" ariaLabel="Copy the citation as an HTML link" />
+          <CopyButton text={sentence} label="Copy citation" />
+          <CopyButton text={html} label="Copy HTML" ariaLabel="Copy HTML (the citation as a link)" />
         </span>
       </div>
       <p className={styles.citeText}>{sentence}</p>

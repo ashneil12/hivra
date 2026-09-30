@@ -324,7 +324,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
     metaDescription:
       "Build the exact caffeinate command to keep a Mac awake while Claude Code or Codex runs, with the Linux version and a list of what it cannot cover.",
     longIntro: [
-      "caffeinate is the command macOS ships to stop the Mac sleeping while a job runs. The -i flag stops idle sleep, -s stops system sleep but only on AC power, and -t sets a timeout in seconds. Apple documents closed-lid use only with an external display, power connected and an external keyboard and mouse or trackpad, and caffeinate's manual makes no promise about the lid.",
+      "caffeinate is the command macOS ships to stop the Mac sleeping while a job runs. The -i flag stops idle sleep, -s stops system sleep but only on AC power, and -t sets a timeout in seconds. Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad, and caffeinate's manual makes no promise about the lid.",
       "Answer four questions and the builder prints the exact command for macOS or Linux, how to check it is working, and a plain list of what it will not cover. The command you type stays in your browser.",
     ],
     faqs: [

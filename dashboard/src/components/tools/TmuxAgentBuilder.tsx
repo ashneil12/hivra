@@ -123,7 +123,7 @@ export default function TmuxAgentBuilder() {
           <span className={styles.panelTitle} style={{ margin: 0 }}>
             Your commands
           </span>
-          <CopyButton text={result.script} label="Copy commands" ariaLabel="Copy all the commands" />
+          <CopyButton text={result.script} label="Copy commands" />
         </div>
         <pre className={styles.pre} data-testid="tmux-script">
           {result.script}

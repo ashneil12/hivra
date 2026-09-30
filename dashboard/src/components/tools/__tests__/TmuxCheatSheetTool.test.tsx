@@ -184,7 +184,7 @@ describe("TmuxCheatSheetTool builder", () => {
   it("copies the whole script, and each later command", async () => {
     render(<TmuxCheatSheetTool />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy all the commands" }));
+      fireEvent.click(screen.getByRole("button", { name: "Copy commands" }));
     });
     expect(writeText).toHaveBeenLastCalledWith(script());
     // The peek command is in the agent section and in the builder's follow-ups.

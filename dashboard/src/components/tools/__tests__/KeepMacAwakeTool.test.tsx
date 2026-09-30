@@ -152,7 +152,7 @@ describe("KeepMacAwakeTool copy buttons", () => {
     fireEvent.click(screen.getByLabelText("Linux with systemd"));
     fireEvent.click(screen.getByLabelText("Closed"));
 
-    const copy = screen.getByRole("button", { name: "Copy the command" });
+    const copy = screen.getByRole("button", { name: "Copy command" });
     await act(async () => {
       fireEvent.click(copy);
     });
@@ -160,7 +160,7 @@ describe("KeepMacAwakeTool copy buttons", () => {
     expect(copy).toHaveTextContent("Copied");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Copy this as a prompt for Claude Code or Codex/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Copy for agent/ }));
     });
     const prompt = writeText.mock.calls.at(-1)![0] as string;
     expect(prompt).toContain('systemd-inhibit --what=sleep:handle-lid-switch --why="agent run" claude');
@@ -169,7 +169,7 @@ describe("KeepMacAwakeTool copy buttons", () => {
     expect(prompt).toContain("Tell me plainly what this does not cover");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy a link to this setup" }));
+      fireEvent.click(screen.getByRole("button", { name: "Copy link to this setup" }));
     });
     expect(writeText.mock.calls.at(-1)![0]).toBe(`${window.location.origin}${BASE}?os=linux&lid=closed`);
   });
@@ -177,7 +177,7 @@ describe("KeepMacAwakeTool copy buttons", () => {
   it("goes back to Copy after a moment, and reports a blocked clipboard", async () => {
     jest.useFakeTimers();
     render(<KeepMacAwakeTool />);
-    const copy = screen.getByRole("button", { name: "Copy the command" });
+    const copy = screen.getByRole("button", { name: "Copy command" });
     await act(async () => {
       fireEvent.click(copy);
     });
@@ -194,6 +194,20 @@ describe("KeepMacAwakeTool copy buttons", () => {
     expect(copy).toHaveTextContent("Copy failed, select the text");
     // The text is still on the page to select by hand.
     expect(script()).toBe("caffeinate -is claude");
+  });
+});
+
+describe("KeepMacAwakeTool accessible names", () => {
+  // WCAG 2.5.3 Label in Name: a voice-control user says what they see, so every
+  // visible button label must be contained in the button's accessible name.
+  it("keeps each visible button label inside its accessible name", () => {
+    render(<KeepMacAwakeTool />);
+    for (const visible of ["Copy command", "Copy for agent", "Copy link"]) {
+      const button = screen.getByText(visible).closest("button");
+      expect(button).not.toBeNull();
+      const name = (button!.getAttribute("aria-label") ?? button!.textContent ?? "").toLowerCase();
+      expect([visible, name.includes(visible.toLowerCase())]).toEqual([visible, true]);
+    }
   });
 });
 
