@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
-import { dayToDate, PAGE_LAST_MODIFIED } from "@/lib/seo-lastmod";
+import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "@/lib/seo-lastmod";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
@@ -201,12 +201,13 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     })),
   ];
 
-  const toolPagesLastModified = cutoverPage(PAGE_LAST_MODIFIED.tools);
+  // The hub lists every tool; each tool page carries the date of its own content.
+  const toolHubLastModified = cutoverPage(PAGE_LAST_MODIFIED.tools);
   const toolPages: MetadataRoute.Sitemap = [
-    { url: `${SITE_URL}/tools`, lastModified: toolPagesLastModified, changeFrequency: "monthly", priority: 0.8 },
+    { url: `${SITE_URL}/tools`, lastModified: toolHubLastModified, changeFrequency: "monthly", priority: 0.8 },
     ...TOOL_ENTRIES.map((entry) => ({
       url: `${SITE_URL}/tools/${entry.slug}`,
-      lastModified: toolPagesLastModified,
+      lastModified: cutoverPage(TOOL_PAGE_LAST_MODIFIED[entry.slug] ?? PAGE_LAST_MODIFIED.tools),
       changeFrequency: "monthly" as const,
       priority: 0.8,
     })),

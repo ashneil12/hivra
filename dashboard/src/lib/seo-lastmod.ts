@@ -34,8 +34,10 @@ export const PAGE_LAST_MODIFIED = {
   // truth pass (speed, backup, import and price claims removed, FAQs changed).
   featureDetail: "2026-09-24",
   compareDetail: "2026-09-24",
-  // Free tools: restored and truth-checked on 2026-09-24, unchanged since.
-  tools: "2026-09-24",
+  // The /tools hub lists every tool, and gained two on 2026-09-30 (the keep-awake
+  // command builder and the tmux cheat sheet). Each tool page has its own date in
+  // TOOL_PAGE_LAST_MODIFIED below.
+  tools: "2026-09-30",
   // Phase-aware token copy and official accounts, 2026-09-24.
   token: "2026-09-24",
   // The founder note was reworded on 2026-09-30 (open source, no preview label).
@@ -62,6 +64,27 @@ export const PAGE_LAST_MODIFIED = {
 } as const;
 
 export type PageLastModifiedKey = keyof typeof PAGE_LAST_MODIFIED;
+
+/**
+ * Each tool page's last change to its own content, by slug. The block of related
+ * tools every tool page shares is boilerplate and does not move a page's date,
+ * so the three older tools keep the day they were restored and truth-checked.
+ * The /tools hub follows PAGE_LAST_MODIFIED.tools. Adding a tool means adding its
+ * slug here: seo-urls.test.ts fails on a missing or stale slug.
+ */
+export const TOOL_PAGE_LAST_MODIFIED: Record<string, string> = {
+  // New copy, a method section with linked sources, worked examples and re-read
+  // figures, 2026-09-30.
+  "claude-code-plan-calculator": "2026-09-30",
+  // Restored and truth-checked on 2026-09-24, unchanged since. The plan facts
+  // the limit-reset tool now imports change none of its output.
+  "agent-survival-check": "2026-09-24",
+  "ai-agent-hosting-cost-calculator": "2026-09-24",
+  "claude-code-limit-reset-calculator": "2026-09-24",
+  // Added on 2026-09-30.
+  "keep-mac-awake": "2026-09-30",
+  "tmux-cheat-sheet": "2026-09-30",
+};
 
 /** An ISO day as a Date at 00:00 UTC, for the sitemap. */
 export function dayToDate(day: string): Date {
