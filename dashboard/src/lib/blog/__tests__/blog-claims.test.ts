@@ -244,6 +244,7 @@ const KNOWN_TRUE_2026_09_30 = [
 // carry the one true statement of which runs survive a closed laptop: only what
 // holds on every computer, old runtime or new.
 const CLI_24_7_POSTS = [
+  "claude-max-vs-pro-for-claude-code",
   "keep-claude-code-running-24-7",
   "run-codex-24-7-in-the-cloud",
   "claude-code-vs-codex-24-7",
