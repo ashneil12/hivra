@@ -70,6 +70,7 @@ These are read directly in the current codebase:
 - Free-tier abuse checks: `FINGERPRINT_SECRET_KEY`, `NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY`
 - Hetzner API: `HETZNER_API_TOKEN`, `HETZNER_SSH_KEY_ID`
 - Hetzner SSH auth: `HETZNER_SSH_PRIVATE_KEY_B64` or `HETZNER_SSH_KEY_PATH`
+- Cold-storage backups: `HERMES_COLD_STORAGE_HOST` and `HERMES_COLD_STORAGE_USER` name the Storage Box the backup routes write to. They have no default in source. The routes also need `HETZNER_SSH_PRIVATE_KEY_B64` (see [docs/cold-storage.md](docs/cold-storage.md)).
 - Proxmox rollout:
   - `HERMES_INFRA_PROVIDER=proxmox` makes the Proxmox backend available.
   - `HERMES_PROXMOX_ENABLED_USER_IDS` is a comma- or space-separated allowlist of Clerk user IDs that should use Proxmox.
