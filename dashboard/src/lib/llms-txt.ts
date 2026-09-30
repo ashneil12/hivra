@@ -116,7 +116,7 @@ export function buildLlmsTxt({
   );
   lines.push("");
   lines.push(
-    `In private preview: Windows and Omarchy computers. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
+    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
   );
   lines.push("");
   lines.push(NON_AFFILIATION_LINE);

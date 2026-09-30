@@ -12,11 +12,12 @@ jest.mock("@/components/public-site/PublicSite", () => ({
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-import LandingPage from "../page";
+import LandingPage, { metadata as homeMetadata } from "../page";
 import StructuredData from "@/components/StructuredData";
 import { officialProfileLinks } from "@/lib/public-project-links";
 import { HOMEPAGE_FAQ } from "@/components/landing/home/content";
 import { SITE_DESCRIPTION } from "@/lib/brand-description";
+import { buildLlmsTxt } from "@/lib/llms-txt";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 
 type Graph = { "@graph": Array<Record<string, unknown>> };
@@ -123,6 +124,24 @@ describe("homepage identity structured data", () => {
         .map((hit) => `${hit.match} in "${text}": ${hit.why}`),
     );
     expect(hits).toEqual([]);
+  });
+});
+
+describe("availability of Windows and Omarchy computers across surfaces", () => {
+  // The owner's homepage copy (2026-09-28) and the roadmap say a person can launch
+  // an Ubuntu, Windows or Omarchy computer. The JSON-LD feature list, the meta
+  // description and llms.txt are read by crawlers and answer engines, so they
+  // must say the same thing; one surface calling them "private preview" while the
+  // others list them as available is exactly the drift this test stops.
+  it("lists Windows and Omarchy in the JSON-LD feature list, the meta description and llms.txt alike", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const app = nodeOf(schema, "SoftwareApplication") as { featureList: string[] };
+    expect(app.featureList).toContain("Ubuntu, Windows or Omarchy");
+    expect(String(homeMetadata.description)).toContain("launch Ubuntu, Windows or Omarchy for yourself");
+
+    const llmsTxt = buildLlmsTxt({ siteUrl: "https://hivra.cloud", phase: "dormant" });
+    expect(llmsTxt).toMatch(/Also available: Windows[^.]*and Omarchy\./);
+    expect(llmsTxt).not.toMatch(/private preview/i);
   });
 });
 

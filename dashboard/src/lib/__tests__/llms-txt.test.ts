@@ -48,9 +48,12 @@ describe("buildLlmsTxt", () => {
   it("separates what is available now from preview, coming and proposed work", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     expect(txt).toContain("Available now on Hivra Cloud:");
-    // Windows and Omarchy are private preview, not available (truth table, 2026-09-30).
-    expect(txt).toContain("In private preview: Windows and Omarchy computers.");
-    expect(txt).not.toMatch(/Also available: Windows/);
+    // Windows and Omarchy are listed as available, with the real Windows condition,
+    // because the homepage, its meta description and the roadmap say so (owner copy
+    // 2026-09-28, commit 2f7fdcea 2026-09-30; truth table row "Ubuntu, Windows and
+    // Omarchy computers"). llms.txt must not contradict them.
+    expect(txt).toMatch(/Also available: Windows \(on your own Proxmox host, from your own licensed ISO\) and Omarchy\./);
+    expect(txt).not.toMatch(/private preview/i);
     expect(txt).toContain("In preview: DeepSeek.");
     expect(txt).toContain("$HIVRA is a proposed new token and does not exist yet.");
     expect(txt).not.toMatch(/one click|Free tier is live/i);

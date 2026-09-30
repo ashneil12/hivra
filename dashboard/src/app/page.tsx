@@ -121,7 +121,7 @@ const homepageSchema = {
       ],
       featureList: [
         "Launch a computer with or without an agent",
-        "Ubuntu computers",
+        "Ubuntu, Windows or Omarchy",
         "Terminal and graphical interfaces",
         "Persistent files, tools and settings",
         "Use Hivra Cloud or your own infrastructure",
