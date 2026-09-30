@@ -283,6 +283,12 @@ describe("Claude Code Remote Control article", () => {
     expect(copy.split("\n").filter((line) => line.startsWith("- **"))).toHaveLength(5);
   });
 
+  it("says who turns Trusted Devices on: you on Pro and Max, an Owner on Team and Enterprise", () => {
+    expect(sectionCopy).toContain("- **Switches for you and for admins.**");
+    expect(sectionCopy).not.toContain("**Switches for admins.**");
+    expect(sectionCopy).toContain("On Pro and Max you turn Trusted Devices on yourself, and on Team and Enterprise an Owner does.");
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
