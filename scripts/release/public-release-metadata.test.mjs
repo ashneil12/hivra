@@ -185,8 +185,8 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.match(credentialEvidenceBuilder, /current-authorization-boundary-reconciled/);
   assert.equal(assetPolicy.format, 'hivra-asset-provenance-policy-v1');
   assert.equal(assetPolicy.releaseApproved, false);
-  assert.equal(assetPolicy.assets.length, 31);
-  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 31);
+  assert.equal(assetPolicy.assets.length, 37);
+  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 37);
   assert.ok(assetPolicy.assets.every((entry) => entry.redistributionDecision === 'include'));
   assert.ok(assetPolicy.assets.some((entry) => entry.rightsStatus === 'documented-project-generated'));
   assert.equal(assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-third-party-font').length, 4);
@@ -202,6 +202,19 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.equal(assetPolicy.assets.filter(
     (entry) => entry.class === 'owner-asserted-brand-artwork-draft',
   ).length, 2);
+  // Six are light WebP exports of the three generated litepaper renders. They
+  // name their source and carry no generation record of their own.
+  const derivedRecords = JSON.parse(read('docs/release/asset-derived-exports.json'));
+  const derivedAssets = assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-derived-export');
+  assert.equal(derivedAssets.length, 6);
+  assert.equal(derivedRecords.format, 'hivra-asset-derived-exports-v1');
+  assert.equal(derivedRecords.derivedAssets.length, 6);
+  assert.deepEqual(derivedRecords.derivedAssets.map((entry) => entry.path).sort(), derivedAssets.map((entry) => entry.path).sort());
+  assert.ok(derivedRecords.derivedAssets.every((entry) => assetRecords.generatedAssets.some(
+    (record) => record.path === entry.sourcePath && record.sha256 === entry.sourceSha256,
+  )));
+  assert.ok(derivedAssets.every((entry) => !assetRecords.generatedAssets.some((record) => record.path === entry.path)));
+  assert.equal(assetPolicy.rightsReview.derivedExportsSha256, sha256('docs/release/asset-derived-exports.json'));
   assert.equal(assetRecords.format, 'hivra-asset-generation-records-v1');
   assert.equal(assetRecords.generatedAssets.length, 3);
   assert.equal(assetPolicy.rightsReview.generationRecordsSha256, sha256('docs/release/asset-generation-records.json'));

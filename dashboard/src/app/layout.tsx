@@ -17,17 +17,26 @@ import { OG_IMAGE } from "@/lib/og-meta";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import "./globals.css";
 
+// These faces are not used by the public site shell (it ships its own
+// "Hivra Manrope"/"Hivra Plex Mono"), but next/font preloads every font declared
+// in the root layout on every route, which puts ~130 KB of woff2 on the same
+// constrained link as the render-blocking CSS. `preload: false` keeps the
+// @font-face rules and CSS variables, so routes that do render these faces
+// (dashboard, sign-in, get-started, cookie banner) fetch them on demand.
 const outfit = Outfit({
+  preload: false,
   subsets: ["latin"],
   variable: "--font-outfit",
 });
 
 const playfair = Playfair_Display({
+  preload: false,
   subsets: ["latin"],
   variable: "--font-playfair",
 });
 
 const spaceMono = Space_Mono({
+  preload: false,
   weight: ["400", "700"],
   subsets: ["latin"],
   variable: "--font-mono",
@@ -35,6 +44,7 @@ const spaceMono = Space_Mono({
 
 // Hivra brand display typeface — technical, gridded, used for landing headlines.
 const spaceGrotesk = Space_Grotesk({
+  preload: false,
   weight: ["400", "500", "700"],
   subsets: ["latin"],
   variable: "--font-grotesk",

@@ -51,7 +51,7 @@ export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): 
     {
       heading: "Source and self-hosting",
       links: [
-        { label: "Source code", path: PUBLIC_REPOSITORY_URL, note: "The public repository, under the Apache-2.0 license" },
+        { label: "Source code", path: PUBLIC_REPOSITORY_URL, note: "The open source repository" },
         { label: "Self-host quickstart", path: `${PUBLIC_REPOSITORY_URL}/blob/main/docs/self-host/QUICKSTART.md`, note: "Run the platform on your own hardware with your own sign-in" },
       ],
     },
@@ -105,7 +105,7 @@ export function buildLlmsTxt({
   );
   lines.push("");
   lines.push(
-    `In private preview: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
+    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
   );
   lines.push("");
 

@@ -67,6 +67,20 @@ def monolith(attributes, sizes):
     """The monolith render as WebP where supported, with the PNG as fallback."""
     return ('<picture><source type="image/webp" srcset="{}" sizes="{}">'
             '<img src="assets/boundary-monolith-v5.png" {}></picture>').format(MONOLITH_WEBP, sizes, attributes)
+# The three generated renders have WebP exports beside them, made by
+# export-litepaper-images.py and recorded as derived exports in
+# docs/release/asset-derived-exports.json.
+WEBP_WIDTHS = (768, 1536)
+
+
+def render(png, attributes, sizes):
+    """A generated render as WebP where supported, with the PNG as fallback."""
+    stem = png.removesuffix(".png")
+    srcset = ", ".join("assets/{}-{}.webp {}w".format(stem, width, width) for width in WEBP_WIDTHS)
+    return ('<picture><source type="image/webp" srcset="{}" sizes="{}">'
+            '<img src="assets/{}" {}></picture>').format(srcset, sizes, png, attributes)
+
+
 # Share tags need absolute URLs; they name the canonical site.
 SITE_URL = "https://hivra.cloud"
 PAGE_URL = SITE_URL + "/docs/litepaper/index.html"
@@ -313,7 +327,7 @@ def build_page():
     feature_alts = ['One workspace connects to a laptop, tablet and phone.', SHARE_IMAGE_ALT, 'Concept illustration connecting a request, observed actions and result.', 'Personal device beside a separate agent computer.']
     features = ''
     for i, name in enumerate(feature_names):
-        image = f'<img src="assets/{feature_images[i]}" alt="{feature_alts[i]}" width="1536" height="1024" loading="lazy">'
+        image = render(feature_images[i], f'alt="{feature_alts[i]}" width="1536" height="1024" loading="lazy"', '(max-width: 999px) 100vw, 46vw')
         if feature_images[i] == 'boundary-monolith-v5.png':
             image = monolith(f'alt="{feature_alts[i]}" width="1672" height="940" loading="lazy"', '(max-width: 999px) 100vw, 46vw')
         features += f'<article class="quality-panel"><div class="quality-word" aria-hidden="true">{feature_big[i]}</div><div class="quality-layout"><figure>{image}</figure><div class="quality-copy"><span class="quality-position" aria-hidden="true">{i+1:02d} / 04</span><h3>{escape(name)}</h3>{blocks(quality_sub[name])}</div></div></article>'

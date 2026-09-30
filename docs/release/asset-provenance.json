@@ -10,8 +10,10 @@
     "ownerAssertions": "docs/release/asset-owner-assertions.json",
     "ownerAssertionsSha256": "4075c13b376c0ef2963b31c03978146f76f1ea9c34d7cda51ea04241bddf892c",
     "openAiTermsUrl": "https://openai.com/policies/terms-of-use/",
-    "finding": "The earlier generated-asset review remains byte-bound. Four retained font files now have exact official-upstream byte matches and adjacent OFL-1.1 evidence. Five artwork files have repository-owner originality assertions recorded separately from independent evidence; only the selected Hivra logo has an independently verified owner-supplied original byte match. Eleven token-image, listing-logo and app-icon files are resized exports of that logo and carry its assertion. Two launch-banner drafts are composites of the logo and the owner-asserted litepaper artwork and carry both assertions. No missing prompts, generation tools, or receipts are inferred.",
-    "publicSnapshotBasis": "Retained asset bytes are also bound to the first public root commit; original creation, generation and licensing evidence remains in the corresponding origin records. This is a public snapshot identity, not a new authorship claim."
+    "finding": "The earlier generated-asset review remains byte-bound. Four retained font files now have exact official-upstream byte matches and adjacent OFL-1.1 evidence. Five artwork files have repository-owner originality assertions recorded separately from independent evidence; only the selected Hivra logo has an independently verified owner-supplied original byte match. Eleven token-image, listing-logo and app-icon files are resized exports of that logo and carry its assertion. Two launch-banner drafts are composites of the logo and the owner-asserted litepaper artwork and carry both assertions. No missing prompts, generation tools, or receipts are inferred. Six WebP files are resized exports of the three project-generated litepaper renders; they are recorded as derived exports that name their source rather than as new generations, and no generation record is invented for them.",
+    "publicSnapshotBasis": "Retained asset bytes are also bound to the first public root commit; original creation, generation and licensing evidence remains in the corresponding origin records. This is a public snapshot identity, not a new authorship claim.",
+    "derivedExports": "docs/release/asset-derived-exports.json",
+    "derivedExportsSha256": "3594689f8dbffe1173a9b4ed492c435fb7b343a14b4a03b9f994cb5b18ead99c"
   },
   "assets": [
     {
@@ -162,6 +164,66 @@
       "origin": "Base prompt, corrective edit prompt, built-in-tool output receipt, terms review and visual acceptance are recorded in docs/release/asset-generation-records.json.",
       "provenanceCommit": "250fd9d9c929f0afdda9c74dc2513763a93851e2",
       "rightsStatus": "documented-project-generated",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-hero-v2-768.webp",
+      "sha256": "77f884216fbd549795ed4e3848109f5ee6c8a8f267344fd7fcdcbd4100acb520",
+      "bytes": 12972,
+      "class": "derived-export-of-project-generated-illustration",
+      "origin": "Resized WebP export of docs/litepaper/assets/agent-computer-hero-v2.png by docs/litepaper/export-litepaper-images.py; the source, derivation and reproduction are recorded in docs/release/asset-derived-exports.json. Not a new generation: the source's record in docs/release/asset-generation-records.json applies.",
+      "provenanceCommit": "62782993a6dd8c43a9656d29ce58e208bfc9b082",
+      "rightsStatus": "documented-derived-export",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-hero-v2-1536.webp",
+      "sha256": "1cc3fbc001dc301e9233b63d9d2b1cc2995491458671a8fb8af8cfa689a4abaf",
+      "bytes": 42888,
+      "class": "derived-export-of-project-generated-illustration",
+      "origin": "Resized WebP export of docs/litepaper/assets/agent-computer-hero-v2.png by docs/litepaper/export-litepaper-images.py; the source, derivation and reproduction are recorded in docs/release/asset-derived-exports.json. Not a new generation: the source's record in docs/release/asset-generation-records.json applies.",
+      "provenanceCommit": "62782993a6dd8c43a9656d29ce58e208bfc9b082",
+      "rightsStatus": "documented-derived-export",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-opportunity-v2-768.webp",
+      "sha256": "b831e718bbeb0a41d8bdfed066026a7050b2aec990a58ffd37d58b6a3dbf1d3d",
+      "bytes": 13794,
+      "class": "derived-export-of-project-generated-illustration",
+      "origin": "Resized WebP export of docs/litepaper/assets/agent-computer-opportunity-v2.png by docs/litepaper/export-litepaper-images.py; the source, derivation and reproduction are recorded in docs/release/asset-derived-exports.json. Not a new generation: the source's record in docs/release/asset-generation-records.json applies.",
+      "provenanceCommit": "62782993a6dd8c43a9656d29ce58e208bfc9b082",
+      "rightsStatus": "documented-derived-export",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-opportunity-v2-1536.webp",
+      "sha256": "d278e5b34590544dc2856ed17655f3ccd4148fc14c0255687ac45dda7e1fdeff",
+      "bytes": 42848,
+      "class": "derived-export-of-project-generated-illustration",
+      "origin": "Resized WebP export of docs/litepaper/assets/agent-computer-opportunity-v2.png by docs/litepaper/export-litepaper-images.py; the source, derivation and reproduction are recorded in docs/release/asset-derived-exports.json. Not a new generation: the source's record in docs/release/asset-generation-records.json applies.",
+      "provenanceCommit": "62782993a6dd8c43a9656d29ce58e208bfc9b082",
+      "rightsStatus": "documented-derived-export",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/observable-run-v2-768.webp",
+      "sha256": "caf8d6b7ef08ddf0c8792819678e4da4ae7882aa4d0e604029aacf2baea53aa1",
+      "bytes": 13414,
+      "class": "derived-export-of-project-generated-illustration",
+      "origin": "Resized WebP export of docs/litepaper/assets/observable-run-v2.png by docs/litepaper/export-litepaper-images.py; the source, derivation and reproduction are recorded in docs/release/asset-derived-exports.json. Not a new generation: the source's record in docs/release/asset-generation-records.json applies.",
+      "provenanceCommit": "62782993a6dd8c43a9656d29ce58e208bfc9b082",
+      "rightsStatus": "documented-derived-export",
+      "redistributionDecision": "include"
+    },
+    {
+      "path": "docs/litepaper/assets/observable-run-v2-1536.webp",
+      "sha256": "e9e33ccb31b0c45086e44f6c162c4ec5306879e89f9de4723c7a56fd11ba1944",
+      "bytes": 40594,
+      "class": "derived-export-of-project-generated-illustration",
+      "origin": "Resized WebP export of docs/litepaper/assets/observable-run-v2.png by docs/litepaper/export-litepaper-images.py; the source, derivation and reproduction are recorded in docs/release/asset-derived-exports.json. Not a new generation: the source's record in docs/release/asset-generation-records.json applies.",
+      "provenanceCommit": "62782993a6dd8c43a9656d29ce58e208bfc9b082",
+      "rightsStatus": "documented-derived-export",
       "redistributionDecision": "include"
     },
     {
