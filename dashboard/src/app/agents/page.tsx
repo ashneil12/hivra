@@ -37,19 +37,19 @@ export const metadata: Metadata = {
 const SUMMARY = [
   {
     title: "Your own sign-ins",
-    body: "Claude Code uses your Anthropic account. Codex uses your ChatGPT account or OpenAI key. Hermes runs on the model key you already pay for.",
+    body: "Claude Code uses your Anthropic account. Codex uses your ChatGPT account or OpenAI key. Hermes runs on the AI key you already pay for.",
   },
   {
     title: "Stays on when you log off",
-    body: "Every agent gets a private cloud VM of its own, and paid plans are never paused for inactivity. Hermes, OpenClaw and Agent Zero run on that computer, and Aeon's tasks run on your own GitHub Actions, so none of them needs an open browser. A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop.",
+    body: "Every agent gets a private computer in the cloud (a virtual machine, or VM) of its own, and paid plans are never paused for inactivity. Hermes, OpenClaw and Agent Zero run on that computer, and Aeon's tasks run on your own GitHub Actions, so none of them needs an open browser. A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop. (tmux is a tool that keeps a program running after you disconnect.)",
   },
   {
     title: "From $9.99 a month",
-    body: "2 vCPU and 4 GB RAM to start, or 4 vCPU and 8 GB for $19.99. Card payments come with a 7-day money-back guarantee.",
+    body: "2 vCPU and 4 GB RAM to start, or 4 vCPU and 8 GB for $19.99. (A vCPU is one slice of a processor, and RAM is working memory.) Card payments come with a 7-day money-back guarantee.",
   },
   {
     title: "Public source",
-    body: "Hivra is open source, and you can self-host it.",
+    body: "Hivra is open source, which means anyone can read the code, and you can run it yourself.",
   },
 ] as const;
 

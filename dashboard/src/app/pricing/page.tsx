@@ -123,6 +123,7 @@ export default function PricingPage() {
               <p>
                 Larger sizes are planned. The proposed sizes are in the <Link href="/#pricing">pricing preview</Link>.
               </p>
+              <p>A vCPU is one slice of a processor, and RAM is the computer&apos;s working memory.</p>
             </div>
           </section>
         </div>
