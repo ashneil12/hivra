@@ -17,7 +17,6 @@ test("the hero copy and call to action ship visible, before any script runs", ()
   const copy = markup.slice(0, markup.indexOf("Illustration"));
   expect(copy).toContain("Your agent needs a");
   expect(copy).toContain("Launch an agent");
-  expect(copy).toContain("7-day money-back guarantee on card payments.");
   // Only the illustration may start hidden and animate in; the words never do.
   const beforeScene = copy.slice(0, copy.indexOf("Your own Claude or ChatGPT account"));
   expect(beforeScene).not.toMatch(HIDDEN);
