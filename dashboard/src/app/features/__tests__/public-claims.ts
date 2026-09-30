@@ -76,6 +76,12 @@ export const BANNED_PUBLIC_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
     "invented hours to set up or keep a server running",
     /\b\d+\s*(?:-|–|to)\s*\d+\+?\s*(?:hours?|hrs?)\b|\b\d+\+?\s*(?:hours?|hrs?)\b[^.!?]*\b(?:of|for) (?:setup|set-up|upkeep|maintenance)\b|\b(?:an? hour|\d+ hours?) (?:per|a|each|\/) ?month\b|\bmulti-day project\b|\b(?:full|whole) (?:weekend|afternoon)\b|\bspend (?:a|the) weekend\b|\b(?:the|a) weekend (?:you|setting|configuring|of)\b/i,
   ],
+  // The same claim without a number: "hours of configuration" about a named
+  // host, or a setup that costs "days" or "weeks". No page measured either.
+  [
+    "unmeasured length of time to set up or keep a server running",
+    /\bhours? of (?:configuration|setup|set-up|work|upkeep|maintenance)\b|\b(?:spending|spend|spent) (?:days|weeks)\b|\bmaintenance hours\b/i,
+  ],
   [
     "invented hourly-rate arithmetic",
     /\$\s?\d+\s*(?:\/|an |per )\s?(?:hour|hr)\b|\beffective rate\b|\btime factored in\b/i,
@@ -193,6 +199,8 @@ export const KNOWN_FALSE_CLAIMS = [
   "It can easily take a full weekend.",
   "None of this is extraordinarily difficult if you know Linux, but it is a full afternoon of work minimum.",
   "You would spend a weekend setting it up.",
+  "Hours of configuration",
+  "Best for: anyone who wants a running agent without spending days on infrastructure and ongoing maintenance hours every month.",
   "you still need to factor in 6-8 hours of setup time and ongoing maintenance.",
   // Overclaims the features pages carried until the same audit (F-24).
   "Your agent remembers. Every session. Forever.",

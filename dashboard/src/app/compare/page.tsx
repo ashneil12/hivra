@@ -56,7 +56,7 @@ const comparisons = [
     title: "Hivra vs Self-Hosted VPS",
     tagline: "Control vs. time. The honest tradeoff.",
     description:
-      "Running Hermes yourself on a server you rent from Hetzner or DigitalOcean costs less each month. But the hours of setup, the upkeep and the midnight debugging add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
+      "Running Hermes yourself on a server you rent from Hetzner or DigitalOcean costs less each month. But the setup, the upkeep and the midnight debugging add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
   },
   {
     slug: "vs-railway",

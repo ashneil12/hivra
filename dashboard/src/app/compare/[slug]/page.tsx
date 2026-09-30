@@ -152,7 +152,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       },
     ],
     vsTable: [
-      { criterion: "Time to first running agent", hermesOs: "No setup: launch from the dashboard", other: "Hours of configuration", hermosWins: true },
+      { criterion: "Time to first running agent", hermesOs: "No setup: launch from the dashboard", other: "You set it up yourself", hermosWins: true },
       { criterion: "Hermes-specific configuration", hermesOs: "Pre-configured out of the box", other: "DIY from scratch", hermosWins: true },
       { criterion: "Agent dashboard & monitoring", hermesOs: "Built-in", other: "None", hermosWins: true },
       { criterion: "Multiple agents", hermesOs: "More than one per paid plan, one dashboard", other: "Manual configuration", hermosWins: true },
@@ -413,7 +413,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
         paragraphs: [
           "Hivra is managed hosting for AI agents: Hermes, OpenClaw, Claude Code, Codex, and others. For Hermes, the container, browser environment, memory persistence layer, and dashboard are all pre-configured. Sign up, add an API key or login, and launch.",
           "Hosting is $9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM. Automatic updates and 24/7 monitoring are included; backups are not guaranteed, so keep an export of anything you cannot lose. The trade: you are not running on your own infrastructure, and $9.99/month is higher than a Hetzner CX23's raw server cost.",
-          "Best for: anyone who wants a running agent without spending days on infrastructure and ongoing maintenance hours every month.",
+          "Best for: anyone who wants a running agent without setting up and maintaining the infrastructure themselves.",
         ],
       },
       {
