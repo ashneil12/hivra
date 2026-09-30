@@ -139,4 +139,10 @@ export const article: BlogArticle = {
     },
   ],
   relatedFeatures: [{ slug: "browser-automation", title: "Browser automation" }],
+  relatedComparisons: [
+    { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
+    { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+    { slug: "vs-xcloud", title: "Hivra vs xCloud" },
+    { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
+  ],
 };

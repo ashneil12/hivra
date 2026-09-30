@@ -15,6 +15,8 @@ const PORTED_TOOL_SLUGS = [
   "ai-agent-hosting-cost-calculator",
   "claude-code-limit-reset-calculator",
   "claude-code-plan-calculator",
+  "keep-mac-awake",
+  "tmux-cheat-sheet",
 ];
 
 const APP_ROOT = path.join(__dirname, "..", "..", "..", "app");

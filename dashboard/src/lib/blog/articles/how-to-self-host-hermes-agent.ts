@@ -118,4 +118,8 @@ export const article: BlogArticle = {
     { slug: "best-vps-for-hermes-agent", title: "Best VPS for Hermes Agent in 2026" },
     { slug: "persistent-memory-explained", title: "How persistent memory works in AI agents" },
   ],
+  relatedComparisons: [
+    { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
+    { slug: "vs-self-hosted", title: "Hivra vs self-hosted VPS" },
+  ],
 };

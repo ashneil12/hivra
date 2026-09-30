@@ -90,5 +90,8 @@ export const article: BlogArticle = {
   relatedComparisons: [
     { slug: "vs-self-hosted", title: "Hivra vs self-hosted VPS" },
     { slug: "ai-agent-hosting-alternatives", title: "All AI agent hosting options" },
+    { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
+    { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+    { slug: "vs-xcloud", title: "Hivra vs xCloud" },
   ],
 };

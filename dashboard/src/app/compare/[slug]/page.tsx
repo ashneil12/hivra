@@ -103,6 +103,8 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-railway", title: "Hivra vs Railway" },
       { slug: "vs-render", title: "Hivra vs Render" },
       { slug: "openclaw-to-hermes", title: "OpenClaw to Hermes Migration" },
+      { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+      { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
     ],
     relatedBlog: [
       { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },
@@ -180,6 +182,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-self-hosted", title: "Hivra vs Self-Hosted" },
       { slug: "vs-render", title: "Hivra vs Render" },
       { slug: "ai-agent-hosting-alternatives", title: "All AI Agent Hosting Options" },
+      { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
     ],
     relatedBlog: [
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
@@ -256,6 +259,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-railway", title: "Hivra vs Railway" },
       { slug: "vs-self-hosted", title: "Hivra vs Self-Hosted" },
       { slug: "ai-agent-hosting-alternatives", title: "All AI Agent Hosting Options" },
+      { slug: "vs-xcloud", title: "Hivra vs xCloud" },
     ],
     relatedBlog: [
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
@@ -456,6 +460,10 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-self-hosted", title: "Hivra vs Self-Hosted VPS" },
       { slug: "vs-railway", title: "Hivra vs Railway" },
       { slug: "openclaw-to-hermes", title: "OpenClaw to Hermes Migration" },
+      { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
+      { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+      { slug: "vs-xcloud", title: "Hivra vs xCloud" },
+      { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
     ],
     relatedBlog: [
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },

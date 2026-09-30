@@ -114,4 +114,8 @@ export const article: BlogArticle = {
     { slug: "hermes-agent-telegram-discord-setup", title: "Hermes Agent gateway setup: Telegram, Discord, and 13 more" },
     { slug: "cost-of-running-ai-agent", title: "How much does it cost to run an AI agent?" },
   ],
+  relatedComparisons: [
+    { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+    { slug: "vs-self-hosted", title: "Hivra vs self-hosted VPS" },
+  ],
 };
