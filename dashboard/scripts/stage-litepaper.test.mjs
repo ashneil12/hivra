@@ -7,11 +7,17 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ignore from 'ignore';
-import { LITEPAPER_FILES, RESTRICTED_COPIES, stageLitepaper } from './stage-litepaper.mjs';
+import { FORBIDDEN_PUBLIC_PATHS, GEO_DOCUMENTS, GEO_DOCUMENTS_DIRECTORY, LITEPAPER_FILES, RESTRICTED_COPIES, stageLitepaper } from './stage-litepaper.mjs';
 
-// Every source the staging script reads, and each source beside the public path it is served at.
-const PAIRS = [...LITEPAPER_FILES.map((relative) => [relative, relative]), ...RESTRICTED_COPIES];
-const SOURCES = PAIRS.map(([source]) => source);
+// Each source the staging script reads, beside the path under dashboard/ it is staged at.
+const PUBLIC_PAIRS = [...LITEPAPER_FILES.map((relative) => [relative, relative]), ...RESTRICTED_COPIES]
+  .map(([source, published]) => [source, `public/${published}`]);
+const GEO_PAIRS = GEO_DOCUMENTS.flatMap((document) => ['full', 'restricted'].map((variant) => [
+  document[variant], `${GEO_DOCUMENTS_DIRECTORY}/${variant}/${document.name}`,
+]));
+const PAIRS = [...PUBLIC_PAIRS, ...GEO_PAIRS];
+// Distinct sources: a restricted document is staged twice (public and private).
+const SOURCES = [...new Set(PAIRS.map(([source]) => source))];
 
 const FIXTURE_SOURCE = 'LITEPAPER.md\n';
 const FIXTURE_SHA256 = createHash('sha256').update(FIXTURE_SOURCE).digest('hex');
@@ -34,14 +40,50 @@ test('stages approved bytes only, preserves unrelated public files and checks fr
   writeFileSync(path.join(root, 'docs/litepaper/review/review.zip'), 'private review');
   writeFileSync(path.join(root, 'dashboard/public/unrelated.txt'), 'keep');
   assert.equal(stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }).files, PAIRS.length);
-  for (const [source, published] of PAIRS) assert.deepEqual(readFileSync(path.join(root, 'dashboard/public', published)), readFileSync(path.join(root, source)));
+  for (const [source, staged] of PAIRS) assert.deepEqual(readFileSync(path.join(root, 'dashboard', staged)), readFileSync(path.join(root, source)));
   assert.equal(existsSync(path.join(root, 'dashboard/public/.env')), false);
   assert.equal(existsSync(path.join(root, 'dashboard/public/docs/litepaper/review')), false);
   assert.equal(readFileSync(path.join(root, 'dashboard/public/unrelated.txt'), 'utf8'), 'keep');
   assert.equal(stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }).updated, 0);
   stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 });
-  writeFileSync(path.join(root, 'dashboard/public/LITEPAPER.md'), 'stale');
+  writeFileSync(path.join(root, 'dashboard/public/THOUGHTS.md'), 'stale');
   assert.throws(() => stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 }), /stale/);
+  stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 });
+  writeFileSync(path.join(root, `dashboard/${GEO_DOCUMENTS_DIRECTORY}/full/LITEPAPER.md`), 'stale');
+  assert.throws(() => stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 }), /stale/);
+});
+
+test('the four token documents are staged beside the app, never into public/', (t) => {
+  const root = fixture(t);
+  stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 });
+  assert.deepEqual([...FORBIDDEN_PUBLIC_PATHS].sort(), ['LITEPAPER.md', 'TOKENOMICS.md', 'WHITEPAPER.md', 'docs/litepaper/index.html']);
+  for (const document of GEO_DOCUMENTS) {
+    assert.equal(existsSync(path.join(root, 'dashboard/public', document.full)), false, `${document.full} must not be a public file`);
+    assert.deepEqual(readFileSync(path.join(root, 'dashboard', GEO_DOCUMENTS_DIRECTORY, 'full', document.name)), readFileSync(path.join(root, document.full)));
+    assert.deepEqual(readFileSync(path.join(root, 'dashboard', GEO_DOCUMENTS_DIRECTORY, 'restricted', document.name)), readFileSync(path.join(root, document.restricted)));
+  }
+  // Nothing in public/ carries the bytes of a full document under any name.
+  const fullBytes = GEO_DOCUMENTS.map(({ full }) => readFileSync(path.join(root, full)));
+  const published = readdirSync(path.join(root, 'dashboard/public'), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => readFileSync(path.join(entry.parentPath, entry.name)));
+  for (const bytes of published) assert.equal(fullBytes.some((full) => full.equals(bytes)), false);
+  // The restricted copies are still public.
+  for (const [source, published] of RESTRICTED_COPIES) assert.deepEqual(readFileSync(path.join(root, 'dashboard/public', published)), readFileSync(path.join(root, source)));
+});
+
+test('a full document left in public/ by an earlier release is removed, and --check refuses it', (t) => {
+  const root = fixture(t);
+  stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 });
+  for (const relative of FORBIDDEN_PUBLIC_PATHS) {
+    mkdirSync(path.dirname(path.join(root, 'dashboard/public', relative)), { recursive: true });
+    writeFileSync(path.join(root, 'dashboard/public', relative), 'full token document');
+  }
+  assert.throws(() => stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 }), /full token document is published/);
+  const result = stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 });
+  assert.equal(result.updated, FORBIDDEN_PUBLIC_PATHS.length);
+  for (const relative of FORBIDDEN_PUBLIC_PATHS) assert.equal(existsSync(path.join(root, 'dashboard/public', relative)), false, relative);
+  stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 });
 });
 
 test('missing inputs or unapproved wording fail before any artifact is staged', (t) => {
@@ -75,6 +117,9 @@ test('refuses accidental extra files within the generated directory', (t) => {
   writeFileSync(path.join(root, 'dashboard/public/docs/litepaper/private.zip'), 'review-only');
   assert.throws(() => stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 }), /Unexpected file/);
   assert.throws(() => stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }), /Unexpected file/);
+  rmSync(path.join(root, 'dashboard/public/docs/litepaper/private.zip'));
+  writeFileSync(path.join(root, `dashboard/${GEO_DOCUMENTS_DIRECTORY}/full/extra.md`), 'review-only');
+  assert.throws(() => stageLitepaper({ repoRoot: root, check: true, approvedSha256: FIXTURE_SHA256 }), /Unexpected file/);
 });
 
 test('Vercel-filtered source package stages successfully without private documentation', (t) => {
@@ -143,7 +188,8 @@ test('Vercel-filtered source package stages successfully without private documen
   const result = spawnSync(process.execPath, [realpathSync(path.join(uploaded, stageScript))], { cwd: path.join(uploaded, 'dashboard'), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   stageLitepaper({ repoRoot: uploaded, check: true });
-  for (const [source, published] of PAIRS) {
-    assert.deepEqual(readFileSync(path.join(uploaded, 'dashboard/public', published)), readFileSync(path.join(repo, source)));
+  for (const [source, staged] of PAIRS) {
+    assert.deepEqual(readFileSync(path.join(uploaded, 'dashboard', staged)), readFileSync(path.join(repo, source)));
   }
+  for (const relative of FORBIDDEN_PUBLIC_PATHS) assert.equal(existsSync(path.join(uploaded, 'dashboard/public', relative)), false, relative);
 });

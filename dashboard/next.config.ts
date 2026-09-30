@@ -5,7 +5,6 @@ import type { NextConfig } from "next";
 import { HTML_LIMITED_BOT_UA_RE } from "next/dist/shared/lib/router/utils/html-bots";
 import { htmlLimitedBotsWithAiCrawlers } from "./src/lib/ai-crawlers";
 import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
-import { BLOCKED_COUNTRIES } from "./src/lib/compliance/token-geo-list";
 
 // This is build-generation provenance only. Vercel's authoritative deployment
 // createdAt is collected from `vercel inspect --json` during Plan 08 rather
@@ -18,24 +17,6 @@ function resolveSiteHost(): string {
   } catch {
     return "hermesos.cloud";
   }
-}
-
-/**
- * The static documents are served straight from public/, so the token geo-policy
- * cannot gate them in the app. For a viewer in a listed country these paths are
- * rewritten, before the filesystem is checked, to token-free copies built by
- * docs/litepaper/restrict.py. The country is the header Vercel's edge sets; a
- * missing or unknown country gets the full document, as on the app's own pages.
- */
-export function tokenGeoRewrites(countries: readonly string[] = BLOCKED_COUNTRIES) {
-  if (!countries.length) return [];
-  const has = [{ type: "header" as const, key: "x-vercel-ip-country", value: `(?:${countries.join("|")})` }];
-  return [
-    ["/docs/litepaper/index.html", "/docs/litepaper/restricted.html"],
-    ["/LITEPAPER.md", "/restricted/LITEPAPER.md"],
-    ["/WHITEPAPER.md", "/restricted/WHITEPAPER.md"],
-    ["/TOKENOMICS.md", "/restricted/TOKENOMICS.md"],
-  ].map(([source, destination]) => ({ source, destination, has }));
 }
 
 const selfHostAuthEnabled = process.env.HIVRA_AUTH_MODE?.trim().toLowerCase() === "local";
@@ -190,6 +171,27 @@ const nextConfig: NextConfig = {
     "/enroll/script": ["./bootstrap/server-enroll.sh"],
     "/enroll/script.sha256": ["./bootstrap/server-enroll.sh"],
     "/api/infrastructure/server-enrollments": ["./bootstrap/server-enroll.sh"],
+    // The four documents the token geo-policy applies to are not public files:
+    // each handler reads its full and token-free copy, staged by
+    // scripts/stage-litepaper.mjs, and picks one by the viewer's country
+    // (src/lib/compliance/token-geo-documents.ts). A handler without its files
+    // answers 500, so each one must carry them.
+    "/LITEPAPER.md": [
+      "./.generated/litepaper/full/LITEPAPER.md",
+      "./.generated/litepaper/restricted/LITEPAPER.md",
+    ],
+    "/WHITEPAPER.md": [
+      "./.generated/litepaper/full/WHITEPAPER.md",
+      "./.generated/litepaper/restricted/WHITEPAPER.md",
+    ],
+    "/TOKENOMICS.md": [
+      "./.generated/litepaper/full/TOKENOMICS.md",
+      "./.generated/litepaper/restricted/TOKENOMICS.md",
+    ],
+    "/docs/litepaper/index.html": [
+      "./.generated/litepaper/full/litepaper.html",
+      "./.generated/litepaper/restricted/litepaper.html",
+    ],
   },
   async redirects() {
     return [
@@ -230,7 +232,6 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return {
-      beforeFiles: tokenGeoRewrites(),
       afterFiles: [
       // UK Dental DBR GTM landing page lives on a separate Vercel project
       // (clearweb.one/dental). Proxy /dental through the dashboard origin so

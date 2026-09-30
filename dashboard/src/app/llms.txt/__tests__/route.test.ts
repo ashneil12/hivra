@@ -72,10 +72,10 @@ describe("GET /llms.txt", () => {
 
   it("only links site paths that the app, the staged papers or public/ actually serve", async () => {
     // Every same-site link must answer 200 on the build that ships it. The app
-    // routes and public files are checked on disk; the three papers are staged
-    // into public/ from the repository root by scripts/stage-litepaper.mjs.
+    // routes and public files are checked on disk. The three papers are route
+    // handlers (src/app/LITEPAPER.md/route.ts and its two siblings), so a
+    // missing handler shows up here.
     const dashboardRoot = path.join(__dirname, "..", "..", "..", "..");
-    const repoRoot = path.join(dashboardRoot, "..");
     const appRoot = path.join(dashboardRoot, "src", "app");
     const exists = (file: string) => fs.existsSync(file);
     const body = await GET().text();
@@ -93,7 +93,6 @@ describe("GET /llms.txt", () => {
       const relative = pathname.slice(1);
       const routeDir = path.join(appRoot, relative);
       if (exists(path.join(routeDir, "page.tsx")) || exists(path.join(routeDir, "route.ts"))) return false;
-      if (/^\/(LITEPAPER|WHITEPAPER|TOKENOMICS)\.md$/.test(pathname)) return !exists(path.join(repoRoot, relative));
       return !exists(path.join(dashboardRoot, "public", relative));
     });
     expect(missing).toEqual([]);
