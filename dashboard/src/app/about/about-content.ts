@@ -17,7 +17,7 @@ import { SECURITY_EMAIL } from "@/lib/security-contact";
 
 export const ABOUT_TITLE = "About Hivra, formerly HermesOS";
 export const ABOUT_DESCRIPTION =
-  "Hivra (formerly HermesOS) is an open-source computer for you and your AI agents. What it is, what it is not, how it is paid for and how to reach us.";
+  "Hivra (formerly HermesOS) is an open-source computer for you and your AI agents. What it is, what it is not, what it costs and how to reach us.";
 
 export const REPOSITORY_LABEL = "github.com/ashneil12/hivra";
 
@@ -43,10 +43,10 @@ export const ABOUT_SECTIONS = {
     ],
   },
   built: {
-    heading: "How it is built and paid for",
+    heading: "How it is built and what it costs",
     paragraphs: [
       `Hivra is built in the open. The source code is public at ${REPOSITORY_LABEL}, and you can read it and run it yourself.`,
-      `Hivra Cloud is paid for by the people who use it, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Self-hosting is free: you pay for your own server and your own AI usage. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
+      `Hivra Cloud costs ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Self-hosting is free: you pay for your own server and your own AI usage. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
       "Hivra is built by Ash, the founder, who explains why in the founder's note.",
     ],
   },

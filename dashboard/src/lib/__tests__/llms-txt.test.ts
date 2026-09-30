@@ -100,6 +100,12 @@ describe("buildLlmsTxt", () => {
     }
   });
 
+  it("describes /about by what it covers without implying who funds Hivra", () => {
+    const about = LLMS_TXT_SECTIONS.flatMap((section) => section.links).find((link) => link.path === "/about");
+    expect(about?.note).toContain("what it costs");
+    expect(about?.note).not.toMatch(/paid for|funded|funding/i);
+  });
+
   it("uses the glossary: agents and computers, never boxes, runtimes or instances", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     expect(txt).not.toMatch(/\b(box|boxes|runtime|runtimes|instance|instances)\b/i);

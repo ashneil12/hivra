@@ -121,6 +121,11 @@ describe("/about", () => {
     expect(hits(text, /registered (company|office|in)|company (number|no)|legal entity|headquarter/i)).toEqual([]);
     expect(hits(text, /\b(Street|Road|Avenue|Suite|PO Box|postcode)\b/i)).toEqual([]);
     expect(hits(text, /funded by|raised|investors?|venture|seed round|backed by|bootstrapped|profitable/i)).toEqual([]);
+    // Nor a claim about who pays for Hivra: nothing in the repository says how it
+    // is funded, and the token and treasury exist, so "paid for by its users"
+    // would read as a fact about funding. The page states the price instead.
+    expect(hits(text, /paid for|paid by|pays for|who use it|supported by (?:its |our )?(?:users|customers)|(?:user|customer|self)[- ]funded|no outside funding/i)).toEqual([]);
+    expect(text).toContain("Hivra Cloud costs $9.99 a month for 2 vCPU and 4 GB of RAM.");
     expect(hits(text, /founded in|\bborn\b|lives in|based in|located in|years of experience/i)).toEqual([]);
     // The only founder detail is the one the homepage already shows: Ash, the founder.
     expect(text).toContain("Hivra is built by Ash, the founder");

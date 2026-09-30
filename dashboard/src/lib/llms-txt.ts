@@ -42,7 +42,7 @@ export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): 
         { label: "Free tools", path: "/tools", note: "Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator" },
         { label: "Ecosystem", path: "/ecosystem", note: "What is available now, next, later and still research" },
         { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks and several agents on one account" },
-        { label: "About", path: "/about", note: "Who and what Hivra is, formerly HermesOS, what it is not, how it is paid for and how to contact it" },
+        { label: "About", path: "/about", note: "Who and what Hivra is, formerly HermesOS, what it is not, what it costs and how to contact it" },
         { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on AI, accountability and why the limits should live outside the model" },
         { label: "Compare", path: "/compare", note: "Hivra vs self-hosting and other agent-hosting options" },
       ],
