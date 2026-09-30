@@ -112,7 +112,23 @@ describe("the post reads its numbers from the calculator's constants", () => {
     expect(section).toContain("| Max 5x | $100 | 7.7 days | 3.3 days |");
     expect(section).toContain("| Max 20x | $200 | 15.4 days | 6.7 days |");
     expect(section).toContain("break-even active days a month = plan price / API cost per active day");
-    expect(article.shortAnswer).toContain("beats Pro below 1.5 active days a month");
+    expect(article.shortAnswer).toContain("At Anthropic's $13 enterprise average day, API billing beats Pro only below 1.5 active days a month");
+  });
+
+  it("calls the $13 an enterprise average wherever it heads the break-even, and keeps the plan-limits caveat", () => {
+    // Anthropic's $13 is an average across enterprise deployments, not a typical
+    // solo day, and a plan is only cheaper if its limits cover the sessions.
+    const section = sectionByHeading("API key or subscription").paragraphs.join("\n");
+    expect(section).toContain("| Plan | Price | At $13 a day (Anthropic's enterprise average) |");
+    expect(section).toContain("across enterprise deployments");
+    expect(section).toContain("as long as the plan's limits cover that usage");
+    expect(bodyCopy).not.toMatch(/Anthropic's average day|\(Anthropic's average\)/);
+    const faq = article.faqs.find((candidate) => candidate.q === "Is the API cheaper than a Claude subscription for Claude Code?");
+    expect(faq?.a).toContain("per developer per active day across enterprise deployments, so a plan is cheaper, if its limits cover your sessions,");
+    const calculator = getToolEntry("claude-code-plan-calculator")!;
+    const apiFaq = calculator.faqs.find((candidate) => candidate.q === "Is the API cheaper than a Claude subscription?");
+    expect(apiFaq?.a).toContain("across enterprise deployments");
+    expect(apiFaq?.a).toContain("if Pro's limits cover your sessions");
   });
 
   it("works the example from the constants: ten active days at $13 a day is $130", () => {

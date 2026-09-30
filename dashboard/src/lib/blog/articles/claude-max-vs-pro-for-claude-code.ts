@@ -70,7 +70,7 @@ export const article: BlogArticle = {
   tagline: "Pro, Max 5x or Max 20x: the numbers Anthropic publishes, dated.",
   intro:
     "Anthropic sells Claude Code inside its Pro and Max plans and publishes the limits as multiples and does not currently publish message or token counts. This page gives the prices and multiples as read on 30 September 2026, a rule for choosing between them, the break-even against API billing, what to do at a limit, and when Anthropic's own cloud is enough.",
-  shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Anthropic publishes the gap per session, not per week, so measure with /usage. At Anthropic's ${DAY} average day, API billing beats Pro below ${proDays} active days a month.`,
+  shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Anthropic publishes the gap per session, not per week, so measure with /usage. At Anthropic's ${DAY} enterprise average day, API billing beats Pro only below ${proDays} active days a month.`,
   sections: [
     {
       heading: `The plans side by side, read ${READ_ON}`,
@@ -127,13 +127,13 @@ export const article: BlogArticle = {
         `Claude Code can bill two ways. A plan charges a flat price and enforces the limits above. An API key charges per token at list price, with no plan limits. Anthropic's own planning figures for API-billed Claude Code are about ${DAY} per developer per active day and ${usd(COST.perMonthLowUsd)} to ${usd(COST.perMonthHighUsd)} per developer per month across enterprise deployments, with costs below ${P90_DAY} per active day for 90% of users (${link(S.costs, "Claude Code docs")}). Those figures are API bills, so they say what the same work costs without a plan.`,
         "The break-even is one division:\n\n```text\nbreak-even active days a month = plan price / API cost per active day\n```",
         [
-          `| Plan | Price | At ${DAY} a day (Anthropic's average) | At ${P90_DAY} a day (the 90% line) |`,
+          `| Plan | Price | At ${DAY} a day (Anthropic's enterprise average) | At ${P90_DAY} a day (the 90% line) |`,
           "|---|---|---|---|",
           `| Pro | ${usd(PRO.priceUsd)} | ${proDays} days | ${proDaysP90} days |`,
           `| Max 5x | ${usd(MAX5.priceUsd)} | ${max5Days} days | ${max5DaysP90} days |`,
           `| Max 20x | ${usd(MAX20.priceUsd)} | ${max20Days} days | ${max20DaysP90} days |`,
         ].join("\n"),
-        `Read it this way: if you use Claude Code on more active days a month than the number in the table, the plan costs less than the same tokens at API list price, as long as the plan's limits cover that usage. At Anthropic's average day, API billing beats Pro only below about ${proDays} active days a month, and beats Max 5x below about ${max5Days}. A worked example: ${EXAMPLE_DAYS} active days a month at ${DAY} a day is ${exampleMonth} on the API. That is more than Max 5x's ${usd(MAX5.priceUsd)} and far more than Pro's ${usd(PRO.priceUsd)}, so a plan that covers your sessions costs less than the API. It is less than Max 20x's ${usd(MAX20.priceUsd)}, so Max 20x would cost more than the API for the same ${EXAMPLE_DAYS} days.`,
+        `Read it this way: if you use Claude Code on more active days a month than the number in the table, the plan costs less than the same tokens at API list price, as long as the plan's limits cover that usage. At Anthropic's enterprise average day, API billing beats Pro only below about ${proDays} active days a month, and beats Max 5x below about ${max5Days}. A worked example: ${EXAMPLE_DAYS} active days a month at ${DAY} a day is ${exampleMonth} on the API. That is more than Max 5x's ${usd(MAX5.priceUsd)} and far more than Pro's ${usd(PRO.priceUsd)}, so a plan that covers your sessions costs less than the API. It is less than Max 20x's ${usd(MAX20.priceUsd)}, so Max 20x would cost more than the API for the same ${EXAMPLE_DAYS} days.`,
         `Your day may cost more or less than the average. The cost figure in \`/usage\` is an estimate of what a session would cost at API list price, and Anthropic says it is not relevant to billing on Pro and Max, but it is a fair number to use as your API cost per active day. For your own hours and model mix, the [Claude Code plan calculator](/tools/claude-code-plan-calculator) prints an estimate, labelled as one, with its assumptions.`,
         `API list prices per million tokens, read on ${READ_ON} (${link(S.apiPricing, "Claude API pricing")}):`,
         [
@@ -230,7 +230,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is the API cheaper than a Claude subscription for Claude Code?",
-      a: `Only for light use. Anthropic's docs put API-billed Claude Code at about ${DAY} per developer per active day, so a plan is cheaper once you use it on more than about ${proDays} active days a month for Pro, ${max5Days} for Max 5x or ${max20Days} for Max 20x. At the ${P90_DAY} day that 90% of users stay under, the figures are ${proDaysP90}, ${max5DaysP90} and ${max20DaysP90}. The formula is plan price divided by your API cost per active day.`,
+      a: `Only for light use. Anthropic's docs put API-billed Claude Code at about ${DAY} per developer per active day across enterprise deployments, so a plan is cheaper, if its limits cover your sessions, once you use it on more than about ${proDays} active days a month for Pro, ${max5Days} for Max 5x or ${max20Days} for Max 20x. At the ${P90_DAY} day that 90% of users stay under, the figures are ${proDaysP90}, ${max5DaysP90} and ${max20DaysP90}. The formula is plan price divided by your API cost per active day.`,
     },
     {
       q: "Does Claude Code use my subscription or my API key?",

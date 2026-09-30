@@ -89,7 +89,8 @@ describe("PlanCalculatorTool", () => {
     );
     expect(screen.getByText("$376/mo")).toBeInTheDocument();
     expect(screen.getByText("$281/mo")).toBeInTheDocument();
-    expect(screen.getByText("Anthropic's average ($13 per active day)")).toBeInTheDocument();
+    // The $13 is an average across enterprise deployments, and the label says so.
+    expect(screen.getByText("Anthropic's enterprise average ($13 per active day)")).toBeInTheDocument();
 
     // Pro never stopping you means Pro is the answer.
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "never" } });

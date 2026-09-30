@@ -183,7 +183,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
     {
       q: "Is the API cheaper than a Claude subscription?",
-      a: `Only for light use. At API list price Sonnet 5.5 costs ${usd(API.sonnet.input)} per million input tokens and ${usd(API.sonnet.output)} per million output tokens, and Opus 5.5 costs ${usd(API.opus.input)} and ${usd(API.opus.output)}, with cache reads at ${usd(API.opus.cacheRead)}. Anthropic's docs put API-billed Claude Code at about ${PLAN_DAY} per developer per active day and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} a month, below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} a day for 90% of users. At ${PLAN_DAY} a day, Pro costs less than the API from about ${formatDays(breakEvenDays(PRO.priceUsd, ANTHROPIC_COST.perActiveDayUsd))} active days a month.`,
+      a: `Only for light use. At API list price Sonnet 5.5 costs ${usd(API.sonnet.input)} per million input tokens and ${usd(API.sonnet.output)} per million output tokens, and Opus 5.5 costs ${usd(API.opus.input)} and ${usd(API.opus.output)}, with cache reads at ${usd(API.opus.cacheRead)}. Anthropic's docs put API-billed Claude Code at about ${PLAN_DAY} per developer per active day and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} a month across enterprise deployments, below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} a day for 90% of users. At ${PLAN_DAY} a day, Pro costs less than the API from about ${formatDays(breakEvenDays(PRO.priceUsd, ANTHROPIC_COST.perActiveDayUsd))} active days a month, if Pro's limits cover your sessions.`,
     },
     {
       q: "What happens when I hit my Claude Code limit?",
@@ -227,7 +227,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         sources: [PLAN_SOURCES.apiPricing, PLAN_SOURCES.sessionsBlog],
       },
       {
-        text: `As a check on those assumptions, Anthropic's docs put API-billed Claude Code at about ${PLAN_DAY} per developer per active day and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} per developer per month across enterprise deployments, with costs below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} per active day for 90% of users. The assumptions are set so that a normal three-hour day on Sonnet 5.5 comes to about ${NORMAL_SONNET_DAY}, close to that average, and a heavy three-hour day on Opus 5.5 lands above the ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} line. The second figure on the page is the ${PLAN_DAY} average times your active days. It is an average, not a forecast for you.`,
+        text: `As a check on those assumptions, Anthropic's docs put API-billed Claude Code at about ${PLAN_DAY} per developer per active day and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} per developer per month across enterprise deployments, with costs below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} per active day for 90% of users. The assumptions are set so that a normal three-hour day on Sonnet 5.5 comes to about ${NORMAL_SONNET_DAY}, close to that average, and a heavy three-hour day on Opus 5.5 lands above the ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} line. The second figure on the page is the ${PLAN_DAY} enterprise average times your active days. It is an average, not a forecast for you.`,
         sources: [PLAN_SOURCES.costs],
       },
       {

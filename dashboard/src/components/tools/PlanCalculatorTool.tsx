@@ -122,7 +122,7 @@ export default function PlanCalculatorTool() {
         </div>
         <div className={styles.stat}>
           <span className={styles.statLabel}>
-            Anthropic&apos;s average (${F.anthropicCost.perActiveDayUsd} per active day)
+            Anthropic&apos;s enterprise average (${F.anthropicCost.perActiveDayUsd} per active day)
           </span>
           <span className={styles.statValue}>{formatUsd(result.anthropicAveragePerMonth)}/mo</span>
         </div>
