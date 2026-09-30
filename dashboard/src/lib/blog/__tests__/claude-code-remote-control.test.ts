@@ -83,6 +83,24 @@ describe("Claude Code Remote Control article", () => {
     expect(sectionCopy).toContain("Anthropic does not publish how long \"offline long enough\" is");
   });
 
+  it("never tells a reader a host that has exited will reconnect by itself", () => {
+    // Only a sleep is documented as reconnecting automatically. A server-mode host that is awake but offline for roughly
+    // 10 minutes exits, so a reader told to "do nothing else" would be left with a dead host.
+    expect(fullCopy).not.toContain("do nothing else");
+    expect(fullCopy).not.toContain("you do not need to start anything");
+    expect(fullCopy).not.toMatch(/reconnects by itself, and/);
+    for (const heading of [
+      "The \"Can’t reach your computer\" message",
+      "The \"Claude Code on the computer running this session is offline\" message",
+    ]) {
+      const section = article.sections.find((candidate) => candidate.heading === heading)!;
+      expect(section.paragraphs.join("\n")).toContain("roughly 10 minutes");
+      expect(section.paragraphs.join("\n")).toMatch(/(?:If it was asleep|After a sleep), Claude Code reconnects by itself/);
+    }
+    const offlineFaq = article.faqs.find(({ q }) => q.includes("running this session is offline"))!;
+    expect(offlineFaq.a).toContain("a network outage of roughly 10 minutes exits the claude remote-control process");
+  });
+
   it("gives each message its own fix", () => {
     const first = article.sections.find((section) => section.heading === "The \"Can\u2019t reach your computer\" message")!;
     const second = article.sections.find((section) => section.heading === "The \"Claude Code on the computer running this session is offline\" message")!;
