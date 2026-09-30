@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import PublicSite from "@/components/public-site/PublicSite";
 import StructuredData from "@/components/StructuredData";
+import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { OG_IMAGE } from "@/lib/og-meta";
 import { officialProfileLinks } from "@/lib/public-project-links";
@@ -49,6 +50,17 @@ export const metadata: Metadata = {
   }),
 };
 
+// Identity markup (owner decision 2026-09-30, checklist E1 to E3):
+// - Organization carries the one-line description and the FORMER names only
+//   ("HermesOS", "Hermes OS"). Never another company's product name: "Hermes
+//   Cloud" and "Hermes Agent OS" are Nous Research's, and Google's structured
+//   data policy bars markup that misrepresents affiliation.
+// - WebSite.name is "Hivra" with the lowercase domain as the fallback site name,
+//   because hivra.ai, hivra.app and hivra.space also call themselves Hivra. Old
+//   names stay out of WebSite and SoftwareApplication.
+// - The logo is the square 512x512 brand mark, not the 1200x630 social banner.
+// - sameAs lists only profiles Hivra controls (officialProfileLinks()).
+// homepage-structured-data.test.tsx scans this graph for forbidden strings.
 const homepageSchema = {
   "@context": "https://schema.org",
   "@graph": [
@@ -56,11 +68,12 @@ const homepageSchema = {
       "@type": "Organization",
       "@id": `${SITE_URL}/#organization`,
       name: "Hivra",
-      alternateName: ["HermesOS", "Hermes Agent OS"],
+      alternateName: ["HermesOS", "Hermes OS"],
+      description: SITE_DESCRIPTION,
       url: SITE_URL,
       logo: {
         "@type": "ImageObject",
-        url: `${SITE_URL}/brand/hivra-token-512.png`,
+        url: `${SITE_URL}/brand/hivra-icon-512.png`,
         width: 512,
         height: 512,
       },
@@ -71,20 +84,17 @@ const homepageSchema = {
       "@id": `${SITE_URL}/#website`,
       url: SITE_URL,
       name: "Hivra",
-      alternateName: "HermesOS",
-      description:
-        homepageDescription,
+      alternateName: ["hivra.cloud"],
+      description: SITE_DESCRIPTION,
       publisher: { "@id": `${SITE_URL}/#organization` },
     },
     {
       "@type": "SoftwareApplication",
       "@id": `${SITE_URL}/#softwareapp`,
       name: "Hivra",
-      alternateName: "HermesOS",
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Ubuntu",
-      description:
-        homepageDescription,
+      description: SITE_DESCRIPTION,
       url: SITE_URL,
       offers: [
         {
@@ -111,7 +121,7 @@ const homepageSchema = {
       ],
       featureList: [
         "Launch a computer with or without an agent",
-        "Ubuntu, Windows or Omarchy",
+        "Ubuntu computers",
         "Terminal and graphical interfaces",
         "Persistent files, tools and settings",
         "Use Hivra Cloud or your own infrastructure",

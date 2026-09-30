@@ -14,7 +14,10 @@ jest.mock("@/components/public-site/PublicSite", () => ({
 
 import LandingPage from "../page";
 import StructuredData from "@/components/StructuredData";
+import { officialProfileLinks } from "@/lib/public-project-links";
 import { HOMEPAGE_FAQ } from "@/components/landing/home/content";
+import { SITE_DESCRIPTION } from "@/lib/brand-description";
+import { findBannedClaims } from "@/lib/tools/copy-rules";
 
 type Graph = { "@graph": Array<Record<string, unknown>> };
 
@@ -37,6 +40,89 @@ describe("homepage Organization structured data", () => {
     const schema = findSchema(await LandingPage({}));
     const organization = schema?.["@graph"].find((entry) => entry["@type"] === "Organization");
     expect(organization?.sameAs).toEqual(["https://x.com/HivraOS", "https://github.com/ashneil12/hivra"]);
+  });
+});
+
+function nodeOf(schema: Graph | null, type: string): Record<string, unknown> {
+  const node = schema?.["@graph"].find((entry) => entry["@type"] === type);
+  if (!node) throw new Error(`homepage JSON-LD has no ${type} node`);
+  return node;
+}
+
+function allStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(allStrings);
+  if (value && typeof value === "object") return Object.values(value).flatMap(allStrings);
+  return [];
+}
+
+describe("homepage identity structured data", () => {
+  it("names Hivra, with the former names only on Organization and the domain as the site-name fallback", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const organization = nodeOf(schema, "Organization");
+    const website = nodeOf(schema, "WebSite");
+    const app = nodeOf(schema, "SoftwareApplication");
+
+    expect(organization.name).toBe("Hivra");
+    expect(organization.alternateName).toEqual(["HermesOS", "Hermes OS"]);
+    expect(organization.description).toBe(SITE_DESCRIPTION);
+    expect(organization.description).toBe(
+      "Hivra (hivra.cloud, formerly HermesOS) is an open-source computer for you and your AI agents, on Hivra Cloud or your own server.",
+    );
+    // Google will not give two global sites the same name, and hivra.ai, hivra.app
+    // and hivra.space already call themselves Hivra, so the domain is the fallback.
+    expect(website.name).toBe("Hivra");
+    expect(website.alternateName).toEqual(["hivra.cloud"]);
+    expect(app.name).toBe("Hivra");
+    expect(app).not.toHaveProperty("alternateName");
+  });
+
+  it("uses a square brand mark for the logo and the official profile links for sameAs", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const organization = nodeOf(schema, "Organization") as { logo: { url: string; width: number; height: number }; sameAs: string[] };
+    expect(organization.logo.url).toBe("https://hivra.cloud/brand/hivra-icon-512.png");
+    expect(organization.logo.width).toBe(organization.logo.height);
+    expect(organization.logo.width).toBeGreaterThanOrEqual(112);
+    // Not the 1200x630 social banner, and not the token-named file.
+    expect(organization.logo.url).not.toMatch(/og-image|opengraph|token/i);
+    expect(organization.sameAs).toEqual(officialProfileLinks());
+    expect(organization.sameAs.join(" ")).not.toMatch(/hivra\.ai|hivra\.app|hivra\.space|nousresearch/i);
+  });
+
+  it("links the website and application back to the one Organization node", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const organization = nodeOf(schema, "Organization");
+    expect(nodeOf(schema, "WebSite").publisher).toEqual({ "@id": organization["@id"] });
+  });
+
+  it("contains no other company's product name and none of the retired claims anywhere in the markup", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const markup = allStrings(schema);
+    expect(markup.length).toBeGreaterThan(20);
+
+    const FORBIDDEN: Array<[RegExp, string]> = [
+      [/hermes cloud/i, "Hermes Cloud is Nous Research's hosted product"],
+      [/hermes agent os/i, "Hermes Agent is Nous Research's product name"],
+      [/nous research|nousresearch/i, "no Nous Research names in Hivra's own markup"],
+      [/free trial|free tier|free plan|\$0 free|\bfree hosting\b/i, "Hivra has no trial and no hosted free plan"],
+      [/one[- ]click/i, "no unmeasured speed claims"],
+      [/licen[sc]e|apache|mit license|public domain/i, "marketing markup never names the licence or says public domain"],
+    ];
+    for (const text of markup) {
+      for (const [pattern, why] of FORBIDDEN) {
+        expect({ text, pattern: String(pattern), why, hit: pattern.test(text) }).toEqual({ text, pattern: String(pattern), why, hit: false });
+      }
+    }
+
+    // The shared public-copy rules (price and size wording, dashes, guarantees)
+    // also apply to structured data. The homepage is the one page where Ash
+    // treats Windows computers as live (2026-09-28), as in home-copy.test.ts.
+    const hits = markup.flatMap((text) =>
+      findBannedClaims(text)
+        .filter((hit) => !/Windows computers are not generally available/.test(hit.why))
+        .map((hit) => `${hit.match} in "${text}": ${hit.why}`),
+    );
+    expect(hits).toEqual([]);
   });
 });
 
