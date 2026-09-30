@@ -22,6 +22,8 @@ const COMPONENT_FILES: Record<ToolComponentKey, string> = {
   "agent-survival-check": "AgentSurvivalCheckTool.tsx",
   "hosting-cost-calculator": "HostingCostCalculatorTool.tsx",
   "limit-reset-calculator": "LimitResetCalculatorTool.tsx",
+  "keep-mac-awake": "KeepMacAwakeTool.tsx",
+  "tmux-cheat-sheet": "TmuxCheatSheetTool.tsx",
 };
 
 const COMPONENTS_DIR = path.join(__dirname, "..", "..", "..", "components", "tools");
@@ -44,12 +46,14 @@ function collectStrings(value: unknown, out: string[] = []): string[] {
 }
 
 describe("tools catalog", () => {
-  it("has four entries with unique slugs", () => {
+  it("has six entries with unique slugs", () => {
     expect(TOOL_ENTRIES.map((entry) => entry.slug)).toEqual([
       "claude-code-plan-calculator",
       "agent-survival-check",
       "ai-agent-hosting-cost-calculator",
       "claude-code-limit-reset-calculator",
+      "keep-mac-awake",
+      "tmux-cheat-sheet",
     ]);
   });
 
@@ -125,12 +129,14 @@ describe("tools catalog", () => {
     expect(TOOLS_CTA).toEqual({
       primaryHref: PUBLIC_START_HREF,
       claudeCodeHref: `${PUBLIC_START_HREF}?agentType=claude-code`,
+      codexHref: `${PUBLIC_START_HREF}?agentType=codex`,
       entryPlanHref: "/get-started?plan=operator",
       secondaryHref: "/pricing",
     });
-    // "Run Claude Code on Hivra" buttons preselect the runtime exactly the way
-    // the /agents/claude-code page does.
+    // "Run Claude Code on Hivra" and "Run Codex on Hivra" buttons preselect the
+    // agent exactly the way the /agents pages do.
     expect(TOOLS_CTA.claudeCodeHref).toBe(agentDeployHref(getAgentSeoEntry("claude-code")!));
+    expect(TOOLS_CTA.codexHref).toBe(agentDeployHref(getAgentSeoEntry("codex")!));
   });
 
   it("states the $19.99 size inline and never sends readers to /pricing for sizes", () => {
@@ -190,5 +196,68 @@ describe("tools catalog", () => {
   it("resolves entries by slug and 404s unknown slugs", () => {
     expect(getToolEntry("claude-code-plan-calculator")?.slug).toBe("claude-code-plan-calculator");
     expect(getToolEntry("not-a-tool")).toBeUndefined();
+  });
+  // The optional page-level method section and worked examples. The two newer
+  // tools carry both; the four older ones are upgraded in a later slice.
+  describe("method section and worked examples", () => {
+    const WITH_METHOD = TOOL_ENTRIES.filter((entry) => entry.method);
+
+    it("is carried by the keep-awake builder and the tmux cheat sheet", () => {
+      expect(WITH_METHOD.map((entry) => entry.slug)).toEqual(["keep-mac-awake", "tmux-cheat-sheet"]);
+    });
+
+    it.each(WITH_METHOD)("$slug: method has a heading, an ISO verified date and linked https sources", (entry) => {
+      const method = entry.method!;
+      expect(method.heading.trim().length).toBeGreaterThan(0);
+      expect(method.lastVerified).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(Number.isNaN(Date.parse(method.lastVerified))).toBe(false);
+      expect(method.paragraphs.length).toBeGreaterThanOrEqual(4);
+      const sources = method.paragraphs.flatMap((paragraph) => paragraph.sources ?? []);
+      expect(sources.length).toBeGreaterThanOrEqual(2);
+      for (const source of sources) {
+        expect(source.url).toMatch(/^https:\/\//);
+        expect(source.label.trim().length).toBeGreaterThan(0);
+      }
+    });
+
+    it.each(WITH_METHOD)("$slug: has at least three worked examples with inputs, the exact output and a stated result", (entry) => {
+      expect(entry.examples!.length).toBeGreaterThanOrEqual(3);
+      for (const example of entry.examples!) {
+        expect(example.title.trim().length).toBeGreaterThan(0);
+        expect(example.inputs.trim().length).toBeGreaterThan(0);
+        expect(example.command.trim().length).toBeGreaterThan(0);
+        expect(example.result.trim().length).toBeGreaterThan(0);
+      }
+    });
+
+    it.each(WITH_METHOD)("$slug: method and examples make none of the banned claims", (entry) => {
+      for (const text of collectStrings({ method: entry.method, examples: entry.examples })) {
+        expect({ text, hits: findBannedClaims(text) }).toEqual({ text, hits: [] });
+      }
+    });
+
+    it("targets the head queries the pipeline names, without the brand in the title", () => {
+      const awake = getToolEntry("keep-mac-awake")!;
+      expect(awake.primaryKeyword).toBe("caffeinate mac");
+      expect(awake.h1).toMatch(/^Caffeinate on Mac/);
+      const tmux = getToolEntry("tmux-cheat-sheet")!;
+      expect(tmux.primaryKeyword).toBe("tmux cheat sheet");
+      expect(tmux.h1).toBe("tmux cheat sheet");
+    });
+
+    it("never names the operating system the public copy rules ban, in any catalog string", () => {
+      for (const slug of ["keep-mac-awake", "tmux-cheat-sheet"]) {
+        for (const text of collectStrings(getToolEntry(slug))) {
+          expect(text).not.toMatch(/\bWindows\b/);
+        }
+      }
+    });
+
+    it("links the two new tools to each other and to the survival check", () => {
+      const awake = getToolEntry("keep-mac-awake")!.relatedLinks.map((link) => link.href);
+      const tmux = getToolEntry("tmux-cheat-sheet")!.relatedLinks.map((link) => link.href);
+      expect(awake).toEqual(expect.arrayContaining(["/tools/agent-survival-check", "/tools/tmux-cheat-sheet"]));
+      expect(tmux).toEqual(expect.arrayContaining(["/tools/keep-mac-awake", "/tools/agent-survival-check"]));
+    });
   });
 });
