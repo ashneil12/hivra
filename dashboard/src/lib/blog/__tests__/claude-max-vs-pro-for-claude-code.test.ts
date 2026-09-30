@@ -293,3 +293,18 @@ describe("the Hivra section and the claims rules", () => {
     expect(faq?.a).toMatch(/^No\. Your limits follow your Anthropic account/);
   });
 });
+
+describe("inbound links to the post", () => {
+  const POST_LINK = `](/blog/${SLUG})`;
+
+  it.each(["cost-of-running-ai-agent", "claude-code-vs-codex-24-7", "byo-api-key-explained"])("%s links to it once, in its own text", (slug) => {
+    const copy = BLOG_ARTICLES[slug].sections.flatMap((section) => section.paragraphs).join("\n");
+    expect(copy.split(POST_LINK)).toHaveLength(2);
+  });
+
+  it("is linked from the plan calculator page, once, and the calculator links back to no other post", () => {
+    const hrefs = getToolEntry("claude-code-plan-calculator")!.relatedLinks.map((link) => link.href);
+    expect(hrefs.filter((href) => href === `/blog/${SLUG}`)).toHaveLength(1);
+    expect(hrefs.filter((href) => href.startsWith("/blog/"))).toEqual([`/blog/${SLUG}`]);
+  });
+});

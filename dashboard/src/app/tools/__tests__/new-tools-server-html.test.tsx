@@ -86,6 +86,12 @@ describe("server HTML of /tools/claude-code-plan-calculator", () => {
     expect(text).toContain(escaped("Hivra's assumptions. Anthropic publishes neither."));
   });
 
+  it("links to the plan hub post it backs, and to no other blog post", () => {
+    expect(html).toContain('href="/blog/claude-max-vs-pro-for-claude-code"');
+    const blogLinks = [...html.matchAll(/href="(\/blog\/[^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(blogLinks)).toEqual(new Set(["/blog/claude-max-vs-pro-for-claude-code"]));
+  });
+
   it("has the structured data, the vendor line and no placeholder leakage or banned name", () => {
     expect(html).toContain('"@type":"WebApplication"');
     expect(html).toContain('"@type":"FAQPage"');

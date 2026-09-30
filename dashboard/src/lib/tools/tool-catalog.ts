@@ -199,6 +199,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
   ],
   relatedLinks: [
+    { href: "/blog/claude-max-vs-pro-for-claude-code", label: "Claude Max vs Pro for Claude Code: which plan fits" },
     { href: "/agents/claude-code", label: "Run Claude Code on Hivra" },
     { href: "/pricing", label: "Hivra pricing" },
   ],

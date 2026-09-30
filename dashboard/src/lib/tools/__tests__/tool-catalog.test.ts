@@ -30,11 +30,16 @@ const COMPONENTS_DIR = path.join(__dirname, "..", "..", "..", "components", "too
 
 // Destinations a tools page may link to. /pricing and the two /agents pages
 // are ported from the retired site alongside /tools; nothing else is linked
-// because several older blog posts still carry stale prices.
+// because several older blog posts still carry stale prices. The one blog post
+// allowed is the plan hub the plan calculator backs: it was written on
+// 2026-09-30 from the same facts module (lib/tools/claude-plan-facts.ts), so it
+// cannot carry a stale Anthropic figure.
+const PLAN_HUB_POST = "/blog/claude-max-vs-pro-for-claude-code";
 const ALLOWED_RELATED = new Set([
   "/pricing",
   "/agents/claude-code",
   "/agents/codex",
+  PLAN_HUB_POST,
   ...TOOL_ENTRIES.map((entry) => toolPath(entry.slug)),
 ]);
 
@@ -257,6 +262,11 @@ describe("tools catalog", () => {
           expect(text).not.toMatch(/\bWindows\b/);
         }
       }
+    });
+
+    it("links the plan calculator to the plan hub post it backs, once", () => {
+      const links = getToolEntry("claude-code-plan-calculator")!.relatedLinks.map((link) => link.href);
+      expect(links.filter((href) => href === PLAN_HUB_POST)).toHaveLength(1);
     });
 
     it("links the two new tools to each other and to the survival check", () => {
