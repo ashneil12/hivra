@@ -355,6 +355,19 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // /roofing is an off-topic outreach landing page (static HTML in public/).
+      // It stays up for the people who were sent there, but it must not be
+      // indexed under hivra.cloud. A header works for both the rewritten path
+      // and the file's own URL, and robots.txt must keep allowing the page so
+      // crawlers can read this directive.
+      {
+        source: "/roofing",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+      {
+        source: "/roofing.html",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
       // After the document rule so this path keeps its own enforced policy.
       clerkAssetHeaders,
       {
