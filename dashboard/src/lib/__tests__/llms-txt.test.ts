@@ -62,6 +62,13 @@ describe("buildLlmsTxt", () => {
     expect(txt).not.toContain("The evolution of HermesOS into Hivra");
   });
 
+  it("links the free tools hub and the keep-awake builder and tmux cheat sheet with their own notes", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE });
+    expect(txt).toContain(`[Free tools](${SITE}/tools): Keep-awake commands, a tmux cheat sheet,`);
+    expect(txt).toContain(`[Keep a Mac awake (caffeinate)](${SITE}/tools/keep-mac-awake): Builds the caffeinate (macOS) or systemd-inhibit (Linux) command`);
+    expect(txt).toContain(`[tmux cheat sheet](${SITE}/tools/tmux-cheat-sheet): tmux commands and keys with copy buttons`);
+  });
+
   it("ends with a single trailing newline", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     expect(txt.endsWith("\n")).toBe(true);
