@@ -43,11 +43,16 @@ function readMigration(name) {
 /**
  * Open a database with every migration up to and including `through` applied.
  * `skip` names migrations to leave out (for a test that applies them itself).
+ * `setup` is SQL to run after the Supabase stubs and before the first
+ * migration, for a test that needs more of hosted Supabase's behaviour (for
+ * example default privileges on functions and sequences) in place while the
+ * schema is built.
  */
-async function openMigratedDatabase({ through, skip = [] } = {}) {
+async function openMigratedDatabase({ through, skip = [], setup = "" } = {}) {
   const db = new PGlite();
   try {
     await db.exec(SUPABASE_STUBS);
+    if (setup) await db.exec(setup);
     for (const name of migrationFiles(through)) {
       if (skip.includes(name)) continue;
       try { await db.exec(readMigration(name)); } catch (error) { throw new Error(`${name}: ${error.message}`); }
@@ -59,4 +64,4 @@ async function openMigratedDatabase({ through, skip = [] } = {}) {
   }
 }
 
-module.exports = { openMigratedDatabase, readMigration, migrationFiles, MIGRATIONS };
+module.exports = { openMigratedDatabase, readMigration, migrationFiles, MIGRATIONS, SUPABASE_STUBS };

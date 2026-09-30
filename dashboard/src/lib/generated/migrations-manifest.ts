@@ -380,4 +380,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260925194500", name: "token_holding_refresh_standing_first" },
   { version: "20260925201500", name: "managed_venice_atomic_wallet_debits" },
   { version: "20260926090000", name: "public_tables_api_role_writes" },
+  { version: "20260930140000", name: "lock_down_api_role_grants" },
 ];

@@ -64,7 +64,7 @@ build-time budget is separate from an individual deployed agent's allocation.
 
 These are read directly in the current codebase:
 
-- Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. The app reaches the database only with the service role key, from the server. `NEXT_PUBLIC_SUPABASE_ANON_KEY` is not read by application code; only the self-host status probe in `scripts/hivra-self-host.mjs` uses it.
 - Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 - Credit top-ups: production card credit purchases require both `CREDIT_TOPUPS_ENABLED=true` and `NEXT_PUBLIC_CREDIT_TOPUPS_ENABLED=true`.
 - Free-tier abuse checks: `FINGERPRINT_SECRET_KEY`, `NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY`
