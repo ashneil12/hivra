@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 556" width="720" height="556" role="img" aria-labelledby="t d">
+  <title id="t">How tmux nests its parts: server, sessions, windows and panes</title>
+  <desc id="d">One tmux server holds sessions. Each session holds windows, and each window is split into panes. Your terminal is a client that attaches to a session and can detach without stopping it. A closed terminal or dropped SSH connection leaves the server running. A sleeping or powered-off machine stops it.</desc>
+  <style>
+    .ui { font-family: system-ui, -apple-system, Helvetica, Arial, sans-serif; font-variant-ligatures: none; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-ligatures: none; }
+    .ink { fill: #1a1d20; }
+    .muted { fill: #555d63; }
+    .accent { fill: #bd342d; }
+  </style>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#1a1d20"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="718" height="554" rx="14" fill="#faf9f6" stroke="#c7cbc9" stroke-width="2"/>
+  <text x="28" y="44" class="ui ink" font-size="24" font-weight="700">How tmux nests its parts</text>
+
+  <!-- server -->
+  <rect x="28" y="64" width="664" height="330" rx="14" fill="#f1f0eb" stroke="#1a1d20" stroke-width="2.5"/>
+  <text x="48" y="96" class="ui ink" font-size="22" font-weight="700">tmux server</text>
+  <text x="190" y="96" class="ui muted" font-size="19">one per user, runs in the background</text>
+
+  <!-- session: claude -->
+  <rect x="48" y="116" width="408" height="258" rx="10" fill="#faf9f6" stroke="#bd342d" stroke-width="3"/>
+  <text x="64" y="144" class="ui ink" font-size="21" font-weight="700">session: claude</text>
+
+  <rect x="64" y="156" width="376" height="112" rx="8" fill="#f1f0eb" stroke="#c7cbc9" stroke-width="2"/>
+  <text x="78" y="180" class="ui muted" font-size="19">window 0: agent</text>
+  <rect x="78" y="192" width="168" height="62" rx="4" fill="#ffffff" stroke="#1a1d20" stroke-width="2"/>
+  <text x="162" y="230" class="mono ink" font-size="19" text-anchor="middle">pane: claude</text>
+  <rect x="256" y="192" width="170" height="62" rx="4" fill="#ffffff" stroke="#1a1d20" stroke-width="2"/>
+  <text x="341" y="230" class="mono ink" font-size="19" text-anchor="middle">pane: shell</text>
+
+  <rect x="64" y="280" width="376" height="82" rx="8" fill="#f1f0eb" stroke="#c7cbc9" stroke-width="2"/>
+  <text x="78" y="304" class="ui muted" font-size="19">window 1: logs</text>
+  <rect x="78" y="314" width="348" height="38" rx="4" fill="#ffffff" stroke="#1a1d20" stroke-width="2"/>
+  <text x="252" y="340" class="mono ink" font-size="19" text-anchor="middle">pane: tail -f</text>
+
+  <!-- session: codex -->
+  <rect x="476" y="116" width="196" height="258" rx="10" fill="#faf9f6" stroke="#bd342d" stroke-width="3"/>
+  <text x="490" y="144" class="ui ink" font-size="21" font-weight="700">session: codex</text>
+  <rect x="490" y="156" width="168" height="112" rx="8" fill="#f1f0eb" stroke="#c7cbc9" stroke-width="2"/>
+  <text x="502" y="180" class="ui muted" font-size="19">window 0: agent</text>
+  <rect x="502" y="192" width="144" height="62" rx="4" fill="#ffffff" stroke="#1a1d20" stroke-width="2"/>
+  <text x="574" y="230" class="mono ink" font-size="19" text-anchor="middle">pane: codex</text>
+  <text x="490" y="316" class="ui muted" font-size="19">one session per</text>
+  <text x="490" y="342" class="ui muted" font-size="19">agent</text>
+
+  <!-- client -->
+  <rect x="28" y="420" width="250" height="62" rx="10" fill="#ffffff" stroke="#1a1d20" stroke-width="2.5"/>
+  <text x="153" y="458" class="ui ink" font-size="21" font-weight="700" text-anchor="middle">your terminal</text>
+  <line x1="92" y1="418" x2="92" y2="380" stroke="#1a1d20" stroke-width="2.5" marker-end="url(#head)"/>
+  <line x1="212" y1="380" x2="212" y2="418" stroke="#1a1d20" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#head)"/>
+  <text x="300" y="444" class="mono ink" font-size="19">attach: tmux attach -t claude</text>
+  <text x="300" y="472" class="mono ink" font-size="19">detach: Ctrl-b d</text>
+
+  <!-- the honest line -->
+  <text x="28" y="512" class="ui accent" font-size="19" font-weight="600">A closed terminal or dropped SSH leaves the server running.</text>
+  <text x="28" y="538" class="ui accent" font-size="19" font-weight="600">A sleeping or powered-off machine stops it.</text>
+</svg>

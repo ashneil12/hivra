@@ -24,7 +24,19 @@ jest.mock("next/link", () => {
   return MockLink;
 });
 
-const TOOL_FILES = ["PlanCalculatorTool.tsx", "AgentSurvivalCheckTool.tsx", "HostingCostCalculatorTool.tsx", "LimitResetCalculatorTool.tsx"];
+const TOOL_FILES = [
+  "PlanCalculatorTool.tsx",
+  "AgentSurvivalCheckTool.tsx",
+  "HostingCostCalculatorTool.tsx",
+  "LimitResetCalculatorTool.tsx",
+  // The keep-awake builder, the tmux cheat sheet and the pieces they share.
+  "KeepMacAwakeTool.tsx",
+  "TmuxCheatSheetTool.tsx",
+  "TmuxAgentBuilder.tsx",
+  "CopyButton.tsx",
+  "CiteBlock.tsx",
+  "ToolRadioGroup.tsx",
+];
 
 function expectNoBannedClaims(container: HTMLElement) {
   expect(findBannedClaims(container.textContent ?? "")).toEqual([]);

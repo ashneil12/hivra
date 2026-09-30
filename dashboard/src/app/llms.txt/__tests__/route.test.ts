@@ -4,6 +4,7 @@ import path from "path";
 import { GET } from "../route";
 import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { SITE_URL } from "@/lib/seo-urls";
+import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 
 // Exercises the live /llms.txt route end-to-end against the shipped link map.
 describe("GET /llms.txt", () => {
@@ -84,7 +85,10 @@ describe("GET /llms.txt", () => {
       .map(url => new URL(url).pathname);
 
     expect(sitePaths.length).toBeGreaterThan(15);
+    // /tools/[slug] is one dynamic route; a tool page exists when its slug is in the catalog.
+    const toolPaths = new Set(TOOL_ENTRIES.map(tool => `/tools/${tool.slug}`));
     const missing = sitePaths.filter(pathname => {
+      if (toolPaths.has(pathname)) return false;
       if (pathname === "/") return !exists(path.join(appRoot, "page.tsx"));
       const relative = pathname.slice(1);
       const routeDir = path.join(appRoot, relative);
