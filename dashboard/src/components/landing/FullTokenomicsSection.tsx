@@ -9,6 +9,9 @@ import { glossify } from "@/components/gloss/glossify";
 /** Set only when the token geo-policy blocks this viewer. */
 export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
 
+/** Phase-independent, and the same idea the litepaper's economy section opens with. */
+const PROJECT_LEAD = "Hivra gives an AI agent a computer of its own, so it does its work there and stays off yours. One shared token could pay for the parts around that: the computers, the security rewards, and the people who keep tools alive.";
+
 const USES = [
   { name: "Compute and software", text: "Hold for a tier of computing power, fixed when you first qualify. Pay for running time, storage, extra processor cores and data sent out. Ready-made agent setups and reserved capacity." },
   { name: "Work that improves security", text: "Rewards for breaking out of the machine, paid threat reports and paid reviews. Certification bonds put a deposit behind a specific claim; nothing grows just from holding it." },
@@ -59,7 +62,7 @@ export default function FullTokenomicsSection({
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
       <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+      <div><p>{glossify(PROJECT_LEAD, { token: true })}</p><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
     </header>
 
     <div className={styles.accessMigration}>
