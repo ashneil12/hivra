@@ -92,6 +92,17 @@ describe("dormant $HIVRA: the copy from before", () => {
     expect(screen.getByText("$HermesOS is the live token today. $HIVRA is the proposed next one.")).toBeInTheDocument();
   });
 
+  it("/why-hivra/evolution markup never names Hermes Agent OS or Hermes Cloud (Nous Research's names)", () => {
+    setPhase("dormant");
+    const { container } = renderPage(WhyHivraEvolutionPage);
+    const jsonLd = [...container.querySelectorAll('script[type="application/ld+json"]')].map(node => node.textContent ?? "");
+    expect(jsonLd.length).toBeGreaterThan(0);
+    for (const block of jsonLd) {
+      expect(block).toContain('"HermesOS"');
+      expect(block).not.toMatch(/Hermes Agent OS|Hermes Cloud/i);
+    }
+  });
+
   it("/llms.txt keeps its $HIVRA sentences", () => {
     setPhase("dormant");
     const txt = buildLlmsTxt({ siteUrl: "https://example.test" });

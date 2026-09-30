@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
-import RoadmapPage from "../page";
+import RoadmapPage, { metadata } from "../page";
 import { roadmapContent } from "@/lib/roadmap-content";
 
 jest.mock("next/link", () => {
@@ -201,6 +201,28 @@ describe("/roadmap page", () => {
     expect(bankrLink).toHaveAttribute("rel", "noopener noreferrer");
   });
 
+  it("is unmistakably Hivra's roadmap, not the Hermes Agent roadmap that searchers may expect", () => {
+    // Search Console shows "hermes agent roadmap" landing on this page. Hermes
+    // Agent is Nous Research's project, so the title, description and hero all
+    // say whose roadmap this is.
+    const title = String(metadata.title);
+    const description = String(metadata.description);
+    expect(title).toMatch(/^Hivra Roadmap/);
+    // The root layout template already appends " | Hivra".
+    expect(title).not.toMatch(/\| Hivra$/);
+    expect(title.length).toBeLessThanOrEqual(58);
+    expect(description).toMatch(/^The Hivra roadmap \(hivra\.cloud, formerly HermesOS\)/);
+    expect(description).toContain("Not the Hermes Agent roadmap.");
+    expect(description.length).toBeLessThanOrEqual(160);
+    expect(title + description).not.toMatch(/[\u2013\u2014]/);
+
+    const { container } = render(<RoadmapPage />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Hivra Product Roadmap 2026$/);
+    expect(container).toHaveTextContent(
+      /This is the roadmap for Hivra \(hivra\.cloud, formerly HermesOS\), not for Hermes Agent, which is a Nous Research project\./,
+    );
+  });
+
   it("does not promise token holders a governance vote while governance is undecided", () => {
     const { container } = render(<RoadmapPage />);
     expect(container).not.toHaveTextContent(/holders vote/i);
@@ -225,6 +247,26 @@ describe("/roadmap page", () => {
     }
     expect(screen.getAllByText(/hivra\.cloud\/token/).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Agents on their own computers")).toBeInTheDocument();
+  });
+
+  it("makes no speed claim anywhere, including in planned Marketplace items", () => {
+    // The shared public-copy rules ban unmeasured speed claims ("one click",
+    // "instantly", "in N minutes"). The roadmap is a labelled plan, but a plan
+    // that promises a speed is still a speed claim once it is indexed.
+    const SPEED_CLAIM = /one[- ]click|\binstant(?:ly)?\b|\bin \d+ (?:minutes|seconds)\b|\bwithin (?:minutes|seconds)\b|live in minutes|deploy in \d/i;
+    const strings: string[] = [];
+    const collect = (value: unknown): void => {
+      if (typeof value === "string") strings.push(value);
+      else if (Array.isArray(value)) value.forEach(collect);
+      else if (value && typeof value === "object") Object.values(value).forEach(collect);
+    };
+    collect(roadmapContent);
+    expect(strings.length).toBeGreaterThan(100);
+    expect(strings.filter((text) => SPEED_CLAIM.test(text))).toEqual([]);
+
+    const { container } = render(<RoadmapPage />);
+    expect(container.textContent ?? "").not.toMatch(SPEED_CLAIM);
+    expect(container).toHaveTextContent("Browse, install, and deploy community-built operator packs.");
   });
 
   it("labels every token use that is not live as proposed", () => {

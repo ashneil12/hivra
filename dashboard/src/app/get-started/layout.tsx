@@ -5,9 +5,9 @@ import { AuthRuntimeNotice } from "@/components/auth/AuthRuntimeNotice";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
 export const metadata: Metadata = {
-  title: "Get Started | Hivra",
+  title: "Get Started",
   description:
-    "Create your account and deploy a persistent Hermes AI agent in under 5 minutes.",
+    "Create your account and choose how to run your agents on Hivra.",
   robots: {
     index: false,
     follow: false,

@@ -41,6 +41,102 @@ export const HOSTED_SIZES: HostedSize[] = [
   hostedSize("fleet", LARGER_PLAN_PRICE, "The same, with twice the CPU and memory for bigger builds and heavier workloads."),
 ];
 
+/**
+ * The date the prices and sizes below were last checked against checkout's
+ * PLANS. Change it only when a price or size is checked or changes, together
+ * with the expected rows in __tests__/pricing-table.test.tsx, which fails when
+ * PLANS and this date drift apart.
+ */
+export const PRICES_AS_OF = "2026-09-30";
+
+/** "30 September 2026": spelled out, UTC, the same on every server. */
+export function formatPricesAsOf(iso: string = PRICES_AS_OF): string {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/**
+ * One row of the pricing table. The visible <table> and the Offer JSON-LD are
+ * both built from these rows, so the markup cannot drift from what is shown.
+ */
+export interface PricingRow {
+  key: "self-host" | HostedSize["planKey"];
+  /** Row header, also the Offer name. */
+  option: string;
+  vcpu: string;
+  ram: string;
+  /** Visible price with its dollar sign: "$9.99". */
+  price: string;
+  /** The same price as a bare amount for structured data: "9.99". */
+  priceAmount: string;
+  /** What the price buys, shown beside the price and used as the Offer description. */
+  priceFor: string;
+  billing: string;
+  refund: string;
+  /** Hosted rows bill monthly; self-hosting has no billing period. */
+  monthly: boolean;
+}
+
+export const SELF_HOST_OPTION = "Self-host";
+
+export const PRICING_ROWS: PricingRow[] = [
+  {
+    key: "self-host",
+    option: SELF_HOST_OPTION,
+    vcpu: "Your server",
+    ram: "Your server",
+    price: "$0",
+    priceAmount: "0",
+    priceFor: "for the software, on your own server",
+    billing: "None, you pay your own server and model provider",
+    refund: "Not applicable",
+    monthly: false,
+  },
+  ...HOSTED_SIZES.map((size): PricingRow => ({
+    key: size.planKey,
+    option: `Hivra Cloud, ${size.cpu} vCPU and ${size.ramGb} GB`,
+    vcpu: String(size.cpu),
+    ram: `${size.ramGb} GB`,
+    price: size.price,
+    priceAmount: size.price.replace("$", ""),
+    priceFor: `for ${size.cpu} vCPU and ${size.ramGb} GB of RAM`,
+    billing: "Monthly",
+    refund: MONEY_BACK_GUARANTEE,
+    monthly: true,
+  })),
+];
+
+/**
+ * Offer JSON-LD for the pricing table: one Offer per row, the same option
+ * name, price, currency and billing period the table shows.
+ */
+export function buildPricingOffers(siteUrl: string): Array<Record<string, unknown>> {
+  return PRICING_ROWS.map((row) => ({
+    "@type": "Offer",
+    name: row.option,
+    price: row.priceAmount,
+    priceCurrency: "USD",
+    description: row.monthly
+      ? `${row.price} a month ${row.priceFor}. ${row.refund}.`
+      : "Run Hivra on your own server from the open source code. You provide the server and pay for it and your model usage.",
+    url: `${siteUrl}/pricing#pricing-table`,
+    ...(row.monthly
+      ? {
+          priceSpecification: {
+            "@type": "UnitPriceSpecification",
+            price: row.priceAmount,
+            priceCurrency: "USD",
+            billingDuration: "P1M",
+          },
+        }
+      : {}),
+  }));
+}
+
 export const PRICING_FAQ: { q: string; a: string }[] = [
   {
     q: "How much does Hivra cost?",

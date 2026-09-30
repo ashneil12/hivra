@@ -10,3 +10,20 @@
 
 /* The size always sits on its own line under the price. */
 .priceFor { flex-basis: 100%; }
+
+/* The machine-readable table: the same rows as the cards and the Offer JSON-LD.
+   It scrolls inside its own region on a narrow screen, never the page. */
+.tableBlock { margin-top: 48px; }
+.tableHeading { font: 550 clamp(22px, 2.6vw, 30px)/1.2 var(--public-font, sans-serif); letter-spacing: -.04em; margin: 0 0 20px; }
+.tableScroll { overflow-x: auto; border: 1px solid var(--public-line, var(--etched-border)); }
+.tableScroll:focus-visible { outline: 2px solid var(--public-accent, var(--gold-leaf)); outline-offset: 4px; }
+.table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; line-height: 1.6; color: var(--public-text, var(--ink-black)); }
+.table th, .table td { padding: 14px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--public-line, var(--etched-border)); }
+.table thead th { font: 11px/1.6 var(--public-mono, monospace); text-transform: uppercase; letter-spacing: .04em; color: var(--public-muted, var(--text-secondary)); white-space: nowrap; }
+.table tbody tr:last-child th, .table tbody tr:last-child td { border-bottom: 0; }
+/* A size such as "4 GB" must never break onto two lines, so the row header does not wrap. */
+.table tbody th { font-weight: 650; white-space: nowrap; }
+.table td strong { font-weight: 650; font-variant-numeric: tabular-nums; }
+.priceNote { display: block; font-size: 12px; color: var(--public-muted, var(--text-secondary)); }
+.caption { caption-side: top; text-align: left; padding: 14px 16px; font-size: 12px; color: var(--public-muted, var(--text-secondary)); border-bottom: 1px solid var(--public-line, var(--etched-border)); }
+.asOf { margin: 14px 0 0; font-size: 13px; color: var(--public-muted, var(--text-secondary)); }

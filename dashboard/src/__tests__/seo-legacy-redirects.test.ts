@@ -22,10 +22,7 @@ async function loadHostedConfig(): Promise<NextConfig> {
 describe("legacy SEO redirects", () => {
   // The retired private build served these as 308s; without them the URLs 404
   // after cutover and their links and rankings are lost.
-  it.each([
-    ["/faq", "https://hivra.cloud/#faq"],
-    ["/about", "https://hivra.cloud/why-hivra"],
-  ])("permanently redirects %s", async (path, location) => {
+  it.each([["/faq", "https://hivra.cloud/#faq"]])("permanently redirects %s", async (path, location) => {
     const nextConfig = await loadHostedConfig();
     const response = await unstable_getResponseFromNextConfig({
       url: `https://hivra.cloud${path}`,
@@ -34,5 +31,24 @@ describe("legacy SEO redirects", () => {
 
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe(location);
+  });
+
+  // /about used to 308 to the founder essay. It is now the entity home page, so
+  // no redirect may shadow it: a redirect here would hide the page from
+  // crawlers and from everyone who follows the footer link.
+  it("serves /about and /security as pages instead of redirecting them", async () => {
+    const nextConfig = await loadHostedConfig();
+    const redirects = (await nextConfig.redirects?.()) ?? [];
+    expect(redirects.map((rule) => rule.source)).not.toContain("/about");
+    expect(redirects.map((rule) => rule.source)).not.toContain("/security");
+
+    for (const path of ["/about", "/security"]) {
+      const response = await unstable_getResponseFromNextConfig({
+        url: `https://hivra.cloud${path}`,
+        nextConfig,
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+    }
   });
 });

@@ -1,5 +1,9 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+// Next's own default list of bots that need metadata in <head>. The path is
+// part of Next's build output; next-config.test.ts fails if an upgrade moves it.
+import { HTML_LIMITED_BOT_UA_RE } from "next/dist/shared/lib/router/utils/html-bots";
+import { htmlLimitedBotsWithAiCrawlers } from "./src/lib/ai-crawlers";
 import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
 import { BLOCKED_COUNTRIES } from "./src/lib/compliance/token-geo-list";
 
@@ -108,6 +112,9 @@ const nextConfig: NextConfig = {
   },
   distDir: process.env.VERCEL ? ".next" : ".next.nosync", // Prevent iCloud Drive thrashing locally
   trailingSlash: false,
+  // Keep Next's default list and add the AI crawlers (src/lib/ai-crawlers.ts).
+  // Setting this option replaces the default, so it must extend it.
+  htmlLimitedBots: htmlLimitedBotsWithAiCrawlers(HTML_LIMITED_BOT_UA_RE),
   compress: false, // Disable built-in gzip — it buffers entire responses, defeating SSE streaming
   crossOrigin: "anonymous",
   allowedDevOrigins: [localLiveAuthHost, `*.${localLiveAuthHost}`],
@@ -200,6 +207,10 @@ const nextConfig: NextConfig = {
             "/token",
             "/tokenomics",
             "/why-hivra/:path*",
+            // Trust pages for Hivra's own site: their contact is Hivra's, not
+            // the operator's.
+            "/about",
+            "/security",
           ].map(source => ({
             source,
             destination: "/dashboard",
@@ -210,7 +221,6 @@ const nextConfig: NextConfig = {
       // and that search engines and old links still carry. The homepage FAQ
       // section is id="faq".
       { source: "/faq", destination: "/#faq", permanent: true },
-      { source: "/about", destination: "/why-hivra", permanent: true },
       // Social cards cached from the retired site point at this static file.
       { source: "/og-image.png", destination: "/opengraph-image", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
@@ -376,6 +386,19 @@ const nextConfig: NextConfig = {
             ].join("; "),
           },
         ],
+      },
+      // /roofing is an off-topic outreach landing page (static HTML in public/).
+      // It stays up for the people who were sent there, but it must not be
+      // indexed under hivra.cloud. A header works for both the rewritten path
+      // and the file's own URL, and robots.txt must keep allowing the page so
+      // crawlers can read this directive.
+      {
+        source: "/roofing",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+      {
+        source: "/roofing.html",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
       },
       // After the document rule so this path keeps its own enforced policy.
       clerkAssetHeaders,

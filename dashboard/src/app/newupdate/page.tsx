@@ -6,7 +6,7 @@ import { EditorialArt } from "@/components/public-editorial/Editorial";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 export const metadata: Metadata = {
-  title: "Venice Multimodal Agents | Hivra",
+  title: "Venice Multimodal Agents",
   robots: {
     index: false,
     follow: false,

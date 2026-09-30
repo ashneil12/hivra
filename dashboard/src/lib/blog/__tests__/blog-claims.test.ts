@@ -331,10 +331,15 @@ describe("blog claims", () => {
     expect(PLAN_SUMMARY).toContain(MONEY_BACK_GUARANTEE);
   });
 
-  it("uses the checkout's exact money-back wording, card payments only", () => {
+  it("states the money-back guarantee for card payments only, and the checkout screen names the same 7-day guarantee", () => {
     const i18n = fs.readFileSync(path.join(__dirname, "..", "..", "i18n.ts"), "utf8");
     expect(MONEY_BACK_GUARANTEE).toBe("7-day money-back guarantee on card payments");
-    expect(i18n).toContain(MONEY_BACK_GUARANTEE);
+    // This used to assert the full sentence in i18n.ts, but only the retired
+    // landing-page pricing block carried it (deleted with that block, which no
+    // component read). The live checkout step (getStarted) says "7-day
+    // money-back guarantee" without the card limit: an open owner decision, not
+    // something this test should pin either way.
+    expect(i18n).toContain("7-day money-back guarantee");
   });
 
   it("never marks a Hivra table cell as surviving a closed laptop with a bare yes", () => {

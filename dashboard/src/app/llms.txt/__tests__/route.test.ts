@@ -1,4 +1,8 @@
+import fs from "fs";
+import path from "path";
+
 import { GET } from "../route";
+import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { SITE_URL } from "@/lib/seo-urls";
 
 // Exercises the live /llms.txt route end-to-end against the shipped link map.
@@ -15,7 +19,7 @@ describe("GET /llms.txt", () => {
     // H1 product line first.
     expect(body.startsWith("# Hivra\n")).toBe(true);
     // A short '> ' description blurb.
-    expect(body).toMatch(/\n> Hivra \(formerly HermesOS\) gives AI agents computers of their own\./);
+    expect(body).toContain(`\n> ${SITE_DESCRIPTION}\n`);
     // Markdown link sections.
     expect(body).toContain("## Product");
     expect(body).toContain("## Updates");
@@ -30,6 +34,9 @@ describe("GET /llms.txt", () => {
 
     const expectedUrls = [
       SITE_URL, // home
+      `${SITE_URL}/agents`,
+      `${SITE_URL}/pricing`,
+      `${SITE_URL}/tools`,
       `${SITE_URL}/features`,
       `${SITE_URL}/why-hivra`,
       `${SITE_URL}/compare`,
@@ -41,6 +48,8 @@ describe("GET /llms.txt", () => {
       `${SITE_URL}/stats`,
       `${SITE_URL}/privacy`,
       `${SITE_URL}/terms`,
+      `${SITE_URL}/about`,
+      `${SITE_URL}/security`,
       `${SITE_URL}/ecosystem`,
       `${SITE_URL}/LITEPAPER.md`,
       `${SITE_URL}/WHITEPAPER.md`,
@@ -58,6 +67,32 @@ describe("GET /llms.txt", () => {
     expect(body).not.toMatch(/\/api\//);
     expect(body).not.toMatch(/\/sign-in/);
     expect(body).not.toMatch(/\/get-started/);
+  });
+
+  it("only links site paths that the app, the staged papers or public/ actually serve", async () => {
+    // Every same-site link must answer 200 on the build that ships it. The app
+    // routes and public files are checked on disk; the three papers are staged
+    // into public/ from the repository root by scripts/stage-litepaper.mjs.
+    const dashboardRoot = path.join(__dirname, "..", "..", "..", "..");
+    const repoRoot = path.join(dashboardRoot, "..");
+    const appRoot = path.join(dashboardRoot, "src", "app");
+    const exists = (file: string) => fs.existsSync(file);
+    const body = await GET().text();
+    const sitePaths = [...body.matchAll(/\]\(([^)\s]+)\)/g)]
+      .map(match => match[1])
+      .filter(url => url === SITE_URL || url.startsWith(`${SITE_URL}/`))
+      .map(url => new URL(url).pathname);
+
+    expect(sitePaths.length).toBeGreaterThan(15);
+    const missing = sitePaths.filter(pathname => {
+      if (pathname === "/") return !exists(path.join(appRoot, "page.tsx"));
+      const relative = pathname.slice(1);
+      const routeDir = path.join(appRoot, relative);
+      if (exists(path.join(routeDir, "page.tsx")) || exists(path.join(routeDir, "route.ts"))) return false;
+      if (/^\/(LITEPAPER|WHITEPAPER|TOKENOMICS)\.md$/.test(pathname)) return !exists(path.join(repoRoot, relative));
+      return !exists(path.join(dashboardRoot, "public", relative));
+    });
+    expect(missing).toEqual([]);
   });
 
   it("advertises a public, cacheable response", () => {

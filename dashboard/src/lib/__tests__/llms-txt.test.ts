@@ -1,3 +1,4 @@
+import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "../brand-description";
 import { buildLlmsTxt, llmsTxtSections, PUBLIC_REPOSITORY_URL } from "../llms-txt";
 
 const LLMS_TXT_SECTIONS = llmsTxtSections("dormant");
@@ -8,7 +9,11 @@ describe("buildLlmsTxt", () => {
   it("opens with the H1 product line and a short description blurb", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     expect(txt.startsWith("# Hivra\n")).toBe(true);
-    expect(txt).toMatch(/\n> Hivra \(formerly HermesOS\) gives AI agents computers of their own\./);
+    // The owner's one-line description, word for word (2026-09-30).
+    expect(txt).toContain(`\n> ${SITE_DESCRIPTION}\n`);
+    expect(SITE_DESCRIPTION).toBe(
+      "Hivra (hivra.cloud, formerly HermesOS) is an open-source computer for you and your AI agents, on Hivra Cloud or your own server.",
+    );
   });
 
   it("renders every section heading and resolves the home link to the bare site URL", () => {
@@ -42,8 +47,13 @@ describe("buildLlmsTxt", () => {
 
   it("separates what is available now from preview, coming and proposed work", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
-    expect(txt).toContain("Available now:");
-    expect(txt).toMatch(/Also available: Windows[^.]*and Omarchy\./);
+    expect(txt).toContain("Available now on Hivra Cloud:");
+    // Windows and Omarchy are listed as available, with the real Windows condition,
+    // because the homepage, its meta description and the roadmap say so (owner copy
+    // 2026-09-28, commit 2f7fdcea 2026-09-30; truth table row "Ubuntu, Windows and
+    // Omarchy computers"). llms.txt must not contradict them.
+    expect(txt).toMatch(/Also available: Windows \(on your own Proxmox host, from your own licensed ISO\) and Omarchy\./);
+    expect(txt).not.toMatch(/private preview/i);
     expect(txt).toContain("In preview: DeepSeek.");
     expect(txt).toContain("$HIVRA is a proposed new token and does not exist yet.");
     expect(txt).not.toMatch(/one click|Free tier is live/i);
@@ -60,6 +70,45 @@ describe("buildLlmsTxt", () => {
     expect(txt).toContain("(https://github.com/ashneil12/hivra/blob/main/docs/self-host/QUICKSTART.md)");
     expect(txt).toContain(`[Why I'm building Hivra](${SITE}/why-hivra): The founder's note`);
     expect(txt).not.toContain("The evolution of HermesOS into Hivra");
+  });
+
+  it("says Hermes is Hivra Cloud only and never implies it runs on your own cloud account or server", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE });
+    expect(txt).toContain("Hermes runs on Hivra Cloud only.");
+    expect(txt).toContain("OpenClaw and Agent Zero need a paid plan.");
+    // The retired sentence listed Hermes among agents that launch "on Hivra Cloud
+    // or your own cloud account or server".
+    expect(txt).not.toMatch(/your own cloud account/i);
+    expect(txt).toContain("self-host the platform on your own server");
+  });
+
+  it("states plans by price and size, never per computer, and drops the multi-agent promise", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE });
+    expect(txt).toContain(
+      "Self-host free, or Hivra Cloud at $9.99 a month for 2 vCPU and 4 GB of RAM or $19.99 a month for 4 vCPU and 8 GB of RAM",
+    );
+    expect(txt).not.toMatch(/computer from \$/i);
+    expect(txt).not.toMatch(/multi-agent/i);
+    expect(txt).toContain("several agents on one account");
+  });
+
+  it("carries the independence line and the public entry points an answer engine needs", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE });
+    expect(txt).toContain(`\n${NON_AFFILIATION_LINE}\n`);
+    for (const path of ["/agents", "/pricing", "/tools", "/compare"]) {
+      expect(txt).toContain(`(${SITE}${path})`);
+    }
+  });
+
+  it("describes /about by what it covers without implying who funds Hivra", () => {
+    const about = LLMS_TXT_SECTIONS.flatMap((section) => section.links).find((link) => link.path === "/about");
+    expect(about?.note).toContain("what it costs");
+    expect(about?.note).not.toMatch(/paid for|funded|funding/i);
+  });
+
+  it("uses the glossary: agents and computers, never boxes, runtimes or instances", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE });
+    expect(txt).not.toMatch(/\b(box|boxes|runtime|runtimes|instance|instances)\b/i);
   });
 
   it("ends with a single trailing newline", () => {
