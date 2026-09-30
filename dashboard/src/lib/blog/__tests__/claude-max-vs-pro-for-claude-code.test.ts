@@ -99,6 +99,15 @@ describe("the page targets the pricing queries and answers on the first screen",
     expect(article.slug).toBe("claude-max-vs-pro-for-claude-code");
   });
 
+  it("answers Pro vs Max in the short answer: who should move, and that Max is more usage, not a different model", () => {
+    // Pricing table, read 2026-09-30: Opus and Sonnet are listed for Pro and for both Max sizes.
+    expect(article.shortAnswer).toContain("Move to Max 5x ($100) when Pro's five-hour limit stops you in most sessions, and to Max 20x ($200) only if Max 5x still does.");
+    expect(article.shortAnswer).toContain("Max adds usage per session, not a different Opus or Sonnet.");
+    const words = (article.shortAnswer ?? "").trim().split(/\s+/).length;
+    expect(words).toBeGreaterThanOrEqual(40);
+    expect(words).toBeLessThanOrEqual(60);
+  });
+
   it("puts the recommendation and the three prices in the tagline and the intro, from the constants", () => {
     const { pro, max5x, max20x } = F.plans;
     expect(article.tagline).toBe(`Start on Pro at ${usd(pro.priceUsd)}. Move to Max only when Pro's limit stops you.`);

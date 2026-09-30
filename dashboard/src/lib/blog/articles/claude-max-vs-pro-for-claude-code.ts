@@ -72,7 +72,7 @@ export const article: BlogArticle = {
   author: "Hivra team",
   tagline: `Start on Pro at ${usd(PRO.priceUsd)}. Move to Max only when Pro's limit stops you.`,
   intro: `Claude Code is included in Pro (${usd(PRO.priceUsd)} a month), Max 5x (${usd(MAX5.priceUsd)}) and Max 20x (${usd(MAX20.priceUsd)}), prices read ${READ_ON}. Anthropic states Max's extra usage only as a multiple of Pro's per five-hour session and does not currently publish message or token counts, so this page gives a rule for choosing, the break-even against API billing, what to do at a limit, and when Anthropic's own cloud is enough.`,
-  shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Anthropic publishes the gap per session, not per week, so measure with /usage. At Anthropic's ${DAY} enterprise average day, API billing beats Pro only below ${proDays} active days a month.`,
+  shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Max adds usage per session, not a different Opus or Sonnet. At Anthropic's ${DAY} enterprise average day, API billing beats Pro only below ${proDays} active days a month.`,
   sections: [
     {
       heading: `Claude Code pricing by plan, read ${READ_ON}`,
