@@ -1,31 +1,30 @@
 # Token geo-policy runbook
 
-A server-enforced country gate for Hivra's token features. It is built and
-**dormant**: the committed list is empty, so it blocks nobody, reads no
-country and changes nothing anyone sees.
+A server-enforced country gate for Hivra's token features. **Status: on for
+GB** since the owner directed it on 2026-09-30. It is live on Canary when this
+merges and reaches production only through an owner-approved Promote. This page
+is not legal advice, and a UK crypto lawyer should still review the position.
 
-Enabling it is a legal decision first. Before any country is listed, the UK
-financial-promotion and crypto position needs review by a UK crypto lawyer.
-The 2026-09-24 UK exposure research found that blocking helps but is not a
-full fix for a UK-based founder, and that the FCA's good-practice example is
-geo-blocking plus onboarding checks that refuse a UK address or UK payment
-method, with UK-exclusion notices. This page is not legal advice.
+What a country block does and does not do, from the FCA's own pages (checked
+2026-09-30): the cryptoasset promotions rules apply "regardless of whether the
+firm is based overseas", to communications capable of having effect in the UK,
+and lawful routes are an authorised firm, approval by one, MLR registration or
+an exemption. Geo-blocking is one way to keep UK consumers out of reach, so it
+only works if it covers every place the promotion appears. The app's routes and
+pages are covered below; the static documents, emails and social posts are not
+(see "Not covered").
 
 ## The one file
 
-`dashboard/src/lib/compliance/token-geo-policy.ts`:
+`dashboard/src/lib/compliance/token-geo-list.ts`:
 
 ```ts
-export const TOKEN_GEO_POLICY: TokenGeoPolicy = {
-  blockedCountries: [],        // ISO-3166 alpha-2, upper case. Empty = dormant.
-};
+export const BLOCKED_COUNTRIES: readonly string[] = ["GB"];   // empty = dormant
 ```
 
-To block the United Kingdom, the change is one line:
-
-```ts
-  blockedCountries: ["GB"],
-```
+`token-geo-policy.ts` reads it. The list is its own file so the test suite can
+run against an empty list (`jest.setup.tsx` mocks it) while
+`token-geo-policy.test.ts` checks the real one.
 
 Use "GB", not "UK": `token-geo-policy.test.ts` fails the build on "UK", a
 lower-case or three-letter code, an unknown region or a duplicate.
@@ -132,7 +131,7 @@ is always there. With the empty list no component asks.
   active payment itself still settles.
 - $HIVRA itself trades on a permissionless pool; nothing here can block that.
 
-## Enabling it
+## Changing it
 
 1. Legal review agrees the country list, the notice wording and whether the
    uncovered items above need their own change.
