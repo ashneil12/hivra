@@ -99,4 +99,17 @@ describe("Static copy safety", () => {
     expect(footer).toContain("mailto:info@hivra.cloud");
     expect(footer).not.toContain("info@hermesos.cloud");
   });
+
+  it("keeps the site-wide meta keywords free of speed claims and Nous Research names", () => {
+    const layout = fs.readFileSync(path.join(__dirname, "..", "layout.tsx"), "utf8");
+    const block = layout.match(/keywords:\s*\[([\s\S]*?)\]/)?.[1] ?? "";
+    const keywords = [...block.matchAll(/"([^"]+)"/g)].map(match => match[1]);
+    expect(keywords.length).toBeGreaterThanOrEqual(5);
+    expect(keywords).toContain("hivra");
+    for (const keyword of keywords) {
+      // "one click" is an unmeasured speed claim. "nous" and "hermes agent os"
+      // are Nous Research's names, which Hivra must not use as its own.
+      expect(keyword).not.toMatch(/one[- ]click|nous|hermes agent os|hermes cloud/i);
+    }
+  });
 });
