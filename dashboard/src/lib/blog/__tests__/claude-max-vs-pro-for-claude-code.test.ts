@@ -186,10 +186,12 @@ describe("the post reads its numbers from the calculator's constants", () => {
     expect(bodyCopy).not.toMatch(/Anthropic's average day|\(Anthropic's average\)/);
     const faq = article.faqs.find((candidate) => candidate.q === "Is the API cheaper than a Claude subscription for Claude Code?");
     expect(faq?.a).toContain("per developer per active day across enterprise deployments, so a plan is cheaper, if its limits cover your sessions,");
+    // The calculator page names the $13 an enterprise average too, in its FAQ and method.
     const calculator = getToolEntry("claude-code-plan-calculator")!;
-    const apiFaq = calculator.faqs.find((candidate) => candidate.q === "Is the API cheaper than a Claude subscription?");
-    expect(apiFaq?.a).toContain("across enterprise deployments");
-    expect(apiFaq?.a).toContain("if Pro's limits cover your sessions");
+    const estimateFaq = calculator.faqs.find((candidate) => candidate.q.startsWith("Where does the dollar estimate come from"));
+    expect(estimateFaq?.a).toContain("Anthropic's $13 enterprise average");
+    expect(JSON.stringify(calculator.method)).toContain("the $13 enterprise average times your active days");
+    expect(JSON.stringify(calculator.method)).toContain("across enterprise deployments");
   });
 
   it("works the example from the constants: ten active days at $13 a day is $130", () => {
@@ -342,6 +344,52 @@ describe("Team seat prices read as a month, not a year", () => {
     const row = CLAUDE_PLAN_CHANGELOG.find((entry) => entry.date === "2026-01-28")!;
     expect(row.text).toMatch(/\$20 a month on the annual plan or \$25 a month on the monthly plan/);
     expect(row.text).not.toMatch(/\(annual\)|\(monthly\)/);
+  });
+});
+
+describe("the post and the calculator page do not repeat each other's FAQ", () => {
+  // Two FAQPage blocks that answer the same questions in the same words compete
+  // with each other and read as scaled content. The post owns the plan and price
+  // questions; the tool page owns how the tool works.
+  const tool = getToolEntry("claude-code-plan-calculator")!;
+  const shingles = (text: string, size = 6): Set<string> => {
+    const words = text.toLowerCase().replace(/[^a-z0-9$%.' ]/g, " ").split(/\s+/).filter(Boolean);
+    const out = new Set<string>();
+    for (let i = 0; i + size <= words.length; i++) out.add(words.slice(i, i + size).join(" "));
+    return out;
+  };
+
+  it("shares no question", () => {
+    const post = new Set(article.faqs.map((faq) => faq.q.toLowerCase()));
+    expect(tool.faqs.filter((faq) => post.has(faq.q.toLowerCase())).map((faq) => faq.q)).toEqual([]);
+  });
+
+  it("shares at most a fifth of any answer's six-word phrases with any answer on the other page", () => {
+    const worst: Array<{ tool: string; post: string; overlap: number }> = [];
+    for (const toolFaq of tool.faqs) {
+      const a = shingles(toolFaq.a);
+      for (const postFaq of article.faqs) {
+        const b = shingles(postFaq.a);
+        const shared = [...a].filter((phrase) => b.has(phrase)).length;
+        const overlap = shared / Math.max(1, Math.min(a.size, b.size));
+        if (overlap > 0.2) worst.push({ tool: toolFaq.q, post: postFaq.q, overlap: Math.round(overlap * 100) / 100 });
+      }
+    }
+    expect(worst).toEqual([]);
+  });
+
+  it("keeps the tool page to tool questions and points to the post for the plan comparison", () => {
+    expect(tool.faqs.map((faq) => faq.q)).toEqual([
+      "How does the calculator rate each plan?",
+      "Why does the calculator never rate the weekly limit?",
+      "Why does it ask where Pro stops me?",
+      "Where does the dollar estimate come from, and how far should I trust it?",
+      "Why does the model mix start at 100% Opus?",
+      "What does the calculator leave out?",
+      "Does the calculator replace /usage in Claude Code?",
+    ]);
+    expect(tool.faqs.find((faq) => faq.q === "What does the calculator leave out?")?.a).toContain("read the plan pricing post linked below");
+    expect(tool.relatedLinks.map((link) => link.href)).toContain(`/blog/${SLUG}`);
   });
 });
 
