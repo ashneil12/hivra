@@ -1,7 +1,7 @@
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
-import { getTokenPhaseCopy, type TokenomicsPhaseCopy } from "@/lib/token-phase-copy";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
 
@@ -20,12 +20,12 @@ const USES = [
  * proposal: the factual contract addresses, where to verify them, and the
  * notice. No payment discount, bonus, migration, uses or treasury copy.
  */
-function RestrictedTokenomicsSection({ headingLevel, restriction, copy }: { headingLevel: 1 | 2; restriction: TokenomicsGeoRestriction; copy: TokenomicsPhaseCopy }) {
+function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLevel: 1 | 2; restriction: TokenomicsGeoRestriction }) {
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
-      <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>{copy.restrictedHeaderLead}</p></div>
+      <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">Token<br /><em>contracts.</em></Heading></div>
+      <div><p>{RESTRICTED_TOKEN_PAGE_COPY.tokenomicsLead}</p></div>
     </header>
     <TokenGeoNotice notice={restriction.notice} />
     <div data-testid="tokenomics-contracts">
@@ -53,7 +53,7 @@ export default function FullTokenomicsSection({
   phase = getHivraTokenPhase(),
 }: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null; phase?: HivraTokenPhase } = {}) {
   const copy = getTokenPhaseCopy(phase).tokenomics;
-  if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} copy={copy} />;
+  if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} />;
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>

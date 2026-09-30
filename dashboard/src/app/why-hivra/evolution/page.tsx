@@ -10,7 +10,7 @@ import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { buildAbsoluteSiteUrl, buildWebsiteMetadata } from "@/lib/metadata";
-import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 import styles from "../page.module.css";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
@@ -217,18 +217,18 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
                 </ul>
               </>
             )}
-            <div className={styles.sameTokenBox}>
-              <p>{tokenCopy.hivraStatus}</p>
-              {geoNotice ? null : (
-                <>
-                  {tokenCopy.hivraDetails.map((line) => (
-                    <p key={line}>{line}</p>
-                  ))}
-                </>
-              )}
-            </div>
+            {/* A blocked viewer reads no $HIVRA status or proposal line here: the notice above and the
+                token page link below are what stays (RESTRICTED_TOKEN_PAGE_COPY). */}
+            {geoNotice ? null : (
+              <div className={styles.sameTokenBox}>
+                <p>{tokenCopy.hivraStatus}</p>
+                {tokenCopy.hivraDetails.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            )}
             <p>
-              {tokenCopy.addressNote}{" "}
+              {geoNotice ? RESTRICTED_TOKEN_PAGE_COPY.evolutionAddressNote : tokenCopy.addressNote}{" "}
               <Link href="/token">token page</Link>.
             </p>
           </SectionShell>
@@ -285,7 +285,7 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
             <p>Simple version:</p>
             <div className={styles.relationshipBox}>
               <p>Hivra is the platform.</p>
-              <p>{tokenCopy.relationship}</p>
+              {geoNotice ? null : <p>{tokenCopy.relationship}</p>}
             </div>
             <p>The platform became bigger than its original name.</p>
             <p>The vision expanded.</p>
