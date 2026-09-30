@@ -251,6 +251,18 @@ describe("Claude Code Remote Control article", () => {
     expect(sectionCopy).toContain("It keeps going only while the machine, its network and the `claude` process stay up.");
   });
 
+  it("separates Dispatch from Remote Control, since \"Remote Control vs Dispatch\" is a related search", () => {
+    const section = article.sections.find((candidate) => candidate.heading === "Remote Control, cloud sessions, Channels, Dispatch or SSH: which one do you mean?")!;
+    expect(section).toBeDefined();
+    const copy = section.paragraphs.join("\n");
+    expect(copy).toContain("can mean five different things");
+    expect(copy).toContain("- **Dispatch** lets you message a task from the Claude mobile app to the Claude Desktop app on your computer, and Dispatch decides how to run it.");
+    expect(copy).toContain("It needs a Pro or Max plan");
+    expect(copy).toContain("it drives your own machine, so that machine has to stay on ([Claude Code on mobile](https://code.claude.com/docs/en/mobile))");
+    // One bullet per thing the heading names.
+    expect(copy.split("\n").filter((line) => line.startsWith("- **"))).toHaveLength(5);
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
