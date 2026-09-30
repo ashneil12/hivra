@@ -101,6 +101,25 @@ describe("Claude Code Remote Control article", () => {
     expect(offlineFaq.a).toContain("a network outage of roughly 10 minutes exits the claude remote-control process");
   });
 
+  it("scopes the first message to the Desktop app, the only client every cited report names", () => {
+    // Issues 88692, 90172, 90877, 94229 and 94833 are all Claude Desktop app reports. None is a browser, phone or CLI
+    // report, so the page must not say the banner appears in a browser or give terminal-only fixes.
+    const first = article.sections.find((section) => section.heading === "The \"Can’t reach your computer\" message")!;
+    const copy = first.paragraphs.join("\n");
+    expect(copy).toContain("Every report we found comes from the Claude Desktop app");
+    expect(copy).toContain("The Claude app cannot reach the machine that hosts the session.");
+    expect(copy).not.toMatch(/or browser/i);
+    expect(copy).toContain("If the host is the Claude Desktop app, reopen the app on that computer, then open the session again.");
+    expect(copy).toContain("a Windows reinstall that regenerates the device identity");
+    expect(copy).toContain("the Desktop app restarting itself to install an update, with the running sessions not coming back afterwards ([issue 90172](https://github.com/anthropics/claude-code/issues/90172))");
+    expect(copy).toContain("Anthropic has not confirmed any of these.");
+    expect(copy).toContain("If you started the session from the command line, run `/remote-control` to reconnect.");
+    const faq = article.faqs.find(({ q }) => q.startsWith("What does \"Can’t reach your computer\""))!;
+    expect(faq.a).toContain("when the Claude Desktop app cannot reach the machine hosting a session");
+    expect(faq.a).toContain("If the host is the Claude Desktop app, reopen it on that computer");
+    expect(faq.a).not.toMatch(/or browser/i);
+  });
+
   it("gives each message its own fix", () => {
     const first = article.sections.find((section) => section.heading === "The \"Can\u2019t reach your computer\" message")!;
     const second = article.sections.find((section) => section.heading === "The \"Claude Code on the computer running this session is offline\" message")!;
