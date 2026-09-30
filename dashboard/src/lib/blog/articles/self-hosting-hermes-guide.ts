@@ -100,6 +100,8 @@ export const article: BlogArticle = {
   ],
   relatedComparisons: [
     { slug: "vs-self-hosted", title: "Hivra vs self-hosted VPS" },
+    { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
+    { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
   ],
   relatedFeatures: [
     { slug: "no-docker-hosting", title: "No Docker required" },

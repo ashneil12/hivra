@@ -135,4 +135,9 @@ export const article: BlogArticle = {
       title: "How to keep Claude Code running 24/7 (even when your laptop closes)",
     },
   ],
+  relatedComparisons: [
+    { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
+    { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+    { slug: "vs-xcloud", title: "Hivra vs xCloud" },
+  ],
 };

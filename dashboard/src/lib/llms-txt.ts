@@ -46,7 +46,7 @@ export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): 
         { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks and several agents on one account" },
         { label: "About", path: "/about", note: "Who and what Hivra is, formerly HermesOS, what it is not, what it costs and how to contact it" },
         { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on AI, accountability and why the limits should live outside the model" },
-        { label: "Compare", path: "/compare", note: "Hivra vs self-hosting and other agent-hosting options" },
+        { label: "Compare", path: "/compare", note: "Hivra vs Agent 37, Hostinger, xCloud, Nous Hermes Cloud, self-hosting, Railway and Render, with a dated price table" },
       ],
     },
     {
