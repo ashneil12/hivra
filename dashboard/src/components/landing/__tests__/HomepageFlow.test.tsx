@@ -17,7 +17,7 @@ async function renderHome() {
 test("the first screen says what it is, who it is for, what it costs, and asks once", async () => {
   await renderHome();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your agent needs a computer. It doesn't need yours.");
-  expect(screen.getByText(/Run Claude Code, Codex, Hermes and more on a private cloud computer of their own\..*From \$9\.99 a month\./)).toBeInTheDocument();
+  expect(screen.getByText(/AI agents like Claude Code and Codex can do real work for you\..*private computer in the cloud\..*From \$9\.99 a month\./)).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   expect(screen.getByRole("link", { name: /Hermes OS is now Hivra/ })).toHaveAttribute("href", "/why-hivra/evolution");
   expect(screen.getAllByText("7-day money-back guarantee on card payments.").length).toBeGreaterThan(0);

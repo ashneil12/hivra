@@ -16,6 +16,7 @@ import {
   PRICING,
   REACH,
   STICKY,
+  TMUX_GLOSS,
 } from "../content";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 import {
@@ -81,9 +82,9 @@ describe("homepage copy", () => {
 
   it("answers the keep-running question with the verified runtime facts, word for word", () => {
     const answer = HOMEPAGE_FAQ.find(({ q }) => q === "What happens when I close my laptop?");
-    expect(answer?.a).toBe(`${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING}`);
+    expect(answer?.a).toBe(`${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING} ${TMUX_GLOSS}`);
     // The illustration and step copy only promise tmux runs keep going.
-    expect(HOW.steps[0].body).toContain("A run you start in tmux keeps going.");
+    expect(HOW.steps[0].body).toContain("A run you start in tmux (a tool that keeps programs going) keeps going.");
   });
 
   it("quotes the approved litepaper exactly", () => {
