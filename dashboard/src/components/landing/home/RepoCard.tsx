@@ -13,7 +13,7 @@ const FILES: { name: string; dir?: boolean; note?: string }[] = [
   { name: "dashboard", dir: true },
   { name: "services", dir: true },
   { name: "docs", dir: true },
-  { name: "LICENSE", note: "Apache-2.0" },
+  { name: "LICENSE", note: "Open source" },
   { name: "README.md" },
 ];
 
@@ -60,7 +60,7 @@ export default function RepoCard({ owner, name, clone }: { owner: string; name: 
         </div>
         <p className={styles.repoLicense}>
           <Scale size={15} aria-hidden="true" />
-          Apache-2.0 license
+          Open source license
         </p>
         <ul className={styles.repoFiles} aria-label="Top of the repository">
           {FILES.map(file => (
