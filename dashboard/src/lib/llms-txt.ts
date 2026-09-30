@@ -10,6 +10,13 @@
 // the document is exactly what it was before the phase copy existed.
 
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
+import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "@/lib/brand-description";
+import {
+  ENTRY_PLAN_PRICE,
+  ENTRY_PLAN_SIZE,
+  LARGER_PLAN_PRICE,
+  LARGER_PLAN_SIZE,
+} from "@/lib/blog/plan-facts";
 import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 export interface LlmsTxtSection {
@@ -31,10 +38,10 @@ export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): 
       links: [
         { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or launch a computer and use it yourself" },
         { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own" },
-        { label: "Pricing", path: "/pricing", note: "Self-host free, or a Hivra Cloud computer from $9.99 a month" },
+        { label: "Pricing", path: "/pricing", note: `Self-host free, or Hivra Cloud at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}` },
         { label: "Free tools", path: "/tools", note: "Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator" },
         { label: "Ecosystem", path: "/ecosystem", note: "What is available now, next, later and still research" },
-        { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks, multi-agent" },
+        { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks and several agents on one account" },
         { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on AI, accountability and why the limits should live outside the model" },
         { label: "Compare", path: "/compare", note: "Hivra vs self-hosting and other agent-hosting options" },
       ],
@@ -100,13 +107,17 @@ export function buildLlmsTxt({
 
   lines.push("# Hivra");
   lines.push("");
+  lines.push(`> ${SITE_DESCRIPTION}`);
+  lines.push("");
   lines.push(
-    "> Hivra (formerly HermesOS) gives AI agents computers of their own. Available now: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu computer and use it yourself, on Hivra Cloud or your own cloud account or server. Self-hosting the platform needs no Hivra account and no token."
+    "Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu computer and use it yourself. Hermes runs on Hivra Cloud only. OpenClaw and Agent Zero need a paid plan. You can also self-host the platform on your own server, with no Hivra account and no token."
   );
   lines.push("");
   lines.push(
-    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
+    `In private preview: Windows and Omarchy computers. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
   );
+  lines.push("");
+  lines.push(NON_AFFILIATION_LINE);
   lines.push("");
 
   for (const section of llmsTxtSections(phase)) {
