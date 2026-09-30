@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import lockfile from "../package-lock.json";
 
 function compareSemver(left: string, right: string): number {
@@ -20,12 +23,16 @@ describe("dependency security", () => {
     .map(([path, info]) => ({ path, version: info.version ?? "0.0.0" }));
 
   // Dated release floor, not a substitute for a current advisory scan. Includes
-  // the 2026-08-25 Next.js critical fixes, which were newer than repo alerts.
+  // the 2026-08-25 Next.js critical fixes, which were newer than repo alerts,
+  // and the 2026-09-30 advisories: GHSA-vcvr-r3jv-pc5j (next/og ImageResponse
+  // RCE, fixed in next 16.3.6; 16.3.8 is the newest 16.x), the undici 7.29.x
+  // advisories (fixed in 7.30.0) and the DOMPurify IN_PLACE hook advisory
+  // GHSA-p98j-92pf-mc4p (fixed in 3.4.16).
   it.each([
-    ["next", "16.3.3"],
+    ["next", "16.3.8"],
     ["pdfjs-dist", "6.2.108"],
-    ["dompurify", "3.4.13"],
-    ["undici", "7.29.0"],
+    ["dompurify", "3.4.16"],
+    ["undici", "7.30.0"],
     ["sharp", "0.35.4"],
     ["postcss", "8.5.23"],
     ["nanoid", "3.3.18"],
@@ -82,6 +89,33 @@ describe("dependency security", () => {
     expect(
       postcssCopies.filter((copy) => compareSemver(copy.version, "8.5.10") < 0)
     ).toEqual([]);
+  });
+
+  // The Cloudflare worker packages carry undici only as a dev-only dependency
+  // of Miniflare, which pins one exact version. An override in each manifest
+  // keeps the lockfile at the reviewed floor, so these copies cannot fall back
+  // to a version with the 2026-09-30 advisories.
+  it.each([
+    "host-relay-worker",
+    "posthog-proxy-worker",
+    "venice-proxy-worker",
+  ])("keeps the %s undici override and lockfile copy at the reviewed floor 7.30.0", (worker) => {
+    const dir = join(__dirname, "..", "..", "services", worker);
+    const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+      overrides?: Record<string, string>;
+    };
+    const workerLock = JSON.parse(readFileSync(join(dir, "package-lock.json"), "utf8")) as {
+      packages: Record<string, { version?: string }>;
+    };
+    expect(manifest.overrides?.undici).toBe("7.30.0");
+    const copies = Object.entries(workerLock.packages)
+      .filter(([path]) => path === "node_modules/undici" || path.endsWith("/node_modules/undici"))
+      .map(([path, info]) => ({ path, version: info.version ?? "0.0.0" }));
+    expect(copies.length).toBeGreaterThan(0);
+    for (const copy of copies) {
+      expect({ path: copy.path, secure: compareSemver(copy.version, "7.30.0") >= 0 })
+        .toEqual({ path: copy.path, secure: true });
+    }
   });
 
   it("does not install an undici version vulnerable to the <7.28.0 TLS/SOCKS5/cache advisories", () => {
