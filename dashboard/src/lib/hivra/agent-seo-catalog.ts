@@ -59,8 +59,12 @@ export interface AgentSeoEntry {
   relatedBlogSlugs: string[];
 }
 
-/** Date these pages last changed substantively (sitemap lastmod). */
-export const AGENT_PAGES_LAST_MODIFIED = "2026-09-24";
+/**
+ * Date these pages last changed substantively (sitemap lastmod). The agent pages
+ * were reworded on 2026-09-30 (plain English, open source without a licence
+ * name, no preview labels). Move it only for a real content change.
+ */
+export const AGENT_PAGES_LAST_MODIFIED = "2026-09-30";
 
 /**
  * Entry monthly price for every agent page, as the JSON-LD Offer price. It is
