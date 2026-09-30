@@ -17,9 +17,11 @@ async function renderHome() {
 test("the first screen says what it is, who it is for, what it costs, and asks once", async () => {
   await renderHome();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your agent needs a computer. It doesn't need yours.");
-  expect(screen.getByText((_, element) => element?.tagName === "P" && /AI agents like Claude Code and Codex can do real work for you\..*private computer in the cloud\..*From \$9\.99 a month\./.test(element.textContent ?? ""))).toBeInTheDocument();
+  expect(screen.getByText((_, element) => element?.tagName === "P" && /AI agents like Claude Code and Codex can do real work for you\..*private computer in the cloud\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
-  expect(screen.getByRole("link", { name: /Hermes OS is now Hivra/ })).toHaveAttribute("href", "/why-hivra/evolution");
+  // The hero makes no price or guarantee claim, and no longer carries the rename link.
+  expect(screen.queryByRole("link", { name: /Hermes OS is now Hivra/ })).not.toBeInTheDocument();
+  expect(document.querySelector("#home-title")?.closest("section")).not.toHaveTextContent(/\$9\.99|money-back/);
   expect(screen.getAllByText("7-day money-back guarantee on card payments.").length).toBeGreaterThan(0);
   // The old page's app download and tab switcher are gone.
   expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
