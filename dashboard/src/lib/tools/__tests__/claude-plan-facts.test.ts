@@ -65,6 +65,7 @@ describe("Claude plan facts, pinned to what Anthropic's pages said on 2026-09-30
       perMonthLowUsd: 150,
       perMonthHighUsd: 250,
       inputToOutputRatio: 324,
+      inputToOutputRatioBefore: 189,
     });
     expect(F.limitChanges).toEqual({
       fiveHourDoubled: "2026-05-06",

@@ -82,8 +82,10 @@ export const CLAUDE_PLAN_FACTS = {
     perMonthLowUsd: 150,
     perMonthHighUsd: 250,
     // Input tokens per output token in Anthropic's aggregate Claude Code data,
-    // March to September 2026 (189:1 six months earlier). It counts cache reads.
+    // March to September 2026 (189:1 at the start of that period). It counts
+    // cache reads.
     inputToOutputRatio: 324,
+    inputToOutputRatioBefore: 189,
   },
   // HIVRA'S ESTIMATE, not Anthropic's. Anthropic publishes neither an hourly
   // token volume nor how much of the input is cache reads. These two numbers are
@@ -112,6 +114,7 @@ export const CLAUDE_PLAN_FACTS = {
       label: "Manage usage credits for paid Claude plans",
       url: "https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans",
     },
+    usageBundles: { label: "Buy usage bundles", url: "https://support.claude.com/en/articles/14246112-buy-usage-bundles" },
     limitReset: { label: "What is a limit reset?", url: "https://support.claude.com/en/articles/17007452-what-is-a-limit-reset" },
     usageLimitTips: {
       label: "Usage limit best practices",
