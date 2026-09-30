@@ -180,11 +180,11 @@ describe("the plan changelog section", () => {
   const section = sectionByHeading("What changed and when");
   const text = section.paragraphs.join("\n");
 
-  it("prints every changelog row with its date and a link to the page that states it", () => {
-    const rows = text.split("\n").filter((line) => /^\| \d{4}-\d{2}-\d{2} \|/.test(line));
+  it("prints every changelog row, newest first, with its date and a link to the page that states it", () => {
+    const rows = text.split("\n").filter((line) => /^- \*\*\d{4}-\d{2}-\d{2}\*\*: /.test(line));
     expect(rows).toHaveLength(CLAUDE_PLAN_CHANGELOG.length);
     CLAUDE_PLAN_CHANGELOG.forEach((entry, index) => {
-      expect(rows[index]).toBe(`| ${entry.date} | ${entry.text} | [${entry.source.label}](${entry.source.url}) |`);
+      expect(rows[index]).toBe(`- **${entry.date}**: ${entry.text} Source: [${entry.source.label}](${entry.source.url}).`);
       expect(entry.source.url).toMatch(/^https:\/\//);
       expect((OFFICIAL_SOURCE_HOSTS as readonly string[]).includes(new URL(entry.source.url).hostname)).toBe(true);
     });
@@ -197,8 +197,8 @@ describe("the plan changelog section", () => {
   });
 
   it("has rows for the changes the calculator depends on", () => {
-    for (const date of [F.limitChanges.fiveHourDoubled, F.limitChanges.weeklyRaised, F.limitChanges.fiveHourRaised, F.defaultModel.since]) {
-      expect(text).toContain(`| ${date} |`);
+    for (const date of [F.limitChanges.fiveHourDoubled, F.limitChanges.weeklyChanged, F.limitChanges.fiveHourRaised, F.defaultModel.since]) {
+      expect(text).toContain(`- **${date}**: `);
     }
   });
 });

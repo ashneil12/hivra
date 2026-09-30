@@ -179,7 +179,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
     {
       q: "What are the Claude Code usage limits?",
-      a: `Two layers. A session limit on a rolling five-hour window, and weekly limits on top that reset at a fixed time each week assigned to your account. Claude Code shares both with Claude on the web, desktop and mobile. Anthropic does not publish fixed hour or message caps, and it changes the limits often: five-hour limits doubled on ${LIMIT_CHANGES.fiveHourDoubled} and rose again on ${LIMIT_CHANGES.fiveHourRaised}, and weekly limits have been 25% higher than before the May to September promotion since ${LIMIT_CHANGES.weeklyRaised}. The Opus and Sonnet limits apply to that model family only.`,
+      a: `Two layers. A session limit on a rolling five-hour window, and weekly limits on top that reset at a fixed time each week assigned to your account. Claude Code shares both with Claude on the web, desktop and mobile. Anthropic does not publish fixed hour or message caps, and it changes the limits often: five-hour limits doubled on ${LIMIT_CHANGES.fiveHourDoubled} and rose again on ${LIMIT_CHANGES.fiveHourRaised}, and weekly limits have been 25% higher than before the May to September promotion since ${LIMIT_CHANGES.weeklyChanged}. The Opus and Sonnet limits apply to that model family only.`,
     },
     {
       q: "Is the API cheaper than a Claude subscription?",
@@ -219,7 +219,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         sources: [PLAN_SOURCES.maxPlan, PLAN_SOURCES.pricing],
       },
       {
-        text: `Anthropic changes Claude Code's limits often. Five-hour limits doubled on ${LIMIT_CHANGES.fiveHourDoubled} and rose again on ${LIMIT_CHANGES.fiveHourRaised}. Weekly limits were 50% higher from ${LIMIT_CHANGES.weeklyPromotionStart} to ${LIMIT_CHANGES.weeklyPromotionEnd} and have been 25% higher than before that promotion since ${LIMIT_CHANGES.weeklyRaised}. Anthropic did not publish the size of the ${LIMIT_CHANGES.fiveHourRaised} increase in hours or tokens. A reading of where Pro stops you taken before ${LIMIT_CHANGES.fiveHourRaised} is out of date, which is why the calculator asks for a recent one.`,
+        text: `Anthropic changes Claude Code's limits often. Five-hour limits doubled on ${LIMIT_CHANGES.fiveHourDoubled} and rose again on ${LIMIT_CHANGES.fiveHourRaised}. Weekly limits were 50% higher from ${LIMIT_CHANGES.weeklyPromotionStart} to ${LIMIT_CHANGES.weeklyPromotionEnd} and have been 25% higher than before that promotion since ${LIMIT_CHANGES.weeklyChanged}. Anthropic did not publish the size of the ${LIMIT_CHANGES.fiveHourRaised} increase in hours or tokens. A reading of where Pro stops you taken before ${LIMIT_CHANGES.fiveHourRaised} is out of date, which is why the calculator asks for a recent one.`,
         sources: [PLAN_SOURCES.spacex, PLAN_SOURCES.weeklyPromotion, PLAN_SOURCES.opus55],
       },
       {

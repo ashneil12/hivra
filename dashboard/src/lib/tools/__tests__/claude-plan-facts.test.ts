@@ -71,7 +71,7 @@ describe("Claude plan facts, pinned to what Anthropic's pages said on 2026-09-30
       fiveHourDoubled: "2026-05-06",
       weeklyPromotionStart: "2026-05-13",
       weeklyPromotionEnd: "2026-09-13",
-      weeklyRaised: "2026-09-14",
+      weeklyChanged: "2026-09-14",
       fiveHourRaised: "2026-09-22",
     });
   });
@@ -152,7 +152,7 @@ describe("the plan changelog", () => {
       CLAUDE_PLAN_CHANGELOG.some((entry) => entry.date === date && entry.source.url === sourceUrl);
     expect(row(F.limitChanges.fiveHourDoubled, F.sources.spacex.url)).toBe(true);
     expect(row(F.limitChanges.weeklyPromotionStart, F.sources.weeklyPromotion.url)).toBe(true);
-    expect(row(F.limitChanges.weeklyRaised, F.sources.weeklyPromotion.url)).toBe(true);
+    expect(row(F.limitChanges.weeklyChanged, F.sources.weeklyPromotion.url)).toBe(true);
     expect(row(F.limitChanges.fiveHourRaised, F.sources.opus55.url)).toBe(true);
     expect(row(F.defaultModel.since, F.sources.changelog.url)).toBe(true);
   });

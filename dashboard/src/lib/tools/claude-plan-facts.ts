@@ -40,7 +40,7 @@ export const CLAUDE_PLAN_FACTS = {
     fiveHourDoubled: "2026-05-06",
     weeklyPromotionStart: "2026-05-13",
     weeklyPromotionEnd: "2026-09-13",
-    weeklyRaised: "2026-09-14",
+    weeklyChanged: "2026-09-14",
     fiveHourRaised: "2026-09-22",
   },
   plans: {

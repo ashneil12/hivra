@@ -53,11 +53,10 @@ const exampleMonth = usd(EXAMPLE_DAYS * COST.perActiveDayUsd);
 
 const link = (source: { label: string; url: string }, text: string = source.label) => `[${text}](${source.url})`;
 
-const changelogTable = [
-  "| Date | What changed | Source |",
-  "|---|---|---|",
-  ...CLAUDE_PLAN_CHANGELOG.map((row) => `| ${row.date} | ${row.text} | [${row.source.label}](${row.source.url}) |`),
-].join("\n");
+// A list, not a table: each row is a sentence and a source, which a phone shows whole instead of in a scroll box.
+const changelogList = CLAUDE_PLAN_CHANGELOG.map(
+  (row) => `- **${row.date}**: ${row.text} Source: [${row.source.label}](${row.source.url}).`,
+).join("\n");
 
 export const article: BlogArticle = {
   slug: "claude-max-vs-pro-for-claude-code",
@@ -66,12 +65,12 @@ export const article: BlogArticle = {
   metaDescription: `Pro is ${usd(PRO.priceUsd)}, Max 5x ${usd(MAX5.priceUsd)}, Max 20x ${usd(MAX20.priceUsd)}. What Anthropic publishes about Claude Code limits, when API billing is cheaper, and what to do at a limit.`,
   publishedDate: "2026-09-30",
   lastModified: "2026-09-30",
-  readingTimeMin: 12,
+  readingTimeMin: 17,
   author: "Hivra team",
   tagline: "Pro, Max 5x or Max 20x: the numbers Anthropic publishes, dated.",
   intro:
     "Anthropic sells Claude Code inside its Pro and Max plans and publishes the limits as multiples, never as counts. This page gives the prices and multiples as read on 30 September 2026, a rule for choosing between them, the break-even against API billing, what to do at a limit, and when Anthropic's own cloud is enough.",
-  shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Anthropic publishes the gap per session, not per week, so measure with /usage. At its ${DAY} average day, API billing beats Pro below ${proDays} active days a month.`,
+  shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Anthropic publishes the gap per session, not per week, so measure with /usage. At Anthropic's ${DAY} average day, API billing beats Pro below ${proDays} active days a month.`,
   sections: [
     {
       heading: `The plans side by side, read ${READ_ON}`,
@@ -97,12 +96,12 @@ export const article: BlogArticle = {
         "Anthropic will not tell you how many hours Pro covers, so the choice rests on what you observe. Use this rule. It is ours, not Anthropic's.",
         [
           "- **Stay on Pro** if the five-hour limit rarely stops you and the weekly limit has never ended your week early.",
-          "- **Move to Max 5x** if Pro's five-hour limit stops you in most working sessions. Five times Pro's per-session allowance turns a stop two hours into a window into about ten hours, more than the whole window.",
+          "- **Move to Max 5x** if Pro's five-hour limit stops you in most working sessions. If Pro stops you two hours into a window, five times that is about ten hours, more than the whole five-hour window.",
           "- **Move to Max 20x** only if Max 5x still stops you inside a window. If Pro stopped you 30 minutes in, Max 5x covers about two and a half hours and Max 20x a full five-hour window.",
           "- **Treat the weekly limit as a separate wall.** Anthropic states the Max multiples per five-hour session only, and no Anthropic page states a weekly multiple. If Pro's weekly limit is what stops you, the published figures cannot tell you how much more week Max gives. Check `/usage` after your first full week.",
         ].join("\n"),
         `The hours above are arithmetic on Anthropic's published multiples, not a promise that usage scales in a straight line. Everything you do while signed in to your account draws on the same pool: chat on the web, desktop and mobile, and every Claude Code session you run at once (${link(S.pricing, "pricing FAQ")}).`,
-        `Measure instead of guessing. \`/usage\` in Claude Code shows your plan usage bars and when they reset, and the Usage page in your Claude account settings shows the session limit and the weekly limits (${link(S.costs, "Claude Code docs")}, ${link(S.usageLimitTips, "help article")}). Mind the date: Anthropic raised weekly limits on ${longDate(CHANGES.weeklyRaised)} and five-hour limits on ${longDate(CHANGES.fiveHourRaised)}, so a reading of where Pro stops you from before those days is out of date. The [Claude Code plan calculator](/tools/claude-code-plan-calculator) applies this rule to your own hours and Pro reading, rates each plan, and says plainly when it cannot.`,
+        `Measure instead of guessing. \`/usage\` in Claude Code shows your plan usage bars and when they reset, and the Usage page in your Claude account settings shows the session limit and the weekly limits (${link(S.costs, "Claude Code docs")}, ${link(S.usageLimitTips, "help article")}). Mind the dates: Claude Code's weekly limits changed on ${longDate(CHANGES.weeklyChanged)}, when a 50% promotion ended and they settled at 25% above where they were before it, and Anthropic raised five-hour limits on ${longDate(CHANGES.fiveHourRaised)}. A reading of where Pro stops you from before those days is out of date. The [Claude Code plan calculator](/tools/claude-code-plan-calculator) applies this rule to your own hours and Pro reading, rates each plan, and says plainly when it cannot.`,
       ],
     },
     {
@@ -134,8 +133,8 @@ export const article: BlogArticle = {
           `| Max 5x | ${usd(MAX5.priceUsd)} | ${max5Days} days | ${max5DaysP90} days |`,
           `| Max 20x | ${usd(MAX20.priceUsd)} | ${max20Days} days | ${max20DaysP90} days |`,
         ].join("\n"),
-        `Read it this way: if you use Claude Code on more active days a month than the number in the table, the plan costs less than the same tokens at API list price. At Anthropic's average day, API billing beats Pro only below about ${proDays} active days a month, and beats Max 5x below about ${max5Days}. A worked example: ${EXAMPLE_DAYS} active days a month at ${DAY} a day is ${exampleMonth} on the API. That is more than Max 5x's ${usd(MAX5.priceUsd)} and far more than Pro's ${usd(PRO.priceUsd)}, so a plan that covers your sessions costs less than the API. It is less than Max 20x's ${usd(MAX20.priceUsd)}, so Max 20x would cost more than the API for the same ${EXAMPLE_DAYS} days.`,
-        `Your day may cost more or less than the average. The cost figure in \`/usage\` is an estimate of what a session would cost at API list price, and Anthropic says it is not relevant to billing on Pro and Max, but it is a fair number to put on the right-hand side. For your own hours and model mix, the [Claude Code plan calculator](/tools/claude-code-plan-calculator) prints an estimate, labelled as one, with its assumptions.`,
+        `Read it this way: if you use Claude Code on more active days a month than the number in the table, the plan costs less than the same tokens at API list price, as long as the plan's limits cover that usage. At Anthropic's average day, API billing beats Pro only below about ${proDays} active days a month, and beats Max 5x below about ${max5Days}. A worked example: ${EXAMPLE_DAYS} active days a month at ${DAY} a day is ${exampleMonth} on the API. That is more than Max 5x's ${usd(MAX5.priceUsd)} and far more than Pro's ${usd(PRO.priceUsd)}, so a plan that covers your sessions costs less than the API. It is less than Max 20x's ${usd(MAX20.priceUsd)}, so Max 20x would cost more than the API for the same ${EXAMPLE_DAYS} days.`,
+        `Your day may cost more or less than the average. The cost figure in \`/usage\` is an estimate of what a session would cost at API list price, and Anthropic says it is not relevant to billing on Pro and Max, but it is a fair number to use as your API cost per active day. For your own hours and model mix, the [Claude Code plan calculator](/tools/claude-code-plan-calculator) prints an estimate, labelled as one, with its assumptions.`,
         `API list prices per million tokens, read on ${READ_ON} (${link(S.apiPricing, "Claude API pricing")}):`,
         [
           "| Model | Input | Output | Cache read | Cache write (5 minutes) |",
@@ -196,7 +195,7 @@ export const article: BlogArticle = {
         `Hivra plans are ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. Hivra runs the official Claude Code CLI, and on your own Anthropic login it adds no markup on Claude usage: usage bills through Anthropic against your plan.`,
         CLI_RUN_LIFETIME,
         `Anthropic sets the terms for hosting Claude Code, and its legal page says the advertised usage limits for Pro and Max assume ordinary, individual usage of Claude Code and the Agent SDK. Read ${link(S.legal, "that page")} before you put a plan behind round-the-clock automation.`,
-        "Hivra is not the better choice in every case. If your tasks live in GitHub repositories and can run unattended, Anthropic's cloud sessions cost nothing beyond your plan. If you only need Claude Code while you sit at the laptop, a keep-awake command is enough, and the [keep-awake command builder](/tools/keep-mac-awake) writes it. A computer of your own pays off when you want your files, logins and other agents to stay in place between tasks.",
+        "Hivra is not the better choice in every case. If your tasks live in GitHub repositories and can run unattended, Anthropic's cloud sessions cost nothing beyond your plan. If you only need a run to keep going while the laptop stays open and plugged in, a keep-awake command is enough, and the [keep-awake command builder](/tools/keep-mac-awake) writes it. A computer of your own pays off when you want your files, logins and other agents to stay in place between tasks.",
         "Start Claude Code from [the Claude Code agent page](/agents/claude-code). Hivra is independent and is not affiliated with Anthropic or OpenAI.",
       ],
     },
@@ -204,7 +203,7 @@ export const article: BlogArticle = {
       heading: "What changed and when: the Claude plan changelog",
       paragraphs: [
         `These are dated changes to Claude plans and Claude Code limits, each with the Anthropic page that states it. Last checked ${READ_ON}. Anthropic changes plans often, so open the linked page before you rely on a row. Changes that only news sites or posts on X reported are left out.`,
-        changelogTable,
+        changelogList,
       ],
     },
   ],
