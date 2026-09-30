@@ -444,17 +444,19 @@
       demo = [];
     }
     // The first-view walk-through is for a reader who has not touched anything.
-    // Any use of the lab, by pointer, keyboard or focus, ends it and keeps it
-    // from starting later.
+    // Any use of a control, by pointer, keyboard or focus, ends it and keeps it
+    // from starting later. Dragging the page past the picture is not a choice, so
+    // a press counts only when it lands on a button.
     let touched = false;
     function touch() {
       touched = true;
       stopDemo();
     }
     const labStage = lab.closest(".boundary-sticky") || lab;
-    ["pointerdown", "keydown", "focusin"].forEach((type) =>
-      labStage.addEventListener(type, touch),
-    );
+    labStage.addEventListener("pointerdown", (event) => {
+      if (event.target instanceof Element && event.target.closest("button")) touch();
+    });
+    ["keydown", "focusin"].forEach((type) => labStage.addEventListener(type, touch));
     all("[data-boundary]").forEach((button) =>
       button.addEventListener("click", () => {
         touch();
@@ -1604,6 +1606,8 @@
   let pinned = false;
   let dismissed = false;
   let pointerKind = "mouse";
+  let tapped = false;
+  let tapTimer = 0;
   let fragment = 0;
   let closeTimer = 0;
   let frame = 0;
@@ -1729,9 +1733,31 @@
       render();
     }
   });
-  document.addEventListener("click", (event) => {
+  // A tap opens or closes the bubble on pointerup, not on click: iOS Safari does
+  // not send a click to a listener on the document for a word that has no
+  // handler of its own, but pointer events always arrive. A scroll gesture ends
+  // in pointercancel, so only a real tap gets here.
+  document.addEventListener("pointerup", (event) => {
+    if (event.pointerType !== "touch") return;
     const term = find(event.target);
-    if (!term || pointerKind !== "touch") return;
+    if (!term) return;
+    tapped = true;
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(() => {
+      tapped = false;
+    }, 500);
+    activate(term);
+    toggle();
+  });
+  // A click that follows a tap is the same tap. One with no pointer before it (a
+  // screen reader's double tap) is a tap of its own. A mouse click is left to hover.
+  document.addEventListener("click", (event) => {
+    if (tapped) {
+      tapped = false;
+      return;
+    }
+    const term = find(event.target);
+    if (!term || (pointerKind !== "touch" && event.detail !== 0)) return;
     activate(term);
     toggle();
   });

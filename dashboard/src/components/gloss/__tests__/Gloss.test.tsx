@@ -141,6 +141,40 @@ describe("Gloss tooltip", () => {
     expect(shown()).toBe(false);
   });
 
+  it("opens on a tap that sends no click, as on iOS Safari", () => {
+    const { term } = setup();
+    pointer(term, "pointerdown", { pointerType: "touch" });
+    pointer(term, "pointerup", { pointerType: "touch" });
+    expect(shown()).toBe(true);
+    // The click that some browsers add is the same tap, not a second one.
+    fireEvent.click(term);
+    expect(shown()).toBe(true);
+    pointer(term, "pointerdown", { pointerType: "touch" });
+    pointer(term, "pointerup", { pointerType: "touch" });
+    expect(shown()).toBe(false);
+  });
+
+  it("does not open when a touch turns into a scroll", () => {
+    const { term } = setup();
+    pointer(term, "pointerdown", { pointerType: "touch" });
+    pointer(term, "pointercancel", { pointerType: "touch" });
+    expect(shown()).toBe(false);
+  });
+
+  it("opens on a click that no pointer came before, as a screen reader sends it", () => {
+    const { term } = setup();
+    fireEvent.click(term);
+    expect(shown()).toBe(true);
+  });
+
+  it("leaves a mouse click to hover", () => {
+    const { term } = setup();
+    pointer(term, "pointerover");
+    pointer(term, "pointerdown");
+    fireEvent.click(term, { detail: 1 });
+    expect(shown()).toBe(true);
+  });
+
   it("shows one bubble at a time", () => {
     const { term, second } = setup();
     pointer(term, "pointerover");

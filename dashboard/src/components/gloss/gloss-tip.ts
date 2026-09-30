@@ -45,6 +45,8 @@ function mount(): () => void {
   let pinned = false;
   let dismissed = false;
   let pointerKind: "mouse" | "touch" = "mouse";
+  let tapped = false;
+  let tapTimer: ReturnType<typeof setTimeout> | undefined;
   let fragment = 0;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let frame = 0;
@@ -157,9 +159,31 @@ function mount(): () => void {
       render();
     }
   };
-  const onClick = (event: Event) => {
+  // A tap opens or closes the bubble on pointerup, not on click: iOS Safari does
+  // not send a click to a listener on the document for a word that has no
+  // handler of its own, but pointer events always arrive. A scroll gesture ends
+  // in pointercancel, so only a real tap gets here.
+  const onPointerUp = (event: Event) => {
+    if ((event as PointerEvent).pointerType !== "touch") return;
     const term = find(event.target);
-    if (!term || pointerKind !== "touch") return;
+    if (!term) return;
+    tapped = true;
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(() => {
+      tapped = false;
+    }, 500);
+    activate(term);
+    toggle();
+  };
+  // A click that follows a tap is the same tap. One with no pointer before it (a
+  // screen reader's double tap) is a tap of its own. A mouse click is left to hover.
+  const onClick = (event: Event) => {
+    if (tapped) {
+      tapped = false;
+      return;
+    }
+    const term = find(event.target);
+    if (!term || (pointerKind !== "touch" && (event as MouseEvent).detail !== 0)) return;
     activate(term);
     toggle();
   };
@@ -211,6 +235,7 @@ function mount(): () => void {
   document.addEventListener("pointerover", onPointerOver);
   document.addEventListener("pointerout", onPointerOut);
   document.addEventListener("pointerdown", onPointerDown);
+  document.addEventListener("pointerup", onPointerUp);
   document.addEventListener("click", onClick);
   document.addEventListener("focusin", onFocusIn);
   document.addEventListener("focusout", onFocusOut);
@@ -222,6 +247,7 @@ function mount(): () => void {
     document.removeEventListener("pointerover", onPointerOver);
     document.removeEventListener("pointerout", onPointerOut);
     document.removeEventListener("pointerdown", onPointerDown);
+    document.removeEventListener("pointerup", onPointerUp);
     document.removeEventListener("click", onClick);
     document.removeEventListener("focusin", onFocusIn);
     document.removeEventListener("focusout", onFocusOut);
@@ -229,6 +255,7 @@ function mount(): () => void {
     window.removeEventListener("scroll", onScroll, { capture: true });
     window.removeEventListener("resize", onResize);
     clearTimeout(closeTimer);
+    clearTimeout(tapTimer);
     cancelAnimationFrame(frame);
     active?.removeAttribute("aria-describedby");
     tip?.remove();

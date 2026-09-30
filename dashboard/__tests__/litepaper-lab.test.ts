@@ -290,6 +290,30 @@ describe("the boundary lab", () => {
       expect(lab(doc).dataset.mode).toBe("shared");
     });
 
+    it("stops when a pointer is pressed on a control, even before the click (CR-07)", () => {
+      const doc = loadPage();
+      firstView(doc);
+      elapse(3000);
+      const button = doc.querySelector<HTMLElement>('[data-boundary="shared"]')!;
+      button.dispatchEvent(new (win(doc).MouseEvent)("pointerdown", { bubbles: true }));
+      elapse(30000);
+      expect(lab(doc).dataset.mode).toBe("shared");
+    });
+
+    it("keeps going when the reader only drags the page past the picture (CR-07)", () => {
+      const doc = loadPage();
+      // A finger that starts a scroll on the picture has not chosen anything.
+      doc
+        .querySelector(".reach-map")!
+        .dispatchEvent(new (win(doc).MouseEvent)("pointerdown", { bubbles: true }));
+      firstView(doc);
+      elapse(SETTLED);
+      elapse(2500);
+      expect(lab(doc).dataset.mode).toBe("separate");
+      elapse(8000);
+      expect(lab(doc).dataset.mode).toBe("project");
+    });
+
     it("is not started by a reader who touched a resource first (CR-07)", () => {
       const doc = loadPage();
       resource(doc, "files").click();
@@ -520,6 +544,50 @@ describe("the page's plain-English terms", () => {
     expect(shown(doc)).toBe(true);
     pointer(doc.body, "pointerdown", { pointerType: "touch" });
     expect(shown(doc)).toBe(false);
+  });
+
+  it("opens on a tap that sends no click, as on iOS Safari (CR-09)", () => {
+    const doc = loadPage();
+    const word = term(doc);
+    rectsFor(word, [{ left: 300, top: 400, width: 80, height: 20 }]);
+    pointer(word, "pointerdown", { pointerType: "touch" });
+    pointer(word, "pointerup", { pointerType: "touch" });
+    expect(shown(doc)).toBe(true);
+    // The click that some browsers add is the same tap, not a second one.
+    word.click();
+    expect(shown(doc)).toBe(true);
+    // A second tap on the word closes it.
+    pointer(word, "pointerdown", { pointerType: "touch" });
+    pointer(word, "pointerup", { pointerType: "touch" });
+    expect(shown(doc)).toBe(false);
+  });
+
+  it("does not open when a touch turns into a scroll (CR-09)", () => {
+    const doc = loadPage();
+    const word = term(doc);
+    rectsFor(word, [{ left: 300, top: 400, width: 80, height: 20 }]);
+    pointer(word, "pointerdown", { pointerType: "touch" });
+    pointer(word, "pointercancel", { pointerType: "touch" });
+    expect(shown(doc)).toBe(false);
+  });
+
+  it("opens on a click that no pointer came before, as a screen reader sends it (CR-09)", () => {
+    const doc = loadPage();
+    const word = term(doc);
+    rectsFor(word, [{ left: 300, top: 400, width: 80, height: 20 }]);
+    word.click();
+    expect(shown(doc)).toBe(true);
+  });
+
+  it("leaves a mouse click to hover (CR-09)", () => {
+    const doc = loadPage();
+    const word = term(doc);
+    rectsFor(word, [{ left: 300, top: 400, width: 80, height: 20 }]);
+    pointer(word, "pointerover");
+    pointer(word, "pointerdown");
+    word.dispatchEvent(new (win(doc).MouseEvent)("click", { bubbles: true, detail: 1 }));
+    // Still open: the click did not toggle it shut.
+    expect(shown(doc)).toBe(true);
   });
 
   it("shows one bubble at a time", () => {
