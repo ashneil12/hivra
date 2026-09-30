@@ -18,6 +18,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
     blurb: "What happens to a coding agent when you close the laptop, which fixes work, and how to leave one running safely.",
     articles: [
       "keep-claude-code-running-24-7",
+      "claude-code-remote-control",
       "run-codex-24-7-in-the-cloud",
       "claude-code-vs-codex-24-7",
       "ai-agent-dies-terminal-closes-fixes",
