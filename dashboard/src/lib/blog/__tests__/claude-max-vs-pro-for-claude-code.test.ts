@@ -543,12 +543,58 @@ describe("the Hivra section and the claims rules", () => {
   });
 });
 
+describe("the sibling posts it links to state the same Anthropic API prices and say what they did not recompute", () => {
+  // The post is a dated table of Anthropic prices, so the posts it sends readers
+  // to must not print the April 2026 Sonnet 4.6 and Opus 4.6 prices as current.
+  const SIBLINGS = ["cost-of-running-ai-agent", "byo-api-key-explained", "ai-agent-api-cost-optimization"];
+  const copyOf = (slug: string) => [...BLOG_ARTICLES[slug].sections.flatMap((section) => section.paragraphs), ...BLOG_ARTICLES[slug].faqs.map((faq) => faq.a)].join("\n");
+
+  it.each(SIBLINGS)("%s names the current Claude models and none of the retired 4.6 prices", (slug) => {
+    const copy = copyOf(slug);
+    expect(copy).not.toMatch(/Sonnet 4\.6|Opus 4\.6|1M context, 128K max output|no surcharge as of March 2026/);
+    expect(copy).toContain(F.api.sonnet.label);
+    expect(copy).toContain(F.api.opus.label);
+  });
+
+  it.each(SIBLINGS)("%s prints the Sonnet 5.5 and Opus 5.5 prices from the constants, dated 30 September 2026", (slug) => {
+    const copy = copyOf(slug);
+    const { sonnet, opus } = F.api;
+    const pair = (input: number, output: number) => new RegExp(`\\$${input}(?:\\.00)?\\s?/\\s?\\$${output}(?:\\.00)?`);
+    expect(copy).toMatch(pair(sonnet.input, sonnet.output));
+    expect(copy).toMatch(pair(opus.input, opus.output));
+    expect(copy).toContain("30 September 2026");
+  });
+
+  it("do not re-date OpenAI prices and say which ranges were not recalculated", () => {
+    expect(copyOf("cost-of-running-ai-agent")).toContain("OpenAI, as of April 2026: GPT-5 mini");
+    expect(copyOf("cost-of-running-ai-agent")).toContain("The monthly ranges below were worked out at April 2026 prices and have not been recalculated.");
+    expect(copyOf("ai-agent-api-cost-optimization")).toContain("OpenAI prices, as of April 2026:");
+    expect(copyOf("ai-agent-api-cost-optimization")).toContain("worked out at April 2026 model prices and have not been recalculated");
+    expect(copyOf("byo-api-key-explained")).toContain("a range worked out at April 2026 prices and not recalculated");
+  });
+
+  it("qualify the no-surprise-bill and zero-AI-cost lines the post contradicts", () => {
+    expect(copyOf("claude-code-vs-codex-24-7")).toContain("as long as no API key is set in the environment and usage credits are off, the worst case for a runaway agent is hitting the window limit");
+    expect(copyOf("cost-of-running-ai-agent")).toContain("$0 while they stay inside the subscription's limits");
+    expect(copyOf("byo-api-key-explained")).toContain("adds no new AI cost while they stay inside the subscription's limits");
+  });
+});
+
 describe("inbound links to the post", () => {
   const POST_LINK = `](/blog/${SLUG})`;
 
-  it.each(["cost-of-running-ai-agent", "claude-code-vs-codex-24-7", "byo-api-key-explained"])("%s links to it once, in its own text", (slug) => {
+  it.each(["cost-of-running-ai-agent", "claude-code-vs-codex-24-7", "byo-api-key-explained", "keep-claude-code-running-24-7"])("%s links to it once, in its own text", (slug) => {
     const copy = BLOG_ARTICLES[slug].sections.flatMap((section) => section.paragraphs).join("\n");
     expect(copy.split(POST_LINK)).toHaveLength(2);
+  });
+
+  it("uses its pricing-query title as the anchor text in the sibling posts and on the calculator page", () => {
+    for (const slug of ["cost-of-running-ai-agent", "claude-code-vs-codex-24-7", "byo-api-key-explained", "keep-claude-code-running-24-7"]) {
+      const copy = BLOG_ARTICLES[slug].sections.flatMap((section) => section.paragraphs).join("\n");
+      expect({ slug, anchored: copy.includes("[Claude Code pricing: Pro vs Max](" + `/blog/${SLUG})`) }).toEqual({ slug, anchored: true });
+    }
+    const label = getToolEntry("claude-code-plan-calculator")!.relatedLinks.find((link) => link.href === `/blog/${SLUG}`)?.label;
+    expect(label).toMatch(/^Claude Code pricing: Pro vs Max/);
   });
 
   it("is linked from the plan calculator page, once, and the calculator links back to no other post", () => {
