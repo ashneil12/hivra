@@ -2,7 +2,7 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`482d24407017eb29233e0a243ff28cdde1e9d015d7df4f3cf34c5bb4525e70af`
+`5127a4e26bc7676aee567cd09eee1af82cc9394530433f80f2e4a8d093483e2d`
 (v2.5, plain-English pass, 30 September 2026). v2.5 rewrites the hard words outside the founder letter for a 12-year-old reader: it defines "AI agent", "model", the cloud, open source, snapshots, virtual machines and containers where they first appear, and swaps jargon (terminals, repositories, SSH keys, credentials, tenants, MCP servers) for plain words. v2.4 (28 September 2026) opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
 language, treats every surface it names as live (no preview labels, at Ash's
 direction), adds Windows desktops to the positioning, simplifies "Keeping a
