@@ -126,17 +126,33 @@ describe("the page targets the pricing queries and answers on the first screen",
 });
 
 describe("the post reads its numbers from the calculator's constants", () => {
-  it("states each plan price the calculator holds, in the short answer and the plans table", () => {
+  it("states each plan price the calculator holds, in the short answer and the plans list", () => {
     const { pro, max5x, max20x } = F.plans;
     expect(article.shortAnswer).toContain(`Pro (${usd(pro.priceUsd)})`);
     expect(article.shortAnswer).toContain(`Max 5x (${usd(max5x.priceUsd)})`);
     expect(article.shortAnswer).toContain(`Max 20x (${usd(max20x.priceUsd)})`);
-    const table = sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n");
-    expect(table).toContain(`${usd(pro.priceUsd)} a month, or ${usd(pro.annualMonthlyUsd)} a month on the annual plan (${usd(pro.annualUpfrontUsd)} billed up front)`);
-    expect(table).toContain(`${usd(max5x.priceUsd)} a month`);
-    expect(table).toContain(`${usd(max20x.priceUsd)} a month`);
-    expect(table).toContain(`${max5x.multiplier}x Pro's`);
-    expect(table).toContain(`${max20x.multiplier}x Pro's`);
+    const plans = sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n");
+    expect(plans).toContain(`${usd(pro.priceUsd)} a month, or ${usd(pro.annualMonthlyUsd)} a month on the annual plan (${usd(pro.annualUpfrontUsd)} billed up front)`);
+    expect(plans).toContain(`${usd(max5x.priceUsd)} a month`);
+    expect(plans).toContain(`${usd(max20x.priceUsd)} a month`);
+    expect(plans).toContain(`${max5x.multiplier}x Pro's`);
+    expect(plans).toContain(`${max20x.multiplier}x Pro's`);
+  });
+
+  it("lays the plans out as a list, because article tables scroll sideways on a 390 px phone", () => {
+    // The shared article table has a 560 px minimum width, so any plans table
+    // needed a swipe to reach Max 5x. A list shows every plan on a phone.
+    const section = sectionByHeading("Claude Code pricing by plan").paragraphs;
+    expect(section.some((paragraph) => paragraph.startsWith("|"))).toBe(false);
+    const list = section.find((paragraph) => paragraph.startsWith("- **Pro:**"))!;
+    expect(list.split("\n")).toEqual([
+      "- **Pro:** $20 a month, or $17 a month on the annual plan ($200 billed up front). The baseline that the Max multiples are measured against.",
+      "- **Max 5x:** $100 a month, monthly only. 5x Pro's usage per five-hour session.",
+      "- **Max 20x:** $200 a month, monthly only. 20x Pro's usage per five-hour session.",
+      "- **Weekly limit:** all three have one. Anthropic does not publish the size of Pro's, or a weekly multiple for Max.",
+      "- **Fable 5.1:** usage credits only on Pro. Included on Max up to 50% of weekly limits.",
+      "- **Claude Code:** included in all three.",
+    ]);
   });
 
   it("carries the same plan prices as the calculator's own page copy", () => {
@@ -152,9 +168,10 @@ describe("the post reads its numbers from the calculator's constants", () => {
   it("prints the break-even days for Anthropic's $13 average and its $30 line, pinned to literals", () => {
     // 20 / 13 = 1.5, 100 / 13 = 7.7, 200 / 13 = 15.4; 20 / 30 = 0.7, 100 / 30 = 3.3, 200 / 30 = 6.7.
     const section = sectionByHeading("API key or subscription").paragraphs.join("\n");
-    expect(section).toContain("| Pro | $20 | 1.5 days | 0.7 days |");
-    expect(section).toContain("| Max 5x | $100 | 7.7 days | 3.3 days |");
-    expect(section).toContain("| Max 20x | $200 | 15.4 days | 6.7 days |");
+    expect(section).toContain("| Plan | At $13 a day | At $30 a day |");
+    expect(section).toContain("| Pro ($20) | 1.5 days | 0.7 days |");
+    expect(section).toContain("| Max 5x ($100) | 7.7 days | 3.3 days |");
+    expect(section).toContain("| Max 20x ($200) | 15.4 days | 6.7 days |");
     expect(section).toContain("break-even active days a month = plan price / API cost per active day");
     expect(article.shortAnswer).toContain("At Anthropic's $13 enterprise average day, API billing beats Pro only below 1.5 active days a month");
   });
@@ -163,7 +180,7 @@ describe("the post reads its numbers from the calculator's constants", () => {
     // Anthropic's $13 is an average across enterprise deployments, not a typical
     // solo day, and a plan is only cheaper if its limits cover the sessions.
     const section = sectionByHeading("API key or subscription").paragraphs.join("\n");
-    expect(section).toContain("| Plan | Price | At $13 a day (Anthropic's enterprise average) |");
+    expect(section).toContain("Break-even days at Anthropic's $13 enterprise average day, and at the $30 day that 90% of users stay below:");
     expect(section).toContain("across enterprise deployments");
     expect(section).toContain("as long as the plan's limits cover that usage");
     expect(bodyCopy).not.toMatch(/Anthropic's average day|\(Anthropic's average\)/);
