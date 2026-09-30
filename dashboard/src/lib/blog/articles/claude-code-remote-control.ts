@@ -146,8 +146,8 @@ export const article: BlogArticle = {
       a: "Anthropic publishes a few numbers and no overall limit. In server mode, Claude Code gives up after roughly 10 minutes without a network and the process exits. After you stop the server, its sessions can be brought back for about four hours. If the machine stays offline long enough, the server cleans up the environment and the sessions cannot be resumed, but that threshold is not published.",
     },
     {
-      q: "Does Remote Control run my code on Anthropic's servers?",
-      a: "No. Claude keeps running on your machine, so code execution and filesystem access stay there. Anthropic's servers route messages and store the session transcript while Remote Control is connected, under its Data usage policy. Your session makes outbound HTTPS requests only and opens no inbound ports.",
+      q: "Is Claude Code Remote Control secure, and does it run my code on Anthropic's servers?",
+      a: "Here is what Anthropic documents, and this page adds no safety promise of its own. Claude keeps running on your machine, so code execution and filesystem access stay there, not on Anthropic's servers. Your session makes outbound HTTPS requests only and opens no inbound ports. Anthropic's servers route messages and store the session transcript while Remote Control is connected, under its Data usage policy.",
     },
     {
       q: "Is Remote Control the same as Claude Code on the web?",

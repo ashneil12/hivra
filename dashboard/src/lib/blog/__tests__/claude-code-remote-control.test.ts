@@ -334,6 +334,17 @@ describe("Claude Code Remote Control article", () => {
     expect(start.a).toContain("The flag forms for an interactive session are in the commands section above.");
   });
 
+  it("answers the \"is it secure\" question with the documented facts and no safety promise", () => {
+    // "Is the Claude code remote secure?" is a People Also Ask query. The answer states what Anthropic documents, says the
+    // transcript is stored on Anthropic's servers, and makes no absolute claim.
+    const faq = article.faqs.find(({ q }) => q === "Is Claude Code Remote Control secure, and does it run my code on Anthropic's servers?")!;
+    expect(faq).toBeDefined();
+    expect(faq.a).toContain("this page adds no safety promise of its own");
+    expect(faq.a).toContain("store the session transcript while Remote Control is connected");
+    expect(faq.a).toContain("outbound HTTPS requests only and opens no inbound ports");
+    expect(faq.a).not.toMatch(/\b(?:completely|fully|100%|guaranteed|always|never) (?:secure|safe|private)\b|\bunhackable\b/i);
+  });
+
   it("gives 8 to 11 real questions, including both offline messages", () => {
     expect(article.faqs.length).toBeGreaterThanOrEqual(8);
     expect(article.faqs.length).toBeLessThanOrEqual(11);
