@@ -49,6 +49,28 @@ function structuredData(container: HTMLElement) {
 describe("/blog/[slug] article page", () => {
   afterEach(cleanup);
 
+  it("shows a Short answer box and the updated date on the laptop post", async () => {
+    const article = BLOG_ARTICLES["keep-claude-code-running-24-7"];
+    expect(article.shortAnswer).toBeTruthy();
+    expect(article.shortAnswer!.split(/\s+/).length).toBeGreaterThanOrEqual(40);
+    expect(article.shortAnswer!.split(/\s+/).length).toBeLessThanOrEqual(60);
+    const { container } = await renderArticle("keep-claude-code-running-24-7");
+    const box = container.querySelector("#short-answer");
+    expect(box).not.toBeNull();
+    expect(box).toHaveTextContent(article.shortAnswer!.slice(0, 40));
+    expect(screen.getByRole("heading", { level: 2, name: "Short answer" })).toBeInTheDocument();
+    expect(container.querySelector(`time[datetime="${article.lastModified}"]`)).toHaveTextContent(/^Updated /);
+  });
+
+  it("shows an updated date only when the article changed after it was published", async () => {
+    for (const article of BLOG_ARTICLES_LIST) {
+      const { container } = await renderArticle(article.slug);
+      const updated = [...container.querySelectorAll("time")].filter((node) => /^Updated /.test(node.textContent ?? ""));
+      expect({ slug: article.slug, updated: updated.length }).toEqual({ slug: article.slug, updated: article.lastModified !== article.publishedDate ? 1 : 0 });
+      cleanup();
+    }
+  });
+
   it("prerenders every registered article, including the cutover posts", () => {
     const params = generateStaticParams().map(({ slug }) => slug);
     expect(params.sort()).toEqual(Object.keys(BLOG_ARTICLES).sort());
