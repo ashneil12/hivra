@@ -9,10 +9,10 @@ import styles from "./founder-tokenomics.module.css";
 export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
 
 const USES = [
-  { name: "Compute and software", text: "Hold for a compute tier, fixed when you first qualify. Metered runtime, storage, extra cores and egress. Prebuilt operator packs and reserved capacity." },
-  { name: "Work that improves security", text: "Containment bounties, verified threat reports and paid reviews. Certification bonds back a specific claim with collateral; nothing accrues just for holding it." },
-  { name: "Builders and useful methods", text: "Pay the people publishing and maintaining tools on Exchange. Buy experience packages with the method, evidence and limits included for review." },
-  { name: "Budgets with boundaries", text: "Fund missions against accepted evidence. Give an agent a capped, revocable allowance. Delegating work must never multiply the money available." },
+  { name: "Compute and software", text: "Hold for a tier of computing power, fixed when you first qualify. Pay for running time, storage, extra processor cores and data sent out. Ready-made agent setups and reserved capacity." },
+  { name: "Work that improves security", text: "Rewards for breaking out of the machine, paid threat reports and paid reviews. Certification bonds put a deposit behind a specific claim; nothing grows just from holding it." },
+  { name: "Builders and useful methods", text: "Pay the people who publish and look after tools on Exchange. Buy experience packages with the method, proof and limits included for review." },
+  { name: "Budgets with boundaries", text: "Fund missions, paying when the proof is accepted. Give an agent an allowance with a cap that can be taken back. Handing a job to another agent must never multiply the money available." },
 ] as const;
 
 /**
@@ -85,6 +85,6 @@ export default function FullTokenomicsSection({
       <div><p>Trading fees and platform revenue would fund maintenance, independent audits, sponsored compute and security bounties. Contributors choose stablecoin or $HIVRA at equivalent value.</p><p>The treasury would sell to cover bills and contributor payments, and buy only when the $HIVRA it holds falls below what contributors have chosen to be paid in $HIVRA. Purchases, sales and payments would all be published, with what each one funded. Tokens held in the treasury aren&apos;t burned. They get paid out again.</p><p>No price target, holder payout or claim on revenue. No fixed share of revenue committed to buying tokens.</p></div>
     </div>
     <div className={styles.rules}><span>No staking or yield.</span><span>No company ownership.</span><span>No buying extra authority.</span></div>
-    <div className={styles.economyEnding}><p>No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+    <div className={styles.economyEnding}><p>No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting (the schedule it&apos;s released on) get published before launch.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
   </section>;
 }

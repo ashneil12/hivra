@@ -30,7 +30,7 @@ const DORMANT: TokenPhaseCopy = {
     restrictedHeaderLead: "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra.",
     migrationParagraphs: [
       "The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.",
-      "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.",
+      "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.",
     ],
   },
   evolution: {

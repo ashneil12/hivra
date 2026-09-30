@@ -80,7 +80,7 @@ const LAUNCHED_TOKEN_PAGE_MIGRATION = {
 const LAUNCHED_TOKENOMICS_MIGRATION_INTRO =
   "$HIVRA is live on Base, launched through Bankr. Under the proposal, an active claim would sell your old tokens into their existing pool and swap the ETH proceeds for $HIVRA in the new pool. Bankr would run the conversion.";
 const DORMANT_TOKENOMICS_MIGRATION_TERMS =
-  "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps.";
+  "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.";
 const LAUNCHED_TOKENOMICS_MIGRATION_TERMS =
   "Existing holders keep their access, without forced conversion or a claim deadline. The steps, rate, fees and risks of a conversion get published before claims open.";
 
