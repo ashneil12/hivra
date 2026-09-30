@@ -53,6 +53,9 @@ export const PAGE_LAST_MODIFIED = {
   stats: "2026-09-30",
   // Google Analytics named as a processor and consent wording, 2026-09-24.
   privacy: "2026-09-24",
+  // New pages, written 2026-09-30. /about replaced a 308 to the founder note.
+  about: "2026-09-30",
+  security: "2026-09-30",
   // The terms text is from 2026-03-01; 2026-09-24 only added its own title and
   // canonical.
   terms: "2026-03-01",

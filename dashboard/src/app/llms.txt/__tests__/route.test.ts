@@ -48,6 +48,8 @@ describe("GET /llms.txt", () => {
       `${SITE_URL}/stats`,
       `${SITE_URL}/privacy`,
       `${SITE_URL}/terms`,
+      `${SITE_URL}/about`,
+      `${SITE_URL}/security`,
       `${SITE_URL}/ecosystem`,
       `${SITE_URL}/LITEPAPER.md`,
       `${SITE_URL}/WHITEPAPER.md`,

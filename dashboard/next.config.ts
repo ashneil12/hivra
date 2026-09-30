@@ -188,6 +188,10 @@ const nextConfig: NextConfig = {
             "/token",
             "/tokenomics",
             "/why-hivra/:path*",
+            // Trust pages for Hivra's own site: their contact is Hivra's, not
+            // the operator's.
+            "/about",
+            "/security",
           ].map(source => ({
             source,
             destination: "/dashboard",
@@ -198,7 +202,6 @@ const nextConfig: NextConfig = {
       // and that search engines and old links still carry. The homepage FAQ
       // section is id="faq".
       { source: "/faq", destination: "/#faq", permanent: true },
-      { source: "/about", destination: "/why-hivra", permanent: true },
       // Social cards cached from the retired site point at this static file.
       { source: "/og-image.png", destination: "/opengraph-image", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.

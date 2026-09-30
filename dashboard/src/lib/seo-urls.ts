@@ -103,6 +103,20 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
       priority: 0.4,
     },
     {
+      // The entity home: who and what Hivra is, formerly HermesOS, contact.
+      url: `${SITE_URL}/about`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.about),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      // How to report a vulnerability; /.well-known/security.txt points here.
+      url: `${SITE_URL}/security`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.security),
+      changeFrequency: "monthly",
+      priority: 0.3,
+    },
+    {
       url: `${SITE_URL}/privacy`,
       lastModified: cutoverPage(PAGE_LAST_MODIFIED.privacy),
       changeFrequency: "monthly",

@@ -79,6 +79,15 @@ describe("seo urls", () => {
     expect(getSiteUrls().map((u) => u.url)).toContain(`${SITE_URL}/status`);
   });
 
+  it("lists the trust pages: /about (the entity home) and /security", () => {
+    const urls = getSiteUrls();
+    for (const path of ["/about", "/security"]) {
+      const entry = urls.find((u) => u.url === `${SITE_URL}${path}`);
+      expect({ path, present: Boolean(entry) }).toEqual({ path, present: true });
+      expect(day(entry!.lastModified)).toBe("2026-09-30");
+    }
+  });
+
   it("dates the /features and /compare detail pages to the 2026-09-24 truth pass and the hubs to their later rewrite", () => {
     const urls = getSiteUrls();
     const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
@@ -128,6 +137,8 @@ describe("seo urls", () => {
         ["/status", PAGE_LAST_MODIFIED.status, false],
         ["/stats", PAGE_LAST_MODIFIED.stats, false],
         ["/terms", PAGE_LAST_MODIFIED.terms, false],
+        ["/about", PAGE_LAST_MODIFIED.about, false],
+        ["/security", PAGE_LAST_MODIFIED.security, false],
       ];
       for (const [path, registryDay, floored] of expectations) {
         const expected = floored && dayToDate(registryDay) < CUTOVER_LAST_MODIFIED ? CUTOVER_LAST_MODIFIED : dayToDate(registryDay);
