@@ -81,10 +81,13 @@ describe("POST /api/billing/wallet/refresh", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.snapshotId).toBe("snap_x");
-    expect(mockEvaluate).toHaveBeenCalledWith({
-      userId: "user_a",
-      balances: { hermesos: 39022814000000000000000000n },
-    });
+    // With the geo-policy on, the route also passes the viewer's country verdict.
+    expect(mockEvaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user_a",
+        balances: { hermesos: 39022814000000000000000000n },
+      }),
+    );
   });
 
   it("still returns 200 if eligibility re-eval throws (snapshot is the source of truth)", async () => {

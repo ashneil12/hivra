@@ -22,6 +22,8 @@ describe("token geo-policy", () => {
 
   it("lists only canonical ISO-3166 alpha-2 codes of real regions, each once", () => {
     // Guards the one-line enabling change: a typo would silently block nobody.
+    const real = jest.requireActual<typeof import("../token-geo-list")>("../token-geo-list").BLOCKED_COUNTRIES;
+    expect(listProblems(real)).toEqual([]);
     expect(listProblems(TOKEN_GEO_POLICY.blockedCountries)).toEqual([]);
   });
 
@@ -69,5 +71,12 @@ describe("token geo-policy", () => {
     expect(tokenGeoNotice("GB")).toBe("Token features aren't available to people in the United Kingdom.");
     expect(tokenGeoNotice("DE")).toBe("Token features aren't available to people in Germany.");
     expect(tokenGeoNotice("US")).toBe("Token features aren't available to people in the United States.");
+  });
+});
+
+describe("the committed country list", () => {
+  it("blocks the United Kingdom", () => {
+    const real = jest.requireActual<typeof import("../token-geo-list")>("../token-geo-list").BLOCKED_COUNTRIES;
+    expect(real).toContain("GB");
   });
 });

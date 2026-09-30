@@ -11,17 +11,19 @@
  * lists what gets blocked, what never changes for existing users, the legal
  * review this needs, and how to verify it after the merge.
  *
- * Client-safe: no imports. The server decides (lib/compliance/token-geo-gate.ts);
+ * Client-safe: its only import is the plain country list. The server decides (lib/compliance/token-geo-gate.ts);
  * the client only uses `isTokenGeoPolicyActive()` to skip asking when the list
  * is empty.
  */
+import { BLOCKED_COUNTRIES } from "./token-geo-list";
+
 export interface TokenGeoPolicy {
   /** ISO-3166 alpha-2 codes, upper case, e.g. "GB". Empty = dormant. */
   blockedCountries: readonly string[];
 }
 
 export const TOKEN_GEO_POLICY: TokenGeoPolicy = {
-  blockedCountries: [],
+  blockedCountries: BLOCKED_COUNTRIES,
 };
 
 /** Error code on every 403 the gate returns. */

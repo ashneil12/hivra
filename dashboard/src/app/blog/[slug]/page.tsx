@@ -1,5 +1,5 @@
 import PublicSite from "@/components/public-site/PublicSite";
-import { Breadcrumbs, EditorialArt, EditorialCTA, EditorialMarkdownLink, EditorialQuestions, EditorialRelated } from "@/components/public-editorial/Editorial";
+import { Breadcrumbs, EditorialArt, EditorialCTA, EditorialQuestions, EditorialRelated } from "@/components/public-editorial/Editorial";
 import ArticleNavigation from "@/components/public-editorial/ArticleNavigation.client";
 import styles from "../../../components/public-editorial/secondary-site.module.css";
 import type { Metadata } from "next";
@@ -10,7 +10,7 @@ import StructuredData from "@/components/StructuredData";
 import { BLOG_ARTICLES } from "@/lib/blog-data";
 import { blogArticleOgImagePath, buildBlogArticleMetadata } from "@/lib/blog/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
-import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { articleMarkdownComponents } from "@/components/public-editorial/article-markdown";
 
 // SCRIPTURE_ANCHOR: blog-scroll | Habakkuk 2:2 | Verse: Write the vision, and make it plain on tablets, that he who runs may read it.
 
@@ -94,7 +94,7 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
         <Breadcrumbs items={[{ label: "Blog", href: "/blog" }, { label: article.title }]} />
         <header className={styles.articleHeader}>
           <div><span className={styles.eyebrow}>{article.tagline}</span><h1>{article.title}</h1><p>{article.intro}</p>
-            <div className={styles.metadata}><span>{article.author}</span><time dateTime={article.publishedDate}>{formatDate(article.publishedDate)}</time><span>{article.readingTimeMin} min read</span></div>
+            <div className={styles.metadata}><span>{article.author}</span><time dateTime={article.publishedDate}>{formatDate(article.publishedDate)}</time>{article.lastModified !== article.publishedDate && <time dateTime={article.lastModified}>Updated {formatDate(article.lastModified)}</time>}<span>{article.readingTimeMin} min read</span></div>
           </div>
           <EditorialArt number={String(article.readingTimeMin).padStart(2, "0")} label="Minutes to read" />
         </header>
@@ -102,18 +102,13 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
           <ArticleNavigation items={contents} />
           <div className={styles.articleBody}>
             <article>
+              {article.shortAnswer ? <section id="short-answer" className={styles.shortAnswer} aria-labelledby="short-answer-heading">
+                <h2 id="short-answer-heading">Short answer</h2>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={articleMarkdownComponents}>{article.shortAnswer}</ReactMarkdown>
+              </section> : null}
               {article.sections.map((section, index) => <section key={section.heading} id={contents[index].id} className={styles.bodySection}>
                 <h2>{section.heading}</h2>
-                {section.paragraphs.map((paragraph, paragraphIndex) => <ReactMarkdown key={paragraphIndex} remarkPlugins={[remarkGfm]} components={{
-                  a: ({ node, ...props }) => { void node; return <EditorialMarkdownLink {...props} />; },
-                  code({ children, className, node, ...rest }) {
-                    void node;
-                    const match = /language-(\w+)/.exec(className || "");
-                    return match ? <div className={styles.code}><CodeBlock language={match[1]} value={String(children).replace(/\n$/, "")} /></div> : <code {...rest}>{children}</code>;
-                  },
-                  pre: ({ children }) => <div className={styles.code}>{children}</div>,
-                  table: ({ children }) => <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Scrollable table"><table>{children}</table></div>,
-                }}>{paragraph}</ReactMarkdown>)}
+                {section.paragraphs.map((paragraph, paragraphIndex) => <ReactMarkdown key={paragraphIndex} remarkPlugins={[remarkGfm]} components={articleMarkdownComponents}>{paragraph}</ReactMarkdown>)}
               </section>)}
             </article>
             <EditorialQuestions questions={article.faqs} />
