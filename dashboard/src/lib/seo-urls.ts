@@ -2,6 +2,8 @@ import type { MetadataRoute } from "next";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
+import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
+import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
 export const SITE_URL = "https://hivra.cloud";
@@ -17,6 +19,11 @@ const CORE_PAGES_LAST_MODIFIED = new Date("2026-07-07");
 // rewrite date. If the cutover ships well after this date, move it to the
 // Promote date: Google compares lastmod with its last crawl of production.
 const FEATURE_COMPARE_LAST_MODIFIED = new Date("2026-09-24");
+
+// The host comparison pages (Agent 37, Hostinger, xCloud, Nous Hermes Cloud) and
+// the dated price table on the /compare hub carry the date their competitor
+// numbers were read, so a refreshed check moves this with it.
+export const COMPARE_FACTS_LAST_MODIFIED = new Date(COMPETITOR_FACTS_CHECKED);
 
 // Pages whose content changed for the cutover: the homepage (title, copy and
 // JSON-LD), the blog index (restored articles) and the privacy policy (Google
@@ -46,7 +53,7 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     },
     {
       url: `${SITE_URL}/compare`,
-      lastModified: FEATURE_COMPARE_LAST_MODIFIED,
+      lastModified: COMPARE_FACTS_LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 0.8,
     },
@@ -137,12 +144,20 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     "ai-agent-hosting-alternatives",
   ];
 
-  const comparePages: MetadataRoute.Sitemap = compareSlugs.map((slug) => ({
-    url: `${SITE_URL}/compare/${slug}`,
-    lastModified: FEATURE_COMPARE_LAST_MODIFIED,
-    changeFrequency: "monthly" as const,
-    priority: 0.75,
-  }));
+  const comparePages: MetadataRoute.Sitemap = [
+    ...compareSlugs.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: FEATURE_COMPARE_LAST_MODIFIED,
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+    ...HOST_COMPARISON_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: COMPARE_FACTS_LAST_MODIFIED,
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+  ];
 
   // Blog articles — pulled live from the article registry (always up to date)
   const blogPages: MetadataRoute.Sitemap = BLOG_ARTICLES_LIST.map((article) => ({

@@ -1,4 +1,5 @@
 import { CUTOVER_LAST_MODIFIED, getSiteUrls, SITE_URL } from "../seo-urls";
+import { COMPETITOR_FACTS_CHECKED } from "../compare/competitor-facts";
 
 describe("seo urls", () => {
   it("includes the token verification page in the sitemap", () => {
@@ -72,15 +73,19 @@ describe("seo urls", () => {
   it("dates the rewritten /features and /compare pages to the 2026-09-24 truth pass so crawlers refetch them", () => {
     const urls = getSiteUrls();
     const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
-    // 2 hubs + 6 feature pages + 5 comparison pages.
+    // 2 hubs + 6 feature pages + 9 comparison pages.
     expect(rewritten.map((u) => u.url.slice(SITE_URL.length)).sort()).toEqual(
       [
         "/compare",
         "/compare/ai-agent-hosting-alternatives",
         "/compare/openclaw-to-hermes",
+        "/compare/vs-agent-37",
+        "/compare/vs-hostinger",
+        "/compare/vs-nous-hermes-cloud",
         "/compare/vs-railway",
         "/compare/vs-render",
         "/compare/vs-self-hosted",
+        "/compare/vs-xcloud",
         "/features",
         "/features/browser-automation",
         "/features/multi-agent",
@@ -90,8 +95,12 @@ describe("seo urls", () => {
         "/features/scheduled-tasks",
       ].sort(),
     );
+    // The hub and the four host comparisons carry the date their competitor
+    // numbers were read (competitor-facts.ts); everything else the truth pass.
+    const factsPages = new Set(["/compare", "/compare/vs-agent-37", "/compare/vs-hostinger", "/compare/vs-xcloud", "/compare/vs-nous-hermes-cloud"]);
     for (const entry of rewritten) {
-      expect([entry.url, new Date(entry.lastModified as Date).toISOString().slice(0, 10)]).toEqual([entry.url, "2026-09-24"]);
+      const expected = factsPages.has(entry.url.slice(SITE_URL.length)) ? COMPETITOR_FACTS_CHECKED : "2026-09-24";
+      expect([entry.url, new Date(entry.lastModified as Date).toISOString().slice(0, 10)]).toEqual([entry.url, expected]);
     }
   });
 
