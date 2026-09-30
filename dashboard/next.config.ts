@@ -1,5 +1,9 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+// Next's own default list of bots that need metadata in <head>. The path is
+// part of Next's build output; next-config.test.ts fails if an upgrade moves it.
+import { HTML_LIMITED_BOT_UA_RE } from "next/dist/shared/lib/router/utils/html-bots";
+import { htmlLimitedBotsWithAiCrawlers } from "./src/lib/ai-crawlers";
 import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
 
 // This is build-generation provenance only. Vercel's authoritative deployment
@@ -89,6 +93,9 @@ const nextConfig: NextConfig = {
   },
   distDir: process.env.VERCEL ? ".next" : ".next.nosync", // Prevent iCloud Drive thrashing locally
   trailingSlash: false,
+  // Keep Next's default list and add the AI crawlers (src/lib/ai-crawlers.ts).
+  // Setting this option replaces the default, so it must extend it.
+  htmlLimitedBots: htmlLimitedBotsWithAiCrawlers(HTML_LIMITED_BOT_UA_RE),
   compress: false, // Disable built-in gzip — it buffers entire responses, defeating SSE streaming
   crossOrigin: "anonymous",
   allowedDevOrigins: [localLiveAuthHost, `*.${localLiveAuthHost}`],

@@ -3,6 +3,9 @@ import { checkCustomRoutes, type Header, type Rewrite } from 'next/dist/lib/load
 import { modifyRouteRegex } from 'next/dist/lib/redirect-status';
 import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match';
 import { prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination';
+import { HTML_LIMITED_BOT_UA_RE } from 'next/dist/shared/lib/router/utils/html-bots';
+import { shouldServeStreamingMetadata } from 'next/dist/server/lib/streaming-metadata';
+import { AI_CRAWLER_USER_AGENTS } from '@/lib/ai-crawlers';
 import { clerkAssetScriptUrls } from '@/lib/clerk-assets';
 import nextConfig, { scrubHostedEnvironmentForSelfHost } from '../../next.config';
 
@@ -173,6 +176,78 @@ describe('next config', () => {
     expect(scriptSrc).toContain('https://fpjscdn.net');
     expect(scriptSrc).toContain('https://fpnpmcdn.net');
     expect(connectSrc).toContain('https://*.fpjs.io');
+  });
+
+  describe('htmlLimitedBots', () => {
+    // Real user-agent shapes from each vendor's documentation.
+    const AI_CRAWLER_UAS: Record<string, string> = {
+      GPTBot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.3; +https://openai.com/gptbot',
+      'OAI-SearchBot': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; OAI-SearchBot/1.3; +https://openai.com/searchbot',
+      'ChatGPT-User': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot',
+      ClaudeBot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)',
+      'Claude-SearchBot': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-SearchBot/1.0; +Claude-SearchBot@anthropic.com)',
+      'Claude-User': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com)',
+      PerplexityBot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)',
+      'Perplexity-User': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)',
+      CCBot: 'CCBot/2.0 (https://commoncrawl.org/faq/)',
+    };
+
+    // What Next does with the option: the RegExp is serialised to its source and
+    // compiled case-insensitively (build/index.js loadConfig, streaming-metadata.js).
+    const servedStreaming = (ua: string) =>
+      shouldServeStreamingMetadata(ua, (nextConfig.htmlLimitedBots as RegExp).source);
+
+    it('is a RegExp, which is the only shape Next accepts', () => {
+      expect(nextConfig.htmlLimitedBots).toBeInstanceOf(RegExp);
+    });
+
+    it('lists the eight AI crawlers the SEO checklist names, plus Perplexity-User', () => {
+      expect([...AI_CRAWLER_USER_AGENTS]).toEqual([
+        'GPTBot',
+        'OAI-SearchBot',
+        'ChatGPT-User',
+        'ClaudeBot',
+        'Claude-SearchBot',
+        'Claude-User',
+        'PerplexityBot',
+        'Perplexity-User',
+        'CCBot',
+      ]);
+      expect(Object.keys(AI_CRAWLER_UAS)).toEqual([...AI_CRAWLER_USER_AGENTS]);
+    });
+
+    it.each(Object.entries(AI_CRAWLER_UAS))('gives %s blocking metadata in <head>', (_name, ua) => {
+      expect(servedStreaming(ua)).toBe(false);
+    });
+
+    it("keeps Next's default bots: replacing the list would otherwise drop them", () => {
+      const defaults = [
+        'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (Applebot/0.1; +http://www.apple.com/go/applebot)',
+        'Mozilla/5.0 (compatible; Google-InspectionTool/1.0)',
+        'Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)',
+        'Twitterbot/1.0',
+        'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)',
+        'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        'LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)',
+      ];
+      for (const ua of defaults) {
+        expect({ ua, matchedByNext: HTML_LIMITED_BOT_UA_RE.test(ua) }).toEqual({ ua, matchedByNext: true });
+        expect({ ua, streaming: servedStreaming(ua) }).toEqual({ ua, streaming: false });
+      }
+      // The config is exactly Next's default with the AI crawlers appended.
+      expect((nextConfig.htmlLimitedBots as RegExp).source.startsWith(HTML_LIMITED_BOT_UA_RE.source)).toBe(true);
+    });
+
+    it('still streams metadata to browsers and to Googlebot, which renders JavaScript', () => {
+      for (const ua of [
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+      ]) {
+        expect({ ua, streaming: servedStreaming(ua) }).toEqual({ ua, streaming: true });
+      }
+    });
   });
 
   describe('/clerk-assets same-origin Clerk proxy', () => {
