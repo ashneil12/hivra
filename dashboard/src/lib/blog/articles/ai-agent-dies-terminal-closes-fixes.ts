@@ -7,14 +7,16 @@ export const article: BlogArticle = {
   title: "Why your AI agent dies when you close the terminal (and every fix that works)",
   metaTitle: "Why your AI agent dies when the terminal closes",
   metaDescription:
-    "Your AI agent stops when the terminal closes, SSH drops, or the laptop sleeps. Why it happens, and every fix: tmux, nohup, systemd, caffeinate.",
+    "Your AI agent dies because closing the terminal or dropping SSH sends it SIGHUP, and sleep suspends it. Fixes: tmux, nohup, systemd, caffeinate.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "The agent did not crash. Your shell took it down.",
   intro:
     `Claude Code, Codex, OpenClaw, Hermes: every terminal AI agent dies the same way when the terminal closes or the laptop sleeps. This is the full troubleshooting guide, from the 90 second tmux fix to systemd to the honest case for a ${ENTRY_PLAN_PRICE} always-on computer.`,
+  shortAnswer:
+    "Your agent is a child process of your shell. Closing the terminal or dropping SSH sends it SIGHUP, and a sleeping laptop suspends it. tmux, screen, nohup or systemd detach it from your session. Sleep needs a different fix: keep the machine awake, or move the agent to an always-on machine.",
   sections: [
     {
       heading: "Why the process dies in the first place",
@@ -61,8 +63,8 @@ export const article: BlogArticle = {
     {
       heading: "When a $10 always-on computer beats all of it",
       paragraphs: [
-        `The pattern behind every fix in this article is the same: move the agent's lifetime off your terminal, then off your laptop. The end state of that pattern is a machine whose only job is to run the agent.\n\nYou can build that yourself with a $5-10/month VPS plus tmux plus systemd plus your own patching and security. That route is legitimate and we wrote it up in detail for [Claude Code](/blog/keep-claude-code-running-24-7) and [Codex](/blog/run-codex-24-7-in-the-cloud). The full menu of places an agent can live, from home hardware to serverless, is in the [AI agent hosting guide](/blog/ai-agent-hosting-guide).\n\nOr you can rent the end state directly. [Hivra](/) provisions a private VM per agent and runs the agent on it: [Claude Code](/agents/claude-code) (the official CLI, signed in with your own Anthropic account), [Codex](/agents/codex) (the official CLI, your own ChatGPT login), [Hermes](/agents/hermes), and [Aeon](/agents/aeon). You get a browser view of the computer (chat, terminal, files), so checking on the 4am state does not require SSH from your phone.\n\nThe same rule from this article applies there, though. ${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING}`,
-        `Honest plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. There is zero markup on AI usage because model billing stays on your own Anthropic or OpenAI account. Details on [the pricing page](/pricing).\n\nIf you enjoy running servers, run the server. If you just want the agent alive tomorrow morning, and every morning after, the ${ENTRY_PLAN_PRICE} computer is the version of this article you do not have to maintain yourself.`,
+        `The pattern behind every fix in this article is the same: move the agent's lifetime off your terminal, then off your laptop. The end state of that pattern is a machine whose only job is to run the agent.\n\nYou can build that yourself with a $5-10/month VPS plus tmux plus systemd plus your own patching and security. That route is legitimate and we wrote it up in detail for [Claude Code](/blog/keep-claude-code-running-24-7) and [Codex](/blog/run-codex-24-7-in-the-cloud). The full menu of places an agent can live, from home hardware to serverless, is in the [AI agent hosting guide](/blog/ai-agent-hosting-guide).\n\nOr you can rent the end state directly. [Hivra](/) provisions a private VM per agent and runs the agent on it: [Claude Code](/agents/claude-code) (the official CLI, signed in with your own Anthropic account), [Codex](/agents/codex) (the official CLI, your own ChatGPT login), and [Hermes](/agents/hermes), and hosts the dashboard for [Aeon](/agents/aeon). You get a browser view of the computer (chat, terminal, files), so checking on the 4am state does not require SSH from your phone.\n\nThe same rule from this article applies there, though. ${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING}`,
+        `Honest plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. On your own Anthropic or OpenAI login, usage bills through that provider at its rates with no Hivra markup. Hivra is independent and is not affiliated with Anthropic or OpenAI. Details on [the pricing page](/pricing).\n\nIf you enjoy running servers, run the server. If you just want the agent alive tomorrow morning, and every morning after, the ${ENTRY_PLAN_PRICE} computer is the version of this article you do not have to maintain yourself.`,
       ],
     },
   ],

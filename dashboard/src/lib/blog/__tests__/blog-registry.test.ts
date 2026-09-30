@@ -96,6 +96,25 @@ describe("blog registry", () => {
     }
   });
 
+  // Every article, not only the cutover set: a short answer that stands alone,
+  // a search title and description that fit a results page, and no dashes.
+  it("gives every article a 40 to 60 word short answer, a search title within 58 characters and a description within 155", () => {
+    const wrong: string[] = [];
+    for (const article of BLOG_ARTICLES_LIST) {
+      const words = (article.shortAnswer ?? "").trim().split(/\s+/).filter(Boolean).length;
+      if (words < 40 || words > 60) wrong.push(`${article.slug}: short answer is ${words} words`);
+      if ((article.metaTitle ?? article.title).length > 58) wrong.push(`${article.slug}: metaTitle over 58`);
+      if (article.metaDescription.length > 155) wrong.push(`${article.slug}: metaDescription over 155`);
+      if (article.metaDescription.length < 70) wrong.push(`${article.slug}: metaDescription under 70`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("writes every article without em or en dashes", () => {
+    const withDashes = BLOG_ARTICLES_LIST.filter((article) => /[\u2013\u2014]/.test(JSON.stringify(article))).map((article) => article.slug);
+    expect(withDashes).toEqual([]);
+  });
+
   it("writes the cutover posts without em or en dashes", () => {
     for (const slug of CUTOVER_BLOG_SLUGS) {
       expect(JSON.stringify(BLOG_ARTICLES[slug])).not.toMatch(/[\u2013\u2014]/);
