@@ -1,0 +1,168 @@
+import { BlogArticle } from "../types";
+import { LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, PLAN_SUMMARY } from "../plan-facts";
+import { CLI_RUN_LIFETIME } from "../runtime-facts";
+
+// Written 2026-09-30 from the Claude Code documentation (Remote Control, Projects, mobile, authentication, errors) and
+// changelog as read that day, plus user-filed issues on github.com/anthropics/claude-code for the two offline messages
+// that Anthropic does not publish. Demand: "claude code remote control" 3,600 US searches a month (Aug 2026, KD 8).
+// The two messages below are quoted as recorded in those issues and in Search Console queries. Re-check them against a
+// live session before changing the wording, and re-check every number against the docs before editing the tables.
+// Remote Control has NOT been tested on a Hivra computer: keep it out of every claim about what Hivra does, and keep
+// the keep-running sentence to CLI_RUN_LIFETIME.
+export const article: BlogArticle = {
+  slug: "claude-code-remote-control",
+  title: "Claude Code Remote Control: how it works and how to keep it online",
+  metaTitle: "Claude Code Remote Control: Setup, Limits and Fixes",
+  metaDescription:
+    "How Claude Code Remote Control works, the exact commands to start it, what the two offline messages mean, and how to keep the host machine online.",
+  publishedDate: "2026-09-30",
+  lastModified: "2026-09-30",
+  readingTimeMin: 13,
+  author: "Hivra team",
+  tagline: "It is a window into a session on your machine, so the machine has to stay on.",
+  intro:
+    "Remote Control lets you steer a Claude Code session from your phone or a browser while the session itself never leaves your machine. This page has the exact commands, what the two offline messages mean and which fix applies, and the honest ways to keep the machine online.",
+  shortAnswer:
+    "Remote Control lets claude.ai/code or the Claude mobile app steer a Claude Code session that keeps running on your own machine. Start it with `claude remote-control`. The one rule: that machine must stay on and the `claude` process must keep running. If either stops, the session goes offline until you bring it back.",
+  sections: [
+    {
+      heading: "What Remote Control is, and what it is not",
+      paragraphs: [
+        "Remote Control connects [claude.ai/code](https://claude.ai/code), or the Claude app on iOS and Android, to a Claude Code session running on your own machine. Claude keeps running locally the entire time, so code execution and filesystem access stay there, along with your MCP servers, tools and project configuration. The web and mobile screens are a window into that local session, so your computer has to stay on and the `claude` process has to keep running ([Claude Code docs](https://code.claude.com/docs/en/remote-control)).\n\nThat one rule explains almost every Remote Control problem on this page. Everything below comes from Anthropic's Claude Code documentation and changelog as read on 30 September 2026, except two offline messages that Anthropic does not publish. Those are labelled where they appear.",
+        "What you get once it is connected:\n\n- **Your full local environment.** Files, MCP servers, tools and project settings all stay available from the other device.\n- **Several screens at once.** The conversation stays in sync across your terminal, browser and phone, and you can send messages from any of them. A connected device also shows a diff of your changes when the directory is a git repository.\n- **Photos and files from your phone.** Attach them in the Claude app or at claude.ai/code.\n- **Recovery from interruptions.** If your laptop sleeps or your network drops, Claude Code reconnects automatically when your machine comes back online.\n\nA session can be hosted by the Claude Code command line, the Claude Desktop app or the VS Code extension. Anthropic's current documentation no longer labels the feature a preview.",
+      ],
+    },
+    {
+      heading: "Remote Control, cloud sessions, Channels or SSH: which one do you mean?",
+      paragraphs: [
+        "People search for \"Claude Code remote\" and mean four different things. Anthropic's docs separate them by where Claude runs:\n\n- **Remote Control** (this page) drives a session that runs on your machine, from claude.ai/code or the Claude app. The machine must stay on.\n- **Cloud sessions** (Claude Code on the web) run on Anthropic-managed infrastructure by default, so they keep going after you close your laptop. They typically work from a GitHub repository and stop after a period of inactivity ([Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web)).\n- **Channels** push events from Telegram, Discord or your own server into a session running on your machine. It is a research preview, and events only arrive while the session is open. Our guide: [control Claude Code from Telegram](/blog/control-claude-code-from-telegram).\n- **SSH and tmux** means logging into a machine that stays on and running Claude Code inside tmux. No Anthropic service is involved. See [how to keep Claude Code running 24/7](/blog/keep-claude-code-running-24-7).",
+      ],
+    },
+    {
+      heading: "What you need before you start",
+      paragraphs: [
+        "From the requirements section of the docs:\n\n- **A plan.** Pro, Max, Team or Enterprise. On Team and Enterprise an Owner must first switch on the Remote Control toggle in Claude Code admin settings. It is off by default there.\n- **A claude.ai login.** Run `claude`, then `/login`, and sign in through claude.ai. API keys are not supported.\n- **A direct line to Anthropic.** It does not work on Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry, with `ANTHROPIC_BASE_URL` pointing at a host other than `api.anthropic.com` (an LLM gateway or proxy), or with an enterprise Claude apps gateway sign-in.\n- **An organization that allows it.** Organizations with Zero Data Retention cannot enable it, and the docs say a HIPAA configuration blocks it too.",
+        "Two things catch machines that were set up for scripts or CI. First, setting `ANTHROPIC_API_KEY`, an `apiKeyHelper` or `ANTHROPIC_AUTH_TOKEN` turns Remote Control off even when a claude.ai login also exists (Claude Code changelog, 2.1.139, 11 May 2026). Second, a token from `claude setup-token`, or `CLAUDE_CODE_OAUTH_TOKEN`, can only make model requests, so it cannot establish sessions. The messages, and what fixes them:\n\n| You see | Cause | Fix |\n|---|---|---|\n| `Remote Control requires a claude.ai subscription.` | Signed out | `claude auth login`, then choose claude.ai |\n| `Remote Control requires claude.ai subscription auth.` | An API key, token or `apiKeyHelper` is in use. The message names it. | Remove it where it is set |\n| `Remote Control requires a full-scope login token` | A `claude setup-token` token or `CLAUDE_CODE_OAUTH_TOKEN` | `claude auth login` |\n| `Remote credentials fetch failed` | Not signed in, a firewall or proxy blocking outbound HTTPS on port 443, or an inactive subscription | `claude remote-control --verbose` shows the full error |",
+      ],
+    },
+    {
+      heading: "How to start a Remote Control session",
+      paragraphs: [
+        "There are three ways from the command line, plus the Claude Desktop app and the VS Code extension. Run these in your project directory:\n\n```bash\n# Server mode: stays running, waits for connections, prints a session URL\nclaude remote-control\n\n# Give the session a name you will recognise in the claude.ai/code list\nclaude remote-control --name \"My Project\"\n\n# Interactive session you can type into locally and also control remotely\nclaude --remote-control\nclaude --remote-control \"My Project\"\n```\n\nFrom a session that is already running, this carries over the conversation so far:\n\n```text\n/remote-control\n/remote-control My Project\n```\n\n`/rc` is short for `/remote-control`, `--rc` for `--remote-control`, and `claude rc` for `claude remote-control`. In the VS Code extension, type `/remote-control` or `/rc` in the prompt input. In the Claude Desktop app, type it in a local session.",
+        "Server mode is the one for a machine you leave running. One process serves several sessions (32 at once by default), and pressing the spacebar shows a QR code you can scan with your phone. The first time, it asks `Enable Remote Control? (y/n)` and, in a directory you have not trusted yet, `Trust <directory>? [y/N]`. Answer `y` to both. Trust is saved, except in your home directory, where it is never saved and the question returns on every run.\n\nTo connect from another device, open the session URL in any browser, scan the QR code, or open claude.ai/code or the Claude app and pick the session by name. In the mobile app, tap Code in the navigation. A session that is online shows a computer icon with a green status dot. No app yet? Run `/mobile` inside Claude Code for a QR code to the download page.",
+        "Flags for server mode that you will actually use:\n\n| Flag | What it does |\n|---|---|\n| `--name \"My Project\"` | The session title in the claude.ai/code list |\n| `-c`, `--continue` | Brings back the session the last server in this directory started with (v2.1.200 or later) |\n| `--session-id <id>` | Brings back one session by its ID (v2.1.200 or later) |\n| `--spawn <mode>` | `same-dir` (default), `worktree` (needs a git repository) or `session` (one session only) |\n| `--capacity <N>` | The most sessions at once. The default is 32. |\n| `--permission-mode <mode>` | The starting permission mode for the server's sessions |\n| `--verbose` | Detailed connection and session logs |\n\nTo turn it on for every interactive session instead, run `/config` and set **Enable Remote Control for all sessions**, or set `remoteControlAtStartup` in `~/.claude/settings.json`.",
+      ],
+    },
+    {
+      heading: "What happens when the computer sleeps, the terminal closes or the network drops",
+      paragraphs: [
+        "Each case, with what the docs and changelog say:\n\n- **The laptop sleeps or the network drops.** Claude Code reconnects automatically when the machine comes back online. The docs do not say whether work carries on while the machine sleeps, and a sleeping laptop runs nothing, so expect nothing to progress until it wakes. The [24/7 guide](/blog/keep-claude-code-running-24-7) covers sleep and locked screens in detail.\n- **You close the terminal, quit the Desktop app or VS Code, or stop the `claude` process.** The session goes offline until you bring it back. Since Claude Code 2.1.236 (19 August 2026) it is marked offline within seconds. A session you started with `claude --remote-control` or `/remote-control` comes back with `claude --continue` or `claude --resume`.\n- **The machine is awake but has no network, in server mode.** Claude Code gives up after roughly 10 minutes and the `claude remote-control` process exits. Run `claude remote-control` again to start a new session.\n- **The same, in an interactive session.** You keep working locally and Claude Code retries. The docs say it retries for as long as the outage lasts. The changelog (2.1.232, 13 August 2026) says it keeps reconnecting for about 30 minutes. If it disconnects with `could not reach the Remote Control server for about 30 minutes`, run `/remote-control`.\n- **You stop server mode with Ctrl+C.** Its sessions stop responding from your phone or browser. They are not archived, unless another `claude remote-control` ran in the same directory or you started with `--no-create-session-in-dir`.\n- **A session in server mode crashes.** Send it a message from a connected device and Claude Code serves it again, with no server restart (v2.1.238 or later).",
+        "After a stop, these work for about four hours, in the same directory: `claude remote-control` brings back every session, `claude remote-control --continue` brings back the session the server started with, and `claude remote-control --session-id <id>` brings back one. After four hours, start a new session.\n\nTwo more limits are easy to meet on a machine nobody watches:\n\n- **Offline long enough.** The server cleans up the environment. The terminal running `claude remote-control` then prints a line that ends `the environment was cleaned up on the server and can't be resumed`. Run `claude remote-control` for a fresh environment, and pick up any uncommitted work from the worktrees it lists.\n- **Running for about 30 days.** Before Claude Code 2.1.267 (9 September 2026), `claude remote-control` exited and dropped every attached session when its server credential expired about 30 days after it started. The fix re-registers and keeps going. This is in the changelog, not in the docs pages.\n\nAnthropic does not publish how long \"offline long enough\" is, and it publishes no maximum session length or idle timeout for Remote Control. Treat the numbers on this page as what the docs state, not as guarantees.",
+      ],
+    },
+    {
+      heading: "The \"Can’t reach your computer\" message",
+      paragraphs: [
+        "Anthropic does not publish this message in its docs. It shows up in user-filed issues on the `anthropics/claude-code` GitHub repository, mostly from the Claude Desktop app (for example [issue 90172](https://github.com/anthropics/claude-code/issues/90172) and [issue 90877](https://github.com/anthropics/claude-code/issues/90877)). As reported:\n\n```text\nCan’t reach your computer\nIt may be asleep or offline. This session will reconnect when it’s back.\n```\n\nThe details view is reported to show a status code, `Remote Control host unreachable (computer_unreachable)`. Some reports quote the message with straight apostrophes instead of the typographic ones above.",
+        "**What it means.** The app or browser cannot reach the machine that hosts the session. The message gives the ordinary causes, asleep or offline, and says the session will reconnect. That matches the docs for Remote Control: the session goes offline until the machine is back or the `claude` process is started again.\n\n**What to do, in order:**\n\n1. Wake the machine and check that it has a network connection. If it was only asleep or offline, do nothing else. The session reconnects by itself.\n2. Check that Claude Code is still running there. If the terminal was closed or the app quit, start it again: `claude remote-control` in the same directory for server mode, or `claude --continue` for a session you started with `--remote-control` or `/remote-control`.\n3. If the server stopped more than about four hours ago, or the machine was offline long enough to have its environment cleaned up, start a new session with `claude remote-control`.\n4. If the machine is awake and online, Claude Code is running and the message stays, treat it as a reported bug rather than documented behaviour. Users describe a session card that shows as live with no process behind it ([issue 90877](https://github.com/anthropics/claude-code/issues/90877)) and a reinstall that regenerates the device identity and orphans sessions ([issue 88692](https://github.com/anthropics/claude-code/issues/88692)). Anthropic has not confirmed either. In an interactive session, run `/remote-control` to reconnect. Otherwise start a new session.",
+      ],
+    },
+    {
+      heading: "The \"Claude Code on the computer running this session is offline\" message",
+      paragraphs: [
+        "This one is not in Anthropic's docs either. Users report it in claude.ai/code in a browser and in the Desktop app, sometimes under a heading that begins `Remote Control disconnected` ([issue 91839](https://github.com/anthropics/claude-code/issues/91839) and [issue 95577](https://github.com/anthropics/claude-code/issues/95577)). The body, as people report it:\n\n```text\nClaude Code on the computer running this session is offline. If that computer is asleep or lost its connection, this session reconnects when it’s back. If Claude Code was closed, start it there again and reopen this conversation.\n```\n\nReports quote the opening and closing sentences, and the middle sentence appears in a search query and in a newer report. We could not check it against a live session, so read it as the message people describe, not as a screenshot. A report filed on 30 September 2026 shows a variant that names the machine: `Claude Code on <machine> is offline. If <machine> is asleep or lost its connection, this session reconnects when it’s back...` ([issue 98310](https://github.com/anthropics/claude-code/issues/98310)).",
+        "**What it means.** It covers two different conditions, and the message tells you which fix applies:\n\n- **The computer is asleep or lost its connection.** Wake it or restore the network. The session reconnects by itself, and you do not need to start anything.\n- **Claude Code was closed.** Start Claude Code there again with the commands from the section above, then reopen the conversation in claude.ai/code or the Claude app.\n\nAnthropic documents a similar state for projects, under the heading Lost contact with your folder. The session there stopped responding, usually because the computer went to sleep or the Desktop app or `claude remote-control` quit. The fix is the same: wake the computer, then restart the app or run `claude remote-control` again in the same folder ([Projects docs](https://code.claude.com/docs/en/claude-projects#lost-contact-with-your-folder)). That is a different message from the one above, so the docs do not cover this one itself.",
+        "One more report is worth knowing if you run server mode unattended. Issue 98310 describes a `claude remote-control` host run as a systemd user service that showed the machine-name version of the message while it was still connected and polling, after a session was archived and then unarchived from claude.ai. It is user-filed and Anthropic has not confirmed it. If the host looks healthy and the banner says offline, check the session's archive state before you restart anything.",
+      ],
+    },
+    {
+      heading: "Keep the host online: your options",
+      paragraphs: [
+        "Remote Control has one requirement that no setting removes: a machine that is on, with `claude` running. So the real question is where that machine lives.\n\n| Where Claude Code runs | Keeps going with your laptop shut? | What to know |\n|---|---|---|\n| Your laptop | No | Sleep pauses the session, and Remote Control reconnects when the laptop wakes. The Claude Desktop app has a setting, Keep this computer awake for Remote Control, under Settings, then Claude Code. A closed lid is a separate problem: see the [keep-awake command builder](/tools/keep-mac-awake). |\n| A desktop, home server or VPS that stays on, with `claude remote-control` inside tmux | Yes, while that machine stays on | Anthropic's docs: to keep a session running on a remote machine after you disconnect from SSH, start it inside tmux or screen. You own the sleep settings, the login, the updates and the restarts. |\n| Anthropic's cloud sessions (Claude Code on the web) | Yes | Not Remote Control. Anthropic says the session keeps running after you close your laptop. It stops after a period of inactivity and the machine is reclaimed. |\n| A Hivra computer | A run started inside tmux in the Terminal tab keeps going. Remote Control itself is untested there. | See the last section. |",
+        "**When Anthropic's cloud is the better choice.** If you only use Claude Code, your work lives in GitHub repositories, you do not need local files, tools or MCP servers, and the laptop will be closed, cloud sessions are the simplest answer. It is also Anthropic's own advice: its mobile docs say that if your computer will be off, use cloud sessions or a project, because Remote Control drives your own machine. Cloud sessions are available on Pro, Max and Team plans, and on Enterprise with premium or Chat + Claude Code seats. They share rate limits with your other Claude and Claude Code usage, carry no separate compute charge, and are not available to Zero Data Retention organizations.\n\n**When Remote Control is the better choice.** You are in the middle of a task on a machine that has its own files, MCP servers and settings, and you want to steer it from your phone while that machine stays awake. Anthropic's rule of thumb is the same: use Remote Control to keep going with local work from another device, and a cloud session to start something with no local setup.",
+      ],
+    },
+    {
+      heading: "Set up an always-on machine for Remote Control",
+      paragraphs: [
+        "This is a checklist built from Anthropic's docs for a machine nobody sits at. The tmux step is Anthropic's own advice. We have not run this whole sequence on a server for this page, so check each step against the current docs.\n\n1. **Pick a machine that does not sleep.** A desktop, a home server or a VPS. On a Mac, the [keep-awake command builder](/tools/keep-mac-awake) writes the command for your setup.\n2. **Sign in through claude.ai.** Run `claude`, then `/login`. If your browser shows a code instead of redirecting back, paste it at the `Paste code here if prompted` prompt. Anthropic says this is common in SSH sessions and containers.\n3. **Clear out anything that blocks Remote Control.** This prints variable names only, never their values:\n\n```bash\nenv | cut -d= -f1 | grep -E '^(ANTHROPIC_|CLAUDE_CODE_)'\n```\n\nIf `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or `CLAUDE_CODE_OAUTH_TOKEN` shows up, remove it where it is set. Check your settings files for an `apiKeyHelper` too.",
+        "4. **Trust the folder and accept the one-time prompts while you are at a terminal.** Run this once in the project directory and answer `y` to both questions:\n\n```bash\ncd ~/projects/my-app\nclaude remote-control\n```\n\nClaude Code 2.1.284 (28 September 2026) added the trust question. On older versions, an untrusted directory exits with the `Workspace not trusted` error instead of asking, so run `claude` in the folder once first and accept its trust dialog. In an untrusted directory the command also exits with that error whenever standard input or output is not a terminal, so the first run cannot come from a service or a cron job.\n\n5. **Start it inside tmux.** The [tmux cheat sheet](/tools/tmux-cheat-sheet) has the keys on one page.\n\n```bash\ntmux new -s remote\nclaude remote-control --name \"Home server\"\n\n# Detach without stopping it: press Ctrl+b, then d\n# Reattach later:\ntmux attach -t remote\n```\n\nPress the spacebar for the QR code and scan it with your phone.",
+        "6. **Expect it to need a restart now and then.** A network outage of roughly 10 minutes exits server mode. A Ctrl+C or a crash can be undone within about four hours. Before Claude Code 2.1.267, server mode also exited at about 30 days, so run `claude update` on a long-lived host. And the login itself expires: Claude Code warns at startup when your claude.ai login is within three days of expiring, and Anthropic says a Remote Control session that outlives the login stops making progress until you sign in again ([authentication docs](https://code.claude.com/docs/en/authentication)). Run `/login` to renew.\n\nIf you want the process to come back by itself after one of those exits, a service manager or a restart loop is the usual tool. That is our suggestion, not Anthropic's: its docs name only tmux and screen. We have not tested a supervised setup, so this page gives no unit file.",
+      ],
+    },
+    {
+      heading: "Security and limits, as documented",
+      paragraphs: [
+        "What Anthropic's docs say, with no claims of our own added:\n\n- **Outbound only.** Your session makes outbound HTTPS requests and never opens inbound ports. It registers with the Anthropic API and polls for work. Traffic goes through the API over TLS, using several short-lived credentials that each cover a single purpose.\n- **Execution stays local, the transcript does not.** While Remote Control is connected, the session transcript, including your messages, Claude's responses and tool activity, is stored on Anthropic's servers and retained under its Data usage policy. Execution and filesystem access stay on your machine.\n- **No cloud VM, and no sandbox by default.** Claude runs on your machine. To sandbox the sessions a server starts, turn on sandboxing in a settings file.\n- **Permission modes from the app.** Remote Control sessions offer Manual, Accept edits and Plan. Bypass permissions and Auto cannot be selected for them. Server mode also takes `--permission-mode` at startup.\n- **Switches for admins.** The `disableRemoteControl` setting turns it off. Trusted Devices, a beta that is off by default, asks for an enrolled device and a sign-in no more than 18 hours old before you can view or steer sessions.\n- **Plain limits.** One remote session per interactive process, 32 sessions at once in server mode by default, and terminal-only commands such as `/plugin` and `/resume` work only from the local command line.",
+        "Approving actions from a phone is convenient, and it is worth a moment of thought before you approve something destructive from a small screen. For the wider risks of leaving an agent running while you are away, see [is it safe to leave an AI agent running unattended](/blog/is-it-safe-to-leave-an-ai-agent-running-unattended).",
+      ],
+    },
+    {
+      heading: "When not to use Remote Control",
+      paragraphs: [
+        "- **The machine will be off or asleep.** Use a cloud session or a project. Anthropic's own mobile docs say so.\n- **You authenticate with an API key.** It is not supported, and neither are Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry or a gateway. If you run Claude Code on your own key, see [BYO API key: what it means](/blog/byo-api-key-explained).\n- **Your organization uses Zero Data Retention or a HIPAA configuration.** Remote Control cannot be enabled there.\n- **You want work to start from an event or a schedule with nobody at the keyboard.** Anthropic lists Channels (research preview) for events from Telegram, Discord or CI, and scheduled tasks for recurring work. Remote Control is for a person steering a session from another device. It does not react to events or run on a schedule.\n- **You want the agent off your laptop for good.** Then the question is hosting, not remote access. See [the 24/7 guide](/blog/keep-claude-code-running-24-7) and [why agents die when the terminal closes](/blog/ai-agent-dies-terminal-closes-fixes).",
+      ],
+    },
+    {
+      heading: "Where a Hivra computer fits",
+      paragraphs: [
+        `[Hivra](/) gives a coding agent a computer of its own, so the machine that has to stay on is not your laptop. ${CLI_RUN_LIFETIME}`,
+        `Remote Control has not been tested on a Hivra computer, so this page does not say it works there. The keep-running statement above is about tmux and Telegram, not about Remote Control, and Hivra's Telegram tab is Hivra's own connection, separate from Anthropic's Channels feature. If you try Remote Control on a Hivra computer, treat it as untested and check the requirements above first.`,
+        `${PLAN_SUMMARY} The ${LARGER_PLAN_PRICE} plan is ${LARGER_PLAN_SIZE}. Details are on [the pricing page](/pricing), and you can launch Claude Code from [the Claude Code agent page](/agents/claude-code). Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
+      ],
+    },
+  ],
+  faqs: [
+    {
+      q: "What is Claude Code Remote Control?",
+      a: "Remote Control connects claude.ai/code or the Claude mobile app to a Claude Code session that runs on your own machine. Code execution and filesystem access stay on that machine, and the web and mobile screens are a window into the session. It is available on Pro, Max, Team and Enterprise plans, and on Team and Enterprise an Owner has to enable it first.",
+    },
+    {
+      q: "How do I start Remote Control in Claude Code?",
+      a: "Run claude remote-control in your project directory for server mode, claude --remote-control (or --rc) for an interactive session, or type /remote-control (or /rc) inside a running session to carry its conversation over. Then open the session URL, scan the QR code, or pick the session by name in claude.ai/code or the Claude app.",
+    },
+    {
+      q: "Does Remote Control keep working if my computer goes to sleep?",
+      a: "Claude Code reconnects automatically when the machine comes back online, so the session returns after a sleep or a network drop. Anthropic's docs do not say whether work carries on while the machine sleeps, and a sleeping laptop runs nothing, so plan on nothing progressing until it wakes.",
+    },
+    {
+      q: "Can I close my laptop and keep using Remote Control from my phone?",
+      a: "No. Remote Control is a window into a session on your machine, so the computer has to stay on and the claude process has to keep running, and closing the lid puts a laptop to sleep. Run it on a machine that stays on, or use Claude Code on the web, which Anthropic says keeps running after you close your laptop.",
+    },
+    {
+      q: "What does \"Can’t reach your computer\" mean in Claude Code?",
+      a: "It is the message people report when the Claude app or browser cannot reach the machine hosting a Remote Control session. It reads: It may be asleep or offline. This session will reconnect when it’s back. Wake the machine, check its network, and make sure claude is still running there. If it was stopped, start it again with claude remote-control in the same directory. Anthropic does not document this message.",
+    },
+    {
+      q: "What does \"Claude Code on the computer running this session is offline\" mean?",
+      a: "It means the machine running your Remote Control session is asleep, offline, or no longer running Claude Code. If it is asleep or lost its connection, the session reconnects when it is back. If Claude Code was closed, start it there again and reopen the conversation. Anthropic does not publish this message. It comes from user reports.",
+    },
+    {
+      q: "Does Remote Control work with an API key?",
+      a: "No. Remote Control needs a claude.ai login on a Pro, Max, Team or Enterprise plan. API keys are not supported, and setting ANTHROPIC_API_KEY, an apiKeyHelper or ANTHROPIC_AUTH_TOKEN turns it off even if you are also signed in. A token from claude setup-token cannot establish sessions, and Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry and a custom ANTHROPIC_BASE_URL are not supported.",
+    },
+    {
+      q: "How long can the host be offline before I lose the session?",
+      a: "Anthropic publishes a few numbers and no overall limit. In server mode, Claude Code gives up after roughly 10 minutes without a network and the process exits. After you stop the server, its sessions can be brought back for about four hours. If the machine stays offline long enough, the server cleans up the environment and the sessions cannot be resumed, but that threshold is not published.",
+    },
+    {
+      q: "Does Remote Control run my code on Anthropic's servers?",
+      a: "No. Claude keeps running on your machine, so code execution and filesystem access stay there. Anthropic's servers route messages and store the session transcript while Remote Control is connected, under its Data usage policy. Your session makes outbound HTTPS requests only and opens no inbound ports.",
+    },
+    {
+      q: "Is Remote Control the same as Claude Code on the web?",
+      a: "No. Remote Control drives a session running on your machine, so that machine must stay on. Claude Code on the web runs cloud sessions on Anthropic-managed infrastructure by default, and Anthropic says they keep running after you close your laptop. Use Remote Control for local work you want to steer from another device, and a cloud session for a task with no local setup.",
+    },
+    {
+      q: "Does Remote Control work on a Hivra computer?",
+      a: `It has not been tested there, so we do not promise it. What we do state: ${CLI_RUN_LIFETIME} Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
+    },
+  ],
+  relatedArticles: [
+    { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop?" },
+    { slug: "control-claude-code-from-telegram", title: "How to control Claude Code from Telegram" },
+    { slug: "ai-agent-dies-terminal-closes-fixes", title: "Why your AI agent dies when you close the terminal" },
+    { slug: "is-it-safe-to-leave-an-ai-agent-running-unattended", title: "Is it safe to leave an AI agent running unattended?" },
+    { slug: "byo-api-key-explained", title: "BYO API key: what it means and why it matters" },
+  ],
+};
