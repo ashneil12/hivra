@@ -109,7 +109,7 @@ describe("Settings access and support destinations", () => {
 
   it("preserves existing support and legal destinations with named external links", () => {
     render(<HelpPage />);
-    expect(screen.getByRole("link", { name: "Email support" })).toHaveAttribute("href", "mailto:info@hermesos.cloud");
+    expect(screen.getByRole("link", { name: "Email support" })).toHaveAttribute("href", "mailto:info@hivra.cloud");
     expect(screen.getByRole("link", { name: "Discord (opens in a new tab)" })).toHaveAttribute("href", "https://discord.gg/tDQZq8479F");
     const updates = screen.getByRole("link", { name: "X (Twitter) (opens in a new tab)" });
     expect(updates).toHaveAttribute("href", "https://x.com/Wayland_Six");

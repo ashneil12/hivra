@@ -164,7 +164,6 @@ describe("POST /api/billing/crypto/top-up", () => {
     expect(ensureBankrDepositWalletForUser).toHaveBeenCalledWith({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     expect(createCryptoTopUpIntent).toHaveBeenCalledWith({
       userId,

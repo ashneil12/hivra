@@ -19,7 +19,7 @@ async function loadConfig(mode: "local" | "hosted"): Promise<NextConfig> {
   return (await import("../../next.config")).default;
 }
 
-const marketingPaths = ["/", "/blog", "/blog/how-ai-agents-work", "/features", "/features/persistent-memory", "/compare/hermes", "/token", "/tokenomics", "/why-hivra/evolution"];
+const marketingPaths = ["/", "/blog", "/blog/how-ai-agents-work", "/features", "/features/persistent-memory", "/compare/hermes", "/token", "/tokenomics", "/why-hivra/evolution", "/agents", "/agents/claude-code", "/tools", "/tools/claude-code-plan-calculator", "/pricing"];
 
 describe("self-host website boundary", () => {
   it("redirects commercial pages into the local app", async () => {
@@ -35,7 +35,7 @@ describe("self-host website boundary", () => {
 
   it("keeps operational, authentication, documentation and similarly named routes available", async () => {
     const nextConfig = await loadConfig("local");
-    for (const path of ["/dashboard", "/dashboard/infrastructure", "/sign-in", "/api/self-host/auth/login", "/docs/litepaper/index.html", "/blogger", "/features-extra", "/robots.txt", "/sitemap.xml", "/icon.svg"]) {
+    for (const path of ["/dashboard", "/dashboard/infrastructure", "/sign-in", "/api/self-host/auth/login", "/docs/litepaper/index.html", "/blogger", "/features-extra", "/robots.txt", "/sitemap.xml", "/favicon.ico", "/brand/hivra-icon-192.png"]) {
       const response = await unstable_getResponseFromNextConfig({
         url: `https://operator.example.test${path}`, nextConfig,
       });
@@ -70,6 +70,17 @@ describe("self-host website boundary", () => {
     const robots = (await import("@/app/robots")).default;
     expect(await robots()).toEqual({ rules: { userAgent: "*", disallow: "/" } });
   });
+
+  it.each(["hermesos-canary.vercel.app", "hermesos.vercel.app"])(
+    "blocks crawling of the %s deployment alias in hosted mode",
+    async (host) => {
+      await loadConfig("hosted");
+      const { headers } = await import("next/headers");
+      (headers as jest.Mock).mockResolvedValue(new Headers({ host }));
+      const robots = (await import("@/app/robots")).default;
+      expect(await robots()).toEqual({ rules: { userAgent: "*", disallow: "/" } });
+    },
+  );
 
   it("preserves public discovery in hosted mode", async () => {
     await loadConfig("hosted");

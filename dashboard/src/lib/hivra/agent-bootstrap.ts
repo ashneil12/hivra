@@ -23,6 +23,7 @@
 
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 import { getGoal, deriveIdentity, type Identity, type GoalDef } from "./agent-identity";
+import { getAgent } from "./agent-catalog";
 import { MAX_CONTEXT_LEN } from "./agent-limits";
 import type { BoxLlmPayload } from "./agent-llm";
 import { getPersonaSoul } from "@/lib/persona-souls-accessor";
@@ -88,21 +89,36 @@ interface Resolved {
   soulPromptId: string;
 }
 
-// Each agent type ships different tools — the identity should say so honestly
-// (Claude Code has a live browser; Codex doesn't). Mirrors the per-kind base
-// persona the provisioner installs (system-prompt.md vs system-prompt-codex.md).
+// Each agent type ships different tools — the identity should say so honestly.
+// The browser is the one capability that can change after launch: agent types
+// that ship the box browser stack (catalog `browser`, e.g. Claude Code and
+// Codex) have it switched on or off per computer from Manage, box-side, with no
+// stored flag, and this identity is seeded only once. A launch-time or seed-time
+// reading would go stale on the first toggle, so for those types the line is
+// conditional (matching the provisioned base persona's "if browser automation
+// is enabled on this box"). Types without the stack never claim a browser.
 function capabilitiesFor(type?: string | null): string {
-  if (type === "codex") return "write and run code, and use a full terminal";
-  // claude-code (and any future claude-CLI agent)
-  return "drive a real browser, write and run code, and use a full terminal";
+  if (type && getAgent(type)?.browser) {
+    return "write and run code, use a full terminal, and drive a real browser when browser automation is on in Manage";
+  }
+  return "write and run code, and use a full terminal";
+}
+
+// Name, emoji and personality each fill one line of the templates below. A
+// line break or control character in them could open a heading or a new
+// instruction in the agent's always-loaded prompt, so they are folded onto
+// one line; the words themselves are kept.
+function oneLine(value?: string | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.normalize("NFC").replace(/[\p{Cc}\u2028\u2029]/gu, " ").replace(/\s+/gu, " ").trim() || undefined;
 }
 
 function resolve(agent: BootstrapAgent): Resolved {
   const goal = getGoal(agent.goal);
   const identity = deriveIdentity(agent.goal, {
-    name: agent.name ?? undefined,
-    emoji: agent.emoji ?? undefined,
-    personality: agent.personality ?? undefined,
+    name: oneLine(agent.name),
+    emoji: oneLine(agent.emoji),
+    personality: oneLine(agent.personality),
   });
   const context = (agent.context || "").trim().slice(0, MAX_CONTEXT_LEN);
   const sharedMemory = (agent.sharedMemory || "").trim().slice(0, MAX_SHARED_MEMORY_FOLD_LEN);
@@ -225,12 +241,42 @@ export function buildBootstrapContent(agent: BootstrapAgent): BootstrapContent {
 
 const b64 = (s: string): string => Buffer.from(s, "utf8").toString("base64");
 
+/**
+ * Whether this runtime reads Hivra's identity files. Claude Code and Codex load
+ * ~/SOUL.md, ~/USER.md and the block in ~/system-prompt.md. Dashboard runtimes
+ * (Aeon, OpenClaw, Agent Zero, DeepSeek) use their own instruction files, and
+ * the provisioner deliberately removes those three (ATT-14), so writing them
+ * back would only leave files the agent never reads. Their seed still
+ * carries the deploy-time model settings.
+ */
+export function agentReadsHivraIdentity(type?: string | null): boolean {
+  const def = type ? getAgent(type) : undefined;
+  return Boolean(def) && def?.surface !== "dashboard" && def?.surface !== "computer";
+}
+
 // The script that runs ON the guest (as root via sudo). Writes SOUL.md + USER.md
 // and idempotently replaces the marked block in system-prompt.md. All file
 // contents arrive base64-encoded so nothing in them touches the shell. When the
 // launch picked an alternative LLM provider, also writes ~/.hivra/llm-provider.json
-// (0600 — it holds the API key; the chat server reads it per spawn).
-export function buildGuestScript(content: BootstrapContent, llm?: BoxLlmPayload | null): string {
+// (0600 — it holds the API key; the chat server reads it per spawn). With
+// identity off (a dashboard runtime), only the model settings are written.
+//
+// `keepChangedAfter` (Unix seconds) is for a computer that may have run for a
+// while before its first seed (ATT-05 backfill on a provider VM). On such a
+// computer, until Hivra's block is in system-prompt.md, a SOUL.md or USER.md
+// changed after that time was written by the agent or its owner, and is kept
+// as it is. Once Hivra has seeded the computer, a re-seed (the owner changed
+// the persona) replaces them as before.
+export function buildGuestScript(
+  content: BootstrapContent,
+  llm?: BoxLlmPayload | null,
+  options: { identity?: boolean; keepChangedAfter?: number } = {},
+): string {
+  const identity = options.identity !== false;
+  const keepAfter = options.keepChangedAfter;
+  if (keepAfter !== undefined && (!Number.isSafeInteger(keepAfter) || keepAfter < 0)) {
+    throw new Error("keepChangedAfter must be a Unix time in seconds");
+  }
   const soulB64 = b64(content.soul);
   const userB64 = b64(content.user);
   const blockB64 = b64(content.promptBlock);
@@ -241,15 +287,29 @@ chown -R bux:bux "$BUX/.hivra" 2>/dev/null || true
 chmod 0600 "$BUX/.hivra/llm-provider.json" 2>/dev/null || true
 `
     : "";
-  return `set -e
-BUX=/home/bux
-[ -d "$BUX" ] || { echo "no box home" >&2; exit 1; }
-umask 022
-printf '%s' '${soulB64}' | base64 -d > "$BUX/SOUL.md"
+  const identityWrites = keepAfter === undefined
+    ? `printf '%s' '${soulB64}' | base64 -d > "$BUX/SOUL.md"
 printf '%s' '${userB64}' | base64 -d > "$BUX/USER.md"
 chown bux:bux "$BUX/SOUL.md" "$BUX/USER.md" 2>/dev/null || true
 chmod 0644 "$BUX/SOUL.md" "$BUX/USER.md" 2>/dev/null || true
-${llmSection}SP="$BUX/system-prompt.md"
+`
+    : `FIRST_SEED=1
+if [ -f "$BUX/system-prompt.md" ] && grep -qF '${BOOTSTRAP_START}' "$BUX/system-prompt.md"; then FIRST_SEED=0; fi
+seed_identity_file() {
+  # A file whose time can't be read counts as changed: when unsure, keep it.
+  if [ "$FIRST_SEED" = 1 ] && { [ -e "$1" ] || [ -L "$1" ]; } && [ "$(stat -c %Y "$1" 2>/dev/null || echo 9999999999)" -gt ${keepAfter} ]; then
+    echo "HIVRA_SEED_KEPT $(basename "$1")"
+    return 0
+  fi
+  printf '%s' "$2" | base64 -d > "$1"
+  chown bux:bux "$1" 2>/dev/null || true
+  chmod 0644 "$1" 2>/dev/null || true
+}
+seed_identity_file "$BUX/SOUL.md" '${soulB64}'
+seed_identity_file "$BUX/USER.md" '${userB64}'
+`;
+  const identitySection = identity ? identityWrites : "";
+  const promptSection = identity ? `SP="$BUX/system-prompt.md"
 if [ -f "$SP" ]; then
   awk '
 /${BOOTSTRAP_START}/{skip=1}
@@ -260,7 +320,12 @@ if [ -f "$SP" ]; then
   mv "$SP.hivratmp" "$SP"
   chown bux:bux "$SP" 2>/dev/null || true
 fi
-echo HIVRA_SEED_OK
+` : "";
+  return `set -e
+BUX=/home/bux
+[ -d "$BUX" ] || { echo "no box home" >&2; exit 1; }
+umask 022
+${identitySection}${llmSection}${promptSection}echo HIVRA_SEED_OK
 `;
 }
 
@@ -293,7 +358,7 @@ export async function seedAgentBox(
   const ip = (agent.ip || "").trim();
   if (!/^[0-9.]+$/.test(ip)) return { ok: false, error: "missing or invalid box ip" };
   const content = buildBootstrapContent(agent);
-  const script = buildHostScript(ip, buildGuestScript(content, agent.llm));
+  const script = buildHostScript(ip, buildGuestScript(content, agent.llm, { identity: agentReadsHivraIdentity(agent.type) }));
   let res: HostScriptResult;
   try {
     // Cap well under the poll route's 60s maxDuration — the SSH connect is 15s

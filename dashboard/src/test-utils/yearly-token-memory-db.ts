@@ -8,6 +8,7 @@
  * scripts/test-yearly-token-payment-settlement.cjs; keep the two in step.
  */
 
+import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
 import {
   createSupabaseMemoryDb,
   type MemoryRow,
@@ -118,6 +119,18 @@ export function settleYearlyTokenPaymentModel(
   const quote = tables.yearly_token_quotes.find((row) => row.id === args.p_quote_id);
   if (!quote) return { data: { status: "not_found" }, error: null };
 
+  // settle_yearly_platform_token_payment: only the quote's own token settles
+  // it. The legacy settle_yearly_token_payment name passes no token and means
+  // $HermesOS.
+  const quoteToken = lower(quote.token_address ?? HERMESOS_TOKEN_ADDRESS);
+  const transferToken = lower(args.p_token_address ?? HERMESOS_TOKEN_ADDRESS);
+  if (quoteToken !== transferToken) {
+    return {
+      data: { status: "wrong_token", quote_token_address: quoteToken, transfer_token_address: transferToken },
+      error: null,
+    };
+  }
+
   if (quote.consumed_tx_hash != null) {
     if (lower(quote.consumed_tx_hash) === tx && (quote.consumed_log_index ?? null) === logIndex) {
       const sub = tables.yearly_token_subscriptions.find((row) => row.yearly_quote_id === quote.id);
@@ -203,6 +216,8 @@ export function settleYearlyTokenPaymentModel(
       deposit_log_index: args.p_log_index ?? null,
       deposit_address: lower(quote.deposit_address),
       amount_received_raw: amount.toString(),
+      token_key: quote.token_key ?? "hermesos",
+      token_address: quoteToken,
       sweep_status: "pending",
       sweep_tx_hash: null,
       sweep_attempted_at: null,
@@ -268,7 +283,10 @@ export function createYearlyTokenMemoryDb(seed: Record<string, MemoryRow[]> = {}
     tables: YEARLY_TOKEN_TABLES,
     seed,
     uniqueIndexes: YEARLY_TOKEN_UNIQUE_INDEXES,
-    rpc: { settle_yearly_token_payment: settleYearlyTokenPaymentModel },
+    rpc: {
+      settle_yearly_token_payment: settleYearlyTokenPaymentModel,
+      settle_yearly_platform_token_payment: settleYearlyTokenPaymentModel,
+    },
   });
 }
 

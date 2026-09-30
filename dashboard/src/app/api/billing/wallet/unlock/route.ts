@@ -18,6 +18,7 @@
  * the button can't hammer the RPC or SSH into Proxmox in a tight loop.
  */
 
+import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
@@ -28,10 +29,12 @@ import {
 import {
   refreshPrimaryHermesTokenHolding,
   getLatestHermesTokenHoldingSnapshot,
-  qualifiesForHermesBaseTier,
   VVV_TOKEN_ADDRESS,
 } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
+import { qualifiesForTokenBaseTier, resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { evaluateAndRecordVeniceComputeBoost } from "@/lib/billing/venice-compute-boost";
 import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -47,6 +50,7 @@ import {
   PENDING_RESIZE_SELECT,
   type PendingResizeRow,
 } from "@/lib/services/pending-resize";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { WEBFREE_BACKENDS } from "@/lib/types/instance";
@@ -61,7 +65,7 @@ const LOG_CONTEXT = {
 // short-circuits to the current state — bounds the RPC read + Proxmox resize.
 const UNLOCK_COOLDOWN_SECONDS = 20;
 
-export async function POST() {
+export async function POST(req?: NextRequest) {
   let userIdForLog: string | null = null;
   try {
     if (!isBillingV2ServerEnabled()) {
@@ -93,12 +97,22 @@ export async function POST() {
         { failureType: "wallet_unlock_no_wallet" }
       );
     }
-    const hermesBalanceRaw = BigInt(refresh.snapshot.balanceRaw);
+    const balances = refresh.balances;
+    const access = await resolveUserTokenAccess(userId);
 
     // ── 2. $HERMESOS tier eligibility ──────────────────────────────────
     let hermesEvaluated = false;
     try {
-      await evaluateAndRecordTokenTierEligibility({ userId, currentBalance: hermesBalanceRaw });
+      // Token geo-policy: existing tiers are re-evaluated as always; a
+      // blocked request just can't gain a NEW one. The decision is passed
+      // only while a country is listed, so dormant calls are unchanged.
+      const geo = await resolveTokenGeoBlock(req, { userId });
+      await evaluateAndRecordTokenTierEligibility({
+        userId,
+        balances,
+        access,
+        ...(isTokenGeoPolicyActive() ? { tokenGeo: geo } : {}),
+      });
       hermesEvaluated = true;
     } catch (err) {
       log.warn("unlock: hermes eligibility eval failed", {
@@ -140,7 +154,7 @@ export async function POST() {
     let desiredTier: TierKey;
     if (sub && isPaidTier(sub.plan)) {
       desiredTier = tierFromPlanKey(sub.plan);
-    } else if (qualifiesForHermesBaseTier(refresh.snapshot.balanceRaw)) {
+    } else if (qualifiesForTokenBaseTier(access, balances)) {
       desiredTier = "token_base";
     } else {
       desiredTier = "credit_base";
@@ -186,7 +200,9 @@ export async function POST() {
           .not("status", "in", '("deleted","scheduled_for_deletion")');
         const rows = (pendingRows ?? []) as unknown as PendingResizeRow[];
         if (rows.length > 0) {
-          const summary = await redeployPendingResizes(rows);
+          // User-initiated: the user just unlocked this compute, so the new caps
+          // land now (no in-flight deferral), as they always have.
+          const summary = await redeployPendingResizes(rows, { initiator: USER_LIVE_UPDATE });
           redeployed = summary.redeployed;
         }
       } catch (err) {

@@ -80,7 +80,7 @@ export const article: BlogArticle = {
     { slug: "ai-agent-automation-examples", title: "7 things your agent can automate overnight" },
   ],
   relatedFeatures: [
-    { slug: "multi-agent", title: "Multi-Agent Coordination" },
+    { slug: "multi-agent", title: "Multiple Agents" },
     { slug: "scheduled-tasks", title: "Scheduled Tasks" },
     { slug: "persistent-memory", title: "Persistent Memory" },
   ],

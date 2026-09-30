@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { SITE_URL } from "@/lib/seo-urls";
-import { OG_IMAGE } from "@/lib/og-meta";
+import { OG_IMAGE, OG_IMAGE_BY_PATH } from "@/lib/og-meta";
 
 const HERMES_SITE_NAME = "Hivra";
 const DEFAULT_SOCIAL_IMAGE = {
@@ -41,8 +41,12 @@ export function buildAbsoluteSiteUrl(path: string): string {
   return new URL(normalizedPath, SITE_URL).toString();
 }
 
-function normalizeSocialImages(images?: readonly SocialImage[]): SocialImage[] {
-  const sourceImages = images && images.length > 0 ? images : [DEFAULT_SOCIAL_IMAGE];
+function defaultSocialImage(path: string): SocialImage {
+  return OG_IMAGE_BY_PATH[path] ?? DEFAULT_SOCIAL_IMAGE;
+}
+
+function normalizeSocialImages(path: string, images?: readonly SocialImage[]): SocialImage[] {
+  const sourceImages = images && images.length > 0 ? images : [defaultSocialImage(path)];
 
   return sourceImages.map((image) => {
     if (typeof image === "string") {
@@ -69,7 +73,7 @@ export function buildWebsiteMetadata({
   images,
 }: WebsiteMetadataInput): Pick<Metadata, "alternates" | "openGraph" | "twitter"> {
   const canonicalUrl = buildAbsoluteSiteUrl(path);
-  const normalizedImages = normalizeSocialImages(images);
+  const normalizedImages = normalizeSocialImages(path, images);
 
   return {
     alternates: {
@@ -105,7 +109,7 @@ export function buildArticleMetadata({
   authors,
 }: ArticleMetadataInput): Pick<Metadata, "alternates" | "openGraph" | "twitter"> {
   const canonicalUrl = buildAbsoluteSiteUrl(path);
-  const normalizedImages = normalizeSocialImages(images);
+  const normalizedImages = normalizeSocialImages(path, images);
 
   return {
     alternates: {

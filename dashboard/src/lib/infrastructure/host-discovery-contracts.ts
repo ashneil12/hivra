@@ -1,7 +1,23 @@
 import { z } from "zod";
 
-export const HOST_DISCOVERY_CONTRACT_VERSION = 1 as const;
+/** The snapshot contract new host and Proxmox inspections write. Version 2
+ * records how the connection reached root (privilegeVia) and whether a
+ * non-root login has passwordless sudo. Version 1 snapshots (written before
+ * sudo connections existed) have neither field and are read as privilegeVia
+ * "login", which is exact: they were all taken over the SSH login. */
+export const HOST_DISCOVERY_CONTRACT_VERSION = 2 as const;
+/** The Hetzner provider lane is a separate contract with its own SQL
+ * (20260828030000 publishes only contractVersion 1) and its own script
+ * protocol, run through the first-boot recipe. Slice 13 changes neither: the
+ * provider lane keeps version 1, byte for byte. */
+export const PROVIDER_GUEST_DISCOVERY_CONTRACT_VERSION = 1 as const;
 export const HOST_DISCOVERY_PROTOCOL = "HIVRA_HOST_DISCOVERY_V1" as const;
+/** The read-only script's own output protocol (its PROTOCOL line), per lane:
+ * host and Proxmox connections emit version 2 (with PASSWORDLESS_SUDO), the
+ * provider lane's first-boot recipe keeps version 1 (without it). */
+export const HOST_DISCOVERY_SCRIPT_PROTOCOL_VERSION = 2 as const;
+export const PROVIDER_GUEST_DISCOVERY_SCRIPT_PROTOCOL_VERSION = 1 as const;
+export type HostDiscoveryScriptLane = "host" | "provider-guest";
 export const HOST_DISCOVERY_SNAPSHOT_TTL_MS = 15 * 60 * 1_000;
 export const MAX_HOST_DISCOVERY_OUTPUT_BYTES = 48 * 1_024;
 
@@ -14,6 +30,7 @@ const HOST_DISCOVERY_ERROR_CODES = [
   "SSH_AUTHENTICATION_FAILED",
   "SSH_CONNECTION_FAILED",
   "SSH_COMMAND_FAILED",
+  "SSH_SUDO_UNAVAILABLE",
   "DISCOVERY_OUTPUT_INVALID",
   "DISCOVERY_SUPERSEDED",
   "DISCOVERY_INTERNAL_ERROR",
@@ -72,7 +89,7 @@ const HostDiscoverySnapshotFields = z
     connectionRevision: z.number().int().positive().safe(),
     /** Informational only. It is never an isolation or launch decision. */
     connectionProvider: z.enum(["proxmox", "host"]),
-    contractVersion: z.literal(HOST_DISCOVERY_CONTRACT_VERSION),
+    contractVersion: z.union([z.literal(1), z.literal(2)]),
     observedAt: IsoDateTimeSchema,
     expiresAt: IsoDateTimeSchema,
     hostIdentityDigest: z.string().regex(/^[0-9a-f]{64}$/),
@@ -94,6 +111,11 @@ const HostDiscoverySnapshotFields = z
         environment: z
           .object({
             effectivePrivilege: z.enum(["root", "non-root", "unknown"]),
+            /** v2: whether a non-root login can run sudo without a password.
+             * Null when Hivra didn't ask (already root, or no sudo). */
+            passwordlessSudo: z.boolean().nullable().optional(),
+            /** v2: how this connection reaches root, from the connection. */
+            privilegeVia: z.enum(["login", "sudo"]).optional(),
             virtualization: z.enum([
               "bare-metal",
               "virtual-machine",
@@ -143,7 +165,17 @@ const HostDiscoverySnapshotFields = z
   })
   .strict();
 
-function validateSnapshot(snapshot:Pick<z.infer<typeof HostDiscoverySnapshotFields>,"observedAt"|"expiresAt"|"host">,context:z.RefinementCtx) {
+function validateSnapshot(snapshot:Pick<z.infer<typeof HostDiscoverySnapshotFields>,"observedAt"|"expiresAt"|"host"|"contractVersion">,context:z.RefinementCtx) {
+    const environment = snapshot.host.environment;
+    const hasPrivilegeFields = environment.privilegeVia !== undefined || environment.passwordlessSudo !== undefined;
+    if (snapshot.contractVersion === 1 ? hasPrivilegeFields
+      : environment.privilegeVia === undefined || environment.passwordlessSudo === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["host", "environment"],
+        message: "Version 2 snapshots record privilegeVia and passwordlessSudo; version 1 snapshots record neither",
+      });
+    }
     const observedAt = Date.parse(snapshot.observedAt);
     const expiresAt = Date.parse(snapshot.expiresAt);
     if (
@@ -184,6 +216,9 @@ export const HostDiscoverySnapshotSchema = HostDiscoverySnapshotFields.superRefi
  */
 export const ProviderGuestDiscoverySnapshotSchema = HostDiscoverySnapshotFields.extend({
   connectionProvider:z.literal("hetzner-cloud"),
+  // A different contract from generic hosts; it always runs through sudo and
+  // is unchanged by contract version 2.
+  contractVersion:z.literal(PROVIDER_GUEST_DISCOVERY_CONTRACT_VERSION),
   providerServerId:z.string().regex(/^[1-9][0-9]{0,15}$/).refine(value=>Number.isSafeInteger(Number(value))),
   capacityOrderId:UuidSchema,
   enrollmentAttemptId:UuidSchema,
@@ -200,6 +235,15 @@ const HostDiscoveryErrorSchema = z
     code: z.enum(HOST_DISCOVERY_ERROR_CODES),
     message: z.string().min(1).max(300),
     remediation: z.string().min(1).max(500).optional(),
+    /** For SSH_HOST_KEY_MISMATCH: the pinned identity and the one the server
+     * presented, so the owner can compare them side by side. */
+    hostKey: z
+      .object({
+        expected: z.string().regex(/^SHA256:[A-Za-z0-9+/]{43}$/),
+        presented: z.string().regex(/^SHA256:[A-Za-z0-9+/]{43}$/),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -225,5 +269,10 @@ export type HostIsolationEngineId = (typeof HOST_ISOLATION_ENGINE_IDS)[number];
 export type HostEngineRequirement = (typeof HOST_ENGINE_REQUIREMENTS)[number];
 export type HostDiscoveryEngine = z.infer<typeof HostDiscoveryEngineSchema>;
 export type HostDiscoverySnapshot = z.infer<typeof HostDiscoverySnapshotSchema>;
+
+/** How a snapshot's connection reached root. Version 1 is always "login". */
+export function snapshotPrivilegeVia(snapshot: Pick<HostDiscoverySnapshot, "contractVersion" | "host">): "login" | "sudo" {
+  return snapshot.contractVersion === 1 ? "login" : snapshot.host.environment.privilegeVia ?? "login";
+}
 export type ProviderGuestDiscoverySnapshot = z.infer<typeof ProviderGuestDiscoverySnapshotSchema>;
 export type HostDiscoveryResult = z.infer<typeof HostDiscoveryResultSchema>;

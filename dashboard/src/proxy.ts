@@ -1,16 +1,44 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { crossOriginMutationRefusal } from "@/lib/cross-origin-mutation-guard";
 import { isProtectedPath, PROTECTED_ROUTE_MATCHERS } from "@/lib/protected-routes";
 import { isHostedBillingPath } from "@/lib/self-host/hosted-surface-guard";
-import { isCanaryHost } from "@/lib/seo-host";
+import { isNoIndexHost } from "@/lib/seo-host";
 
 const requiresAuth = createRouteMatcher(PROTECTED_ROUTE_MATCHERS);
 
 export default clerkMiddleware(async (auth, request) => {
-  const canaryHost = isCanaryHost(request.headers.get("host"));
+  const noIndexHost = isNoIndexHost(request.headers.get("host"));
   const response = NextResponse.next();
-  if (canaryHost) {
+  if (noIndexHost) {
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+
+  // Before Clerk: a state-changing API request that a browser sent from
+  // another origin (for example a box page on the same registrable domain,
+  // which still carries the SameSite=Lax session cookie) is refused outright.
+  const crossOrigin = crossOriginMutationRefusal(request, request.nextUrl.pathname);
+  if (crossOrigin) {
+    // eslint-disable-next-line no-console -- The proxy runs on every request; the structured logger pulls in ops_events and Supabase, so this stays a single JSON line on console.
+    console.warn(JSON.stringify({
+      level: "warn",
+      msg: "refused cross-origin API mutation",
+      source: "proxy",
+      failureType: "cross_origin_api_mutation",
+      method: request.method,
+      path: request.nextUrl.pathname,
+      reason: crossOrigin.reason,
+      secFetchSite: crossOrigin.secFetchSite,
+      origin: crossOrigin.origin?.slice(0, 200) ?? null,
+    }));
+    const refused = NextResponse.json(
+      { error: "Cross-origin request refused." },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+    if (noIndexHost) {
+      refused.headers.set("X-Robots-Tag", "noindex, nofollow");
+    }
+    return refused;
   }
 
   if (
@@ -23,7 +51,7 @@ export default clerkMiddleware(async (auth, request) => {
           { status: 404 },
         )
       : NextResponse.redirect(new URL("/dashboard", request.url));
-    if (canaryHost) {
+    if (noIndexHost) {
       blockedResponse.headers.set("X-Robots-Tag", "noindex, nofollow");
     }
     return blockedResponse;
@@ -54,6 +82,12 @@ export const config = {
      * - exactly /api/activity/collector/renew: the guest reporter renews that
      *   same collector capability with the capability itself; the route
      *   verifies it and the computer's ownership. Clerk cannot decode it.
+     * - exactly /api/infrastructure/server-enrollments/report: the server
+     *   setup script's one-time code is authenticated by the receiver, not as
+     *   a Clerk token. The owner routes beside it stay covered by Clerk.
+     * - exactly /enroll, /enroll/uninstall, /enroll/script and
+     *   /enroll/script.sha256 (page matcher only): `curl … | sudo bash`
+     *   downloads the setup script with no session. Siblings stay covered.
      *
      * An api exclusion must appear in BOTH entries below. The matcher array is
      * an OR: a path excluded from one entry but matched by another still runs
@@ -79,8 +113,8 @@ export const config = {
      * the box's own dashboard in a cross-origin iframe (WebuiIframe). No SSE
      * route needs a bypass, so there is no SSE bypass list.
      */
-    "/((?!_next|api/instances/[^/]+/aeon-gate|api/infrastructure/first-boot/enroll$|api/activity/ingest$|api/activity/collector/renew$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/api/((?!instances/[^/]+/aeon-gate|infrastructure/first-boot/enroll$|activity/ingest$|activity/collector/renew$).*)",
+    "/((?!_next|api/instances/[^/]+/aeon-gate|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/api/((?!instances/[^/]+/aeon-gate|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$).*)",
     "/trpc/(.*)",
   ],
 };

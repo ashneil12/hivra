@@ -126,4 +126,27 @@ describe("HivraDesktopViewport", () => {
     expect(screen.getByTitle("Desktop")).toBe(frame);
     expect(frame.contentWindow).toBe(contentWindow);
   });
+
+  it("caps the quality budget on a phone so the guest never renders below half scale", () => {
+    const matchMedia = jest.fn((query: string) => ({ matches: query.includes("max-width: 767px"), media: query }) as MediaQueryList);
+    Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: matchMedia });
+    try {
+      width = 375;
+      height = 408;
+      render(<HivraDesktopViewport fit targetWidth={1920} targetHeight={1080}><iframe title="Desktop" /></HivraDesktopViewport>);
+      const canvas = screen.getByTitle("Desktop").parentElement!;
+      const logicalWidth = Number.parseFloat(canvas.style.width);
+      const logicalHeight = Number.parseFloat(canvas.style.height);
+      const scale = Number(canvas.style.transform.match(/scale\(([^)]+)\)/)![1]);
+      // 1920x1080 would be ~1380x1500 at scale ~0.27; 4x the panel's pixels is the cap.
+      expect(logicalWidth * logicalHeight).toBeCloseTo(375 * 408 * 4);
+      expect(scale).toBeCloseTo(0.5);
+      expect(logicalWidth / logicalHeight).toBeCloseTo(375 / 408);
+      // A panel already near the preset keeps the full preset budget.
+      resize(1200, 700);
+      expect(Number.parseFloat(canvas.style.width) * Number.parseFloat(canvas.style.height)).toBeCloseTo(1920 * 1080);
+    } finally {
+      delete (window as { matchMedia?: unknown }).matchMedia;
+    }
+  });
 });

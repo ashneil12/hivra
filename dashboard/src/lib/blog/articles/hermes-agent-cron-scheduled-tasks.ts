@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent has a built-in scheduler — no separate cron setup needed. This covers how it works, how to set up a morning briefing, monitoring alerts, weekly reports, and how to manage scheduled tasks from the command line.",
   publishedDate: "2026-04-20",
-  lastModified: "2026-04-20",
+  lastModified: "2026-09-24",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Your agent runs tasks while you sleep. Here is how to set that up.",
@@ -55,7 +55,7 @@ export const article: BlogArticle = {
       heading: "Managing scheduled tasks",
       paragraphs: [
         "```bash\nhermes cron list           # all scheduled tasks with next fire time\nhermes cron list --detail  # include description and delivery platform\nhermes cron edit <id>      # open task in your editor\nhermes cron delete <id>    # remove permanently\nhermes cron pause <id>     # pause without deleting\nhermes cron run <id>       # fire the task right now (for testing)\n```\n\nThe `run` command is the most useful during setup — fire the task immediately to see what the output looks like before waiting for the scheduled time. Saves a lot of guessing.",
-        "Scheduled tasks live in your profile config. They're included in profile exports and backups — migrate to a new server or to Hivra and the schedule comes with you.",
+        "Scheduled tasks live in your profile config. They are part of the profile, so a profile export carries them: move the profile to a new server or to Hivra and the schedule comes with you.",
       ],
     },
     {

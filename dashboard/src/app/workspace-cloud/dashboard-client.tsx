@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { UserButton } from "@clerk/nextjs";
 import {
   AlertTriangle,
@@ -136,6 +136,8 @@ const SCOPED_CSS = `
 @keyframes wc-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 .wc-prov { background: linear-gradient(90deg, rgba(212,160,55,0.06) 0%, rgba(212,160,55,0.16) 50%, rgba(212,160,55,0.06) 100%); background-size: 200% 100%; animation: wc-shimmer 1.8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .wc-in, .wc-overlay, .wc-modal, .wc-toast, .wc-prov { animation: none; } }
+@media (pointer: coarse) { .wc-btn { min-height: 44px; min-width: 44px; } }
+@media (max-width: 480px) { .wc-toasts { left: 16px; right: 16px !important; max-width: none !important; } }
 `;
 
 /* ── primitive button ───────────────────────────────────────────────────── */
@@ -202,7 +204,7 @@ interface Toast { id: number; kind: "success" | "error"; text: string }
 
 function ToastStack({ toasts }: { toasts: Toast[] }) {
   return (
-    <div style={{ position: "fixed", right: 18, bottom: 18, zIndex: 10000, display: "flex", flexDirection: "column", gap: 10, maxWidth: 360 }}>
+    <div className="wc-toasts" style={{ position: "fixed", right: 18, bottom: "calc(18px + env(safe-area-inset-bottom, 0px))", zIndex: 10000, display: "flex", flexDirection: "column", gap: 10, maxWidth: 360 }}>
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -231,6 +233,16 @@ function ToastStack({ toasts }: { toasts: Toast[] }) {
 
 function LaunchModal({ onClose, onLaunch, busy }: { onClose: () => void; onLaunch: (name: string) => void; busy: boolean }) {
   const [name, setName] = useState("Workspace Cloud Agent");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const inputId = useId();
+  useEffect(() => {
+    // On touch screens focusing the field would open the keyboard over a prefilled
+    // name; focus the dialog itself so screen readers still move into it.
+    if (window.matchMedia("(pointer: coarse)").matches) modalRef.current?.focus();
+    else inputRef.current?.focus();
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -238,18 +250,21 @@ function LaunchModal({ onClose, onLaunch, busy }: { onClose: () => void; onLaunc
   }, [onClose]);
   return (
     <div className="wc-overlay" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)", padding: 16 }}>
-      <div className="wc-modal" onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", width: 460, maxWidth: "94vw", boxShadow: "0 24px 50px rgba(0,0,0,0.28)" }}>
+      <div ref={modalRef} className="wc-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", width: 460, maxWidth: "94vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", boxShadow: "0 24px 50px rgba(0,0,0,0.28)", outline: "none" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid var(--etched-border)" }}>
-          <h3 className="serif" style={{ fontSize: "1.3rem", fontWeight: 500 }}>Launch your cloud agent</h3>
-          <button type="button" onClick={onClose} className="wc-btn" style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+          <h3 id={titleId} className="serif" style={{ fontSize: "1.3rem", fontWeight: 500 }}>Launch your cloud agent</h3>
+          <button type="button" onClick={onClose} className="wc-btn" aria-label="Close" style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
             <X size={15} />
           </button>
         </div>
         <div style={{ padding: 20 }}>
-          <label className="mono" style={{ ...monoLabel, fontSize: 9, opacity: 0.55, display: "block", marginBottom: 8 }}>Agent name</label>
+          <label htmlFor={inputId} className="mono" style={{ ...monoLabel, fontSize: 9, opacity: 0.55, display: "block", marginBottom: 8 }}>Agent name</label>
           <input
-            autoFocus
+            id={inputId}
+            ref={inputRef}
             value={name}
+            enterKeyHint="go"
+            autoCapitalize="words"
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && name.trim() && !busy && onLaunch(name.trim())}
             maxLength={60}

@@ -6,6 +6,10 @@
 // setWithdrawalDestinationForOwner. It deliberately does NOT touch the
 // instance-only `instance_bankr_wallet_recipients` table (its instance_id FK to
 // hermes_instances would reject a Hivra box), so no migration is needed.
+//
+// A change needs a fresh sign-in check (Clerk reverification), emails the
+// owner, and holds the new destination for the cooldown
+// (withdraw-destination-policy.ts).
 
 import { auth } from "@clerk/nextjs/server";
 import type { NextRequest } from "next/server";
@@ -16,6 +20,7 @@ import {
   instanceBankrWalletPublicSummary,
   setWithdrawalDestinationForOwner,
 } from "@/lib/billing/bankr-instance-wallets";
+import { withdrawDestinationStepUpResponse } from "@/lib/billing/withdraw-destination-notice";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -52,7 +57,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   try {
     if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await ctx.params;
-    const { userId } = await auth();
+    const authObject = await auth();
+    const { userId } = authObject;
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
@@ -61,6 +67,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (!bankrSkillsDirForType(agent.type)) {
       return apiError("Wallet not supported for this agent type", 400);
     }
+
+    const stepUp = withdrawDestinationStepUpResponse(authObject, {
+      route: "/api/hivra/agents/[id]/bankr-wallet/set-destination",
+      userId,
+    });
+    if (stepUp) return stepUp;
 
     const body = bodySchema.parse(await req.json());
     const record = await setWithdrawalDestinationForOwner({

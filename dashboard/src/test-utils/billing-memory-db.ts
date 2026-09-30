@@ -6,8 +6,8 @@
  * mutates rows, so settlement/reconciliation code runs against real query
  * semantics:
  *   - eq / neq / in / lt / lte / gt / gte / is filters (including PostgREST
- *     JSON paths such as `metadata->>failureType`), multi-key order, and a
- *     chainable + thenable limit;
+ *     JSON paths such as `metadata->>failureType`), multi-key order (with
+ *     nullsFirst), and a chainable + thenable limit;
  *   - update(...).<filters>.select() resolves to the AFFECTED rows, so
  *     compare-and-set code can see "0 rows = lost the race";
  *   - 23505 emulation for the production unique constraints on the tables
@@ -41,6 +41,8 @@ interface Filter {
 interface Order {
   column: string;
   ascending: boolean;
+  /** Postgres default when unset: NULLS LAST for ASC, NULLS FIRST for DESC. */
+  nullsFirst?: boolean;
 }
 
 type MutationKind = "insert" | "update" | "upsert" | "select";
@@ -208,8 +210,9 @@ function sortRows(rows: MemoryRow[], orders: Order[]) {
       const b = readColumn(right, order.column);
       if (a == null && b == null) continue;
       // Postgres default: NULLS LAST for ASC, NULLS FIRST for DESC.
-      if (a == null) return order.ascending ? 1 : -1;
-      if (b == null) return order.ascending ? -1 : 1;
+      const nullsFirst = order.nullsFirst ?? !order.ascending;
+      if (a == null) return nullsFirst ? -1 : 1;
+      if (b == null) return nullsFirst ? 1 : -1;
       const comparison = compareValues(a, b);
       if (comparison !== 0) return order.ascending ? comparison : -comparison;
     }
@@ -239,7 +242,10 @@ export function createBillingMemoryDb(seed: Record<string, MemoryRow[]> = {}) {
   function nextDefaults(tableName: string) {
     sequence += 1;
     const stamp = new Date(Date.UTC(2026, 0, 1) + sequence * 1000).toISOString();
-    return { id: `${tableName}_${sequence}`, created_at: stamp, updated_at: stamp };
+    const defaults: MemoryRow = { id: `${tableName}_${sequence}`, created_at: stamp, updated_at: stamp };
+    // Column default now(): a new row joins the back of the reconcile queue.
+    if (tableName === "payment_transactions") defaults.reconcile_queued_at = stamp;
+    return defaults;
   }
 
   function takeFailure(tableName: string, op: MutationKind, payload: MemoryRow) {
@@ -312,8 +318,8 @@ export function createBillingMemoryDb(seed: Record<string, MemoryRow[]> = {}) {
       };
     }
     query.select = () => query;
-    query.order = (column: string, options?: { ascending?: boolean }) => {
-      orders.push({ column, ascending: options?.ascending !== false });
+    query.order = (column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) => {
+      orders.push({ column, ascending: options?.ascending !== false, nullsFirst: options?.nullsFirst });
       return query;
     };
     query.limit = (count: number) => {

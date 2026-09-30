@@ -113,6 +113,22 @@ describe("PostHogProvider — /dashboard/welcome sensitive-route suppression (#3
     expect(mockPosthog.startSessionRecording).not.toHaveBeenCalled();
   });
 
+  // Launch took over the welcome forms, and with them the pasted model keys,
+  // credit top-ups and card checks that made /dashboard/welcome sensitive.
+  it("never starts recording when landing directly on /dashboard/launch", async () => {
+    installImmediateIdleCallback();
+    setLocation("hermesos.cloud", "/dashboard/launch");
+
+    await import("../PostHogProvider");
+
+    expect(mockPosthog.init).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ disable_session_recording: true })
+    );
+    expect(mockPosthog.stopSessionRecording).toHaveBeenCalled();
+    expect(mockPosthog.startSessionRecording).not.toHaveBeenCalled();
+  });
+
   it("suppresses recording even when /dashboard/welcome is a sub-path (/dashboard/welcome/plan)", async () => {
     installImmediateIdleCallback();
     setLocation("hermesos.cloud", "/dashboard/welcome/plan");

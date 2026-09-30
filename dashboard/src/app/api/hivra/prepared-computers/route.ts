@@ -38,6 +38,11 @@ export async function POST(request: NextRequest) {
       if (["profile_already_claimed", "prepared_slot_claimed"].includes(code)) {
         return apiError("This prepared Canary computer is already claimed.", 409, undefined, { code });
       }
+      if (code === "plan_agent_limit" || code === "plan_access_required") {
+        return apiError(code === "plan_agent_limit"
+          ? "Your plan's agent limit is reached. Upgrade for more slots, or remove an agent first."
+          : "Plan access is required before claiming a computer.", 403, undefined, { code });
+      }
       if (code === "prepared_profile_unavailable") {
         return apiError("This prepared computer is not configured on Canary.", 503, undefined, { code });
       }

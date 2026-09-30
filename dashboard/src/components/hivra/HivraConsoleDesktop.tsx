@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { Loader2, Maximize2, MonitorUp, RefreshCw, ShieldCheck } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, MonitorUp, RefreshCw, ShieldCheck } from "lucide-react";
 import styles from "./HivraRemoteDesktop.module.css";
+import { useWorkspaceModalLayer } from "@/components/workspace/WorkspaceModalLayerContext";
+import { useInertOutside } from "./HivraRemoteDesktop";
 
 import {
   activateNativeOmarchyDesktop,
@@ -101,6 +103,12 @@ function nativeFailureMessage(code: string): string {
   }
 }
 
+const subscribeNever = () => () => {};
+/** Element fullscreen exists here; iPhone Safari has none and expands in place. */
+function hasElementFullscreen(): boolean {
+  return document.fullscreenEnabled !== false && typeof document.documentElement.requestFullscreen === "function";
+}
+
 export function HivraConsoleDesktop({ computerId, name, profile, active = true, autoOpenFast = false }: {
   computerId: string;
   name: string;
@@ -133,6 +141,12 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   const windowsFrameRef = useRef<HTMLIFrameElement>(null);
   const windowsAttemptRef = useRef(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // In-page stand-in for element fullscreen where the browser has none.
+  const [immersive, setImmersive] = useState(false);
+  if (immersive && !active) setImmersive(false);
+  useWorkspaceModalLayer("surface", immersive);
+  useInertOutside(shellRef, immersive);
+  const elementFullscreen = useSyncExternalStore(subscribeNever, hasElementFullscreen, () => true);
   const renewalIdRef = useRef<string | null>(null);
   const automaticReleaseInFlightRef = useRef(false);
   const windowsFastOpenButtonRef = useRef<HTMLButtonElement>(null);
@@ -157,6 +171,14 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
     document.addEventListener("fullscreenchange", changed);
     return () => document.removeEventListener("fullscreenchange", changed);
   }, []);
+
+  // Only reaches this window while focus is outside the desktop frame.
+  useEffect(() => {
+    if (!immersive) return;
+    const exit = (event: KeyboardEvent) => { if (event.key === "Escape") setImmersive(false); };
+    window.addEventListener("keydown", exit);
+    return () => window.removeEventListener("keydown", exit);
+  }, [immersive]);
 
   useEffect(() => {
     const preferred = readStreamModePreference(computerId);
@@ -337,15 +359,21 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   const fullscreen = async () => {
     const shell = shellRef.current;
     if (!shell) return;
+    if (immersive) {
+      setImmersive(false);
+      return;
+    }
     try {
       if (document.fullscreenElement === shell) {
         await document.exitFullscreen();
-      } else if (typeof shell.requestFullscreen === "function") {
+      } else if (document.fullscreenEnabled !== false && typeof shell.requestFullscreen === "function") {
         // Fullscreen the existing surface, never navigate or replace its RDP frame.
         await shell.requestFullscreen();
         windowsFrameRef.current?.focus();
       } else {
-        setMessage("Fullscreen is unavailable. The desktop stays here.");
+        // iPhone Safari has no element fullscreen: expand in place instead.
+        setImmersive(true);
+        windowsFrameRef.current?.focus();
       }
     } catch {
       setMessage("Fullscreen could not change. The desktop stays here.");
@@ -725,10 +753,19 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
     : windowsLaunchUrl ? windowsFrameLoaded ? "Windows desktop gateway loaded · Full screen is optional" : "Windows desktop is opening inline"
     : "Open your Windows desktop here.");
 
+  const expanded = isFullscreen || immersive;
+  const expandLabel = expanded ? "Exit full screen" : "Full screen";
+  // Escape leaves real fullscreen even from inside the desktop frame. The
+  // in-page fallback cannot hear keys typed there, so it names the button.
+  const expandTitle = expanded ? "Return to inline desktop"
+    : elementFullscreen ? "Expand desktop; Escape returns here" : "Expand desktop; Exit full screen returns here";
+
   return (
-    <div ref={shellRef} hidden={!active} style={{ height: "100%", minHeight: 0, display: active ? "flex" : "none", flexDirection: "column", background: "#090909" }}>
+    <div ref={shellRef} hidden={!active} data-immersive={immersive ? "true" : undefined}
+      className={immersive ? styles.immersive : undefined}
+      style={{ height: immersive ? "var(--workspace-viewport-height, 100dvh)" : "100%", minHeight: 0, display: active ? "flex" : "none", flexDirection: "column", background: "#090909" }}>
       {profile === "windows" ? (
-        <header className={styles.strip}>
+        <header className={styles.strip} data-state={windowsFrameLoaded && windowsLaunchUrl ? "connected" : windowsLaunchState}>
           <span className={styles.stripStatus} aria-hidden="true">
             {windowsStatus === "Opening" ? <Loader2 size={13} className="animate-spin" /> : <MonitorUp size={13} />}
           </span>
@@ -753,8 +790,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
             {windowsLaunchUrl || windowsLaunchState === "failed" ? <RefreshCw size={11} /> : <MonitorUp size={11} />}
           </button>
           <button type="button" onClick={() => void fullscreen()} className={styles.stripIcon}
-            aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
-            title={isFullscreen ? "Return to inline desktop" : "Expand desktop; Escape returns here"}><Maximize2 size={13} /></button>
+            aria-label={expandLabel} title={expandTitle}>{immersive ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button>
         </header>
       ) : (
       <div style={{ minHeight: 46, display: "flex", alignItems: "center", gap: 10, padding: "0 16px", borderBottom: "1px solid rgba(255,255,255,.12)", color: "#eee" }}>
@@ -803,9 +839,9 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
           </button>
         </> : null}
         {!fastProfile ? <button type="button" onClick={() => void connect()}
-          aria-label="Reconnect desktop" title="Reconnect desktop"
+          aria-label="Reconnect desktop" title="Reconnect desktop" className={styles.consoleIcon}
           style={{ padding: 7, color: "inherit", background: "transparent", border: "1px solid #333" }}><RefreshCw size={14} /></button> : null}
-        <button type="button" onClick={() => void fullscreen()} aria-label={isFullscreen ? "Exit full screen" : "Full screen"} title={isFullscreen ? "Return to inline desktop" : "Expand desktop; Escape returns here"} style={{ padding: 7, color: "inherit", background: "transparent", border: "1px solid #333" }}><Maximize2 size={14} /></button>
+        <button type="button" onClick={() => void fullscreen()} aria-label={expandLabel} title={expandTitle} className={styles.consoleIcon} style={{ padding: 7, color: "inherit", background: "transparent", border: "1px solid #333" }}>{immersive ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
       </div>
       )}
       {nativeMessage ? (

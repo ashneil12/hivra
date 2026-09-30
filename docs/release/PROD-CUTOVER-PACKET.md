@@ -136,6 +136,16 @@ Sort the difference into four groups:
 4. `NEXT_PUBLIC_*` names in any group: baked in at build time. A change needs a
    new candidate build and a new Promote.
 
+One name needs its value confirmed by the owner, not only its presence:
+`NEXT_PUBLIC_HIVRA_AGENTS`. Off Canary hosts, the Hivra agent and computer
+routes (`/api/hivra/*`) answer only when it is `1` (`isHivraApiAllowed`). The
+candidate's only first run is Launch (`/dashboard/launch`): the welcome launcher
+and its deploy forms are retired, and every sign-up, activation, checkout return,
+landing card and Agents row opens Launch. Launch offers Claude Code, Codex,
+OpenClaw, Agent Zero, Aeon and the computers whatever this flag says, so without
+`1` on production every launch there except Hermes fails. Set it (a build-time
+name) before the release PR is merged, or hold the Promote.
+
 Any production env change is an owner action, made before the release PR is
 merged so the staged build picks it up.
 
@@ -235,9 +245,11 @@ Hard-reload first. Skew Protection keeps open tabs on the old build for up to
 4. **Controls.** `node scripts/release/check-managed-hosting-controls.mjs --live`.
 5. **Sign-in.** Clerk sign-in on hivra.cloud with an owned account reaches the
    dashboard.
-6. **Launch an agent.** With an owned test account, launch one agent end to end
-   until it answers, then delete it. No customer sessions, no spending without
-   the owner's OK.
+6. **Launch an agent.** With an owned test account, open `/dashboard/launch` and
+   launch one Hivra agent (for example Claude Code) and one Hermes agent end to
+   end until each answers, then delete them. This also proves
+   `NEXT_PUBLIC_HIVRA_AGENTS` (section 4). No customer sessions, no spending
+   without the owner's OK.
 7. **Billing page.** Signed in, `/dashboard/billing` loads for a paid and a
    free account and shows the right plan. Signed out it returns 404 by design
    (same on Canary).

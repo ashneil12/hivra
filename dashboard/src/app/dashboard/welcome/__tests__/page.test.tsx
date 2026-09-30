@@ -1,10 +1,7 @@
 /** @jest-environment node */
 /**
- * /dashboard/welcome is a thin server gate. It validates the Clerk
- * session and hands off to <WelcomeFlow />, which owns the
- * loading → plan → deploy → deploying state machine and the
- * entitlement-skip routing. These tests cover the auth gate only —
- * the flow itself is exercised by the client component's own tests.
+ * /dashboard/welcome no longer launches anything. Launch is the one front
+ * door; this route only sends older links, emails and bookmarks there.
  */
 
 const mockRedirect = jest.fn((url: string) => {
@@ -20,16 +17,11 @@ jest.mock("@clerk/nextjs/server", () => ({
   auth: () => mockAuth(),
 }));
 
-// The client component is a heavy framer-motion + fetch-driven UI.
-// The server gate doesn't render it during tests; we just assert the
-// gate hands off to the right component.
-jest.mock("@/components/dashboard/welcome/WelcomeFlow", () => ({
-  WelcomeFlow: function MockWelcomeFlow() {
-    return null;
-  },
-}));
-
 import WelcomePage from "../page";
+
+function visit(searchParams: Record<string, string | string[] | undefined> = {}) {
+  return WelcomePage({ searchParams: Promise.resolve(searchParams) });
+}
 
 describe("/dashboard/welcome", () => {
   beforeEach(() => {
@@ -39,12 +31,20 @@ describe("/dashboard/welcome", () => {
 
   it("redirects to /sign-in when unauthenticated", async () => {
     mockAuth.mockResolvedValueOnce({ userId: null });
-    await expect(WelcomePage()).rejects.toThrow(/NEXT_REDIRECT:\/sign-in/);
+    await expect(visit()).rejects.toThrow(/NEXT_REDIRECT:\/sign-in$/);
   });
 
-  it("renders the welcome flow when authenticated", async () => {
-    const tree = await WelcomePage();
-    expect(tree).toBeTruthy();
-    expect(mockRedirect).not.toHaveBeenCalled();
+  it("sends a signed-in visitor to Launch instead of a launcher of its own", async () => {
+    await expect(visit()).rejects.toThrow("NEXT_REDIRECT:/dashboard/launch");
+  });
+
+  it("keeps the intent of the old link: the agent it named, and repeated server handoffs", async () => {
+    await expect(visit({ step: "deploy", agentType: "general", targetId: [
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    ] })).rejects.toThrow(
+      "NEXT_REDIRECT:/dashboard/launch?kind=agent&start=1&profile=hermes"
+        + "&targetId=22222222-2222-4222-8222-222222222222&targetId=33333333-3333-4333-8333-333333333333",
+    );
   });
 });

@@ -78,9 +78,23 @@ export function duplicateFleetNames(
  * conversation — so the destination is derived, never guessed at the call site.
  */
 export function fleetEntryHref(agent: UnifiedAgent): string {
+  // An agent added to a computer opens that computer's Chat tab (or its progress).
+  if (agent.attachment && agent.href) return agent.href;
   if (agent.kind === "hermes") {
     return `/dashboard/instances/${encodeURIComponent(agent.id)}`;
   }
-  const tab = agent.resourceKind === "computer" ? "desktop" : "chat";
+  const tab = agent.resourceKind === "computer" ? (isSandboxComputer(agent) ? "manage" : "desktop") : "chat";
   return `/dashboard/agent/${encodeURIComponent(agent.id)}?tab=${tab}`;
+}
+
+/** A Linux Sandbox is a terminal-only computer: it has no desktop to open. */
+export function isSandboxComputer(agent: Pick<UnifiedAgent, "resourceKind" | "agentType" | "computerProfile">): boolean {
+  return agent.resourceKind === "computer"
+    && (agent.agentType === "linux-terminal" || agent.computerProfile === "linux-terminal");
+}
+
+/** What a running entry's link says it opens. */
+export function fleetEntryOpenLabel(agent: Pick<UnifiedAgent, "resourceKind" | "agentType" | "computerProfile">): string {
+  if (agent.resourceKind !== "computer") return "Open agent";
+  return isSandboxComputer(agent) ? "Open sandbox" : "Open desktop";
 }

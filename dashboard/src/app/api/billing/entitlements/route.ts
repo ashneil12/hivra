@@ -10,7 +10,7 @@ import {
   evaluateComputeEntitlement,
   normalizeEntitlementInstance,
 } from "@/lib/billing/entitlements";
-import { getLatestHermesTokenHoldingSnapshot } from "@/lib/billing/token-holdings";
+import { getLatestAccessTokenHoldingSnapshot } from "@/lib/billing/token-access";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 
 /**
@@ -57,7 +57,7 @@ export async function GET() {
 
     const creditSummary = await getCreditSummary(userId, subscription?.plan ?? null);
     const reservedCredits = await deriveReservedCreditBalance(userId);
-    const tokenSnapshot = await getLatestHermesTokenHoldingSnapshot(userId);
+    const tokenSnapshot = await getLatestAccessTokenHoldingSnapshot(userId);
     const decision = evaluateComputeEntitlement({
       userId,
       subscription: subscription

@@ -126,8 +126,13 @@ export function StorageUsageBanner({ instanceId }: StorageUsageBannerProps) {
           background: "transparent",
           color: "var(--text-muted)",
           cursor: "pointer",
-          padding: 2,
-          display: "inline-flex",
+          padding: 0,
+          width: 44,
+          height: 44,
+          // A 44px hit area that stays inside the banner's padding box.
+          margin: "-10px -12px -10px 0",
+          display: "grid",
+          placeItems: "center",
           flexShrink: 0,
         }}
       >

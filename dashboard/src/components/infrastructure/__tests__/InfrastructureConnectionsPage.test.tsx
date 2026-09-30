@@ -4,30 +4,45 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { HetznerCloudCapacityDialog } from "../HetznerCloudCapacityDialog";
 import { HetznerCloudConnectionCard } from "../HetznerCloudConnectionCard";
+import { HetznerCloudConnectionDialog } from "../HetznerCloudConnectionDialog";
 
 import { InfrastructureConnectionsPage } from "../InfrastructureConnectionsPage";
 import {
+  advanceProviderComputerSetup,
+  checkGvisorConnection,
+  prepareGvisorConnection,
   connectHetznerCloudProject,
   createHetznerCloudCapacity,
   createInfrastructureConnection,
   deleteInfrastructureConnection,
   discoverInfrastructureHost,
   forceForgetHetznerCloudConnection,
+  getHetznerCloudCapacitySlot,
   getHetznerCloudInventory,
   getHetznerCloudOfferCatalog,
   InfrastructureApiError,
   listInfrastructureConnections,
   listInfrastructureTargets,
+  listProviderComputerSetupEvidence,
+  listProviderComputerSetups,
   preflightInfrastructureConnection,
   prepareInfrastructureConnection,
   quoteHetznerCloudCapacity,
   refreshHetznerCloudInventory,
+  replaceHetznerCloudToken,
   updateInfrastructureConnection,
 } from "@/lib/infrastructure/client";
 import type { DeploymentTargetDto, InfrastructureConnectionDto } from "@/lib/infrastructure/contracts";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
 import { HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION, HETZNER_CLOUD_SIMPLE_MODE_POLICY } from "@/lib/infrastructure/contracts";
 import { getHivraCloudCapacity } from "@/lib/infrastructure/hivra-cloud-client";
+import {
+  cancelServerEnrollment,
+  declineServerEnrollment,
+  issueServerEnrollment,
+  listServerEnrollments,
+} from "@/lib/infrastructure/server-enrollment-client";
+import type { ServerEnrollmentDto } from "@/lib/infrastructure/server-enrollment-contracts";
 import { providerVmTarget } from "@/lib/infrastructure/__tests__/provider-vm-target.fixtures";
 import { verifyExternalCleanup } from "@/lib/infrastructure/hetzner-external-cleanup-client";
 jest.mock("@/lib/infrastructure/hetzner-external-cleanup-client",()=>({verifyExternalCleanup:jest.fn()}));
@@ -38,8 +53,10 @@ import {
 
 const mockSearchParamsGet = jest.fn();
 
+const mockRouterPush = jest.fn();
 jest.mock("next/navigation", () => ({
   useSearchParams: () => ({ get: mockSearchParamsGet }),
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 
 jest.mock("@/lib/infrastructure/client", () => ({
@@ -53,6 +70,9 @@ jest.mock("@/lib/infrastructure/client", () => ({
       this.name = "InfrastructureApiError";
     }
   },
+  advanceProviderComputerSetup: jest.fn(),
+  checkGvisorConnection: jest.fn(),
+  prepareGvisorConnection: jest.fn(),
   createInfrastructureConnection: jest.fn(),
   connectHetznerCloudProject: jest.fn(),
   createHetznerCloudCapacity: jest.fn(),
@@ -61,17 +81,32 @@ jest.mock("@/lib/infrastructure/client", () => ({
   getHetznerCloudInventory: jest.fn(),
   getHetznerCloudOfferCatalog: jest.fn(),
   forceForgetHetznerCloudConnection: jest.fn(),
+  getHetznerCloudCapacitySlot: jest.fn(),
   listInfrastructureConnections: jest.fn(),
   listInfrastructureTargets: jest.fn(),
+  listProviderComputerSetupEvidence: jest.fn(),
+  listProviderComputerSetups: jest.fn(),
   preflightInfrastructureConnection: jest.fn(),
   prepareInfrastructureConnection: jest.fn(),
   quoteHetznerCloudCapacity: jest.fn(),
   refreshHetznerCloudInventory: jest.fn(),
+  replaceHetznerCloudToken: jest.fn(),
   updateInfrastructureConnection: jest.fn(),
 }));
 
 jest.mock("@/lib/infrastructure/hivra-cloud-client", () => ({
   getHivraCloudCapacity: jest.fn(),
+}));
+
+jest.mock("@/lib/infrastructure/server-enrollment-client", () => ({
+  issueServerEnrollment: jest.fn(),
+  listServerEnrollments: jest.fn(),
+  getServerEnrollment: jest.fn(),
+  confirmServerEnrollment: jest.fn(),
+  replaceServerEnrollmentAccess: jest.fn(),
+  declineServerEnrollment: jest.fn(),
+  cancelServerEnrollment: jest.fn(),
+  captureServerHostKey: jest.fn(),
 }));
 
 jest.mock("@/lib/billing/client", () => ({
@@ -208,10 +243,18 @@ const READY_GVISOR_TARGET: DeploymentTargetDto = {
   },
   supportedIsolationDrivers: ["gvisor-runsc"],
   isolationClass: "application-kernel",
-  lastPreflightAt: "2026-09-15T12:00:00.000Z",
+  // A gVisor host can launch only within 15 minutes of its last strict check,
+  // so a ready fixture was checked a minute before the suite runs.
+  lastPreflightAt: new Date(Date.now() - 60_000).toISOString(),
   lastErrorCode: null,
   createdAt: "2026-09-15T12:00:00.000Z",
   updatedAt: "2026-09-15T12:00:00.000Z",
+};
+
+/** The same host, last checked long enough ago that a launch would be refused. */
+const STALE_GVISOR_TARGET: DeploymentTargetDto = {
+  ...READY_GVISOR_TARGET,
+  lastPreflightAt: "2026-09-15T12:00:00.000Z",
 };
 
 const DISCOVERED_INSTALLED_GVISOR: HostDiscoveryResult = {
@@ -412,11 +455,11 @@ const HETZNER_CATALOG = {
   }],
   images: [{
     id: 100,
-    name: "ubuntu-24.04",
-    description: "Ubuntu 24.04",
+    name: "ubuntu-22.04",
+    description: "Ubuntu 22.04",
     architecture: "x86" as const,
     osFlavor: "ubuntu",
-    osVersion: "24.04",
+    osVersion: "22.04",
     deprecated: false,
   }],
   simpleModePolicy: {
@@ -458,11 +501,11 @@ const HETZNER_QUOTE = {
   location: { id: 1, name: "nbg1", city: "Nuremberg", country: "DE" },
   image: {
     id: 100,
-    name: "ubuntu-24.04",
-    description: "Ubuntu 24.04",
+    name: "ubuntu-22.04",
+    description: "Ubuntu 22.04",
     architecture: "x86" as const,
     osFlavor: "ubuntu" as const,
-    osVersion: "24.04",
+    osVersion: "22.04",
   },
   price: {
     currency: "EUR",
@@ -508,17 +551,34 @@ const HETZNER_QUOTE = {
   spendingConfirmation: "Create server and start billing" as const,
 };
 
-const HETZNER_PREPARABLE_QUOTE = {
-  ...HETZNER_QUOTE,
-  image: { ...HETZNER_QUOTE.image, name: "ubuntu-22.04", description: "Ubuntu 22.04", osVersion: "22.04" },
+const HETZNER_UNSUPPORTED_IMAGE = {
+  id: 101,
+  name: "ubuntu-24.04",
+  description: "Ubuntu 24.04",
+  architecture: "x86" as const,
+  osFlavor: "ubuntu",
+  osVersion: "24.04",
+  deprecated: false,
 };
 
-function mockPreparableHetznerOffer() {
-  (getHetznerCloudOfferCatalog as jest.Mock).mockResolvedValue({
-    ...HETZNER_CATALOG,
-    images: [{ ...HETZNER_PREPARABLE_QUOTE.image, deprecated: false }],
-  });
-  (quoteHetznerCloudCapacity as jest.Mock).mockResolvedValue(HETZNER_PREPARABLE_QUOTE);
+/** The setup view Hivra saves for a freshly created, not yet started server. */
+function hetznerSetupView(patch: Record<string, unknown> = {}) {
+  return {
+    orderId: "00000000-0000-4000-8000-000000001016",
+    connectionId: HETZNER_CONNECTION.id,
+    connectionRevision: 1,
+    serverName: "hivra-a1b2c3d4",
+    providerServerId: "4815162343",
+    stage: "awaiting_setup" as const,
+    targetId: null,
+    observedAt: null,
+    launchReady: false,
+    // A newly created server: its 15 minutes start at Start setup, so the
+    // server reports no deadline before then.
+    enrollmentExpiresAt: null, enrollmentClosesAt: null,
+    enrollmentWindow: "since_start" as const,
+    ...patch,
+  };
 }
 
 const HETZNER_OPERATION = {
@@ -544,9 +604,46 @@ const HETZNER_OPERATION = {
   updatedAt: "2026-08-26T15:00:04.000Z",
 };
 
+const ISSUED_ENROLLMENT: ServerEnrollmentDto = {
+  id: "77777777-7777-4777-8777-777777777777",
+  phase: "issued",
+  issuedAt: new Date().toISOString(),
+  expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  confirmBy: null,
+  scriptFetches: 0,
+  lastFetchedAt: null,
+  refusedReports: 0,
+  lastRefusal: null,
+  lastRefusedAt: null,
+  report: null,
+  knownServer: null,
+  outcome: null,
+  connectionId: null,
+  decidedAt: null,
+  replacementAttempts: 0,
+  lastReplacementFailure: null,
+};
+
+const ENROLLMENT_COMMAND = "curl -fsS --proto '=https' -H 'Authorization: Bearer hse1_abcdefghijklmnopqrstuvwxyz234567' https://hivra.example/enroll | sudo bash";
+
 describe("InfrastructureConnectionsPage first-run entry", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [], uninstallCommand: null });
+    (cancelServerEnrollment as jest.Mock).mockResolvedValue(undefined);
+    (issueServerEnrollment as jest.Mock).mockResolvedValue({
+      enrollment: ISSUED_ENROLLMENT,
+      command: ENROLLMENT_COMMAND,
+      dryRunCommand: "curl … | bash -s -- --dry-run",
+      downloadCommand: "curl … -o hivra-enroll.sh",
+      uninstallCommand: "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash",
+      finalLine: "{ hivra_enroll_entry \"$@\" HIVRA_ARGS_V1 … HIVRA_END_V1; }",
+      downloadSha256: "d".repeat(64),
+      scriptVersion: "2026.09.24.1",
+      scriptSha256: "e".repeat(64),
+      accountCode: "K7QM-2XRA",
+      origin: "https://hivra.example",
+    });
     mockSearchParamsGet.mockReturnValue(null);
     window.localStorage.clear();
     Object.defineProperty(globalThis.crypto, "randomUUID", {
@@ -576,13 +673,20 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       canarySlotHeld: true,
     });
     (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([]);
+    // The card's evidence is the same setup list plus Hivra's created-server records.
+    (listProviderComputerSetupEvidence as jest.Mock).mockImplementation(async (connectionId: string) => ({
+      computers: await (listProviderComputerSetups as jest.Mock)(connectionId),
+      createdServers: [],
+    }));
+    (getHetznerCloudCapacitySlot as jest.Mock).mockResolvedValue({ held: false, serverName: null, connectionId: null, status: null });
   });
 
   it("leads with Hivra Cloud, then truthful self-managed paths, and hides empty-state dashboard clutter", async () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     expect(screen.queryByLabelText("Infrastructure summary")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Available infrastructure" })).not.toBeInTheDocument();
@@ -605,13 +709,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHivraCloudCapacity as jest.Mock).mockRejectedValueOnce(new Error("Usage temporarily unavailable"));
     render(<InfrastructureConnectionsPage />);
 
-    const chooser = await screen.findByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
     expect(screen.getByRole("button", { name: "Retry Hivra Cloud capacity" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Hivra Cloud capacity" })).not.toBeInTheDocument();
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Use an existing server/i }));
-    fireEvent.click(within(chooser).getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
+    // The setup command is the default; the SSH wizard is its advanced path.
+    const command = await screen.findByRole("dialog", { name: "Connect a server you already have" });
+    fireEvent.click(within(command).getByRole("button", { name: /Connect with SSH details instead \(advanced\)/ }));
     expect(screen.getByRole("dialog", { name: "Connect a host" })).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
     expect(createInfrastructureConnection).not.toHaveBeenCalled();
@@ -622,7 +729,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
   });
 
-  it("preserves a selected agent through capacity setup and returns to its deploy form", async () => {
+  it("preserves a selected agent through capacity setup and opens its launch on the ready server", async () => {
     const target = providerVmTarget();
     target.connectionId = HETZNER_CONNECTION.id;
     target.status = "ready";
@@ -637,7 +744,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/welcome?step=deploy&agentType=codex&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&start=1&profile=codex&targetId=${target.id}`,
     );
     expect(screen.getByText(/Capacity is ready for Codex/i)).toBeInTheDocument();
   });
@@ -665,11 +772,176 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     render(<InfrastructureConnectionsPage />);
 
-    expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
+    const banner = (await screen.findByText(/Capacity is ready for Linux Sandbox/i)).closest('[role="status"]') as HTMLElement;
+    expect(within(banner).getByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/computers?launch=1&targetId=${READY_GVISOR_TARGET.id}`,
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
     );
-    expect(screen.getByText(/Capacity is ready for Linux Sandbox/i)).toBeInTheDocument();
+    // The ready host's own card continues the same launch, with a truthful badge.
+    const card = screen.getByRole("heading", { name: "Linux host" }).closest("article") as HTMLElement;
+    expect(within(card).getByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).queryByText("Inspected")).not.toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Continue launch" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+  });
+
+  it("doesn't send a Linux Sandbox launch back to a gVisor host whose check is stale", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => key === "launch" ? "linux-terminal" : null);
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([STALE_GVISOR_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Needs a check")).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready for Linux Sandbox/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+  });
+
+  // INF-06: a ready gVisor host is one click from launching Linux Sandbox.
+  it("offers Launch on this server on a ready gVisor host's card", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+  });
+
+  // Slice 10: inside Launch's capacity sheet, a ready server goes back to the
+  // launch that opened it instead of opening Launch again.
+  it("inside Launch, hands the ready server back to the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    expect(await screen.findByRole("heading", { name: "Add capacity for your launch" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).not.toBeInTheDocument();
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    const launch = await within(card).findByRole("link", { name: /^(Launch on this server|Continue launch)$/ });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    launch.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it("inside Launch, names the ready server and uses it for the same launch", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_GVISOR_TARGET]);
+    const onLaunchTarget = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "linux-terminal", onLaunchTarget, onClose: jest.fn() }} />);
+
+    const banner = (await screen.findByText(`${READY_GVISOR_TARGET.displayName} is ready for Linux Sandbox.`)).closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(banner).getByRole("button", { name: "Use it for this launch" }));
+    expect(onLaunchTarget).toHaveBeenCalledWith(READY_GVISOR_TARGET.id);
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+  });
+
+  // Live test of slice 10: the sheet said "Capacity is ready" for the Hivra
+  // Cloud plan the launch had just outgrown, and its "Continue launch" link
+  // (no server in it) left the sheet open over the launch.
+  it("inside Launch, returns to the launch from any Launch link and doesn't offer Hivra Cloud back as news", async () => {
+    (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
+    const onLaunchTarget = jest.fn();
+    const onClose = jest.fn();
+
+    render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "codex", onLaunchTarget, onClose }} />);
+
+    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    screen.getByRole("link", { name: /Launch an agent/i }).dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onLaunchTarget).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  // Review of slice 5: an owner who set up Linux Sandbox and came back an
+  // hour later got Ready and a Launch button the server then refused.
+  it("asks for a readiness check on a gVisor host whose last check is stale, then offers Launch", async () => {
+    const readyConnection: InfrastructureConnectionDto = {
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:00:00.000Z",
+    };
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyConnection]);
+    (listInfrastructureTargets as jest.Mock)
+      .mockResolvedValueOnce([STALE_GVISOR_TARGET])
+      .mockResolvedValue([READY_GVISOR_TARGET]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Needs a check")).toBeInTheDocument();
+    expect(within(card).queryByText("Ready for Linux Sandbox")).not.toBeInTheDocument();
+    expect(within(card).queryByRole("link", { name: "Launch on this server" })).not.toBeInTheDocument();
+
+    // One click: inspect, then the strict check, with no second button.
+    fireEvent.click(within(card).getByRole("button", { name: "Check readiness" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(discoverInfrastructureHost).toHaveBeenCalledWith(PENDING_HOST_CONNECTION.id);
+    expect(checkGvisorConnection).toHaveBeenCalledTimes(1);
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(await within(card).findByText("Ready for Linux Sandbox")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toBeInTheDocument();
+  });
+
+  it("offers Launch on this server on a ready Proxmox host's card", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:05:00.000Z",
+    }]);
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([READY_PROXMOX_TARGET]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("Ready for agents")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?start=1&targetId=${READY_PROXMOX_TARGET.id}`,
+    );
+    expect(within(card).queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
   });
 
   it("refreshes saved readiness again when a completed preparation closes", async () => {
@@ -726,9 +998,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     render(<InfrastructureConnectionsPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare recommended setup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review setup" }));
     const prepareDialog = await screen.findByRole("dialog");
-    fireEvent.click(within(prepareDialog).getByRole("button", { name: "Prepare recommended setup" }));
+    expect(within(prepareDialog).getByRole("heading", { name: "Set up Linux host for agents?" })).toBeInTheDocument();
+    fireEvent.click(within(prepareDialog).getByRole("button", { name: "Set up Linux host" }));
     expect(await screen.findByRole("heading", { name: /Linux host is ready for agents/i })).toBeInTheDocument();
     expect(listInfrastructureTargets).toHaveBeenCalledTimes(2);
 
@@ -755,37 +1028,112 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValue([READY_GVISOR_TARGET]);
     (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
-    const originalFetch = global.fetch;
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true }),
+    (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    expect(await screen.findByRole("heading", { name: "Linux host already has gVisor, which Linux Sandbox runs on." })).toBeInTheDocument();
+    await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(2));
+
+    // Repair is a host change, so it goes through the same review dialog.
+    fireEvent.click(screen.getByRole("button", { name: "Reinstall Linux Sandbox setup" }));
+    const review = await screen.findByRole("dialog", { name: "Reinstall Linux Sandbox setup on Linux host?" });
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    fireEvent.click(within(review).getByRole("button", { name: "Reinstall setup" }));
+    expect(await screen.findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(prepareGvisorConnection).toHaveBeenCalledWith(PENDING_HOST_CONNECTION.id);
+    await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(3));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("link", { name: "Continue launch" })).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(4));
+    expect((await screen.findAllByRole("link", { name: /Continue launch/i }))[0]).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
+  });
+
+  it("checks an installed Linux Sandbox setup from the card's inspection and offers Launch on this server", async () => {
+    const readyConnection: InfrastructureConnectionDto = {
+      ...PENDING_HOST_CONNECTION,
+      status: "ready",
+      lastCheckedAt: "2026-09-15T12:05:00.000Z",
+    };
+    (listInfrastructureConnections as jest.Mock)
+      .mockResolvedValueOnce([PENDING_HOST_CONNECTION])
+      .mockResolvedValue([readyConnection]);
+    (listInfrastructureTargets as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([READY_GVISOR_TARGET]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_INSTALLED_GVISOR);
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check readiness" }));
+    expect(await screen.findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(prepareGvisorConnection).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("link", { name: "Launch on this server" })).toHaveAttribute(
+      "href",
+      `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${READY_GVISOR_TARGET.id}`,
+    );
+  });
+
+  it("offers the setup command when discovery signed in without root or passwordless sudo", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([{ ...PENDING_HOST_CONNECTION, endpoint: { ...PENDING_HOST_CONNECTION.endpoint!, sshUser: "ubuntu" } }]);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+      ...DISCOVERED_INSTALLED_GVISOR,
+      snapshot: {
+        ...DISCOVERED_INSTALLED_GVISOR.snapshot,
+        host: {
+          ...DISCOVERED_INSTALLED_GVISOR.snapshot.host,
+          environment: { ...DISCOVERED_INSTALLED_GVISOR.snapshot.host.environment, effectivePrivilege: "non-root" },
+        },
+        engines: DISCOVERED_INSTALLED_GVISOR.snapshot.engines.map((engine) => engine.id === "gvisor"
+          ? { ...engine, supported: false, unmetRequirements: ["ROOT_REQUIRED" as const] }
+          : engine),
+      },
+    } satisfies HostDiscoveryResult);
+
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    expect(await screen.findByRole("heading", { name: "Signed in as ubuntu without passwordless sudo." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use the setup command" }));
+    expect(await screen.findByRole("dialog", { name: "Connect a server you already have" })).toBeInTheDocument();
+    expect(issueServerEnrollment).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches a login with passwordless sudo to sudo for setup, then inspects again", async () => {
+    const ubuntu = { ...PENDING_HOST_CONNECTION, endpoint: { ...PENDING_HOST_CONNECTION.endpoint!, sshUser: "ubuntu" } };
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([ubuntu]);
+    (updateInfrastructureConnection as jest.Mock).mockResolvedValue({
+      ...ubuntu, endpoint: { ...ubuntu.endpoint, sshPrivilege: "sudo" },
     });
-    Object.defineProperty(global, "fetch", { value: fetchMock, configurable: true });
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+      ...DISCOVERED_INSTALLED_GVISOR,
+      snapshot: {
+        ...DISCOVERED_INSTALLED_GVISOR.snapshot,
+        host: {
+          ...DISCOVERED_INSTALLED_GVISOR.snapshot.host,
+          environment: { ...DISCOVERED_INSTALLED_GVISOR.snapshot.host.environment, effectivePrivilege: "non-root", passwordlessSudo: true },
+        },
+        engines: DISCOVERED_INSTALLED_GVISOR.snapshot.engines.map((engine) => engine.id === "gvisor"
+          ? { ...engine, supported: false, unmetRequirements: ["ROOT_REQUIRED" as const] }
+          : engine),
+      },
+    } as HostDiscoveryResult);
 
-    try {
-      render(<InfrastructureConnectionsPage />);
+    render(<InfrastructureConnectionsPage />);
 
-      fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
-      expect(await screen.findByRole("heading", {
-        name: "A supported Linux sandbox path is available.",
-      })).toBeInTheDocument();
-      await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(2));
-
-      fireEvent.click(screen.getByRole("button", { name: "Repair gVisor" }));
-      expect(await screen.findByText(/pinned runtime, application adapter, and exact host evidence passed/i)).toBeInTheDocument();
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/api/infrastructure/connections/${PENDING_HOST_CONNECTION.id}/gvisor/prepare`,
-        expect.objectContaining({ method: "POST" }),
-      );
-
-      fireEvent.click(screen.getByRole("button", { name: "Done" }));
-
-      await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(3));
-      expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
-    } finally {
-      Object.defineProperty(global, "fetch", { value: originalFetch, configurable: true });
-    }
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect again" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use sudo for setup" }));
+    await waitFor(() => expect(updateInfrastructureConnection).toHaveBeenCalledWith(ubuntu.id, {
+      endpoint: { ...ubuntu.endpoint, sshPrivilege: "sudo" },
+    }));
+    await waitFor(() => expect(discoverInfrastructureHost).toHaveBeenCalledTimes(2));
   });
 
   it("refreshes saved readiness when Edit host readiness closes the wizard", async () => {
@@ -858,7 +1206,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(wizard).getByRole("button", { name: "Save and inspect" }));
 
     expect(await within(wizard).findByRole("heading", {
-      name: "A supported isolation engine is installed.",
+      name: "Linux host runs Proxmox VE 8.4.1.",
     })).toBeInTheDocument();
     fireEvent.click(within(wizard).getByRole("button", { name: "Check Proxmox readiness" }));
     expect(await within(wizard).findByRole("heading", { name: "Ready for agents" })).toBeInTheDocument();
@@ -868,6 +1216,105 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     await waitFor(() => expect(listInfrastructureTargets).toHaveBeenCalledTimes(3));
     expect(await screen.findByText("Ready for agents")).toBeInTheDocument();
+  });
+
+  // INF-17: Review setup closed the wizard and opened setup without its
+  // Connect → Ready progress bar, so the bar never reached Prepare or Ready.
+  describe("host setup started from the connection wizard", () => {
+    const hostSetupProgress = (container: HTMLElement) => within(container)
+      .getAllByRole("listitem")
+      .filter((step) => step.closest('[aria-label="Host setup progress"]'))
+      .map((step) => step.getAttribute("aria-label"));
+
+    it("carries the wizard's progress into Linux Sandbox setup and ends on Ready", async () => {
+      const readyHost: InfrastructureConnectionDto = { ...PENDING_HOST_CONNECTION, status: "ready", lastCheckedAt: "2026-09-15T12:05:00.000Z" };
+      (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyHost]);
+      (listInfrastructureTargets as jest.Mock).mockResolvedValueOnce([]).mockResolvedValue([READY_GVISOR_TARGET]);
+      (updateInfrastructureConnection as jest.Mock).mockResolvedValue(readyHost);
+      (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+        ...DISCOVERED_INSTALLED_GVISOR,
+        snapshot: {
+          ...DISCOVERED_INSTALLED_GVISOR.snapshot,
+          engines: DISCOVERED_INSTALLED_GVISOR.snapshot.engines.map((engine) => engine.id === "gvisor"
+            ? { ...engine, availability: "installable" as const, detectedVersion: null, unmetRequirements: ["ENGINE_NOT_INSTALLED" as const, "DOCKER_REQUIRED" as const] }
+            : engine),
+        },
+      } satisfies HostDiscoveryResult);
+      (prepareGvisorConnection as jest.Mock).mockResolvedValue({ targetId: READY_GVISOR_TARGET.id, ready: true });
+
+      render(<InfrastructureConnectionsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const wizard = await screen.findByRole("dialog");
+      fireEvent.click(within(wizard).getByRole("button", { name: "Save and inspect" }));
+      expect(await within(wizard).findByRole("heading", { name: "Linux host can run Linux Sandbox after a short setup." })).toBeInTheDocument();
+      fireEvent.click(within(wizard).getByRole("button", { name: "Review setup" }));
+
+      const setup = await screen.findByRole("dialog", { name: "Set up Linux Sandbox on Linux host?" });
+      expect(hostSetupProgress(setup)).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, current", "Ready"]);
+      fireEvent.click(within(setup).getByRole("button", { name: "Set up Linux Sandbox" }));
+
+      expect(await screen.findByRole("heading", { name: "Linux host is ready for Linux Sandbox." })).toBeInTheDocument();
+      const done = screen.getByRole("dialog");
+      expect(hostSetupProgress(done)).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, complete", "Ready, current"]);
+      expect(within(done).getByRole("link", { name: "Launch on this server" })).toHaveAttribute("href", expect.stringContaining(READY_GVISOR_TARGET.id));
+    });
+
+    it("carries the wizard's progress into Proxmox setup and ends on Ready", async () => {
+      const readyHost: InfrastructureConnectionDto = { ...PENDING_HOST_CONNECTION, status: "ready", lastCheckedAt: "2026-09-15T12:05:00.000Z" };
+      (listInfrastructureConnections as jest.Mock).mockResolvedValue([readyHost]);
+      (listInfrastructureTargets as jest.Mock).mockResolvedValueOnce([PREPARABLE_PROXMOX_TARGET]).mockResolvedValue([READY_PROXMOX_TARGET]);
+      (updateInfrastructureConnection as jest.Mock).mockResolvedValue(readyHost);
+      (discoverInfrastructureHost as jest.Mock).mockResolvedValue(DISCOVERED_PROXMOX);
+      const readyPreflight = {
+        ok: true as const,
+        connectionId: readyHost.id,
+        checkedAt: "2026-09-15T12:05:00.000Z",
+        target: {
+          externalId: "pve-01",
+          displayName: "Linux host / pve-01",
+          proxmoxVersion: "pve-manager/8.4.1",
+          launchReady: true,
+          capacity: READY_PROXMOX_TARGET.capacity,
+          capabilities: {
+            isolationDrivers: ["proxmox-kvm" as const],
+            isolationClass: "hardware-vm" as const,
+            kvmAvailable: true,
+            bridges: ["hivra0"],
+            storages: ["local-lvm"],
+            template: null,
+            provisioner: { ready: true, version: "2026.09.15.2" },
+            runtimeCompatibility: null,
+            vmidRange: { start: 200, end: 399, freeCount: 200 },
+          },
+        },
+        warnings: [],
+        unmetRequirements: [],
+      };
+      (preflightInfrastructureConnection as jest.Mock).mockResolvedValue({
+        ...readyPreflight,
+        target: { ...readyPreflight.target, launchReady: false, capabilities: { ...readyPreflight.target.capabilities, provisioner: null } },
+        warnings: ["Prepared assets are not configured."],
+        unmetRequirements: [{ code: "PROVISIONER_UNAVAILABLE", message: "Prepared assets are not configured." }],
+      });
+      (prepareInfrastructureConnection as jest.Mock).mockResolvedValue({
+        ok: true, connectionId: readyHost.id, provisionerVersion: "2026.09.15.2", preflight: readyPreflight,
+      });
+
+      render(<InfrastructureConnectionsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const wizard = await screen.findByRole("dialog");
+      fireEvent.click(within(wizard).getByRole("button", { name: "Save and inspect" }));
+      fireEvent.click(await within(wizard).findByRole("button", { name: "Check Proxmox readiness" }));
+      fireEvent.click(await within(wizard).findByRole("button", { name: "Review setup" }));
+
+      const setup = await screen.findByRole("dialog", { name: "Set up Linux host for agents?" });
+      expect(hostSetupProgress(setup)).toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, current", "Ready"]);
+      fireEvent.click(within(setup).getByRole("button", { name: "Set up Linux host" }));
+
+      expect(await screen.findByRole("heading", { name: "Linux host is ready for agents." })).toBeInTheDocument();
+      expect(hostSetupProgress(screen.getByRole("dialog")))
+        .toEqual(["Connect, complete", "Inspect, complete", "Recommend, complete", "Prepare, complete", "Ready, current"]);
+    });
   });
 
   it("returns unified Codex capacity setup to the saved launch journey", async () => {
@@ -889,7 +1336,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     expect(await screen.findByRole("link", { name: /Continue launch/i })).toHaveAttribute(
       "href",
-      `/dashboard/launch?kind=agent&targetId=${target.id}`,
+      `/dashboard/launch?kind=agent&profile=codex&targetId=${target.id}`,
     );
   });
 
@@ -900,7 +1347,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       render(<InfrastructureConnectionsPage />);
 
       const chooser = await screen.findByRole("region", {
-        name: "How would you like to add infrastructure?",
+        name: "How would you like to add capacity?",
       });
       expect(screen.getByText(/Connect a cloud project or bring a computer you control/i)).toBeInTheDocument();
       expect(screen.queryByText(/Managed capacity appears here as soon as your plan is active/i)).not.toBeInTheDocument();
@@ -924,7 +1371,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "How would you like to add infrastructure?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "How would you like to add capacity?" })).not.toBeInTheDocument();
     const cloudCard = screen.getByRole("heading", { name: "Hivra Cloud" }).closest("article") as HTMLElement;
     expect(within(cloudCard).getByText(/Your plan's CPU and RAM allowance/i)).toHaveTextContent("The servers that host them have separate capacity.");
     expect(within(cloudCard).getByText("1.5 vCPU allocated")).toBeInTheDocument();
@@ -937,7 +1384,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     );
     expect(within(cloudCard).getByRole("link", { name: "Manage resources for Codex One" })).toHaveAttribute(
       "href",
-      "/dashboard/agent/codex-one?tab=manage#resources",
+      "/dashboard/agent/codex-one?tab=manage&section=resources",
     );
     expect(within(cloudCard).getByRole("link", { name: "Open Codex One" })).toHaveAttribute(
       "href",
@@ -952,8 +1399,8 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       "/dashboard/launch?start=1&kind=computer",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Add infrastructure" }));
-    const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
+    fireEvent.click(screen.getByRole("button", { name: "Add capacity" }));
+    const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     expect(within(chooser).getByText("Pro is active. Review plan options in Billing.")).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
     expect(within(chooser).getByRole("link", { name: /Manage Hivra Cloud/i })).toHaveAttribute(
@@ -981,7 +1428,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose Hivra Cloud/i }));
 
@@ -991,8 +1438,18 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Yearly" }));
     fireEvent.click(within(dialog).getByRole("button", { name: /Continue to secure checkout/i }));
 
-    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("fleet", "yearly"));
+    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("fleet", "yearly", { returnTo: null }));
     expect(redirectToCheckoutUrl).toHaveBeenCalledWith("https://checkout.stripe.test/hivra-cloud");
+  });
+
+  it("returns a Hivra Cloud checkout started from a launch detour to that launch", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => ({ launch: "codex", returnTo: "unified-launch" } as Record<string, string>)[key] ?? null);
+    render(<InfrastructureConnectionsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Choose Hivra Cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure checkout/i }));
+
+    await waitFor(() => expect(requestSubscriptionCheckout).toHaveBeenCalledWith("operator", "monthly", { returnTo: "/dashboard/launch" }));
   });
 
   it("refreshes Infrastructure when Hivra Cloud activates without a checkout redirect", async () => {
@@ -1003,7 +1460,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose Hivra Cloud/i }));
     fireEvent.click(screen.getByRole("button", { name: /Continue to secure checkout/i }));
@@ -1028,44 +1485,191 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps inventory separate from agent readiness, which is checked in Computer setup", () => {
-    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_OFF_SERVER]} loading={false}
-      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={jest.fn()} />);
-    expect(screen.getByText("Provider inventory · Open Computer setup to check agent readiness")).toBeInTheDocument();
-    expect(screen.queryByText(/not launch.ready/i)).not.toBeInTheDocument();
+  it("labels each project server by what Hivra can do with it", () => {
+    const onSetup = jest.fn();
+    const onConnect = jest.fn();
+    const ready = { ...HETZNER_OFF_SERVER, id: "00000000-0000-4000-8000-000000001007", providerResourceId: "4815162344", name: "hivra-ready" };
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION}
+      inventory={[HETZNER_SERVER, HETZNER_OFF_SERVER, ready]}
+      setups={[
+        hetznerSetupView(),
+        hetznerSetupView({ orderId: "00000000-0000-4000-8000-000000001017", providerServerId: "4815162344", serverName: "hivra-ready",
+          stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
+          observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null }),
+      ]}
+      setupEvidence="loaded"
+      loading={false}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={onSetup} onConnectExistingServer={onConnect} />);
+
+    const existing = screen.getByText("agent-box-1").closest("article") as HTMLElement;
+    expect(within(existing).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    fireEvent.click(within(existing).getByRole("button", { name: "Connect this server" }));
+    expect(onConnect).toHaveBeenCalledWith(HETZNER_SERVER);
+
+    const created = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(created).getByText("Needs setup")).toBeInTheDocument();
+    fireEvent.click(within(created).getByRole("button", { name: "Start setup" }));
+    expect(onSetup).toHaveBeenCalledWith("00000000-0000-4000-8000-000000001016");
+
+    const prepared = screen.getByText("hivra-ready").closest("article") as HTMLElement;
+    expect(within(prepared).getByText("Ready for agents")).toBeInTheDocument();
+    expect(within(prepared).getByRole("link", { name: "Launch on this server" }))
+      .toHaveAttribute("href", "/dashboard/launch?start=1&targetId=00000000-0000-4000-8000-000000001099");
+    expect(screen.queryByText(/Open Computer setup to check agent readiness/)).not.toBeInTheDocument();
   });
 
-  it("connects a project, observes current provider billing, and shows only verified powered-off inventory", async () => {
+  it.each([["since_start", "It didn't connect back within 15 minutes of starting setup."],
+    ["since_creation", "Its one-time setup key expired."]] as const)("explains an expired %s setup window by its own rule", (window, hint) => {
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_OFF_SERVER]}
+      setups={[hetznerSetupView({ stage: "expired", enrollmentWindow: window })]} setupEvidence="loaded" loading={false}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onSetup={jest.fn()} onConnectExistingServer={jest.fn()} />);
+    const created = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(created).getByText("Setup window expired")).toBeInTheDocument();
+    expect(within(created).getByText(new RegExp(hint.replace(/[.]/g, "\\.")))).toBeInTheDocument();
+  });
+
+  it("names no server as someone else's until Hivra's records have loaded", () => {
+    const onConnect = jest.fn();
+    const props = {
+      connection: HETZNER_CONNECTION, inventory: [HETZNER_SERVER], loading: false,
+      onCreateCapacity: jest.fn(), onRefresh: jest.fn(), onDelete: jest.fn(), onConnectExistingServer: onConnect,
+    };
+    const { rerender } = render(<HetznerCloudConnectionCard {...props} />);
+    // Loading (also the default): no provenance, no SSH wizard.
+    const server = () => screen.getByText("agent-box-1").closest("article") as HTMLElement;
+    expect(within(server()).getByText("Checking whether Hivra created this server…")).toBeInTheDocument();
+    expect(screen.queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    rerender(<HetznerCloudConnectionCard {...props} setupEvidence="loaded" />);
+    expect(within(server()).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    expect(within(server()).getByRole("button", { name: "Connect this server" })).toBeInTheDocument();
+  });
+
+  it("keeps setup reachable and labels nothing when Hivra's records can't be read", () => {
+    const onRetry = jest.fn();
+    const onSetup = jest.fn();
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_SERVER, HETZNER_OFF_SERVER]}
+      setupEvidence="failed" onRetrySetupEvidence={onRetry} loading={false} onSetup={onSetup}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} onConnectExistingServer={jest.fn()} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Hivra couldn't load which of these servers it created or how far their setup got.");
+    expect(screen.queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Checking whether Hivra created/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+    // Computer setup reads its own list, so the way into setup stays.
+    fireEvent.click(screen.getByRole("button", { name: "Computer setup" }));
+    expect(onSetup).toHaveBeenCalledWith();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels a server Hivra created from its order records even without a setup view", () => {
+    const abandoned = { ...HETZNER_SERVER, id: "00000000-0000-4000-8000-000000001008", providerResourceId: "4815162399", name: "hivra-abandoned" };
+    const lookalike = { ...HETZNER_SERVER, id: "00000000-0000-4000-8000-000000001009", providerResourceId: "4815162398", name: "hivra-removed-by-hand" };
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION}
+      inventory={[HETZNER_OFF_SERVER, abandoned, lookalike]}
+      createdServers={[
+        // Still being confirmed: no server id yet, so its generated name identifies it.
+        { orderId: "00000000-0000-4000-8000-000000001016", serverName: "hivra-a1b2c3d4", providerServerId: null, status: "ambiguous" },
+        { orderId: "00000000-0000-4000-8000-000000001017", serverName: "hivra-abandoned", providerServerId: "4815162399", status: "cleanup_abandoned" },
+        // Confirmed with another id: a same-named server is not this order's.
+        { orderId: "00000000-0000-4000-8000-000000001018", serverName: "hivra-removed-by-hand", providerServerId: "1", status: "created_off" },
+      ]}
+      setupEvidence="loaded" loading={false} onConnectExistingServer={jest.fn()}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+
+    const confirming = screen.getByText("hivra-a1b2c3d4").closest("article") as HTMLElement;
+    expect(within(confirming).getByText("Created by Hivra")).toBeInTheDocument();
+    expect(within(confirming).getByText("Hivra is still confirming how this server's creation ended.")).toBeInTheDocument();
+    expect(within(confirming).queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    const stuck = screen.getByText("hivra-abandoned").closest("article") as HTMLElement;
+    expect(within(stuck).getByText("Created by Hivra")).toBeInTheDocument();
+    expect(within(stuck).getByText(/Hivra stopped removing this server/)).toBeInTheDocument();
+    expect(within(stuck).queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    const other = screen.getByText("hivra-removed-by-hand").closest("article") as HTMLElement;
+    expect(within(other).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    expect(within(other).getByRole("button", { name: "Connect this server" })).toBeInTheDocument();
+  });
+
+  it("doesn't treat a same-named server in another project as the one holding the server slot", () => {
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[HETZNER_SERVER]}
+      slot={{ held: true, serverName: HETZNER_SERVER.name, connectionId: "00000000-0000-4000-8000-000000009999", status: "created_off" }}
+      setupEvidence="loaded" loading={false} onConnectExistingServer={jest.fn()}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+    expect(screen.queryByText("Created by Hivra")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect this server" })).toBeInTheDocument();
+  });
+
+  it("disables Create with its reason once the account's server slot is used", () => {
+    const onCreate = jest.fn();
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[]} loading={false}
+      slot={{ held: true, serverName: "hivra-a1b2c3d4", connectionId: HETZNER_CONNECTION.id, status: "created_off" }}
+      onCreateCapacity={onCreate} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+    const create = screen.getByRole("button", { name: "Create cloud server" });
+    expect(create).toBeDisabled();
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Right now Hivra can create one Hetzner server per account. hivra-a1b2c3d4 is using it. Remove it with Remove created server on its project to create another.",
+    );
+  });
+
+  it("keeps a saved request checkable while it holds the slot", () => {
+    window.localStorage.setItem(`hivra:hetzner-capacity-recovery:${HETZNER_CONNECTION.id}`, JSON.stringify({
+      version: 2, connectionId: HETZNER_CONNECTION.id,
+      quoteId: "11111111-1111-4111-8111-111111111111", idempotencyKey: "22222222-2222-4222-8222-222222222222", prepare: true,
+    }));
+    const onCreate = jest.fn();
+    render(<HetznerCloudConnectionCard connection={HETZNER_CONNECTION} inventory={[]} loading={false}
+      slot={{ held: true, serverName: "hivra-a1b2c3d4", connectionId: HETZNER_CONNECTION.id, status: "ambiguous" }}
+      onCreateCapacity={onCreate} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check saved request" }));
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  it("offers Replace token as the fix when Hetzner rejected the project token", () => {
+    const onReplace = jest.fn();
+    render(<HetznerCloudConnectionCard
+      connection={{ ...HETZNER_CONNECTION, status: "error", lastErrorCode: "invalid_credentials" }}
+      inventory={[HETZNER_SERVER]} loading={false} onReplaceToken={onReplace}
+      onCreateCapacity={jest.fn()} onRefresh={jest.fn()} onDelete={jest.fn()} />);
+    expect(screen.getByText("Token rejected")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Replace it with a new Read & Write token from the same project/);
+    fireEvent.click(screen.getByRole("button", { name: "Replace token" }));
+    expect(onReplace).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects a project with a disclosed write check, reviews one timeline, and starts setup next", async () => {
     (connectHetznerCloudProject as jest.Mock).mockResolvedValue({
       connection: HETZNER_CONNECTION,
       inventory: [],
+      writeCheck: { strayKeyName: null },
     });
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Start with Hetzner/i }));
 
     const dialog = screen.getByRole("dialog", { name: "Connect Hetzner Cloud" });
+    // The guide sits above the one field; nothing to expand first.
+    const steps = within(dialog).getByRole("list", { name: "Hetzner token steps" });
+    expect(within(steps).getByText("Generate a Read & Write API token")).toBeVisible();
+    expect(steps.compareDocumentPosition(within(dialog).getByLabelText(/Read & Write project API token/))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(dialog).getByText(/adding, then removing, a test SSH key named hivra-check/)).toBeInTheDocument();
     const tokenField = within(dialog).getByLabelText(/Read & Write project API token/);
     const nameField = within(dialog).getByLabelText("Connection name");
-    const namingDisclosure = within(dialog).getByText("Customize connection name").closest("details");
-    const helpDisclosure = within(dialog).getByText("Need a Hetzner project or API token?").closest("details");
-    expect(tokenField).toBeVisible();
     expect(nameField).not.toBeVisible();
-    expect(namingDisclosure).not.toHaveAttribute("open");
-    expect(helpDisclosure).not.toHaveAttribute("open");
 
     fireEvent.click(within(dialog).getByText("Customize connection name"));
-    expect(nameField).toBeVisible();
-    fireEvent.change(nameField, {
-      target: { value: "Personal cloud" },
-    });
-    fireEvent.change(tokenField, {
-      target: { value: "secure-project-token-1234567890" },
-    });
+    fireEvent.change(nameField, { target: { value: "Personal cloud" } });
+    fireEvent.change(tokenField, { target: { value: "secure-project-token-1234567890" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Connect and choose a server" }));
 
     await waitFor(() => expect(connectHetznerCloudProject).toHaveBeenCalledWith({
@@ -1080,9 +1684,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(capacityDialog).getByLabelText("Location")).toHaveValue("1");
     expect(within(capacityDialog).getByLabelText("System image")).toHaveValue("100");
     expect(within(capacityDialog).getByText(/Nothing is created yet/i)).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(
-      /Canary allows one non-rejected in-app Hetzner server per Hivra account across all connected projects/i,
-    )).toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/Enable guided computer setup/i)).not.toBeInTheDocument();
 
     fireEvent.click(within(capacityDialog).getByRole("button", { name: "Review current rates" }));
     await waitFor(() => expect(quoteHetznerCloudCapacity).toHaveBeenCalledWith(
@@ -1090,46 +1692,285 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       { serverTypeId: 22, locationId: 1, imageId: 100 },
     ));
 
-    expect(await within(capacityDialog).findByText("EUR 4.5101")).toBeInTheDocument();
-    expect(within(capacityDialog).getByText("Primary IPv4")).toBeInTheDocument();
-    expect(within(capacityDialog).getByText("Primary IPv6")).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(/Traffic beyond 20 TiB/i)).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(/Powered off.*point-in-time provider observation/i)).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(/rare migration or hardware-failure cases/i)).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(/Hetzner determines final billing and may reject or change/i))
-      .toBeInTheDocument();
-    expect(within(capacityDialog).getByText(
-      "One non-rejected in-app Hetzner server per Hivra account",
-    )).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(
-      /Hivra does not request or manage a provider firewall.*existing Hetzner label-selector or project policy may still attach one.*boot-time gap/i,
-    )).toBeInTheDocument();
+    await within(capacityDialog).findByRole("heading", { name: "Review and create" });
+    const timeline = within(capacityDialog).getByRole("region", { name: "What happens next" });
+    expect(within(timeline).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1CreateHetzner starts billing.",
+      "2Set it up for agentsAbout 5 minutes; you start it next.",
+      "3LaunchYou review it next.",
+    ]);
+    // One confirmation, with the price it binds; the rest is disclosed on demand.
+    expect(within(capacityDialog).getAllByRole("checkbox", { name: /I understand/ })).toHaveLength(1);
+    const billing = within(capacityDialog).getByText("Billing details").closest("details") as HTMLElement;
+    expect(billing).not.toHaveAttribute("open");
+    expect(within(billing).getByText("Primary IPv4")).toBeInTheDocument();
+    expect(within(billing).getByText(/Traffic beyond 20 TiB/i)).toBeInTheDocument();
+    expect(within(billing).getByText(/rare migration or hardware-failure cases/i)).toBeInTheDocument();
+    expect(within(billing).getByText(/Setup applies and checks a Hetzner firewall before it turns the server on/)).toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/Canary/)).not.toBeInTheDocument();
 
     const createButton = within(capacityDialog).getByRole("button", {
       name: "Create server and start billing",
     });
     expect(createButton).toBeDisabled();
-    fireEvent.click(within(capacityDialog).getByRole("checkbox", { name: /I approve this observed configuration/i }));
+    fireEvent.click(within(capacityDialog).getByRole("checkbox", {
+      name: /I understand Hetzner bills this server EUR 0\.0067 an hour, at most EUR 4\.5101 a month, from now until I delete it/,
+    }));
     expect(createButton).toBeEnabled();
     fireEvent.click(createButton);
 
+    // Setup is on by default: the request carries the recipe consent.
     await waitFor(() => expect(createHetznerCloudCapacity).toHaveBeenCalledWith(
       HETZNER_CONNECTION.id,
       {
         quoteId: HETZNER_QUOTE.id,
         idempotencyKey: "00000000-0000-4000-8000-000000001048",
         spendingConfirmation: "Create server and start billing",
+        preparationConfirmation: "Prepare this computer for agent launch",
       },
     ));
-    expect(await within(capacityDialog).findByRole("heading", {
-      name: "Created, powered off, not prepared.",
-    })).toBeInTheDocument();
-    expect(within(capacityDialog).getByText("hivra-a1b2c3d4")).toBeInTheDocument();
-    expect(within(capacityDialog).getByText("Not prepared")).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(/Launch remains blocked/i)).toBeInTheDocument();
-    expect(within(capacityDialog).getByText(/uses the account's one Canary capacity slot/i))
-      .toBeInTheDocument();
+    expect(await within(capacityDialog).findByRole("heading", { name: "Set it up for agents" })).toBeInTheDocument();
+    expect(within(capacityDialog).getByText("Server created (powered off). Billing has started.")).toBeInTheDocument();
+    // No countdown before Start setup: the window opens when Hivra powers it on.
+    expect(await within(capacityDialog).findByText(/Setup must finish within 15 minutes of starting/)).toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/Setup key valid for/)).not.toBeInTheDocument();
+    expect(within(capacityDialog).queryByText(/left for the server to connect back/)).not.toBeInTheDocument();
+    // Start setup is the only primary action; no "Return to infrastructure" first.
+    expect(within(capacityDialog).getByRole("button", { name: "Start setup" })).toBeEnabled();
+    expect(within(capacityDialog).queryByRole("button", { name: /Return to infrastructure/ })).not.toBeInTheDocument();
+    expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
     expect(screen.queryByDisplayValue("secure-project-token-1234567890")).not.toBeInTheDocument();
+  });
+
+  it("starts setup from the result and ends on the launch the server was created for", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => key === "launch" ? "codex" : null);
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
+    (advanceProviderComputerSetup as jest.Mock).mockResolvedValue(hetznerSetupView({
+      stage: "environment_prepared", launchReady: true, targetId: "00000000-0000-4000-8000-000000001099",
+      observedAt: "2026-08-26T15:30:00.000Z", enrollmentExpiresAt: null, enrollmentClosesAt: null,
+    }));
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Create cloud server" }));
+    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Review current rates" }));
+    expect(await within(dialog).findByText("3")).toBeInTheDocument();
+    expect(within(dialog).getByText("Launch Codex")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I understand Hetzner bills this server/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create server and start billing" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Start setup" }));
+
+    expect(await within(dialog).findByRole("link", { name: "Continue launch" })).toHaveAttribute(
+      "href", "/dashboard/launch?kind=agent&start=1&profile=codex&targetId=00000000-0000-4000-8000-000000001099",
+    );
+    expect(advanceProviderComputerSetup).toHaveBeenCalledWith(HETZNER_CONNECTION.id, {
+      orderId: "00000000-0000-4000-8000-000000001016", expectedConnectionRevision: 1,
+    });
+    expect(within(dialog).getByText("hivra-a1b2c3d4 is ready for agents.", { exact: false })).toBeInTheDocument();
+  });
+
+  it("creates a plain server only when the user opts out under Advanced", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Create cloud server" }));
+    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Review current rates" }));
+    const plain = await within(dialog).findByRole("checkbox", { name: /Create a plain server without agent setup/ });
+    expect(plain).not.toBeChecked();
+    fireEvent.click(plain);
+    expect(within(dialog).getByText("Skipped. You chose a plain server under Advanced.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Hivra does not request or manage a provider firewall/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I understand Hetzner bills this server/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create server and start billing" }));
+    await waitFor(() => expect(createHetznerCloudCapacity).toHaveBeenCalledTimes(1));
+    expect((createHetznerCloudCapacity as jest.Mock).mock.calls[0][1]).not.toHaveProperty("preparationConfirmation");
+    expect(await within(dialog).findByText(/You chose a plain server/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Start setup" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Done" })).toBeInTheDocument();
+  });
+
+  it("blocks a new price review with the reason while the account's slot is used", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudCapacitySlot as jest.Mock).mockResolvedValue({ held: true, serverName: "hivra-a1b2c3d4", connectionId: null, status: "created_off" });
+    render(<HetznerCloudCapacityDialog connection={HETZNER_CONNECTION} onClose={jest.fn()} onInventoryChanged={jest.fn()}
+      slot={{ held: true, serverName: "hivra-a1b2c3d4", connectionId: null, status: "created_off" }} />);
+    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    expect(await within(dialog).findByRole("button", { name: "Review current rates" })).toBeDisabled();
+    expect(within(dialog).getByText(/hivra-a1b2c3d4 is using it/)).toBeInTheDocument();
+    expect(quoteHetznerCloudCapacity).not.toHaveBeenCalled();
+  });
+
+  // Live test of INF02 on Canary: a server Hivra had just set up sat on the
+  // card as "Off" beside "Ready for agents", because Start setup powered it on
+  // after the last inventory sync, until the owner pressed Sync servers.
+  it("syncs a set-up server's power state once instead of showing it Off beside Ready for agents", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, status: "running", discoveredAt: "2026-08-26T15:31:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Running")).toBeInTheDocument();
+    expect(within(server).getByText("Ready for agents")).toBeInTheDocument();
+    expect(within(server).queryByText("Off")).not.toBeInTheDocument();
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a set-up server that really is off as Off after one sync, without syncing again", async () => {
+    const prepared = hetznerSetupView({ stage: "environment_prepared", launchReady: true,
+      targetId: "00000000-0000-4000-8000-000000001099", observedAt: "2026-08-26T15:30:00.000Z",
+      enrollmentExpiresAt: null, enrollmentClosesAt: null });
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([prepared]);
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([
+      { ...HETZNER_OFF_SERVER, discoveredAt: "2026-08-26T16:00:00.000Z" },
+    ]);
+
+    render(<InfrastructureConnectionsPage />);
+
+    await waitFor(() => expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1));
+    const server = (await screen.findByText("hivra-a1b2c3d4")).closest("article") as HTMLElement;
+    expect(await within(server).findByText("Off")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(refreshHetznerCloudInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces a rejected project token from the card without disconnecting", async () => {
+    const rejected = { ...HETZNER_CONNECTION, status: "error" as const, lastErrorCode: "invalid_credentials" as const };
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([rejected]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    (replaceHetznerCloudToken as jest.Mock).mockResolvedValue({
+      connection: HETZNER_CONNECTION, inventory: [HETZNER_OFF_SERVER], writeCheck: { strayKeyName: null }, projectCheck: "confirmed",
+    });
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Replace token" }));
+    const dialog = screen.getByRole("dialog", { name: "Replace Hetzner token" });
+    expect(within(dialog).queryByLabelText("Connection name")).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/can see the servers and keys it created in this project/)).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText(/Read & Write project API token/), { target: { value: "replacement-project-token-1234" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Replace token" }));
+
+    await waitFor(() => expect(replaceHetznerCloudToken).toHaveBeenCalledWith(HETZNER_CONNECTION.id, "replacement-project-token-1234"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Token replaced for Personal cloud. Its servers and setup carried over.")).toBeInTheDocument();
+    expect(within(card).getByText("Connected")).toBeInTheDocument();
+    expect(deleteInfrastructureConnection).not.toHaveBeenCalled();
+  });
+
+  it("says plainly when a replaced token couldn't be matched to the same project, and syncs a list it couldn't save", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (replaceHetznerCloudToken as jest.Mock).mockResolvedValue({
+      connection: HETZNER_CONNECTION, inventory: null, writeCheck: { strayKeyName: null }, projectCheck: "unconfirmed",
+    });
+    (refreshHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: "Replace token" }));
+    const dialog = screen.getByRole("dialog", { name: "Replace Hetzner token" });
+    fireEvent.change(within(dialog).getByLabelText(/Read & Write project API token/), { target: { value: "replacement-project-token-1234" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Replace token" }));
+
+    expect(await screen.findByText(/couldn't confirm this is the same project/)).toBeInTheDocument();
+    expect(screen.queryByText(/Its servers and setup carried over/)).not.toBeInTheDocument();
+    // The token is saved but its list wasn't: read it with the new token instead of showing an empty project.
+    await waitFor(() => expect(refreshHetznerCloudInventory).toHaveBeenCalledWith(HETZNER_CONNECTION.id));
+    expect(await within(card).findByText("agent-box-1")).toBeInTheDocument();
+  });
+
+  it("re-reads the connection when a replaced token couldn't be confirmed, and never says nothing was replaced", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (replaceHetznerCloudToken as jest.Mock).mockRejectedValue(new InfrastructureApiError(
+      "Hivra saved your new token but couldn't confirm it's the one this project uses now. It may have changed again straight after. Use Sync servers to check it.",
+      409, "replaced_unconfirmed",
+    ));
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    await waitFor(() => expect(listInfrastructureConnections).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(card).getByRole("button", { name: "Replace token" }));
+    const dialog = screen.getByRole("dialog", { name: "Replace Hetzner token" });
+    const field = within(dialog).getByLabelText(/Read & Write project API token/);
+    fireEvent.change(field, { target: { value: "replacement-project-token-1234" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Replace token" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Hivra saved your new token");
+    expect(within(dialog).queryByText(/Nothing was replaced/)).not.toBeInTheDocument();
+    await waitFor(() => expect(listInfrastructureConnections).toHaveBeenCalledTimes(2));
+    expect(field).toHaveValue("");
+  });
+
+  it("labels no server until the card's evidence arrives, and offers a retry when it fails", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER, HETZNER_OFF_SERVER]);
+    let failRead!: (error: Error) => void;
+    (listProviderComputerSetupEvidence as jest.Mock).mockImplementationOnce(() => new Promise((_resolve, reject) => { failRead = reject; }));
+    render(<InfrastructureConnectionsPage />);
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    expect(await within(card).findByText("hivra-a1b2c3d4")).toBeInTheDocument();
+    // Still reading Hivra's records: the server Hivra created is not called someone else's.
+    expect(within(card).queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Connect this server" })).not.toBeInTheDocument();
+
+    await act(async () => failRead(new Error("Setup evidence unavailable")));
+    const alert = await within(card).findByRole("alert");
+    expect(alert).toHaveTextContent("Hivra couldn't load which of these servers it created");
+    expect(within(card).queryByText(/Not created by Hivra/)).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Computer setup" })).toBeInTheDocument();
+
+    (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    const created = (await within(card).findByText("Needs setup")).closest("article") as HTMLElement;
+    expect(within(created).getByText("hivra-a1b2c3d4")).toBeInTheDocument();
+    const existing = within(card).getByText("agent-box-1").closest("article") as HTMLElement;
+    expect(within(existing).getByText("Not created by Hivra — connect with the setup command.")).toBeInTheDocument();
+    expect(within(card).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["connect", "This token is read-only. Generate a Read & Write token in the same project and paste it here."],
+    ["replace", "This token is for a different Hetzner project. It can't see the servers or keys Hivra created here. Generate a Read & Write token in the same project and paste it here."],
+  ])("keeps the %s dialog open with the fix when the token check fails", async (mode, message) => {
+    const failure = new InfrastructureApiError(message, 422, mode === "connect" ? "token_read_only" : "token_project_mismatch");
+    (connectHetznerCloudProject as jest.Mock).mockRejectedValue(failure);
+    (replaceHetznerCloudToken as jest.Mock).mockRejectedValue(failure);
+    const onConnected = jest.fn();
+    const onReplaceUnconfirmed = jest.fn();
+    render(mode === "replace"
+      ? <HetznerCloudConnectionDialog replacing={HETZNER_CONNECTION} onClose={jest.fn()} onReplaced={onConnected} onReplaceUnconfirmed={onReplaceUnconfirmed} />
+      : <HetznerCloudConnectionDialog onClose={jest.fn()} onConnected={onConnected} />);
+    fireEvent.change(screen.getByLabelText(/Read & Write project API token/), { target: { value: "some-hetzner-token-1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: mode === "connect" ? "Connect and choose a server" : "Replace token" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(onConnected).not.toHaveBeenCalled();
+    // A refused check replaced nothing; there's nothing to re-read.
+    expect(onReplaceUnconfirmed).not.toHaveBeenCalled();
+    // Fixed on the same screen: the field is ready for the next token.
+    expect(screen.getByLabelText(/Read & Write project API token/)).toBeEnabled();
+  });
+
+  it("shows the stray test key's name when Hivra couldn't remove it", async () => {
+    (connectHetznerCloudProject as jest.Mock).mockResolvedValue({
+      connection: HETZNER_CONNECTION, inventory: [], writeCheck: { strayKeyName: "hivra-check-0123456789ab" },
+    });
+    const onConnected = jest.fn();
+    render(<HetznerCloudConnectionDialog onClose={jest.fn()} onConnected={onConnected} />);
+    fireEvent.change(screen.getByLabelText(/Read & Write project API token/), { target: { value: "some-hetzner-token-1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect and choose a server" }));
+    expect(await screen.findByRole("heading", { name: "Project connected." })).toBeInTheDocument();
+    expect(screen.getByText(/Hivra couldn't remove its test SSH key hivra-check-0123456789ab/)).toBeInTheDocument();
+    expect(onConnected).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onConnected).toHaveBeenCalledWith(HETZNER_CONNECTION, []);
   });
 
   it("displays precise provider amounts without insignificant trailing zeros", async () => {
@@ -1170,16 +2011,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     await within(dialog).findByLabelText("Server size");
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
-    await within(dialog).findByRole("heading", { name: "Review price and creation" });
+    await within(dialog).findByRole("heading", { name: "Review and create" });
 
     expect(within(dialog).getByText("USD 7.788 / month cap")).toBeInTheDocument();
     expect(within(dialog).getByText("USD 0.72 / month cap")).toBeInTheDocument();
     expect(within(dialog).getByText("USD 0 / hour gross")).toBeInTheDocument();
     expect(within(dialog).getByText("USD 0.0000000000000001 / month cap")).toBeInTheDocument();
     expect(within(dialog).getByText("USD 1.44")).toBeInTheDocument();
-    expect(within(dialog).getByText(/Hetzner VAT rate: 20%/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Hetzner's VAT rate of 20%/)).toBeInTheDocument();
     expect(within(dialog).getByRole("checkbox", {
-      name: /gross base rate of USD 0\.01368 per hour, capped at USD 8\.5080000000000001 per month/,
+      name: /bills this server USD 0\.01368 an hour, at most USD 8\.5080000000000001 a month/,
     })).not.toBeChecked();
     expect(within(dialog).getByRole("button", { name: "Create server and start billing" })).toBeDisabled();
     expect(JSON.stringify(quote)).toBe(originalQuote);
@@ -1195,7 +2036,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     await within(dialog).findByLabelText("Server size");
     dialog.scrollTop = 350;
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
-    const reviewHeading = await within(dialog).findByRole("heading", { name: "Review price and creation" });
+    const reviewHeading = await within(dialog).findByRole("heading", { name: "Review and create" });
     expect(dialog.scrollTop).toBe(0);
     expect(reviewHeading).toHaveFocus();
 
@@ -1206,57 +2047,207 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(chooseHeading).toHaveFocus();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
-    fireEvent.click(await within(dialog).findByRole("checkbox", { name: /I approve this observed configuration/ }));
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: /I understand Hetzner bills this server/ }));
     dialog.scrollTop = 850;
     fireEvent.click(within(dialog).getByRole("button", { name: "Create server and start billing" }));
-    const resultHeading = await within(dialog).findByRole("heading", { name: "Provider result" });
+    const resultHeading = await within(dialog).findByRole("heading", { name: "Set it up for agents" });
     expect(dialog.scrollTop).toBe(0);
     expect(resultHeading).toHaveFocus();
   });
 
-  it("explains the selected guided firewall sequence without claiming it has run", async () => {
+  it("brings each new capacity step into view when the dashboard page scrolls the dialog", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
-    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
-    mockPreparableHetznerOffer();
+    render(<InfrastructureConnectionsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create cloud server" }));
+    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    await within(dialog).findByLabelText("Server size");
+    // Phone CSS makes the dialog overflow visible so the dashboard main scrolls it.
+    dialog.style.overflowY = "visible";
+    const scrollIntoView = jest.fn();
+    dialog.scrollIntoView = scrollIntoView;
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
+    const reviewHeading = await within(dialog).findByRole("heading", { name: "Review and create" });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(reviewHeading).toHaveFocus();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change configuration" }));
+    await within(dialog).findByRole("heading", { name: "Choose a Hetzner server" });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["phone", "visible", true],
+    ["desktop", "auto", false],
+  ])("on %s layouts, scrolls an opened dialog's top into view only when the page scrolls it", async (_layout, overflowY, scrolls) => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    // Phone CSS makes in-flow dialogs overflow visible so the dashboard main
+    // scrolls them; desktop dialogs scroll themselves.
+    const layout = document.createElement("style");
+    layout.textContent = `[role="dialog"], [role="alertdialog"] { overflow-y: ${overflowY}; }`;
+    document.head.appendChild(layout);
+    try {
+      const { container } = render(<InfrastructureConnectionsPage />);
+      const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+      const anchor = container.querySelector("[data-infrastructure-modal-anchor]") as HTMLElement;
+      const scrollIntoView = jest.fn();
+      anchor.scrollIntoView = scrollIntoView;
+
+      fireEvent.click(within(card).getByRole("button", { name: "Disconnect project Personal cloud" }));
+      await screen.findByRole("alertdialog", { name: "Disconnect Personal cloud?" });
+      expect(scrollIntoView).toHaveBeenCalledTimes(scrolls ? 1 : 0);
+      if (scrolls) expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "start" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Keep connection" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+      expect(scrollIntoView).toHaveBeenCalledTimes(scrolls ? 1 : 0);
+
+      fireEvent.click(within(card).getByRole("button", { name: "Create cloud server" }));
+      await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+      expect(scrollIntoView).toHaveBeenCalledTimes(scrolls ? 2 : 0);
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it("scrolls a phone dialog to its top before moving focus into it", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([PENDING_HOST_CONNECTION]);
+    const layout = document.createElement("style");
+    layout.textContent = '[role="alertdialog"] { overflow-y: visible; }';
+    document.head.appendChild(layout);
+    try {
+      const { container } = render(<InfrastructureConnectionsPage />);
+      const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+      const anchor = container.querySelector("[data-infrastructure-modal-anchor]") as HTMLElement;
+      const focusedAtScroll: Array<Element | null> = [];
+      anchor.scrollIntoView = jest.fn(() => {
+        focusedAtScroll.push(document.activeElement);
+      });
+      const opener = within(card).getByRole("button", { name: "Disconnect host Linux host" });
+      opener.focus();
+
+      fireEvent.click(opener);
+      const dialog = await screen.findByRole("alertdialog", { name: "Disconnect Linux host?" });
+
+      // Focusing the initial control afterwards only scrolls when it is out of
+      // view, so the dialog does not open at the scroll offset of its last action.
+      expect(focusedAtScroll).toEqual([opener]);
+      expect(within(dialog).getByRole("button", { name: "Keep connection" })).toHaveFocus();
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it("shows saved recovery identifiers in full and copies each exact value", async () => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const record = {
+      version: 2,
+      connectionId: HETZNER_CONNECTION.id,
+      quoteId: "11111111-1111-4111-8111-111111111111",
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      prepare: false,
+    };
+    window.localStorage.setItem(
+      `hivra:hetzner-capacity-recovery:${HETZNER_CONNECTION.id}`,
+      JSON.stringify(record),
+    );
+    try {
+      render(<HetznerCloudCapacityDialog connection={HETZNER_CONNECTION} onClose={jest.fn()} onInventoryChanged={jest.fn()} />);
+      const dialog = await screen.findByRole("dialog", { name: "Recover pending request" });
+      const facts = within(dialog).getByLabelText("Saved recovery identifiers");
+      expect(within(facts).getByText(record.connectionId)).toBeInTheDocument();
+      expect(within(facts).getByText(record.quoteId)).toBeInTheDocument();
+
+      fireEvent.click(within(facts).getByRole("button", { name: "Copy request key" }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(record.idempotencyKey));
+      expect(await within(facts).findByRole("button", { name: "Copied request key" })).toBeInTheDocument();
+      expect(within(facts).getByText("Copied request key")).toHaveAttribute("role", "status");
+
+      fireEvent.click(within(facts).getByRole("button", { name: "Copy quote id" }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(record.quoteId));
+      expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it.each([
+    ["denied", () => ({ writeText: jest.fn().mockRejectedValue(new Error("NotAllowedError")) })],
+    ["missing", () => undefined],
+  ])("selects a recovery id and says so when clipboard access is %s", async (_case, makeClipboard) => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: makeClipboard() });
+    const record = {
+      version: 2,
+      connectionId: HETZNER_CONNECTION.id,
+      quoteId: "11111111-1111-4111-8111-111111111111",
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      prepare: false,
+    };
+    window.localStorage.setItem(
+      `hivra:hetzner-capacity-recovery:${HETZNER_CONNECTION.id}`,
+      JSON.stringify(record),
+    );
+    try {
+      render(<HetznerCloudCapacityDialog connection={HETZNER_CONNECTION} onClose={jest.fn()} onInventoryChanged={jest.fn()} />);
+      const dialog = await screen.findByRole("dialog", { name: "Recover pending request" });
+      const facts = within(dialog).getByLabelText("Saved recovery identifiers");
+
+      fireEvent.click(within(facts).getByRole("button", { name: "Copy request key" }));
+
+      expect(await within(facts).findByText("Selected — use Copy")).toHaveAttribute("role", "status");
+      expect(window.getSelection()?.toString()).toBe(record.idempotencyKey);
+      // Nothing claims a copy that did not happen.
+      expect(within(facts).queryByRole("button", { name: /^Copied/ })).not.toBeInTheDocument();
+    } finally {
+      window.getSelection()?.removeAllRanges();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("explains the firewall sequence setup will run without claiming it has run", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     render(<InfrastructureConnectionsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Create cloud server" }));
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     await within(dialog).findByLabelText("Server size");
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
-    const preparation = await within(dialog).findByRole("checkbox", { name: /Enable guided computer setup/ });
-    expect(preparation).toBeEnabled();
-    expect(within(dialog).getByText(/Hivra does not request or manage a provider firewall/)).toBeInTheDocument();
-
-    fireEvent.click(preparation);
-    expect(preparation).toBeChecked();
-    expect(within(dialog).getByText("Guided setup checks the firewall before startup.")).toBeInTheDocument();
-    expect(within(dialog).getByText(/applies and verifies the provider firewall before requesting power-on/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Selecting this option does not apply changes/)).toBeInTheDocument();
+    await within(dialog).findByRole("heading", { name: "Review and create" });
+    expect(within(dialog).getByText(/Setup applies and checks a Hetzner firewall before it turns the server on/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/Hivra does not request or manage a provider firewall/)).not.toBeInTheDocument();
-    expect(within(dialog).getByRole("checkbox", { name: /I approve this observed configuration/ })).not.toBeChecked();
+    expect(within(dialog).getByText("About 5 minutes; you start it next.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: /I understand Hetzner bills this server/ })).not.toBeChecked();
     expect(within(dialog).getByRole("button", { name: "Create server and start billing" })).toBeDisabled();
-    expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
-
-    fireEvent.click(preparation);
-    expect(within(dialog).getByText(/Hivra does not request or manage a provider firewall/)).toBeInTheDocument();
-    expect(within(dialog).queryByText("Guided setup checks the firewall before startup.")).not.toBeInTheDocument();
     expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
   });
 
-  it("does not promise guided firewall setup for an unsupported system image", async () => {
+  it("lists only images Hivra can set up and says so when none are offered", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
-    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
+    (getHetznerCloudOfferCatalog as jest.Mock).mockResolvedValueOnce({
+      ...HETZNER_CATALOG,
+      images: [HETZNER_UNSUPPORTED_IMAGE, ...HETZNER_CATALOG.images],
+    });
+    const view = render(<InfrastructureConnectionsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create cloud server" }));
+    let dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    const image = await within(dialog).findByLabelText("System image");
+    expect(within(image).getAllByRole("option").map((option) => option.textContent)).toEqual(["Ubuntu 22.04 · 22.04"]);
+    view.unmount();
+
+    (getHetznerCloudOfferCatalog as jest.Mock).mockResolvedValueOnce({ ...HETZNER_CATALOG, images: [HETZNER_UNSUPPORTED_IMAGE] });
     render(<InfrastructureConnectionsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Create cloud server" }));
-    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
-    await within(dialog).findByLabelText("Server size");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
-    const preparation = await within(dialog).findByRole("checkbox", { name: /Enable guided computer setup/ });
-    expect(preparation).toBeDisabled();
-    expect(preparation).not.toBeChecked();
-    expect(within(dialog).queryByText("Guided setup checks the firewall before startup.")).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/Hivra does not request or manage a provider firewall/)).toBeInTheDocument();
-    expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
+    dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    expect(await within(dialog).findByRole("heading", { name: "No server Hivra can set up is available here." })).toBeInTheDocument();
+    expect(within(dialog).getByText(/Hivra sets up Ubuntu 22.04 on x86 servers/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Review current rates" })).not.toBeInTheDocument();
+    expect(quoteHetznerCloudCapacity).not.toHaveBeenCalled();
   });
 
   it("offers the available 8 GiB USD desktop host while retaining explicit price review", async () => {
@@ -1321,15 +2312,23 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(serverType).getByRole("option", { name: /cx-expensive/i })).toBeInTheDocument();
   });
 
-  it("routes existing and manual-server choices into the current secure SSH wizard", async () => {
+  it("routes existing servers to the setup command first, with the SSH wizard as the advanced path", async () => {
     render(<InfrastructureConnectionsPage />);
 
     const chooser = await screen.findByRole("region", {
-      name: "How would you like to add infrastructure?",
+      name: "How would you like to add capacity?",
     });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose my machine/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /^Remote server/i }));
-    fireEvent.click(within(chooser).getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
+
+    const commandDialog = await screen.findByRole("dialog", { name: "Connect a server you already have" });
+    expect(await within(commandDialog).findByTestId("server-enrollment-command")).toHaveTextContent(ENROLLMENT_COMMAND);
+    expect(within(commandDialog).getByText("K7QM-2XRA")).toBeInTheDocument();
+    fireEvent.click(within(commandDialog).getByRole("button", { name: /Connect with SSH details instead \(advanced\)/ }));
+    // Choosing the advanced path doesn't cancel the command: it may have been
+    // copied, and the page lists it with Cancel until it's used or expires.
+    expect(cancelServerEnrollment).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole("dialog", { name: "Connect a host" });
     expect(dialog).toBeInTheDocument();
@@ -1346,6 +2345,141 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Close infrastructure setup" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  // Review (round 1): closing the panel used to cancel a command no server
+  // had downloaded, so a command copied, then pasted after closing, failed as
+  // "expired, already used or replaced". Now it keeps working: the page lists
+  // it with Cancel, keeps polling, and shows "Is this your server?" when the
+  // server reports.
+  it("keeps a copied command working after its panel closes, lists it with Cancel, and shows the report when it lands", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+    try {
+      const open = { ...ISSUED_ENROLLMENT, issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
+      render(<InfrastructureConnectionsPage />);
+      const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
+      fireEvent.click(within(chooser).getByRole("button", { name: /Choose my machine/i }));
+      fireEvent.click(within(chooser).getByRole("button", { name: /^Remote server/i }));
+      fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
+      const commandDialog = await screen.findByRole("dialog", { name: "Connect a server you already have" });
+      await within(commandDialog).findByTestId("server-enrollment-command");
+
+      (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [open], uninstallCommand: null });
+      fireEvent.click(within(commandDialog).getByRole("button", { name: "Close server setup" }));
+      expect(cancelServerEnrollment).not.toHaveBeenCalled();
+
+      const commands = await screen.findByRole("region", { name: "Setup commands" });
+      expect(within(commands).getByText(/The setup command you made at .+ hasn't been used yet\. It works until .+\./))
+        .toBeInTheDocument();
+      expect(within(commands).getByRole("button", { name: "Cancel this command" })).toBeInTheDocument();
+      // The owner's next step sits above the ways to add more capacity.
+      const entryChooser = document.getElementById("infrastructure-entry-options");
+      expect(entryChooser).not.toBeNull();
+      expect(commands.compareDocumentPosition(entryChooser as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      // The server runs the copied command and reports: the page's poll finds it.
+      (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [{
+        ...open, phase: "reported", scriptFetches: 1, lastFetchedAt: new Date().toISOString(),
+        confirmBy: new Date(Date.now() + 30 * 60_000).toISOString(),
+        report: { kind: "enrolled", reportedAt: new Date().toISOString(), observedAddress: "203.0.113.24", sshPort: 22,
+          hostFingerprintSha256: "SHA256:" + "X".repeat(43), consent: "terminal", words: "amber-falcon-river", reenrollment: false,
+          facts: { hostname: "web-7", osId: "ubuntu", osVersionId: "24.04", architecture: "x86_64", cpuCount: 2,
+            memoryBytes: 4 * 1024 ** 3, virtualization: "kvm", proxmoxVersion: null, sshMatchRules: false } },
+      }], uninstallCommand: null });
+      await act(async () => { jest.advanceTimersByTime(5_000); });
+      expect(await screen.findByRole("heading", { name: "Is this your server?" })).toBeInTheDocument();
+      expect(screen.getByText("amber falcon river")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Yes, this is my server" })).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("cancels an open command from the page", async () => {
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [{ ...ISSUED_ENROLLMENT,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }], uninstallCommand: null });
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [], uninstallCommand: null });
+    fireEvent.click(within(commands).getByRole("button", { name: "Cancel this command" }));
+    await waitFor(() => expect(cancelServerEnrollment).toHaveBeenCalledWith(ISSUED_ENROLLMENT.id));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Setup commands" })).not.toBeInTheDocument());
+  });
+
+  // Review (round 2): Cancel swallowed its error, so a failed cancel left the
+  // command listed and working with no word of it.
+  it("says so when a command couldn't be cancelled, and keeps it listed", async () => {
+    const open = { ...ISSUED_ENROLLMENT, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [open], uninstallCommand: null });
+    (cancelServerEnrollment as jest.Mock).mockRejectedValueOnce(
+      new InfrastructureApiError("Hivra couldn't reach its database.", 503));
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    fireEvent.click(within(commands).getByRole("button", { name: "Cancel this command" }));
+    expect(await within(commands).findByRole("alert"))
+      .toHaveTextContent("Hivra couldn't reach its database. It wasn't cancelled and still works until it expires. Try again.");
+    expect(within(commands).getByRole("button", { name: "Cancel this command" })).toBeEnabled();
+    expect(within(commands).getByText(/hasn't been used yet/)).toBeInTheDocument();
+  });
+
+  // Review (round 2): after No, the page re-read its list, which leaves out
+  // rejected commands, so "Cancelled." and the uninstall command vanished at
+  // once. They stay until the owner dismisses them.
+  it.each([
+    ["the refreshed list returns the command as rejected", "rejected"],
+    ["the refreshed list no longer returns the command", "gone"],
+  ] as const)("keeps \"Cancelled.\" and the uninstall command after No until dismissed (%s)", async (_label, after) => {
+    const uninstall = "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash";
+    const question: ServerEnrollmentDto = {
+      ...ISSUED_ENROLLMENT, phase: "reported", scriptFetches: 1, lastFetchedAt: new Date().toISOString(),
+      confirmBy: new Date(Date.now() + 30 * 60_000).toISOString(),
+      report: { kind: "enrolled", reportedAt: new Date().toISOString(), observedAddress: "203.0.113.24", sshPort: 22,
+        hostFingerprintSha256: "SHA256:" + "X".repeat(43), consent: "terminal", words: "amber-falcon-river", reenrollment: false,
+        facts: { hostname: "web-7", osId: "ubuntu", osVersionId: "24.04", architecture: "x86_64", cpuCount: 2,
+          memoryBytes: 4 * 1024 ** 3, virtualization: "kvm", proxmoxVersion: null, sshMatchRules: false } },
+    };
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [question], uninstallCommand: uninstall });
+    (declineServerEnrollment as jest.Mock).mockResolvedValue(undefined);
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    expect(within(commands).getByRole("heading", { name: "Is this your server?" })).toBeInTheDocument();
+
+    (listServerEnrollments as jest.Mock).mockResolvedValue({
+      enrollments: after === "rejected" ? [{ ...question, phase: "rejected", decidedAt: new Date().toISOString() }] : [],
+      uninstallCommand: uninstall,
+    });
+    const reads = (listServerEnrollments as jest.Mock).mock.calls.length;
+    fireEvent.click(within(commands).getByRole("button", { name: "No, cancel" }));
+    await waitFor(() => expect(declineServerEnrollment).toHaveBeenCalledWith(question.id));
+    await waitFor(() => expect((listServerEnrollments as jest.Mock).mock.calls.length).toBeGreaterThan(reads));
+    await act(async () => { await Promise.resolve(); });
+
+    const region = screen.getByRole("region", { name: "Setup commands" });
+    expect(within(region).getByRole("heading", { name: "Cancelled." })).toBeInTheDocument();
+    expect(within(region).getByText(uninstall)).toBeInTheDocument();
+    expect(within(region).queryByRole("heading", { name: "Is this your server?" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(region).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Setup commands" })).not.toBeInTheDocument());
+  });
+
+  it("shows a command declined in the last hour, with the uninstall command, after a reload", async () => {
+    const uninstall = "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash";
+    const declined: ServerEnrollmentDto = {
+      ...ISSUED_ENROLLMENT, phase: "rejected", scriptFetches: 1, decidedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      confirmBy: new Date(Date.now() + 20 * 60_000).toISOString(),
+      report: { kind: "enrolled", reportedAt: new Date(Date.now() - 11 * 60_000).toISOString(), observedAddress: "203.0.113.24",
+        sshPort: 22, hostFingerprintSha256: "SHA256:" + "X".repeat(43), consent: "terminal", words: "amber-falcon-river",
+        reenrollment: false, facts: { hostname: "web-7", osId: "ubuntu", osVersionId: "24.04", architecture: "x86_64",
+          cpuCount: 2, memoryBytes: 4 * 1024 ** 3, virtualization: "kvm", proxmoxVersion: null, sshMatchRules: false } },
+    };
+    const old = { ...declined, id: "66666666-6666-4666-8666-666666666666", decidedAt: new Date(Date.now() - 61 * 60_000).toISOString() };
+    (listServerEnrollments as jest.Mock).mockResolvedValue({ enrollments: [declined, old], uninstallCommand: uninstall });
+    render(<InfrastructureConnectionsPage />);
+    const commands = await screen.findByRole("region", { name: "Setup commands" });
+    expect(within(commands).getAllByRole("heading", { name: "Cancelled." })).toHaveLength(1);
+    expect(within(commands).getByText(uninstall)).toBeInTheDocument();
   });
 
   it("keeps creation blocked and explains how to replace a read-only project token", async () => {
@@ -1368,7 +2502,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     const confirmation = await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     });
     fireEvent.click(confirmation);
     fireEvent.click(within(dialog).getByRole("button", {
@@ -1376,7 +2510,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      /reconnect it with a Read & Write project token/i,
+      /read-only\. Use Replace token on the project card with a Read & Write token from the same project/i,
     );
     expect(within(dialog).queryByText(/Created, powered off/i)).not.toBeInTheDocument();
   });
@@ -1400,10 +2534,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      /Disconnect and reconnect this Hetzner project.*before in-app server creation/i,
+      /older saved token that can't create servers\. Use Replace token on the project card/i,
     );
     expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      /Existing read-only inventory may still work/i,
+      /The server list keeps working meanwhile/i,
     );
     expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
   });
@@ -1452,20 +2586,20 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
     fireEvent.click(within(dialog).getByRole("button", {
       name: "Create server and start billing",
     }));
 
     const alert = await within(dialog).findByRole("alert");
-    expect(alert).toHaveTextContent(/one across all Hetzner connections/i);
+    expect(alert).toHaveTextContent(/one Hetzner server per account/i);
     expect(alert).toHaveTextContent(
-      /deleting the server directly in Hetzner does not automatically free this slot/i,
+      /Deleting the server directly in Hetzner doesn't free it/i,
     );
-    expect(alert).toHaveTextContent(/Use Remove created server on the original project/i);
-    expect(alert).toHaveTextContent(/Older or unresolved launches require manual review/i);
-    expect(alert).toHaveTextContent(/additional simultaneous capacity is not supported/i);
+    expect(alert).toHaveTextContent(/use Remove created server on its project/i);
+    expect(alert).toHaveTextContent(/Older or unresolved launches need manual review/i);
+    expect(alert).not.toHaveTextContent(/reconnect/i);
   });
 
   it("shows callback rejection as an unstarted purchase, not a stuck recovery", async () => {
@@ -1480,10 +2614,12 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Create cloud server" }));
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
-    fireEvent.click(await within(dialog).findByRole("checkbox", { name: /I approve this observed configuration/i }));
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Enable guided computer setup/i }));
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: /I understand Hetzner bills this server/i }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create server and start billing" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("This attempt did not request a new server");
+    expect((createHetznerCloudCapacity as jest.Mock).mock.calls[0][1]).toHaveProperty(
+      "preparationConfirmation", "Prepare this computer for agent launch",
+    );
     expect(within(dialog).getByRole("alert").compareDocumentPosition(
       within(dialog).getByLabelText("Server size"),
     ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -1519,14 +2655,14 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
     fireEvent.click(within(dialog).getByRole("button", {
       name: "Create server and start billing",
     }));
 
     expect(await within(dialog).findByText(
-      /This request uses the account's one Canary capacity slot/i,
+      /This request uses the account's one Hetzner server slot/i,
     )).toBeInTheDocument();
     expect(within(dialog).getByText(/Inspect retained Hetzner resources/i))
       .toBeInTheDocument();
@@ -1564,14 +2700,14 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
     fireEvent.click(within(dialog).getByRole("button", {
       name: "Create server and start billing",
     }));
 
     expect(await within(dialog).findByText(
-      /This request did not retain the Canary capacity slot/i,
+      /This request did not keep the account's Hetzner server slot/i,
     )).toBeInTheDocument();
     expect(within(dialog).getByText(/You can retry after fixing the reported cause/i))
       .toBeInTheDocument();
@@ -1588,7 +2724,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     fireEvent.click(within(card).getByRole("button",{name:"Create cloud server"}));
     const dialog=await screen.findByRole("dialog",{name:"Choose a Hetzner server"});
     fireEvent.click(within(dialog).getByRole("button",{name:"Review current rates"}));
-    fireEvent.click(await within(dialog).findByRole("checkbox",{name:/I approve this observed configuration/i}));
+    fireEvent.click(await within(dialog).findByRole("checkbox",{name:/I understand Hetzner bills this server/i}));
     fireEvent.click(within(dialog).getByRole("button",{name:"Create server and start billing"}));
     const verify=await within(dialog).findByRole("button",{name:"Verify resources I removed in Hetzner"});
     expect(verifyExternalCleanup).not.toHaveBeenCalled();
@@ -1601,7 +2737,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(dialog).queryByText(/recorded no provider server/i)).not.toBeInTheDocument();
     expect(createHetznerCloudCapacity).toHaveBeenCalledTimes(1);
     expect(verifyExternalCleanup).toHaveBeenCalledTimes(1);
-    fireEvent.click(within(dialog).getByRole("button",{name:"Return to infrastructure"}));
+    fireEvent.click(within(dialog).getByRole("button",{name:"Close"}));
     fireEvent.click(within(card).getByRole("button",{name:"Create cloud server"}));
     expect(await screen.findByRole("dialog",{name:"Choose a Hetzner server"})).toBeInTheDocument();
   });
@@ -1614,7 +2750,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const view=render(<HetznerCloudCapacityDialog connection={HETZNER_CONNECTION} onClose={onClose} onInventoryChanged={onInventoryChanged} />);
     const dialog=await screen.findByRole("dialog",{name:"Choose a Hetzner server"});
     fireEvent.click(await within(dialog).findByRole("button",{name:"Review current rates"}));
-    fireEvent.click(await within(dialog).findByRole("checkbox",{name:/I approve this observed configuration/i}));
+    fireEvent.click(await within(dialog).findByRole("checkbox",{name:/I understand Hetzner bills this server/i}));
     fireEvent.click(within(dialog).getByRole("button",{name:"Create server and start billing"}));
     fireEvent.click(await within(dialog).findByRole("button",{name:"Verify resources I removed in Hetzner"}));
     expect(within(dialog).getByRole("button",{name:"Close Hetzner server setup"})).toBeDisabled();
@@ -1646,13 +2782,13 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
 
     expect(within(dialog).getByRole("button", {
       name: "Create server and start billing",
     })).toBeDisabled();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(/rate observation has expired/i);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/This price has expired/i);
     expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
   });
 
@@ -1690,7 +2826,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
     const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
       throw new Error("Storage denied");
@@ -1701,7 +2837,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      /could not save the non-secret recovery identifiers/i,
+      /couldn't save the non-secret recovery identifiers/i,
     );
     expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
     setItem.mockRestore();
@@ -1732,7 +2868,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
     fireEvent.click(within(dialog).getByRole("button", {
       name: "Create server and start billing",
@@ -1741,15 +2877,13 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(await within(dialog).findByRole("heading", {
       name: "Creation outcome needs reconciliation.",
     })).toBeInTheDocument();
-    expect(within(dialog).getByText(/uses the account's one Canary capacity slot/i))
+    expect(within(dialog).getByText(/uses the account's one Hetzner server slot/i))
       .toBeInTheDocument();
     expect(within(dialog).getByText(/Inspect retained Hetzner resources/i))
       .toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Check this request again" }));
 
-    expect(await within(dialog).findByRole("heading", {
-      name: "Created, powered off, not prepared.",
-    })).toBeInTheDocument();
+    expect(await within(dialog).findByText("Server created (powered off). Billing has started.")).toBeInTheDocument();
     expect(createHetznerCloudCapacity).toHaveBeenCalledTimes(2);
     expect((createHetznerCloudCapacity as jest.Mock).mock.calls[0]).toEqual(
       (createHetznerCloudCapacity as jest.Mock).mock.calls[1],
@@ -1778,7 +2912,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
       fireEvent.click(await within(dialog).findByRole("checkbox", {
-        name: /I approve this observed configuration/i,
+        name: /I understand Hetzner bills this server/i,
       }));
       fireEvent.click(within(dialog).getByRole("button", {
         name: "Create server and start billing",
@@ -1800,7 +2934,6 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
   it.each([false, true])("restores a lost-response request with its exact identifiers and setup consent (%s)", async prepare => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
-    if (prepare) mockPreparableHetznerOffer();
     (createHetznerCloudCapacity as jest.Mock)
       .mockRejectedValueOnce(new Error("The provider response was lost."))
       .mockResolvedValueOnce({ operation: HETZNER_OPERATION, inventory: [HETZNER_OFF_SERVER] });
@@ -1812,9 +2945,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     let dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
     fireEvent.click(await within(dialog).findByRole("checkbox", {
-      name: /I approve this observed configuration/i,
+      name: /I understand Hetzner bills this server/i,
     }));
-    if (prepare) fireEvent.click(within(dialog).getByRole("checkbox", { name: /Enable guided computer setup/i }));
+    if (!prepare) fireEvent.click(within(dialog).getByRole("checkbox", { name: /Create a plain server without agent setup/i }));
+    if (prepare) (listProviderComputerSetups as jest.Mock).mockResolvedValue([hetznerSetupView()]);
     fireEvent.click(within(dialog).getByRole("button", {
       name: "Create server and start billing",
     }));
@@ -1839,14 +2973,13 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     render(<InfrastructureConnectionsPage />);
     projectHeading = await screen.findByRole("heading", { name: "Personal cloud" });
     projectCard = projectHeading.closest("article") as HTMLElement;
-    fireEvent.click(within(projectCard).getByRole("button", { name: "Create cloud server" }));
+    // The card offers the saved check, not a second purchase.
+    fireEvent.click(within(projectCard).getByRole("button", { name: "Check saved request" }));
     dialog = await screen.findByRole("dialog", { name: "Recover pending request" });
 
     expect(createHetznerCloudCapacity).toHaveBeenCalledTimes(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "Check saved request" }));
-    expect(await within(dialog).findByRole("heading", {
-      name: "Created, powered off, not prepared.",
-    })).toBeInTheDocument();
+    expect(await within(dialog).findByText("Server created (powered off). Billing has started.")).toBeInTheDocument();
     expect(createHetznerCloudCapacity).toHaveBeenCalledTimes(2);
     expect((createHetznerCloudCapacity as jest.Mock).mock.calls[0]).toEqual(
       (createHetznerCloudCapacity as jest.Mock).mock.calls[1],
@@ -1854,7 +2987,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(quoteHetznerCloudCapacity).toHaveBeenCalledTimes(1);
     expect(window.localStorage.length).toBe(0);
     if (prepare) {
-      expect(within(dialog).getByRole("button", { name: "Continue computer setup" })).toBeInTheDocument();
+      expect(await within(dialog).findByRole("button", { name: "Start setup" })).toBeInTheDocument();
       expect((createHetznerCloudCapacity as jest.Mock).mock.calls[0][1]).toHaveProperty(
         "preparationConfirmation", "Prepare this computer for agent launch",
       );
@@ -1886,9 +3019,9 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
     render(<InfrastructureConnectionsPage />);
 
-    const addCapacity = await screen.findByRole("button", { name: "Add infrastructure" });
+    const addCapacity = await screen.findByRole("button", { name: "Add capacity" });
     fireEvent.click(addCapacity);
-    const chooser = screen.getByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     const openDialog = within(chooser).getByRole("button", { name: /Start with Hetzner/i });
     openDialog.focus();
@@ -1902,15 +3035,14 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(screen.getByRole("heading", { name: "Which cloud account do you use?" })).toBeInTheDocument();
   });
 
-  it("shows a failed Hetzner refresh as stale evidence instead of connected health", async () => {
+  it.each([
+    ["invalid_credentials", "Token rejected", true],
+    ["provider_unavailable", "Sync issue", false],
+  ])("shows a failed Hetzner refresh (%s) as stale evidence instead of connected health", async (code, badge, replaceIsPrimary) => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
     (refreshHetznerCloudInventory as jest.Mock).mockRejectedValue(
-      new InfrastructureApiError(
-        "Hetzner Cloud rejected this project API token.",
-        422,
-        "invalid_credentials",
-      ),
+      new InfrastructureApiError("Hetzner Cloud inventory could not be refreshed.", 422, code),
     );
     render(<InfrastructureConnectionsPage />);
 
@@ -1918,11 +3050,16 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const projectCard = projectHeading.closest("article") as HTMLElement;
     fireEvent.click(within(projectCard).getByRole("button", { name: "Sync servers" }));
 
-    expect(await within(projectCard).findByText("Sync issue")).toBeInTheDocument();
+    expect(await within(projectCard).findByText(badge)).toBeInTheDocument();
     expect(within(projectCard).getByRole("alert")).toHaveTextContent(
       /Showing the last successful server snapshot/i,
     );
     expect(within(projectCard).queryByText(/^Connected$/)).not.toBeInTheDocument();
+    const replace = within(projectCard).getAllByRole("button", { name: "Replace token" });
+    expect(replace).toHaveLength(1);
+    // A rejected token puts Replace token first, ahead of Create cloud server.
+    const create = within(projectCard).getByRole("button", { name: "Create cloud server" });
+    expect(Boolean(replace[0].compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(replaceIsPrimary);
   });
 
   it("keeps explicit Hetzner disconnect available while warning that Hivra loses reconciliation", async () => {
@@ -1941,6 +3078,41 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(dialog).toHaveTextContent(/billing continues/i);
     expect(dialog).toHaveTextContent(/Hetzner rescue mode or a rebuild/i);
     expect(within(dialog).getByRole("button", { name: "Remove connection" })).toBeEnabled();
+  });
+
+  it("offers a labelled project disconnect that opens the same confirmation", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_OFF_SERVER]);
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Personal cloud" })).closest("article") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Remove created server" })).toBeInTheDocument();
+    // The accessible name keeps the visible label and names the connection it removes.
+    const labelled = within(card).getByRole("button", { name: "Disconnect project Personal cloud" });
+    expect(labelled).toHaveTextContent("Disconnect project");
+    fireEvent.click(labelled);
+    expect(screen.getByRole("alertdialog", { name: "Disconnect Personal cloud?" })).toBeInTheDocument();
+    expect(deleteInfrastructureConnection).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Disconnect host Linux host", "alertdialog", "Keep connection"],
+    ["Edit", "dialog", "Close infrastructure setup"],
+  ])("returns focus to the card's %s control when its dialog closes", async (trigger, role, closeName) => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([PENDING_HOST_CONNECTION]);
+    render(<InfrastructureConnectionsPage />);
+
+    const card = (await screen.findByRole("heading", { name: "Linux host" })).closest("article") as HTMLElement;
+    const opener = within(card).getByRole("button", { name: trigger });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const dialog = await screen.findByRole(role as "dialog" | "alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: closeName }));
+
+    await waitFor(() => expect(screen.queryByRole(role as "dialog" | "alertdialog")).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add capacity" })).not.toHaveFocus();
   });
 
   it("requires typed confirmation before force-forgetting an idle ambiguous Hetzner connection", async () => {
@@ -1973,13 +3145,19 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
       name: "Forget Hivra access only",
     });
     const confirmation = within(dialog).getByLabelText("Type the exact confirmation");
+    expect(confirmation).toHaveAttribute("autocapitalize", "characters");
+    expect(confirmation).toHaveAttribute("autocorrect", "off");
+    expect(confirmation).toHaveAttribute("spellcheck", "false");
     expect(forceButton).toBeDisabled();
+    expect(within(dialog).queryByText("Doesn't match yet")).not.toBeInTheDocument();
     fireEvent.change(confirmation, { target: { value: "FORGET" } });
     expect(forceButton).toBeDisabled();
+    expect(confirmation).toHaveAccessibleDescription(/Doesn't match yet/);
     fireEvent.change(confirmation, {
       target: { value: HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION },
     });
     expect(forceButton).toBeEnabled();
+    expect(within(dialog).queryByText("Doesn't match yet")).not.toBeInTheDocument();
     fireEvent.click(forceButton);
 
     await waitFor(() => expect(forceForgetHetznerCloudConnection).toHaveBeenCalledWith(
@@ -2056,10 +3234,10 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
   it.each([
     { trigger: "Start with Hetzner", title: "Connect Hetzner Cloud" },
-    { trigger: "Connect existing host", title: "Connect a host" },
+    { trigger: "Connect a server you already have", title: "Connect a server you already have" },
   ])("pins $title inside the dashboard scrollport", async ({ trigger, title }) => {
     const { container, unmount } = render(<InfrastructureConnectionsPage />);
-    const chooser = await screen.findByRole("region", { name: "How would you like to add infrastructure?" });
+    const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     if (trigger === "Start with Hetzner") {
       fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     } else {

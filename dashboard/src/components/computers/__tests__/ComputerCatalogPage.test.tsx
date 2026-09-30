@@ -1,7 +1,13 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import { ComputerCatalogPage } from "../ComputerCatalogPage";
 
@@ -49,9 +55,72 @@ describe("ComputerCatalogPage", () => {
       "href",
       "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop",
     );
+    // Linux Sandbox is launchable from the catalog, not only from Launch.
+    expect(
+      screen.getByRole("link", { name: /Launch Linux Sandbox/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/launch?kind=computer&start=1&profile=linux-terminal",
+    );
+    expect(screen.getByText(/Add one in Capacity first/i, { selector: "article#linux-sandbox p" })).toBeInTheDocument();
   });
 
-  it("keeps Omarchy's prepared path while presenting Windows as customer capacity", async () => {
+  it("brings an opened OS catalog below the fold to the top under its heading", async () => {
+    const scroll = jest.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      render(<ComputerCatalogPage />);
+      await screen.findByText("No computers yet");
+      const details = screen
+        .getByText("Browse operating systems")
+        .closest("details") as HTMLDetailsElement;
+      const grid = details.querySelector("article")?.parentElement as HTMLElement;
+      const top = jest.spyOn(grid, "getBoundingClientRect");
+
+      // Opened with its first card already on screen: the page stays put.
+      top.mockReturnValue({ top: 200 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).not.toHaveBeenCalled();
+
+      // Opened at the bottom edge: the heading goes to the top, not the grid,
+      // so the tapped summary and its collapse control stay visible.
+      details.open = false;
+      fireEvent(details, new Event("toggle"));
+      top.mockReturnValue({ top: window.innerHeight - 40 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll).toHaveBeenCalledWith({ block: "start" });
+      expect(scroll.mock.instances[0]).toBe(details);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("brings a linked profile card into view when the catalog opens", async () => {
+    const scroll = jest.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    window.history.replaceState(null, "", "#omarchy");
+    try {
+      render(<ComputerCatalogPage />);
+      await screen.findByText("No computers yet");
+      const details = screen
+        .getByText("Browse operating systems")
+        .closest("details") as HTMLDetailsElement;
+      expect(details.open).toBe(true);
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).toHaveBeenLastCalledWith({ block: "nearest" });
+      expect(scroll.mock.instances.at(-1)).toBe(details.querySelector("#omarchy"));
+    } finally {
+      window.history.replaceState(null, "", window.location.pathname);
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("keeps Omarchy's prepared path while presenting Windows as needing your own server", async () => {
     render(<ComputerCatalogPage />);
 
     await screen.findByText("No computers yet");
@@ -62,10 +131,19 @@ describe("ComputerCatalogPage", () => {
     expect(
       screen.getByRole("heading", { name: "Omarchy" }),
     ).toBeInTheDocument();
+    const omarchyCard = screen
+      .getByRole("heading", { name: "Omarchy" })
+      .closest("article") as HTMLElement;
+    expect(within(omarchyCard).getByText("Preview")).toBeInTheDocument();
     expect(
-      screen.getByText("Canary ready · operating system"),
+      within(omarchyCard).getByText("Full Linux desktop in your browser"),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/prepared Canary computer/i)).toHaveLength(1);
+    // Substrate details stay available, but behind a collapsed disclosure.
+    expect(screen.getAllByText(/^Prepared computer\.$/i)).toHaveLength(1);
+    expect(screen.getByText(/^Prepared computer\.$/i)).not.toBeVisible();
+    fireEvent.click(within(omarchyCard).getByText("Technical details"));
+    expect(screen.getByText(/^Prepared computer\.$/i)).toBeVisible();
+    expect(omarchyCard).not.toHaveTextContent(/Canary ready/);
     expect(
       screen.getByRole("link", { name: /Launch Omarchy/i }),
     ).toHaveAttribute(
@@ -76,7 +154,7 @@ describe("ComputerCatalogPage", () => {
       screen.getByRole("heading", { name: "Windows" }),
     ).toBeInTheDocument();
     const windowsCard = screen.getByRole("heading", { name: "Windows" }).closest("article");
-    expect(windowsCard).toHaveTextContent("Connect compatible customer-owned or self-hosted capacity to continue.");
+    expect(windowsCard).toHaveTextContent("Needs your own server that can run Windows. Add one in Capacity first.");
     expect(windowsCard).not.toHaveTextContent(/Canary ready|prepared Canary|evaluation/i);
     expect(
       screen.getByRole("link", { name: /Launch Windows/i }),
@@ -169,15 +247,17 @@ describe("ComputerCatalogPage", () => {
     ).toBe(false);
   });
 
-  it("keeps infrastructure and agent inventories as separate destinations", async () => {
+  it("keeps capacity and agent inventories as separate destinations", async () => {
     render(<ComputerCatalogPage />);
 
     await screen.findByText("No computers yet");
     expect(
-      screen.getByRole("link", { name: /Infrastructure/i }),
+      screen.getByRole("link", { name: /Capacity/i }),
     ).toHaveAttribute("href", "/dashboard/infrastructure");
     expect(
-      screen.getByText(/Those are agent runtimes, not operating systems/i),
+      // An agent's computer is its own: point there instead of calling agents
+      // "not operating systems" (ATT-11).
+      screen.getByText("Agents run on their own computer. Open them, and their computer, from Agents."),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open Agents/i })).toHaveAttribute(
       "href",
@@ -277,6 +357,61 @@ describe("ComputerCatalogPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("labels rows with the shared status words and filters starting computers", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: {
+          agents: [
+            {
+              id: "new",
+              type: "linux-desktop",
+              computer_profile: "ubuntu-desktop",
+              name: "Fresh desktop",
+              status: "provisioning",
+              cpu: 2,
+              ram: 4,
+            },
+            {
+              id: "broken",
+              type: "linux-desktop",
+              computer_profile: "ubuntu-desktop",
+              name: "Needs repair",
+              status: "error",
+              cpu: 2,
+              ram: 4,
+            },
+            {
+              id: "on",
+              type: "linux-desktop",
+              computer_profile: "ubuntu-desktop",
+              name: "Daily driver",
+              status: "running",
+              cpu: 2,
+              ram: 4,
+            },
+          ],
+        },
+      }),
+    });
+    render(<ComputerCatalogPage />);
+    const fresh = await screen.findByRole("link", { name: /Fresh desktop/ });
+    expect(fresh).toHaveTextContent("Starting");
+    expect(fresh).not.toHaveTextContent(/provisioning/i);
+    expect(
+      screen.getByRole("link", { name: /Needs repair/ }),
+    ).toHaveTextContent("Needs attention");
+    expect(
+      screen.getByRole("link", { name: /Daily driver/ }),
+    ).toHaveTextContent("Running");
+    fireEvent.click(screen.getByRole("button", { name: "Starting" }));
+    expect(screen.getByText("Fresh desktop")).toBeInTheDocument();
+    expect(screen.queryByText("Daily driver")).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs repair")).not.toBeInTheDocument();
+  });
+
   it("shows a recoverable inventory error without claiming there are no computers", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: false,
@@ -289,5 +424,61 @@ describe("ComputerCatalogPage", () => {
     );
     expect(screen.queryByText("No computers yet")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("picks the computer for Launch's \"Put an agent on a computer I already have\" with the honest pair line", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, name: "MY_UBUNTU_DESKTOP", status: "running", cpu: 2, ram: 4 };
+    const windows = { ...desk, id: "22222222-2222-4222-8222-222222222222", computer_profile: "windows", name: "WIN_BOX" };
+    // The browser's rows never carry the binding column: the server names the computers that can take Codex.
+    const unbound = { ...desk, id: "33333333-3333-4333-8333-333333333333", name: "UNBOUND_DESK" };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [desk.id] } }
+        : { success: true, data: { agents: [desk, windows, unbound] } } }) as Response);
+    render(<ComputerCatalogPage />);
+    const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
+    await waitFor(() => expect(row).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage&addAgent=1`));
+    expect(within(row).getByText("Adds a new Codex to MY_UBUNTU_DESKTOP. Your other agents stay as they are.")).toBeInTheDocument();
+    const other = screen.getByRole("link", { name: /WIN_BOX/ });
+    expect(within(other).getByText("Not available to add to an existing computer yet")).toBeInTheDocument();
+    expect(other.getAttribute("href")).not.toContain("addAgent");
+    expect(within(screen.getByRole("link", { name: /UNBOUND_DESK/ })).getByText("Not available to add to an existing computer yet"))
+      .toBeInTheDocument();
+  });
+
+  it("gives a supported computer that can't take Codex now the gate's reason, not the pair line", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm", name: "STOPPED_DESK", status: "stopped", cpu: 2, ram: 4 };
+    const busy = { ...desk, id: "22222222-2222-4222-8222-222222222222", name: "CODEX_DESK", status: "running" };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [],
+          computerReasons: { [desk.id]: "Start the computer to add Codex.", [busy.id]: "Codex is already on this computer." } } }
+        : { success: true, data: { agents: [desk, busy] } } }) as Response);
+    render(<ComputerCatalogPage />);
+    const stopped = await screen.findByRole("link", { name: /STOPPED_DESK/ });
+    await waitFor(() => expect(within(stopped).getByText("Start the computer to add Codex.")).toBeInTheDocument());
+    expect(stopped).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage`);
+    const present = screen.getByRole("link", { name: /CODEX_DESK/ });
+    expect(within(present).getByText("Codex is already on this computer.")).toBeInTheDocument();
+    expect(screen.queryByText(/Adds a new Codex/)).not.toBeInTheDocument();
+  });
+
+  it("ignores ?addAgent=1 where attach is not offered (production)", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
+      computer_substrate: "proxmox-kvm", name: "MY_UBUNTU_DESKTOP", status: "running", cpu: 2, ram: 4 };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: false, agents: [], eligibleComputerIds: [] } }
+        : { success: true, data: { agents: [desk] } } }) as Response);
+    render(<ComputerCatalogPage />);
+    const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/attached-agents", expect.anything()));
+    expect(within(row).queryByText(/Adds a new Codex|Not available to add/)).not.toBeInTheDocument();
+    expect(row.getAttribute("href")).not.toContain("addAgent");
   });
 });

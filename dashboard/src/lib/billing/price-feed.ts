@@ -17,13 +17,37 @@
  * No auth required. Rate-limited to 300 req/min/IP — well above
  * anything we'd push from the deposit-quote flow even with no caching.
  *
- * Future: cross-check against the Uniswap V4 quoter on Base for
- * sanity. If two sources disagree by more than a configured tolerance
- * we should refuse to mint a quote rather than giving a bad rate.
- * Out of scope for V1 — flagged in the BACKLOG.
+ * Platform tokens ($HermesOS, $HIVRA) are priced with two gates, and every
+ * quote or live threshold fails closed when either fails:
+ *
+ *   1. Liquidity floor: the pricing pool (the registry's canonical pool when
+ *      set, else the highest-liquidity Base pair) must hold at least the
+ *      token's minPriceLiquidityUsd. A thin pool is what makes
+ *      pump-quote-dump profitable.
+ *   2. Median cross-check: the reference is the median price over the last
+ *      PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES of wall-clock time, from the
+ *      pool's completed 5-minute candles on GeckoTerminal (an independent
+ *      indexer). Each 5-minute bucket carries the last traded close forward,
+ *      so a quiet pool still has a reference (its last price). Both sides are
+ *      compared in the pool's paired token (WETH), so an ETH move while the
+ *      pool is quiet is not mistaken for a token move. The median is only
+ *      trusted once the pool has a full window of history and at least
+ *      PLATFORM_PRICE_MIN_TRADED_CANDLES traded 5-minute periods: a young
+ *      pool's "median" is its last few candles, which a pump sets.
+ *
+ * Every flow gains from a higher token price (fewer tokens to hold or pay,
+ * more credit per token), so a quote is priced at min(spot, median): a pump
+ * never buys a cheaper quote. A spot more than PLATFORM_PRICE_MAX_DEVIATION_BPS
+ * above the median is refused outright; a spot below it is simply used.
+ *
+ * Each refusal is a PlatformTokenPriceGateError that names the token, the
+ * reason (liquidity_floor, median_deviation, insufficient_history, no_candle
+ * or feed_error) and the observed values, so the quote routes can log and alert on it
+ * (price-gate-alerts.ts) without re-deriving why.
  */
 
-import { HERMESOS_TOKEN_ADDRESS, VVV_TOKEN_ADDRESS } from "./token-holdings";
+import { VVV_TOKEN_ADDRESS } from "./token-holdings";
+import { HERMESOS_TOKEN, type PlatformToken, type PlatformTokenKey } from "./token-registry";
 
 export interface HermesPriceQuote {
   /**
@@ -52,7 +76,7 @@ export interface HermesPriceQuote {
 }
 
 export type HermesPriceCrossCheck = {
-  source: "uniswap_v4_base_quoter";
+  source: "uniswap_v4_base_quoter" | "geckoterminal_ohlcv_median";
   priceUsd: string;
   lastUpdatedAt: number;
   raw?: unknown;
@@ -66,6 +90,8 @@ interface DexScreenerPair {
   baseToken: { address: string; symbol?: string };
   quoteToken: { address: string; symbol?: string };
   priceUsd?: string;
+  /** Price in the pair's quote token (WETH for the platform pools). */
+  priceNative?: string;
   liquidity?: { usd?: number };
 }
 
@@ -74,6 +100,157 @@ interface DexScreenerTokensResponse {
 }
 
 const DEXSCREENER_BASE_URL = "https://api.dexscreener.com";
+const GECKOTERMINAL_BASE_URL = "https://api.geckoterminal.com/api/v2";
+
+/** Spot may sit at most this far above the recent median; the quote is priced at the lower of the two. */
+export const PLATFORM_PRICE_MAX_DEVIATION_BPS = 1_000;
+/** The wall-clock window the reference median covers, in 5-minute buckets. */
+export const PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES = 4 * 60;
+/**
+ * A pool's first completed candle must be at least this old before its median
+ * is trusted: the whole median window, so every bucket holds a real price and
+ * a pump has to hold for half the window to move the median.
+ */
+export const PLATFORM_PRICE_MIN_HISTORY_MINUTES = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES;
+/**
+ * ...and it must have traded in at least this many completed 5-minute
+ * periods (two hours' worth), so a handful of trades cannot set the reference.
+ */
+export const PLATFORM_PRICE_MIN_TRADED_CANDLES = 24;
+const BUCKET_SEC = 5 * 60;
+/**
+ * Candles fetched per reference read. Candles exist only for 5-minute periods
+ * with trades, so this reaches back past the window to find the last close
+ * before it (the price a quiet pool opened the window at).
+ */
+const CANDLES_FETCHED = 1_000;
+const REFERENCE_CACHE_MS = 60_000;
+/** A failed reference read is reused this long, so an outage does not become a request storm (and a 429). */
+const REFERENCE_FAILURE_CACHE_MS = 30_000;
+
+export type PlatformTokenPriceGate =
+  | "liquidity"
+  | "spot_unavailable"
+  | "reference_unavailable"
+  | "deviation"
+  | "history"
+  | "pool_missing";
+
+/**
+ * Why a price gate refused, for logs and ops alerts:
+ *   liquidity_floor       the pricing pool holds less than the token's floor
+ *   median_deviation      the spot is too far above the recent median
+ *   insufficient_history  the pool is too young, or has traded too little, for
+ *                         its median to be trusted (a market condition, not an
+ *                         outage: no cached price is served in its place)
+ *   no_candle             the median source has no candle for the pool
+ *   feed_error            a price source failed, or named the wrong pool
+ */
+export type PriceGateReason = "liquidity_floor" | "median_deviation" | "insufficient_history" | "no_candle" | "feed_error";
+
+/** Numbers and ids a gate observed when it refused (never user data). */
+export type PriceGateObserved = Record<string, number | string | null>;
+
+/** One gate refusal, in the shape the quote routes log and alert on. */
+export interface PriceGateRefusal {
+  /** Registry key of the refused token, or "unknown" when the error did not name it. */
+  assetKey: PlatformTokenKey | "unknown";
+  /** How the product writes the token, e.g. "$HIVRA". */
+  asset: string;
+  reason: PriceGateReason;
+  gate: PlatformTokenPriceGate | "unknown";
+  observed: PriceGateObserved;
+}
+
+function reasonForGate(gate: PlatformTokenPriceGate): PriceGateReason {
+  if (gate === "liquidity") return "liquidity_floor";
+  if (gate === "deviation") return "median_deviation";
+  if (gate === "history") return "insufficient_history";
+  return "feed_error";
+}
+
+/** A platform-token price failed a safety gate; quotes must not be issued. */
+export class PlatformTokenPriceGateError extends Error {
+  readonly reason: PriceGateReason;
+  readonly assetKey: PlatformTokenKey | "unknown";
+  readonly asset: string;
+  readonly observed: PriceGateObserved;
+
+  constructor(
+    readonly gate: PlatformTokenPriceGate,
+    message: string,
+    details: { token?: PlatformToken; reason?: PriceGateReason; observed?: PriceGateObserved } = {}
+  ) {
+    super(message);
+    this.name = "PlatformTokenPriceGateError";
+    this.reason = details.reason ?? reasonForGate(gate);
+    this.assetKey = details.token?.key ?? "unknown";
+    this.asset = details.token?.displayUnit ?? "unknown";
+    this.observed = details.observed ?? {};
+  }
+
+  get refusal(): PriceGateRefusal {
+    return { assetKey: this.assetKey, asset: this.asset, reason: this.reason, gate: this.gate, observed: this.observed };
+  }
+}
+
+/**
+ * The gate refusal behind a quote failure: a PlatformTokenPriceGateError, an
+ * error that carries a `priceGateRefusal` (managed-Venice deposit gates), or
+ * one wrapping either as its `cause` (LivePriceUnavailableError). Null when
+ * no gate is involved.
+ */
+export function priceGateRefusalFromError(error: unknown): PriceGateRefusal | null {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    if (current instanceof PlatformTokenPriceGateError) return current.refusal;
+    const carried = (current as { priceGateRefusal?: PriceGateRefusal }).priceGateRefusal;
+    if (carried) return carried;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/**
+ * A price source answered with an HTTP error. The status goes into the
+ * refusal's `observed` values, so a 429 rate limit, a 5xx outage and a 404
+ * can be told apart in the logs and the ops alert.
+ */
+class PriceSourceHttpError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus: number
+  ) {
+    super(message);
+    this.name = "PriceSourceHttpError";
+  }
+}
+
+/**
+ * The median source has no candle for the pool: never traded, or not indexed
+ * yet (GeckoTerminal answers 404 for a pool it has not indexed).
+ */
+class NoCandleError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus?: number
+  ) {
+    super(message);
+    this.name = "NoCandleError";
+  }
+}
+
+/** `observed` plus the HTTP status of the source error behind a refusal, when it had one. */
+function withHttpStatus(observed: PriceGateObserved, error: unknown): PriceGateObserved {
+  const httpStatus = (error as { httpStatus?: unknown } | null)?.httpStatus;
+  return typeof httpStatus === "number" ? { ...observed, httpStatus } : observed;
+}
+
+/** A gate error raised below the token level (a shared fetch), named for `token`. */
+function forToken(error: PlatformTokenPriceGateError, token: PlatformToken): PlatformTokenPriceGateError {
+  if (error.assetKey !== "unknown") return error;
+  return new PlatformTokenPriceGateError(error.gate, error.message, { token, reason: error.reason, observed: error.observed });
+}
 
 type FetchImpl = typeof fetch;
 
@@ -93,8 +270,8 @@ interface FetchTokenPriceOptions {
  */
 async function fetchTokenPriceUsd(
   tokenAddress: string,
-  options: FetchTokenPriceOptions = {}
-): Promise<HermesPriceQuote> {
+  options: FetchTokenPriceOptions & { poolId?: string | null } = {}
+): Promise<HermesPriceQuote & { pair: DexScreenerPair }> {
   const fetchImpl = options.fetchImpl || (fetch as FetchImpl);
   const env = options.env ?? process.env;
   const baseUrl = env.DEXSCREENER_BASE_URL || DEXSCREENER_BASE_URL;
@@ -117,9 +294,7 @@ async function fetchTokenPriceUsd(
   }
 
   if (!response.ok) {
-    throw new Error(
-      `DEXScreener price fetch failed status=${response.status}`
-    );
+    throw new PriceSourceHttpError(`DEXScreener price fetch failed status=${response.status}`, response.status);
   }
 
   const payload = (await response.json()) as DexScreenerTokensResponse;
@@ -137,13 +312,26 @@ async function fetchTokenPriceUsd(
       /^\d+(\.\d+)?$/.test(p.priceUsd)
   );
 
-  if (eligible.length === 0) {
+  // A canonical pool, when the registry names one, is the only pool that
+  // prices the token: a satellite pool can never be chosen instead.
+  const candidates = options.poolId
+    ? eligible.filter((p) => p.pairAddress?.toLowerCase() === options.poolId!.toLowerCase())
+    : eligible;
+
+  if (candidates.length === 0) {
+    if (options.poolId && eligible.length > 0) {
+      throw new PlatformTokenPriceGateError(
+        "pool_missing",
+        `DEXScreener has no pair for the canonical pool ${options.poolId}`,
+        { observed: { stage: "spot", poolId: options.poolId, otherPairs: eligible.length } }
+      );
+    }
     throw new Error(`DEXScreener returned no usable pair for ${tokenAddress}`);
   }
 
   // Highest-liquidity pair wins. Same default DEXScreener's UI uses.
   // A 4-figure tick on a $1 satellite pool can't move our number.
-  const best = eligible.reduce((a, b) => {
+  const best = candidates.reduce((a, b) => {
     const al = a.liquidity?.usd ?? 0;
     const bl = b.liquidity?.usd ?? 0;
     return bl > al ? b : a;
@@ -154,13 +342,323 @@ async function fetchTokenPriceUsd(
     lastUpdatedAt: Math.floor(Date.now() / 1000),
     source: "dexscreener",
     raw: best,
+    pair: best,
+  };
+}
+
+interface GeckoOhlcvResponse {
+  data?: { attributes?: { ohlcv_list?: unknown } };
+  meta?: { base?: { address?: string }; quote?: { address?: string } };
+}
+
+interface PoolReference {
+  /** Median price in the pool's paired token (WETH). */
+  priceNative: number;
+  /** Completed candles with trades inside the window (the rest carry a close forward). */
+  candles: number;
+  fetchedAtMs: number;
+}
+
+const referenceCache = new Map<string, PoolReference>();
+const referenceFailures = new Map<string, { error: Error; fetchedAtMs: number }>();
+
+/** Test seam. */
+export function _resetPlatformPriceReferenceCacheForTests() {
+  referenceCache.clear();
+  referenceFailures.clear();
+}
+
+function median(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Median price of the pool over the last PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES
+ * of wall-clock time, from GeckoTerminal 5-minute candles priced in the
+ * pool's paired token. Only completed candles count: the in-progress one's
+ * "close" is simply the latest trade, which is the spot being checked. Each
+ * 5-minute bucket holds the close of the latest completed candle at or before
+ * it, so buckets with no trades carry the last price forward: a quiet pool
+ * keeps a reference, and a burst of trades cannot outvote hours of earlier
+ * price. Throws NoCandleError when the pool has no completed candle, and a
+ * `history` gate error while the pool is younger than the window or has traded
+ * in fewer than PLATFORM_PRICE_MIN_TRADED_CANDLES periods.
+ */
+async function fetchPoolMedianCloseNative(
+  poolId: string,
+  tokenAddress: string,
+  options: FetchTokenPriceOptions = {}
+): Promise<PoolReference> {
+  const cacheKey = `${poolId}:${tokenAddress}`;
+  const nowMs = Date.now();
+  const cached = referenceCache.get(cacheKey);
+  if (cached && nowMs - cached.fetchedAtMs < REFERENCE_CACHE_MS) return cached;
+  const failed = referenceFailures.get(cacheKey);
+  if (failed && nowMs - failed.fetchedAtMs < REFERENCE_FAILURE_CACHE_MS) throw failed.error;
+  try {
+    const reference = await readPoolMedianCloseNative(poolId, tokenAddress, nowMs, options);
+    referenceCache.set(cacheKey, reference);
+    referenceFailures.delete(cacheKey);
+    return reference;
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    referenceFailures.set(cacheKey, { error: failure, fetchedAtMs: nowMs });
+    throw failure;
+  }
+}
+
+async function readPoolMedianCloseNative(
+  poolId: string,
+  tokenAddress: string,
+  nowMs: number,
+  options: FetchTokenPriceOptions
+): Promise<PoolReference> {
+  const fetchImpl = options.fetchImpl || (fetch as FetchImpl);
+  const env = options.env ?? process.env;
+  const baseUrl = env.GECKOTERMINAL_BASE_URL || GECKOTERMINAL_BASE_URL;
+  const url =
+    `${baseUrl}/networks/base/pools/${poolId}/ohlcv/minute` +
+    `?aggregate=5&limit=${CANDLES_FETCHED}&currency=token&token=${tokenAddress}`;
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), options.timeoutMs ?? 8000);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+  if (response.status === 404) {
+    // A pool GeckoTerminal has not indexed yet (a new pool on launch day): no candle, not an outage.
+    throw new NoCandleError(`GeckoTerminal does not know pool ${poolId} (status=404)`, 404);
+  }
+  if (!response.ok) {
+    throw new PriceSourceHttpError(`GeckoTerminal OHLCV fetch failed status=${response.status}`, response.status);
+  }
+  const payload = (await response.json()) as GeckoOhlcvResponse;
+  const base = payload.meta?.base?.address?.toLowerCase();
+  if (base && base !== tokenAddress.toLowerCase()) {
+    // A misconfigured pool, not an outage: fail closed, never serve a cached price.
+    throw new PlatformTokenPriceGateError("pool_missing", `GeckoTerminal priced pool ${poolId} for ${base}, not ${tokenAddress}`, {
+      observed: { stage: "reference", poolId },
+    });
+  }
+  const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
+  const nowSec = Math.floor(nowMs / 1000);
+  const candles = list
+    .filter((c): c is number[] => Array.isArray(c) && c.length >= 5)
+    .map((c) => ({ at: Number(c[0]), close: Number(c[4]) }))
+    // A candle is complete once its 5-minute period has ended.
+    .filter((c) => Number.isFinite(c.at) && c.at + BUCKET_SEC <= nowSec && Number.isFinite(c.close) && c.close > 0)
+    .sort((a, b) => a.at - b.at);
+  if (candles.length === 0) throw new NoCandleError(`GeckoTerminal has no completed candles for pool ${poolId}`);
+
+  const lastBucket = nowSec - (nowSec % BUCKET_SEC);
+  const buckets = PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES / 5;
+  const firstBucket = lastBucket - (buckets - 1) * BUCKET_SEC;
+  const historyMinutes = Math.floor((nowSec - candles[0].at) / 60);
+  if (historyMinutes < PLATFORM_PRICE_MIN_HISTORY_MINUTES || candles.length < PLATFORM_PRICE_MIN_TRADED_CANDLES) {
+    throw new PlatformTokenPriceGateError(
+      "history",
+      `Pool ${poolId} has ${historyMinutes} minutes of candle history in ${candles.length} traded periods; ` +
+        `its median is trusted from ${PLATFORM_PRICE_MIN_HISTORY_MINUTES} minutes and ${PLATFORM_PRICE_MIN_TRADED_CANDLES} periods`,
+      {
+        observed: {
+          stage: "reference",
+          poolId,
+          historyMinutes,
+          minHistoryMinutes: PLATFORM_PRICE_MIN_HISTORY_MINUTES,
+          tradedCandles: candles.length,
+          minTradedCandles: PLATFORM_PRICE_MIN_TRADED_CANDLES,
+        },
+      }
+    );
+  }
+  const closes: number[] = [];
+  let next = 0;
+  let carried: number | null = null;
+  for (let bucket = firstBucket; bucket <= lastBucket; bucket += BUCKET_SEC) {
+    while (next < candles.length && candles[next].at <= bucket) carried = candles[next++].close;
+    // The history check puts the first candle before the first bucket, so
+    // every bucket carries a price.
+    if (carried !== null) closes.push(carried);
+  }
+  return {
+    priceNative: median(closes),
+    candles: candles.filter((c) => c.at >= firstBucket).length,
+    fetchedAtMs: nowMs,
+  };
+}
+
+/** A positive float as a plain decimal string with ~12 significant digits (never exponent notation). */
+export function toDecimalString(value: number): string {
+  if (!(value > 0) || !Number.isFinite(value)) throw new Error(`Invalid price ${value}`);
+  const decimals = Math.min(100, Math.max(0, 11 - Math.floor(Math.log10(value))));
+  const fixed = value.toFixed(decimals);
+  return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+}
+
+/**
+ * Live USD price of a platform token ($HermesOS or $HIVRA), gated: the pool
+ * must meet the token's liquidity floor and the spot must agree with the
+ * pool's recent median close. Throws PlatformTokenPriceGateError otherwise;
+ * callers fail closed (no quote, no new threshold).
+ */
+export async function fetchPlatformTokenPriceUsd(
+  token: PlatformToken,
+  options: FetchTokenPriceOptions = {}
+): Promise<HermesPriceQuote> {
+  let spot: Awaited<ReturnType<typeof fetchTokenPriceUsd>>;
+  try {
+    spot = await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId });
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw forToken(error, token);
+    throw new PlatformTokenPriceGateError(
+      "spot_unavailable",
+      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      { token, observed: withHttpStatus({ stage: "spot", poolId: token.poolId }, error) }
+    );
+  }
+  const { pair, ...quote } = spot;
+  const poolId = pair.pairAddress ?? token.poolId;
+  const liquidityUsd = pair.liquidity?.usd ?? 0;
+  if (!(liquidityUsd >= token.minPriceLiquidityUsd)) {
+    throw new PlatformTokenPriceGateError(
+      "liquidity",
+      `${token.displayUnit} pricing pool holds $${Math.floor(liquidityUsd)}, below the $${token.minPriceLiquidityUsd} floor`,
+      { token, observed: { liquidityUsd, minLiquidityUsd: token.minPriceLiquidityUsd, poolId } }
+    );
+  }
+  const spotUsd = Number(quote.priceUsd);
+  const spotNative = Number(pair.priceNative);
+  if (!(spotNative > 0) || !Number.isFinite(spotNative)) {
+    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`, {
+      token,
+      observed: { stage: "spot", poolId, liquidityUsd },
+    });
+  }
+  const reference = await referenceFor(token, pair, options);
+  // Positive = spot above the median (the direction a pump pushes).
+  const aboveMedianBps = Math.round(((spotNative - reference.priceNative) / reference.priceNative) * 10_000);
+  if (aboveMedianBps > PLATFORM_PRICE_MAX_DEVIATION_BPS) {
+    throw new PlatformTokenPriceGateError(
+      "deviation",
+      `${token.displayUnit} spot is ${aboveMedianBps} bps above its ${PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES}-minute median`,
+      {
+        token,
+        observed: {
+          aboveMedianBps,
+          maxDeviationBps: PLATFORM_PRICE_MAX_DEVIATION_BPS,
+          spotNative,
+          medianNative: reference.priceNative,
+          medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
+          medianCandles: reference.candles,
+          liquidityUsd,
+          poolId,
+        },
+      }
+    );
+  }
+  // The median in USD at today's paired-token rate (the spot's own rate).
+  const medianUsd = reference.priceNative * (spotUsd / spotNative);
+  const pricedAt = aboveMedianBps > 0 ? "median" : "spot";
+  return {
+    ...quote,
+    priceUsd: pricedAt === "median" ? toDecimalString(medianUsd) : quote.priceUsd,
+    raw: {
+      pair,
+      gates: {
+        liquidityUsd,
+        minLiquidityUsd: token.minPriceLiquidityUsd,
+        spotUsd: quote.priceUsd,
+        medianUsd,
+        medianNative: reference.priceNative,
+        medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
+        medianCandles: reference.candles,
+        aboveMedianBps,
+        pricedAt,
+      },
+    },
+  };
+}
+
+async function referenceFor(
+  token: PlatformToken,
+  pair: DexScreenerPair,
+  options: FetchTokenPriceOptions
+): Promise<PoolReference> {
+  const poolId = token.poolId ?? pair.pairAddress;
+  if (!poolId) {
+    throw new PlatformTokenPriceGateError("reference_unavailable", `${token.displayUnit} pool has no address`, {
+      token,
+      observed: { stage: "reference", poolId: null },
+    });
+  }
+  try {
+    return await fetchPoolMedianCloseNative(poolId, token.address, options);
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw forToken(error, token);
+    throw new PlatformTokenPriceGateError(
+      "reference_unavailable",
+      `${token.displayUnit} median cross-check unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      // Still a reference outage for the stale-price fallback (live-thresholds),
+      // but reported as no_candle when the pool simply has no candle yet.
+      {
+        token,
+        reason: error instanceof NoCandleError ? "no_candle" : "feed_error",
+        observed: withHttpStatus({ stage: "reference", poolId }, error),
+      }
+    );
+  }
+}
+
+/**
+ * The recent median alone, in USD at today's paired-token rate, as a
+ * cross-check quote. It is the same reference the gated price was checked
+ * against, not an independent source: flows that compare the two (managed
+ * Venice deposits) are applying a tighter band around the median.
+ */
+export async function fetchPlatformTokenPriceCrossCheck(
+  token: PlatformToken,
+  options: FetchTokenPriceOptions = {}
+): Promise<HermesPriceCrossCheck> {
+  let pair: DexScreenerPair;
+  try {
+    pair = (await fetchTokenPriceUsd(token.address, { ...options, poolId: token.poolId })).pair;
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) throw forToken(error, token);
+    throw new PlatformTokenPriceGateError(
+      "spot_unavailable",
+      `${token.displayUnit} spot price unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      { token, observed: withHttpStatus({ stage: "spot", poolId: token.poolId }, error) }
+    );
+  }
+  const usdPerNative = Number(pair.priceUsd) / Number(pair.priceNative);
+  if (!(usdPerNative > 0) || !Number.isFinite(usdPerNative)) {
+    throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`, {
+      token,
+      observed: { stage: "spot", poolId: pair.pairAddress ?? token.poolId },
+    });
+  }
+  const reference = await referenceFor(token, pair, options);
+  return {
+    source: "geckoterminal_ohlcv_median",
+    priceUsd: toDecimalString(reference.priceNative * usdPerNative),
+    // When the reference was read (it is cached briefly), not when it was asked for.
+    lastUpdatedAt: Math.floor(reference.fetchedAtMs / 1000),
+    raw: { medianWindowMinutes: PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES, medianCandles: reference.candles },
   };
 }
 
 export async function fetchHermesPriceUsd(
   options: FetchTokenPriceOptions = {}
 ): Promise<HermesPriceQuote> {
-  return fetchTokenPriceUsd(HERMESOS_TOKEN_ADDRESS, options);
+  return fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, options);
 }
 
 /**
@@ -181,8 +679,10 @@ export function isHermesPriceFresh(
   return now.getTime() - quote.lastUpdatedAt * 1000 <= maxAgeMs;
 }
 
-export async function fetchHermesPriceCrossCheck(): Promise<HermesPriceCrossCheck | null> {
-  return null;
+export async function fetchHermesPriceCrossCheck(
+  token: PlatformToken = HERMESOS_TOKEN
+): Promise<HermesPriceCrossCheck | null> {
+  return fetchPlatformTokenPriceCrossCheck(token);
 }
 
 /**

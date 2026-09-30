@@ -168,7 +168,7 @@ export async function sendWarmPoolEmail(
     return { sent: false, reason: "not_configured" };
   }
   const from = process.env.RESEND_FROM_EMAIL ?? "noreply@hermesos.cloud";
-  const replyTo = process.env.RESEND_REPLY_TO_EMAIL ?? "info@hermesos.cloud";
+  const replyTo = process.env.RESEND_REPLY_TO_EMAIL ?? "info@hivra.cloud";
   const content = buildWarmPoolEmail(params);
   try {
     const resend = new Resend(apiKey);

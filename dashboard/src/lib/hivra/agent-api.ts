@@ -10,6 +10,8 @@ import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import type { HivraAgentActivity } from "./agent-authority";
+import type { ManageCapabilities } from "./manage-sections";
+import type { ComputerHistoryEvent } from "./computer-history";
 import type { ProviderAgentReadinessStage } from "./provider-readiness-contract";
 import type { ProviderAgentPowerStage } from "./provider-power-contract";
 import {
@@ -48,8 +50,6 @@ export interface HivraAgent {
   cpu_max?: number | null;
   ram_max?: number | null;
   vmid?: number | null;
-  proxmox_host?: string | null;
-  ip?: string | null;
   chat_url?: string | null;
   error?: string | null;
   created_at?: string;
@@ -76,6 +76,9 @@ export interface HivraAgent {
   /** Key-free alternative-LLM provider summary (null = native vendor auth).
    *  Drives box-side inference routing for codex (and claude-code post-shim). */
   llm_config?: AgentLlmSummary | null;
+  /** What Manage offers for this computer, and why not (server-computed,
+   *  public fields only). Absent only from an older server. */
+  manage?: ManageCapabilities;
 }
 
 export interface HivraAgentSnapshot {
@@ -105,6 +108,9 @@ export interface AgentLlmInput {
   mode: "byok" | "managed";
   /** BYOK only. */
   apiKey?: string;
+  /** BYOK only: a Venice key saved in the owner's Vault, read by the server
+   * instead of being sent again. Never combined with apiKey. */
+  vaultKeyId?: string;
   model?: string;
   /** Managed only. */
   walletType?: "hermesos" | "card";
@@ -144,6 +150,9 @@ export interface CreateAgentInput {
   /** Stable owner-generated receipt key for native Codex and Ubuntu launches.
    * Reuse this exact UUID after an uncertain response; never mint one per retry. */
   launchRequestId?: string;
+  /** A saved template to start from (id or slug). The server checks the owner
+   * may use it and applies its identity and skills; fields sent here win. */
+  templateId?: string;
 }
 
 export class HivraLaunchInProgressError extends Error {
@@ -244,7 +253,9 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
         typeof j?.code === "string" ? j.code : null,
       );
     }
-    if (r.status >= 400 && r.status < 500) {
+    // Refused before anything was created (no host could take it right now):
+    // back to Review with the reason, never "couldn't confirm".
+    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable") {
       throw new HivraLaunchCorrectableError(
         message,
         r.status,
@@ -270,8 +281,10 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
   if (input.launchRequestId) {
     if (
       data?.agent
-      && data.launch?.state === "accepted"
       && data.launchRequestId === input.launchRequestId
+      // A launch with a model key answers from its own admission record,
+      // which names the request but has no launch-operation state.
+      && (data.launch?.state === "accepted" || (input.llm !== undefined && data.launch === undefined))
     ) return data.agent;
     throw new Error(`Provision returned an invalid receipt (${r.status})`);
   }
@@ -372,7 +385,24 @@ export interface PlanInfo {
   poolRam: number;
   /** Account-wide managed usage from billing, including Hermes. RAM is GB here. */
   usage?: { agentCount: number; usedCpu: number; usedRam: number };
+  /** Billing reports no plan at all yet: a new account before the Free plan
+   * is turned on. Hivra Cloud launches need a plan first. */
+  needsActivation?: boolean;
+  /** Billing reports no active plan because this paid one holds the account
+   * without granting anything: a payment didn't go through, or it has no
+   * agent slots. Free can't be turned on over it; it is settled in Billing.
+   * The plan itself stays Free's shape, so nothing reads it as paid. Never
+   * set together with `needsActivation`. */
+  onHold?: PlanOnHold;
 }
+
+export type PlanOnHold = {
+  key: string;
+  name: string;
+  reason: "payment_overdue" | "no_slots";
+  /** The billing portal can settle it (a live Stripe subscription bills it). */
+  billingPortal: boolean;
+};
 
 const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxAgents: 1, maxCpuPerAgent: 0.5, maxRamPerAgent: 1, poolCpu: 0.5, poolRam: 1 };
 
@@ -394,6 +424,34 @@ const FREE_PLAN: PlanInfo = { subscribed: false, name: "Free", key: "free", maxA
  */
 export function isFreePlanInfo(plan: PlanInfo | null | undefined): boolean {
   return !!plan && (!plan.subscribed || plan.key === "free");
+}
+
+/** Usage billing observed, with RAM converted from MB to GB; undefined when
+ * it is missing or malformed. */
+function observedUsage(value: unknown): PlanInfo["usage"] {
+  if (!value || typeof value !== "object") return undefined;
+  const observed = value as { agentCount?: unknown; usedCpu?: unknown; usedRam?: unknown };
+  return typeof observed.agentCount === "number" && Number.isInteger(observed.agentCount) && observed.agentCount >= 0 &&
+    typeof observed.usedCpu === "number" && Number.isFinite(observed.usedCpu) && observed.usedCpu >= 0 &&
+    typeof observed.usedRam === "number" && Number.isFinite(observed.usedRam) && observed.usedRam >= 0
+    ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
+    : undefined;
+}
+
+const PLAN_ON_HOLD_REASONS = new Set(["payment_overdue", "no_slots"]);
+
+/** The paid plan billing says holds an account that has no active plan. */
+function planOnHold(value: unknown): PlanOnHold | null {
+  if (!value || typeof value !== "object") return null;
+  const hold = value as { key?: unknown; name?: unknown; reason?: unknown; billingPortal?: unknown };
+  if (typeof hold.key !== "string" || !hold.key.trim() || typeof hold.name !== "string" || !hold.name.trim()) return null;
+  if (typeof hold.reason !== "string" || !PLAN_ON_HOLD_REASONS.has(hold.reason)) return null;
+  return {
+    key: hold.key,
+    name: hold.name,
+    reason: hold.reason as "payment_overdue" | "no_slots",
+    billingPortal: hold.billingPortal === true,
+  };
 }
 
 // Agent slot counts come from the authoritative source (subscription/agent-slots)
@@ -422,18 +480,32 @@ export async function fetchPlanStrict(): Promise<PlanInfo | null> {
     const r = await fetch("/api/billing/usage", { cache: "no-store" });
     const j = await readJson(r);
     if (!r.ok || !j || j.success !== true) return null;
-    const d = j.data as { subscribed?: boolean; usage?: { agentCount?: unknown; usedCpu?: unknown; usedRam?: unknown } | null; plan?: { name?: string; key?: string; maxAgents?: number; maxCpuPerAgent?: number; maxRamPerAgent?: number; totalCpu?: number; totalRam?: number } | null };
-    const observed = d.usage;
+    const d = j.data as {
+      subscribed?: boolean;
+      usage?: unknown;
+      managedUsage?: unknown;
+      planOnHold?: unknown;
+      plan?: { name?: string; key?: string; maxAgents?: number; maxCpuPerAgent?: number; maxRamPerAgent?: number; totalCpu?: number; totalRam?: number } | null;
+    };
+    if (!d.subscribed) {
+      // No plan. What the account already runs on Hivra Cloud is reported
+      // separately (it counts against Free once Free is on); left out when
+      // billing couldn't read it, so it stays unknown rather than zero.
+      const running = observedUsage(d.managedUsage);
+      const runningFields = running ? { usage: running } : {};
+      const onHold = planOnHold(d.planOnHold);
+      // A paid plan holds the account, and is settled in Billing. Everything
+      // else stays Free's, so no caller reads the account as paid or plans
+      // beyond what it could get without that plan.
+      if (onHold) return { ...FREE_PLAN, ...runningFields, onHold };
+      // A new account: Free is what turning a plan on would give.
+      return { ...FREE_PLAN, ...runningFields, needsActivation: true };
+    }
     // Missing or malformed usage is unknown, not an empty pool. Launch callers
     // require this evidence; plan-only callers keep their existing behavior.
-    const usage = observed &&
-      typeof observed.agentCount === "number" && Number.isInteger(observed.agentCount) && observed.agentCount >= 0 &&
-      typeof observed.usedCpu === "number" && Number.isFinite(observed.usedCpu) && observed.usedCpu >= 0 &&
-      typeof observed.usedRam === "number" && Number.isFinite(observed.usedRam) && observed.usedRam >= 0
-      ? { agentCount: observed.agentCount, usedCpu: observed.usedCpu, usedRam: observed.usedRam / 1024 }
-      : undefined;
+    const usage = observedUsage(d.usage);
     const usageFields = usage ? { usage } : {};
-    if (!d.subscribed || !d.plan) return { ...FREE_PLAN, ...usageFields };
+    if (!d.plan) return { ...FREE_PLAN, ...usageFields };
     const key = d.plan.key || "paid";
     if (key === "free") return { ...FREE_PLAN, ...usageFields }; // the free row is subscribed:true but is NOT paid
     const ramGb = Math.max(1, Math.round((Number(d.plan.maxRamPerAgent) || 8192) / 1024)); // plan RAM is MB
@@ -463,6 +535,16 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return (await fetchPlanStrict()) ?? FREE_PLAN;
 }
 
+/** A lifecycle action the server refused or could not verify, with its HTTP status. */
+export class AgentActionError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AgentActionError";
+    this.status = status;
+  }
+}
+
 async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
   const r = await fetch(`/api/hivra/agents/${id}/action`, {
     method: "POST",
@@ -470,7 +552,7 @@ async function agentAction(id: string, action: string, extra?: Record<string, un
     body: JSON.stringify({ action, ...(extra || {}) }),
   });
   const j = await readJson(r);
-  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Action failed");
+  if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
 }
 export const stopAgent = (id: string) => agentAction(id, "stop");
 export const startAgent = (id: string) => agentAction(id, "start");
@@ -561,6 +643,18 @@ export async function confirmProviderResize(input: {
   return ProviderResizeOperationViewSchema.parse(data.operation);
 }
 
+/** The computer's last lifecycle events, newest first (Manage › Advanced). */
+export async function getAgentEvents(id: string, signal?: AbortSignal): Promise<ComputerHistoryEvent[]> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/events`, { cache: "no-store", signal });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Could not load this computer's history.");
+  const events = (j.data as { events?: unknown } | undefined)?.events;
+  return Array.isArray(events)
+    ? events.filter((row): row is ComputerHistoryEvent => Boolean(row) && typeof row === "object"
+      && typeof (row as ComputerHistoryEvent).label === "string" && typeof (row as ComputerHistoryEvent).createdAt === "string")
+    : [];
+}
+
 export async function listAgentSnapshots(id: string): Promise<{
   snapshots: HivraAgentSnapshot[];
   supported: boolean;
@@ -590,11 +684,56 @@ function boxBase(boxUrl: string): string {
   return boxUrl.replace(/\/$/, "");
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null }> {
+/** An Aeon computer's last sync with the user's GitHub fork, as recorded by
+ *  the computer (~/.hivra/aeon-connect.json). `pushReady` means dashboard
+ *  saves reach the fork; `workflows` maps each Aeon workflow file to its
+ *  GitHub state after the computer enabled the ones GitHub disabled itself.
+ *  - auth_failed: GitHub rejected the computer's sign-in (401/403).
+ *  - unreachable: GitHub could not be reached; retried until `retryAt`.
+ *  - fetch_failed: the fork could not be read; also retried.
+ *  - credentials_failed: git could not be given the GitHub sign-in.
+ *  - push_denied: GitHub refused the push (token permissions).
+ *  - push_failed: the push failed for another reason; `detail` carries what
+ *    GitHub said (a repository rule, push protection, a protected branch).
+ *  - on_other_branch: the owner checked out another branch by hand; nothing
+ *    was changed and saves are not pushed until the default branch is back.
+ *  - operation_in_progress: a git rebase, merge or other operation the sync
+ *    did not start is unfinished in the clone; nothing was changed and saves
+ *    are not pushed until it is finished or cancelled.
+ *  GitHub connect fails (HTTP 400) for every status other than syncing, ok,
+ *  unreachable and fetch_failed. */
+export interface AeonConnectStatus {
+  status:
+    | "syncing"
+    | "ok"
+    | "auth_failed"
+    | "unreachable"
+    | "fetch_failed"
+    | "credentials_failed"
+    | "push_denied"
+    | "push_failed"
+    | "on_other_branch"
+    | "operation_in_progress"
+    | "error";
+  repo: string;
+  branch: string | null;
+  pushReady: boolean;
+  workflows: Record<string, string>;
+  /** Local branches holding edits that could not be applied to the fork. */
+  parkedBranches: string[];
+  detail?: string;
+  /** How many syncs have run in this series (1 for the first). */
+  attempt?: number;
+  /** When the computer will try again, for the retried statuses. */
+  retryAt?: string;
+  at: string;
+}
+
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
   } catch {
     return { loggedIn: false };
   }
@@ -659,9 +798,11 @@ export async function listBoxSessions(boxUrl: string, token?: string | null): Pr
     const r = await fetch(`${boxBase(boxUrl)}/api/sessions`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return [];
     const sessions = (((await r.json()) as { sessions?: BoxSession[] }).sessions) || [];
-    // The box persists the hidden welcome-generation turn as a session; drop it so
-    // the setup prompt never appears as a visible, readable chat in the rail.
-    return sessions.filter((s) => !isHiddenWelcomeTitle(s.title));
+    // The box titles a conversation with its first message, which for the
+    // first-contact welcome is the hidden setup prompt. That conversation is the
+    // owner's to read and continue, so it lists as "Welcome", and a computer
+    // whose only history is its welcome still counts as one with history.
+    return sessions.map((s) => (isHiddenWelcomeTitle(s.title) ? { ...s, title: "Welcome" } : s));
   } catch { return []; }
 }
 export async function readBoxSession(boxUrl: string, id: string, token?: string | null): Promise<BoxMessage[]> {
@@ -671,6 +812,45 @@ export async function readBoxSession(boxUrl: string, id: string, token?: string 
     return (((await r.json()) as { messages?: BoxMessage[] }).messages) || [];
   } catch { return []; }
 }
+// ---- Detached chat runs ----
+// A chat turn runs on the box independently of the browser request that started
+// it, so closing the tab or losing the network does not end the agent's work.
+// These let the chat stop a run explicitly and find runs that kept going while
+// the page was closed or offline. Boxes on an older runtime have no run API.
+export interface BoxChatRun {
+  runId: string;
+  clientRef: string | null;
+  state: "running" | "finished";
+  title: string;
+  code: number | null;
+  stopped: "user" | "disconnect" | null;
+  interrupted: boolean;
+  agentSessionId: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+/** Recent runs, newest first; null when the box predates detached runs, is unreachable, or the signal aborts. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatRun[] | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token), signal });
+    if (!r.ok) return null;
+    const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
+    return Array.isArray(runs) ? runs : null;
+  } catch { return null; }
+}
+export function boxChatRunEventsUrl(boxUrl: string, runId: string): string {
+  return `${boxBase(boxUrl)}/api/chat/runs/${encodeURIComponent(runId)}/events`;
+}
+/** Ask the box to end a run. Resolves false when the box could not confirm it. */
+export async function stopBoxChatRun(boxUrl: string, runId: string, token?: string | null): Promise<boolean> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs/${encodeURIComponent(runId)}/stop`, {
+      method: "POST", headers: boxHeaders(token), keepalive: true,
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
 export async function listBoxFiles(boxUrl: string, dir: string, token?: string | null): Promise<{ path: string; entries: BoxFileEntry[]; error: string | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/files?path=${encodeURIComponent(dir)}`, { cache: "no-store", headers: boxHeaders(token) });

@@ -68,27 +68,27 @@ describe("getIP", () => {
   const makeReq = (headers: Record<string, string>) =>
     ({ headers: { get: (k: string) => headers[k] ?? null } } as unknown as Request);
 
-  it("prefers cf-connecting-ip", () => {
+  it("never reads a client-sent cf-connecting-ip", () => {
     const req = makeReq({ "cf-connecting-ip": "203.0.113.4", "x-forwarded-for": "198.51.100.8" });
-    expect(getIP(req)).toBe("203.0.113.4");
-  });
-
-  it("falls back to x-forwarded-for and strips extra IPs", () => {
-    const req = makeReq({ "x-forwarded-for": "198.51.100.8, 192.0.2.12" });
     expect(getIP(req)).toBe("198.51.100.8");
   });
 
-  it("strips IPv4 ports from direct proxy headers", () => {
-    const req = makeReq({ "x-real-ip": "203.0.113.7:443" });
+  it("uses the rightmost x-forwarded-for hop, the one the nearest proxy appended", () => {
+    const req = makeReq({ "x-forwarded-for": "198.51.100.8, 192.0.2.12" });
+    expect(getIP(req)).toBe("192.0.2.12");
+  });
+
+  it("strips IPv4 ports", () => {
+    const req = makeReq({ "x-forwarded-for": "203.0.113.7:443" });
     expect(getIP(req)).toBe("203.0.113.7");
   });
 
-  it("sanitizes direct proxy headers before returning them", () => {
+  it("never returns header text that is not an address", () => {
     const req = makeReq({
-      "cf-connecting-ip": '198.51.100.7,or(status.eq.active)',
-      "x-forwarded-for": "198.51.100.8",
+      "cf-connecting-ip": "198.51.100.7,or(status.eq.active)",
+      "x-forwarded-for": "198.51.100.7,or(status.eq.active)",
     });
-    expect(getIP(req)).toBe("198.51.100.7");
+    expect(getIP(req)).toBe("127.0.0.1");
   });
 
   it("returns localhost when no IP header is present", () => {
@@ -97,7 +97,7 @@ describe("getIP", () => {
   });
 
   it("falls back to localhost for invalid proxy headers", () => {
-    const req = makeReq({ "cf-connecting-ip": "not-an-ip" });
+    const req = makeReq({ "x-forwarded-for": "not-an-ip" });
     expect(getIP(req)).toBe("127.0.0.1");
   });
 });

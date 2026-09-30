@@ -7,7 +7,8 @@ import {
   verifyRemoteDesktopRestartOnHivraAgent,
 } from "@/lib/remote-computers/guest-installation";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const AGENT_ID = "00000000-0000-4000-8000-000000001041";
@@ -54,6 +55,31 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("remote desktop guest installation", () => {
+  it("refuses an operation fenced by stale-lease recovery before touching the VM", () => {
+    const script = buildRemoteDesktopGuestInstallScript({ vmid: 1112, guestIp: "10.250.20.62", operationId: OPERATION_ID,
+      provisionerDirectory: "/root/hivra-provisioner", infrastructureBindingTag: "hivra-bind-exact", computerId: AGENT_ID,
+      controlOrigin: "https://canary.hermesos.cloud", publicOrigin: "https://agent.example.test" });
+    const lock = script.indexOf("exec 8>/run/lock/hivra-allocation.lock");
+    const fence = script.indexOf("set_install_phase operation_fence");
+    expect(lock).toBeGreaterThan(-1);
+    expect(fence).toBeGreaterThan(lock);
+    expect(fence).toBeLessThan(script.indexOf("set_install_phase target_running"));
+    // Execute the exact fence line: a fenced operation fails, any other passes.
+    const check = script.split("\n").find(line => line.startsWith("[ ! -e '/var/lib/hivra/desktop-prepare-fences'/"));
+    expect(check).toBeDefined();
+    const fences = mkdtempSync(path.join(tmpdir(), "hivra-prepare-fence-"));
+    try {
+      const run = () => spawnSync("bash", ["-c", `set -e\nOPERATION_ID=${OPERATION_ID}\n${check!
+        .replace("/var/lib/hivra/desktop-prepare-fences", fences)}\necho dispatch`], { encoding: "utf8" });
+      expect(run()).toMatchObject({ status: 0, stdout: "dispatch\n" });
+      writeFileSync(path.join(fences, OPERATION_ID), "");
+      expect(existsSync(path.join(fences, OPERATION_ID))).toBe(true);
+      expect(run()).toMatchObject({ status: 1, stdout: "" });
+    } finally {
+      rmSync(fences, { recursive: true, force: true });
+    }
+  });
+
   it("builds a fixed selected-VM installer with cleanup and no browser-selected command", () => {
     const script = buildRemoteDesktopGuestInstallScript({ vmid: 1112, guestIp: "10.250.20.62", operationId: OPERATION_ID,
       provisionerDirectory: "/root/hivra-provisioner",

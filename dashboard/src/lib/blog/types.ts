@@ -6,6 +6,11 @@ export type BlogSection = {
 export type BlogArticle = {
   slug: string;
   title: string;
+  /**
+   * Optional shorter search-result title. The on-page H1 keeps `title`.
+   * Keep it to about 55 characters: the root layout's title template appends " | Hivra".
+   */
+  metaTitle?: string;
   metaDescription: string;
   publishedDate: string;   // ISO date string
   lastModified: string;

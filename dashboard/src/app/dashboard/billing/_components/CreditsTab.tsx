@@ -14,6 +14,9 @@ export const MANAGED_VENICE_ANCHOR_ID = "managed-venice";
 export function CreditsTab({ c, variants }: { c: BillingController; variants: Variants }) {
   const { billingV2Enabled, cryptoBillingEnabled, creditTopUpsEnabled } = c.flags;
   const summary = c.managedVeniceSummary;
+  // Token geo-policy: no token top-ups, bonus banner or crypto top-up for a
+  // viewer it blocks (or while it is still checking).
+  const tokenFeatures = c.tokenGeo.status === "allowed";
 
   return (
     <div className={styles.stack}>
@@ -38,7 +41,7 @@ export function CreditsTab({ c, variants }: { c: BillingController; variants: Va
             <>
               <ManagedVeniceWalletPanel
                 summary={summary}
-                tokenPaymentsEnabled={billingV2Enabled}
+                tokenPaymentsEnabled={billingV2Enabled && tokenFeatures}
                 onDeposit={(walletType) => c.openManagedVeniceDeposit(walletType)}
               />
               <ManagedVeniceKeysPanel keys={summary.keys} />
@@ -48,7 +51,7 @@ export function CreditsTab({ c, variants }: { c: BillingController; variants: Va
         </section>
       )}
 
-      {cryptoBillingEnabled && (
+      {cryptoBillingEnabled && tokenFeatures && (
         <CryptoTopUpPanel
           intent={c.cryptoTopUpIntent}
           error={c.cryptoTopUpError}

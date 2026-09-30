@@ -82,13 +82,10 @@ export function FileEditor({ instanceId, filePath, onClose, onSave }: FileEditor
       animate="visible"
       exit="exit"
       variants={editorVariants}
-      className="flex min-h-[36rem] flex-col border border-[var(--etched-border)] bg-[var(--bg-surface)] shadow-[0_20px_45px_rgba(0,0,0,0.08)]"
+      className="flex min-h-[50dvh] flex-col border border-[var(--etched-border)] bg-[var(--bg-surface)] shadow-[0_20px_45px_rgba(0,0,0,0.08)] lg:min-h-[620px]"
       data-testid="file-editor-shell"
-      style={{
-        minHeight: 620,
-      }}
     >
-      <div className="flex items-center justify-between gap-4 border-b border-[var(--etched-border)] bg-[var(--bg-elevated)] px-5 py-4">
+      <div className="flex items-center justify-between gap-4 border-b border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-2 sm:px-5 sm:py-4">
         <div className="flex items-center gap-2.5 overflow-hidden">
           <span className="font-mono text-sm text-[var(--ink-black)] truncate">{fileName}</span>
           {hasChanges ? <span className="h-2 w-2 rounded-full bg-[var(--gold-leaf)]" title="Unsaved changes" /> : null}
@@ -98,7 +95,7 @@ export function FileEditor({ instanceId, filePath, onClose, onSave }: FileEditor
           <button
             onClick={handleSave}
             disabled={!hasChanges || saving || loading}
-            className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold transition-colors ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold transition-colors pointer-coarse:min-h-[44px] ${
               hasChanges 
                 ? 'border border-[var(--ink-black)] bg-[var(--ink-black)] text-[var(--bg-surface)] hover:bg-[var(--gold-leaf)] hover:text-[var(--ink-black)] hover:border-[var(--gold-leaf)]'
                 : 'cursor-not-allowed border border-[var(--etched-border)] bg-[var(--bg-surface)] text-[var(--text-muted)]'
@@ -110,7 +107,7 @@ export function FileEditor({ instanceId, filePath, onClose, onSave }: FileEditor
           <button
             onClick={onClose}
             aria-label="Close editor"
-            className="p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-surface)] hover:text-[var(--ink-black)]"
+            className="inline-flex items-center justify-center p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-surface)] hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px]"
           >
             <X size={16} />
           </button>
@@ -133,12 +130,12 @@ export function FileEditor({ instanceId, filePath, onClose, onSave }: FileEditor
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            className="h-full w-full resize-none bg-[var(--bg-surface)] p-5 font-mono text-[13px] leading-7 text-[var(--ink-black)] outline-none focus:ring-1 focus:ring-inset focus:ring-[var(--gold-leaf)]/50"
+            className="h-full w-full resize-none bg-[var(--bg-surface)] p-3 font-mono text-[13px] leading-[1.8] text-[var(--ink-black)] outline-none focus:ring-1 focus:ring-inset focus:ring-[var(--gold-leaf)]/50 sm:p-6"
+            aria-label={`Edit ${fileName}`}
             spellCheck={false}
-            style={{
-              padding: 24,
-              lineHeight: "1.8",
-            }}
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
           />
         )}
       </div>

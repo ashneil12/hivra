@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 export const metadata: Metadata = {
   title: "Start Free | Hivra",
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function ReservePage() {
-  redirect("/get-started?plan=free");
+  redirect(PUBLIC_START_HREF);
 }

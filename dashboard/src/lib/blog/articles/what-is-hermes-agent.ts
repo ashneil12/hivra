@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent is an open-source autonomous AI agent from Nous Research. Here's what it actually does, how it differs from ChatGPT, and what makes it worth running on a server.",
   publishedDate: "2026-03-10",
-  lastModified: "2026-03-10",
+  lastModified: "2026-09-24",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Not a chatbot. Not a wrapper. Something different.",
@@ -46,8 +46,8 @@ export const article: BlogArticle = {
     {
       heading: "The infrastructure problem",
       paragraphs: [
-        "Hermes is designed to run on a server — a VPS, a dedicated machine, a Docker container, or a cloud VM. The installation requires Linux familiarity, Docker, and some comfort configuring networking. On Hetzner's CX22 at €4/month, it is technically cheap. But it takes 4-8 hours to set up correctly the first time and requires maintenance when updates break things. This is not a criticism — Hermes is an open-source tool built for developers, and the infrastructure complexity is appropriate for what it is.",
-        "Hivra fills that gap by handling server provisioning, Docker configuration, networking, SSL termination, monitoring, and backups. Sign up, paste your AI provider key, and get a running Hermes instance with a web dashboard. The gap between 'I want this' and 'I have this' goes from hours to minutes.",
+        "Hermes is designed to run on a server — a VPS, a dedicated machine, a Docker container, or a cloud VM. The installation requires Linux familiarity, Docker, and some comfort configuring networking. On Hetzner's CX23 at €5.49/month (excluding VAT), it is technically cheap. But it takes 4-8 hours to set up correctly the first time and requires maintenance when updates break things. This is not a criticism — Hermes is an open-source tool built for developers, and the infrastructure complexity is appropriate for what it is.",
+        "Hivra fills that gap by handling server provisioning, the container setup, networking, and SSL termination, and it restarts the agent if it crashes; backups are not guaranteed. Launch Hermes from the dashboard, add your AI provider key, and use it from chat and an admin dashboard in the browser, with nothing to install.",
       ],
     },
     {
@@ -67,7 +67,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Is Hermes Agent free?",
-      a: "The Hermes Agent framework is free and open-source (MIT license). You can run it yourself for the cost of the server — Hetzner's cheapest VPS that can run it starts at around €4/month. Hosting services like Hivra charge for the managed infrastructure on top of that.",
+      a: "The Hermes Agent framework is free and open-source (MIT license). You can run it yourself for the cost of the server — Hetzner's cheapest VPS that can run it, the CX23, is €5.49/month excluding VAT. Hosting services like Hivra charge for the managed infrastructure on top of that.",
     },
     {
       q: "Do I need coding skills to use Hermes Agent?",

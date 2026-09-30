@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Step-by-step guide to self-hosting OpenClaw AI agent on a Linux VPS. Covers Docker setup, environment configuration, Telegram integration, CVE-2026-25253 security patch, and the honest upgrade overhead — plus when it makes sense to use a managed alternative.",
   publishedDate: "2026-04-12",
-  lastModified: "2026-04-12",
+  lastModified: "2026-09-24",
   readingTimeMin: 15,
   author: "Hivra team",
   tagline: "OpenClaw is powerful. Maintaining a self-hosted instance is a second job.",
@@ -16,22 +16,22 @@ export const article: BlogArticle = {
     {
       heading: "Before you start: what you are actually signing up for",
       paragraphs: [
-        "OpenClaw releases 1-2 major point releases per month and frequently introduces breaking changes. The community estimates $10,000-$20,000 per year in developer operations overhead for self-hosted instances managed at a production quality level — largely the time cost of keeping up with updates, handling schema migrations, and rewriting custom skills when API surfaces change.",
+        "OpenClaw ships new releases several times a month and frequently introduces breaking changes. The community estimates $10,000-$20,000 per year in developer operations overhead for self-hosted instances managed at a production quality level — largely the time cost of keeping up with updates, handling schema migrations, and rewriting custom skills when API surfaces change.",
         "For running personal workflows or experimenting: the DIY route is fine. For anything business-critical requiring 24/7 reliability: the upgrade overhead is real. The r/openclaw subreddit has a steady stream of threads about breaking changes that went unannounced.",
-        "There is also a third option: Hermes Agent. The architecture is comparable — persistent AI agent, messaging gateway, skills/tools system — but Hermes ships a built-in migration tool (`hermes claw migrate`) for OpenClaw users and has a more stable release cadence. Hivra is managed Hermes hosting with one-click deployment. Check it out before committing 4 hours to a self-hosted OpenClaw setup.",
+        "There is also a third option: Hermes Agent. The architecture is comparable — persistent AI agent, messaging gateway, skills/tools system — but Hermes ships a built-in migration tool (`hermes claw migrate`) for OpenClaw users and has a more stable release cadence. Hivra hosts both on managed VMs: [OpenClaw itself](/agents/openclaw) on paid plans, and Hermes launched from the dashboard. Check it out before committing 4 hours to a self-hosted OpenClaw setup.",
       ],
     },
     {
       heading: "System requirements",
       paragraphs: [
-        "Minimum for OpenClaw: 2 vCPU, 4GB RAM, 20GB SSD, Ubuntu 22.04 or 24.04. At 2GB RAM, expect OOM errors on complex agent tasks. Node.js 22 LTS or later is required. pnpm is the recommended package manager (npm and bun work but the official docs use pnpm). Docker and Docker Compose are required for the containerized install.",
-        "Recommended: 4 vCPU, 8GB RAM, 40GB SSD on a dedicated VPS — OpenClaw's Docker daemon and multi-container setup competes for memory with other services. Hetzner CX22 (€3.99/month, 4GB RAM) or Hetzner CX32 (€7.49/month, 8GB RAM) are the community-recommended budget options.",
+        "Minimum for OpenClaw: 2 vCPU, 4GB RAM, 20GB SSD, Ubuntu 22.04 or 24.04. At 2GB RAM, expect OOM errors on complex agent tasks. OpenClaw's install docs currently require Node 24.16+ or 26.1+, and the installer can provision Node for you. pnpm is only needed if you build from source. Docker and Docker Compose are required for the containerized install.",
+        "Recommended: 4 vCPU, 8GB RAM, 40GB SSD on a dedicated VPS — OpenClaw's Docker daemon and multi-container setup competes for memory with other services. Hetzner CX23 (€5.49/month, 4GB RAM) or Hetzner CX33 (€8.49/month, 8GB RAM), both excluding VAT, are the community-recommended budget options.",
       ],
     },
     {
       heading: "Installation: the fastest method (shell installer)",
       paragraphs: [
-        "OpenClaw provides a shell installer for Linux and macOS:\n\n```\ncurl -fsSL https://openclaw.ai/install.sh | bash\n```\n\nThis installs the `openclaw` CLI, sets up the `~/.openclaw/` configuration directory, and handles Node.js dependency checking. After it completes:\n\n```\nsource ~/.bashrc\nopenclaw --version\nopenclaw doctor\n```\n\nFix anything `openclaw doctor` flags before continuing — common issues are the wrong Node.js version and missing pnpm.",
+        "OpenClaw provides a shell installer for Linux and macOS:\n\n```\ncurl -fsSL https://openclaw.ai/install.sh | bash\n```\n\nThis installs the `openclaw` CLI, sets up the `~/.openclaw/` configuration directory, and handles Node.js dependency checking. After it completes:\n\n```\nsource ~/.bashrc\nopenclaw --version\nopenclaw doctor\n```\n\nFix anything `openclaw doctor` flags before continuing — common issues are the wrong Node.js version and, on source installs, missing pnpm.",
         "Run the setup wizard:\n\n```\nopenclaw setup\n```\n\nThis creates the main configuration file at `~/.openclaw/openclaw.json`. The config file is JSON — any syntax error in it prevents OpenClaw from starting with a cryptic error message. After any manual edits, run `openclaw config validate`.",
       ],
     },
@@ -64,37 +64,37 @@ export const article: BlogArticle = {
     {
       heading: "Security: CVE-2026-25253 and the ClawHub risks",
       paragraphs: [
-        "CVE-2026-25253 is a prompt injection vulnerability affecting OpenClaw before version 2026.2.8. Malicious content in processed documents or web pages can inject instructions into the agent's context, potentially causing it to execute unauthorized commands or exfiltrate data. If you are running 2026.2.7 or earlier, update now:\n\n```\nopenclaw update\nopenclaw --version  # verify 2026.2.8+\n```\n\nFor Docker:\n\n```\ndocker compose pull\ndocker compose up -d --force-recreate\n```",
+        "CVE-2026-25253 is a one-click remote code execution flaw affecting OpenClaw before version 2026.1.29. The Control UI trusted a gateway address passed in its URL and sent the stored gateway token to it, so a single malicious link could hand an attacker your token and, from there, command execution on the host. If you are running an older version, update now:\n\n```\nopenclaw update\nopenclaw --version  # verify 2026.1.29 or later\n```\n\nFor Docker:\n\n```\ndocker compose pull\ndocker compose up -d --force-recreate\n```",
         "Beyond patching: the agent has full system-level access — shell commands, local file reads. Anyone with access to your connected messaging account can command it. The community security checklist: enable the pairing approval flow, set `ALLOWED_USERS` explicitly, never run as root, use Docker sandbox mode, and do not connect accounts with access to sensitive data.\n\nA separate note on ClawHub: the official skill registry lists 2,800+ community skills. In early 2026, Immersive Labs and MITRE documented a coordinated supply chain attack — 'ClawHavoc' — in which hundreds of malicious skills designed as info-stealers were published before the marketplace had systematic security review in place. Treat skill installation the same way you would treat installing an npm package from an unknown author.",
       ],
     },
     {
       heading: "The upgrade process: what actually happens every month",
       paragraphs: [
-        "OpenClaw releases 1-2 major point releases per month. The actual upgrade procedure:\n\n```\n# 1. Stop the gateway\nopenclaw gateway stop\n\n# 2. Backup BEFORE every upgrade (schema changes can corrupt data)\ntar czf openclaw-backup-$(date +%Y%m%d-%H%M).tgz ~/.openclaw/\ngpg --symmetric --cipher-algo AES256 openclaw-backup-*.tgz\n\n# 3. Upgrade\nopenclaw update\n\n# 4. Post-upgrade verification\nopenclaw doctor --fix\nopenclaw gateway restart\nopenclaw --version\nopenclaw config validate\n```",
-        "That is approximately 20 minutes per upgrade done correctly, times 2-4 upgrades per month. This is before accounting for any breaking changes that require rewriting custom skills or handling config schema migrations manually.\n\nCommon things that break after an upgrade: config schema changes (fix: `openclaw doctor --fix`), skill API changes where functions have been renamed, and `tools.profile` defaulting to `messaging` which strips read/write/exec permissions from the agent. After every upgrade, run `openclaw config validate` and verify in Telegram that the bot still responds before calling it done.\n\nThe community's practical workaround for critical deployments: pin to a specific version in `docker-compose.yml` (`image: ghcr.io/openclaw/openclaw:2026.3.12`) and only upgrade when you have time to handle breakage. This means falling behind on security patches — which means CVE-2026-25253 all over again. There is no clean answer.",
+        "OpenClaw ships new releases several times a month. The actual upgrade procedure:\n\n```\n# 1. Stop the gateway\nopenclaw gateway stop\n\n# 2. Backup BEFORE every upgrade (schema changes can corrupt data)\ntar czf openclaw-backup-$(date +%Y%m%d-%H%M).tgz ~/.openclaw/\ngpg --symmetric --cipher-algo AES256 openclaw-backup-*.tgz\n\n# 3. Upgrade\nopenclaw update\n\n# 4. Post-upgrade verification\nopenclaw doctor --fix\nopenclaw gateway restart\nopenclaw --version\nopenclaw config validate\n```",
+        "That is approximately 20 minutes per upgrade done correctly, times 2-4 upgrades per month. This is before accounting for any breaking changes that require rewriting custom skills or handling config schema migrations manually.\n\nCommon things that break after an upgrade: config schema changes (fix: `openclaw doctor --fix`), skill API changes where functions have been renamed, and `tools.profile` defaulting to `messaging` which strips read/write/exec permissions from the agent. Each of those has a specific fix, and they are worth trying in a set order: [OpenClaw broken after an update](/blog/openclaw-broken-after-update) walks them one at a time. After every upgrade, run `openclaw config validate` and verify in Telegram that the bot still responds before calling it done.\n\nThe community's practical workaround for critical deployments: pin to a specific version in `docker-compose.yml` (`image: ghcr.io/openclaw/openclaw:2026.3.12`) and only upgrade when you have time to handle breakage. This means falling behind on security patches — which means CVE-2026-25253 all over again. There is no clean answer.",
       ],
     },
     {
       heading: "When self-hosting stops making sense",
       paragraphs: [
-        "Self-hosting OpenClaw makes sense if you want zero monthly software cost, full data sovereignty, or the ability to run entirely local models. It stops making sense if that 20-minute monthly upgrade process (4+ hours per year on updates alone, before breakage) is time you do not have.",
-        "Three managed OpenClaw options: ClawHost (purpose-built for OpenClaw, handles auto-updates), Blink Claw (managed service with automatic update management), and Zeabur (container deployment platform that works with the Docker image).\n\nThere is also Hermes Agent — MIT licensed, built by Nous Research, with `hermes claw migrate` to migrate your OpenClaw config, memories, skills, and environment variables. Hermes has a more stable release cadence, fewer breaking changes, and managed hosting (Hivra) with one-click deployment. If you have spent three Saturdays debugging OpenClaw upgrades, that migration exists for a reason.",
+        "Self-hosting OpenClaw makes sense if you want zero monthly software cost, full data sovereignty, or the ability to run entirely local models. It stops making sense if that 20-minute monthly upgrade process (4+ hours per year on updates alone, before breakage) is time you do not have. Still deciding whether OpenClaw is the right agent to host at all? [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting) compares the two on requirements, security exposure, and monthly cost.",
+        "Three managed OpenClaw options: ClawHost (purpose-built for OpenClaw, handles auto-updates), Blink Claw (managed service with automatic update management), and Zeabur (container deployment platform that works with the Docker image).\n\nThere is also Hermes Agent — MIT licensed, built by Nous Research, with `hermes claw migrate` to migrate your OpenClaw config, memories, skills, and environment variables. Hermes has a more stable release cadence, fewer breaking changes, and managed hosting on Hivra, launched from the dashboard. Hivra also hosts OpenClaw itself on paid plans, if you would rather keep the agent you have. If you have spent three Saturdays debugging OpenClaw upgrades, that migration exists for a reason.",
       ],
     },
   ],
   faqs: [
     {
       q: "Is OpenClaw free to self-host?",
-      a: "The software is open source and free. Your costs are server (~$4-25/month), LLM API usage ($5-50/month), and your time. The community estimates $10K-20K/year in developer operations overhead for production-quality deployments. That number is about time cost, not software cost.",
+      a: "The software is open source and free. Your costs are server (~$5-25/month), LLM API usage ($5-50/month), and your time. The community estimates $10K-20K/year in developer operations overhead for production-quality deployments. That number is about time cost, not software cost.",
     },
     {
       q: "How do I apply the CVE-2026-25253 security patch?",
-      a: "Run `openclaw update` and verify you are on 2026.2.8 or later with `openclaw --version`. For Docker: `docker compose pull && docker compose up -d --force-recreate`. The patch addresses a prompt injection vulnerability that allows malicious content in processed documents to inject instructions into the agent's context.",
+      a: "Run `openclaw update` and verify you are on 2026.1.29 or later with `openclaw --version`. For Docker: `docker compose pull && docker compose up -d --force-recreate`. The patch closes a one-click flaw where a malicious link could steal your gateway token and lead to remote code execution on the host.",
     },
     {
       q: "How often does OpenClaw have breaking changes?",
-      a: "1-2 times per month, based on release history and community reports. The most common breakages: config schema changes (fixed by `openclaw doctor --fix`), renamed or removed skill APIs, and `tools.profile` resetting to `messaging` (strips permissions). Budget 20 minutes per upgrade including backup.",
+      a: "Often. OpenClaw ships new releases several times a month, and community reports treat breaking changes as a regular part of that cadence. The most common breakages: config schema changes (fixed by `openclaw doctor --fix`), renamed or removed skill APIs, and `tools.profile` resetting to `messaging` (strips permissions). Budget 20 minutes per upgrade including backup.",
     },
     {
       q: "Can I migrate from OpenClaw to Hermes Agent without losing my data?",
@@ -102,11 +102,20 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a way to get OpenClaw-equivalent functionality without the maintenance overhead?",
-      a: "ClawHost and Blink Claw host OpenClaw directly. Hivra hosts Hermes Agent with a built-in `hermes claw migrate` tool to import your existing data. It covers Docker setup, updates, Telegram gateway, web interface, and persistent memory in one click.",
+      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra on paid plans. Hivra also hosts Hermes Agent, which has a built-in `hermes claw migrate` tool to import your existing data. Hivra handles the server, container, updates, and messaging gateway for it, and the agent's memory stays on its own VM.",
     },
   ],
   relatedArticles: [
+    {
+      slug: "openclaw-broken-after-update",
+      title: "OpenClaw broken after an update? Every fix, in the order to try them",
+    },
     { slug: "hermes-vs-openclaw", title: "Hermes Agent vs OpenClaw: a direct comparison" },
+    { slug: "agent-zero-vs-openclaw-hosting", title: "Agent Zero vs OpenClaw hosting: requirements, costs, and which to run" },
     { slug: "how-to-self-host-hermes-agent", title: "How to self-host Hermes Agent on a VPS" },
+    {
+      slug: "hermes-agent-skills-guide",
+      title: "Hermes Agent skills: how they work, how to create them, and what's on the Skills Hub",
+    },
   ],
 };

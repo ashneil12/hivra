@@ -18,7 +18,7 @@ jest.mock("next/link", () => {
     children: React.ReactNode;
     [key: string]: unknown;
   }) => (
-    <a href={href} {...rest}>
+    <a data-next-link href={href} {...rest}>
       {children}
     </a>
   );
@@ -64,6 +64,14 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
+  it("links the official X account in a new tab", () => {
+    render(<Footer />);
+    const x = screen.getByRole("link", { name: "X (@HivraOS)" });
+    expect(x).toHaveAttribute("href", "https://x.com/HivraOS");
+    expect(x).toHaveAttribute("target", "_blank");
+    expect(x).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("links the changelog next to the roadmap entry", () => {
     render(<Footer />);
 
@@ -78,17 +86,28 @@ describe("Footer", () => {
     );
 
     expect(screen.getByRole("link", { name: "Roadmap" })).toHaveAttribute("href", "/roadmap");
-    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/#agents");
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+  });
+  it("links the restored hubs sitewide so they are never orphaned", () => {
+    render(<Footer />);
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("href", "/pricing");
+    expect(screen.getByRole("link", { name: "Free tools" })).toHaveAttribute("href", "/tools");
   });
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
     render(<Footer />);
-    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
+    // The litepaper is a static file: a plain link, so no Server Components prefetch 404s.
+    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
+    expect(screen.getByRole("link", { name: "Litepaper" })).not.toHaveAttribute("data-next-link");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("data-next-link");
     expect(screen.queryByText("A place of its own.")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Read the litepaper" })).not.toBeInTheDocument();
-    const nibbii = screen.getByRole("link", { name: "Nibbii" });
-    expect(nibbii).toHaveAttribute("href", "https://nibbii.pet/");
-    expect(nibbii).toHaveAttribute("target", "_blank");
-    expect(nibbii).toHaveAttribute("rel", "noopener noreferrer");
+    // Nibbii is no longer part of Hivra or a token use.
+    expect(screen.queryByRole("link", { name: "Nibbii" })).not.toBeInTheDocument();
+    const github = screen.getByRole("link", { name: "GitHub" });
+    expect(github).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
+    expect(github).toHaveAttribute("target", "_blank");
+    expect(github).toHaveAttribute("rel", "noopener noreferrer");
     screen.getAllByRole("link").filter((link) => link.getAttribute("href")?.startsWith("/")).forEach((link) => {
       expect(link).not.toHaveAttribute("target", "_blank");
     });

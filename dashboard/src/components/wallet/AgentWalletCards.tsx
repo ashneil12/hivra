@@ -7,10 +7,13 @@ import { BillingDialog, billingDialogStyles as dlg } from '@/components/billing/
 import { CopyButton, DepositAddressField, touchStyles } from '@/components/billing/TransferDetails';
 import { useLocale } from '@/components/i18n/LocaleProvider';
 import { clientLog } from '@/lib/client/logger';
+import { withdrawDestinationCooldownHours } from '@/lib/billing/withdraw-destination-policy';
+import { STEP_UP_CANCELLED_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import {
   agentBaseEthBalance,
   agentWalletWithdrawableBalances,
   defaultWithdrawAmountForBalance,
+  heldUntilLabel,
   isEvmAddressInput,
   isNonZeroAmountDisplay,
   primaryAgentWalletRecipient,
@@ -28,7 +31,6 @@ import {
   agentWalletApiBase,
   type AgentWalletBalance,
   type AgentWalletCardData,
-  type AgentWalletRecipient,
   type AgentWalletsState,
   type InstanceBankrWalletPublicSummary,
 } from '@/app/dashboard/wallet/agent-wallet-data';
@@ -47,7 +49,7 @@ import {
  * Hivra sweeps is not the user's wallet and must never be called
  * non-custodial.
  */
-export function BankrTrustFooter({ withdrawable = false }: { withdrawable?: boolean }) {
+export function BankrTrustFooter({ withdrawable = false, note }: { withdrawable?: boolean; note?: string }) {
   return (
     <div
       style={{
@@ -84,7 +86,7 @@ export function BankrTrustFooter({ withdrawable = false }: { withdrawable?: bool
           Bankr
         </a>
         {' · '}
-        {withdrawable ? 'your wallet · withdraw any time' : 'payment address on Base'}
+        {note ?? (withdrawable ? 'your wallet · withdraw any time' : 'payment address on Base')}
       </span>
     </div>
   );
@@ -204,6 +206,9 @@ export function WithdrawalDestinationModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const invalid = touched && destination.trim().length > 0 && !isEvmAddressInput(destination);
+  // A change needs a fresh sign-in check: Clerk asks the user to confirm it's
+  // them, then the save is retried.
+  const stepUpRequest = useStepUpJsonRequest();
 
   const handleSave = useCallback(async () => {
     setTouched(true);
@@ -219,7 +224,7 @@ export function WithdrawalDestinationModal({
       // { evmAddress }. Both return { wallet }.
       const isHivra = card.instance.lane === 'hivra';
       const trimmedDestination = destination.trim();
-      const response = await fetch(
+      const result = await stepUpRequest(
         `${agentWalletApiBase(card.instance)}/${isHivra ? 'set-destination' : 'withdraw-destination'}`,
         {
           method: isHivra ? 'POST' : 'PUT',
@@ -229,9 +234,13 @@ export function WithdrawalDestinationModal({
           ),
         },
       );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body?.success) {
-        setError(body?.error || `Save failed (${response.status})`);
+      if (!result) {
+        setError(STEP_UP_CANCELLED_MESSAGE);
+        return;
+      }
+      const { ok, status, body } = result;
+      if (!ok || !body?.success) {
+        setError(body?.error || `Save failed (${status})`);
         return;
       }
       const wallet = (body.data?.wallet ?? null) as InstanceBankrWalletPublicSummary | null;
@@ -242,14 +251,14 @@ export function WithdrawalDestinationModal({
     } finally {
       setSaving(false);
     }
-  }, [card.instance.id, destination, onClose, onSaved]);
+  }, [card.instance, destination, onClose, onSaved, stepUpRequest]);
 
   // A backdrop tap must not throw away an address the user has typed.
   const destinationEdited = destination.trim() !== (card.wallet?.withdrawalDestinationEvm ?? '').trim();
 
   return (
     <AgentWalletModalFrame
-      title="Set primary recipient."
+      title="Set withdrawal destination."
       onClose={onClose}
       dismissOnBackdrop={!destinationEdited}
       closeDisabled={saving}
@@ -276,11 +285,14 @@ export function WithdrawalDestinationModal({
       }
     >
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-        This address appears first in recent recipients and is prefilled for Base withdrawals. You can still choose a different recipient at withdrawal time. {AGENT_WITHDRAWAL_GAS_NOTICE}
+        Withdrawals from this agent wallet go only to this address. {AGENT_WITHDRAWAL_GAS_NOTICE}
+      </p>
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+        For your safety, you&apos;ll confirm it&apos;s you before saving, we email you whenever it changes, and a new address can receive withdrawals {withdrawDestinationCooldownHours()} hours after you save it.
       </p>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-          Primary recipient
+          Withdrawal destination
         </span>
         <input
           value={destination}
@@ -331,38 +343,19 @@ export function AgentWalletWithdrawModal({
   const [selectedTokenKey, setSelectedTokenKey] = useState(() => initialBalance ? tokenBalanceKey(initialBalance) : '');
   const selectedBalance = withdrawableBalances.find((balance) => tokenBalanceKey(balance) === selectedTokenKey)
     ?? initialBalance;
-  const primaryRecipient = primaryAgentWalletRecipient(card);
+  // Withdrawals go only to the saved destination (the server refuses any
+  // other address), and a newly saved one is held for the cooldown.
+  const destination = primaryAgentWalletRecipient(card);
+  const heldUntil = destination ? heldUntilLabel(card.wallet?.withdrawalDestinationAvailableAt) : null;
   const [submitting, setSubmitting] = useState(false);
   const [amount, setAmount] = useState(() => initialBalance ? defaultWithdrawAmountForBalance(initialBalance) : '');
-  const [recipientAddress, setRecipientAddress] = useState(() => primaryRecipient ?? '');
-  const [setPrimaryRecipient, setSetPrimaryRecipient] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<AgentWalletWithdrawSuccess | null>(null);
   const normalizedAmount = amount.replace(/,/g, '').trim();
-  const normalizedRecipient = recipientAddress.trim();
-  const canSubmit = Boolean(selectedBalance && isEvmAddressInput(normalizedRecipient) && isNonZeroAmountDisplay(normalizedAmount));
-  const recentRecipients = (() => {
-    const seen = new Set<string>();
-    const recipients: AgentWalletRecipient[] = [];
-    for (const recipient of card.withdrawalRecipients ?? []) {
-      const normalized = recipient.normalizedAddress || recipient.address.toLowerCase();
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      recipients.push(recipient);
-    }
-    if (primaryRecipient && !seen.has(primaryRecipient.toLowerCase())) {
-      recipients.unshift({
-        id: 'primary',
-        address: primaryRecipient,
-        normalizedAddress: primaryRecipient.toLowerCase(),
-        label: null,
-        isPrimary: true,
-        useCount: 0,
-        lastUsedAt: '',
-      });
-    }
-    return recipients;
-  })();
+  const normalizedRecipient = (destination ?? '').trim();
+  const canSubmit = Boolean(
+    selectedBalance && isEvmAddressInput(normalizedRecipient) && !heldUntil && isNonZeroAmountDisplay(normalizedAmount)
+  );
 
   const handleWithdraw = useCallback(async () => {
     if (!selectedBalance) {
@@ -370,7 +363,7 @@ export function AgentWalletWithdrawModal({
       return;
     }
     if (!isEvmAddressInput(normalizedRecipient)) {
-      setError('Enter a valid 0x recipient address.');
+      setError('Save a withdrawal destination for this wallet first.');
       return;
     }
     if (!isNonZeroAmountDisplay(normalizedAmount)) {
@@ -396,7 +389,6 @@ export function AgentWalletWithdrawModal({
           amount: normalizedAmount,
           recipientAddress: normalizedRecipient,
           token,
-          setPrimaryRecipient,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -423,7 +415,7 @@ export function AgentWalletWithdrawModal({
     } finally {
       setSubmitting(false);
     }
-  }, [card.instance.id, normalizedAmount, normalizedRecipient, onSubmitted, selectedBalance, setPrimaryRecipient]);
+  }, [card.instance, normalizedAmount, normalizedRecipient, onSubmitted, selectedBalance]);
 
   const handleTokenChange = useCallback((nextKey: string) => {
     setSelectedTokenKey(nextKey);
@@ -500,7 +492,7 @@ export function AgentWalletWithdrawModal({
       }
     >
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-        Base network only for now. Choose the token, amount, and recipient address for {card.instance.name}&apos;s agent wallet; the server re-reads the live Base balance before submitting.
+        Base network only for now. Choose the token and amount to send from {card.instance.name}&apos;s agent wallet to its saved withdrawal destination; the server re-reads the live Base balance before submitting.
       </p>
       <div
         style={{
@@ -566,74 +558,30 @@ export function AgentWalletWithdrawModal({
             }}
           />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-            Recipient address
+            Sends to
           </span>
-          <input
-            className="mono"
-            value={recipientAddress}
-            onChange={(event) => setRecipientAddress(event.target.value)}
-            autoComplete="off"
-            placeholder="0x..."
-            disabled={submitting}
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              border: `1px solid ${recipientAddress && !isEvmAddressInput(recipientAddress) ? 'var(--gold-leaf)' : 'var(--etched-border)'}`,
-              background: 'var(--bg-canvas)',
-              color: 'var(--ink-black)',
-              padding: '10px 11px',
-              fontSize: 13,
-              outline: 'none',
-            }}
-          />
-        </label>
-        {recentRecipients.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-              Recent recipients
+          {destination ? (
+            <code className="mono notranslate" translate="no" style={{ fontSize: 12, wordBreak: 'break-all', color: 'var(--ink-black)' }}>
+              {destination}
+            </code>
+          ) : (
+            <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              No withdrawal destination saved. Close this and set one on the wallet card first.
             </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {recentRecipients.map((recipient) => (
-                <button
-                  key={recipient.id}
-                  type="button"
-                  onClick={() => setRecipientAddress(recipient.address)}
-                  disabled={submitting}
-                  style={{
-                    border: '1px solid var(--etched-border)',
-                    background: recipient.address.toLowerCase() === normalizedRecipient.toLowerCase() ? 'color-mix(in srgb, var(--gold-leaf) 9%, var(--bg-surface))' : 'transparent',
-                    color: 'var(--ink-black)',
-                    padding: '7px 9px',
-                    cursor: submitting ? 'wait' : 'pointer',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    alignItems: 'center',
-                    textAlign: 'left',
-                  }}
-                >
-                  <code className="mono notranslate" translate="no" style={{ fontSize: 11, wordBreak: 'break-all' }}>{recipient.address}</code>
-                  {recipient.isPrimary && (
-                    <span className="mono" style={{ fontSize: 8, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-leaf)', fontWeight: 900 }}>
-                      Primary
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-          <input
-            type="checkbox"
-            checked={setPrimaryRecipient}
-            onChange={(event) => setSetPrimaryRecipient(event.target.checked)}
-            disabled={submitting}
-          />
-          Set as primary
-        </label>
+          )}
+          {heldUntil && (
+            <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+              This destination was saved recently. For your safety, withdrawals to it open {heldUntil}.
+            </span>
+          )}
+          {destination && !heldUntil && (
+            <span style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--text-muted)' }}>
+              To send somewhere else, change the withdrawal destination on the wallet card.
+            </span>
+          )}
+        </div>
       </div>
       <div
         style={{
@@ -654,6 +602,122 @@ export function AgentWalletWithdrawModal({
     </AgentWalletModalFrame>
   );
 }
+function walletCustody(wallet: InstanceBankrWalletPublicSummary | null | undefined) {
+  return wallet?.custody ?? 'hivra_provisioned';
+}
+function isUserConnected(wallet: InstanceBankrWalletPublicSummary | null | undefined): boolean {
+  return wallet?.status === 'active' && walletCustody(wallet) === 'user_connected';
+}
+const BANKR_SECURITY_URL = 'https://bankr.bot';
+const BANKR_API_KEYS_URL = 'https://bankr.bot/api-keys';
+const modalText = { margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' } as const;
+const modalNote = { fontSize: 12, lineHeight: 1.5, color: 'var(--text-muted)' } as const;
+const modalEyebrow = {
+  fontSize: 10,
+  textTransform: 'uppercase',
+  letterSpacing: '0.14em',
+  color: 'var(--text-muted)',
+  fontWeight: 900,
+} as const;
+const externalLink = { color: 'var(--gold-leaf)', textDecoration: 'underline' } as const;
+const secondaryActionStyle = {
+  border: '1px solid var(--etched-border)',
+  background: 'transparent',
+  color: 'var(--ink-black)',
+  padding: '9px 13px',
+  fontFamily: 'var(--font-mono), monospace',
+  fontSize: 10,
+  fontWeight: 800,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+  cursor: 'pointer',
+} as const;
+
+/**
+ * Whether the connect/disconnect call reached the running agent. The Hermes
+ * route reports `configSync`, the Hivra route `envSync`; "update_started"
+ * means a Hermes webfree agent is restarting to load the change, "skipped"
+ * that the runtime takes the change at its next update, "failed" that it
+ * couldn't be reached.
+ */
+function runtimeSyncStatus(data: unknown): 'synced' | 'skipped' | 'failed' | 'update_started' | null {
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  const value = record.envSync ?? record.configSync;
+  return value === 'synced' || value === 'skipped' || value === 'failed' || value === 'update_started'
+    ? value
+    : null;
+}
+
+/** Why the Hermes route skipped delivering the change now, or null. */
+function configSyncSkipReason(data: unknown): string | null {
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  return record.configSync === 'skipped' && typeof record.configSyncReason === 'string' ? record.configSyncReason : null;
+}
+
+function identityUnverifiable(data: unknown): boolean {
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  return record.envSyncReason === 'identity_unverifiable';
+}
+
+// Older boxes that can't prove which VM they are never receive a wallet key.
+const UNVERIFIABLE_BOX_NOTICE =
+  'This agent\'s computer can\'t be verified as the one you own, so Hivra didn\'t send the key to it. Recreate the agent to use a wallet.';
+
+const RUN_UPDATE_NOTICE = 'Your agent is already updating. Run Update once it finishes to apply this change.';
+const AGENT_RESTARTING_NOTICE = 'The agent is restarting to apply this.';
+
+/**
+ * Hermes agents only. A "webfree" Hermes box takes a wallet change only when
+ * its runtime restarts, which takes 1–3 minutes and stops chats in progress, so
+ * the user chooses whether that happens now. Boxes that don't need a restart
+ * ignore the choice.
+ */
+function RestartAgentCheckbox({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label style={{ ...modalNote, display: 'flex', gap: 8, alignItems: 'flex-start', cursor: disabled ? 'default' : 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        style={{ marginTop: 3 }}
+      />
+      <span>Restart the agent now if it needs a restart to pick this up (about 1–3 minutes; chats in progress stop).</span>
+    </label>
+  );
+}
+
+function NoticeBox({ children, warn = false }: { children: React.ReactNode; warn?: boolean }) {
+  return (
+    <div
+      style={{
+        border: warn
+          ? '1px solid color-mix(in srgb, var(--gold-leaf) 44%, var(--etched-border))'
+          : '1px solid var(--etched-border)',
+        background: warn ? 'color-mix(in srgb, var(--gold-leaf) 8%, var(--bg-surface))' : 'var(--bg-surface)',
+        padding: '0.85rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Who holds what, per wallet kind. Facts only: this copy is what the key
+ * custody inventory (docs/security/KEY-CUSTODY-INVENTORY.md) says.
+ */
 export function AgentWalletManagementModal({
   card,
   onClose,
@@ -661,6 +725,7 @@ export function AgentWalletManagementModal({
   card: AgentWalletCardData;
   onClose: () => void;
 }) {
+  const custody = card.wallet?.evmAddress ? walletCustody(card.wallet) : null;
   return (
     <AgentWalletModalFrame
       title="How this wallet is managed."
@@ -671,41 +736,402 @@ export function AgentWalletManagementModal({
         </button>
       }
     >
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-        {card.instance.name}&apos;s wallet is created through Bankr for this one agent. Bankr custodies the private keys; Hivra stores only this agent wallet&apos;s API key and sends it to the agent runtime.
+      {custody === 'user_connected' ? (
+        <>
+          <p style={modalText}>
+            {card.instance.name} uses your own Bankr account. Bankr holds the private keys. Hivra stores the API key you
+            gave it, encrypted, and sends it to this agent&apos;s runtime so the agent can act on your Bankr wallet.
+          </p>
+          <NoticeBox>
+            <span className="mono" style={modalEyebrow}>What you control at Bankr</span>
+            <span style={modalNote}>
+              The key&apos;s permissions and recipient allowlist, and your wallet&apos;s daily and per-transaction spending
+              limits (an API key can&apos;t change those). Revoke the key at{' '}
+              <a href={BANKR_API_KEYS_URL} target="_blank" rel="noopener noreferrer" style={externalLink}>bankr.bot/api-keys</a>{' '}
+              any time. Hivra&apos;s Bankr partner account has no access to your account, and Hivra doesn&apos;t move your
+              funds: you do that at bankr.bot.
+            </span>
+          </NoticeBox>
+          <NoticeBox warn>
+            <span style={modalNote}>
+              Disconnect deletes Hivra&apos;s copy of the key and stops giving it to the agent. The key keeps working at
+              Bankr, including any copy the agent already loaded, until you revoke it there.
+            </span>
+          </NoticeBox>
+        </>
+      ) : custody === 'hivra_provisioned' ? (
+        <>
+          <p style={modalText}>
+            Hivra created {card.instance.name}&apos;s wallet through its Bankr partner account. Bankr holds the private
+            keys. Hivra stores this wallet&apos;s API key, encrypted, and sends it to the agent runtime. Hivra can use that
+            key, or its Bankr partner key, to move funds from this wallet, for example when you ask for a withdrawal.
+          </p>
+          <NoticeBox>
+            <span className="mono" style={modalEyebrow}>What you can do here</span>
+            <span style={modalNote}>
+              Deposit on Base, copy the address, view balances and withdraw Base tokens to an address you choose. Bankr
+              doesn&apos;t let anyone export this wallet&apos;s private key.
+            </span>
+          </NoticeBox>
+          <NoticeBox warn>
+            <span style={modalNote}>
+              To hold the keys yourself, withdraw everything, then choose Switch to your Bankr account. Hivra then stops
+              using this wallet and revokes its API keys at Bankr. Base only.
+            </span>
+          </NoticeBox>
+        </>
+      ) : (
+        <>
+          <p style={modalText}>
+            Agent wallets connect to your own Bankr account. Hivra doesn&apos;t create wallets for agents.
+          </p>
+          <NoticeBox>
+            <span className="mono" style={modalEyebrow}>How it works</span>
+            <span style={modalNote}>
+              You create an API key in your Bankr account and paste it here. Hivra stores it encrypted and sends it to this
+              agent&apos;s runtime. You set what the key can do and the wallet&apos;s spending limits at Bankr, and you can
+              revoke the key there or disconnect it here at any time.
+            </span>
+          </NoticeBox>
+        </>
+      )}
+    </AgentWalletModalFrame>
+  );
+}
+
+/**
+ * Connect the user's own Bankr account to one agent, or (mode "replace")
+ * switch an agent off the wallet Hivra created for it. The key is typed into
+ * a password field, sent once over HTTPS, and never shown again: the server
+ * returns only its preview.
+ */
+export function ConnectBankrModal({
+  card,
+  mode,
+  onClose,
+  onConnected,
+}: {
+  card: AgentWalletCardData;
+  mode: 'connect' | 'replace';
+  onClose: () => void;
+  onConnected: (wallet: InstanceBankrWalletPublicSummary) => void;
+}) {
+  const [apiKey, setApiKey] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+  // Off by default: connecting shouldn't interrupt a running agent unless asked.
+  const [restartAgent, setRestartAgent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const keyFieldId = useId();
+  const hermesLane = card.instance.lane === 'hermes';
+  // The server can still ask for the switch confirmation (an agent whose
+  // Hivra wallet the card didn't show), so the mode can change here.
+  const [replacing, setReplacing] = useState(mode === 'replace');
+  const ready = apiKey.trim().length > 0 && consent && (!replacing || replaceConfirmed);
+
+  const handleConnect = useCallback(async () => {
+    if (!ready) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`${agentWalletApiBase(card.instance)}/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: apiKey.trim(),
+          consent: true,
+          ...(replacing ? { replaceProvisionedWallet: true } : {}),
+          ...(hermesLane ? { restartAgent } : {}),
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      const wallet = body?.data?.wallet as InstanceBankrWalletPublicSummary | undefined;
+      if (!response.ok || !body?.success || !wallet) {
+        if (body?.code === 'replace_not_confirmed') setReplacing(true);
+        setError(body?.error || `Connect failed (${response.status})`);
+        return;
+      }
+      setApiKey('');
+      onConnected(wallet);
+      const runtime = runtimeSyncStatus(body?.data);
+      const notices: string[] = [];
+      if (body?.data?.oldKeysRevoked === false) {
+        notices.push(
+          'Switched, but Hivra couldn\'t confirm the old wallet\'s keys were revoked at Bankr. Contact support so this can be finished.'
+        );
+      }
+      if (runtime === 'failed' && identityUnverifiable(body?.data)) {
+        notices.push(`Connected. ${UNVERIFIABLE_BOX_NOTICE}`);
+      } else if (runtime === 'failed') {
+        notices.push('Connected, but Hivra couldn\'t reach the agent to give it the key. Connect again to retry.');
+      } else if (runtime === 'update_started') {
+        notices.push(`Connected. ${AGENT_RESTARTING_NOTICE}`);
+      } else if (configSyncSkipReason(body?.data) === 'restart_not_requested') {
+        notices.push('Connected. The agent picks up the key at its next update, or run Update on its page to apply it now.');
+      } else if (configSyncSkipReason(body?.data) === 'update_in_progress') {
+        notices.push(`Connected. ${RUN_UPDATE_NOTICE}`);
+      } else if (runtime === 'skipped') {
+        notices.push(
+          card.instance.lane === 'hivra'
+            ? 'Connected. The agent isn\'t running, so it gets the key when it next starts.'
+            : 'Connected. The agent gets the key at its next update.'
+        );
+      }
+      if (notices.length > 0) {
+        setNotice(notices.join(' '));
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      // Never log the key: only the failure's class name leaves the browser.
+      clientLog.warn('agent wallet connect request failed', {
+        source: 'wallet-page',
+        route: '/dashboard/wallet',
+        instanceId: card.instance.id,
+        failureType: 'agent_wallet_connect_request_failed',
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      setError('Connect failed. Check your connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [apiKey, card.instance, hermesLane, onClose, onConnected, ready, replacing, restartAgent]);
+
+  return (
+    <AgentWalletModalFrame
+      title={replacing ? <>Switch {card.instance.name} to your Bankr account.</> : <>Connect your Bankr account to {card.instance.name}.</>}
+      onClose={onClose}
+      dismissOnBackdrop={apiKey.length === 0}
+      closeDisabled={submitting}
+      footer={
+        notice ? (
+          <button type="button" onClick={onClose} className={`${dlg.button} ${dlg.primary}`}>
+            Done
+          </button>
+        ) : (
+        <>
+          <button type="button" onClick={onClose} disabled={submitting} className={`${dlg.button} ${dlg.secondary}`}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleConnect}
+            disabled={submitting || !ready}
+            aria-busy={submitting || undefined}
+            className={`${dlg.button} ${dlg.primary}`}
+          >
+            {submitting ? 'Checking key…' : replacing ? 'Switch wallet' : 'Connect'}
+          </button>
+        </>
+        )
+      }
+    >
+      {notice ? (
+        <p role="status" style={modalText}>{notice}</p>
+      ) : (
+      <>
+      <p style={modalText}>
+        The agent uses a wallet in your own Bankr account. You decide what it may do there, and you can revoke it at any
+        time.
       </p>
-      <div
-        style={{
-          border: '1px solid var(--etched-border)',
-          background: 'var(--bg-surface)',
-          padding: '0.85rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-        }}
-      >
-        <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--text-muted)', fontWeight: 900 }}>
-          What you can do in V1
+      <NoticeBox>
+        <span className="mono" style={modalEyebrow}>At bankr.bot</span>
+        <ol style={{ ...modalNote, margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <li>
+            Sign in at{' '}
+            <a href={BANKR_SECURITY_URL} target="_blank" rel="noopener noreferrer" style={externalLink}>bankr.bot</a>.
+            Bankr suggests a separate account for each agent, funded with only what it needs.
+          </li>
+          <li>Under Security, set a daily spending limit and a per-transaction limit. An API key can&apos;t change them.</li>
+          <li>
+            At{' '}
+            <a href={BANKR_API_KEYS_URL} target="_blank" rel="noopener noreferrer" style={externalLink}>bankr.bot/api-keys</a>,
+            create a key for this agent. Turn on Wallet API only if the agent should transact (otherwise turn on
+            read-only), leave Agent API and token launching off unless you need them, and add allowed recipients if you
+            know them.
+          </li>
+        </ol>
+      </NoticeBox>
+      {replacing && (
+        <NoticeBox warn>
+          <span style={modalNote}>
+            Withdraw everything from the wallet Hivra created first. Hivra asks Bankr whether it is empty on every chain
+            (up to 0.0001 ETH of gas on Base can stay). After the switch, Hivra stops using that wallet and revokes its
+            API keys at Bankr. Anything sent to the old address later stays there and needs support to recover.
+          </span>
+          <label style={{ ...modalNote, display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={replaceConfirmed}
+              onChange={(event) => setReplaceConfirmed(event.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>Replace the wallet Hivra created for {card.instance.name}.</span>
+          </label>
+        </NoticeBox>
+      )}
+      <label htmlFor={keyFieldId} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
+          Bankr API key
         </span>
-        <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-muted)' }}>
-          Deposit on Base, copy the wallet address, view balances here, and withdraw Base tokens to a chosen recipient. Direct Bankr-side management or private-key export is not available in this version.
+        <input
+          id={keyFieldId}
+          type="password"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+          placeholder="bk_…"
+          autoComplete="off"
+          spellCheck={false}
+          className="mono"
+          style={{
+            border: '1px solid var(--etched-border)',
+            background: 'var(--bg-surface)',
+            color: 'var(--ink-black)',
+            padding: '10px 12px',
+            fontSize: 12,
+            outline: 'none',
+          }}
+        />
+      </label>
+      <label style={{ ...modalNote, display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={(event) => setConsent(event.target.checked)}
+          style={{ marginTop: 3 }}
+        />
+        <span>
+          I authorise Hivra to store this key encrypted and send it to {card.instance.name}&apos;s runtime, where the agent
+          can use it on my Bankr wallet within the permissions and limits I set at Bankr. I can revoke it at
+          bankr.bot/api-keys or disconnect it here at any time.
         </span>
-      </div>
-      <div
-        style={{
-          border: '1px solid color-mix(in srgb, var(--gold-leaf) 44%, var(--etched-border))',
-          background: 'color-mix(in srgb, var(--gold-leaf) 8%, var(--bg-surface))',
-          padding: '0.85rem',
-          display: 'flex',
-          gap: 10,
-          alignItems: 'flex-start',
-        }}
-      >
-        <AlertTriangle size={17} style={{ color: 'var(--gold-leaf)', flex: '0 0 auto', marginTop: 1 }} />
-        <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-muted)' }}>
-          This V1 wallet is Base-only. Multi-chain deposits are not supported yet.
+      </label>
+      {hermesLane && <RestartAgentCheckbox checked={restartAgent} onChange={setRestartAgent} disabled={submitting} />}
+      {error && (
+        <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+          {error}
         </span>
-      </div>
+      )}
+      </>
+      )}
+    </AgentWalletModalFrame>
+  );
+}
+
+export function DisconnectBankrModal({
+  card,
+  onClose,
+  onDisconnected,
+}: {
+  card: AgentWalletCardData;
+  onClose: () => void;
+  onDisconnected: (wallet: InstanceBankrWalletPublicSummary) => void;
+}) {
+  // On by default: after a disconnect the agent keeps the key until it restarts.
+  const [restartAgent, setRestartAgent] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const hermesLane = card.instance.lane === 'hermes';
+
+  const handleDisconnect = useCallback(async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `${agentWalletApiBase(card.instance)}/connect`,
+        hermesLane
+          ? { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restartAgent }) }
+          : { method: 'DELETE' }
+      );
+      const body = await response.json().catch(() => ({}));
+      const wallet = body?.data?.wallet as InstanceBankrWalletPublicSummary | undefined;
+      if (!response.ok || !body?.success || !wallet) {
+        setError(body?.error || `Disconnect failed (${response.status})`);
+        return;
+      }
+      onDisconnected(wallet);
+      const runtime = runtimeSyncStatus(body?.data);
+      if (runtime === 'synced') {
+        onClose();
+      } else if (runtime === 'update_started') {
+        setNotice(
+          `Hivra deleted its copy. ${AGENT_RESTARTING_NOTICE} The key still works at Bankr until you revoke it at bankr.bot/api-keys.`
+        );
+      } else if (configSyncSkipReason(body?.data) === 'restart_not_requested') {
+        setNotice(
+          'Hivra deleted its copy. The agent keeps the key until its next update (run Update on its page to apply it now); revoke it at bankr.bot/api-keys to stop it immediately.'
+        );
+      } else if (configSyncSkipReason(body?.data) === 'update_in_progress') {
+        setNotice(
+          `Hivra deleted its copy. ${RUN_UPDATE_NOTICE} The key still works at Bankr until you revoke it at bankr.bot/api-keys.`
+        );
+      } else if (identityUnverifiable(body?.data)) {
+        setNotice(
+          'Hivra deleted its copy, but this agent\'s computer can\'t be verified, so Hivra couldn\'t remove the key from it. Revoke it at bankr.bot/api-keys to stop the agent using it.'
+        );
+      } else {
+        setNotice(
+          'Hivra deleted its copy, but couldn\'t confirm the key was removed from the running agent. Revoke it at bankr.bot/api-keys to stop the agent using it.'
+        );
+      }
+    } catch {
+      setError('Disconnect failed. Check your connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [card.instance, hermesLane, onClose, onDisconnected, restartAgent]);
+
+  return (
+    <AgentWalletModalFrame
+      title={<>Disconnect your Bankr account from {card.instance.name}?</>}
+      onClose={onClose}
+      closeDisabled={submitting}
+      footer={
+        notice ? (
+          <button type="button" onClick={onClose} className={`${dlg.button} ${dlg.primary}`}>
+            Done
+          </button>
+        ) : (
+        <>
+          <button type="button" onClick={onClose} disabled={submitting} className={`${dlg.button} ${dlg.secondary}`}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleDisconnect}
+            disabled={submitting}
+            aria-busy={submitting || undefined}
+            className={`${dlg.button} ${dlg.primary}`}
+          >
+            {submitting ? 'Disconnecting…' : 'Disconnect'}
+          </button>
+        </>
+        )
+      }
+    >
+      {notice && (
+        <p role="status" style={modalText}>{notice}</p>
+      )}
+      <p style={modalText}>
+        Hivra deletes its copy of the key and stops giving it to the agent. Your funds stay in your Bankr account.
+      </p>
+      {hermesLane && !notice && (
+        <RestartAgentCheckbox checked={restartAgent} onChange={setRestartAgent} disabled={submitting} />
+      )}
+      <NoticeBox warn>
+        <span style={modalNote}>
+          The key still works at Bankr, including any copy the agent already loaded, until you revoke it at{' '}
+          <a href={BANKR_API_KEYS_URL} target="_blank" rel="noopener noreferrer" style={externalLink}>bankr.bot/api-keys</a>.
+        </span>
+      </NoticeBox>
+      {error && (
+        <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+          {error}
+        </span>
+      )}
     </AgentWalletModalFrame>
   );
 }
@@ -715,8 +1141,8 @@ export function AgentWalletCard({
   onManage,
   onSetDestination,
   onWithdraw,
-  onCreateWallet,
-  creatingWallet,
+  onConnect,
+  onDisconnect,
   onRefresh,
 }: {
   card: AgentWalletCardData;
@@ -724,23 +1150,24 @@ export function AgentWalletCard({
   onManage: (card: AgentWalletCardData) => void;
   onSetDestination: (card: AgentWalletCardData) => void;
   onWithdraw: (card: AgentWalletCardData) => void;
-  onCreateWallet: (card: AgentWalletCardData) => void;
-  creatingWallet: boolean;
+  /** "connect" for an agent with no wallet; "replace" to switch off a Hivra-created one. */
+  onConnect: (card: AgentWalletCardData, mode: 'connect' | 'replace') => void;
+  onDisconnect: (card: AgentWalletCardData) => void;
   onRefresh: () => void;
 }) {
   const wallet = card.wallet;
   const address = wallet?.evmAddress;
   const primaryRecipient = primaryAgentWalletRecipient(card);
-  const pending = wallet?.status === 'pending';
+  const destinationHeldUntil = primaryRecipient ? heldUntilLabel(wallet?.withdrawalDestinationAvailableAt) : null;
   const needsWallet = !address;
+  const connected = isUserConnected(wallet);
+  const hivraCreated = Boolean(address) && !connected;
   const ethBalance = agentBaseEthBalance(card);
   const hermesOsBalance = card.balances.find((balance) => balance.tokenSymbol === 'HERMESOS') ?? null;
-  // Both lanes now have working payout routes: Hermes at
-  // /api/instances/[id]/bankr-wallet/{withdraw,withdraw-destination} and Hivra
-  // at /api/hivra/agents/[id]/bankr-wallet/{withdraw,set-destination}. The
-  // modals route by lane (see agentWalletApiBase), so payouts are supported for
-  // every agent that has a wallet.
-  const payoutsSupported = true;
+  // Payouts exist only for wallets Hivra created (both lanes route by
+  // agentWalletApiBase). A user's own Bankr account is managed at bankr.bot:
+  // Hivra never initiates transfers from it, and its withdraw routes refuse.
+  const payoutsSupported = hivraCreated;
   const canWithdraw = Boolean(address && agentWalletWithdrawableBalances(card).length > 0);
   const withdrawReasonId = useId();
   const headlineBalances = [
@@ -785,7 +1212,7 @@ export function AgentWalletCard({
             }}
           >
             <span aria-hidden style={{ width: 6, height: 6, background: 'var(--gold-leaf)', display: 'inline-block' }} />
-            {pending ? 'Provisioning…' : 'Not created'}
+            Not connected
           </span>
         )}
       </div>
@@ -807,12 +1234,29 @@ export function AgentWalletCard({
             Base only
           </span>
         )}
+        {address && (
+          <span
+            className="mono"
+            data-testid="agent-wallet-custody"
+            style={{
+              border: '1px solid var(--etched-border)',
+              color: 'var(--text-muted)',
+              padding: '4px 7px',
+              fontSize: 9,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              fontWeight: 800,
+            }}
+          >
+            {connected ? 'Your Bankr account' : 'Created by Hivra'}
+          </span>
+        )}
         <code
           className="mono agent-wallet-address-full notranslate"
           translate="no"
           style={{ fontSize: 12, color: 'var(--ink-black)', wordBreak: 'break-all', flex: '1 1 220px', minWidth: 0 }}
         >
-          {address ?? 'Create wallet to receive address'}
+          {address ?? 'Connect your Bankr account to use a wallet'}
         </code>
         {address && (
           <code className="mono agent-wallet-address-short notranslate" translate="no" style={{ fontSize: 12, color: 'var(--ink-black)' }}>
@@ -968,7 +1412,7 @@ export function AgentWalletCard({
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)', fontWeight: 800 }}>
-            Primary withdrawal recipient
+            Withdrawal destination
           </span>
           {primaryRecipient ? (
             <>
@@ -976,14 +1420,17 @@ export function AgentWalletCard({
                 {primaryRecipient}
               </code>
               <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                Recent recipients appear in the withdraw modal. {AGENT_WITHDRAWAL_GAS_NOTICE}
+                {destinationHeldUntil
+                  ? `New destination. For your safety, withdrawals to it open ${destinationHeldUntil}.`
+                  : 'Withdrawals from this wallet go only here.'}{' '}
+                {AGENT_WITHDRAWAL_GAS_NOTICE}
               </span>
             </>
           ) : (
             <>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No primary recipient set</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No withdrawal destination set</span>
               <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                You can enter a recipient during withdrawal and optionally make it primary. {AGENT_WITHDRAWAL_GAS_NOTICE}
+                Set one before withdrawing. A new destination can receive withdrawals {withdrawDestinationCooldownHours()} hours after you save it. {AGENT_WITHDRAWAL_GAS_NOTICE}
               </span>
             </>
           )}
@@ -1007,7 +1454,7 @@ export function AgentWalletCard({
             textTransform: 'uppercase',
           }}
         >
-          {primaryRecipient ? 'Change' : 'Set primary'}
+          {primaryRecipient ? 'Change' : 'Set destination'}
         </button>
       </div>
       )}
@@ -1036,16 +1483,14 @@ export function AgentWalletCard({
         ) : (
           <button
             type="button"
-            onClick={() => onCreateWallet(card)}
-            disabled={creatingWallet}
+            onClick={() => onConnect(card, 'connect')}
             className={touchStyles.touchTarget}
             style={{
               border: '1px solid var(--ink-black)',
               background: 'var(--ink-black)',
               color: 'var(--bg-surface)',
               padding: '9px 13px',
-              cursor: creatingWallet ? 'wait' : 'pointer',
-              opacity: creatingWallet ? 0.7 : 1,
+              cursor: 'pointer',
               fontFamily: 'var(--font-mono), monospace',
               fontSize: 10,
               fontWeight: 800,
@@ -1053,7 +1498,7 @@ export function AgentWalletCard({
               textTransform: 'uppercase',
             }}
           >
-            {creatingWallet ? 'Creating…' : 'Create wallet'}
+            Connect Bankr account
           </button>
         )}
         {address && payoutsSupported && (
@@ -1107,6 +1552,33 @@ export function AgentWalletCard({
           How management works
           <Info size={12} />
         </button>
+        {connected && (
+          <>
+            <a
+              href={BANKR_SECURITY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={touchStyles.touchTarget}
+              style={{ ...secondaryActionStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+            >
+              Manage at bankr.bot
+            </a>
+            <button type="button" onClick={() => onDisconnect(card)} className={touchStyles.touchTarget} style={secondaryActionStyle}>
+              Disconnect
+            </button>
+          </>
+        )}
+        {hivraCreated && (
+          <button type="button" onClick={() => onConnect(card, 'replace')} className={touchStyles.touchTarget} style={secondaryActionStyle}>
+            Switch to your Bankr account
+          </button>
+        )}
+        {connected && wallet?.apiKeyPreview && (
+          <span className="mono notranslate" translate="no" style={{ flexBasis: '100%', fontSize: 11, lineHeight: 1.45, color: 'var(--text-muted)' }}>
+            Key {wallet.apiKeyPreview}
+            {wallet.connectedAt ? ` · connected ${new Date(wallet.connectedAt).toLocaleDateString()}` : ''}
+          </span>
+        )}
         {address && payoutsSupported && !canWithdraw && (
           // The reason Withdraw is disabled, as text (a title tooltip never
           // shows on touch screens).
@@ -1137,32 +1609,8 @@ export function AgentWalletsSection({
   const [destinationCard, setDestinationCard] = useState<AgentWalletCardData | null>(null);
   const [withdrawRequest, setWithdrawRequest] = useState<AgentWalletCardData | null>(null);
   const [managementCard, setManagementCard] = useState<AgentWalletCardData | null>(null);
-  const [creatingWalletIds, setCreatingWalletIds] = useState<Set<string>>(() => new Set());
-
-  const handleCreateWallet = useCallback(async (card: AgentWalletCardData) => {
-    const instanceId = card.instance.id;
-    setCreatingWalletIds((prev) => new Set(prev).add(instanceId));
-    try {
-      const response = await fetch(agentWalletApiBase(card.instance), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      });
-      const body = await response.json().catch(() => ({}));
-      const wallet = body?.data?.wallet as InstanceBankrWalletPublicSummary | undefined;
-      if (response.ok && wallet) {
-        onWalletUpdated(instanceId, wallet);
-        return;
-      }
-      onRefresh();
-    } finally {
-      setCreatingWalletIds((prev) => {
-        const next = new Set(prev);
-        next.delete(instanceId);
-        return next;
-      });
-    }
-  }, [onRefresh, onWalletUpdated]);
+  const [connectRequest, setConnectRequest] = useState<{ card: AgentWalletCardData; mode: 'connect' | 'replace' } | null>(null);
+  const [disconnectCard, setDisconnectCard] = useState<AgentWalletCardData | null>(null);
 
   return (
     <section aria-label={agentWalletsCopy.ariaLabel} style={{ margin: '1.5rem 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1237,18 +1685,39 @@ export function AgentWalletsSection({
               onManage={setManagementCard}
               onSetDestination={setDestinationCard}
               onWithdraw={setWithdrawRequest}
-              onCreateWallet={handleCreateWallet}
-              creatingWallet={creatingWalletIds.has(card.instance.id)}
+              onConnect={(target, mode) => setConnectRequest({ card: target, mode })}
+              onDisconnect={setDisconnectCard}
               onRefresh={onRefresh}
             />
           ))}
         </div>
       )}
 
-      <BankrTrustFooter withdrawable />
+      <BankrTrustFooter note="connect your own Bankr account" />
 
       {depositCard && <AgentDepositModal card={depositCard} onClose={() => setDepositCard(null)} />}
       {managementCard && <AgentWalletManagementModal card={managementCard} onClose={() => setManagementCard(null)} />}
+      {connectRequest && (
+        <ConnectBankrModal
+          card={connectRequest.card}
+          mode={connectRequest.mode}
+          onClose={() => setConnectRequest(null)}
+          onConnected={(wallet) => {
+            onWalletUpdated(connectRequest.card.instance.id, wallet);
+            onRefresh();
+          }}
+        />
+      )}
+      {disconnectCard && (
+        <DisconnectBankrModal
+          card={disconnectCard}
+          onClose={() => setDisconnectCard(null)}
+          onDisconnected={(wallet) => {
+            onWalletUpdated(disconnectCard.instance.id, wallet);
+            onRefresh();
+          }}
+        />
+      )}
       {withdrawRequest && (
         <AgentWalletWithdrawModal
           card={withdrawRequest}

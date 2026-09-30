@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Loader2, X } from 'lucide-react';
 import { StyledDropdown } from "@/components/ui/StyledDropdown";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { clientLog } from "@/lib/client/logger";
@@ -89,6 +89,7 @@ const segButtonStyle = (active: boolean): React.CSSProperties => ({
   background: active ? 'var(--ink-black)' : 'transparent',
   color: active ? 'var(--bg-surface)' : 'var(--ink-black)',
   padding: '8px 14px',
+  minHeight: 40,
   fontSize: 11,
   cursor: 'pointer',
   fontFamily: 'var(--font-mono)',
@@ -96,6 +97,99 @@ const segButtonStyle = (active: boolean): React.CSSProperties => ({
   letterSpacing: '0.04em',
   flex: '1 1 auto',
 });
+
+// The overlay covers only the visible viewport and the dialog is capped to it, so
+// the pinned header and Save stay on screen behind iOS toolbars and the keyboard.
+const OVERLAY_PADDING = 'clamp(8px, 4vw, 16px)';
+const MODAL_MAX_HEIGHT = `calc(var(--workspace-viewport-height, 100dvh) - 2 * ${OVERLAY_PADDING} - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))`;
+const FORM_GUTTER = 'clamp(20px, 5vw, 32px)';
+
+const presetButtonStyle: React.CSSProperties = {
+  border: '1px solid var(--etched-border)',
+  background: 'transparent',
+  color: 'var(--ink-black)',
+  padding: '8px 12px',
+  minHeight: 40,
+  fontSize: 10,
+  cursor: 'pointer',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  opacity: 0.8,
+};
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function hasFinePointer(): boolean {
+  try {
+    return window.matchMedia?.('(pointer: fine)').matches ?? false;
+  } catch {
+    return false;
+  }
+}
+
+type TaskDraft = { name: string; command: string; status: 'active' | 'paused'; deliver: string; agentId: string; profileName: string; schedule: string };
+const draftKey = (d: TaskDraft) => JSON.stringify([d.name, d.command, d.status, d.deliver, d.agentId, d.profileName, d.schedule]);
+
+// Mounted inside the portal so the dialog node exists when focus moves in. Tab
+// wraps inside and focus returns to the opener. Escape closes only when
+// closeOnEscape is set (an untouched form), never mid-IME composition, and never
+// while a StyledDropdown is open: its menu portals outside the dialog, takes
+// focus after a short delay and handles its own Escape.
+function TaskDialogFrame({ onClose, closeOnEscape, children }: { onClose: () => void; closeOnEscape: boolean; children: React.ReactNode }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  const closeOnEscapeRef = useRef(closeOnEscape);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { closeOnEscapeRef.current = closeOnEscape; }, [closeOnEscape]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
+    (focusable()[0] ?? dialog).focus({ preventScroll: true });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && target !== document.body && !dialog.contains(target)) return;
+      if (event.key === 'Escape') {
+        if (dialog.querySelector('[aria-expanded="true"]')) return;
+        event.preventDefault();
+        if (closeOnEscapeRef.current) onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && (active === first || !dialog.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (opener?.isConnected && opener !== document.body) opener.focus({ preventScroll: true });
+    };
+  }, []);
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 'var(--workspace-viewport-height, 100dvh)', boxSizing: 'border-box', background: 'var(--overlay-bg)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: OVERLAY_PADDING }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="task-modal-title" tabIndex={-1} className="interrogation-box" style={{ background: "var(--vellum-bg)", width: '100%', maxWidth: 700, padding: 0, boxShadow: '0 20px 40px rgba(0,0,0,0.1)', maxHeight: MODAL_MAX_HEIGHT, overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const labelStyle: React.CSSProperties = {
   fontSize: 10,
@@ -114,7 +208,8 @@ export function TaskModal({
   agents,
   editingJobInitial,
   editingAgentId,
-  editingProfileName
+  editingProfileName,
+  agentName,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -124,6 +219,8 @@ export function TaskModal({
   editingJobInitial: LiveJob | null;
   editingAgentId: string;
   editingProfileName: string;
+  /** Names the agent in the copy; falls back to "your agent". */
+  agentName?: string;
 }) {
   const [formName, setFormName] = useState('');
   const [formCommand, setFormCommand] = useState('');
@@ -144,45 +241,67 @@ export function TaskModal({
 
   const [profiles, setProfiles] = useState<{name: string, display_name?: string}[]>([]);
   const [profilesLoading, setProfilesLoading] = useState(false);
+  // The draft as the modal opened it; Escape only closes while the form still matches.
+  const [pristineKey, setPristineKey] = useState<string | null>(null);
+  const commandRef = useRef<HTMLTextAreaElement>(null);
 
-  const applyFriendly = (f: FriendlySchedule) => {
-    setFrequency(f.frequency);
-    setMinute(f.minute);
-    setHour(f.hour);
-    setDaysOfWeek(f.frequency === 'weekly' ? f.daysOfWeek : DEFAULT_FRIENDLY_SCHEDULE.daysOfWeek);
-    setDayOfMonth(f.frequency === 'monthly' ? f.dayOfMonth : DEFAULT_FRIENDLY_SCHEDULE.dayOfMonth);
+  const applyFriendly = (f: FriendlySchedule): FriendlySchedule => {
+    const applied: FriendlySchedule = {
+      ...f,
+      daysOfWeek: f.frequency === 'weekly' ? f.daysOfWeek : DEFAULT_FRIENDLY_SCHEDULE.daysOfWeek,
+      dayOfMonth: f.frequency === 'monthly' ? f.dayOfMonth : DEFAULT_FRIENDLY_SCHEDULE.dayOfMonth,
+    };
+    setFrequency(applied.frequency);
+    setMinute(applied.minute);
+    setHour(applied.hour);
+    setDaysOfWeek(applied.daysOfWeek);
+    setDayOfMonth(applied.dayOfMonth);
+    return applied;
   };
 
   // Initialize form when modal opens
   useEffect(() => {
     if (isOpen) {
       if (editingJobInitial) {
-        setFormName(editingJobInitial.name || '');
-        setFormCommand(editingJobInitial.command || '');
-        setFormStatus(editingJobInitial.enabled ? 'active' : 'paused');
-        // Preserve the existing job's delivery target; blank/unknown -> "local".
-        setFormDeliver(editingJobInitial.deliver || DEFAULT_DELIVER);
-        setFormAgentId(editingAgentId);
-        setFormProfileName(editingProfileName || 'default');
+        const initial: TaskDraft = {
+          name: editingJobInitial.name || '',
+          command: editingJobInitial.command || '',
+          status: editingJobInitial.enabled ? 'active' : 'paused',
+          // Preserve the existing job's delivery target; blank/unknown -> "local".
+          deliver: editingJobInitial.deliver || DEFAULT_DELIVER,
+          agentId: editingAgentId,
+          profileName: editingProfileName || 'default',
+          schedule: '',
+        };
+        setFormName(initial.name);
+        setFormCommand(initial.command);
+        setFormStatus(initial.status);
+        setFormDeliver(initial.deliver);
+        setFormAgentId(initial.agentId);
+        setFormProfileName(initial.profileName);
         const parsed = friendlyFromCron(editingJobInitial.schedule || '');
         if (parsed) {
-          applyFriendly(parsed);
+          initial.schedule = cronFromFriendly(applyFriendly(parsed));
           setAdvancedCron(null);
         } else {
           // Keep an editable raw expression for schedules the builder can't model.
           applyFriendly(DEFAULT_FRIENDLY_SCHEDULE);
-          setAdvancedCron(editingJobInitial.schedule || DEFAULT_NEW_TASK_SCHEDULE);
+          initial.schedule = editingJobInitial.schedule || DEFAULT_NEW_TASK_SCHEDULE;
+          setAdvancedCron(initial.schedule);
         }
+        setPristineKey(draftKey(initial));
       } else {
         setFormName('');
         setFormCommand('');
         setFormStatus('active');
         setFormDeliver(DEFAULT_DELIVER);
-        applyFriendly(DEFAULT_FRIENDLY_SCHEDULE);
+        const schedule = cronFromFriendly(applyFriendly(DEFAULT_FRIENDLY_SCHEDULE));
         setAdvancedCron(null);
         const defaultAgent = agents.find(a => a.status === 'running') || agents[0];
-        setFormAgentId(defaultAgent ? defaultAgent.id : '');
+        const agentId = defaultAgent ? defaultAgent.id : '';
+        setFormAgentId(agentId);
         setFormProfileName('default');
+        setPristineKey(draftKey({ name: '', command: '', status: 'active', deliver: DEFAULT_DELIVER, agentId, profileName: 'default', schedule }));
       }
     }
   }, [isOpen, editingJobInitial, agents, editingAgentId, editingProfileName]);
@@ -211,9 +330,10 @@ export function TaskModal({
   };
 
   const statusOptions = [
-    { value: 'active', label: 'ACTIVE (SCHEDULED)' },
-    { value: 'paused', label: 'DRAFT (PAUSED)' },
+    { value: 'active', label: 'Scheduled' },
+    { value: 'paused', label: 'Paused' },
   ];
+  const agentLabel = agentName?.trim() || 'your agent';
   
   const agentDropdownOptions = [
     ...agents.map(a => ({ value: a.id, label: `${a.name} (${a.status})` }))
@@ -224,6 +344,10 @@ export function TaskModal({
   const friendly: FriendlySchedule = { frequency, minute, hour, daysOfWeek, dayOfMonth };
   const resolvedSchedule = advancedCron != null ? advancedCron : cronFromFriendly(friendly);
   const usingAdvanced = advancedCron != null;
+  const pristine = pristineKey !== null && pristineKey === draftKey({
+    name: formName, command: formCommand, status: formStatus, deliver: formDeliver,
+    agentId: formAgentId, profileName: formProfileName, schedule: resolvedSchedule,
+  });
 
   const { hour12, meridiem } = to12Hour(hour);
 
@@ -248,20 +372,18 @@ export function TaskModal({
     });
   };
 
+  // The dropdown trigger reserves ~70px for padding and chevron, so fixed 72-84px
+  // cells clipped "9", ":00" and "AM"; three shared columns keep each value visible.
   const timePicker = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+    <div role="group" aria-label="Time" style={{ display: 'grid', gap: 6, width: '100%', maxWidth: 320 }}>
       <span className="mono" style={{ fontSize: 11, opacity: 0.6 }}>at</span>
-      <div style={{ width: 72 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr)', gap: 8 }}>
         <StyledDropdown
           value={String(hour12)}
           onChange={(val) => setHour(to24Hour(Number(val), meridiem))}
           options={HOUR_OPTIONS}
         />
-      </div>
-      <div style={{ width: 84 }}>
         <StyledDropdown value={String(minute)} onChange={(val) => setMinute(Number(val))} options={minuteOptions} />
-      </div>
-      <div style={{ width: 80 }}>
         <StyledDropdown
           value={meridiem}
           onChange={(val) => setHour(to24Hour(hour12, val as 'AM' | 'PM'))}
@@ -288,18 +410,17 @@ export function TaskModal({
 
   return (
     <SafePortal>
-      <div style={{ position: 'fixed', inset: 0, background: 'var(--overlay-bg)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(8px, 4vw, 16px)' }}>
-         <div className="interrogation-box" style={{ background: "var(--vellum-bg)", width: '100%', maxWidth: 700, padding: 0, boxShadow: '0 20px 40px rgba(0,0,0,0.1)', maxHeight: '95vh', overflowY: 'auto' }}>
-          <div style={{ padding: 'clamp(16px, 4vw, 24px) clamp(16px, 5vw, 32px)', borderBottom: '1px solid var(--etched-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-             <div>
-                <h2 className="serif" style={{ fontSize: '1.5rem', margin: 0, color: 'var(--ink-black)' }}>{editingJobInitial ? 'Configure Task Request' : 'Define New Task'}</h2>
-                <div className="mono" style={{ fontSize: 10, marginTop: 8, opacity: 0.5 }}>
-                  {editingJobInitial ? 'Adjust what runs and when it fires.' : 'Tell Hermes what to run and when it should fire.'}
+      <TaskDialogFrame onClose={onClose} closeOnEscape={pristine}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 2, background: 'var(--vellum-bg)', padding: 'clamp(16px, 4vw, 24px) clamp(16px, 5vw, 32px)', borderBottom: '1px solid var(--etched-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+             <div style={{ minWidth: 0 }}>
+                <h2 id="task-modal-title" className="serif" style={{ fontSize: '1.5rem', margin: 0, color: 'var(--ink-black)' }}>{editingJobInitial ? 'Edit scheduled task' : 'New scheduled task'}</h2>
+                <div className="mono" style={{ fontSize: 11, marginTop: 8, opacity: 0.6 }}>
+                  {editingJobInitial ? 'Adjust what runs and when it fires.' : `Tell ${agentLabel} what to do and when.`}
                 </div>
              </div>
-             <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+             <button type="button" onClick={onClose} aria-label="Close" style={{ flexShrink: 0, width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, background: 'transparent', border: '1px solid var(--etched-border)', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
           </div>
-          <form onSubmit={handleSubmit} style={{ padding: 'clamp(20px, 5vw, 32px)' }}>
+          <form onSubmit={handleSubmit} style={{ padding: `${FORM_GUTTER} ${FORM_GUTTER} 0` }}>
              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 {!editingJobInitial && (
                   <div style={{ border: '1px solid var(--etched-border)', background: 'rgba(0,0,0,0.025)', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -313,8 +434,24 @@ export function TaskModal({
                 )}
 
                 <div>
-                  <label className="mono" style={{ fontSize: 10, display: 'block', marginBottom: 8, opacity: 0.6, fontWeight: 700, textTransform: 'uppercase' }}>Task Identifier</label>
-                  <input type="text" required value={formName} onChange={e => setFormName(e.target.value)} className="terminal-light" placeholder="e.g., Target Purge" style={{ width: '100%', padding: '12px', fontSize: 13 }} />
+                  <label htmlFor="task-modal-name" className="mono" style={{ fontSize: 10, display: 'block', marginBottom: 8, opacity: 0.6, fontWeight: 700, textTransform: 'uppercase' }}>Name</label>
+                  <input
+                    id="task-modal-name"
+                    type="text"
+                    required
+                    value={formName}
+                    onChange={e => setFormName(e.target.value)}
+                    // The touch keyboard labels Enter "next", so it moves on instead of saving; a physical keyboard keeps Enter-to-save.
+                    onKeyDown={e => {
+                      if (e.key !== 'Enter' || e.nativeEvent.isComposing || hasFinePointer()) return;
+                      e.preventDefault();
+                      commandRef.current?.focus();
+                    }}
+                    enterKeyHint="next"
+                    className="terminal-light"
+                    placeholder="e.g., Morning inbox summary"
+                    style={{ width: '100%', padding: '12px', fontSize: 13 }}
+                  />
                 </div>
 
                 <div>
@@ -327,6 +464,10 @@ export function TaskModal({
                         required
                         value={advancedCron ?? ''}
                         onChange={e => setAdvancedCron(e.target.value)}
+                        aria-label="Custom schedule (cron)"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
                         className="terminal-light"
                         placeholder="0 9 * * *"
                         style={{ width: '100%', padding: '12px', fontSize: 13, fontFamily: 'var(--font-mono)' }}
@@ -339,7 +480,7 @@ export function TaskModal({
                           type="button"
                           onClick={() => { setAdvancedCron(null); applyFriendly(DEFAULT_FRIENDLY_SCHEDULE); }}
                           className="mono"
-                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--ink-black)', textDecoration: 'underline' }}
+                          style={{ background: 'none', border: 'none', padding: '8px 12px', minHeight: 40, cursor: 'pointer', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--ink-black)', textDecoration: 'underline' }}
                         >
                           Use simple schedule
                         </button>
@@ -363,7 +504,7 @@ export function TaskModal({
                       {frequency === 'hourly' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span className="mono" style={{ fontSize: 11, opacity: 0.6 }}>at</span>
-                          <div style={{ width: 84 }}>
+                          <div style={{ width: 100 }}>
                             <StyledDropdown value={String(minute)} onChange={(val) => setMinute(Number(val))} options={minuteOptions} />
                           </div>
                           <span className="mono" style={{ fontSize: 11, opacity: 0.6 }}>past every hour</span>
@@ -374,7 +515,8 @@ export function TaskModal({
 
                       {frequency === 'weekly' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {/* One row of seven: each day shrinks to fit a 360px phone rather than wrapping Saturday. */}
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
                             {DAY_INITIALS.map((initial, idx) => {
                               const active = daysOfWeek.includes(idx);
                               return (
@@ -383,9 +525,14 @@ export function TaskModal({
                                   type="button"
                                   onClick={() => toggleDay(idx)}
                                   title={DAY_LABELS[idx]}
+                                  aria-label={DAY_LABELS[idx]}
+                                  aria-pressed={active}
                                   style={{
-                                    width: 38,
-                                    height: 38,
+                                    flex: '1 1 0',
+                                    minWidth: 34,
+                                    maxWidth: 40,
+                                    height: 40,
+                                    padding: 0,
                                     border: '1px solid var(--etched-border)',
                                     background: active ? 'var(--ink-black)' : 'transparent',
                                     color: active ? 'var(--bg-surface)' : 'var(--ink-black)',
@@ -407,17 +554,7 @@ export function TaskModal({
                                 type="button"
                                 onClick={() => setDaysOfWeek(preset.days)}
                                 className="mono"
-                                style={{
-                                  border: '1px solid var(--etched-border)',
-                                  background: 'transparent',
-                                  color: 'var(--ink-black)',
-                                  padding: '4px 10px',
-                                  fontSize: 10,
-                                  cursor: 'pointer',
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '0.04em',
-                                  opacity: 0.8,
-                                }}
+                                style={presetButtonStyle}
                               >
                                 {preset.label}
                               </button>
@@ -428,9 +565,10 @@ export function TaskModal({
                       )}
 
                       {frequency === 'monthly' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span className="mono" style={{ fontSize: 11, opacity: 0.6 }}>on day</span>
-                          <div style={{ width: 80 }}>
+                        // "on day" stacks above its dropdown like "at" does, so both rows of dropdowns line up.
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px 16px', flexWrap: 'wrap' }}>
+                          <div role="group" aria-label="Day of month" style={{ display: 'grid', gap: 6, width: 96 }}>
+                            <span className="mono" style={{ fontSize: 11, opacity: 0.6 }}>on day</span>
                             <StyledDropdown value={String(dayOfMonth)} onChange={(val) => setDayOfMonth(Number(val))} options={DAY_OF_MONTH_OPTIONS} />
                           </div>
                           {timePicker}
@@ -445,7 +583,7 @@ export function TaskModal({
                 </div>
 
                 <div>
-                  <label className="mono" style={labelStyle}>Initial Status</label>
+                  <label className="mono" style={labelStyle}>Status</label>
                   <div style={{ maxWidth: 320 }}>
                     <StyledDropdown value={formStatus} onChange={val => setFormStatus(val as 'active'|'paused')} options={statusOptions} />
                   </div>
@@ -457,7 +595,7 @@ export function TaskModal({
                     <StyledDropdown value={formDeliver} onChange={setFormDeliver} options={DELIVER_OPTIONS} />
                   </div>
                   <p style={{ margin: '8px 0 0', fontSize: 11, opacity: 0.6, lineHeight: 1.5 }}>
-                    Where {`the agent`} sends the result when this task fires. Default keeps it in the agent&rsquo;s run history.
+                    Where {agentName?.trim() || 'the agent'} sends the result when this task fires. Default keeps it in the agent&rsquo;s run history.
                   </p>
                 </div>
 
@@ -466,6 +604,7 @@ export function TaskModal({
                      Instructions for Agent
                   </label>
                   <textarea 
+                    ref={commandRef}
                     required 
                     value={formCommand} 
                     onChange={e => setFormCommand(e.target.value)} 
@@ -498,6 +637,9 @@ export function TaskModal({
                          disabled={!!editingJobInitial}
                          value={formProfileName} 
                          onChange={e => setFormProfileName(e.target.value)} 
+                         autoCapitalize="none"
+                         autoCorrect="off"
+                         spellCheck={false}
                          className="terminal-light" 
                          placeholder="e.g. default, coder" 
                          style={{ width: '100%', padding: '12px', fontSize: 13, fontFamily: 'var(--font-mono)' }} 
@@ -524,16 +666,16 @@ export function TaskModal({
                    </div>
                 </div>
              </div>
-             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: '2.5rem' }}>
-                <button type="button" onClick={onClose} style={{ background: 'transparent', color: 'var(--ink-black)', border: 'none', padding: '10px 24px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontWeight: 700, textTransform: 'uppercase' }}>Cancel</button>
-                <button type="submit" disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--ink-black)', color: "var(--bg-surface)", border: 'none', padding: '10px 32px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontWeight: 700, textTransform: 'uppercase' }}>
+             {/* Pinned to the bottom of the scrolling modal so Save is always reachable. */}
+             <div style={{ position: 'sticky', bottom: 0, zIndex: 2, background: 'var(--vellum-bg)', borderTop: '1px solid var(--etched-border)', display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', margin: `2.5rem calc(-1 * ${FORM_GUTTER}) 0`, padding: `14px ${FORM_GUTTER}` }}>
+                <button type="button" onClick={onClose} style={{ background: 'transparent', color: 'var(--ink-black)', border: 'none', padding: '10px 24px', minHeight: 44, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontWeight: 700, textTransform: 'uppercase' }}>Cancel</button>
+                <button type="submit" disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--ink-black)', color: "var(--bg-surface)", border: 'none', padding: '10px 32px', minHeight: 44, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontWeight: 700, textTransform: 'uppercase' }}>
                   {saving && <Loader2 size={14} className="animate-spin" />}
-                  {saving ? 'Transmitting...' : (editingJobInitial ? 'Update Task' : 'Commit Tasks')}
+                  {saving ? 'Saving…' : 'Save task'}
                 </button>
              </div>
           </form>
-         </div>
-      </div>
+      </TaskDialogFrame>
     </SafePortal>
   );
 }

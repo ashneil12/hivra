@@ -4,8 +4,14 @@ import { clerkClient } from "@clerk/nextjs/server";
 
 import { GET, POST } from "../route";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-orchestrator";
+import type { InFlightUpdateGateReport } from "@/lib/services/inflight-update-gate";
+import {
+  OPERATOR_LIVE_UPDATE,
+  systemLiveUpdate,
+} from "@/lib/services/live-update-initiator";
 import { FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 
 // The DB CHECK vocabulary for hermes_instances.lifecycle_state
 // (supabase/migrations/20260516123000_cold_storage_lifecycle.sql). Filtering on
@@ -26,6 +32,44 @@ jest.mock("@/lib/services/instance-orchestrator", () => ({
   applyLiveUpdate: jest.fn(),
   resolveInstanceIpv4: jest.fn(),
 }));
+
+const FLEET_SYNC = systemLiveUpdate("fleet_sync");
+
+function launched(initiator = OPERATOR_LIVE_UPDATE) {
+  return { applied: true as const, initiator, inFlightGate: null };
+}
+
+function busyGate(deferrals: number): InFlightUpdateGateReport {
+  return {
+    action: "defer",
+    verdict: "busy",
+    reason: "in_flight_turn",
+    trigger: "fleet_sync",
+    liveTurns: 1,
+    unreadableMarkers: 0,
+    gatewayActive: 0,
+    gatewayUnknown: 0,
+    deferrals,
+    streakSeconds: 60,
+  };
+}
+
+// The gate could not tell (stale or unreadable gateway state while it runs):
+// fleet sync defers on it, but nothing says a turn is running.
+function unverifiedGate(deferrals: number): InFlightUpdateGateReport {
+  return {
+    action: "defer",
+    verdict: "unknown",
+    reason: "turn_state_unknown",
+    trigger: "fleet_sync",
+    liveTurns: 0,
+    unreadableMarkers: 0,
+    gatewayActive: 0,
+    gatewayUnknown: 1,
+    deferrals,
+    streakSeconds: 0,
+  };
+}
 
 function request(body: unknown, authorization = "Bearer expected-secret") {
   return new NextRequest("http://localhost/api/cron/redeploy-webui-instances", {
@@ -66,7 +110,7 @@ describe("POST /api/cron/redeploy-webui-instances", () => {
       },
     } as never);
     mockedResolveInstanceIpv4.mockResolvedValue("10.250.20.98");
-    mockedApplyLiveUpdate.mockResolvedValue({ applied: true });
+    mockedApplyLiveUpdate.mockResolvedValue(launched());
   });
 
   afterEach(() => {
@@ -137,17 +181,21 @@ describe("POST /api/cron/redeploy-webui-instances", () => {
     expect(mockedResolveInstanceIpv4).toHaveBeenCalledWith(webuiRow, supabaseAdmin);
     expect(mockedResolveInstanceIpv4).toHaveBeenCalledWith(gatewayRow, supabaseAdmin);
     expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(2);
+    // A targeted POST is an operator rescue: it recreates now, without the
+    // in-flight turn gate the scheduled sweep uses.
     expect(mockedApplyLiveUpdate).toHaveBeenCalledWith(
       webuiRow,
       "10.250.20.98",
       expect.any(Object),
       supabaseAdmin,
+      { initiator: OPERATOR_LIVE_UPDATE },
     );
     expect(mockedApplyLiveUpdate).toHaveBeenCalledWith(
       gatewayRow,
       "10.250.20.98",
       expect.any(Object),
       supabaseAdmin,
+      { initiator: OPERATOR_LIVE_UPDATE },
     );
     expect(body.data).toMatchObject({
       requested: 2,
@@ -228,6 +276,7 @@ describe("POST /api/cron/redeploy-webui-instances", () => {
     mockedApplyLiveUpdate.mockResolvedValueOnce({
       applied: false,
       error: "ssh failed with bearer super-secret-runtime-token",
+      initiator: OPERATOR_LIVE_UPDATE,
     });
 
     const response = await POST(request({ instanceIds: ["inst-webui"] }));
@@ -351,7 +400,7 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
       },
     } as never);
     mockedResolveInstanceIpv4.mockResolvedValue("10.250.21.55");
-    mockedApplyLiveUpdate.mockResolvedValue({ applied: true });
+    mockedApplyLiveUpdate.mockResolvedValue(launched(FLEET_SYNC));
   });
 
   afterEach(() => {
@@ -451,6 +500,134 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     expect(query.orderMock).toHaveBeenNthCalledWith(2, "id", { ascending: true });
     expect(query.orderMock).not.toHaveBeenCalledWith("last_synced_at", expect.anything());
     expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(2);
+    // The scheduled sweep is system-initiated, so every update passes the
+    // in-flight turn gate instead of recreating mid-turn.
+    for (const call of mockedApplyLiveUpdate.mock.calls) {
+      expect(call[4]).toEqual({ initiator: FLEET_SYNC });
+    }
+  });
+
+  it("defers a box with an agent turn in flight: not launched, not failed, requeued first for the next tick", async () => {
+    const query = fleetSelectQuery([
+      { id: "inst-busy", user_id: "user_a", name: "busy", backend: "gateway", gateway_url: "https://a.example" },
+      { id: "inst-idle", user_id: "user_b", name: "idle", backend: "gateway", gateway_url: "https://b.example" },
+    ]);
+    mockedSupabaseAdmin.from.mockReturnValue(query);
+    mockedApplyLiveUpdate.mockImplementation(async (row) =>
+      row.id === "inst-busy"
+        ? {
+            applied: false,
+            deferred: true,
+            reason: "deferred_busy",
+            error: "Deferred: an agent turn is in flight (deferral 1); the next run retries",
+            initiator: FLEET_SYNC,
+            inFlightGate: busyGate(1),
+          }
+        : launched(FLEET_SYNC),
+    );
+
+    const response = await GET(getRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ requested: 2, launched: 1, failed: 0, skipped: 0, deferred: 1 });
+    expect(body.data.results).toEqual(
+      expect.arrayContaining([
+        {
+          id: "inst-busy",
+          name: "busy",
+          success: false,
+          deferred: true,
+          deferrals: 1,
+          error: "deferred_busy",
+        },
+      ]),
+    );
+    // Both rows were stamped up front; only the deferred one is put back at the
+    // head of the queue (NULLS FIRST) so the next tick retries it.
+    expect(query.stampInMock).toHaveBeenNthCalledWith(1, "id", ["inst-busy", "inst-idle"]);
+    expect(query.updateMock).toHaveBeenCalledWith({ last_sync_attempt_at: null });
+    expect(query.stampInMock).toHaveBeenLastCalledWith("id", ["inst-busy"]);
+    // A deferral is routine, not a failure: no failure ops event.
+    expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("webui redeploy launch failed");
+  });
+
+  it("reports a deferral the gate could not verify as unverified, not as a turn in flight", async () => {
+    const query = fleetSelectQuery([
+      { id: "inst-busy", user_id: "user_a", name: "busy", backend: "gateway", gateway_url: "https://a.example" },
+      { id: "inst-unverified", user_id: "user_b", name: "unverified", backend: "gateway", gateway_url: "https://b.example" },
+    ]);
+    mockedSupabaseAdmin.from.mockReturnValue(query);
+    mockedApplyLiveUpdate.mockImplementation(async (row) =>
+      row.id === "inst-busy"
+        ? {
+            applied: false,
+            deferred: true,
+            reason: "deferred_busy",
+            error: "Deferred: an agent turn is in flight (deferral 1); the next run retries",
+            initiator: FLEET_SYNC,
+            inFlightGate: busyGate(1),
+          }
+        : {
+            applied: false,
+            deferred: true,
+            reason: "deferred_unverified",
+            error: "Deferred: the computer could not confirm that no agent turn is running (deferral 1); the next run retries",
+            initiator: FLEET_SYNC,
+            inFlightGate: unverifiedGate(1),
+          },
+    );
+    const info = jest.spyOn(log, "info");
+
+    const response = await GET(getRequest());
+    const body = await response.json();
+
+    // Both are deferrals (requeued, not failed), counted apart.
+    expect(body.data).toMatchObject({ requested: 2, launched: 0, failed: 0, deferred: 2, deferredUnverified: 1 });
+    expect(body.data.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "inst-busy", deferred: true, error: "deferred_busy" }),
+        expect.objectContaining({ id: "inst-unverified", deferred: true, error: "deferred_unverified" }),
+      ]),
+    );
+    expect(query.stampInMock).toHaveBeenLastCalledWith("id", ["inst-busy", "inst-unverified"]);
+    expect(info).toHaveBeenCalledWith(
+      "webui redeploy deferred: agent turn in flight",
+      expect.objectContaining({
+        instanceId: "inst-busy",
+        failureType: "webui_redeploy_deferred_busy",
+        verdict: "busy",
+        gateReason: "in_flight_turn",
+      }),
+    );
+    expect(info).toHaveBeenCalledWith(
+      "webui redeploy deferred: could not confirm no agent turn is running",
+      expect.objectContaining({
+        instanceId: "inst-unverified",
+        failureType: "webui_redeploy_deferred_unverified",
+        verdict: "unknown",
+        gateReason: "turn_state_unknown",
+        gatewayUnknown: 1,
+      }),
+    );
+    expect(info).not.toHaveBeenCalledWith(
+      "webui redeploy deferred: agent turn in flight",
+      expect.objectContaining({ instanceId: "inst-unverified" }),
+    );
+    info.mockRestore();
+  });
+
+  it("does not requeue anything when no box was deferred", async () => {
+    const query = fleetSelectQuery([
+      { id: "inst-a", user_id: "user_a", name: "agent-a", backend: "webui", gateway_url: "https://a.example" },
+    ]);
+    mockedSupabaseAdmin.from.mockReturnValue(query);
+
+    const response = await GET(getRequest());
+    const body = await response.json();
+
+    expect(body.data.deferred).toBe(0);
+    expect(query.updateMock).not.toHaveBeenCalledWith({ last_sync_attempt_at: null });
   });
 
   it("stamps the fairness cursor for every selected row BEFORE redeploying", async () => {
@@ -466,7 +643,7 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     });
     mockedApplyLiveUpdate.mockImplementation(async () => {
       callOrder.push("redeploy");
-      return { applied: true } as never;
+      return launched(FLEET_SYNC);
     });
 
     await GET(getRequest());

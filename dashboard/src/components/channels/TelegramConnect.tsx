@@ -82,6 +82,7 @@ const mono: React.CSSProperties = {
 };
 const inputStyle: React.CSSProperties = {
   width: "100%",
+  minHeight: 44,
   padding: "10px 12px",
   border: "1px solid var(--etched-border)",
   background: "rgba(255,255,255,0.04)",
@@ -99,10 +100,25 @@ const primaryBtn: React.CSSProperties = {
   letterSpacing: "0.1em",
   fontWeight: 800,
   padding: "11px 18px",
+  minHeight: 44,
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
   justifySelf: "start",
+};
+
+// On phones the Disconnect slot (and the Cancel that replaces it) takes its own row.
+const CONNECTED_CSS = `@media (max-width: 767px) { .telegram-disconnect-slot { flex-basis: 100%; justify-content: center; } }`;
+const cardButton: React.CSSProperties = {
+  fontSize: 10,
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  fontWeight: 800,
+  padding: "9px 14px",
+  minHeight: 40,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 7,
 };
 
 type Step = "token" | "pair-deeplink" | "pair-code" | "connecting";
@@ -490,6 +506,9 @@ function ConnectedCard({
   busy: boolean;
   onDisconnect: () => void;
 }) {
+  // Disconnect tears down the bot binding; re-pairing needs BotFather again.
+  const [confirming, setConfirming] = useState(false);
+  const handle = connectedUsername ? `@${connectedUsername}` : "this bot";
   return (
     <div
       style={{
@@ -500,6 +519,7 @@ function ConnectedCard({
         gap: 14,
       }}
     >
+      <style>{CONNECTED_CSS}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span
           style={{
@@ -529,43 +549,54 @@ function ConnectedCard({
             rel="noopener noreferrer"
             className="mono"
             style={{
+              ...cardButton,
               border: "1px solid var(--ink-black)",
               background: "var(--ink-black)",
               color: "var(--bg-surface)",
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              fontWeight: 800,
-              padding: "9px 14px",
               textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 7,
             }}
           >
             <ExternalLink size={13} /> Open in Telegram
           </a>
         ) : null}
-        <button
-          type="button"
-          onClick={onDisconnect}
-          disabled={busy}
-          className="mono"
-          style={{
-            border: "1px solid var(--etched-border)",
-            background: "transparent",
-            color: "#e06c5a",
-            fontSize: 10,
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            fontWeight: 800,
-            padding: "9px 14px",
-            cursor: busy ? "default" : "pointer",
-          }}
-        >
-          {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : "Disconnect"}
-        </button>
+        {/* Two-step disconnect: Cancel takes the Disconnect slot so a double tap cannot confirm. */}
+        {confirming ? (
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="mono telegram-disconnect-slot"
+            style={{ ...cardButton, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", cursor: "pointer" }}
+          >
+            Cancel
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={busy}
+            className="mono telegram-disconnect-slot"
+            style={{ ...cardButton, border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", cursor: busy ? "default" : "pointer" }}
+          >
+            {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : "Disconnect"}
+          </button>
+        )}
       </div>
+      {confirming ? (
+        <div style={{ border: "1px solid rgba(192,57,43,0.4)", background: "rgba(192,57,43,0.04)", padding: 14, display: "grid", gap: 10 }}>
+          <p style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55, margin: 0 }}>
+            Disconnect {handle}? Your agent stops answering on Telegram, and reconnecting needs a bot token from BotFather again.
+          </p>
+          <button
+            type="button"
+            onClick={() => { setConfirming(false); onDisconnect(); }}
+            disabled={busy}
+            className="mono"
+            style={{ ...cardButton, justifySelf: "start", border: "1px solid #c0392b", background: "transparent", color: "#e06c5a", cursor: busy ? "default" : "pointer" }}
+          >
+            Disconnect {handle}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -605,8 +636,12 @@ function TokenStep({
             if (e.key === "Enter") onContinue();
           }}
           placeholder="123456789:ABCdef…"
+          aria-label="Bot token"
           style={inputStyle}
           autoComplete="off"
+          autoCapitalize="none"
+          autoCorrect="off"
+          enterKeyHint="go"
           spellCheck={false}
         />
       </div>
@@ -663,6 +698,7 @@ function DeeplinkPairingStep({
               letterSpacing: "0.1em",
               fontWeight: 800,
               padding: "10px 16px",
+              minHeight: 44,
               textDecoration: "none",
               display: "inline-flex",
               alignItems: "center",
@@ -723,9 +759,13 @@ function CodePairingStep({
             if (e.key === "Enter") onSubmit();
           }}
           placeholder="ABCD2345"
+          aria-label="Pairing code"
           maxLength={12}
           spellCheck={false}
           autoComplete="off"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          enterKeyHint="go"
           style={{ ...inputStyle, letterSpacing: "0.18em", textTransform: "uppercase" }}
         />
       </div>
@@ -775,6 +815,10 @@ function ManualFallback({
             cursor: "pointer",
             justifySelf: "start",
             padding: 0,
+            minHeight: 40,
+            display: "inline-flex",
+            alignItems: "center",
+            textAlign: "left",
             textTransform: "none",
             letterSpacing: 0,
             fontSize: 12,
@@ -801,6 +845,8 @@ function ManualFallback({
             }}
             placeholder="123456789"
             inputMode="numeric"
+            enterKeyHint="go"
+            aria-label="Your Telegram user id"
             style={inputStyle}
           />
           <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55 }}>

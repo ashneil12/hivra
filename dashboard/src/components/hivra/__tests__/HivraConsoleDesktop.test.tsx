@@ -4,6 +4,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { consoleEncodingFor, HivraConsoleDesktop } from "../HivraConsoleDesktop";
+import { WorkspaceModalLayerProvider } from "@/components/workspace/WorkspaceModalLayerContext";
 import {
   activateNativeOmarchyDesktop,
   browserNativeDesktopDependencies,
@@ -292,6 +293,53 @@ describe("HivraConsoleDesktop", () => {
     rerender(<HivraConsoleDesktop computerId="windows-id" name="Windows" profile="windows" />);
     expect(screen.getByTitle("Windows Windows desktop")).toBe(frame);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("expands Windows in place, hiding the shell chrome, when element fullscreen is unavailable", async () => {
+    const launchUrl = "https://windows-canary.hermesos.cloud/guacamole/#/client/test?token=handoff";
+    fetchMock.mockImplementation(() => response(201, { success: true, data: { launchUrl } }));
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const layerChanges: boolean[] = [];
+    try {
+      const { rerender } = render(
+        <WorkspaceModalLayerProvider onActiveChange={(active) => layerChanges.push(active)}>
+          <nav><button type="button">Manage</button></nav>
+          <HivraConsoleDesktop computerId="windows-id" name="Windows" profile="windows" />
+        </WorkspaceModalLayerProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+      const frame = await screen.findByTitle("Windows Windows desktop");
+      const shell = screen.getByLabelText("Windows interactive desktop").parentElement!;
+      const manage = screen.getByText("Manage");
+      // No element fullscreen, so the copy points at the button rather than
+      // Escape, which the frame would swallow.
+      expect(screen.getByRole("button", { name: "Full screen" })).toHaveAttribute("title", "Expand desktop; Exit full screen returns here");
+      fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+      expect(shell).toHaveAttribute("data-immersive", "true");
+      expect(layerChanges.at(-1)).toBe(true);
+      expect(manage.closest("[inert]")).not.toBeNull();
+      expect(frame.closest("[inert]")).toBeNull();
+      expect(screen.queryByText(/Fullscreen is unavailable/)).not.toBeInTheDocument();
+      expect(screen.getByTitle("Windows Windows desktop")).toBe(frame);
+      fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+      expect(shell).not.toHaveAttribute("data-immersive");
+      expect(layerChanges.at(-1)).toBe(false);
+      expect(manage.closest("[inert]")).toBeNull();
+      // Leaving the Desktop tab never strands the shell with its chrome hidden.
+      fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+      expect(layerChanges.at(-1)).toBe(true);
+      rerender(
+        <WorkspaceModalLayerProvider onActiveChange={(active) => layerChanges.push(active)}>
+          <nav><button type="button">Manage</button></nav>
+          <HivraConsoleDesktop computerId="windows-id" name="Windows" profile="windows" active={false} />
+        </WorkspaceModalLayerProvider>,
+      );
+      expect(layerChanges.at(-1)).toBe(false);
+      expect(shell).not.toHaveAttribute("data-immersive");
+      expect(manage.closest("[inert]")).toBeNull();
+    } finally {
+      Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: undefined });
+    }
   });
 
   it.each([

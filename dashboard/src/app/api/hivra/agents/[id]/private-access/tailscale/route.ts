@@ -19,6 +19,7 @@ import {
   DEFAULT_TAILSCALE_LOGIN_SERVER,
   disconnectHivraTailscale,
   hivraPrivateAccessAuthority,
+  hivraPrivateAccessReason,
   isCompatibleHivraPrivateAccessAgent,
   normalizeTailscaleLoginServer,
   observeHivraTailscale,
@@ -144,8 +145,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   let connection: StoredConnection | null;
   try { connection = await loadConnection(id, owner.userId); }
   catch { return response({ success: false, error: "Private access is unavailable." }, 503); }
-  const compatible = isCompatibleHivraPrivateAccessAgent(owner.agent);
-  return response({ success: true, data: { supported: compatible,
+  // reason says why supported is false, so the panel can say "start this
+  // computer" rather than refuse an eligible Ubuntu computer outright.
+  const reason = hivraPrivateAccessReason(owner.agent);
+  return response({ success: true, data: { supported: reason === null, reason,
     pending: owner.agent.operation_kind === "private_access" && owner.agent.operation_id != null,
     connection: publicConnection(connection) } });
 }

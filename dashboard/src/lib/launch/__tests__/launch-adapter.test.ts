@@ -52,4 +52,22 @@ describe("bounded launch receipt reconciliation", () => {
     expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({ launchRequestId: requestId });
     expect(findHivraLaunchReceipt).toHaveBeenCalled();
   });
+
+  it.each([true, false])("sends the chosen Codex browser flag (%s) with its envelope", async browser => {
+    const codex = { ...accepted, type: "codex" as const, computer_profile: null, name: "Codex" };
+    jest.mocked(createAgent).mockResolvedValue(codex);
+    const resources = browser
+      ? { cpu: 1.5, ram: 3, maximumCpu: 2, maximumRam: 4 }
+      : { cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1 };
+
+    await expect(submitLaunchDraft({
+      resourceKind: "agent", profileId: "codex", name: "Codex", launchRequestId: requestId, resources, browser,
+    } as never, { mode: "hivra-managed" })).resolves.toEqual(codex);
+
+    expect(createAgent).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toEqual({
+      type: "codex", name: "Codex", ...resources, browser,
+      deployment: { mode: "hivra-managed" }, launchRequestId: requestId,
+    });
+  });
 });

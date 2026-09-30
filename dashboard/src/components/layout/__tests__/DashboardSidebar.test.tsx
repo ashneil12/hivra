@@ -9,6 +9,7 @@ import { MARKETING_COPY } from '@/lib/i18n';
 import { DashboardSidebar } from '../DashboardSidebar';
 import { useDashboardResources } from '../useDashboardResources';
 import type { DashboardResource } from '../dashboard-resources';
+import { recordVisit } from '@/lib/workspace/recents';
 
 jest.mock('next/navigation', () => ({ usePathname: jest.fn(), useRouter: jest.fn() }));
 jest.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'dark', setTheme: jest.fn() }) }));
@@ -27,6 +28,7 @@ const props = { userName: 'Test User', userEmail: 'test@example.com', resourceOw
 const push = jest.fn();
 const refresh = jest.fn();
 let viewportWidth = 1280;
+let coarsePointer = false;
 const mediaQueries = new Map<string, EventTarget>();
 
 function setViewportWidth(width: number) {
@@ -39,6 +41,7 @@ function setViewportWidth(width: number) {
 
 beforeEach(() => {
   viewportWidth = 1280;
+  coarsePointer = false;
   mediaQueries.clear();
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewportWidth });
   Object.defineProperty(window, 'matchMedia', {
@@ -49,6 +52,7 @@ beforeEach(() => {
         Object.defineProperties(list, {
           media: { value: query },
           matches: { get: () => {
+            if (query.includes('pointer: coarse')) return coarsePointer;
             const minimum = query.match(/min-width:\s*(\d+)px/);
             const maximum = query.match(/max-width:\s*(\d+)px/);
             return (!minimum || viewportWidth >= Number(minimum[1])) && (!maximum || viewportWidth <= Number(maximum[1]));
@@ -72,7 +76,7 @@ describe('DashboardSidebar', () => {
   it('starts expanded for a new preference and keeps work above secondary destinations', () => {
     render(<DashboardSidebar {...props} />);
     expect(screen.getByTitle('Collapse Sidebar')).toHaveAttribute('aria-expanded', 'true');
-    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Activity']);
+    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Capacity', 'Activity']);
     expect(screen.getByRole('link', { name: 'Applications' })).toHaveAttribute('href', '/dashboard/settings/applications');
     expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('href', '/dashboard/settings/help');
     expect(screen.queryByText('Install Hivra')).not.toBeInTheDocument();
@@ -90,7 +94,7 @@ describe('DashboardSidebar', () => {
     try {
       render(<DashboardSidebar {...props} />);
       const primary = within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link');
-      expect(primary.map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Activity']);
+      expect(primary.map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Capacity', 'Activity']);
       expect(screen.queryByRole('link', { name: 'Chat' })).not.toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     } finally {
@@ -112,23 +116,73 @@ describe('DashboardSidebar', () => {
     }
   });
 
-  it.each(['/dashboard/agent/desktop', '/dashboard/instances/same', '/dashboard/settings'])(
-    'keeps Home as the resume destination from %s', (pathname) => {
-      (usePathname as jest.Mock).mockReturnValue(pathname);
-      render(<DashboardSidebar {...props} />);
-      expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/dashboard');
-      fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
-      expect(screen.getByRole('link', { name: 'All agents and computers' })).toHaveAttribute('href', '/dashboard?runtimes=1');
-    },
-  );
+  // The resume at /dashboard follows the server shell flag, which self-host
+  // builds hide from the client, so the route decides, not the client flag.
+  it.each([
+    ['/dashboard/agent/desktop', '/dashboard?runtimes=1'],
+    ['/dashboard/instances/same', '/dashboard?runtimes=1'],
+    ['/dashboard/settings', '/dashboard'],
+  ])('sends Home and the brand from %s to %s with the client shell flag off', (pathname, href) => {
+    (usePathname as jest.Mock).mockReturnValue(pathname);
+    render(<DashboardSidebar {...props} />);
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', href);
+    expect(screen.getByRole('link', { name: 'Hivra home' })).toHaveAttribute('href', href);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    expect(screen.getByRole('link', { name: 'All agents and computers' })).toHaveAttribute('href', '/dashboard?runtimes=1');
+  });
 
-  it('closes mobile navigation when browsing all agents and computers', () => {
-    const onMobileClose = jest.fn();
-    render(<DashboardSidebar {...props} isMobileOpen onMobileClose={onMobileClose} />);
+  it('closes the switcher when browsing all agents and computers', () => {
+    render(<DashboardSidebar {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
     fireEvent.click(screen.getByRole('link', { name: 'All agents and computers' }));
-    expect(onMobileClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['/dashboard/agent/abc-123', '/dashboard?runtimes=1'],
+    ['/dashboard/instances/inst_1/console', '/dashboard?runtimes=1'],
+    ['/dashboard/settings', '/dashboard'],
+  ])('under the shell, sends Home from %s to %s so it cannot resume the runtime being left', (pathname, href) => {
+    process.env.NEXT_PUBLIC_HIVRA_WORKSPACE_SHELL_ENABLED = '1';
+    (usePathname as jest.Mock).mockReturnValue(pathname);
+    try {
+      render(<DashboardSidebar {...props} />);
+      expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', href);
+    } finally {
+      delete process.env.NEXT_PUBLIC_HIVRA_WORKSPACE_SHELL_ENABLED;
+    }
+  });
+
+  it('reports the attention count so the phone bar can badge More', () => {
+    const onAttentionCountChange = jest.fn();
+    (useDashboardResources as jest.Mock).mockReturnValue({ resources: [{ ...resources[0], status: 'error' }, resources[2]], loading: false, errors: { hermes: null, hivra: null }, refresh });
+    render(<DashboardSidebar {...props} onAttentionCountChange={onAttentionCountChange} />);
+    expect(onAttentionCountChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it('lets the shell open and close the switcher, refreshing once per open', () => {
+    const onSwitcherOpenChange = jest.fn();
+    const view = render(<DashboardSidebar {...props} switcherOpen={false} onSwitcherOpenChange={onSwitcherOpenChange} />);
+    expect(refresh).not.toHaveBeenCalled();
+    view.rerender(<DashboardSidebar {...props} switcherOpen onSwitcherOpenChange={onSwitcherOpenChange} />);
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Close switcher' }));
+    expect(onSwitcherOpenChange).toHaveBeenLastCalledWith(false);
+    view.rerender(<DashboardSidebar {...props} switcherOpen={false} onSwitcherOpenChange={onSwitcherOpenChange} />);
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    expect(onSwitcherOpenChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('labels the collapsed rail so touch tablets without tooltips can read it', () => {
+    window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
+    const { container } = render(<DashboardSidebar {...props} />);
+    const labels = [...container.querySelectorAll('.railLabel')].map((label) => label.textContent);
+    expect(labels).toEqual(['Search', 'Launch', 'Home', 'Computers', 'Agents', 'Capacity', 'Activity', 'Settings', 'Billing', 'Apps', 'Help']);
+    expect(screen.getByRole('link', { name: 'Capacity' })).toHaveAttribute('title', 'Capacity');
+    fireEvent.click(screen.getByTitle('Expand Sidebar'));
+    expect(container.querySelector('.railLabel')).not.toBeInTheDocument();
   });
 
   it('shows attention only for current, actionable resource signals', () => {
@@ -204,16 +258,7 @@ describe('DashboardSidebar', () => {
     expect(window.localStorage.getItem('hivra:dashboard:sidebar-expanded')).toBe('true');
   });
 
-  it('does not persist mobile drawer visibility over the desktop preference', () => {
-    window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
-    const view = render(<DashboardSidebar {...props} isMobileOpen />);
-    expect(screen.getByText('Home')).toBeVisible();
-    view.rerender(<DashboardSidebar {...props} isMobileOpen={false} />);
-    expect(screen.queryByText('Home')).not.toBeInTheDocument();
-    expect(window.localStorage.getItem('hivra:dashboard:sidebar-expanded')).toBe('false');
-  });
-
-  it('removes closed mobile drawer controls from accessibility even when a child is explicitly visible', () => {
+  it('keeps the sidebar and all of its controls out of reach on phones, where the bottom bar navigates', () => {
     const style = document.createElement('style');
     style.textContent = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
     document.head.append(style);
@@ -226,22 +271,33 @@ describe('DashboardSidebar', () => {
         ...rules.filter((rule) => rule.type === CSSRule.STYLE_RULE),
         ...Array.from(mobile.cssRules),
       ].map((rule) => rule.cssText).join('\n');
-      const view = render(<DashboardSidebar {...props} />);
+      render(<DashboardSidebar {...props} />);
       const theme = screen.getByTitle('Switch to light mode');
       theme.style.visibility = 'visible';
       expect(screen.queryByRole('button', { name: 'Toggle theme' })).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Home' })).not.toBeInTheDocument();
-
-      view.rerender(<DashboardSidebar {...props} isMobileOpen />);
-      expect(screen.getByRole('button', { name: 'Toggle theme' })).toBeVisible();
-      expect(screen.getByRole('link', { name: 'Home' })).toBeVisible();
-      expect(screen.getByRole('button', { name: 'Switch agent or computer' })).toHaveFocus();
-
-      view.rerender(<DashboardSidebar {...props} isMobileOpen={false} />);
-      expect(screen.queryByRole('button', { name: 'Toggle theme' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument();
     } finally {
       style.remove();
     }
+  });
+
+  it('shows switcher status on phones with a dot that desktop keeps hidden', () => {
+    const css = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
+    const mobile = css.slice(css.indexOf('@media (max-width: 767px)'));
+    expect(css).toContain('.resultDot { display: none; }');
+    expect(mobile.slice(0, mobile.indexOf('\n}'))).toContain('.resultDot { display: block; }');
+    expect(mobile.slice(0, mobile.indexOf('\n}'))).not.toContain('.resultStatus { display: none; }');
+    render(<DashboardSidebar {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    const option = screen.getAllByRole('option')[0];
+    expect(option.querySelector('.resultDot')).toHaveAttribute('data-state', 'running');
+    expect(option).toHaveTextContent('Running');
+    const input = screen.getByRole('combobox');
+    expect(input).toHaveAttribute('enterkeyhint', 'go');
+    expect(input).toHaveAttribute('autocapitalize', 'none');
+    expect(input).toHaveAttribute('autocorrect', 'off');
+    expect(input).toHaveAttribute('spellcheck', 'false');
   });
 
   it.each([
@@ -346,12 +402,12 @@ describe('DashboardSidebar', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('closes the mobile drawer with Escape and after a primary navigation selection', () => {
-    const onMobileClose = jest.fn();
-    render(<DashboardSidebar {...props} isMobileOpen onMobileClose={onMobileClose} />);
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Switch agent or computer' }), { key: 'Escape' });
+  it('closes the tablet overlay after a primary navigation selection', () => {
+    setViewportWidth(900);
+    render(<DashboardSidebar {...props} />);
+    fireEvent.click(screen.getByTitle('Expand Sidebar'));
     fireEvent.click(screen.getByRole('link', { name: 'Agents' }));
-    expect(onMobileClose).toHaveBeenCalledTimes(2);
+    expect(screen.getByTitle('Expand Sidebar')).toHaveAttribute('aria-expanded', 'false');
   });
 
   // The rail is a fixed flex column. Its only grow child (the resource list) was
@@ -371,9 +427,30 @@ describe('DashboardSidebar', () => {
     expect(rule('.footer > .navigation + .navigation')).toContain('border-top');
 
     const { container } = render(<DashboardSidebar {...props} />);
-    const footer = container.querySelector('aside')?.querySelector(':scope > .footer');
+    const footer = container.querySelector('aside')?.querySelector(':scope > .body > .footer');
     const groups = [...(footer?.querySelectorAll(':scope > nav') ?? [])];
     expect(groups.map((nav) => nav.getAttribute('aria-label'))).toEqual(['Manage', 'Applications and help']);
+  });
+
+  // The labelled touch-tablet rail and short windows are taller than the
+  // viewport. Only the body scrolls: scrolling the fixed aside itself clips the
+  // collapse toggle that overhangs the collapsed rail.
+  it('scrolls the rail body, not the aside, so the footer and the collapse toggle stay reachable', () => {
+    const css = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
+    const body = css.slice(css.indexOf('\n.body {'), css.indexOf('}', css.indexOf('\n.body {')));
+    for (const declaration of ['flex: 1 1 auto', 'flex-direction: column', 'min-height: 0', 'overflow-y: auto']) {
+      expect(body).toContain(declaration);
+    }
+    expect(css).not.toMatch(/\.sidebar\s*\{[^}]*overflow/);
+    expect(css).toContain('.collapsed .collapseButton { position: absolute; right: -16px;');
+
+    window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
+    const { container } = render(<DashboardSidebar {...props} />);
+    const scroller = container.querySelector('aside > .body');
+    expect(scroller).toContainElement(screen.getByRole('button', { name: 'Switch agent or computer' }));
+    expect(scroller).toContainElement(screen.getByRole('link', { name: 'Help' }));
+    expect(scroller).toContainElement(screen.getByTitle('Switch to light mode'));
+    expect(scroller).not.toContainElement(screen.getByTitle('Expand Sidebar'));
   });
 
   it('names the Billing link in English by the route name used everywhere', () => {
@@ -403,5 +480,94 @@ describe('DashboardSidebar', () => {
       fireEvent.click(screen.getByRole('button', { expanded: true, name: /侧/ }));
       expect(screen.getByRole('link', { name: '首页' })).toBeInTheDocument();
     } finally { jest.restoreAllMocks(); }
+  });
+
+  // ⌘K is the hot switch between agents: the one you were in before this is
+  // highlighted, so ⌘K then Enter goes back, and it reopens where you left it.
+  describe('Recent', () => {
+    /** Oldest first: the last uid named is the most recent. */
+    function opened(...visits: Array<[string, 'chat' | 'box' | 'desktop' | 'terminal']>) {
+      visits.forEach(([uid, tab], index) => recordVisit(uid, tab, { now: 1_000_000 + index }));
+    }
+    function openSwitcher() {
+      fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+      return screen.getByRole('combobox');
+    }
+
+    it('lists Recent first without the current resource, and highlights the previous one', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/desktop');
+      opened(['x-same', 'chat'], ['h-same', 'chat'], ['x-desktop', 'desktop']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      const groups = screen.getAllByRole('group');
+      expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Recent', 'Computers']);
+      expect(within(groups[0]).getAllByRole('option').map((option) => option.id)).toEqual([
+        screen.getAllByRole('option')[0].id, screen.getAllByRole('option')[1].id,
+      ]);
+      expect(within(groups[0]).getAllByRole('option')[0]).toHaveTextContent('Hermes');
+      expect(within(groups[0]).getAllByRole('option')[1]).toHaveTextContent('Codex');
+      const [previous] = screen.getAllByRole('option');
+      expect(previous).toHaveAttribute('aria-selected', 'true');
+      expect(input).toHaveAttribute('aria-activedescendant', previous.id);
+      // The current resource stays listed in its own group, marked.
+      const current = within(groups[1]).getByRole('option');
+      expect(current).toHaveAttribute('aria-current', 'true');
+      expect(current).toHaveTextContent("You're here");
+      expect(screen.getByText(/↵ back to Writer/)).toBeInTheDocument();
+    });
+
+    it('goes back to the previous resource on Enter, on the surface you left it on', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/desktop');
+      opened(['x-same', 'box'], ['x-desktop', 'desktop']);
+      render(<DashboardSidebar {...props} />);
+      fireEvent.keyDown(openSwitcher(), { key: 'Enter' });
+      expect(push).toHaveBeenCalledWith('/dashboard/agent/same?tab=box');
+    });
+
+    it('opens the nth Recent entry with a digit while nothing is typed', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      opened(['x-desktop', 'desktop'], ['x-same', 'chat'], ['h-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(screen.getAllByRole('option').slice(0, 3).map((option) => option.getAttribute('aria-keyshortcuts'))).toEqual(['1', '2', '3']);
+      expect(fireEvent.keyDown(input, { key: '3' })).toBe(false);
+      expect(push).toHaveBeenCalledWith('/dashboard/agent/desktop?tab=desktop');
+    });
+
+    // A touch screen shows no digit hints, and a search can start with a
+    // digit (a name like "2nd brain", or part of an id).
+    it('lets a digit type into the search on a touch screen, where no shortcut is shown', () => {
+      coarsePointer = true;
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      opened(['x-desktop', 'desktop'], ['x-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(screen.getAllByRole('option').some((option) => option.hasAttribute('aria-keyshortcuts'))).toBe(false);
+      expect(fireEvent.keyDown(input, { key: '1' })).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+      expect(screen.getByText(/Esc close/).textContent).not.toMatch(/recent/);
+    });
+
+    it('lets a digit type into the search once something is typed, or when there is no such entry', () => {
+      opened(['x-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(fireEvent.keyDown(input, { key: '4' })).toBe(true);
+      fireEvent.change(input, { target: { value: 'w' } });
+      expect(fireEvent.keyDown(input, { key: '1' })).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it('filters every group with the search', () => {
+      opened(['x-same', 'chat'], ['x-desktop', 'desktop']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      fireEvent.change(input, { target: { value: 'writer' } });
+      expect(screen.getAllByRole('group').map((group) => group.getAttribute('aria-label'))).toEqual(['Recent', 'Agents']);
+      expect(screen.getAllByRole('option')).toHaveLength(2);
+      fireEvent.change(input, { target: { value: 'ubuntu' } });
+      expect(screen.getAllByRole('group').map((group) => group.getAttribute('aria-label'))).toEqual(['Recent']);
+      expect(screen.getByRole('option')).toHaveTextContent('My desktop');
+    });
   });
 });

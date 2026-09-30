@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
 
 // This is build-generation provenance only. Vercel's authoritative deployment
 // createdAt is collected from `vercel inspect --json` during Plan 08 rather
@@ -151,6 +152,18 @@ const nextConfig: NextConfig = {
       "./provisioner/**/*",
       "./provisioner/.gitignore",
     ],
+    // The attach worker sends the pinned staging and lifecycle programs.
+    "/api/cron/progress-agent-attachments": [
+      "./provisioner/**/*",
+      "./provisioner/.gitignore",
+    ],
+    // The pinned server setup script. Its routes refuse to serve it if it is
+    // missing or hashes differently, so each one must carry it.
+    "/enroll": ["./bootstrap/server-enroll.sh"],
+    "/enroll/uninstall": ["./bootstrap/server-enroll.sh"],
+    "/enroll/script": ["./bootstrap/server-enroll.sh"],
+    "/enroll/script.sha256": ["./bootstrap/server-enroll.sh"],
+    "/api/infrastructure/server-enrollments": ["./bootstrap/server-enroll.sh"],
   },
   async redirects() {
     return [
@@ -162,6 +175,9 @@ const nextConfig: NextConfig = {
             "/blog/:path*",
             "/features/:path*",
             "/compare/:path*",
+            "/agents/:path*",
+            "/tools/:path*",
+            "/pricing",
             "/token",
             "/tokenomics",
             "/why-hivra/:path*",
@@ -171,6 +187,13 @@ const nextConfig: NextConfig = {
             permanent: false as const,
           }))
         : []),
+      // Legacy/intent URLs that the retired site served as permanent redirects
+      // and that search engines and old links still carry. The homepage FAQ
+      // section is id="faq".
+      { source: "/faq", destination: "/#faq", permanent: true },
+      { source: "/about", destination: "/why-hivra", permanent: true },
+      // Social cards cached from the retired site point at this static file.
+      { source: "/og-image.png", destination: "/opengraph-image", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
@@ -211,16 +234,13 @@ const nextConfig: NextConfig = {
         source: "/p/decide",
         destination: "https://us.i.posthog.com/decide",
       },
-      // Same-origin proxy for Clerk's pinned npm assets (clerk.browser.js +
-      // ui.browser.js and the named sub-chunks ui.browser.js fans out into —
-      // Clerk resolves those relative to its own URL, so the rewrite must
-      // cover the whole /npm/* dist path). cdn.jsdelivr.net times out for a
-      // slice of users every week and takes sign-in down with it; serving
-      // through our origin rides Vercel's edge instead.
-      {
-        source: "/clerk-assets/:path*",
-        destination: "https://cdn.jsdelivr.net/npm/:path*",
-      },
+      // Same-origin proxy for Clerk's pinned browser bundles and the lazy
+      // chunks they load from their own dist/ directory. cdn.jsdelivr.net
+      // times out for a slice of users every week and takes sign-in down with
+      // it; serving through our origin rides Vercel's edge instead. Scoped to
+      // the pinned @clerk/clerk-js and @clerk/ui dist/*.js files only: see
+      // src/lib/clerk-assets.ts.
+      ...clerkAssetRewrites(),
     ];
   },
   async headers() {
@@ -335,6 +355,8 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // After the document rule so this path keeps its own enforced policy.
+      clerkAssetHeaders,
       {
         source: "/sw.js",
         headers: [

@@ -48,6 +48,7 @@ export function ModalPicker({
   const dialogTitleId = `${baseId}-dialog-title`;
   const dialogDescriptionId = `${baseId}-dialog-description`;
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -93,8 +94,13 @@ export function ModalPicker({
       return;
     }
 
+    // Touch: focusing the search raised the keyboard and pushed the header and
+    // options off-screen, so touch focus lands on the dialog itself instead.
+    let finePointer = false;
+    try { finePointer = window.matchMedia?.('(pointer: fine)').matches ?? false; } catch { /* treat as touch */ }
     const focusTimer = window.setTimeout(() => {
-      searchInputRef.current?.focus();
+      if (finePointer) searchInputRef.current?.focus();
+      else dialogRef.current?.focus({ preventScroll: true });
     }, 10);
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -118,7 +124,7 @@ export function ModalPicker({
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <label id={labelId} className="mono" style={{ display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 600, opacity: 0.8 }}>
+        <label id={labelId} className="mono" style={{ display: 'block', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 600, opacity: 0.8 }}>
           {label}
           {loading && <Loader2 size={10} style={{ display: 'inline', marginLeft: 4, animation: 'spin 1s linear infinite' }} />}
         </label>
@@ -157,34 +163,36 @@ export function ModalPicker({
       {open && (
         <SafePortal>
           <div
+            className="hivra-modal-picker-overlay"
             style={{
               position: 'fixed',
               inset: 0,
               zIndex: 9999,
               display: 'flex',
-              alignItems: 'center',
               justifyContent: 'center',
               background: 'rgba(0,0,0,0.4)',
               backdropFilter: 'blur(4px)',
-              padding: 20,
             }}
             onClick={closeDialog}
           >
             <div
+              ref={dialogRef}
               role="dialog"
               aria-modal="true"
+              tabIndex={-1}
               aria-labelledby={dialogTitleId}
               aria-describedby={dialogDescription ? dialogDescriptionId : undefined}
               style={{
                 width: '100%',
                 maxWidth: 560,
-                maxHeight: 'calc(100vh - 40px)',
+                maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
                 background: 'var(--bg-surface)',
                 border: '1px solid var(--ink-black)',
                 boxShadow: '8px 8px 0px var(--ink-black)',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
+                outline: 'none',
               }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -199,7 +207,7 @@ export function ModalPicker({
                     </p>
                   )}
                 </div>
-                <button type="button" onClick={closeDialog} aria-label={`Close ${dialogTitle || label}`} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                <button type="button" onClick={closeDialog} aria-label={`Close ${dialogTitle || label}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 44, minHeight: 44, marginRight: -12, flexShrink: 0, background: 'transparent', border: 'none', borderRadius: 0, cursor: 'pointer', color: 'var(--text-muted)' }}>
                   <X size={18} />
                 </button>
               </div>
@@ -209,7 +217,13 @@ export function ModalPicker({
                   <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                   <input
                     ref={searchInputRef}
-                    type="text"
+                    type="search"
+                    className="hivra-search-input"
+                    enterKeyHint="search"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-label={searchPlaceholder}
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder={searchPlaceholder}

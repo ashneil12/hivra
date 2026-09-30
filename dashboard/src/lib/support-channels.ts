@@ -15,7 +15,7 @@
 export const SUPPORT_DISCORD_URL = "https://discord.gg/tDQZq8479F";
 
 /** Monitored support inbox (matches DashboardSidebar + CancelSaveFlow). */
-export const SUPPORT_EMAIL = "info@hermesos.cloud";
+export const SUPPORT_EMAIL = "info@hivra.cloud";
 
 export interface ReportProblemContext {
   /** Short summary used as the mailto subject, e.g. "Agent failed to start". */

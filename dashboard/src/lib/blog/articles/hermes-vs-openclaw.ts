@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent and OpenClaw are both open-source autonomous AI agents. An honest comparison of their architecture, memory systems, skill ecosystems, security models, and which makes sense for your workflow.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-24",
   readingTimeMin: 13,
   author: "Hivra team",
   tagline: "Two approaches to the same problem. Different bets.",
@@ -49,7 +49,7 @@ export const article: BlogArticle = {
       heading: "Security: the ClawHavoc incident",
       paragraphs: [
         "Both frameworks use the agentskills.io standard for custom tool capabilities, which means their ecosystems are technically interoperable — a Clawhub skill can be loaded into a Hermes instance. The security posture of the Clawhub marketplace is worth taking seriously before doing that.",
-        "In February 2026, Bitsight researchers identified over 30,000 OpenClaw instances exposed to the public internet without authentication, many due to misconfigured reverse proxies. CVE-2026-25253 documented a one-click remote code execution flaw. Separately, security researchers at Immersive Labs and MITRE documented a coordinated supply chain attack — dubbed ClawHavoc — in which hundreds of malicious skills designed as info-stealers were published to Clawhub before the marketplace had systematic security review in place.",
+        "Between 27 January and 8 February 2026, Bitsight researchers counted more than 30,000 OpenClaw instances exposed to the public internet, and found that trivially weak tokens were accepted on exposed gateways. CVE-2026-25253 documented a one-click remote code execution flaw, patched in OpenClaw 2026.1.29. Separately, security researchers at Immersive Labs and MITRE documented a coordinated supply chain attack — dubbed ClawHavoc — in which hundreds of malicious skills designed as info-stealers were published to Clawhub before the marketplace had systematic security review in place.",
         "Hermes Agent's 40+ core tools are maintained and audited by the Nous Research team. The framework is not affected by CVE-2026-25253. When pulling community skills from Clawhub into Hermes, the same vetting discipline applies regardless: read the source, review what API access the skill requests, and run it in a sandboxed environment before granting it production-level permissions.",
       ],
     },
@@ -72,7 +72,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "OpenClaw wins if you prefer Node.js, want the native desktop and mobile apps, or benefit from an enormous community for troubleshooting. For users whose work is primarily novel or one-off tasks, the reactive tool-chaining model is entirely adequate.",
         "Hermes wins if your work involves structured, recurring tasks where an agent that improves through experience creates real value. The skill-learning system, three-tier memory architecture, and the Hermes model family's task reliability are meaningfully better for this use case. Because Hermes can pull skills from Clawhub, you get the same tool ecosystem breadth without losing Hermes's architectural advantages.",
-        "Practically: for an easy-to-install application with broad community UIs, OpenClaw is simpler. For a server-side agent running repetitive workflows and improving reliability over time, Hermes is the stronger choice.",
+        "Practically: for an easy-to-install application with broad community UIs, OpenClaw is simpler. For a server-side agent running repetitive workflows and improving reliability over time, Hermes is the stronger choice. Weighing OpenClaw against a dashboard-style agent instead? We compared it with Agent Zero in [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting).",
       ],
     },
   ],
@@ -100,6 +100,7 @@ export const article: BlogArticle = {
   ],
   relatedArticles: [
     { slug: "what-is-hermes-agent", title: "What is Hermes Agent? A plain-English explanation" },
+    { slug: "agent-zero-vs-openclaw-hosting", title: "Agent Zero vs OpenClaw hosting: requirements, costs, and which to run" },
     { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },
     { slug: "persistent-memory-explained", title: "How persistent memory works in AI agents" },
   ],

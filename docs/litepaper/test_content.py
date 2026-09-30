@@ -9,6 +9,7 @@ them inside its own article. This catches the former first-paragraph-only
 renderer even when the page still builds and displays every product name.
 """
 
+import hashlib
 import re
 import unittest
 from collections import Counter
@@ -21,6 +22,19 @@ from urllib.parse import unquote, urlsplit
 
 REPO = Path(__file__).resolve().parents[2]
 PAGE = REPO / "docs/litepaper/index.html"
+# Same-origin files the Next.js app serves at the site root, which the page
+# links by site-root path. Kept separate from build.py so the test checks it.
+SITE_ROOT_FILES = {
+    "/favicon.ico": REPO / "dashboard/src/app/favicon.ico",
+    "/apple-icon.png": REPO / "dashboard/src/app/apple-icon.png",
+    "/brand/hivra-icon-192.png": REPO / "dashboard/public/brand/hivra-icon-192.png",
+    "/images/home/monolith-900.webp": REPO / "dashboard/public/images/home/monolith-900.webp",
+    "/images/home/monolith-1600.webp": REPO / "dashboard/public/images/home/monolith-1600.webp",
+}
+# App pages, not files: Launch is a route the app serves.
+SITE_ROUTES = {"/dashboard/launch"}
+AGENT_LAUNCH = "/dashboard/launch?kind=agent&start=1"
+COMPUTER_LAUNCH = "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop"
 VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
     "meta", "param", "source", "track", "wbr",
@@ -131,6 +145,11 @@ def slug(value):
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
+def picture_fallback(picture):
+    """The PNG a <picture> falls back to."""
+    return next(child.attrs["src"] for child in picture.children if isinstance(child, Element) and child.tag == "img")
+
+
 class LitepaperContentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -139,13 +158,15 @@ class LitepaperContentTests(unittest.TestCase):
         cls.by_id = {node.attrs["id"]: node for node in cls.page.elements if "id" in node.attrs}
 
     def test_source_matches_current_user_approved_wording_byte_for_byte(self):
-        # This immutable review snapshot is the current approved wording
-        # contract. Rendering edited source faithfully must not conceal an
-        # unapproved copy change. Replace the snapshot only with new user copy.
-        approved = REPO / "docs/litepaper/review/20-user-final-litepaper.md"
+        # The build pin in stage-litepaper.mjs is the approved wording contract.
+        # Rendering edited source faithfully must not conceal an unapproved copy
+        # change. Re-pin only to new user-approved copy.
+        stage = (REPO / "dashboard/scripts/stage-litepaper.mjs").read_text(encoding="utf-8")
+        pin = re.search(r"APPROVED_SOURCE_SHA256 = '([0-9a-f]{64})'", stage)
+        self.assertIsNotNone(pin, "stage-litepaper.mjs must pin the approved LITEPAPER.md")
         self.assertEqual(
-            (REPO / "LITEPAPER.md").read_bytes(),
-            approved.read_bytes(),
+            hashlib.sha256((REPO / "LITEPAPER.md").read_bytes()).hexdigest(),
+            pin[1],
             "LITEPAPER.md differs from the current user-approved wording",
         )
 
@@ -156,6 +177,43 @@ class LitepaperContentTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(homepage_links), 3)
         self.assertTrue(any("Back to Hivra" in node.text() for node in homepage_links))
+
+    def test_shared_links_get_a_title_description_image_and_the_official_x_account(self):
+        meta = {}
+        for node in self.page.elements:
+            if node.tag == "meta":
+                key = node.attrs.get("property") or node.attrs.get("name")
+                if key:
+                    meta[key] = node.attrs.get("content")
+        title = next(node for node in self.page.elements if node.tag == "title").text().strip()
+        self.assertEqual(meta["og:title"], title)
+        self.assertEqual(meta["og:description"], meta["description"])
+        self.assertEqual(meta["og:type"], "website")
+        self.assertEqual(meta["og:url"], "https://hivra.cloud/docs/litepaper/index.html")
+        self.assertEqual(meta["twitter:card"], "summary_large_image")
+        self.assertEqual(meta["twitter:site"], "@HivraOS")
+        # The share image is absolute and names a committed litepaper asset.
+        image = urlsplit(meta["og:image"])
+        self.assertEqual((image.scheme, image.netloc), ("https", "hivra.cloud"))
+        self.assertTrue(image.path.startswith("/docs/litepaper/assets/"))
+        asset = REPO / image.path.lstrip("/")
+        self.assertTrue(asset.is_file(), "Missing share image: " + meta["og:image"])
+        header = asset.read_bytes()[:24]
+        self.assertEqual(
+            (int(meta["og:image:width"]), int(meta["og:image:height"])),
+            (int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")),
+        )
+        self.assertTrue(meta["og:image:alt"])
+
+    def test_the_tab_shows_the_app_favicon(self):
+        icons = {
+            node.attrs.get("rel"): node.attrs.get("href")
+            for node in self.page.elements if node.tag == "link" and "icon" in node.attrs.get("rel", "")
+        }
+        self.assertEqual(icons.get("icon"), "/favicon.ico")
+        self.assertEqual(icons.get("apple-touch-icon"), "/apple-icon.png")
+        for href in icons.values():
+            self.assertTrue(SITE_ROOT_FILES[href].is_file(), "Missing app file: " + href)
 
     def test_standalone_tokenomics_preserves_the_complete_economy_wording(self):
         expected = "# Hivra tokenomics\n\n" + section(
@@ -170,6 +228,70 @@ class LitepaperContentTests(unittest.TestCase):
     def assert_content(self, blocks, element, label):
         missing = missing_blocks(blocks, element.text())
         self.assertFalse(missing, label + " lost source copy:\n" + "\n".join(missing))
+
+    def test_positioning_and_open_source_come_before_the_founder_letter(self):
+        order = [node.attrs["id"] for node in self.page.elements if node.tag == "section" and node.attrs.get("id")]
+        self.assertEqual(order[:6], ["beginning", "opportunity", "threat", "fit", "platform", "founder"])
+        table = next(node for node in self.page.elements if node.tag == "table")
+        self.assertIn("Hivra", table.text())
+        cover = self.by_id["beginning"]
+        self.assertIn("Open source", cover.text())
+
+    def test_the_reader_can_launch_from_the_dock_and_the_finale(self):
+        def links(element):
+            found = [element] if element.tag == "a" else []
+            for child in element.children:
+                if isinstance(child, Element):
+                    found += links(child)
+            return found
+        dock = next(node for node in self.page.elements if "chapter-dock" in node.attrs.get("class", "").split())
+        finale = self.by_id["somewhere-better"]
+        self.assertIn((AGENT_LAUNCH, "Launch an agent"), [(a.attrs.get("href"), a.text().strip()) for a in links(dock)])
+        finale_links = [(a.attrs.get("href"), a.text().strip()) for a in links(finale)]
+        self.assertEqual(finale_links[:2], [(AGENT_LAUNCH, "Launch an agent"), (COMPUTER_LAUNCH, "Start with a computer")])
+        # The approved closing links stay, after the launch actions.
+        self.assertIn("Visit Hivra", [text for _href, text in finale_links[2:]])
+
+    def test_the_brand_mark_is_the_approved_logo(self):
+        marks = [node for node in self.page.elements if "brand-mark" in node.attrs.get("class", "").split()]
+        self.assertEqual(len(marks), 5)
+        for mark in marks:
+            self.assertEqual((mark.tag, mark.attrs.get("src"), mark.attrs.get("alt")), ("img", "/brand/hivra-icon-192.png", ""))
+
+    def test_the_monolith_is_served_as_webp_with_the_png_as_fallback(self):
+        pictures = [node for node in self.page.elements if node.tag == "picture" and "monolith" in picture_fallback(node)]
+        self.assertEqual(len(pictures), 3, "hero, gallery and finale")
+        for picture in pictures:
+            source, image = [child for child in picture.children if isinstance(child, Element)]
+            self.assertEqual((source.tag, source.attrs.get("type")), ("source", "image/webp"))
+            self.assertEqual(
+                [candidate.split()[0] for candidate in source.attrs["srcset"].split(",")],
+                ["/images/home/monolith-900.webp", "/images/home/monolith-1600.webp"],
+            )
+            self.assertEqual((image.tag, image.attrs.get("src")), ("img", "assets/boundary-monolith-v5.png"))
+        preload = next(node for node in self.page.elements if node.tag == "link" and node.attrs.get("rel") == "preload" and node.attrs.get("as") == "image")
+        self.assertEqual(preload.attrs.get("imagesrcset"), pictures[0].children[0].attrs["srcset"])
+
+    def test_the_generated_renders_are_served_as_webp_with_the_png_as_fallback(self):
+        pictures = [node for node in self.page.elements if node.tag == "picture" and "monolith" not in picture_fallback(node)]
+        self.assertEqual([picture_fallback(picture) for picture in pictures], [
+            "assets/agent-computer-opportunity-v2.png",
+            "assets/observable-run-v2.png",
+            "assets/agent-computer-hero-v2.png",
+        ])
+        for picture in pictures:
+            source, image = [child for child in picture.children if isinstance(child, Element)]
+            stem = image.attrs["src"].removesuffix(".png")
+            self.assertEqual((source.tag, source.attrs.get("type")), ("source", "image/webp"))
+            self.assertEqual(source.attrs["srcset"], f"{stem}-768.webp 768w, {stem}-1536.webp 1536w")
+            self.assertEqual(source.attrs.get("sizes"), "(max-width: 999px) 100vw, 46vw")
+            self.assertEqual((image.tag, image.attrs.get("loading")), ("img", "lazy"))
+            self.assertEqual((image.attrs.get("width"), image.attrs.get("height")), ("1536", "1024"))
+            self.assertTrue(image.attrs.get("alt"))
+
+    def test_the_share_image_stays_a_png(self):
+        tag = next(node for node in self.page.elements if node.tag == "meta" and node.attrs.get("property") == "og:image")
+        self.assertEqual(tag.attrs["content"], "https://hivra.cloud/docs/litepaper/assets/boundary-monolith-v5.png")
 
     def test_every_reader_block_survives(self):
         mains = [node for node in self.page.elements if node.tag == "main"]
@@ -188,10 +310,10 @@ class LitepaperContentTests(unittest.TestCase):
                 self.assertIsNotNone(article, "Missing product article: " + name)
                 self.assert_content(blocks, article, name)
 
-    def test_all_fourteen_token_utility_explanations_stay_in_their_articles(self):
+    def test_all_twelve_token_utility_explanations_stay_in_their_articles(self):
         economy = section(self.markdown, "The economy", 2)
         utilities = list(named_entries(section(economy, "What it's for", 3)))
-        self.assertEqual(len(utilities), 14, "The complete source has 14 token utilities")
+        self.assertEqual(len(utilities), 12, "The complete source has 12 token utilities")
         rendered = [node for node in self.page.elements if "token-utility" in node.attrs.get("class", "").split()]
         self.assertEqual(len(rendered), len(utilities))
         for name, blocks in utilities:
@@ -204,15 +326,26 @@ class LitepaperContentTests(unittest.TestCase):
         ids = [node.attrs["id"] for node in self.page.elements if "id" in node.attrs]
         duplicates = [value for value, count in Counter(ids).items() if count > 1]
         self.assertFalse(duplicates, "Duplicate navigation targets: " + repr(duplicates))
-        for node in self.page.elements:
+        def urls(node):
             for attribute in ("href", "src", "poster"):
-                value = node.attrs.get(attribute)
-                if not value:
-                    continue
+                if node.attrs.get(attribute):
+                    yield attribute, node.attrs[attribute]
+            for attribute in ("srcset", "imagesrcset"):
+                for candidate in (node.attrs.get(attribute) or "").split(","):
+                    if candidate.strip():
+                        yield attribute, candidate.split()[0]
+        for node in self.page.elements:
+            for attribute, value in urls(node):
                 if value == "/":
                     continue
                 target = urlsplit(value)
                 if target.scheme or target.netloc:
+                    continue
+                if target.path in SITE_ROOT_FILES:
+                    with self.subTest(tag=node.tag, attribute=attribute, url=value):
+                        self.assertTrue(SITE_ROOT_FILES[target.path].is_file(), "Missing app file: " + value)
+                    continue
+                if target.path in SITE_ROUTES:
                     continue
                 with self.subTest(tag=node.tag, attribute=attribute, url=value):
                     resolved = (PAGE.parent / unquote(target.path)).resolve() if target.path else PAGE

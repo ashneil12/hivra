@@ -15,6 +15,7 @@ import {
 import { validateConsoleAccess } from "@/lib/services/console-helpers";
 import { isSshWarmupError, SSH_WARMUP_MESSAGE } from "@/lib/ssh-warmup";
 import { isWebfreeBackend } from "@/lib/types/instance";
+import { GUEST_IDENTITY_REFUSED_MESSAGE, GUEST_SSH_REFUSED_MARKER } from "@/lib/proxmox/hermes-guest-ssh";
 
 const WEBUI_EXEC_USER = "1024:1024";
 const WEBUI_NOUS_START_TIMEOUT_MS = 30_000;
@@ -53,7 +54,11 @@ function buildWebUINousStartFailureDetails(result: SshCommandResult) {
   const commandExitMatch = rawMessage.match(/command exited with code\s+(\d+)/i);
   let failureCategory = "unknown";
 
-  if (normalized.includes("no such container") || normalized.includes("is not running")) {
+  // Checked first: a refused guest identity check can follow a guest agent
+  // error such as "QEMU guest agent is not running", which is not the runtime.
+  if (`${result.stderr || ""}\n${result.error || ""}`.includes(GUEST_SSH_REFUSED_MARKER)) {
+    failureCategory = "guest_identity_refused";
+  } else if (normalized.includes("no such container") || normalized.includes("is not running")) {
     failureCategory = "container_unavailable";
   } else if (
     normalized.includes("no module named 'hermes_cli'") ||
@@ -98,6 +103,10 @@ function classifyWebUINousStartFailure(result: SshCommandResult) {
       message: SSH_WARMUP_MESSAGE,
       details,
     };
+  }
+
+  if (details.failureCategory === "guest_identity_refused") {
+    return { status: 503, message: GUEST_IDENTITY_REFUSED_MESSAGE, details };
   }
 
   if (details.failureCategory === "container_unavailable") {
@@ -157,7 +166,7 @@ export async function POST(
       const result = await sshExec(
         access.hostIp,
         buildNousStartCommand(id, WEBUI_EXEC_USER, WEBUI_HERMES_HOME),
-        { timeoutMs: WEBUI_NOUS_START_TIMEOUT_MS }
+        { timeoutMs: WEBUI_NOUS_START_TIMEOUT_MS, proxmoxHostConfig: access.proxmoxHostConfig ?? null }
       );
 
       if (!result.ok) {

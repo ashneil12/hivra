@@ -3,7 +3,8 @@ import path from "node:path";
 
 import { loadEnvConfig } from "@next/env";
 
-import { CURATED_SKILLS } from "../src/data/curated-skills";
+import { CURATED_SKILLS, type CuratedSkillEntry } from "../src/data/curated-skills";
+import { loadableSkillContent, SkillContentError, skillFrontmatterProblem } from "../src/lib/hivra/skill-file";
 
 loadEnvConfig(process.cwd());
 
@@ -81,19 +82,45 @@ async function fetchSkillContent(identifier: string): Promise<string> {
   throw new Error(`Fetch failed for ${identifier}: ${lastStatus}`);
 }
 
+/**
+ * The SKILL.md to vendor for a catalog skill from its upstream file: unchanged
+ * when Codex can load it, repaired when it has one of the broken shapes seen
+ * upstream (`repaired` names what was wrong), and refused with
+ * SkillContentError otherwise, so a broken upstream file never replaces
+ * working catalog content.
+ */
+export function vendoredSkillContent(
+  skill: Pick<CuratedSkillEntry, "identifier" | "installedAs" | "description">,
+  upstream: string
+): { content: string; repaired: string | null } {
+  const content = loadableSkillContent({ ...skill, content: upstream });
+  return { content, repaired: skillFrontmatterProblem(upstream) };
+}
+
 async function main() {
   const bankrSkills = CURATED_SKILLS.filter((skill) => skill.category === "bankr");
   let source = readFileSync(CATALOG_PATH, "utf8");
   let vendored = 0;
   let skipped = 0;
+  const refused: string[] = [];
 
   for (const skill of bankrSkills) {
     try {
-      const content = await fetchSkillContent(skill.identifier);
+      const { content, repaired } = vendoredSkillContent(skill, await fetchSkillContent(skill.identifier));
       source = patchSkillContent(source, skill.identifier, content);
       vendored += 1;
-      process.stdout.write(`[vendor-bankr-skills] vendored ${skill.identifier}\n`);
+      process.stdout.write(
+        `[vendor-bankr-skills] vendored ${skill.identifier}${repaired ? ` (repaired: ${repaired})` : ""}\n`
+      );
     } catch (err) {
+      if (err instanceof SkillContentError) {
+        refused.push(skill.identifier);
+        process.stderr.write(
+          `[vendor-bankr-skills] REFUSED ${skill.identifier}: Codex can't load the upstream SKILL.md ` +
+            `(${err.problem}) and no repair fixes it; kept the current catalog content\n`
+        );
+        continue;
+      }
       skipped += 1;
       process.stderr.write(
         `[vendor-bankr-skills] skipped ${skill.identifier}: ${err instanceof Error ? err.message : String(err)}\n`
@@ -102,7 +129,13 @@ async function main() {
   }
 
   writeFileSync(CATALOG_PATH, source, "utf8");
-  process.stdout.write(`[vendor-bankr-skills] updated ${vendored} Bankr skills; skipped ${skipped}\n`);
+  process.stdout.write(
+    `[vendor-bankr-skills] updated ${vendored} Bankr skills; skipped ${skipped}; refused ${refused.length}\n`
+  );
+  if (refused.length > 0) {
+    process.stderr.write(`[vendor-bankr-skills] refused: ${refused.join(", ")}\n`);
+    process.exitCode = 1;
+  }
 }
 
 if (require.main === module) {

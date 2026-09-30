@@ -20,6 +20,14 @@ function getConfiguredOpsAdmin(): { email: string | null; userId: string | null 
   };
 }
 
+/**
+ * Whether OPS_ADMIN_EMAILS names an admin, so a caller that only has a user ID
+ * can skip looking up that user's email when no email could match.
+ */
+export function isOpsAdminEmailConfigured(): boolean {
+  return getConfiguredOpsAdmin().email !== null;
+}
+
 export function isOpsAdminUser(identity: OpsAdminIdentity): boolean {
   const email = identity.email?.trim().toLowerCase() || null;
   const userId = identity.userId?.trim() || null;

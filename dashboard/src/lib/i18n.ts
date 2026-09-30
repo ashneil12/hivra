@@ -290,7 +290,7 @@ const BASE_MARKETING_COPY = {
       accessPrefix: "Three ways to access",
       footnote:
         "Save up to 40% paying with $HermesOS. Launch pricing for the first wave — rates may adjust as the platform matures.",
-      guarantee: "Free tier — try before you upgrade · 48-hr refund on card payments",
+      guarantee: "Free tier — try before you upgrade · 7-day money-back guarantee on card payments",
       tiers: [
         {
           name: "Free",
@@ -433,12 +433,6 @@ const BASE_MARKETING_COPY = {
     },
     getStarted: {
       loadingCheckout: "Redirecting to checkout...",
-      steps: {
-        choosePlan: "Choose Plan",
-        createAccount: "Create Account",
-        activate: "Activate",
-        payment: "Payment",
-      },
       badges: {
         free: "Always Free",
         paid: "7-Day Money-Back Guarantee",
@@ -471,7 +465,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "Best Fit",
       planGuidance: {
         free:
-          "Free is best for trying Hermes with one guarded starter agent. It sleeps after 4 idle days to keep costs down — a tap brings it back. Most users can launch without a card; higher-risk free-tier deploys may need card verification first.",
+          "Free is best for trying one small agent on Hivra Cloud. It sleeps after 4 idle days to keep costs down — a tap brings it back. Most users can launch without a card; some free launches need a card check first.",
         operator:
           "Pro is best for solo builders and daily drivers — your agent stays always-on (never paused for inactivity) with room for three running at once.",
         fleet:
@@ -496,7 +490,7 @@ const BASE_MARKETING_COPY = {
         home: "Home",
         computers: "Computers",
         agents: "Agents",
-        infrastructure: "Infrastructure",
+        infrastructure: "Capacity",
         collaboration: "Collaboration",
         settings: "Settings",
         launch: "Launch",
@@ -736,9 +730,9 @@ const BASE_MARKETING_COPY = {
         agentWallets: {
           ariaLabel: "Agent wallets",
           title: "Agent wallets.",
-          subtitle: "One wallet per agent · Bankr-managed · Base only",
+          subtitle: "One wallet per agent · Bankr · Base only",
           emptyNoAgents:
-            "Spin up your first agent and we'll provision a Bankr wallet for it automatically.",
+            "Launch an agent, then connect your own Bankr account to give it a wallet.",
           deployAgent: "Deploy an agent",
           runningEmpty: "Running agents will appear here.",
         },
@@ -827,7 +821,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "Unlimited",
           agents: "agents",
           active: "Active",
-          guarantee: "48-hour refund policy · Upgrade-only plans",
+          guarantee: "7-day money-back guarantee · Upgrade-only plans",
         },
         noSubscription: {
           title: "No plan yet",
@@ -1164,7 +1158,7 @@ const BASE_MARKETING_COPY = {
       accessPrefix: "访问方式：",
       footnote:
         "使用 $HermesOS 支付最高可省 40%。首批用户享启动价格，平台成熟后价格可能调整。",
-      guarantee: "免费层级 — 先试用再升级 · 刷卡付款 48 小时退款",
+      guarantee: "免费层级 — 先试用再升级 · 刷卡付款 7 天退款保证",
       tiers: [
         {
           name: "Free",
@@ -1302,12 +1296,6 @@ const BASE_MARKETING_COPY = {
     },
     getStarted: {
       loadingCheckout: "正在跳转到结账...",
-      steps: {
-        choosePlan: "选择计划",
-        createAccount: "创建账户",
-        activate: "激活",
-        payment: "付款",
-      },
       badges: {
         free: "始终免费",
         paid: "7 天退款保证",
@@ -1337,7 +1325,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "最佳适合",
       planGuidance: {
         free:
-          "Free 适合用一个受保护的 Agent 先试用 Hermes。大多数用户无需银行卡即可启动；风险较高的免费部署可能需要先完成银行卡验证。",
+          "Free 适合先在 Hivra Cloud 上试用一个小型 Agent。大多数用户无需银行卡即可启动；部分免费启动需要先完成银行卡验证。",
         operator:
           "Pro 适合独立开发者、黑客松项目，以及想快速上线一个 Agent 的用户。",
         fleet:
@@ -1362,7 +1350,7 @@ const BASE_MARKETING_COPY = {
         home: "首页",
         computers: "电脑",
         agents: "智能体",
-        infrastructure: "基础设施",
+        infrastructure: "容量",
         collaboration: "协作",
         settings: "设置",
         launch: "启动",
@@ -1592,8 +1580,8 @@ const BASE_MARKETING_COPY = {
         agentWallets: {
           ariaLabel: "Agent 钱包",
           title: "Agent 钱包。",
-          subtitle: "每个 Agent 一个钱包 · Bankr 管理 · 仅限 Base",
-          emptyNoAgents: "启动第一个 Agent 后，我们会自动为它配置 Bankr 钱包。",
+          subtitle: "每个 Agent 一个钱包 · Bankr · 仅限 Base",
+          emptyNoAgents: "启动一个 Agent，然后连接你自己的 Bankr 账户，为它配置钱包。",
           deployAgent: "部署 Agent",
           runningEmpty: "运行中的 Agent 会显示在这里。",
         },
@@ -1678,7 +1666,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "无限",
           agents: "个 Agent",
           active: "已启用",
-          guarantee: "48 小时退款政策 · 仅支持升级",
+          guarantee: "7 天退款政策 · 仅支持升级",
         },
         noSubscription: {
           title: "没有有效订阅",
@@ -2038,7 +2026,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Recomendado",
       "accessPrefix": "Tres formas de acceder",
       "footnote": "Ahorra hasta un 40% pagando con $HermesOS. Precios de lanzamiento para la primera ola — las tarifas pueden ajustarse conforme la plataforma madure.",
-      "guarantee": "Tier gratuito — prueba antes de actualizar · Reembolso de 48 h en pagos con tarjeta",
+      "guarantee": "Tier gratuito — prueba antes de actualizar · Reembolso en 7 días en pagos con tarjeta",
       "tiers": [
         {
           "name": "Free",
@@ -2209,12 +2197,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Redirigiendo al pago...",
-      "steps": {
-        "choosePlan": "Elige plan",
-        "createAccount": "Crear cuenta",
-        "activate": "Activar",
-        "payment": "Pago"
-      },
       "badges": {
         "free": "Siempre gratis",
         "paid": "Garantía de devolución de 7 días"
@@ -2263,7 +2245,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Inicio",
         "computers": "Ordenadores",
         "agents": "Agentes",
-        "infrastructure": "Infraestructura",
+        "infrastructure": "Capacidad",
         "collaboration": "Colaboración",
         "settings": "Configuración",
         "launch": "Lanzar",
@@ -2491,8 +2473,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Billeteras de agentes",
           "title": "Billeteras de agentes.",
-          "subtitle": "Una billetera por agente · Gestionada por Bankr · Solo Base",
-          "emptyNoAgents": "Inicia tu primer agente y le aprovisionaremos una billetera Bankr automáticamente.",
+          "subtitle": "Una billetera por agente · Bankr · Solo Base",
+          "emptyNoAgents": "Inicia un agente y conecta tu propia cuenta de Bankr para darle una billetera.",
           "deployAgent": "Desplegar agente",
           "runningEmpty": "Los agentes en ejecución aparecerán aquí."
         }
@@ -2577,7 +2559,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Activo",
-          "guarantee": "Política de reembolso de 48 horas · Solo actualizaciones"
+          "guarantee": "Política de reembolso de 7 días · Solo actualizaciones"
         },
         "noSubscription": {
           "title": "Sin suscripción activa"
@@ -2890,7 +2872,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Recomendado",
       "accessPrefix": "Três formas de acessar",
       "footnote": "Economize até 40% pagando com $HermesOS. Preços de lançamento para a primeira onda — valores podem ser ajustados conforme a plataforma amadurece.",
-      "guarantee": "Plano gratuito — experimente antes de fazer upgrade · Reembolso em 48h para pagamentos com cartão",
+      "guarantee": "Plano gratuito — experimente antes de fazer upgrade · Reembolso em 7 dias para pagamentos com cartão",
       "tiers": [
         {
           "name": "Free",
@@ -3061,12 +3043,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Redirecionando para o checkout...",
-      "steps": {
-        "choosePlan": "Escolher Plano",
-        "createAccount": "Criar Conta",
-        "activate": "Ativar",
-        "payment": "Pagamento"
-      },
       "badges": {
         "free": "Sempre Gratuito",
         "paid": "Garantia de 7 Dias"
@@ -3115,7 +3091,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Início",
         "computers": "Computadores",
         "agents": "Agentes",
-        "infrastructure": "Infraestrutura",
+        "infrastructure": "Capacidade",
         "collaboration": "Colaboração",
         "settings": "Configurações",
         "launch": "Lançar",
@@ -3343,8 +3319,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Carteiras dos agentes",
           "title": "Carteiras dos agentes.",
-          "subtitle": "Uma carteira por agente · Gerenciada pela Bankr · Apenas Base",
-          "emptyNoAgents": "Crie seu primeiro agente e provisionaremos automaticamente uma carteira Bankr para ele.",
+          "subtitle": "Uma carteira por agente · Bankr · Apenas Base",
+          "emptyNoAgents": "Crie um agente e conecte sua própria conta Bankr para dar uma carteira a ele.",
           "deployAgent": "Criar um agente",
           "runningEmpty": "Agentes em execução aparecerão aqui."
         }
@@ -3429,7 +3405,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Ativo",
-          "guarantee": "Política de reembolso em 48h · Planos somente com upgrade"
+          "guarantee": "Política de reembolso em 7 dias · Planos somente com upgrade"
         },
         "noSubscription": {
           "title": "Sem assinatura ativa"
@@ -3742,7 +3718,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Recommandé",
       "accessPrefix": "Trois façons d'accéder",
       "footnote": "Économisez jusqu'à 40 % en payant avec $HermesOS. Tarifs de lancement pour la première vague — susceptibles d'évoluer à mesure que la plateforme mûrit.",
-      "guarantee": "Tier gratuit — essayez avant de monter en gamme · Remboursement sous 48h sur paiement par carte",
+      "guarantee": "Tier gratuit — essayez avant de monter en gamme · Remboursement sous 7 jours sur paiement par carte",
       "tiers": [
         {
           "name": "Free",
@@ -3913,12 +3889,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Redirection vers le paiement...",
-      "steps": {
-        "choosePlan": "Choisir un plan",
-        "createAccount": "Créer un compte",
-        "activate": "Activer",
-        "payment": "Paiement"
-      },
       "badges": {
         "free": "Toujours gratuit",
         "paid": "Garantie satisfait ou remboursé 7 jours"
@@ -3967,7 +3937,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Accueil",
         "computers": "Ordinateurs",
         "agents": "Agents IA",
-        "infrastructure": "Infrastructure système",
+        "infrastructure": "Capacité",
         "collaboration": "Coopération",
         "settings": "Paramètres",
         "launch": "Lancer",
@@ -4195,8 +4165,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Portefeuilles des agents",
           "title": "Portefeuilles d’agents.",
-          "subtitle": "Un portefeuille par agent · Géré par Bankr · Base uniquement",
-          "emptyNoAgents": "Lancez votre premier agent et nous lui provisionnerons automatiquement un portefeuille Bankr.",
+          "subtitle": "Un portefeuille par agent · Bankr · Base uniquement",
+          "emptyNoAgents": "Lancez un agent, puis connectez votre propre compte Bankr pour lui donner un portefeuille.",
           "deployAgent": "Déployer un agent",
           "runningEmpty": "Les agents en cours d'exécution apparaîtront ici."
         }
@@ -4281,7 +4251,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Illimité",
           "agents": "agents",
           "active": "Actif",
-          "guarantee": "Politique de remboursement 48h · Plans avec upgrade uniquement"
+          "guarantee": "Politique de remboursement sous 7 jours · Plans avec upgrade uniquement"
         },
         "noSubscription": {
           "title": "Aucun abonnement actif"
@@ -4594,7 +4564,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "Empfohlen",
       "accessPrefix": "Drei Zugangswege",
       "footnote": "Bis zu 40 % sparen bei Zahlung mit $HermesOS. Launch-Preise für die erste Welle — können sich mit Reife der Plattform ändern.",
-      "guarantee": "Free-Tier — erst testen, dann upgraden · 48-Std.-Rückerstattung bei Kartenzahlung",
+      "guarantee": "Free-Tier — erst testen, dann upgraden · 7-Tage-Rückerstattung bei Kartenzahlung",
       "tiers": [
         {
           "name": "Free",
@@ -4765,12 +4735,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "Weiterleitung zum Checkout...",
-      "steps": {
-        "choosePlan": "Plan wählen",
-        "createAccount": "Konto erstellen",
-        "activate": "Aktivieren",
-        "payment": "Zahlung"
-      },
       "badges": {
         "free": "Immer kostenlos",
         "paid": "7-Tage-Geld-zurück-Garantie"
@@ -5047,8 +5011,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Agent-Wallets",
           "title": "Agent-Wallets.",
-          "subtitle": "Eine Wallet pro Agent · Von Bankr verwaltet · Nur Base",
-          "emptyNoAgents": "Ersten Agenten starten und wir richten automatisch eine Bankr-Wallet dafür ein.",
+          "subtitle": "Eine Wallet pro Agent · Bankr · Nur Base",
+          "emptyNoAgents": "Starte einen Agenten und verbinde dann dein eigenes Bankr-Konto, um ihm eine Wallet zu geben.",
           "deployAgent": "Agent deployen",
           "runningEmpty": "Laufende Agenten erscheinen hier."
         }
@@ -5133,7 +5097,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Unbegrenzt",
           "agents": "Agenten",
           "active": "Aktiv",
-          "guarantee": "48-Stunden-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
+          "guarantee": "7-Tage-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
         },
         "noSubscription": {
           "title": "Kein aktives Abo"
@@ -5446,7 +5410,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "おすすめ",
       "accessPrefix": "3 つのアクセス方法",
       "footnote": "$HermesOS での支払いで最大 40% 割引。ローンチ価格は初回ウェーブ限定 —— プラットフォームの成熟に伴い料金が変更になる場合があります。",
-      "guarantee": "Free プランで試してからアップグレード · カード決済は 48 時間返金保証",
+      "guarantee": "Free プランで試してからアップグレード · カード決済は 7 日間返金保証",
       "tiers": [
         {
           "name": "Free",
@@ -5617,12 +5581,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "チェックアウトへ移動中...",
-      "steps": {
-        "choosePlan": "プランを選ぶ",
-        "createAccount": "アカウント作成",
-        "activate": "有効化",
-        "payment": "お支払い"
-      },
       "badges": {
         "free": "常時無料",
         "paid": "7 日間返金保証"
@@ -5899,8 +5857,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "エージェントウォレット",
           "title": "エージェントウォレット。",
-          "subtitle": "エージェントごとに 1 つ · Bankr 管理 · Base のみ",
-          "emptyNoAgents": "最初のエージェントを起動すると、Bankr ウォレットが自動的にプロビジョニングされます。",
+          "subtitle": "エージェントごとに 1 つ · Bankr · Base のみ",
+          "emptyNoAgents": "エージェントを起動し、ご自身の Bankr アカウントを接続してウォレットを使えるようにします。",
           "deployAgent": "エージェントをデプロイ",
           "runningEmpty": "実行中のエージェントがここに表示されます。"
         }
@@ -5985,7 +5943,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "無制限",
           "agents": "エージェント",
           "active": "有効",
-          "guarantee": "48 時間返金ポリシー · アップグレード専用プラン"
+          "guarantee": "7 日間返金ポリシー · アップグレード専用プラン"
         },
         "noSubscription": {
           "title": "有効なサブスクリプションなし"
@@ -6298,7 +6256,7 @@ const LOCALE_COPY_OVERRIDES = {
       "recommended": "추천",
       "accessPrefix": "이용 방법 세 가지",
       "footnote": "$HermesOS 결제 시 최대 40% 절약. 첫 번째 웨이브를 위한 런칭 요금 — 플랫폼 성숙에 따라 조정될 수 있습니다.",
-      "guarantee": "Free 티어 — 업그레이드 전 체험 · 카드 결제 48시간 환불",
+      "guarantee": "Free 티어 — 업그레이드 전 체험 · 카드 결제 7일 환불",
       "tiers": [
         {
           "name": "Free",
@@ -6469,12 +6427,6 @@ const LOCALE_COPY_OVERRIDES = {
     },
     "getStarted": {
       "loadingCheckout": "결제 페이지로 이동 중...",
-      "steps": {
-        "choosePlan": "플랜 선택",
-        "createAccount": "계정 만들기",
-        "activate": "활성화",
-        "payment": "결제"
-      },
       "badges": {
         "free": "항상 무료",
         "paid": "7일 환불 보장"
@@ -6751,8 +6703,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "에이전트 지갑",
           "title": "에이전트 지갑.",
-          "subtitle": "에이전트당 하나 · Bankr 관리 · Base 전용",
-          "emptyNoAgents": "첫 번째 에이전트를 실행하면 Bankr 지갑이 자동으로 프로비저닝됩니다.",
+          "subtitle": "에이전트당 하나 · Bankr · Base 전용",
+          "emptyNoAgents": "에이전트를 실행한 뒤 내 Bankr 계정을 연결해 지갑을 설정하세요.",
           "deployAgent": "에이전트 배포",
           "runningEmpty": "실행 중인 에이전트가 여기에 표시됩니다."
         }
@@ -6837,7 +6789,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "무제한",
           "agents": "에이전트",
           "active": "활성",
-          "guarantee": "48시간 환불 정책 · 업그레이드 전용 플랜"
+          "guarantee": "7일 환불 정책 · 업그레이드 전용 플랜"
         },
         "noSubscription": {
           "title": "활성 구독 없음"

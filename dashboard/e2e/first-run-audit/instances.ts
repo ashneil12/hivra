@@ -333,7 +333,7 @@ export function sleep(ms: number): Promise<void> {
  * Neither the `provider` COLUMN nor `config.model` will do on its own. A
  * clean-slate deploy POSTs `{unconfigured: true}`, and the server still stores
  * the benign defaults `provider='openrouter'` and `config.model='openai/
- * gpt-5.4-pro'` so redeploy/PROVIDER_ID_MAP lookups don't throw (WelcomeFlow.tsx).
+ * gpt-5.4-pro'` so redeploy/PROVIDER_ID_MAP lookups don't throw.
  * Measured on canary: all five clean-slate audit boxes carry exactly those two
  * values. A box that cannot answer looks fully configured in both fields.
  *

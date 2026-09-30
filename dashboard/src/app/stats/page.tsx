@@ -18,12 +18,12 @@ import { log } from "@/lib/logger";
 const PATH = "/stats";
 
 export const metadata: Metadata = {
-  title: "Agents deployed — Hivra live counter",
+  title: "Agents deployed: Hivra live counter",
   description:
     "Live count of every agent successfully deployed on Hivra. Updated as people deploy.",
   ...buildWebsiteMetadata({
     path: PATH,
-    title: "Agents deployed — Hivra live counter",
+    title: "Agents deployed: Hivra live counter",
     description:
       "Live count of every agent successfully deployed on Hivra. Updated as people deploy.",
   }),

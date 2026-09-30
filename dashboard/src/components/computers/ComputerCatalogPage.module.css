@@ -709,20 +709,33 @@
 }
 .filters {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--etched-border);
+}
+.filters::-webkit-scrollbar {
+  display: none;
 }
 .filters button {
+  flex: 1 0 auto;
   min-height: 44px;
   padding: 8px 11px;
-  border: 1px solid transparent;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 12px;
+  border: 0;
+  border-right: 1px solid var(--etched-border);
+}
+.filters button:last-child {
+  border-right: 0;
 }
 .filters button[aria-pressed="true"] {
-  border-color: var(--etched-border);
-  background: color-mix(in srgb, var(--ink-black) 7%, transparent);
-  color: var(--ink-black);
+  color: var(--bg-surface);
+  background: var(--ink-black);
 }
 .computerList {
   margin: 0 -18px;
@@ -756,7 +769,8 @@
 }
 .computerStatus {
   font-size: 11px;
-  text-transform: capitalize;
+  /* Labels arrive cased ("Needs attention"), matching the agent rows. */
+  text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
 }
@@ -831,6 +845,12 @@
 .catalogSummary svg {
   color: var(--hivra-red);
 }
+.disclosureIcon {
+  transition: transform 0.15s ease;
+}
+.osSection[open] .disclosureIcon {
+  transform: rotate(180deg);
+}
 .osGrid {
   border-top: 1px solid var(--etched-border);
   padding: 18px;
@@ -848,11 +868,34 @@
   font-size: 10px;
 }
 .osFacts span,
-.availableBadge {
+.availableBadge,
+.previewBadge {
   font-size: 10px;
   line-height: 1.35;
   font-weight: 400;
   letter-spacing: 0.03em;
+}
+/* Substrate details (hypervisor, protocol) stay available but collapsed. */
+.technical {
+  width: 100%;
+  color: var(--text-secondary);
+}
+.technical summary {
+  min-height: 44px;
+  padding-block: 13px;
+  box-sizing: border-box;
+  cursor: pointer;
+  font:
+    400 11px/1.4 var(--font-mono),
+    monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.osCard .technical p {
+  font-size: 12px;
+}
+.technical .omarchyTruth {
+  margin-top: 2px;
 }
 .agentNote {
   border: 0;
@@ -873,9 +916,16 @@
   outline: 2px solid var(--hivra-red);
   outline-offset: 3px;
 }
+/* The segmented row scrolls, so an outer ring would be clipped. */
+.filters button:focus-visible {
+  outline-offset: -3px;
+}
 @media (prefers-reduced-motion: reduce) {
   .spin {
     animation: none;
+  }
+  .disclosureIcon {
+    transition: none;
   }
 }
 
@@ -959,8 +1009,9 @@
   .toolbar {
     padding-bottom: 13px;
   }
+  /* 7px sides keep all five chips on one row down to a 320px phone. */
   .filters button {
-    padding: 7px 9px;
+    padding: 7px;
     font-size: 11px;
   }
   .computerRow {
@@ -989,10 +1040,6 @@
   }
 }
 @container computer-inventory (max-width: 320px) {
-  .filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .sectionHeader h2 {
     font-size: 20px;
   }
@@ -1044,5 +1091,17 @@
 @media (pointer: coarse) {
   .search input {
     font-size: 16px;
+  }
+}
+@media (max-width: 767px) {
+  .osFacts span,
+  .availableBadge,
+  .previewBadge {
+    font-size: 11px;
+  }
+  /* Keep the opened catalog clear of the fixed bottom navigation. */
+  .osGrid,
+  .osCard {
+    scroll-margin-block-end: calc(64px + env(safe-area-inset-bottom, 0px) + 12px);
   }
 }

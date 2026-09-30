@@ -5,7 +5,7 @@ import type { ChangelogEntry } from "@/lib/changelog";
 // app/changelog/rss.xml/route.ts wires readChangelog() into this. (#changelog-rss-feed)
 
 /** Channel-level copy, mirrored from the /changelog page so the feed reads the same. */
-export const CHANGELOG_FEED_TITLE = "Changelog — what shipped on Hivra";
+export const CHANGELOG_FEED_TITLE = "Changelog: what shipped on Hivra";
 const CHANGELOG_FEED_DESCRIPTION =
   "Dated entries for every notable change to Hermes Deploy: bug fixes, feature ships, upstream syncs, and infrastructure work.";
 

@@ -303,7 +303,8 @@ describe("five-resource first-boot cleanup orchestration", () => {
     expect(preview.observedAbsence).toEqual({ server: false, firewall: false, ipv4: false, ipv6: false, sshKey: false });
     expect(h.deps.loadFirstBoot).toHaveBeenCalledWith({ binding: {
       userId: "owner", connectionId: cleanupConnection, connectionRevision: 7, orderId: cleanupOrder,
-      quoteFingerprint: "a".repeat(64), recipeVersion: h.firstBoot!.binding.recipeVersion,
+      // Order-only: the attempt and its recipe come from the original records.
+      quoteFingerprint: "a".repeat(64),
     }, providerServerId: "42" });
     expect(h.deps.claim).not.toHaveBeenCalled();
     expect(h.client.deleteServer).not.toHaveBeenCalled();

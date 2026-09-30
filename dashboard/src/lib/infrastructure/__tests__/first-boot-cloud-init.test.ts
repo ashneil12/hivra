@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { join } from "node:path";
-import { createFirstBootChallenge, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
-import { renderFirstBootCloudInit } from "../first-boot-cloud-init";
+import { createFirstBootChallenge, FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
+import { MAX_USER_DATA_BYTES, renderFirstBootCloudInit } from "../first-boot-cloud-init";
 
 jest.mock("node:fs/promises", () => ({
   ...jest.requireActual("node:fs/promises"),
@@ -43,7 +43,7 @@ describe("private deterministic first-boot recipe", () => {
     const input = fixture();
     const text = await renderFirstBootCloudInit(input);
     expect(await renderFirstBootCloudInit(input)).toBe(text);
-    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(32_768);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_USER_DATA_BYTES);
     const config = parse(text);
     expect(config.users).toEqual([{name:"hivra", groups:["sudo"], sudo:["ALL=(ALL) NOPASSWD:ALL"],
       shell:"/bin/bash", lock_passwd:true, ssh_authorized_keys:[publicKey]}]);
@@ -59,6 +59,17 @@ describe("private deterministic first-boot recipe", () => {
     expect(text).not.toContain(input.currentBinding.userId);
     expect(fileContent(config,"/etc/ssh/sshd_config.d/00-hivra-bootstrap.conf")).toContain("PermitRootLogin no\n");
   });
+  it("stays far under the user_data limit for the longest valid input, so its own check is only a backstop", async () => {
+    // Only the origin varies in length (at most 253 characters). The token,
+    // key and binding have fixed formats, and the helper is pinned by SHA-256.
+    const callbackOrigin = "https://" + ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(53)].join(".");
+    expect(callbackOrigin).toHaveLength(253);
+    const shortest = Buffer.byteLength(await renderFirstBootCloudInit(fixture()));
+    const longest = Buffer.byteLength(await renderFirstBootCloudInit({ ...fixture(), callbackOrigin }));
+    expect(longest).toBeGreaterThan(shortest);
+    expect(longest).toBeLessThan(MAX_USER_DATA_BYTES * 0.6);
+    await expect(renderFirstBootCloudInit({ ...fixture(), callbackOrigin: callbackOrigin + "e" })).rejects.toThrow("invalid_origin");
+  });
   it("embeds the exact vendored helper and root-only narrowly scoped configuration", async () => {
     const input = fixture();
     const config = parse(await renderFirstBootCloudInit(input));
@@ -67,24 +78,44 @@ describe("private deterministic first-boot recipe", () => {
     ]);
     expect(fileContent(config,"/usr/local/lib/hivra/hetzner-enroll.py"))
       .toBe(readFileSync(join(process.cwd(),"bootstrap/hetzner-enroll.py"),"utf8"));
+    // No absolute expiry reaches the guest: it measures 15 minutes from its own
+    // first boot, and Hivra's receiver enforces the window it opened.
     expect(JSON.parse(fileContent(config,"/run/hivra/first-boot-enrollment.json"))).toEqual({
-      version:1, recipeVersion: FIRST_BOOT_RECIPE_VERSION, orderId:binding.orderId, attemptId:binding.attemptId,
-      token:input.token, issuedAt:input.challenge.issuedAt, expiresAt:input.challenge.expiresAt,
-      callbackUrl:"https://hivra.example/api/infrastructure/first-boot/enroll",
+      version:2, recipeVersion: FIRST_BOOT_RECIPE_VERSION, orderId:binding.orderId, attemptId:binding.attemptId,
+      token:input.token, callbackUrl:"https://hivra.example/api/infrastructure/first-boot/enroll",
     });
+    expect(fileContent(config,"/run/hivra/first-boot-enrollment.json")).not.toContain(input.challenge.expiresAt);
   });
   it("round-trips the real rendered configuration through the real Python validator", async () => {
     const config = parse(await renderFirstBootCloudInit(fixture()));
-    const result = spawnSync("python3", ["-B", "-c", [
+    const run = (uptime: number) => spawnSync("python3", ["-B", "-c", [
       "import importlib.util,json,sys",
       "spec=importlib.util.spec_from_file_location('hivra_enroll','bootstrap/hetzner-enroll.py')",
       "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)",
-      "config=module.validate_config(json.load(sys.stdin),lambda:1787842800.0)",
-      "print(json.dumps({'accepted':True,'recipeVersion':config['recipeVersion']}))",
+      "try:",
+      "  config=module.validate_config(json.load(sys.stdin),lambda:" + uptime + ")",
+      "  print(json.dumps({'accepted':True,'recipeVersion':config['recipeVersion']}))",
+      "except module.EnrollmentFailure as error:",
+      "  print(json.dumps({'accepted':False,'code':error.code}))",
     ].join("\n")], { input:fileContent(config,"/run/hivra/first-boot-enrollment.json"), encoding:"utf8", timeout:5_000 });
+    // The server was created long ago; only time since this first boot counts.
+    for (const [uptime, expected] of [[30, {accepted:true,recipeVersion:FIRST_BOOT_RECIPE_VERSION}],
+      [899.5, {accepted:true,recipeVersion:FIRST_BOOT_RECIPE_VERSION}], [900, {accepted:false,code:"ENROLLMENT_EXPIRED"}]] as const) {
+      const result = run(uptime);
+      expect({status: result.status, stderr: result.stderr}).toEqual({status: 0, stderr: ""});
+      expect(JSON.parse(result.stdout)).toEqual(expected);
+    }
+  });
+  it("passes the helper's own offline unittest suite", () => {
+    const result = spawnSync("python3", ["-B", "bootstrap/test_hetzner_enroll.py"], { encoding:"utf8", timeout:30_000 });
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({accepted:true,recipeVersion:FIRST_BOOT_RECIPE_VERSION});
+    expect(result.stderr).toMatch(/\nOK\s*$/);
+  });
+  it("renders only the current recipe; a legacy attempt gets no new user-data", async () => {
+    const legacy = { ...binding, recipeVersion: FIRST_BOOT_LEGACY_RECIPE_VERSION };
+    const input = { ...createFirstBootChallenge(legacy, now), currentBinding: legacy,
+      publicKeyOpenSsh: publicKey, callbackOrigin: "https://hivra.example", now };
+    await expect(renderFirstBootCloudInit(input)).rejects.toThrow("First-boot recipe unavailable: recipe_retired");
   });
   it.each(["http://hivra.example", "https://user:password@hivra.example", "https://hivra.example:8443",
     "https://hivra.example/other", "https://hivra.example?token=private", "https://hivra.example#fragment",

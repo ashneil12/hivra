@@ -1,9 +1,16 @@
 import net from "node:net";
 import { NextRequest } from "next/server";
 
+import { trustedClientAddressHeader } from "@/lib/infrastructure/trusted-client-address";
+
 type RateLimitRecord = {
   count: number;
   lastReset: number;
+  /** Reserved slots whose work has not finished yet. */
+  inFlight?: number;
+  /** Failed reserved runs since failureWindowStart. */
+  failures?: number;
+  failureWindowStart?: number;
 };
 
 // In-memory store (works well enough for basic DoS protection per-container)
@@ -14,10 +21,19 @@ export interface RateLimitConfig {
   windowMs: number;
 }
 
+export type RateLimitResult =
+  | { success: true }
+  | { success: false; retryAfterMs: number };
+
+function retryAfterMs(record: RateLimitRecord, config: RateLimitConfig, now: number): number {
+  return Math.max(0, record.lastReset + config.windowMs - now);
+}
+
 /**
- * Basic fixed-window rate limiter
+ * Basic fixed-window rate limiter. A refusal says how long until the window
+ * resets, so callers can send an honest Retry-After.
  */
-export function enforceRateLimit(identifier: string, config: RateLimitConfig) {
+export function enforceRateLimit(identifier: string, config: RateLimitConfig): RateLimitResult {
   const now = Date.now();
   const record = store.get(identifier);
 
@@ -28,7 +44,7 @@ export function enforceRateLimit(identifier: string, config: RateLimitConfig) {
   }
 
   if (record.count >= config.limit) {
-    return { success: false };
+    return { success: false, retryAfterMs: retryAfterMs(record, config, now) };
   }
 
   record.count += 1;
@@ -36,15 +52,122 @@ export function enforceRateLimit(identifier: string, config: RateLimitConfig) {
   return { success: true };
 }
 
+export interface ReservationRateLimitConfig extends RateLimitConfig {
+  /**
+   * Failed runs allowed per window before the next run must wait. A failure
+   * gives its slot back so a fixed cause can be retried at once, but the work
+   * still costs something (an SSH connection to someone's server), so repeated
+   * failures are capped separately.
+   */
+  failureLimit?: number;
+}
+
+export type RateLimitRefusalReason = "in_flight" | "recent_success" | "repeated_failures";
+
+export type RateLimitReservation =
+  | {
+      success: true;
+      /** Ends the reserved run. A failed run gives its slot back (and counts
+       * toward the failure cap); a successful one keeps it, and the window
+       * restarts from the success. Idempotent. */
+      settle: (outcome: "succeeded" | "failed") => void;
+    }
+  | { success: false; retryAfterMs: number; inFlight: boolean; reason: RateLimitRefusalReason };
+
 /**
- * Gets the IP address from headers
+ * A fixed-window limit that counts only work that is still running or that
+ * succeeded. The slot is taken when the work starts, so concurrent attempts
+ * are refused, and returned if the work fails, so a person who fixes the cause
+ * can try again straight away. A success holds the slot for a full window
+ * from the moment it succeeded. With failureLimit, that many failures in a
+ * window also make the next run wait.
  */
-function parseCandidateIp(rawValue: string | null): string | null {
+export function reserveRateLimit(identifier: string, config: ReservationRateLimitConfig): RateLimitReservation {
+  const now = Date.now();
+  let record = store.get(identifier);
+  if (!record || now - record.lastReset > config.windowMs) {
+    // A run still in flight from the previous window keeps counting, so a
+    // window rollover never admits a concurrent second run. Failures have
+    // their own window and carry over with it.
+    record = {
+      count: record?.inFlight ?? 0,
+      lastReset: now,
+      inFlight: record?.inFlight ?? 0,
+      failures: record?.failures,
+      failureWindowStart: record?.failureWindowStart,
+    };
+    store.set(identifier, record);
+  }
+  if (record.count >= config.limit) {
+    const inFlight = (record.inFlight ?? 0) > 0;
+    return {
+      success: false,
+      retryAfterMs: retryAfterMs(record, config, now),
+      inFlight,
+      reason: inFlight ? "in_flight" : "recent_success",
+    };
+  }
+  if (config.failureLimit !== undefined && record.failureWindowStart !== undefined) {
+    if (now - record.failureWindowStart > config.windowMs) {
+      record.failures = 0;
+      record.failureWindowStart = undefined;
+    } else if ((record.failures ?? 0) >= config.failureLimit) {
+      return {
+        success: false,
+        retryAfterMs: Math.max(0, record.failureWindowStart + config.windowMs - now),
+        inFlight: false,
+        reason: "repeated_failures",
+      };
+    }
+  }
+
+  record.count += 1;
+  record.inFlight = (record.inFlight ?? 0) + 1;
+  let settled = false;
+  return {
+    success: true,
+    settle: (outcome) => {
+      if (settled) return;
+      settled = true;
+      const current = store.get(identifier);
+      if (!current) return;
+      current.inFlight = Math.max(0, (current.inFlight ?? 0) - 1);
+      const settledAt = Date.now();
+      if (outcome === "succeeded") {
+        // The limit is "one success per window", so the window runs from the
+        // success, not from whichever earlier attempt opened it. A success
+        // also clears the failure count.
+        current.lastReset = settledAt;
+        current.failures = 0;
+        current.failureWindowStart = undefined;
+        return;
+      }
+      // The run is counted in whichever window now holds it (a rollover
+      // carries in-flight runs forward), so a failure always gives it back.
+      current.count = Math.max(0, current.count - 1);
+      if (current.failureWindowStart === undefined || settledAt - current.failureWindowStart > config.windowMs) {
+        current.failures = 0;
+        current.failureWindowStart = settledAt;
+      }
+      current.failures = (current.failures ?? 0) + 1;
+    },
+  };
+}
+
+/**
+ * Parses the RIGHTMOST entry of an address header. A proxy appends the address
+ * it saw to the end of the list, so only the last entry was written by the
+ * proxy nearest to us; everything to its left came from further out, and a
+ * client can put anything there. An invalid last entry is "no address": we
+ * never walk left to a client-supplied one.
+ */
+function parseRightmostIp(rawValue: string | null): string | null {
   if (!rawValue) {
     return null;
   }
 
-  let candidate = rawValue.split(",")[0]?.trim() ?? "";
+  const entries = rawValue.split(",");
+  let candidate = entries[entries.length - 1]?.trim() ?? "";
   if (!candidate) {
     return null;
   }
@@ -66,18 +189,49 @@ function parseCandidateIp(rawValue: string | null): string | null {
     }
   }
 
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(candidate);
+  if (mapped && net.isIP(mapped[1]) === 4) {
+    candidate = mapped[1];
+  }
+
   return net.isIP(candidate) ? candidate : null;
 }
 
-export function getIP(req: NextRequest | Request): string {
-  const directIp =
-    parseCandidateIp(req.headers.get("cf-connecting-ip")) ??
-    parseCandidateIp(req.headers.get("x-real-ip"));
-  if (directIp) {
-    return directIp;
+const NO_ADDRESS = "127.0.0.1";
+
+/**
+ * The calling machine's address, for rate-limit keys and checkout metadata.
+ *
+ * Reads only headers the hosting platform writes, never one a client can
+ * choose:
+ * - On Vercel: `x-vercel-forwarded-for`, then `x-real-ip`, then
+ *   `x-forwarded-for`. Vercel overwrites all three on every request with the
+ *   address that connected to it.
+ * - Self-hosted with HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER: that header only
+ *   (the same setting the server-enrollment card trusts).
+ * - Otherwise: the rightmost `x-forwarded-for` hop, the one the nearest
+ *   proxy (or Next's own server, from the socket) appended.
+ * A list keeps only its rightmost hop. With no usable address the key is the
+ * shared NO_ADDRESS bucket, never a guess from another header.
+ *
+ * `cf-connecting-ip` is never read. Neither Canary nor production is behind
+ * Cloudflare, and on a direct request anyone can send it, which let a caller
+ * pick a fresh rate-limit key per request. If a deployment is ever put behind
+ * a Cloudflare proxy, name the header in HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER
+ * only if the origin accepts nothing but Cloudflare's edges.
+ */
+export function getIP(req: NextRequest | Request, env: Record<string, string | undefined> = process.env): string {
+  if (env.VERCEL === "1") {
+    return (
+      parseRightmostIp(req.headers.get("x-vercel-forwarded-for")) ??
+      parseRightmostIp(req.headers.get("x-real-ip")) ??
+      parseRightmostIp(req.headers.get("x-forwarded-for")) ??
+      NO_ADDRESS
+    );
   }
 
-  return parseCandidateIp(req.headers.get("x-forwarded-for")) ?? "127.0.0.1";
+  const configuredHeader = trustedClientAddressHeader(env);
+  return parseRightmostIp(req.headers.get(configuredHeader ?? "x-forwarded-for")) ?? NO_ADDRESS;
 }
 
 // Periodic cleanup to prevent Memory Leaks in longer-living Node containers
@@ -85,8 +239,10 @@ if (typeof setInterval !== "undefined") {
   const interval = setInterval(() => {
     const now = Date.now();
     for (const [key, record] of Array.from(store.entries())) {
-      // Arbitrary eviction after 1 hour of no updates
-      if (now - record.lastReset > 60 * 60 * 1000) {
+      // Arbitrary eviction after 1 hour of no updates. A reserved run still
+      // going keeps its record, so eviction never admits a concurrent run.
+      const lastUpdate = Math.max(record.lastReset, record.failureWindowStart ?? 0);
+      if (!record.inFlight && now - lastUpdate > 60 * 60 * 1000) {
         store.delete(key);
       }
     }

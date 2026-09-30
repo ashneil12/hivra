@@ -7,7 +7,6 @@ import { getInfrastructureDeploymentTarget } from "@/lib/infrastructure/connecti
 import { ProviderVmDeploymentTargetDtoSchema, type ProviderVmDeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { loadHetznerCloudConnectionMetadata, loadHetznerCloudCleanupOrder, loadHetznerCloudCapacityBootstrap } from "@/lib/infrastructure/hetzner-cloud-store";
 import { loadFirstBootOperationForOrder } from "@/lib/infrastructure/first-boot-operations";
-import { FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
 import { verifyEnrolledProviderReceipt } from "@/lib/infrastructure/enrolled-provider-receipt";
 import { inspectFirstBootGuest } from "@/lib/infrastructure/first-boot-ssh";
 import { parseProviderGuestDiscoveryOutput } from "@/lib/infrastructure/host-discovery";
@@ -50,12 +49,12 @@ export type ProviderAgentModelLaunch = { service: LaunchModelAdmissionService; a
 export class ProviderAgentLaunchError extends Error {
   constructor(readonly code: "not_ready" | "capacity" | "model" | "template" | "access" | "conflict" | "unconfirmed") {
     super({
-      not_ready: "This cloud computer is not ready for launch. Check its original setup in Infrastructure.",
+      not_ready: "This cloud computer is not ready for launch. Check its setup in Capacity.",
       capacity: "This computer does not have enough measured free resources for that agent. Choose a larger computer or turn off browser automation.",
       model: "This model connection needs a supported runtime, a saved launch request and a model-ready computer. Prepare the computer again, or launch with native sign-in and connect your account there.",
       template: "Installing template skills on a provider computer is not supported yet. Launch a fresh agent and customize it in its native interface.",
       access: "Secure access is not configured on this Hivra installation. No agent was created.",
-      conflict: "This computer is already assigned or its connection changed. Refresh Infrastructure before launching again.",
+      conflict: "This computer is already assigned or its connection changed. Refresh Capacity before launching again.",
       unconfirmed: "The launch response could not be confirmed. Check your agents before trying again; no replacement computer was created.",
     }[code]);
     this.name = "ProviderAgentLaunchError";
@@ -156,7 +155,7 @@ export async function launchProviderAgent(raw: ProviderAgentLaunchInput, depende
       || order.operation.providerServerId !== target.externalId || order.cleanup) throw new Error();
     const boot = await deps.boot({ binding: { userId: input.userId, connectionId: input.connectionId,
       connectionRevision: input.expectedConnectionRevision, orderId: order.operation.id,
-      quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION }, providerServerId: target.externalId });
+      quoteFingerprint: order.quoteFingerprintSha256 }, providerServerId: target.externalId });
     fence();
     if (!boot || boot.binding.attemptId !== target.capabilities.enrollmentAttemptId) throw new Error();
     const scope = { binding: boot.binding, providerServerId: target.externalId };
@@ -231,7 +230,9 @@ export async function launchProviderAgent(raw: ProviderAgentLaunchInput, depende
         infrastructure_connection_id: row.infrastructure_connection_id, infrastructure_connection_revision: row.infrastructure_connection_revision,
         deployment_target_id: row.deployment_target_id, provider_capacity_order_id: row.provider_capacity_order_id,
         provider_enrollment_attempt_id: row.provider_enrollment_attempt_id, provider_server_id: row.provider_server_id,
-      });
+      // An agent on the owner's own cloud uses the owner's capacity and is not
+      // counted toward the plan's agent limit; the reservation does not count it.
+      }, 0);
       if (!reservation.created) return { agent: sanitizeHivraAgentRow(reservation.agent), launchRequestId: reservation.requestId };
       agent = reservation.agent;
     } else agent = await deps.reserve(row);

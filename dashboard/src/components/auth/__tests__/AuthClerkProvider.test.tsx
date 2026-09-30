@@ -164,6 +164,39 @@ describe("AuthClerkProvider", () => {
     expect(String(mockClerkProviderProps[0].__internal_clerkUIUrl)).not.toContain("clerk.hermesos.cloud");
   });
 
+  it("moves the same-origin Clerk URLs with an exact NEXT_PUBLIC_CLERK_*_VERSION override", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_example";
+    process.env.NEXT_PUBLIC_CLERK_JS_VERSION = "6.9.1";
+    process.env.NEXT_PUBLIC_CLERK_UI_VERSION = "1.8.0";
+
+    // next.config.ts scopes the /clerk-assets rewrite to these same versions,
+    // so the provider must read them from the same place.
+    jest.resetModules();
+    const freshHeaders = (await import("next/headers")).headers as jest.MockedFunction<typeof headers>;
+    freshHeaders.mockResolvedValue(
+      new Headers({
+        host: "localhost:3000",
+        "x-forwarded-host": "localhost:3000",
+        "x-forwarded-proto": "http",
+      })
+    );
+    const { AuthClerkProvider: FreshAuthClerkProvider } = await import("../AuthClerkProvider");
+
+    render(
+      await FreshAuthClerkProvider({
+        children: <div>real auth content</div>,
+      })
+    );
+
+    const props = mockClerkProviderProps[mockClerkProviderProps.length - 1];
+    expect(props).toMatchObject({
+      __internal_clerkJSVersion: "6.9.1",
+      __internal_clerkUIVersion: "1.8.0",
+      __internal_clerkJSUrl: "/clerk-assets/@clerk/clerk-js@6.9.1/dist/clerk.browser.js",
+      __internal_clerkUIUrl: "/clerk-assets/@clerk/ui@1.8.0/dist/ui.browser.js",
+    });
+  });
+
   it("lets the NEXT_PUBLIC_CLERK_*_URL env overrides win over the same-origin defaults", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_example";
     process.env.NEXT_PUBLIC_CLERK_JS_URL =

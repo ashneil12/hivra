@@ -2,6 +2,8 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
+
 import { PwaInstallPrompt } from "../PwaInstallPrompt";
 
 type BeforeInstallPromptEventLike = Event & {
@@ -244,5 +246,63 @@ describe("PwaInstallPrompt", () => {
 
     expect(await screen.findByText(/add hivra to your home screen/i)).toBeInTheDocument();
     expect(screen.getAllByText(/share, then add to home screen/i)).toHaveLength(2);
+  });
+
+  it("renders the same first HTML on every platform so hydration cannot mismatch", () => {
+    const desktopHtml = renderToString(<PwaInstallPrompt />);
+    userAgentSpy.mockReturnValue(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    );
+    // The server has no navigator; the first client render must not read it either.
+    expect(renderToString(<PwaInstallPrompt />)).toBe(desktopHtml);
+    expect(desktopHtml).not.toMatch(/home screen/i);
+  });
+
+  it.each([
+    ["Chrome", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0 Mobile/15E148 Safari/604.1"],
+    ["Firefox", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/141.0 Mobile/15E148 Safari/605.1.15"],
+    ["Edge", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/140.0 Mobile/15E148 Safari/605.1.15"],
+  ])("gives iOS %s the Share, then Add to Home Screen steps", async (_browser, ua) => {
+    userAgentSpy.mockReturnValue(ua);
+    render(<PwaInstallPrompt />);
+    expect(await screen.findByText(/add hivra to your home screen/i)).toBeInTheDocument();
+    expect(screen.queryByText(/in Safari/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to manual steps on a touch device that never offers the native prompt", () => {
+    jest.useFakeTimers();
+    try {
+      window.matchMedia = jest.fn().mockImplementation((query: string) => ({
+        matches: query === "(pointer: coarse)",
+        media: query,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      }));
+      userAgentSpy.mockReturnValue(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0 Mobile Safari/537.36",
+      );
+      render(<PwaInstallPrompt />);
+      expect(screen.queryByRole("heading", { name: "Install Hivra" })).not.toBeInTheDocument();
+      act(() => { jest.advanceTimersByTime(3000); });
+      expect(screen.getByRole("heading", { name: "Install Hivra" })).toBeInTheDocument();
+      expect(screen.getByText("Browser menu: Install app or Create shortcut")).toBeInTheDocument();
+      // Chromium never fires beforeinstallprompt for an installed app either,
+      // so the fallback must not tell an installed user the app is missing.
+      expect(screen.getByText(/If Hivra isn't installed on this device yet/)).toBeInTheDocument();
+      expect(screen.queryByText(/prompt is unavailable/i)).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not fall back to manual steps with a mouse", () => {
+    jest.useFakeTimers();
+    try {
+      render(<PwaInstallPrompt />);
+      act(() => { jest.advanceTimersByTime(5000); });
+      expect(screen.queryByRole("heading", { name: "Install Hivra" })).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

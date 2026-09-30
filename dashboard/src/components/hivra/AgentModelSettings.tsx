@@ -6,6 +6,7 @@ import type { AgentLlmInput } from "@/lib/hivra/agent-api";
 import { AgentModelSettingsError, cancelAgentLaunchModel, continueAgentLaunchModel, getAgentModelSettings, resumeAgentModelSettings, setAgentModelSettings,
   type AgentModelSettings as Settings } from "@/lib/hivra/agent-model-settings-api";
 import styles from "./AgentModelSettings.module.css";
+import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
 function description(config: Settings["llm"]) {
@@ -15,9 +16,11 @@ function description(config: Settings["llm"]) {
 
 /** Key this component by agent ID: drafts and in-flight response handlers must
  * never move between computers when the owner switches selection. */
-export function AgentModelSettings({ agentId, agentName, ready, disabled, onChanged, onBusyChange }: {
+export function AgentModelSettings({ agentId, agentName, ready, disabled, onChanged, onBusyChange, onFeedbackChange }: {
   agentId: string; agentName: string; ready: boolean; disabled: boolean; onChanged: () => void;
   onBusyChange: (busy: boolean) => void;
+  /** A pending or failed model change, for Manage to show while this section is closed. */
+  onFeedbackChange?: (feedback: ManageFeedback) => void;
 }) {
   const allowManaged = !isLocalAuthMode();
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -131,6 +134,10 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
     }
   };
 
+  useReportManageFeedback(onFeedbackChange, acting ? { kind: "status", message: "Changing the model connection…" }
+    : settings?.pending ? { kind: "status", message: "A model connection change is pending." }
+      : error ? { kind: "alert", message: error } : null);
+
   const blocked = disabled || !ready || loading || acting || !settings || !!settings.pending || !!settings.launch || upgradeRequired;
   const launch = settings?.launch;
   return <section id="model-settings" className={styles.section} aria-label="Inference settings">
@@ -193,14 +200,15 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
         </div>
         {mode === "byok" ? <label className={styles.field}>Venice API key
           <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} autoComplete="off" spellCheck={false}
-            maxLength={256} placeholder="Paste your API key" />
+            autoCapitalize="none" enterKeyHint="done" maxLength={256} placeholder="Paste your API key" />
         </label> : <label className={styles.field}>Pay from
           <select value={wallet} onChange={e => setWallet(e.target.value as "hermesos" | "card")}>
             <option value="hermesos">Token wallet</option><option value="card">Card balance</option>
           </select>
         </label>}
         <label className={styles.field}><span>Model <span className={styles.help}>(optional)</span></span>
-          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: deepseek-v4-pro" spellCheck={false} />
+          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: deepseek-v4-pro" spellCheck={false}
+            autoCapitalize="none" autoCorrect="off" enterKeyHint="done" />
         </label>
         <p className={styles.help}>{mode === "byok"
           ? "Stored encrypted and delivered by Hivra directly to this computer. Your infrastructure key and model API key are separate."

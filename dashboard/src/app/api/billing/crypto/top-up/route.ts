@@ -15,6 +15,8 @@ import {
   isCryptoBillingEnabled,
 } from "@/lib/billing/crypto-availability";
 import { ensureBankrDepositWalletForUser } from "@/lib/billing/bankr-deposit-wallets";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const CryptoTopUpRequestSchema = z.object({
@@ -42,6 +44,18 @@ export async function POST(req: NextRequest) {
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
+    // Token geo-policy: a crypto top-up starts a new crypto payment. Card
+    // top-ups (/api/billing/top-up) never consult the policy.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/crypto/top-up",
+        route: "/api/billing/crypto/top-up",
+        method: "POST",
+        userId,
+      });
+    }
+
     let body: unknown;
     try {
       body = await req.json();
@@ -60,7 +74,6 @@ export async function POST(req: NextRequest) {
     const walletResult = await ensureBankrDepositWalletForUser({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     if (walletResult.status === "not_configured") {
       return apiError("Bankr wallet provisioning is not configured", 503, {

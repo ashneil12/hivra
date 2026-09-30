@@ -46,6 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const result = await resizeProxmoxVm({
     vmid: infrastructure.vmid,
+    expectedInstanceId: instance.id,
     node: infrastructure.node,
     cpuLimit: parsed.data.cpuLimit,
     memoryMb: parsed.data.ramLimit,

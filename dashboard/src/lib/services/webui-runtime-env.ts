@@ -81,6 +81,19 @@ export const WEBUI_PERSISTENT_INSTALL_ENV_KEYS = WEBUI_PERSISTENT_INSTALL_ENV_LI
   (line) => line.split("=", 1)[0]
 );
 
+// Every BANKR_* line buildBankrEnvLines can emit, in the managed list's order.
+// Hivra writes these keys on a webfree box: they are upserted whenever a wallet
+// is deliverable and removed only by the per-run reconcile for a user-connected
+// wallet (see WEBUI_CLEARABLE_RUNTIME_ENV_KEYS).
+export const WEBUI_BANKR_RUNTIME_ENV_KEYS = [
+  "BANKR_AGENT_WALLET_ADDRESS",
+  "BANKR_WALLET_ADDRESS",
+  "BANKR_AGENT_API_KEY",
+  "BANKR_API_KEY",
+  "BANKR_AGENT_WALLET_ID",
+  "BANKR_AGENT_WITHDRAWAL_DESTINATION",
+] as const;
+
 // Per-instance managed runtime env keys that are NOT static install lines but
 // MUST be repaired into the live /state/.env on every update. Their values come
 // from the freshly generated hermes.env (buildHermesEnvFile), not from a static
@@ -104,14 +117,16 @@ export const WEBUI_PERSISTENT_INSTALL_ENV_KEYS = WEBUI_PERSISTENT_INSTALL_ENV_LI
 //     added to /state/.env and an edited key kept its old value FOREVER. Web
 //     search silently stayed broken/stale no matter how many times the user
 //     re-saved. (Found 2026-07-16 while fixing the Daytona path.)
-//   - BANKR_*: the agent's Bankr wallet identity/creds. Same shape, and the
-//     omission defeated a path built specifically to reach live boxes —
-//     instance-orchestrator calls resolveBankrAgentConfigForUpdate() on the
-//     UPDATE path and feeds it into webUIParams, but buildBankrEnvLines' output
-//     landed only in the freshly generated hermes.env, which an update discards
-//     in favour of the persisted /state/.env. So a wallet attached to an
-//     existing agent never reached it. Values are DB-resolved (not typed by the
-//     user), so re-applying them is a convergence, not a surprise.
+//   - BANKR_* (WEBUI_BANKR_RUNTIME_ENV_KEYS): the agent's Bankr wallet
+//     identity/creds. Same shape, and the omission defeated a path built
+//     specifically to reach live boxes — instance-orchestrator calls
+//     resolveBankrRuntimeEnvPlanForUpdate() on the UPDATE path and feeds the
+//     config into webUIParams, but buildBankrEnvLines' output landed only in
+//     the freshly generated hermes.env, which an update discards in favour of
+//     the persisted /state/.env. So a wallet attached to an existing agent
+//     never reached it. Values are DB-resolved (a Hivra-provisioned wallet, or
+//     a key the user connected from their own Bankr account), so re-applying
+//     them is a convergence, not a surprise.
 // These only appear in the generated hermes.env when the relevant feature is
 // on; the repair copies whichever are present (`[ -n "$managed_env_line" ] ||
 // continue`), so listing a key a given box doesn't use is a no-op rather than a
@@ -128,8 +143,8 @@ export const WEBUI_PERSISTENT_INSTALL_ENV_KEYS = WEBUI_PERSISTENT_INSTALL_ENV_LI
 // withdraw-destination and api/hivra/agents/[id]/bankr-wallet/set-destination)
 // require a valid `0x…` EVM address via a non-optional zod regex, so a user can
 // only RE-POINT a destination, never null one. Re-pointing lands via the upsert
-// above. If a clear path is ever added, read the BANKR_* note on the clearable
-// list first — clearing it safely needs more than adding the key to that list.
+// above. The destination leaves the box only with the rest of BANKR_*, through
+// the per-run clear described on the clearable list below.
 // Deliberately NOT listed:
 //   - the provider/model keys (HERMES_INFERENCE_PROVIDER, OPENAI_BASE_URL, the
 //     provider key var) — config.yaml owns provider/model and the update path
@@ -158,12 +173,7 @@ export const WEBUI_MANAGED_RUNTIME_ENV_KEYS = [
   "DAYTONA_API_KEY",
   "TAVILY_API_KEY",
   "FIRECRAWL_API_KEY",
-  "BANKR_AGENT_WALLET_ADDRESS",
-  "BANKR_WALLET_ADDRESS",
-  "BANKR_AGENT_API_KEY",
-  "BANKR_API_KEY",
-  "BANKR_AGENT_WALLET_ID",
-  "BANKR_AGENT_WITHDRAWAL_DESTINATION",
+  ...WEBUI_BANKR_RUNTIME_ENV_KEYS,
 ];
 
 // The CLEAR half of the managed-key contract. The repair above is upsert-only —
@@ -178,17 +188,30 @@ export const WEBUI_MANAGED_RUNTIME_ENV_KEYS = [
 // derived from a PURE read of the already-fetched instance row
 // (getRuntimeAgentSettings(instance.config)) — absent there genuinely means unset.
 //
-// BANKR_* is deliberately EXCLUDED, and the reason generalises. Its value comes
-// from resolveBankrAgentConfigForUpdate(), which catches ANY error and returns
-// null (instance-orchestrator.ts). So `[]` from buildBankrEnvLines means EITHER
-// "no wallet" OR "the wallet lookup just threw" — indistinguishable at this
-// layer. Clearing on that would erase live wallet credentials off every box that
-// hit a transient DB hiccup during a fleet-wide redeploy. Absence must mean
-// "the user cleared it", never "we failed to look it up". Nothing is lost by the
-// exclusion today: no API can clear a wallet or a destination (the setters demand
-// a valid EVM address), so there is no user-reachable clear to honour. Should one
-// appear, resolveBankrAgentConfigForUpdate must FIRST distinguish resolved-empty
-// from lookup-failed, and the failure case must suppress the clear.
+// BANKR_* (WEBUI_BANKR_RUNTIME_ENV_KEYS) is deliberately EXCLUDED from this static
+// list, and the reason generalises. `[]` from buildBankrEnvLines means "no wallet",
+// "nothing deliverable" OR "the wallet lookup just threw" — indistinguishable at
+// this layer. Clearing on absence would erase live wallet credentials off every box
+// that hit a transient DB hiccup during a fleet-wide redeploy. Absence must mean
+// "the user cleared it", never "we failed to look it up".
+// A user CAN now clear it: Disconnect on a wallet connected from the user's own
+// Bankr account. So BANKR_* is cleared only by a per-run flag instead
+// (WebUIDeployParams.bankrRuntimeReconcile, action "clear_user_disconnected"),
+// which the orchestrator's resolveBankrRuntimeEnvPlanForUpdate() sets only after
+// the lookup SUCCEEDED and found a revoked user-connected row, with every wallet
+// address that row has delivered (its current one plus the earlier wallets it
+// recorded when a reconnect replaced them, since a connect or disconnect can
+// skip the restart). The update script then clears BANKR_* only from a file
+// whose BANKR_AGENT_WALLET_ADDRESS is one of those addresses, so it removes only
+// what the row's deliveries wrote, once: the flag stays set on every later
+// update while the row stays revoked, but the address line is gone after the
+// first clear, so a BANKR_API_KEY the user later sets for their own use is
+// never touched. A
+// lookup or decrypt failure, a missing row and every Hivra-provisioned row leave
+// BANKR_* exactly as they are. A run delivering a user-connected wallet
+// ("replace_user_connected") lists BANKR_* too: the pass skips every key that
+// run delivers, so only a key the new wallet doesn't set (a replaced wallet's
+// withdrawal destination) goes.
 //
 // BROWSER_CDP_URL is INCLUDED even though it fails the pure-read test above.
 // That rule is a proxy for the thing that actually matters: absence must never be

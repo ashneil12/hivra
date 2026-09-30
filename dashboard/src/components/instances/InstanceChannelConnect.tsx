@@ -15,7 +15,7 @@
 // the visual tokens of <TelegramConnect> so the experience is identical, just
 // generalized. No new endpoint, no new wire — the backend was already complete.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import posthog from "posthog-js";
 import { Loader2, Check, Plug } from "lucide-react";
 
@@ -93,6 +93,27 @@ const primaryBtn: React.CSSProperties = {
 };
 
 type ChannelStatus = { connected: boolean; partial?: boolean };
+
+// Mobile keyboards and autofill key off the input's type/inputMode, so derive
+// them from the credential's field name. Secrets are masked with a Show toggle.
+const SECRET_FIELDS = new Set([
+  "password", "token", "authToken", "appToken", "accountSid", "accessToken",
+  "accessSecret", "apiKey", "apiSecret", "appSecret", "clientSecret", "secret",
+]);
+const URL_FIELDS = new Set(["httpUrl", "imapHost", "smtpHost", "homeserver", "serverUrl", "url"]);
+const PHONE_FIELDS = new Set(["account", "phoneNumber"]);
+
+function fieldInputProps(name: string): {
+  type: "text" | "email" | "tel" | "password";
+  inputMode?: "email" | "tel" | "url";
+  secret: boolean;
+} {
+  if (SECRET_FIELDS.has(name)) return { type: "password", secret: true };
+  if (name === "address") return { type: "email", inputMode: "email", secret: false };
+  if (PHONE_FIELDS.has(name)) return { type: "tel", inputMode: "tel", secret: false };
+  if (URL_FIELDS.has(name)) return { type: "text", inputMode: "url", secret: false };
+  return { type: "text", secret: false };
+}
 
 // Which fields the connect form should render. Telegram is handled by its own
 // component, so here we render every field the definition declares except the
@@ -345,7 +366,7 @@ export function InstanceChannelConnect({
             <details style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.02)" }}>
               <summary
                 className="mono"
-                style={{ ...mono, opacity: 1, cursor: "pointer", padding: "10px 12px", userSelect: "none" }}
+                style={{ ...mono, opacity: 1, cursor: "pointer", padding: "10px 12px", userSelect: "none", minHeight: 44, boxSizing: "border-box", display: "flex", alignItems: "center" }}
               >
                 Setup guide
               </summary>
@@ -355,22 +376,16 @@ export function InstanceChannelConnect({
 
           <div style={{ display: "grid", gap: 12 }}>
             {fields.map((f) => (
-              <div key={f.name}>
-                <div className="mono" style={{ ...mono, marginBottom: 6 }}>
-                  {f.label}
-                  {f.requiredOnConnect ? "" : " (optional)"}
-                </div>
-                <input
-                  value={values[f.name] ?? ""}
-                  onChange={(e) => setField(f.name, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !missingRequired) void connect();
-                  }}
-                  spellCheck={false}
-                  autoComplete="off"
-                  style={inputStyle}
-                />
-              </div>
+              <CredentialField
+                key={f.name}
+                name={f.name}
+                label={`${f.label}${f.requiredOnConnect ? "" : " (optional)"}`}
+                value={values[f.name] ?? ""}
+                onChange={(value) => setField(f.name, value)}
+                onEnter={() => {
+                  if (!missingRequired) void connect();
+                }}
+              />
             ))}
           </div>
 
@@ -394,6 +409,79 @@ export function InstanceChannelConnect({
   );
 }
 
+function CredentialField({
+  name,
+  label,
+  value,
+  onChange,
+  onEnter,
+}: {
+  name: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onEnter: () => void;
+}) {
+  const id = useId();
+  const { type, inputMode, secret } = fieldInputProps(name);
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div>
+      <label htmlFor={id} className="mono" style={{ ...mono, display: "block", marginBottom: 6 }}>
+        {label}
+      </label>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
+        <input
+          id={id}
+          type={secret && revealed ? "text" : type}
+          inputMode={inputMode}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onEnter();
+          }}
+          spellCheck={false}
+          // Browsers ignore "off" on password inputs; "new-password" keeps a
+          // saved dashboard login from being offered for a channel credential.
+          autoComplete={secret ? "new-password" : "off"}
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          autoCapitalize="none"
+          autoCorrect="off"
+          enterKeyHint="done"
+          style={{ ...inputStyle, minWidth: 0, flex: "1 1 auto" }}
+        />
+        {secret ? (
+          <button
+            type="button"
+            onClick={() => setRevealed((shown) => !shown)}
+            aria-label={revealed ? `Hide ${label}` : `Show ${label}`}
+            aria-pressed={revealed}
+            className="mono"
+            style={{
+              flexShrink: 0,
+              minWidth: 64,
+              minHeight: 44,
+              border: "1px solid var(--etched-border)",
+              borderLeft: "none",
+              background: "transparent",
+              color: "var(--text-secondary)",
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              cursor: "pointer",
+            }}
+          >
+            {revealed ? "Hide" : "Show"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ConnectedCard({
   label,
   agentName,
@@ -405,6 +493,21 @@ function ConnectedCard({
   busy: boolean;
   onDisconnect: () => void;
 }) {
+  // Disconnecting removes the channel token and restarts the connector, so it
+  // takes a second, explicit confirmation.
+  const [confirming, setConfirming] = useState(false);
+  const confirmButton: React.CSSProperties = {
+    minHeight: 44,
+    padding: "0 14px",
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: "0.1em",
+    fontWeight: 800,
+    cursor: busy ? "default" : "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+  };
   return (
     <div
       style={{
@@ -425,27 +528,57 @@ function ConnectedCard({
         {agentName?.trim() || "Your agent"} is reachable on {label}. The gateway restarts the connector when you
         connect or disconnect — give it a few seconds to come up.
       </p>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={onDisconnect}
-          disabled={busy}
-          className="mono"
-          style={{
-            border: "1px solid var(--etched-border)",
-            background: "transparent",
-            color: "#e06c5a",
-            fontSize: 10,
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            fontWeight: 800,
-            padding: "9px 14px",
-            cursor: busy ? "default" : "pointer",
-          }}
-        >
-          {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : "Disconnect"}
-        </button>
-      </div>
+      {confirming ? (
+        <div data-testid="channel-disconnect-confirm" style={{ display: "grid", gap: 10 }}>
+          <p style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.5, margin: 0 }}>
+            Disconnect {label}? This removes its token.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={onDisconnect}
+              disabled={busy}
+              className="mono"
+              style={{ ...confirmButton, border: "1px solid var(--hivra-red)", background: "transparent", color: "var(--hivra-red)" }}
+            >
+              {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : null}
+              Confirm disconnect
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={busy}
+              className="mono"
+              style={{ ...confirmButton, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={busy}
+            className="mono"
+            style={{
+              border: "1px solid var(--etched-border)",
+              background: "transparent",
+              color: "#e06c5a",
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              fontWeight: 800,
+              minHeight: 44,
+              padding: "0 14px",
+              cursor: busy ? "default" : "pointer",
+            }}
+          >
+            {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : "Disconnect"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

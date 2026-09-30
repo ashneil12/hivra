@@ -64,21 +64,15 @@ class LinkPolicyTests(unittest.TestCase):
                 self.assertEqual(ParsedLinks(result).links[0]["target"], expected)
                 self.assert_copy_unchanged(markup, result)
 
-    def test_nibbii_links_are_scoped_and_existing_links_are_never_wrapped(self):
-        markup = """<p>Nibbii elsewhere.</p><section id="economy-what-it-s-for">
-<p hidden>Nibbii hidden.</p><p>Hivra &amp; Nibbii, together. Nibbii again.</p>
-<article id="utility-access-to-nibbii" class="token-utility"><h4>Access to Nibbii.</h4>
-<p><a href="https://nibbii.pet/">Nibbii</a> costs $29. It's the same app.</p></article>
-<article id="utility-commissioned-pets" class="token-utility"><p>Nibbii pets.</p></article>
+    def test_reader_copy_never_gains_links(self):
+        markup = """<section id="economy-what-it-s-for"><p>Hivra &amp; Nibbii, together.</p>
+<article class="token-utility"><p><a href="https://example.com/">Example</a> stays one link.</p></article>
 </section>"""
         result = enhance_links(markup)
         parsed = ParsedLinks(result)
-        self.assertEqual(len(parsed.links), 2)
-        self.assertTrue(all(link["href"] == "https://nibbii.pet/" for link in parsed.links))
+        self.assertEqual([link["href"] for link in parsed.links], ["https://example.com/"])
         self.assertFalse(parsed.nested_anchor)
-        self.assertIn("<p>Nibbii elsewhere.</p>", result)
-        self.assertIn("<p hidden>Nibbii hidden.</p>", result)
-        self.assertIn("<h4>Access to Nibbii.</h4>", result)
+        self.assertIn("<p>Hivra &amp; Nibbii, together.</p>", result)
         self.assert_copy_unchanged(markup, result)
         self.assertEqual(enhance_links(result), result)
 
@@ -88,8 +82,10 @@ class LinkPolicyTests(unittest.TestCase):
         self.assert_copy_unchanged(original, result)
         parsed = ParsedLinks(result)
         self.assertFalse(parsed.nested_anchor)
-        nibbii = [link for link in parsed.links if link.get("href") == "https://nibbii.pet/"]
-        self.assertGreaterEqual(len(nibbii), 1, "The economy must link the visible Nibbii mention")
+        self.assertFalse(
+            [link for link in parsed.links if "nibbii" in link.get("href", "").lower()],
+            "Nibbii is no longer part of the litepaper",
+        )
         for link in parsed.links:
             href = link.get("href", "")
             if opens_new_tab(href):

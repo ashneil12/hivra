@@ -81,6 +81,7 @@ export async function POST(
         "@/lib/services/proxmox-instance-service"
       );
       const result = await shutdownProxmoxInstance(proxmoxInfra, {
+        expectedInstanceId: instance.id,
         hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, { host_id: instance.host_id ?? null }),
       });
       if (!result.ok) {

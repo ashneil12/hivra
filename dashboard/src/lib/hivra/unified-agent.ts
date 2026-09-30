@@ -10,6 +10,8 @@
 import { resourceAttention, type ResourceAttention } from "./resource-attention";
 import type { HivraAgent } from "./agent-api";
 import { getAgent as catalogAgent } from "./agent-catalog";
+import { getComputerTemplate } from "./computer-catalog";
+import { agentComputerPair, type AgentComputerPair } from "@/lib/agent-computers/agent-surfaces";
 
 export type UnifiedKind = "hermes" | "hivra";
 type UnifiedState = "running" | "updating" | "provisioning" | "stopped" | "error" | "other";
@@ -58,6 +60,35 @@ export interface UnifiedAgent {
    *  chat agent from a dashboard runtime from a computer without a second
    *  catalog lookup. Undefined for Hermes. */
   surfaceKind?: "chat" | "dashboard" | "computer";
+  /** An agent's linked computer: where it runs and its size, from the stored
+   *  lifecycle binding (ATT-11). Null for computers and Hermes. */
+  computerPair?: AgentComputerPair | null;
+  /** An agent added to one of the owner's computers (design 5.8). Its `id` is
+   *  that computer's hivra_agents.id, so every link to /dashboard/agent/<id>
+   *  opens the computer that hosts it; its `uid` is `a-<attachment id>`.
+   *  Absent on every other row. */
+  attachment?: UnifiedAttachment | null;
+  /** Where the row opens, when that is more than /dashboard/agent/<id>. */
+  href?: string;
+}
+
+export interface UnifiedAttachment {
+  /** hivra_agent_attachments.id (a lowercase UUID). */
+  id: string;
+  computerId: string;
+  computerName: string;
+  /** "attached" once its chat is ready; "claimed" or "dispatched" while it is being added. */
+  phase: "claimed" | "dispatched" | "attached";
+}
+
+/** One agent added to a computer, as GET /api/hivra/attached-agents lists it. */
+export interface AttachedAgentLite {
+  id: string;
+  phase: UnifiedAttachment["phase"];
+  agentName: string;
+  computerId: string;
+  computerName: string;
+  computerStatus: string | null;
 }
 
 const STATE_LABELS: Record<UnifiedState, string> = {
@@ -99,16 +130,43 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
   // "updating", distinct from a first-time launch ("provisioning").
   let state = hivraState(a.status);
   if (state === "provisioning" && a.provisioned_at) state = "updating";
+  const resourceKind = a.computer_profile || def?.resourceKind === "computer" ? "computer" : "agent";
   return {
     uid: `x-${a.id}`, kind: "hivra", id: a.id, name: a.name, emoji: a.emoji ?? null,
     attention: resourceAttention(a.status),
     statusRaw: a.status, state, dot: HIVRA_DOT[state],
-    vendor: def?.vendor || a.type, typeLabel: def?.name || a.type,
-    resourceKind:
-      a.computer_profile || def?.resourceKind === "computer" ? "computer" : "agent",
+    // Every computer shares the linux-desktop catalog entry ("Ubuntu Desktop"),
+    // so its operating system comes from the stored profile.
+    vendor: def?.vendor || a.type,
+    typeLabel: (a.computer_profile && getComputerTemplate(a.computer_profile)?.name) || def?.name || a.type,
+    resourceKind,
     computerProfile: a.computer_profile ?? null,
     surfaceKind: def?.surface,
     cpu: a.cpu, ram: a.ram, model: null, provider: null, agentType: a.type,
+    computerPair: resourceKind === "agent" ? agentComputerPair(a) : null,
+  };
+}
+
+/**
+ * An agent added to a computer the owner already has. It runs only while that
+ * computer runs, and reads as starting while it is being added. It opens the
+ * computer's Chat tab once ready, and its Manage (the progress) until then.
+ */
+export function unifyAttached(a: AttachedAgentLite): UnifiedAgent {
+  const def = catalogAgent("codex");
+  const ready = a.phase === "attached";
+  const statusRaw = ready ? a.computerStatus ?? "unknown" : "provisioning";
+  const state = hivraState(statusRaw);
+  return {
+    uid: `a-${a.id}`, kind: "hivra", id: a.computerId, name: `${a.agentName} on ${a.computerName}`, emoji: null,
+    attention: resourceAttention(statusRaw),
+    statusRaw, state, dot: HIVRA_DOT[state],
+    vendor: def?.vendor || "OpenAI", typeLabel: a.agentName,
+    resourceKind: "agent", computerProfile: null, surfaceKind: "chat",
+    cpu: null, ram: null, model: null, provider: null, agentType: "codex",
+    computerPair: null,
+    attachment: { id: a.id, computerId: a.computerId, computerName: a.computerName, phase: a.phase },
+    href: `/dashboard/agent/${encodeURIComponent(a.computerId)}?tab=${ready ? "chat" : "manage"}`,
   };
 }
 
@@ -126,7 +184,20 @@ function unifyHermes(i: HermesInstanceLite): UnifiedAgent {
 // Single stable order for the merged list: running first, then provisioning,
 // stopped, error, other — and by name within each bucket.
 const STATE_RANK: Record<UnifiedState, number> = { running: 0, updating: 1, provisioning: 2, stopped: 3, error: 4, other: 5 };
-export function unifyAll(hermes: HermesInstanceLite[], hivra: HivraAgent[]): UnifiedAgent[] {
-  return [...hermes.map(unifyHermes), ...hivra.map(unifyHivra)]
+// An agent added to a computer follows that computer's own row, so a lookup by
+// the computer's id finds the computer first.
+export function unifyAll(hermes: HermesInstanceLite[], hivra: HivraAgent[], attached: AttachedAgentLite[] = []): UnifiedAgent[] {
+  const sorted = [...hermes.map(unifyHermes), ...hivra.map(unifyHivra)]
     .sort((a, b) => (STATE_RANK[a.state] - STATE_RANK[b.state]) || a.name.localeCompare(b.name));
+  if (!attached.length) return sorted;
+  const byComputer = new Map<string, UnifiedAgent[]>();
+  for (const row of attached.map(unifyAttached)) byComputer.set(row.id, [...(byComputer.get(row.id) ?? []), row]);
+  const merged: UnifiedAgent[] = [];
+  for (const row of sorted) {
+    merged.push(row);
+    const hosted = row.kind === "hivra" ? byComputer.get(row.id) : undefined;
+    if (hosted) { merged.push(...hosted); byComputer.delete(row.id); }
+  }
+  for (const rows of byComputer.values()) merged.push(...rows);
+  return merged;
 }

@@ -7,6 +7,7 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (table: unknown) => 
 
 import { beginProviderAgentInstall, loadProviderAgentInstallOperation, recordProviderAgentInstallStopped, expireUnstartedProviderAgent } from "../provider-agent-install-store";
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
+import { FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "@/lib/infrastructure/first-boot-enrollment";
 import type { ProviderGuestWorkerIdentity } from "@/lib/infrastructure/provider-guest-worker";
 
 const input = { userId: "owner", agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", operationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
@@ -33,7 +34,8 @@ describe("provider agent install operation store", () => {
   });
   it("loads only the exact reserved operation and original owner/order binding, with no credentials", async () => {
     const r = row();
-    mockRead.mockResolvedValueOnce({ data: r, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null });
+    mockRead.mockResolvedValueOnce({ data: r, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: FIRST_BOOT_LEGACY_RECIPE_VERSION }, error: null });
     await expect(loadProviderAgentInstallOperation(input)).resolves.toMatchObject({ operation: input,
       accessMode: "direct-https", hostname: "203-0-113-10.sslip.io", tunnelId: null,
       scope: { binding: { userId: input.userId, connectionId: r.infrastructure_connection_id, connectionRevision: 7,
@@ -43,8 +45,25 @@ describe("provider agent install operation store", () => {
       ["active_connection_id", r.infrastructure_connection_id], ["connection_revision", 7], ["provider_resource_id", "42"]]) {
       expect(mockQuery.eq).toHaveBeenCalledWith(...pair);
     }
-    expect(mockFrom.mock.calls.map(call => call[0])).toEqual(["hivra_agents", "infrastructure_capacity_orders"]);
+    expect(mockFrom.mock.calls.map(call => call[0])).toEqual(["hivra_agents", "infrastructure_capacity_orders", "infrastructure_first_boot_enrollments"]);
     expect(mockQuery.select.mock.calls.map(call => call[0]).join(",")).not.toMatch(/private_key|encrypted|api_token|llm_config/);
+  });
+  it.each([FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION])("binds the attempt's own recipe %s, read inside its full binding", async version => {
+    const r = row();
+    mockRead.mockResolvedValueOnce({ data: r, error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: version }, error: null });
+    const result = await loadProviderAgentInstallOperation(input);
+    expect(result.scope.binding.recipeVersion).toBe(version);
+    for (const pair of [["order_id", r.provider_capacity_order_id], ["attempt_id", r.provider_enrollment_attempt_id],
+      ["quote_fingerprint_sha256", "c".repeat(64)]]) expect(mockQuery.eq).toHaveBeenCalledWith(...pair);
+  });
+  it("fails closed when the attempt's recipe is missing or unknown", async () => {
+    for (const recipe of [null, { recipe_version: "2026.09.99.1" }]) {
+      mockRead.mockReset();
+      mockRead.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null })
+        .mockResolvedValueOnce({ data: recipe, error: null });
+      await expect(loadProviderAgentInstallOperation(input)).rejects.toThrow("could not be verified");
+    }
   });
   it.each(["user_id", "id", "operation_id", "allocation_operation_id", "computer_substrate", "vmid", "type"])("rejects changed %s before loading an order", async field => {
     mockRead.mockResolvedValue({ data: { ...row(), [field]: field === "vmid" ? 42 : "other" }, error: null });
@@ -53,14 +72,16 @@ describe("provider agent install operation store", () => {
   });
   it.each([null, "reserved.hivra.test"])("keeps a pre-access reservation inspectable for recovery: %s", async hostname => {
     mockRead.mockResolvedValueOnce({ data: { ...row(), cf_hostname: hostname, chat_url: null, ip: null }, error: null })
-      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null });
+      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: FIRST_BOOT_LEGACY_RECIPE_VERSION }, error: null });
     await expect(loadProviderAgentInstallOperation(input)).resolves.toMatchObject({ operation: input,
       accessMode: null, hostname, tunnelId: null, identity: null });
     expect(mockRpc).not.toHaveBeenCalled();
   });
   it.each([["claude-code", "claude"], ["codex", "codex"], ["aeon", "aeon"], ["openclaw", "openclaw"], ["agent-zero", "agent-zero"]])("maps the existing %s catalog record to its %s installer kind", async (catalog, runtime) => {
     mockRead.mockResolvedValueOnce({ data: { ...row(), type: catalog }, error: null })
-      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null });
+      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: FIRST_BOOT_LEGACY_RECIPE_VERSION }, error: null });
     await expect(loadProviderAgentInstallOperation(input)).resolves.toMatchObject({ runtime });
   });
   it.each([null, { quote_fingerprint_sha256: "invalid" }])("rejects missing or malformed original order", async order => {
@@ -70,7 +91,8 @@ describe("provider agent install operation store", () => {
   it("snapshots the caller scope before a delayed database response", async () => {
     const mutable = { ...input };
     mockRead.mockImplementationOnce(async () => { mutable.userId = "foreign"; mutable.operationId = "changed"; return { data: row(), error: null }; })
-      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null });
+      .mockResolvedValueOnce({ data: { quote_fingerprint_sha256: "c".repeat(64) }, error: null })
+      .mockResolvedValueOnce({ data: { recipe_version: FIRST_BOOT_LEGACY_RECIPE_VERSION }, error: null });
     const result = await loadProviderAgentInstallOperation(mutable);
     expect(result.operation).toEqual(input);
     expect(result.scope.binding.userId).toBe(input.userId);

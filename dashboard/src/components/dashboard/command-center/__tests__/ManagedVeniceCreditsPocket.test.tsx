@@ -112,4 +112,16 @@ describe("ManagedVeniceCreditsPocket", () => {
     expect(onTopUp).toHaveBeenCalledTimes(1);
     expect(onManage).toHaveBeenCalledTimes(1);
   });
+
+  it("puts the hide control in its own header row only when hiding is offered", () => {
+    const { rerender } = render(<ManagedVeniceCreditsPocket summary={summary} />);
+    expect(screen.queryByRole("button", { name: "Hide credits" })).not.toBeInTheDocument();
+
+    const onHide = jest.fn();
+    rerender(<ManagedVeniceCreditsPocket summary={summary} onHide={onHide} />);
+    const hide = screen.getByRole("button", { name: "Hide credits" });
+    expect(hide).toHaveStyle({ width: "44px", height: "44px" });
+    fireEvent.click(hide);
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
 });

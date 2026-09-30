@@ -21,6 +21,7 @@ import {
   isBillingV2ServerEnabled,
 } from "@/lib/billing/billing-v2-availability";
 import {
+  ActiveYearlyQuoteTokenMismatchError,
   createYearlyTokenQuote,
   getActiveYearlyTokenQuote,
   getActiveYearlyTokenQuotes,
@@ -37,7 +38,15 @@ import {
 } from "@/lib/billing/bankr-deposit-wallets";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 import { LivePriceUnavailableError } from "@/lib/billing/live-thresholds";
+import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
+import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
+import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
+import { log } from "@/lib/logger";
 
 function isValidTier(value: unknown): value is TierKey {
   return value === "pro" || value === "power";
@@ -51,6 +60,8 @@ function serializeQuote(quote: YearlyTokenQuote) {
     priceUsdAtQuote: quote.priceUsdAtQuote,
     tokensRequiredRaw: quote.tokensRequiredRaw.toString(),
     tokensRequiredDisplay: quote.tokensRequiredDisplay,
+    tokenKey: quote.tokenKey,
+    tokenAddress: quote.tokenAddress,
     tokenSymbol: quote.tokenSymbol,
     tokenDecimals: quote.tokenDecimals,
     depositAddress: quote.depositAddress,
@@ -186,6 +197,8 @@ export async function GET(req: NextRequest) {
 
 interface PostBody {
   tier?: unknown;
+  /** Optional platform token ("hermesos" | "hivra"); defaults per account. */
+  token?: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -198,6 +211,18 @@ export async function POST(req: NextRequest) {
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
 
+    // Token geo-policy: a new yearly quote is a new token payment. Existing
+    // quotes and years (GET, check-now, settlement) are never refused.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/yearly-token-quote",
+        route: "/api/billing/yearly-token-quote",
+        method: "POST",
+        userId,
+      });
+    }
+
     let body: PostBody = {};
     try {
       body = (await req.json()) as PostBody;
@@ -208,6 +233,39 @@ export async function POST(req: NextRequest) {
     if (!isValidTier(body.tier)) {
       return apiError("Missing or invalid tier — must be 'pro' or 'power'.", 400, {
         failureType: "yearly_token_quote_bad_tier",
+      });
+    }
+    if (body.token !== undefined && !isPlatformTokenKey(body.token)) {
+      return apiError("Invalid token — must be 'hermesos' or 'hivra'.", 400, {
+        failureType: "yearly_token_quote_bad_token",
+      });
+    }
+
+    // Never sell a year that a live $HermesOS entitlement already outranks:
+    // entitlement resolves by the highest live tier, so a Pro year bought
+    // while Power is active would buy nothing. Same-tier years still extend.
+    // The billing UI is the primary guard, so a failed lookup is logged and
+    // the quote proceeds rather than blocking every $HermesOS payment.
+    let tokenEntitlement: Awaited<ReturnType<typeof resolveEffectiveSubscription>> = null;
+    try {
+      tokenEntitlement = await resolveEffectiveSubscription(userId, { excludeStripe: true });
+    } catch (error) {
+      log.warn("Yearly quote tier guard could not read the token entitlement", {
+        source: "billing/yearly-token-quote",
+        route: "/api/billing/yearly-token-quote",
+        method: "POST",
+        userId,
+        failureType: "yearly_token_quote_tier_guard_lookup_failed",
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+    if (
+      (tokenEntitlement?.source === "token_yearly" || tokenEntitlement?.source === "token_holding") &&
+      tokenEntitlement.tokenTier === "power" &&
+      body.tier === "pro"
+    ) {
+      return apiError("Your $HermesOS access already covers Pro.", 409, {
+        failureType: "yearly_token_quote_tier_already_covered",
       });
     }
 
@@ -223,7 +281,6 @@ export async function POST(req: NextRequest) {
       const provisioned = await ensureBankrDepositWalletForUser({
         userId,
         purpose: "credit_deposit",
-        makePrimary: true,
       });
       if (provisioned.status === "not_configured") {
         return apiError("Bankr wallet provisioning is not configured.", 503, {
@@ -250,13 +307,43 @@ export async function POST(req: NextRequest) {
         userId,
         tier: body.tier,
         depositAddress,
+        ...(body.token !== undefined ? { token: body.token } : {}),
       });
     } catch (error) {
-      if (error instanceof LivePriceUnavailableError) {
+      if (error instanceof ActiveYearlyQuoteTokenMismatchError) {
+        return apiError(error.message, 409, {
+          failureType: "yearly_token_quote_token_mismatch",
+          activeQuoteId: error.quote.id,
+          activeQuoteToken: error.quote.tokenKey,
+        });
+      }
+      if (error instanceof TokenNotAllowedError) {
+        return apiError(error.message, 403, {
+          failureType: "token_not_allowed",
+          token: error.tokenKey,
+          allowedTokens: error.allowedTokens,
+        });
+      }
+      if (error instanceof LivePriceUnavailableError || error instanceof PlatformTokenPriceGateError) {
+        // The rate-limited gate log and ops alert are the signal; the per-request
+        // line stays at info so a gate that holds for hours cannot flood the logs.
+        const { refusal } = await reportPriceGateRefusal(error, {
+          source: "billing/yearly-token-quote",
+          route: "/api/billing/yearly-token-quote",
+          method: "POST",
+        });
         return apiError(
           "Token price unavailable — please try again later.",
           503,
-          { failureType: "yearly_token_quote_price_unavailable" }
+          { failureType: "yearly_token_quote_price_unavailable", gate: refusal.gate, gateReason: refusal.reason },
+          undefined,
+          {
+            source: "billing/yearly-token-quote",
+            route: "/api/billing/yearly-token-quote",
+            method: "POST",
+            failureType: "yearly_token_quote_price_unavailable",
+            logLevel: "info",
+          }
         );
       }
       if (error instanceof ActiveCryptoPaymentSessionError) {

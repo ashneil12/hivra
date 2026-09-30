@@ -66,6 +66,8 @@ interface HivraActivityEvent {
   agentType: string | null;
   agentId: string | null;
   createdAt: string;
+  /** Set by the server for an agent added to a computer (design 5.7). */
+  summary?: string;
 }
 
 interface HivraActivity {
@@ -148,6 +150,11 @@ const EVENT_LABEL: Record<string, string> = {
   bankr_wallet_provisioned: "Wallet provisioned",
   snapshot_created: "Snapshot created",
   snapshot_restored: "Snapshot restored",
+  // An agent added to a computer; the timeline shows the row's own words.
+  agent_attached: "Agent added",
+  agent_attach_failed: "Agent not added",
+  agent_access_changed: "Access changed",
+  agent_removed: "Agent removed · files in ~/Hivra kept",
 };
 
 function eventLabel(event: string): string {
@@ -174,10 +181,10 @@ function agentTypeLabel(type: string | null): string {
 }
 
 const LABEL: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   textTransform: "uppercase",
   letterSpacing: "0.12em",
-  opacity: 0.55,
+  color: "var(--text-muted)",
   fontWeight: 700,
 };
 
@@ -198,8 +205,9 @@ function HeadlineCard({
   value: string;
   label: string;
 }) {
+  // Rows stay top-aligned so values line up across tiles when a label wraps.
   return (
-    <div style={{ ...PANEL, gap: 6, minWidth: 0 }}>
+    <div style={{ ...PANEL, gap: 6, minWidth: 0, alignContent: "start" }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, opacity: 0.5 }}>{icon}</span>
       <span className="serif" style={{ fontSize: "1.7rem", fontWeight: 600, lineHeight: 1.05 }}>
         {value}
@@ -366,14 +374,16 @@ export function AgentActivityPanel() {
           setState("loading");
           setReloadKey((k) => k + 1);
         }}
-        className="mono"
+        className="mono pointer-coarse:min-h-[44px]"
         style={{
           marginTop: 4,
           alignSelf: "center",
-          fontSize: 12,
-          padding: "6px 14px",
-          borderRadius: 8,
-          border: "1px solid var(--border, rgba(0,0,0,0.15))",
+          padding: "8px 16px",
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: "0.12em",
+          borderRadius: 0,
+          border: "1px solid var(--etched-border)",
           background: "transparent",
           color: "var(--text-secondary)",
           cursor: "pointer",
@@ -508,7 +518,7 @@ export function AgentActivityPanel() {
             Recorded activity · last {FETCH_DAYS} days
           </span>
           {Object.keys(hivra.fleet.byStatus).length > 0 ? (
-            <span className="mono" style={{ ...LABEL, opacity: 0.4 }}>
+            <span className="mono" style={LABEL}>
               {Object.entries(hivra.fleet.byStatus)
                 .sort((a, b) => b[1] - a[1])
                 .map(([status, count]) => `${count} ${status}`)
@@ -610,7 +620,7 @@ export function AgentActivityPanel() {
                   style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}
                 >
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {eventLabel(e.event)}
+                    {e.summary ?? eventLabel(e.event)}
                   </span>
                   <span className="mono" style={{ fontSize: 11, opacity: 0.55, flexShrink: 0 }}>
                     {agentTypeLabel(e.agentType)} · {timeAgo(e.createdAt, nowMs)}
@@ -672,7 +682,7 @@ export function AgentActivityPanel() {
           <span className="mono" style={LABEL}>
             Token volume · last {FETCH_DAYS} days
           </span>
-          <span className="mono" style={{ ...LABEL, opacity: 0.4 }}>
+          <span className="mono" style={LABEL}>
             {instanceCount} {instanceCount === 1 ? "agent" : "agents"}
           </span>
         </div>

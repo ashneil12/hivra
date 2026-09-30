@@ -6,7 +6,8 @@ module.exports = async function capabilitySql({ db, fixture, stopped, complete, 
   const supabasePath = require.resolve("../src/lib/supabase.ts"), previous = require.cache[supabasePath];
   const ident = text => { assert.match(text, /^[a-z_][a-z_0-9]*$/); return text; };
   const from = table => {
-    assert.ok(["hivra_agents", "infrastructure_capacity_orders"].includes(table));
+    // The attempt's recipe version is read from its enrollment (a non-secret column).
+    assert.ok(["hivra_agents", "infrastructure_capacity_orders", "infrastructure_first_boot_enrollments"].includes(table));
     let columns, params = [], conditions = [];
     return { select(value) { columns = value.split(",").map(ident).join(","); return this; },
       eq(key, value) { params.push(value); conditions.push(`${ident(key)}=$${params.length}`); return this; },

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { attachActivityLine } from "@/lib/agent-computers/attach-activity";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 
@@ -38,6 +39,8 @@ export interface HivraActivityEvent {
   agentType: string | null;
   agentId: string | null;
   createdAt: string;
+  /** The row's own words, for an agent added to a computer (design 5.7). */
+  summary?: string;
 }
 
 export interface HivraActivityDailyPoint {
@@ -131,6 +134,10 @@ export interface HivraEventRow {
   event?: string | null;
   agent_type?: string | null;
   created_at?: string | null;
+  /** Label fields of an attach event's detail, selected by name (never the whole detail). */
+  attach_agent?: string | null;
+  attach_computer?: string | null;
+  attach_access?: string | null;
 }
 
 export interface HivraSessionRow {
@@ -189,7 +196,8 @@ export function aggregateHivraActivity(
     if (agentType) typeCounts.set(agentType, (typeCounts.get(agentType) ?? 0) + 1);
 
     if (row.id) {
-      events.push({ id: row.id, event, agentType, agentId: row.agent_id ?? null, createdAt: created });
+      const summary = attachActivityLine(event, { agentName: row.attach_agent, computerName: row.attach_computer, access: row.attach_access });
+      events.push({ id: row.id, event, agentType, agentId: row.agent_id ?? null, createdAt: created, ...(summary ? { summary } : {}) });
     }
   }
 
@@ -244,7 +252,10 @@ export function emptyHivraActivity(dayKeys: string[], now: Date): HivraActivity 
   return aggregateHivraActivity([], [], [], dayKeys, now);
 }
 
-const EVENT_COLUMNS = "id, agent_id, event, agent_type, created_at";
+// Three label fields of an attach event's detail by name, for its row (5.7);
+// the rest of detail is never read here.
+const EVENT_COLUMNS = "id, agent_id, event, agent_type, created_at, "
+  + "attach_agent:detail->>agentName, attach_computer:detail->>computerName, attach_access:detail->>access";
 // `computer_kind` is read but never filtered: a desktop session on a
 // hermes-instance is still this user's activity and must not be silently dropped.
 const SESSION_COLUMNS = "id, computer_kind, created_at";
@@ -259,7 +270,8 @@ const FLEET_COLUMNS = "id, type, status, created_at";
  *   3. hivra_agents — fleet truth (how many boxes, what state)
  *
  * `detail` is deliberately NOT selected: it carries infrastructure identifiers
- * (vmid, host) that have no business on a customer surface.
+ * (vmid, host) that have no business on a customer surface. Only three label
+ * fields of attach events are read by name (agent, computer name, access).
  */
 export async function fetchHivraActivity(
   client: AdminClient,

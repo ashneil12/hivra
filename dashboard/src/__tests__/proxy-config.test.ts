@@ -80,7 +80,29 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate", "infrastructure/first-boot/enroll$", "activity/ingest$", "activity/collector/renew$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$"]);
+  });
+
+  it("routes only the exact server setup report and script paths around Clerk", async () => {
+    const { config } = await import("@/proxy");
+    for (const url of ["/api/infrastructure/server-enrollments/report", "/enroll", "/enroll/uninstall",
+      "/enroll/script", "/enroll/script.sha256"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
+    }
+    // The owner routes beside the report, and every sibling or child of the
+    // script paths, stay behind Clerk.
+    for (const url of ["/api/infrastructure/server-enrollments", "/api/infrastructure/server-enrollments/11111111-1111-4111-8111-111111111111/confirm",
+      "/api/infrastructure/server-enrollments/report/extra", "/api/infrastructure/server-enrollments/report-other",
+      "/enroll/extra", "/enroll/script/extra", "/enroll/uninstall/x", "/enrollment", "/enroll/script.sha256x",
+      "/dashboard/infrastructure"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("serves every excluded setup script path from a real route", () => {
+    for (const route of ["enroll", "enroll/uninstall", "enroll/script", "enroll/script.sha256"]) {
+      expect(fs.existsSync(path.join(process.cwd(), "src/app", route, "route.ts"))).toBe(true);
+    }
   });
 
   it("lets the scoped collector receiver authenticate OTLP without exempting Activity reads", async () => {

@@ -1,7 +1,7 @@
-import { canonicalFirstBootHostKey, createFirstBootChallenge, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
+import { canonicalFirstBootHostKey, createFirstBootChallenge, FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
-  consumeFirstBootEnrollment, FIRST_BOOT_PREPARATION_CONFIRMATION, loadFirstBootEnrollment,
+  consumeFirstBootEnrollment, FIRST_BOOT_PREPARATION_CONFIRMATION, loadFirstBootEnrollment, loadFirstBootRecipeVersion,
   loadStagedFirstBootDelivery, stageFirstBootEnrollment, loadFirstBootEnrollmentForOrder, markFirstBootServerPostAttempted,
 } from "../first-boot-store";
 
@@ -29,7 +29,8 @@ function fixture() {
     connection_revision:binding.connectionRevision,quote_fingerprint_sha256:binding.quoteFingerprint,
     attempt_id:binding.attemptId,capacity_idempotency_key:capacityKey,recipe_version:FIRST_BOOT_RECIPE_VERSION,
     phase:"staged",issued_at:proof.challenge.issuedAt,expires_at:proof.challenge.expiresAt,
-    verifier_sha256:proof.challenge.verifierSha256,provider_server_id:null,host_public_key:null,host_fingerprint_sha256:null};
+    verifier_sha256:proof.challenge.verifierSha256,provider_server_id:null,host_public_key:null,host_fingerprint_sha256:null,
+    armed_at:null as string|null,armed_expires_at:null as string|null,enrolled_at:null as string|null};
   const ciphertext = encryptSecret(JSON.stringify({version:1,purpose:"hivra/first-boot-delivery/v1",
     token:proof.token,verifierSha256:proof.challenge.verifierSha256}));
   return {input,row,ciphertext};
@@ -135,6 +136,65 @@ describe("private first-boot ledger adapter",()=>{
     }
     mockQuery.maybeSingle.mockResolvedValue({data:{...row,encrypted_token:ciphertext},error:null});
     await expect(loadStagedFirstBootDelivery({...input,now:new Date(now.getTime()+900_000)})).rejects.toThrow("invalid_delivery");
+  });
+  it("reads a start-armed window only for the current recipe, exactly as the database constrains it",async()=>{
+    const {row} = fixture();
+    const armedAt = "2026-08-27T17:00:00.000Z", armedExpiresAt = "2026-08-27T17:17:00.000Z";
+    const awaiting = {...row,phase:"awaiting_identity",provider_server_id:"42"};
+    mockQuery.maybeSingle.mockResolvedValue({data:awaiting,error:null});
+    expect(await loadFirstBootEnrollment(binding.orderId,binding.attemptId)).toMatchObject({armedAt:null,armedExpiresAt:null});
+    mockQuery.maybeSingle.mockResolvedValue({data:{...awaiting,armed_at:armedAt,armed_expires_at:armedExpiresAt},error:null});
+    expect(await loadFirstBootEnrollment(binding.orderId,binding.attemptId)).toMatchObject({armedAt,armedExpiresAt});
+    const host = canonicalFirstBootHostKey(publicKey);
+    const enrolled = {...awaiting,phase:"enrolled",host_public_key:host.publicKey,host_fingerprint_sha256:host.fingerprintSha256};
+    mockQuery.maybeSingle.mockResolvedValue({data:{...enrolled,armed_at:armedAt,armed_expires_at:armedExpiresAt,
+      enrolled_at:"2026-08-27T17:05:00.000Z"},error:null});
+    expect(await loadFirstBootEnrollment(binding.orderId,binding.attemptId)).toMatchObject({phase:"enrolled",armedAt});
+    for (const change of [
+      {...awaiting,armed_at:armedAt},
+      {...awaiting,armed_expires_at:armedExpiresAt},
+      {...awaiting,armed_at:armedAt,armed_expires_at:"2026-08-28T17:00:00.000Z"},
+      {...awaiting,armed_at:"2026-08-27T14:00:00.000Z",armed_expires_at:"2026-08-27T14:17:00.000Z"},
+      {...row,armed_at:armedAt,armed_expires_at:armedExpiresAt},
+      {...awaiting,recipe_version:FIRST_BOOT_LEGACY_RECIPE_VERSION,armed_at:armedAt,armed_expires_at:armedExpiresAt},
+      {...enrolled,enrolled_at:"2026-08-27T17:05:00.000Z"},
+      {...enrolled,armed_at:armedAt,armed_expires_at:armedExpiresAt,enrolled_at:"2026-08-27T17:20:00.000Z"},
+      {...awaiting,recipe_version:"2026.09.99.1"},
+    ]) {
+      mockQuery.maybeSingle.mockResolvedValue({data:change,error:null});
+      await expect(loadFirstBootEnrollment(binding.orderId,binding.attemptId)).rejects.toThrow("invalid_record");
+    }
+  });
+  it("finds an original attempt of either recipe for readers, and stages only the current one",async()=>{
+    const {row,input} = fixture();
+    const {attemptId:ignored,recipeVersion:alsoIgnored,...orderBinding}=binding;void ignored;void alsoIgnored;
+    mockQuery.maybeSingle.mockResolvedValue({data:{...row,recipe_version:FIRST_BOOT_LEGACY_RECIPE_VERSION},error:null});
+    const legacy = await loadFirstBootEnrollmentForOrder({binding:orderBinding,capacityIdempotencyKey:capacityKey});
+    expect(legacy?.challenge.binding.recipeVersion).toBe(FIRST_BOOT_LEGACY_RECIPE_VERSION);
+    expect(mockQuery.eq.mock.calls.map(([column])=>column)).not.toContain("recipe_version");
+    const legacyBinding = {...binding,recipeVersion:FIRST_BOOT_LEGACY_RECIPE_VERSION};
+    const legacyProof = createFirstBootChallenge(legacyBinding,now);
+    await expect(stageFirstBootEnrollment({...input,...legacyProof,binding:legacyBinding})).rejects.toThrow("invalid_delivery");
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+  it("reads an attempt's own recipe inside its complete binding",async()=>{
+    const attempt={userId:binding.userId,connectionId:binding.connectionId,connectionRevision:7,orderId:binding.orderId,
+      attemptId:binding.attemptId,quoteFingerprint:binding.quoteFingerprint};
+    mockQuery.maybeSingle.mockResolvedValue({data:{recipe_version:FIRST_BOOT_LEGACY_RECIPE_VERSION},error:null});
+    await expect(loadFirstBootRecipeVersion(attempt)).resolves.toBe(FIRST_BOOT_LEGACY_RECIPE_VERSION);
+    expect(mockQuery.select).toHaveBeenCalledWith("recipe_version");
+    expect(mockQuery.eq.mock.calls).toEqual([["order_id",binding.orderId],["attempt_id",binding.attemptId],
+      ["user_id",binding.userId],["connection_id",binding.connectionId],["connection_revision",7],
+      ["quote_fingerprint_sha256",binding.quoteFingerprint]]);
+    mockQuery.maybeSingle.mockResolvedValue({data:{recipe_version:FIRST_BOOT_RECIPE_VERSION},error:null});
+    await expect(loadFirstBootRecipeVersion(attempt)).resolves.toBe(FIRST_BOOT_RECIPE_VERSION);
+    mockQuery.maybeSingle.mockResolvedValue({data:null,error:null});
+    await expect(loadFirstBootRecipeVersion(attempt)).rejects.toThrow("not_active");
+    mockQuery.maybeSingle.mockResolvedValue({data:{recipe_version:"later"},error:null});
+    await expect(loadFirstBootRecipeVersion(attempt)).rejects.toThrow("invalid_record");
+    mockQuery.maybeSingle.mockResolvedValue({data:null,error:{message:"private"}});
+    await expect(loadFirstBootRecipeVersion(attempt)).rejects.toThrow("database_error");
+    await expect(loadFirstBootRecipeVersion({...attempt,recipeVersion:FIRST_BOOT_RECIPE_VERSION} as never)).rejects.toThrow("invalid_record");
   });
   it("rejects inconsistent private records",async()=>{
     const {row} = fixture();

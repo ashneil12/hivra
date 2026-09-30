@@ -87,7 +87,7 @@ describe("CodexOAuthModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /start codex login/i }));
 
-    expect(screen.getByText(/connecting to active container to begin oauth/i)).toBeInTheDocument();
+    expect(screen.getByText(/starting sign-in on your agent/i)).toBeInTheDocument();
 
     await act(async () => {
       jest.advanceTimersByTime(45_000);
@@ -577,7 +577,7 @@ describe("CodexOAuthModal", () => {
       <CodexOAuthModal instanceId="inst-autostart" autoStart onClose={jest.fn()} />
     );
 
-    expect(screen.getByText(/connecting to active container to begin oauth/i)).toBeInTheDocument();
+    expect(screen.getByText(/starting sign-in on your agent/i)).toBeInTheDocument();
 
     await screen.findByRole("button", { name: /open authorization page/i });
 
@@ -831,5 +831,52 @@ describe("CodexOAuthModal", () => {
       jest.advanceTimersByTime(3_000);
     });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("puts the device code first and copies it and opens sign-in in one tap", async () => {
+    await arriveAtWaitingStep("inst-code-first");
+    const openSpy = jest.fn().mockReturnValue({} as Window);
+    Object.defineProperty(window, "open", { configurable: true, writable: true, value: openSpy });
+
+    const codeStep = screen.getByText(/step 1 — copy this code/i);
+    const urlStep = screen.getByText(/step 2 — enter it on the sign-in page/i);
+    expect(codeStep.compareDocumentPosition(urlStep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /copy code & open sign-in/i }));
+    });
+
+    expect(mockedCopyTextToClipboard).toHaveBeenCalledWith("ABCD-1234");
+    expect(openSpy).toHaveBeenCalledWith("https://chatgpt.com/auth/device?code=ABCD", "_blank", "noopener,noreferrer");
+    expect(screen.getByRole("button", { name: /^copied!$/i })).toBeInTheDocument();
+
+    // Drain the copy reset timer before afterEach swaps back to real timers.
+    await act(async () => {
+      jest.advanceTimersByTime(2_000);
+    });
+  });
+
+  it("closes from the labelled close button, Escape, or the backdrop, but not from inside the card", () => {
+    const onClose = jest.fn();
+    render(<CodexOAuthModal instanceId="inst-dismiss" onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("heading", { name: /sign in with chatgpt/i }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.pointerDown(screen.getByRole("dialog"));
+    fireEvent.click(screen.getByRole("dialog"));
+    expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+  it("stays open when a text selection started in the card is released over the backdrop", () => {
+    const onClose = jest.fn();
+    render(<CodexOAuthModal instanceId="inst-drag" onClose={onClose} />);
+
+    // The browser sends the click to the common ancestor: the backdrop.
+    fireEvent.pointerDown(screen.getByRole("heading", { name: /sign in with chatgpt/i }));
+    fireEvent.click(screen.getByRole("dialog"));
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

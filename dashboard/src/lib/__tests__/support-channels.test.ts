@@ -12,7 +12,7 @@ import {
 describe("support-channels", () => {
   it("exposes the canonical Discord + email channels", () => {
     expect(SUPPORT_DISCORD_URL).toBe("https://discord.gg/tDQZq8479F");
-    expect(SUPPORT_EMAIL).toBe("info@hermesos.cloud");
+    expect(SUPPORT_EMAIL).toBe("info@hivra.cloud");
   });
 
   it("builds a mailto: to the support inbox with a [Report] subject", () => {

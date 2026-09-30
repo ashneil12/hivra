@@ -1,9 +1,7 @@
-// Welcome agent catalog — first-run choices shown after plan activation.
-//
-// Pure data/logic so signup, checkout recovery, landing links, and the welcome
-// flow can preserve the same agent intent without importing React components.
-
-export const WELCOME_AGENT_TYPE_STORAGE_KEY = "hermes:welcome_agent_type";
+// Agent catalog of the retired welcome flow. Its keys still name an agent in
+// sign-up, activation and landing links (`agentType=`), which Launch maps to
+// its own profiles (launchProfileForAgentType), and the mobile launch reads the
+// general agent's system prompt from here.
 
 export type WelcomeAgentTypeKey = "general" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero";
 type WelcomeAgentIconKey = "bot" | "code" | "terminal" | "infinity" | "messages" | "orbit";

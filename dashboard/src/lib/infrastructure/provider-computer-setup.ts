@@ -1,22 +1,26 @@
 import "server-only";
 
 import { listInfrastructureDeploymentTargets, InfrastructureConnectionStoreError } from "./connection-store";
-import { listHetznerCloudCleanupOrders, loadHetznerCloudCleanupOrder, loadHetznerCloudConnectionMetadata, type StoredHetznerCloudCapacityOrder } from "./hetzner-cloud-store";
-import { FIRST_BOOT_RECIPE_VERSION } from "./first-boot-enrollment";
+import { listHetznerCloudCleanupOrders, listHetznerCloudCreatedServers, loadHetznerCloudCleanupOrder,
+  loadHetznerCloudConnectionMetadata, type StoredHetznerCloudCapacityOrder } from "./hetzner-cloud-store";
+import { FIRST_BOOT_SETUP_WINDOW_MS, firstBootEnrollmentDeadline, firstBootWindowOpensAtStart } from "./first-boot-enrollment";
 import { loadFirstBootEnrollmentForOrder } from "./first-boot-store";
 import { loadFirstBootOperation } from "./first-boot-operations";
 import { advanceFirstBoot } from "./first-boot-coordinator";
 import { prepareEnrolledGuest } from "./enrolled-guest-verification";
-import { ProviderComputerSetupRequestSchema, ProviderComputerSetupViewSchema, PROVIDER_SETUP_TERMINAL_STAGES,
-  type ProviderComputerSetupRequest, type ProviderComputerSetupView } from "./provider-computer-setup-contracts";
+import { ProviderComputerSetupEvidenceSchema, ProviderComputerSetupRequestSchema, ProviderComputerSetupViewSchema,
+  PROVIDER_SETUP_TERMINAL_STAGES, type ProviderComputerSetupEvidence, type ProviderComputerSetupRequest,
+  type ProviderComputerSetupView } from "./provider-computer-setup-contracts";
 
 type Dependencies = {
   connection: typeof loadHetznerCloudConnectionMetadata; orders: typeof listHetznerCloudCleanupOrders;
+  createdServers: typeof listHetznerCloudCreatedServers;
   order: typeof loadHetznerCloudCleanupOrder; enrollment: typeof loadFirstBootEnrollmentForOrder;
   boot: typeof loadFirstBootOperation; targets: typeof listInfrastructureDeploymentTargets;
   advance: typeof advanceFirstBoot; prepare: typeof prepareEnrolledGuest; now: () => Date;
 };
 const defaults: Dependencies = { connection: loadHetznerCloudConnectionMetadata, orders: listHetznerCloudCleanupOrders,
+  createdServers: listHetznerCloudCreatedServers,
   order: loadHetznerCloudCleanupOrder, enrollment: loadFirstBootEnrollmentForOrder, boot: loadFirstBootOperation,
   targets: listInfrastructureDeploymentTargets, advance: advanceFirstBoot, prepare: prepareEnrolledGuest, now: () => new Date() };
 
@@ -32,17 +36,35 @@ async function describe(userId: string, connectionId: string, order: StoredHetzn
   const view: ProviderComputerSetupView = {
     orderId: operation.id, connectionId, connectionRevision: order.connectionRevision,
     serverName: operation.quote.serverName, providerServerId: operation.providerServerId,
-    stage: "awaiting_setup", targetId: null, observedAt: null, launchReady: false,
+    stage: "awaiting_setup", targetId: null, observedAt: null, launchReady: false, enrollmentExpiresAt: null,
+    enrollmentClosesAt: null, enrollmentWindow: null,
   };
-  const creationScope = { binding: { userId, connectionId, connectionRevision: order.connectionRevision, orderId: operation.id,
-    quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION }, capacityIdempotencyKey: operation.idempotencyKey };
-  const enrollment = await deps.enrollment(creationScope);
+  // Either recipe: a server keeps the rules it was created with.
+  const lookup = { binding: { userId, connectionId, connectionRevision: order.connectionRevision, orderId: operation.id,
+    quoteFingerprint: order.quoteFingerprintSha256 }, capacityIdempotencyKey: operation.idempotencyKey };
+  const enrollment = await deps.enrollment(lookup);
   const scope = enrollment && operation.providerServerId
     ? { binding: enrollment.challenge.binding, providerServerId: operation.providerServerId } : null;
+  const startArmed = enrollment ? firstBootWindowOpensAtStart(enrollment.challenge.binding.recipeVersion) : false;
+  if (enrollment) view.enrollmentWindow = startArmed ? "since_start" : "since_creation";
+  // Observed server-side state only. Legacy: 15 minutes from creation. Current:
+  // nothing before Start setup; afterwards the 15 minutes from Hivra's recorded
+  // power-on (the server itself accepts 2 more minutes for Hetzner's boot).
+  const deadline = enrollment ? firstBootEnrollmentDeadline(enrollment) : null;
+  if (enrollment && (enrollment.phase === "staged" || enrollment.phase === "awaiting_identity")) {
+    view.enrollmentExpiresAt = !startArmed ? enrollment.challenge.expiresAt
+      : enrollment.armedAt ? new Date(Date.parse(enrollment.armedAt) + FIRST_BOOT_SETUP_WINDOW_MS).toISOString() : null;
+    view.enrollmentClosesAt = view.enrollmentExpiresAt !== null && deadline !== null ? new Date(deadline).toISOString() : null;
+  }
   if (["deleted", "cleaning"].includes(operation.status)) view.stage = "retired";
   else if (!enrollment) view.stage = "not_requested";
   else if (["revoked", "failed"].includes(enrollment.phase)) view.stage = "stopped";
-  else if (enrollment.phase !== "enrolled" && deps.now().getTime() >= Date.parse(enrollment.challenge.expiresAt)) view.stage = "expired";
+  else if (enrollment.phase !== "enrolled" && deadline !== null && deps.now().getTime() >= deadline) view.stage = "expired";
+  // A current-recipe order has no enrollment deadline until Start setup, but its
+  // server request had to be sent within 15 minutes of staging. Past that, with
+  // no request ever sent, no server exists and Hivra will not send one.
+  else if (startArmed && enrollment.phase === "staged" && !order.serverPostAttemptedAt
+    && deps.now().getTime() >= Date.parse(enrollment.challenge.expiresAt)) view.stage = "expired";
   else if (operation.status !== "created_off" || !scope) view.stage = "waiting_for_capacity";
   else {
     const boot = await deps.boot(scope);
@@ -77,6 +99,18 @@ export async function listProviderComputerSetups(userId: string, connectionId: s
   const orders = await deps.orders(userId, connectionId);
   const results = await Promise.all(orders.map(order => describe(userId, connectionId, order, deps)));
   return results.map(result => result.view);
+}
+
+/** Setup views plus Hivra's record of every server request on the connection,
+ * read together so the card never labels servers from half the evidence. */
+export async function listProviderComputerSetupEvidence(userId: string, connectionId: string,
+  dependencies: Partial<Dependencies> = {}): Promise<ProviderComputerSetupEvidence> {
+  const deps = { ...defaults, ...dependencies };
+  const [computers, createdServers] = await Promise.all([
+    listProviderComputerSetups(userId, connectionId, deps),
+    deps.createdServers(userId, connectionId),
+  ]);
+  return ProviderComputerSetupEvidenceSchema.parse({ computers, createdServers });
 }
 
 /** Only an authenticated, same-origin POST may advance the already-confirmed

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { log } from "@/lib/logger";
 import { createHetznerCloudCleanupClient, createHetznerCloudFirstBootClient, type HetznerCloudCleanupClient, type HetznerCloudFirstBootClient } from "@/lib/hetzner/client";
 import { loadFirstBootOperationForOrder, type FirstBootOperation } from "./first-boot-operations";
-import { FIRST_BOOT_RECIPE_VERSION } from "./first-boot-enrollment";
 import { retireUnusedPreparedProviderComputer } from "./provider-computer-preparation";
 import {
   loadHetznerCloudCleanupOrder, listHetznerCloudCleanupOrders, loadHetznerCloudConnectionSecret,
@@ -92,7 +91,7 @@ async function loadFirstBoot(deps: Dependencies, userId: string, order: StoredHe
   if (!order.operation.providerServerId) return null;
   return deps.loadFirstBoot({ binding: { userId, connectionId: order.operation.connectionId,
     connectionRevision: order.connectionRevision, orderId: order.operation.id,
-    quoteFingerprint: order.quoteFingerprintSha256, recipeVersion: FIRST_BOOT_RECIPE_VERSION },
+    quoteFingerprint: order.quoteFingerprintSha256 },
   providerServerId: order.operation.providerServerId });
 }
 

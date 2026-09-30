@@ -25,7 +25,8 @@ module.exports = async function nativeStoreSqlFixture({ db, nativeFixture, nativ
     } catch (error) { return { data: null, error }; }
   };
   const from = table => {
-    assert.ok(["hivra_agents", "infrastructure_capacity_orders", "hivra_provider_native_cleanup"].includes(table));
+    // The attempt's recipe version is read from its enrollment (a non-secret column).
+    assert.ok(["hivra_agents", "infrastructure_capacity_orders", "hivra_provider_native_cleanup", "infrastructure_first_boot_enrollments"].includes(table));
     let columns, filters = [];
     return {
       select(selected) { columns = selected.split(",").map(identifier).join(","); return this; },

@@ -14,7 +14,7 @@ describe("ProfileService gateway status persistence", () => {
   });
 
   it("throws when marking a started profile as running fails", async () => {
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
     const updateAgentCaddyRoutingSpy = jest
       .spyOn(ProfileService, "updateAgentCaddyRouting")
@@ -43,7 +43,7 @@ describe("ProfileService gateway status persistence", () => {
   });
 
   it("throws when marking a stopped profile as stopped fails", async () => {
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
     const updateAgentCaddyRoutingSpy = jest
       .spyOn(ProfileService, "updateAgentCaddyRouting")
@@ -84,7 +84,7 @@ describe("ProfileService gateway status persistence", () => {
   // Caddyfile with the legacy upstreams — taking the box down. Bail before any
   // SSH / Caddy work, exactly like startProfileGateway already does.
   it("refuses to stop a profile that owns no gateway port, before touching the box", async () => {
-    const getHostIpSpy = jest.spyOn(ProfileService, "getHostIpForInstance");
+    const getHostIpSpy = jest.spyOn(ProfileService, "getGuestSshForInstance");
     const updateAgentCaddyRoutingSpy = jest
       .spyOn(ProfileService, "updateAgentCaddyRouting")
       .mockResolvedValue(undefined);

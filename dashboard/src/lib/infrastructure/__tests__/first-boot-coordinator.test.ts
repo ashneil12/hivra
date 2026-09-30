@@ -4,8 +4,8 @@ import { firstBootFirewallRequest, type FirstBootFirewall } from "@/lib/hetzner/
 import type { FirstBootOperation } from "../first-boot-operations";
 import type { HetznerAction } from "@/lib/hetzner/client";
 
-function setup() {
-  const f = receiverFixture();
+function setup(kind: Parameters<typeof receiverFixture>[0] = "legacy") {
+  const f = receiverFixture(kind);
   const scope = { binding: f.binding, providerServerId: "42" };
   const lease = { ...scope, leaseId: "55555555-5555-4555-8555-555555555555" };
   const operation: FirstBootOperation = { ...scope, leaseId: lease.leaseId,
@@ -194,4 +194,34 @@ it("does not report a completed step if receipt persistence or lease release fai
     expect(h.client.createFirewall).toHaveBeenCalledTimes(1);
     expect(h.deps.release).toHaveBeenCalledTimes(1);
   }
+});
+
+describe("current recipe: Start setup may come long after creation", () => {
+  it("powers on a server created hours ago; only the recorded power-on opens its window", async () => {
+    const h = setup("unarmed");
+    expect(Date.parse(h.stored.challenge.expiresAt)).toBeLessThan(firstBootNow.getTime());
+    expect(await advanceFirstBoot(h.scope, h.deps)).toEqual({ stage: "firewall_requested" });
+    expect(await advanceFirstBoot(h.scope, h.deps)).toEqual({ stage: "power_requested" });
+    expect(h.dispatches).toEqual(["mark firewall", "POST firewall", "save firewall", "mark power", "POST power", "save power"]);
+    expect(h.client.powerOnServer).toHaveBeenCalledTimes(1);
+    // The coordinator never arms: markPower (the database checkpoint) does.
+    expect(h.deps.markPower).toHaveBeenCalledTimes(1);
+  });
+  it("the same late start of a legacy server is refused, as before", async () => {
+    const h = setup(); h.deps.now.mockReturnValue(new Date(firstBootNow.getTime() + 2 * 60 * 60_000));
+    await expect(advanceFirstBoot(h.scope, h.deps)).rejects.toMatchObject({ code: "deadline_expired" });
+    expect(h.dispatches).toEqual([]);
+  });
+  it("stops polling a started server once its armed window has closed", async () => {
+    const h = setup("armed");
+    h.stored.phase = "awaiting_identity"; h.stored.providerServerId = "42";
+    h.operation.firewallPostAttemptedAt = h.operation.firewallVerifiedAt = h.operation.powerOnPostAttemptedAt = h.stored.armedAt;
+    h.operation.firewallReceipt = h.receipt;
+    h.operation.powerOnAction = { id: 603, command: "start_server", status: "running", resources: [{ id: 42, type: "server" }] };
+    h.server.status = "starting";
+    expect(await advanceFirstBoot(h.scope, h.deps)).toEqual({ stage: "waiting_for_power" });
+    h.deps.now.mockReturnValue(new Date(Date.parse(h.stored.armedExpiresAt!)));
+    await expect(advanceFirstBoot(h.scope, h.deps)).rejects.toMatchObject({ code: "deadline_expired" });
+    expect(h.client.powerOnServer).not.toHaveBeenCalled();
+  });
 });

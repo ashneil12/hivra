@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { GET, POST } from "../route";
-import { listProviderComputerSetups, advanceProviderComputerSetup } from "@/lib/infrastructure/provider-computer-setup";
+import { listProviderComputerSetupEvidence, advanceProviderComputerSetup } from "@/lib/infrastructure/provider-computer-setup";
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/infrastructure/provider-computer-setup", () => ({ ...jest.requireActual("@/lib/infrastructure/provider-computer-setup"), listProviderComputerSetups: jest.fn(), advanceProviderComputerSetup: jest.fn() }));
+jest.mock("@/lib/infrastructure/provider-computer-setup", () => ({ ...jest.requireActual("@/lib/infrastructure/provider-computer-setup"), listProviderComputerSetupEvidence: jest.fn(), advanceProviderComputerSetup: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn(() => null) }));
 const connection = "11111111-1111-4111-8111-111111111111", order = "22222222-2222-4222-8222-222222222222";
 const context = { params: Promise.resolve({ id: connection }) };
@@ -12,13 +12,16 @@ const url = `https://hivra.test/api/infrastructure/connections/${connection}/het
 const request = (body: unknown = input) => new NextRequest(url, { method: "POST", headers: { origin: "https://hivra.test", "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify(body) });
 beforeEach(() => {
   jest.clearAllMocks(); (auth as unknown as jest.Mock).mockResolvedValue({ userId: "owner" });
-  (listProviderComputerSetups as jest.Mock).mockResolvedValue([]);
+  (listProviderComputerSetupEvidence as jest.Mock).mockResolvedValue({ computers: [], createdServers: [] });
   (advanceProviderComputerSetup as jest.Mock).mockResolvedValue({ stage: "waiting_for_identity" });
 });
-it("reads without advancing any setup", async () => {
+it("reads setup and Hivra's created-server records without advancing any setup", async () => {
+  const createdServers = [{ orderId: order, serverName: "hivra-a1b2", providerServerId: null, status: "ambiguous" }];
+  (listProviderComputerSetupEvidence as jest.Mock).mockResolvedValue({ computers: [], createdServers });
   const result = await GET(new NextRequest(url), context);
   expect(result.status).toBe(200); expect(result.headers.get("Cache-Control")).toBe("no-store");
-  expect(listProviderComputerSetups).toHaveBeenCalledWith("owner", connection);
+  expect((await result.json()).data).toEqual({ computers: [], createdServers });
+  expect(listProviderComputerSetupEvidence).toHaveBeenCalledWith("owner", connection);
   expect(advanceProviderComputerSetup).not.toHaveBeenCalled();
 });
 it("passes only authenticated owner, route connection and validated request", async () => {

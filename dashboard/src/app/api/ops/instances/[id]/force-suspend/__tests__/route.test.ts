@@ -163,6 +163,7 @@ describe("POST /api/ops/instances/[id]/force-suspend", () => {
     });
 
     expect(shutdownProxmoxInstance).toHaveBeenCalledWith(proxmoxInfra, {
+      expectedInstanceId: "inst_abc",
       hostConfig: null,
     });
     expect(shutdownServer).not.toHaveBeenCalled();

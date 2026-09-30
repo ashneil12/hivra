@@ -63,32 +63,8 @@ export function calculateUsage(instances: InstanceUsage[], hivraAgents: HivraAge
 }
 import { isPoolExempt } from "@/lib/hivra/agent-catalog";
 
-/**
- * Paid resource tiers whose Proxmox-hosted instances are backed up as part of
- * the plan. Keep in step with the backups flag the instance detail API
- * reports (api/instances/[id]/route.ts), which uses the same rule.
- */
-export const BACKUP_INCLUDED_RESOURCE_TIERS: readonly string[] = [
-  "operator",
-  "fleet",
-  "command",
-  "ws_cloud_pro",
-  "ws_cloud_power",
-  "credit_pro",
-  "credit_power",
-  "paid",
-  "pro",
-  "power",
-];
-
-/** True when this instance's backups come with its plan (no add-on to buy). */
-export function backupsIncludedWithInstance(instance: InstanceUsage): boolean {
-  return Boolean(
-    instance.proxmox_node &&
-      instance.proxmox_vmid &&
-      BACKUP_INCLUDED_RESOURCE_TIERS.includes(String(instance.resource_tier ?? ""))
-  );
-}
+export { BACKUP_INCLUDED_RESOURCE_TIERS, backupsIncludedWithInstance } from "@/lib/billing/backup-coverage";
+import { backupsIncludedWithInstance } from "@/lib/billing/backup-coverage";
 
 export interface BackupAddonAvailability {
   /** True when the $10/mo add-on can be bought right now (instanceIds is not empty). */

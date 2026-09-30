@@ -8,11 +8,12 @@ import StructuredData from "@/components/StructuredData";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 // SCRIPTURE_ANCHOR: blog-proclaim | Psalm 96:3 | Verse: Declare his glory among the nations, his marvelous works among all the peoples.
 
 export const metadata: Metadata = {
-  title: "Blog — AI agent guides and deep dives",
+  title: "Blog: AI agent guides and deep dives",
   description:
     "Practical guides to running AI agents: how persistent memory works, self-hosting vs managed hosting, real automation examples, and more from the Hivra team.",
   ...buildWebsiteMetadata({
@@ -89,7 +90,7 @@ export default function BlogIndexPage() {
             <ArrowUpRight className={styles.rowArrow} size={24} aria-hidden="true" />
           </Link>)}
         </div>
-        <EditorialRelated title="Explore Hivra" links={[{ label: "All Features", href: "/features" }, { label: "Compare Alternatives", href: "/compare" }, { label: "Deploy Now", href: "/get-started?plan=operator" }]} />
+        <EditorialRelated title="Explore Hivra" links={[{ label: "All Features", href: "/features" }, { label: "Compare Alternatives", href: "/compare" }, { label: "Deploy Now", href: PUBLIC_START_HREF }]} />
       </main>
     </PublicSite>
   );

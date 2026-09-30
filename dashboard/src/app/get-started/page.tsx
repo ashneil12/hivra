@@ -13,14 +13,13 @@ import { captureClient } from "@/lib/telemetry/posthog-client";
 import {
   PLANS, ACTIVE_PLAN_KEYS, formatPrice, type PlanKey, type Cadence,
 } from "@/lib/subscription";
-import {
-  WELCOME_AGENT_TYPE_STORAGE_KEY,
-  buildAgentTypeQuery,
-  resolveWelcomeAgentTypeKey,
-} from "@/lib/welcome-agent-catalog";
+import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { LanguageSwitcher, LocaleProvider, useLocale } from "@/components/i18n/LocaleProvider";
+import { FunnelHeader } from "@/components/layout/LandingHeader";
+import funnelStyles from "@/components/public-site/public-site.module.css";
 import { isLocalAuthMode } from "@/lib/self-host/config";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const GET_STARTED_ROUTE = "/get-started";
 
@@ -66,7 +65,7 @@ export default function GetStartedPage() {
   return (
     <LocaleProvider>
       <Suspense fallback={
-        <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
           <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
         </div>
       }>
@@ -87,6 +86,11 @@ function GetStartedPageContent() {
   const planParam = searchParams?.get("plan") ?? null;
   const agentTypeKey = resolveWelcomeAgentTypeKey(searchParams?.get("agentType"));
   const agentTypeQuery = buildAgentTypeQuery(agentTypeKey);
+  // A Free link is no plan choice to make: it joins every other new account
+  // at sign-up, which lands in Launch. Launch turns Free on, with its own
+  // button, only for a launch on Hivra Cloud.
+  const freeIntent = planParam === "free";
+  const startHref = agentTypeQuery ? `${PUBLIC_START_HREF}?${agentTypeQuery.replace(/^&/, "")}` : PUBLIC_START_HREF;
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>(
     resolvePlanParam(planParam)
   );
@@ -118,28 +122,19 @@ function GetStartedPageContent() {
     String(saveDollars)
   );
 
-  useEffect(() => {
-    if (!agentTypeKey) return;
-    try {
-      window.localStorage.setItem(WELCOME_AGENT_TYPE_STORAGE_KEY, agentTypeKey);
-    } catch {
-      // The URL still carries agentType; localStorage is only a checkout-return hint.
-    }
-  }, [agentTypeKey]);
-
   // Funnel step 1: a prospective user is shown the signup page. Fire once, only
   // for signed-out visitors — already-signed-in users are redirected straight to
   // activation and aren't entering the signup funnel.
   const viewedRef = useRef(false);
   useEffect(() => {
-    if (selfHosted || !isLoaded || isSignedIn || viewedRef.current) return;
+    if (selfHosted || !isLoaded || isSignedIn || freeIntent || viewedRef.current) return;
     viewedRef.current = true;
     captureFunnelEvent("get_started_viewed", {
       plan: selectedPlan,
       cadence,
       agentType: agentTypeKey ?? null,
     });
-  }, [selfHosted, isLoaded, isSignedIn, selectedPlan, cadence, agentTypeKey]);
+  }, [selfHosted, isLoaded, isSignedIn, freeIntent, selectedPlan, cadence, agentTypeKey]);
 
   // This page is the hosted account and plan funnel. An independent install
   // has one installation-owned operator instead, so it must never render the
@@ -150,16 +145,25 @@ function GetStartedPageContent() {
     router.replace(isSignedIn ? "/dashboard" : "/sign-in");
   }, [selfHosted, isLoaded, isSignedIn, router]);
 
-  // If user is already signed in, redirect to the activate page to trigger checkout
+  // A signed-in visitor with a paid plan goes to activation to start checkout.
+  // A Free intent (an older Register link) needs no checkout, so it goes
+  // straight to the dashboard instead of re-running the Free activation; a
+  // signed-out one goes to sign-up like every other new account.
   useEffect(() => {
-    if (!selfHosted && isLoaded && isSignedIn) {
-      router.replace(activationUrl);
-    }
-  }, [activationUrl, selfHosted, isLoaded, isSignedIn, router]);
+    if (selfHosted || !isLoaded) return;
+    if (isSignedIn) router.replace(freeIntent ? "/dashboard" : activationUrl);
+    else if (freeIntent) router.replace(startHref);
+  }, [activationUrl, freeIntent, startHref, selfHosted, isLoaded, isSignedIn, router]);
+
+  const showPlanSwitcher = () => {
+    const switcher = document.getElementById("get-started-plans");
+    switcher?.scrollIntoView({ behavior: "smooth", block: "center" });
+    switcher?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
+  };
 
   if (selfHosted) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <Loader2 size={24} style={{ opacity: 0.4, animation: "spin 1s linear infinite" }} />
           <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
@@ -173,21 +177,25 @@ function GetStartedPageContent() {
   // Show nothing while Clerk loads to avoid flash
   if (!isLoaded) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
       </div>
     );
   }
 
-  // If already signed in, show loading while redirect happens
-  if (isSignedIn) {
+  // If already signed in, or sent on to sign-up, show loading while the
+  // redirect happens
+  if (isSignedIn || freeIntent) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <Loader2 size={24} style={{ opacity: 0.4, animation: "spin 1s linear infinite" }} />
-          <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
-            {setup.loadingCheckout}
-          </span>
+          {/* Only a paid plan is on its way to checkout. */}
+          {freeIntent ? null : (
+            <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
+              {setup.loadingCheckout}
+            </span>
+          )}
         </div>
       </div>
     );
@@ -196,20 +204,16 @@ function GetStartedPageContent() {
   return (
     <>
       <InteractiveBackground />
-      <div style={{
-        minHeight: "100vh",
+      <FunnelHeader homeHref={selfHosted ? undefined : "/"} trailing={<LanguageSwitcher />} />
+      <div className={funnelStyles.funnelPage} style={{
         padding: "2rem",
         position: "relative",
       }}>
-        <div style={{ position: "absolute", top: "1.5rem", right: "1.5rem", zIndex: 20 }}>
-          <LanguageSwitcher />
-        </div>
-
         {/* Main container */}
         <div className="get-started-grid" style={{
           maxWidth: 1100,
           margin: "0 auto",
-          paddingTop: "5rem",
+          paddingTop: "1.5rem",
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: "3rem",
@@ -218,22 +222,74 @@ function GetStartedPageContent() {
           zIndex: 10,
         }}>
 
-          {/* ── LEFT: Plan Summary ──────────────────────────────────── */}
-          <div className="get-started-sticky" style={{ position: "sticky", top: "3rem" }}>
-            {/* Step indicator */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 12,
-              marginBottom: "2rem",
-            }}>
-              <StepBadge number={1} label={setup.steps.choosePlan} active />
-              <div style={{ width: 32, height: 1, background: "var(--etched-border)" }} />
-              <StepBadge number={2} label={setup.steps.createAccount} active />
-              <div style={{ width: 32, height: 1, background: "var(--etched-border)" }} />
-              <StepBadge number={3} label={selectedPlan === "free" ? setup.steps.activate : setup.steps.payment} />
+          {/* ── RIGHT: Clerk Sign Up ────────────────────────────────── */}
+          {/* First in the DOM so the single-column reading and tab order match the screen. */}
+          {/* No step counter here: Launch, where this ends, has the only one. */}
+          <div className="get-started-form">
+            {/* Phones get the form first; this line keeps the plan in view. */}
+            <div className="get-started-summary">
+              <span className="mono">
+                {plan.name} · {formatPrice(isYearly ? selectedYearlyPrice : plan.price)}{isYearly ? setup.perYear : setup.perMonth}
+              </span>
+              <button type="button" className="mono" onClick={showPlanSwitcher}>{setup.switchPlan}</button>
+            </div>
+            <div style={{ marginBottom: "1.25rem" }}>
+              <h3 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.4rem" }}>
+                {setup.createAccountTitle}
+              </h3>
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                {selectedPlan === "free" ? setup.createAccountIntroFree : setup.createAccountIntroPaid}
+              </p>
             </div>
 
+            <SignUp
+              routing="hash"
+              forceRedirectUrl={activationUrl}
+              fallbackRedirectUrl={activationUrl}
+              signInUrl={signInUrl}
+              appearance={{
+                elements: {
+                  rootBox: "w-full",
+                  cardBox: "w-full max-w-full",
+                  card: "rounded-none border border-[var(--etched-border)] shadow-[0_24px_80px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-xl p-8 pb-10",
+                  headerTitle: "serif text-[2rem] font-light text-[var(--ink-black)] leading-none mb-2",
+                  headerSubtitle: "mono text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)] mt-0",
+                  formButtonPrimary: "rounded-none bg-[var(--ink-black)] text-white hover:bg-black font-mono uppercase tracking-[0.15em] text-[11px] font-bold py-3.5 transition-all mt-2",
+                  formFieldInput: "rounded-none border-[var(--etched-border)] focus:border-[var(--ink-black)] focus:ring-1 focus:ring-[var(--ink-black)] text-sm py-2.5 bg-transparent",
+                  formFieldLabel: "mono text-[9px] uppercase tracking-[0.15em] font-bold text-[var(--text-secondary)] mb-1.5",
+                  footerActionLink: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] font-bold transition-colors",
+                  identityPreview: "rounded-none border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-4 py-3",
+                  identityPreviewEditButton: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] transition-colors",
+                  dividerLine: "bg-[var(--etched-border)]",
+                  dividerText: "mono text-[9px] uppercase tracking-[0.15em] text-[var(--text-muted)] bg-transparent",
+                  socialButtonsBlockButton: "rounded-none border border-[var(--etched-border)] hover:bg-[var(--bg-elevated)] hover:border-[var(--ink-black)] text-[var(--ink-black)] transition-all",
+                  socialButtonsBlockButtonText: "mono text-[11px] font-semibold tracking-wider uppercase",
+                  footer: "!bg-transparent !bg-none border-none rounded-none mt-2",
+                  footerActionText: "text-xs text-[var(--text-secondary)]",
+                  main: "gap-6",
+                },
+                variables: {
+                  borderRadius: 0,
+                  colorPrimary: "var(--ink-black)",
+                  colorBackground: "transparent",
+                  colorText: "var(--ink-black)",
+                  colorInputBackground: "transparent",
+                  colorInputText: "var(--ink-black)",
+                  fontFamily: "inherit",
+                },
+              }}
+            />
+
+            <div className="mt-6 text-center text-[var(--text-muted)] font-mono text-[9px] uppercase tracking-wider">
+              {setup.legalPrefix} <br className="hidden sm:block" />
+              <Link href="/terms" className="underline hover:text-[var(--ink-black)] transition-colors">{setup.terms}</Link> {setup.and} <Link href="/privacy" className="underline hover:text-[var(--ink-black)] transition-colors">{setup.privacy}</Link>
+            </div>
+          </div>
+
+          {/* ── LEFT: Plan Summary ──────────────────────────────────── */}
+          <div className="get-started-sticky" style={{ position: "sticky", top: "3rem" }}>
             {/* Selected plan card */}
-            <div style={{
+            <div className={funnelStyles.funnelCard} style={{
               border: "1px solid var(--ink-black)",
               background: "var(--bg-surface)",
               padding: "2.5rem",
@@ -243,54 +299,58 @@ function GetStartedPageContent() {
               {/* Gold bar */}
               <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "var(--gold-leaf)" }} />
 
-              {/* Guarantee Badge */}
+              {/* Guarantee badge and cadence share a wrapping row, so a wrapped toggle starts flush left. */}
               <div style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "5px 12px",
-                background: "rgba(22,163,106,0.08)",
-                border: "1px solid rgba(22,163,106,0.2)",
-                marginBottom: "0.75rem",
+                display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px",
+                marginBottom: hasYearly ? "1rem" : "0.75rem",
               }}>
-                <span className="mono" style={{
-                  fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
-                  fontWeight: 700, color: "#16a36a",
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "5px 12px",
+                  background: "rgba(22,163,106,0.08)",
+                  border: "1px solid rgba(22,163,106,0.2)",
                 }}>
-                  {selectedPlan === "free" ? setup.badges.free : setup.badges.paid}
-                </span>
-              </div>
-
-              {/* Monthly / Yearly toggle — only for plans that sell yearly */}
-              {hasYearly ? (
-                <div role="group" aria-label="Billing cadence" style={{ display: "inline-flex", border: "1px solid var(--etched-border)", marginBottom: "1rem", marginLeft: 12 }}>
-                  {(["monthly", "yearly"] as const).map((c) => {
-                    const active = (cadence === "yearly") === (c === "yearly");
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setCadence(c)}
-                        aria-pressed={active}
-                        className="mono"
-                        style={{
-                          border: "none",
-                          background: active ? "var(--ink-black)" : "transparent",
-                          color: active ? "var(--bg-surface)" : "var(--text-secondary)",
-                          fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
-                          fontWeight: 700, padding: "6px 10px", cursor: "pointer",
-                          display: "inline-flex", alignItems: "center", gap: 6,
-                        }}
-                      >
-                        <span>{c === "yearly" ? setup.cadence.yearly : setup.cadence.monthly}</span>
-                        {c === "yearly" ? (
-                          <span style={{ color: active ? "var(--gold-leaf)" : "#16a36a", textTransform: "none", letterSpacing: "0.02em" }}>
-                            {saveLabel}
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
+                  <span className="mono" style={{
+                    fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
+                    fontWeight: 700, color: "#16a36a",
+                  }}>
+                    {selectedPlan === "free" ? setup.badges.free : setup.badges.paid}
+                  </span>
                 </div>
-              ) : null}
+
+                {/* Monthly / Yearly toggle — only for plans that sell yearly */}
+                {hasYearly ? (
+                  <div role="group" aria-label="Billing cadence" className="get-started-cadence" style={{ display: "inline-flex", border: "1px solid var(--etched-border)" }}>
+                    {(["monthly", "yearly"] as const).map((c) => {
+                      const active = (cadence === "yearly") === (c === "yearly");
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setCadence(c)}
+                          aria-pressed={active}
+                          className="mono"
+                          style={{
+                            border: "none",
+                            background: active ? "var(--ink-black)" : "transparent",
+                            color: active ? "var(--bg-surface)" : "var(--text-secondary)",
+                            fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
+                            fontWeight: 700, padding: "6px 10px", cursor: "pointer",
+                            display: "inline-flex", alignItems: "center", gap: 6,
+                          }}
+                        >
+                          <span>{c === "yearly" ? setup.cadence.yearly : setup.cadence.monthly}</span>
+                          {c === "yearly" ? (
+                            <span style={{ color: active ? "var(--gold-leaf)" : "#16a36a", textTransform: "none", letterSpacing: "0.02em" }}>
+                              {saveLabel}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
                 <div>
@@ -375,7 +435,7 @@ function GetStartedPageContent() {
             </div>
 
             {/* Plan switcher */}
-            <div style={{ marginTop: "1.5rem" }}>
+            <div id="get-started-plans" style={{ marginTop: "1.5rem" }}>
               <div style={{
                 display: "flex", alignItems: "center", gap: 12, marginBottom: "0.75rem",
               }}>
@@ -395,6 +455,8 @@ function GetStartedPageContent() {
                   return (
                     <button
                       key={key}
+                      type="button"
+                      aria-pressed={isSelected}
                       onClick={() => {
                         // Funnel step: plan selection changed on the landing page.
                         if (key !== selectedPlan) {
@@ -455,69 +517,87 @@ function GetStartedPageContent() {
               </p>
             </div>
           </div>
-
-          {/* ── RIGHT: Clerk Sign Up ────────────────────────────────── */}
-          <div>
-            <div style={{ marginBottom: "1.25rem" }}>
-              <h3 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.4rem" }}>
-                {setup.createAccountTitle}
-              </h3>
-              <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                {selectedPlan === "free" ? setup.createAccountIntroFree : setup.createAccountIntroPaid}
-              </p>
-            </div>
-
-            <SignUp
-              routing="hash"
-              forceRedirectUrl={activationUrl}
-              fallbackRedirectUrl={activationUrl}
-              signInUrl={signInUrl}
-              appearance={{
-                elements: {
-                  card: "rounded-none border border-[var(--etched-border)] shadow-[0_24px_80px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-xl p-8 pb-10",
-                  headerTitle: "serif text-[2rem] font-light text-[var(--ink-black)] leading-none mb-2",
-                  headerSubtitle: "mono text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)] mt-0",
-                  formButtonPrimary: "rounded-none bg-[var(--ink-black)] text-white hover:bg-black font-mono uppercase tracking-[0.15em] text-[11px] font-bold py-3.5 transition-all mt-2",
-                  formFieldInput: "rounded-none border-[var(--etched-border)] focus:border-[var(--ink-black)] focus:ring-1 focus:ring-[var(--ink-black)] text-sm py-2.5 bg-transparent",
-                  formFieldLabel: "mono text-[9px] uppercase tracking-[0.15em] font-bold text-[var(--text-secondary)] mb-1.5",
-                  footerActionLink: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] font-bold transition-colors",
-                  identityPreview: "rounded-none border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-4 py-3",
-                  identityPreviewEditButton: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] transition-colors",
-                  dividerLine: "bg-[var(--etched-border)]",
-                  dividerText: "mono text-[9px] uppercase tracking-[0.15em] text-[var(--text-muted)] bg-transparent",
-                  socialButtonsBlockButton: "rounded-none border border-[var(--etched-border)] hover:bg-[var(--bg-elevated)] hover:border-[var(--ink-black)] text-[var(--ink-black)] transition-all",
-                  socialButtonsBlockButtonText: "mono text-[11px] font-semibold tracking-wider uppercase",
-                  footer: "!bg-transparent !bg-none border-none rounded-none mt-2",
-                  footerActionText: "text-xs text-[var(--text-secondary)]",
-                  main: "gap-6",
-                },
-                variables: {
-                  borderRadius: 0,
-                  colorPrimary: "var(--ink-black)",
-                  colorBackground: "transparent",
-                  colorText: "var(--ink-black)",
-                  colorInputBackground: "transparent",
-                  colorInputText: "var(--ink-black)",
-                  fontFamily: "inherit",
-                },
-              }}
-            />
-
-            <div className="mt-6 text-center text-[var(--text-muted)] font-mono text-[9px] uppercase tracking-wider">
-              {setup.legalPrefix} <br className="hidden sm:block" />
-              <Link href="/terms" className="underline hover:text-[var(--ink-black)] transition-colors">{setup.terms}</Link> {setup.and} <Link href="/privacy" className="underline hover:text-[var(--ink-black)] transition-colors">{setup.privacy}</Link>
-            </div>
-          </div>
         </div>
 
         {/* Responsive styles */}
         <style>{`
+          .get-started-summary {
+            display: none;
+          }
+          /* The form leads the DOM; the wide layout keeps the plan column on the left. */
+          .get-started-grid {
+            reading-flow: grid-rows;
+          }
+          .get-started-sticky {
+            grid-column: 1;
+            grid-row: 1;
+          }
+          .get-started-form {
+            grid-column: 2;
+            grid-row: 1;
+          }
           @media (max-width: 840px) {
             .get-started-grid {
               grid-template-columns: 1fr !important;
+              gap: 2rem !important;
             }
             .get-started-sticky {
               position: static !important;
+            }
+            .get-started-sticky,
+            .get-started-form {
+              grid-column: auto;
+              grid-row: auto;
+            }
+            .get-started-summary {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+              margin-bottom: 1.25rem;
+              padding-left: 12px;
+              border: 1px solid var(--etched-border);
+              border-left: 3px solid var(--gold-leaf);
+              background: var(--bg-surface);
+              font-size: 12px;
+              font-weight: 700;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+            }
+            .get-started-summary > span {
+              min-width: 0;
+              overflow-wrap: anywhere;
+            }
+            .get-started-summary > button {
+              flex-shrink: 0;
+              min-height: 44px;
+              padding: 0 14px;
+              border: 0;
+              border-left: 1px solid var(--etched-border);
+              background: transparent;
+              color: var(--ink-black);
+              font-size: 11px;
+              font-weight: 700;
+              text-transform: uppercase;
+              letter-spacing: 0.1em;
+              cursor: pointer;
+            }
+          }
+          @media (max-width: 840px), (pointer: coarse) {
+            .get-started-cadence button {
+              min-height: 44px;
+              padding: 0 14px !important;
+              font-size: 11px !important;
+            }
+          }
+          @media (max-width: 480px) {
+            .get-started-cadence {
+              display: flex !important;
+              width: 100%;
+            }
+            .get-started-cadence button {
+              flex: 1;
+              justify-content: center;
             }
           }
         `}</style>
@@ -527,27 +607,6 @@ function GetStartedPageContent() {
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
-
-function StepBadge({ number, label, active }: { number: number; label: string; active?: boolean }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, opacity: active ? 1 : 0.35 }}>
-      <span style={{
-        width: 22, height: 22,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        border: active ? "1.5px solid var(--ink-black)" : "1px solid var(--etched-border)",
-        background: active ? "var(--ink-black)" : "transparent",
-        color: active ? "var(--bg-surface)" : "var(--ink-black)",
-        fontFamily: "var(--font-mono), monospace",
-        fontSize: 10, fontWeight: 700,
-      }}>
-        {number}
-      </span>
-      <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-        {label}
-      </span>
-    </div>
-  );
-}
 
 function SpecItem({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (

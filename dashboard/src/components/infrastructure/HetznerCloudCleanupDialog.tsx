@@ -70,6 +70,8 @@ export function HetznerCloudCleanupDialog({connection,onClose,onComplete,onForgo
   }
   const absence = current?.cleanup?.absence ?? current?.observedAbsence;
   const complete = current?.status==="deleted";
+  const nameMismatch = typedName.length>0 && typedName!==current?.serverName;
+  const forgetMismatch = forgetText.length>0 && forgetText!==HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION;
   async function forgetAccess() {
     if(runningRef.current || !current?.cleanup || !current.fingerprint || forgetText!==HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION)return;
     runningRef.current=true;setRunning(true);setError(null);
@@ -110,9 +112,12 @@ export function HetznerCloudCleanupDialog({connection,onClose,onComplete,onForgo
             <span>Hivra also checks both original IP addresses and removes its generated project SSH key. Charges can continue until billable resources are gone. Protected or reassigned resources stop cleanup for your review.</span>
             {current.resources?.firewall && <span>The setup-owned firewall is included. This can permanently delete a computer started during setup; stopping setup or closing this dialog does not stop Hetzner billing.</span>}
           </div></div>
-          <label className={styles.field} htmlFor={inputId}><span>Type <strong>{current.serverName}</strong> to confirm</span>
-            <input id={inputId} value={typedName} disabled={running||loading} autoComplete="off" spellCheck={false} onChange={event=>setTypedName(event.target.value)}/>
-          </label>
+          <div className={styles.field}>
+            <label htmlFor={inputId}>Type <strong>{current.serverName}</strong> to confirm</label>
+            <input id={inputId} value={typedName} disabled={running||loading} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              aria-describedby={nameMismatch ? inputId+"-mismatch" : undefined} onChange={event=>setTypedName(event.target.value)}/>
+            {nameMismatch && <span id={inputId+"-mismatch"} className={styles.fieldHint}>Doesn&apos;t match yet</span>}
+          </div>
         </>}
         {error && <div className={styles.formError} role="alert"><AlertTriangle size={17}/><span>{error}</span></div>}
         {running && <p role="status" aria-live="polite">Removing only the confirmed resources. Each result is saved; if the page closes, reopen this cleanup to resume.</p>}
@@ -127,9 +132,12 @@ export function HetznerCloudCleanupDialog({connection,onClose,onComplete,onForgo
         {current?.cleanup && !complete && <details className={styles.cleanupFallback}>
           <summary>Cannot access the project anymore?</summary>
           <p>You can explicitly forget Hivra access after the active cleanup step finishes. This erases the saved project token and bootstrap private key, but does not remove provider resources or stop their charges. The unresolved capacity claim stays held. You will need to finish recovery directly in Hetzner; this cleanup cannot resume after forgetting.</p>
-          <label className={styles.field}>Type {HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION}
-            <input value={forgetText} disabled={running} autoComplete="off" onChange={event=>setForgetText(event.target.value)}/>
-          </label>
+          <div className={styles.field}>
+            <label htmlFor={inputId+"-forget"}>Type {HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION}</label>
+            <input id={inputId+"-forget"} value={forgetText} disabled={running} autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+              aria-describedby={forgetMismatch ? inputId+"-forget-mismatch" : undefined} onChange={event=>setForgetText(event.target.value)}/>
+            {forgetMismatch && <span id={inputId+"-forget-mismatch"} className={styles.fieldHint}>Doesn&apos;t match yet</span>}
+          </div>
           <button type="button" className={styles.secondaryButton} disabled={running||forgetText!==HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION} onClick={()=>void forgetAccess()}>Forget access, keep provider resources</button>
         </details>}
       </div>

@@ -5,8 +5,8 @@ import { isProtectedPath } from "@/lib/protected-routes";
 const mockQuery = {select:jest.fn(),eq:jest.fn(),maybeSingle:jest.fn()};
 jest.mock("@/lib/supabase",()=>({supabaseAdmin:{from:jest.fn(()=>mockQuery)}}));
 
-function setup() {
-  const f = receiverFixture();
+function setup(recipe: Parameters<typeof receiverFixture>[0] = "legacy") {
+  const f = receiverFixture(recipe);
   const getServer = jest.fn().mockResolvedValue(f.server);
   const getAction = jest.fn().mockResolvedValue(f.action);
   const deps = {
@@ -168,4 +168,31 @@ it("reads exact owner/revision metadata without selecting private key or token c
   mockQuery.maybeSingle.mockResolvedValue({data:null,error:null});expect(await loadFirstBootCapacityEvidence(f.binding)).toBeNull();
   mockQuery.maybeSingle.mockResolvedValue({data:null,error:{message:"private database error"}});
   await expect(loadFirstBootCapacityEvidence(f.binding)).rejects.toThrow("database_error");
+});
+
+describe("current recipe: Hivra accepts the proof only inside the window it opened at Start setup",()=>{
+  it("refuses an unarmed challenge before metadata, credentials, rate budget or provider access",async()=>{
+    const f=setup("unarmed");
+    await expect(receiveFirstBootEnrollment(f.input,f.deps)).rejects.toMatchObject({code:"rejected"});
+    expect(f.deps.admit).not.toHaveBeenCalled();expect(f.deps.evidence).not.toHaveBeenCalled();
+    expect(f.deps.secret).not.toHaveBeenCalled();expect(f.deps.client).not.toHaveBeenCalled();
+    expect(f.deps.consume).not.toHaveBeenCalled();
+  });
+  it("consumes a proof from a server started hours after it was created",async()=>{
+    const f=setup("armed");
+    expect(Date.parse(f.stored.challenge.expiresAt)).toBeLessThan(firstBootNow.getTime());
+    expect(await receiveFirstBootEnrollment(f.input,f.deps)).toEqual({version:1,accepted:true,
+      orderId:f.binding.orderId,attemptId:f.binding.attemptId,hostFingerprintSha256:f.host.fingerprintSha256});
+    expect(f.deps.consume).toHaveBeenCalledWith(expect.objectContaining({binding:f.binding,providerServerId:"42"}));
+  });
+  it("refuses once the armed window has passed, including across provider I/O",async()=>{
+    const closes=Date.parse(receiverFixture("armed").stored.armedExpiresAt!);
+    const late=setup("armed");late.deps.now.mockReturnValue(new Date(closes));
+    await expect(receiveFirstBootEnrollment(late.input,late.deps)).rejects.toMatchObject({code:"rejected"});
+    expect(late.deps.secret).not.toHaveBeenCalled();
+    const during=setup("armed");during.deps.now.mockReturnValueOnce(firstBootNow).mockReturnValueOnce(firstBootNow)
+      .mockReturnValue(new Date(closes));
+    await expect(receiveFirstBootEnrollment(during.input,during.deps)).rejects.toMatchObject({code:"rejected"});
+    expect(during.deps.consume).not.toHaveBeenCalled();
+  });
 });

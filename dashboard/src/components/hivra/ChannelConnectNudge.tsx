@@ -19,6 +19,10 @@ import posthog from "posthog-js";
 import { telegramStatus } from "@/lib/hivra/agent-api";
 
 const DISMISS_KEY_PREFIX = "hermes:channel_nudge_dismissed:";
+const NUDGE_CSS = `@media (max-width: 767px), (pointer: coarse) {
+  .channel-nudge-connect { min-height: 44px; }
+  .channel-nudge-dismiss { min-width: 44px; min-height: 44px; }
+}`;
 
 // Instrumentation must never break the agent page.
 function capture(event: string, properties: Record<string, unknown>) {
@@ -93,6 +97,7 @@ export function ChannelConnectNudge({
       data-testid="channel-connect-nudge"
       style={{
         display: "flex",
+        flexWrap: "wrap",
         alignItems: "center",
         gap: 10,
         padding: "7px 16px",
@@ -103,9 +108,13 @@ export function ChannelConnectNudge({
         minWidth: 0,
       }}
     >
-      <Send size={13} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        Your agent can reach you when work is done — connect Telegram.
+      <style>{NUDGE_CSS}</style>
+      {/* Max-content basis: one line on wide screens; on a phone the copy wraps in full and the actions drop below it. */}
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flex: "0 1 auto", minWidth: 0 }}>
+        <Send size={13} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
+        <span style={{ minWidth: 0, whiteSpace: "normal", lineHeight: 1.45 }}>
+          Your agent can reach you when work is done — connect Telegram.
+        </span>
       </span>
       <button
         type="button"
@@ -113,28 +122,29 @@ export function ChannelConnectNudge({
           capture("channel_connect_nudge_clicked", { channel: "telegram", box_id: boxId });
           onConnect();
         }}
-        className="mono"
+        className="mono channel-nudge-connect"
         style={{
           border: "1px solid var(--etched-border)",
           background: "transparent",
           color: "var(--ink-black)",
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: 700,
           textTransform: "uppercase",
           letterSpacing: "0.1em",
-          padding: "4px 9px",
+          padding: "8px 12px",
           cursor: "pointer",
           flexShrink: 0,
           whiteSpace: "nowrap",
         }}
       >
-        Connect
+        Connect Telegram
       </button>
       <div style={{ flex: 1 }} />
       <button
         type="button"
         onClick={dismiss}
         aria-label="Dismiss"
+        className="channel-nudge-dismiss"
         style={{
           border: "none",
           background: "transparent",
@@ -142,6 +152,8 @@ export function ChannelConnectNudge({
           color: "var(--text-muted)",
           padding: 4,
           display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
           flexShrink: 0,
         }}
       >

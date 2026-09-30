@@ -37,6 +37,17 @@ describe("PendingPromptBadge", () => {
     expect(screen.getByTestId("pending-prompt-badge")).toHaveAttribute("title", "drop table users");
   });
 
+  it("shows the redacted summary as visible text, not only a tooltip", () => {
+    render(<PendingPromptBadge pendingPrompt={chip({ summary: "  drop table users  " })} />);
+    expect(screen.getByTestId("pending-prompt-summary")).toHaveTextContent("drop table users");
+  });
+
+  it("renders only the chip when there is no summary to show", () => {
+    render(<PendingPromptBadge pendingPrompt={chip({ summary: "   " })} />);
+    expect(screen.queryByTestId("pending-prompt-summary")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pending-prompt-badge")).toHaveStyle({ borderRadius: "0" });
+  });
+
   it("falls back to a generic tooltip when summary is empty", () => {
     render(<PendingPromptBadge pendingPrompt={chip({ summary: null })} />);
     expect(screen.getByTestId("pending-prompt-badge")).toHaveAttribute(

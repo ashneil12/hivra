@@ -5,9 +5,9 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const APPROVED_SOURCE_SHA256 = 'b01f8d7a7699c6831de3a1305892f5a2b776fb3117b593bcd4e2c6aa39644ecd';
+export const APPROVED_SOURCE_SHA256 = '27d7d582d04e91865e4aad5eb73dc10ccd326bd3ef9757c89fb6c2305f70cfe0';
 export const LITEPAPER_FILES = Object.freeze([
-  'LITEPAPER.md', 'TOKENOMICS.md', 'THOUGHTS.md', 'WHITEPAPER.md', 'WHY.md',
+  'LITEPAPER.md', 'TOKENOMICS.md', 'THOUGHTS.md', 'WHITEPAPER.md',
   'docs/litepaper/index.html',
   'docs/litepaper/litepaper.css',
   'docs/litepaper/litepaper.js',
@@ -16,6 +16,12 @@ export const LITEPAPER_FILES = Object.freeze([
   'docs/litepaper/assets/agent-computer-opportunity-v2.png',
   'docs/litepaper/assets/observable-run-v2.png',
   'docs/litepaper/assets/boundary-monolith-v5.png',
+  'docs/litepaper/assets/agent-computer-hero-v2-768.webp',
+  'docs/litepaper/assets/agent-computer-hero-v2-1536.webp',
+  'docs/litepaper/assets/agent-computer-opportunity-v2-768.webp',
+  'docs/litepaper/assets/agent-computer-opportunity-v2-1536.webp',
+  'docs/litepaper/assets/observable-run-v2-768.webp',
+  'docs/litepaper/assets/observable-run-v2-1536.webp',
   'docs/litepaper/assets/fonts/Manrope-Variable.ttf',
   'docs/litepaper/assets/fonts/Manrope-OFL.txt',
   'docs/litepaper/assets/fonts/IBMPlexMono-Regular.ttf',

@@ -1,5 +1,6 @@
 import { type TopUpPackageCredits } from "@/lib/billing/credits";
 import { readJsonWithDiagnostics } from "@/lib/client/json-response-diagnostics";
+import { safeReturnPath } from "@/lib/safe-return-path";
 import { type PlanKey } from "@/lib/subscription";
 
 import {
@@ -114,10 +115,14 @@ function readSignupAttribution(): Record<string, unknown> | null {
 
 export async function requestSubscriptionCheckout(
   plan: PlanKey,
-  cadence: "monthly" | "yearly" = "monthly"
+  cadence: "monthly" | "yearly" = "monthly",
+  // Where Stripe's success and cancel pages lead back to, e.g. the launch
+  // draft an upgrade started from. The server validates it again.
+  { returnTo = null }: { returnTo?: string | null } = {}
 ): Promise<CheckoutRequestResult> {
   try {
     const attribution = readSignupAttribution();
+    const safeReturnTo = safeReturnPath(returnTo);
     const response = await fetch("/api/billing/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -125,6 +130,7 @@ export async function requestSubscriptionCheckout(
         plan,
         cadence,
         ...(attribution ? { attribution } : {}),
+        ...(safeReturnTo ? { returnTo: safeReturnTo } : {}),
       }),
     });
     const payload = await readJsonSafely(response);

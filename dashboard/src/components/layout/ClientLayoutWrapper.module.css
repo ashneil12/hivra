@@ -2,12 +2,20 @@
 .mobileHeader { display: none; }
 
 @media (max-width: 767px) {
-  .withMobileHeader { padding-top: calc(56px + env(safe-area-inset-top, 0px)); --dashboard-mobile-header-height: calc(56px + env(safe-area-inset-top, 0px)); }
-  .mobileHeader { position: absolute; inset: 0 0 auto; z-index: 60; display: flex; align-items: center; justify-content: space-between; height: calc(56px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 12px 0 18px; background: var(--vellum-bg); border-bottom: 1px solid var(--etched-border); }
-  .brand { display: flex; align-items: center; gap: 10px; color: var(--ink-black); text-decoration: none; }
+  /* Pages read --dashboard-page-safe-top: the header already clears the inset. */
+  .withMobileHeader { padding-top: calc(56px + env(safe-area-inset-top, 0px)); --dashboard-mobile-header-height: calc(56px + env(safe-area-inset-top, 0px)); --dashboard-page-safe-top: 0px; }
+  .mobileHeader { position: absolute; inset: 0 0 auto; z-index: 60; display: flex; align-items: center; justify-content: space-between; height: calc(56px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) 0 max(18px, env(safe-area-inset-left, 0px)); background: var(--vellum-bg); border-bottom: 1px solid var(--etched-border); }
+  .brand { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--ink-black); text-decoration: none; }
   .brandMark { font-family: var(--font-grotesk), 'Space Grotesk', sans-serif; font-size: 25px; font-weight: 700; font-style: italic; letter-spacing: -2px; }
   .brandName { font-family: var(--font-mono), 'Space Mono', monospace; font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+  .searchButton { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; color: var(--text-muted); background: var(--vellum-bg); border: 1px solid var(--etched-border); box-shadow: 0 4px 12px rgba(0,0,0,0.05); cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  .searchButton:active, .searchButton[aria-expanded='true'] { color: var(--ink-black); background: var(--hivra-red-soft); }
   .mobileHeader :is(a, button):focus-visible { outline: 2px solid var(--hivra-red, #ff3a3b); outline-offset: 3px; }
+}
+/* Phone landscape: 56px of header leaves too little work area. */
+@media (max-width: 767px) and (max-height: 500px) {
+  .mobileHeader { display: none; }
+  .withMobileHeader { padding-top: env(safe-area-inset-top, 0px); --dashboard-mobile-header-height: env(safe-area-inset-top, 0px); }
 }
 .nativeAccount {
   display: flex;

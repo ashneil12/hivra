@@ -226,6 +226,59 @@ export async function loadDigitalOceanConnectionSecret(userId: string, connectio
   }
 }
 
+/**
+ * Replace the stored token for the same connection revision. The swap is a
+ * compare-and-set on the envelope the caller validated against, so a
+ * concurrent replacement cannot be silently overwritten. Callers must prove
+ * the new token reaches the same DigitalOcean team before calling this.
+ */
+export async function replaceDigitalOceanConnectionToken(input: {
+  userId: string;
+  connectionId: string;
+  expectedRevision: number;
+  apiToken: string;
+}): Promise<void> {
+  const db = database();
+  const { data: rawConnection, error: connectionError } = await db
+    .from("infrastructure_connections")
+    .select(CONNECTION_SELECT)
+    .eq("id", input.connectionId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+  if (connectionError) throw databaseError(connectionError);
+  if (!rawConnection) throw new InfrastructureConnectionStoreError("not_found");
+  const row = rawConnection as unknown as ConnectionRow;
+  if (row.provider !== "digitalocean") throw new InfrastructureConnectionStoreError("invalid_request");
+  if (Number(row.revision) !== input.expectedRevision) throw new InfrastructureConnectionStoreError("conflict");
+
+  const { data: rawSecret, error: secretError } = await db
+    .from("infrastructure_connection_secrets")
+    .select("encrypted_bundle,key_version")
+    .eq("connection_id", input.connectionId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+  if (secretError) throw databaseError(secretError);
+  if (!rawSecret || Number((rawSecret as { key_version?: unknown }).key_version) !== 2) {
+    throw new InfrastructureConnectionStoreError("credential_error", row.revision);
+  }
+  const encryptedBundle = encryptSecret(JSON.stringify({
+    version: 2,
+    provider: "digitalocean",
+    userId: input.userId,
+    connectionId: input.connectionId,
+    connectionRevision: input.expectedRevision,
+    apiToken: input.apiToken,
+  } satisfies z.infer<typeof SecretBundleSchema>));
+  const { data: swapped, error: swapError } = await db.rpc("rotate_infrastructure_connection_secret", {
+    p_connection_id: input.connectionId,
+    p_expected_encrypted_bundle: String((rawSecret as { encrypted_bundle: unknown }).encrypted_bundle),
+    p_encrypted_bundle: encryptedBundle,
+    p_key_version: 2,
+  });
+  if (swapError) throw databaseError(swapError);
+  if (swapped !== true) throw new InfrastructureConnectionStoreError("conflict");
+}
+
 export async function listDigitalOceanTargets(userId: string): Promise<DigitalOceanDeploymentTargetDto[]> {
   const { data, error } = await database()
     .from("deployment_targets")

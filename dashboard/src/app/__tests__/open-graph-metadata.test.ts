@@ -1,12 +1,18 @@
 import { metadata as homeMetadata } from '../page';
+import { metadata as downloadMetadata } from '../download/page';
+import { generateMetadata as generateTokenomicsMetadata } from '../tokenomics/page';
 import { metadata as roadmapMetadata } from '../roadmap/page';
-import { metadata as tokenMetadata } from '../token/page';
+import { generateMetadata as generateTokenMetadata } from '../token/page';
 import { metadata as blogIndexMetadata } from '../blog/page';
 import { metadata as featuresIndexMetadata } from '../features/page';
 import { metadata as compareIndexMetadata } from '../compare/page';
 import { buildBlogArticleMetadata } from '@/lib/blog/metadata';
 import { generateMetadata as generateFeatureMetadata } from '../features/[slug]/page';
 import { generateMetadata as generateCompareMetadata } from '../compare/[slug]/page';
+
+// Both token pages generate their metadata from the $HIVRA phase; dormant here.
+const tokenomicsMetadata = generateTokenomicsMetadata();
+const tokenMetadata = generateTokenMetadata();
 
 function getObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') return null;
@@ -23,9 +29,30 @@ function getTwitterValue(metadataValue: unknown, key: string): unknown {
 
 describe('route Open Graph metadata', () => {
   it('reflects the current homepage computer choices in metadata', () => {
-    expect(homeMetadata.description).toContain('Launch Ubuntu, Windows or Omarchy');
+    expect(homeMetadata.description).toContain('launch Ubuntu, Windows or Omarchy for yourself');
     expect(String(homeMetadata.description)).not.toMatch(/launching now/i);
-    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, Windows or Omarchy');
+    // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
+    expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
+    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('launch Ubuntu, Windows or Omarchy for yourself');
+  });
+
+  it('keeps the Hermes OS brand bridge on the homepage, where most search clicks come from', () => {
+    // ~75% of hivra.cloud's Search Console clicks (Jun-Sep 2026) were "hermes os" searches.
+    expect(String(homeMetadata.title)).toMatch(/^Hermes OS is now Hivra \| /);
+    expect(String(homeMetadata.description)).toMatch(/^Hermes OS is now Hivra\./);
+    expect(String(homeMetadata.description).length).toBeLessThanOrEqual(160);
+    expect(getOpenGraphValue(homeMetadata.openGraph, 'title')).toBe(homeMetadata.title);
+  });
+
+  it('labels the /tokenomics title as proposed and sets its own description', () => {
+    expect(tokenomicsMetadata.title).toBe('Proposed $HIVRA tokenomics');
+    expect(String(tokenomicsMetadata.description)).toMatch(/proposed migration/);
+  });
+
+  it('gives /download its own title and description, not the site defaults', () => {
+    expect(downloadMetadata.title).toBe('Download Hivra');
+    expect(downloadMetadata.description).toBe('The Hivra desktop app for macOS is coming soon. Open Hivra in your browser today.');
+    expect(String(downloadMetadata.description)).not.toMatch(/Windows/);
   });
 
   it('keeps the shared website Open Graph defaults on every static route that overrides openGraph metadata', () => {
@@ -33,7 +60,6 @@ describe('route Open Graph metadata', () => {
     // so it is asserted separately below — these routes still use the shared default.
     for (const pageMetadata of [
       roadmapMetadata,
-      tokenMetadata,
       blogIndexMetadata,
       featuresIndexMetadata,
       compareIndexMetadata,
@@ -43,6 +69,20 @@ describe('route Open Graph metadata', () => {
       expect(getOpenGraphValue(pageMetadata.openGraph, 'locale')).toBe('en_US');
       expect(getTwitterValue(pageMetadata.twitter, 'card')).toBe('summary_large_image');
       expect(getTwitterValue(pageMetadata.twitter, 'images')).toContain('https://hivra.cloud/opengraph-image');
+    }
+  });
+
+  it('gives /token and /tokenomics their own share cards on the real page metadata', () => {
+    for (const [pageMetadata, card] of [
+      [tokenMetadata, 'https://hivra.cloud/token/opengraph-image'],
+      [tokenomicsMetadata, 'https://hivra.cloud/tokenomics/opengraph-image'],
+    ] as const) {
+      expect(getOpenGraphValue(pageMetadata.openGraph, 'type')).toBe('website');
+      expect(getOpenGraphValue(pageMetadata.openGraph, 'siteName')).toBe('Hivra');
+      const images = getOpenGraphValue(pageMetadata.openGraph, 'images') as Array<{ url: string }>;
+      expect(images.map((image) => image.url)).toEqual([card]);
+      expect(getTwitterValue(pageMetadata.twitter, 'card')).toBe('summary_large_image');
+      expect(getTwitterValue(pageMetadata.twitter, 'images')).toEqual([card]);
     }
   });
 
@@ -76,7 +116,7 @@ describe('route Open Graph metadata', () => {
     expect(getTwitterValue(compareMetadata.twitter, 'images')).toContain('https://hivra.cloud/opengraph-image');
   });
 
-  it('keeps the shared article Open Graph defaults on generated blog article metadata', async () => {
+  it('keeps the article Open Graph shape and points blog articles at their own generated card', async () => {
     const articleMetadata = buildBlogArticleMetadata('what-is-hermes-agent');
 
     expect(getOpenGraphValue(articleMetadata.openGraph, 'type')).toBe('article');
@@ -84,6 +124,6 @@ describe('route Open Graph metadata', () => {
     expect(getOpenGraphValue(articleMetadata.openGraph, 'locale')).toBe('en_US');
     expect(getOpenGraphValue(articleMetadata.openGraph, 'url')).toBe('https://hivra.cloud/blog/what-is-hermes-agent');
     expect(getTwitterValue(articleMetadata.twitter, 'card')).toBe('summary_large_image');
-    expect(getTwitterValue(articleMetadata.twitter, 'images')).toContain('https://hivra.cloud/opengraph-image');
+    expect(getTwitterValue(articleMetadata.twitter, 'images')).toEqual(['https://hivra.cloud/blog/what-is-hermes-agent/opengraph-image']);
   });
 });

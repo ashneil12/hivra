@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback, useMemo, type ReactNode } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { motion, useReducedMotion } from "framer-motion";
@@ -21,10 +21,6 @@ import {
 } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { useUser } from "@clerk/nextjs";
-// /dashboard/welcome was the v1 tier subscription picker. It's now a
-// redirect to /dashboard/wallet, so we can't import it as an inline
-// component. Empty-state visitors are sent to the wallet page below
-// where the V2 deposit flow lives.
 import { TelemetryGrid } from "@/components/TelemetryGrid";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { buildHermesFadeSlideVariants } from "@/components/ui/motion";
@@ -50,6 +46,7 @@ import {
   requestInstanceActivityDigest,
 } from "@/lib/command-center/activity-client";
 import type { InstanceActivityDigest } from "@/lib/command-center/activity";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 
 interface Instance {
   id: string;
@@ -128,6 +125,60 @@ type CommandCenterV2FlagResponse = {
   error?: string;
 };
 
+// Touch sizing for the legacy command center. Inline styles size desktop, so
+// these rules use !important: card actions are always visible (and labelled)
+// without hover, action buttons reach 44px on coarse pointers, and the host
+// instance indent collapses on narrow phones.
+/** Where an account with no agents starts: Launch, agents first. */
+const FIRST_LAUNCH_HREF = buildAgentLaunchHref();
+
+const HERMES_DASHBOARD_TOUCH_CSS = `
+.hermes-card-action-label { display: none; }
+@media (hover: none) {
+  .hermes-card-action { opacity: 1 !important; }
+  .hermes-card-action-label { display: inline; }
+}
+@media (pointer: coarse) {
+  .hermes-touch-btn,
+  .hermes-card-action { min-height: 44px !important; }
+  .hermes-card-action { min-width: 44px !important; }
+}
+@media (max-width: 480px) {
+  .hermes-host-indent { margin-left: 0 !important; padding-left: 12px !important; }
+}`;
+
+// Hover lift only for a real mouse; touch "hover" sticks after a tap.
+function mouseHoverHandlers(setHovered: (hovered: boolean) => void) {
+  return {
+    onPointerEnter: (event: ReactPointerEvent) => {
+      if (event.pointerType === "mouse") setHovered(true);
+    },
+    onPointerLeave: () => setHovered(false),
+  };
+}
+
+const TOUCH_ACTION_TEXT: CSSProperties = {
+  minHeight: 40,
+  fontSize: 11,
+};
+
+const CARD_ACTION_STYLE: CSSProperties = {
+  border: "1px solid var(--etched-border)",
+  padding: "0 10px",
+  minWidth: 40,
+  minHeight: 40,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  fontSize: 11,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  transition: "all 0.2s ease",
+};
+
 function interpolate(template: string, values: Record<string, string | number>) {
   return Object.entries(values).reduce(
     (message, [key, value]) => message.replace(`{${key}}`, String(value)),
@@ -195,6 +246,7 @@ function StartRestoreButton({
         onClick();
       }}
       disabled={loading}
+      className="hermes-touch-btn"
       style={{
         border: "1px solid rgba(29, 78, 216, 0.26)",
         background: loading ? "rgba(29, 78, 216, 0.08)" : "#1d4ed8",
@@ -202,7 +254,7 @@ function StartRestoreButton({
         padding: compact ? "8px 10px" : "9px 12px",
         cursor: loading ? "not-allowed" : "pointer",
         fontFamily: "var(--font-mono), monospace",
-        fontSize: 10,
+        ...TOUCH_ACTION_TEXT,
         textTransform: "uppercase",
         letterSpacing: "0.08em",
         fontWeight: 800,
@@ -291,8 +343,7 @@ function InstanceCard({
     <motion.div
       variants={cardVariants}
       onClick={() => router.push(`/dashboard/instances/${instance.id}`)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...mouseHoverHandlers(setHovered)}
       style={{
         background: "var(--bg-surface)",
         border: `1px solid ${hovered ? "var(--ink-black)" : "var(--etched-border)"}`,
@@ -308,53 +359,49 @@ function InstanceCard({
       }}
     >
       <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: "2rem" }}>
           <StatusDot status={instance.status} />
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <PendingPromptBadge pendingPrompt={instance.pendingPrompt} />
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 beginRename();
               }}
+              className="hermes-card-action mono"
               style={{
+                ...CARD_ACTION_STYLE,
                 background: hovered ? "var(--ink-black)" : "transparent",
                 color: hovered ? "var(--bg-surface)" : "var(--ink-black)",
-                border: "1px solid var(--etched-border)",
-                padding: "4px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "all 0.2s ease",
                 opacity: hovered ? 1 : 0.2,
               }}
               title="Rename agent"
+              aria-label="Rename agent"
             >
-              <Pencil size={14} />
+              <Pencil size={14} aria-hidden="true" />
+              <span className="hermes-card-action-label">Rename</span>
             </button>
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 router.push(`/dashboard/instances/${instance.id}/console`);
               }}
+              className="hermes-card-action mono"
               style={{
+                ...CARD_ACTION_STYLE,
                 background: hovered ? "var(--ink-black)" : "transparent",
                 color: hovered ? "var(--bg-surface)" : "var(--ink-black)",
-                border: "1px solid var(--etched-border)",
-                padding: "4px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "all 0.2s ease",
                 opacity: hovered ? 1 : 0.2,
               }}
               title={dashboardCopy.actions.advancedConsole}
+              aria-label={dashboardCopy.actions.advancedConsole}
             >
-              <Settings size={14} />
+              <Settings size={14} aria-hidden="true" />
+              <span className="hermes-card-action-label">{dashboardCopy.actions.advancedConsole}</span>
             </button>
-            <span className="mono" style={{ fontSize: 9, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            <span className="mono" style={{ fontSize: 10.5, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
               {instance.provider}
             </span>
           </div>
@@ -392,7 +439,8 @@ function InstanceCard({
                   onClick={(e) => { e.stopPropagation(); submitRename(); }}
                   disabled={savingName}
                   title="Save"
-                  style={{ background: "var(--ink-black)", color: "var(--bg-surface)", border: "none", padding: "4px", cursor: savingName ? "default" : "pointer", display: "flex", flexShrink: 0 }}
+                  aria-label="Save name"
+                  style={{ background: "var(--ink-black)", color: "var(--bg-surface)", border: "none", padding: "4px", cursor: savingName ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 40, minHeight: 40, flexShrink: 0 }}
                 >
                   {savingName ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={13} />}
                 </button>
@@ -401,7 +449,8 @@ function InstanceCard({
                   onClick={(e) => { e.stopPropagation(); cancelRename(); }}
                   disabled={savingName}
                   title="Cancel"
-                  style={{ background: "transparent", color: "var(--ink-black)", border: "1px solid var(--etched-border)", padding: "4px", cursor: "pointer", display: "flex", flexShrink: 0 }}
+                  aria-label="Cancel rename"
+                  style={{ background: "transparent", color: "var(--ink-black)", border: "1px solid var(--etched-border)", padding: "4px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 40, minHeight: 40, flexShrink: 0 }}
                 >
                   <X size={13} />
                 </button>
@@ -577,8 +626,7 @@ function ProfileCard({ profile, instance, isPrimary }: { profile: AgentProfile; 
     <motion.div
       variants={cardVariants}
       onClick={() => router.push(`/dashboard/chat?profile=${profile.name}`)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...mouseHoverHandlers(setHovered)}
       style={{
         background: "var(--bg-surface)",
         border: `1px solid ${hovered ? "var(--ink-black)" : "var(--etched-border)"}`,
@@ -596,7 +644,7 @@ function ProfileCard({ profile, instance, isPrimary }: { profile: AgentProfile; 
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem" }}>
           <StatusDot status="running" />
-          <span className="mono" style={{ fontSize: 9, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+          <span className="mono" style={{ fontSize: 10.5, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
             {dashboardCopy.instance.profileNode}
           </span>
         </div>
@@ -778,7 +826,7 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e" }} />
                    <h5 className="serif" style={{ fontSize: "1.1rem", fontWeight: 500 }}>{inst.name}</h5>
-                   <span className="mono" style={{ fontSize: 9, opacity: 0.4 }}>{inst.id.split('-')[0]}</span>
+                   <span className="mono" style={{ fontSize: 10.5, opacity: 0.4 }}>{inst.id.split('-')[0]}</span>
                 </div>
                 
                 <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
@@ -983,7 +1031,7 @@ function HostCard({
           >
             <Sliders size={14} />
           </button> */}
-          <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", opacity: 0.5 }}>
+          <span className="mono" style={{ fontSize: 10.5, textTransform: "uppercase", opacity: 0.5 }}>
             {host.id.split("-")[0]}
           </span>
         </div>
@@ -1107,6 +1155,7 @@ function PrimaryAgentPanel({
           <button
             type="button"
             onClick={onOpenChat}
+            className="hermes-touch-btn"
             style={{
               border: "1px solid var(--ink-black)",
               background: "var(--ink-black)",
@@ -1114,7 +1163,7 @@ function PrimaryAgentPanel({
               padding: "9px 12px",
               cursor: "pointer",
               fontFamily: "var(--font-mono), monospace",
-              fontSize: 10,
+              ...TOUCH_ACTION_TEXT,
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               fontWeight: 800,
@@ -1128,6 +1177,7 @@ function PrimaryAgentPanel({
           <button
             type="button"
             onClick={onOpenConsole}
+            className="hermes-touch-btn"
             style={{
               border: "1px solid var(--etched-border)",
               background: "transparent",
@@ -1135,7 +1185,7 @@ function PrimaryAgentPanel({
               padding: "9px 12px",
               cursor: "pointer",
               fontFamily: "var(--font-mono), monospace",
-              fontSize: 10,
+              ...TOUCH_ACTION_TEXT,
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               fontWeight: 800,
@@ -1369,6 +1419,7 @@ function AgentSignalRow({
         <button
           type="button"
           onClick={onOpenChat}
+          className="hermes-touch-btn"
           style={{
             border: "1px solid var(--ink-black)",
             background: "var(--ink-black)",
@@ -1376,7 +1427,7 @@ function AgentSignalRow({
             padding: "9px 12px",
             cursor: "pointer",
             fontFamily: "var(--font-mono), monospace",
-            fontSize: 10,
+            ...TOUCH_ACTION_TEXT,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             fontWeight: 800,
@@ -1390,6 +1441,7 @@ function AgentSignalRow({
         <button
           type="button"
           onClick={onOpenConsole}
+          className="hermes-touch-btn"
           style={{
             border: "1px solid var(--etched-border)",
             background: "transparent",
@@ -1397,7 +1449,7 @@ function AgentSignalRow({
             padding: "9px 12px",
             cursor: "pointer",
             fontFamily: "var(--font-mono), monospace",
-            fontSize: 10,
+            ...TOUCH_ACTION_TEXT,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             fontWeight: 800,
@@ -1548,6 +1600,7 @@ function CommandCenterV2Surface({
   onStartColdRestore,
   onTopUpCredits,
   onManageCredits,
+  onDeployAgent,
   showHivra,
 }: {
   instances: Instance[];
@@ -1570,6 +1623,7 @@ function CommandCenterV2Surface({
   onStartColdRestore: (instance: Instance) => void;
   onTopUpCredits: () => void;
   onManageCredits: () => void;
+  onDeployAgent: () => void;
   showHivra: boolean;
 }) {
   const runningCount = instances.filter((instance) => instance.status === "running").length;
@@ -1597,12 +1651,13 @@ function CommandCenterV2Surface({
         maxWidth: 1180,
         margin: "1rem auto 5rem",
         padding: "clamp(1rem, 5vw, 3rem)",
-        paddingTop: "calc(env(safe-area-inset-top, 0px) + clamp(1rem, 5vw, 3rem))",
+        paddingTop: "calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + clamp(1rem, 5vw, 3rem))",
         paddingBottom: "5rem",
         position: "relative",
         zIndex: 1,
       }}
     >
+      <style>{HERMES_DASHBOARD_TOUCH_CSS}</style>
       <header
         style={{
           display: "grid",
@@ -1685,8 +1740,33 @@ function CommandCenterV2Surface({
               <AlertTriangle size={17} /> {error}
             </div>
           ) : instances.length === 0 ? (
-            <div style={{ padding: "18px 0", color: "var(--text-secondary)", fontSize: 14 }}>
-              No agents are deployed yet.
+            <div style={{ padding: "18px 0", display: "grid", gap: 14, justifyItems: "start" }}>
+              <span style={{ color: "var(--text-secondary)", fontSize: 14 }}>No agents yet.</span>
+              <a
+                href={FIRST_LAUNCH_HREF}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onDeployAgent();
+                }}
+                className="mono"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  minHeight: 44,
+                  padding: "0 16px",
+                  border: "1px solid var(--ink-black)",
+                  background: "var(--ink-black)",
+                  color: "var(--bg-surface)",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.12em",
+                  textDecoration: "none",
+                }}
+              >
+                Launch an agent <ArrowRight size={14} aria-hidden="true" />
+              </a>
             </div>
           ) : (
             instances.map((instance) => (
@@ -1738,7 +1818,7 @@ function CommandCenterV2Surface({
       {hosts.length > 0 ? (
         <section style={{ marginTop: 18, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.03)", padding: "clamp(1rem, 3vw, 1.4rem)" }}>
           <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.58, marginBottom: 12 }}>
-            Infrastructure
+            Capacity
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
             {hosts.map((host) => {
@@ -2152,11 +2232,9 @@ export function HermesDashboardPage() {
     };
   }, [mounted, userId, liveWebUIInstanceIds, liveWebUIInstances]);
 
-  // Empty state: route to /dashboard/welcome. The welcome flow now
-  // owns the loading → plan → deploy state machine and skips the
-  // picker for subscribed/eligible users, so it no longer redirects
-  // back here on entitlement — the redirect loop that hammered
-  // /api/billing/wallet/eligibility is dead.
+  // Empty state: an account with no agents opens Launch, the one place to
+  // start an agent or a computer. A new account turns its Free plan on
+  // there; nothing redirects back here, so there is no loop.
   const showOnboarding =
     !loading &&
     mounted &&
@@ -2170,7 +2248,7 @@ export function HermesDashboardPage() {
 
   useEffect(() => {
     if (!showOnboarding) return;
-    router.replace("/dashboard/welcome");
+    router.replace(FIRST_LAUNCH_HREF);
   }, [showOnboarding, router]);
 
   if (showOnboarding) {
@@ -2219,13 +2297,15 @@ export function HermesDashboardPage() {
         onStartColdRestore={startColdStorageRestore}
         onTopUpCredits={() => router.push("/dashboard/billing?managedVenice=deposit&wallet=hermesos")}
         onManageCredits={() => router.push("/dashboard/billing#managed-venice")}
+        onDeployAgent={() => router.push(FIRST_LAUNCH_HREF)}
         showHivra={false}
       />
     );
   }
 
   return (
-      <div style={{ maxWidth: 960, margin: "1rem auto 5rem", padding: "clamp(1rem, 5vw, 3rem)", paddingTop: "calc(env(safe-area-inset-top, 0px) + clamp(1rem, 5vw, 3rem))", paddingBottom: "5rem", position: "relative", zIndex: 1 }}>
+      <div style={{ maxWidth: 960, margin: "1rem auto 5rem", padding: "clamp(1rem, 5vw, 3rem)", paddingTop: "calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + clamp(1rem, 5vw, 3rem))", paddingBottom: "5rem", position: "relative", zIndex: 1 }}>
+      <style>{HERMES_DASHBOARD_TOUCH_CSS}</style>
       {/* Header */}
       <motion.header initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }} style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 24, marginBottom: "clamp(2rem, 8vw, 4rem)" }}>
         <div>
@@ -2345,7 +2425,8 @@ export function HermesDashboardPage() {
           <div style={{ display: "flex", gap: 12 }}>
             <button
               onClick={() => router.push(`/dashboard/instances/${instances[0].id}/console`)}
-              style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid var(--etched-border)", padding: "6px 12px", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: "var(--ink-black)" }}
+              className="hermes-touch-btn"
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid var(--etched-border)", padding: "6px 12px", cursor: "pointer", fontFamily: "var(--font-mono)", fontWeight: 700, textTransform: "uppercase", color: "var(--ink-black)", ...TOUCH_ACTION_TEXT }}
             >
               <Settings size={12} /> {dashboardCopy.actions.coreConsole}
             </button>
@@ -2377,8 +2458,8 @@ export function HermesDashboardPage() {
                 />
                 
                 {hostInsts.length > 0 && (
-                  <div style={{ borderLeft: "2px solid var(--etched-border)", marginLeft: "1rem", paddingLeft: "1.5rem" }}>
-                    <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1.5rem" }}>
+                  <div className="hermes-host-indent" style={{ borderLeft: "2px solid var(--etched-border)", marginLeft: "1rem", paddingLeft: "1.5rem" }}>
+                    <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 260px), 1fr))", gap: "1.5rem" }}>
                       {hostInsts.map((inst) => (
                         <InstanceCard
                           key={inst.id}
@@ -2396,7 +2477,7 @@ export function HermesDashboardPage() {
           })}
         </div>
       ) : (
-        <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "2rem", marginBottom: "4rem" }}>
+        <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), 1fr))", gap: "2rem", marginBottom: "4rem" }}>
           {loading ? (
           <div style={{ gridColumn: "1 / -1", height: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Loader2 size={20} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
@@ -2430,7 +2511,7 @@ export function HermesDashboardPage() {
       {hosts.length > 0 && mounted && instances.length <= 1 && (
         <>
           <motion.h3 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mono" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.6, marginBottom: "2rem" }}>{dashboardCopy.sections.infrastructureNodes}</motion.h3>
-          <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1, delayChildren: 0.2 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "2rem" }}>
+          <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1, delayChildren: 0.2 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: "2rem" }}>
             {hosts.map(host => {
               const cpuPct = (host.used_cpu / host.total_cpu) * 100;
               const ramPct = (host.used_ram / host.total_ram) * 100;

@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { issueRemoteDesktopSession } from "@/lib/remote-computers/session-broker";
+import { MAX_UNANSWERED_DESKTOP_ISSUES } from "@/lib/remote-computers/desktop-session-limits";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import {
   hasStrictJsonContentType,
@@ -16,8 +17,12 @@ import {
 import { remoteDesktopResponse } from "../session-response";
 
 const BODY_LIMIT = 24_576;
+const PKCE_CHALLENGE = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const schema = z.object({
   ownerHandoff: z.boolean().optional(),
+  // Earlier requests from this browser tab whose answers it never read; the
+  // broker may retire only this owner's never-exchanged leases bearing them.
+  unansweredPkceChallenges: z.array(PKCE_CHALLENGE).min(1).max(MAX_UNANSWERED_DESKTOP_ISSUES).optional(),
   sessionId: z.string().uuid().optional(),
   computerKind: z.enum(["hermes-instance", "hivra-agent"]),
   computerId: z.string().uuid(),
@@ -44,14 +49,20 @@ const schema = z.object({
     clientCertificatePem: z.string().min(64).max(16_384),
     clientCertificateSha256: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),
-  pkceChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  pkceChallenge: PKCE_CHALLENGE,
   ttlSeconds: z.number().int().min(30).max(300).optional(),
 }).strict().superRefine((value, context) => {
-  if (value.ownerHandoff === true && (value.computerKind !== "hivra-agent"
-    || value.purpose !== "daily-driver" || value.inputRole !== "controller"
-    || value.client.kind !== "browser" || value.requestedTransport !== "selkies-websocket"
-    || value.sessionId !== undefined || value.nativeProfile !== undefined)) {
+  const browserHivraController = value.computerKind === "hivra-agent"
+    && value.purpose === "daily-driver" && value.inputRole === "controller"
+    && value.client.kind === "browser" && value.requestedTransport === "selkies-websocket"
+    && value.sessionId === undefined && value.nativeProfile === undefined;
+  if (value.ownerHandoff === true && !browserHivraController) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["ownerHandoff"], message: "Owner handoff requires a Hivra browser Selkies controller." });
+  }
+  if (value.unansweredPkceChallenges !== undefined && (!browserHivraController
+    || new Set(value.unansweredPkceChallenges).size !== value.unansweredPkceChallenges.length
+    || value.unansweredPkceChallenges.includes(value.pkceChallenge))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["unansweredPkceChallenges"], message: "Only a Hivra browser Selkies controller may name its own earlier, distinct requests." });
   }
   const preparedNativeSunshine = value.sessionId !== undefined
     && value.client.kind === "native" && value.client.moonlight
@@ -99,6 +110,7 @@ export async function POST(request: NextRequest) {
   const result = await issueRemoteDesktopSession({
     userId,
     ownerHandoff: parsed.data.ownerHandoff,
+    unansweredPkceChallenges: parsed.data.unansweredPkceChallenges,
     sessionId: parsed.data.sessionId,
     computerKind: parsed.data.computerKind,
     computerId: parsed.data.computerId,

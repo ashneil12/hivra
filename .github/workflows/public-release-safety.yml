@@ -24,11 +24,29 @@ jobs:
         with:
           persist-credentials: false
 
+      # The wiring guard covers every test file in the repository, so it runs
+      # here, where no path filter applies. Dashboard CI only starts for
+      # dashboard/** and .github/** changes, so a new unrun test under
+      # scripts/, services/, docs/, apps/ or contracts/ would otherwise land
+      # unchecked. It needs only Node and git, not npm ci.
+      - name: Every test file is run by CI or exempted with a reason
+        run: node dashboard/scripts/check-test-wiring.cjs
+
       - name: Guard managed hosting control validation
         run: node --test scripts/release/check-managed-hosting-controls.test.mjs
 
       - name: Reject tracked secrets, generated output, and scan bypasses
         run: node --test scripts/release/asset-provenance-evidence.test.mjs scripts/release/check-dashboard-public-artifact.test.mjs scripts/release/credential-reconciliation-evidence.test.mjs scripts/release/notice-source-offer-evidence.test.mjs scripts/release/public-release-metadata.test.mjs scripts/release/public-source-approval.test.mjs scripts/release/public-source-candidate.test.mjs scripts/release/public-tree-hygiene.test.mjs scripts/release/runtime-distribution-boundary.test.mjs scripts/release/source-third-party-provenance.test.mjs dashboard/scripts/test-public-source-bootstrap-e2e.test.mjs dashboard/scripts/test-self-host-recovery-e2e.test.mjs && python3 -I -B dashboard/scripts/test-runtime-receipt.py && node scripts/release/public-tree-hygiene.mjs
+
+      # Litepaper sources live outside dashboard/**, so Dashboard CI never sees
+      # them. The export test needs Pillow and skips without it. The renderer imports link_policy from its own directory: no -I.
+      - name: Guard the litepaper render, approved wording and link policy
+        run: python3 -B docs/litepaper/build.py --check && python3 -B docs/litepaper/test_content.py && python3 -B docs/litepaper/test_link_policy.py && python3 -B docs/litepaper/test_export_litepaper_images.py
+
+      # The export must never change a published token or app icon URL. The
+      # end-to-end export test needs Pillow and skips without it.
+      - name: Guard the brand export overwrite rule
+        run: python3 -B docs/brand/test_export_brand_assets.py
 
       - name: Guard standalone database bindings and recovery helpers
         run: node --test dashboard/scripts/hivra-self-host.test.mjs dashboard/scripts/hivra-self-host-docker.test.mjs dashboard/scripts/hivra-self-host-backup.test.mjs dashboard/scripts/hivra-self-host-storage.test.mjs
@@ -50,6 +68,9 @@ jobs:
 
       - name: Preserve exact portable release bytes including bundled documentation
         run: node --test scripts/release/portable-bundle-immutability.test.mjs
+
+      - name: Guard the production migration risk and schema diff helpers
+        run: node --test scripts/release/prod-migration-risk.test.mjs scripts/release/prod-schema-diff.test.mjs
 
       - name: Export exact tracked tree
         shell: bash

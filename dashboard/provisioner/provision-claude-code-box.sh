@@ -47,8 +47,6 @@ set -euo pipefail
 AGENT_USER="${AGENT_USER:-bux}"                 # bux's installer hardcodes this user
 BUX_DIR="${BUX_DIR:-/opt/bux}"                  # MUST be /opt/bux: unit ExecStart paths are hardcoded
 BUX_REF="${BUX_REF:-f17c1b31d6688dd92e745ade650e00d46b4dc4da}" # reviewed upstream commit
-CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.246}"
-CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.149.1}"
 CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2026.8.2}"
 CLOUDFLARED_LINUX_AMD64_SHA256="${CLOUDFLARED_LINUX_AMD64_SHA256:-fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2}"
 CADDY_VERSION="${CADDY_VERSION:-2.11.4}"
@@ -130,6 +128,21 @@ ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
+# The vetted Claude Code / Codex versions ship with the bundle as data, so the
+# runtime updater and the dashboard read the same pins this installer uses.
+read_agent_cli_pin() {
+  python3 -I -c 'import json, re, sys
+value = json.load(open(sys.argv[1])).get(sys.argv[2])
+if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
+print(value)' "$SRC_DIR/agent-cli-versions.json" "$1" 2>/dev/null
+}
+if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then
+  CLAUDE_CODE_VERSION="$(read_agent_cli_pin claude-code)" || die "agent-cli-versions.json has no valid claude-code pin"
+fi
+if [ -z "${CODEX_CLI_VERSION:-}" ]; then
+  CODEX_CLI_VERSION="$(read_agent_cli_pin codex)" || die "agent-cli-versions.json has no valid codex pin"
+fi
+
 [ "$(id -u)" -eq 0 ] || die 'must run as root (use sudo)'
 [ -f /etc/debian_version ] || die 'only debian/ubuntu is supported'
 
@@ -160,10 +173,10 @@ fi
 say "agent kind: ${c_bold}${AGENT_KIND}${c_reset} (browser overlay: $([ "$WANT_BROWSER" = 1 ] && echo yes || echo no))"
 
 # Chat + prompt artifacts are always required; browser artifacts only for claude.
-for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell \
+for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent-cli-versions.json hivra-codex-config-pin.py \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
-         hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/index.html hivra-chat/app.js; do
+         hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
   [ -f "$SRC_DIR/$f" ] || die "missing artifact next to script: $f"
 done
 if [ "$AGENT_KIND" = "linux-desktop" ]; then
@@ -308,7 +321,9 @@ Group=bux
 WorkingDirectory=/home/bux
 Environment=HOME=/home/bux
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/ttyd -i lo -p 7681 -W /usr/local/bin/hivra-agent-shell
+RuntimeDirectory=hivra-terminal
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/ttyd -i /run/hivra-terminal/ttyd.sock -W /usr/local/bin/hivra-agent-shell
 Restart=always
 RestartSec=5
 
@@ -448,6 +463,9 @@ if [ "$AGENT_KIND" = "codex" ]; then
   fi
   sudo -iu "${AGENT_USER}" bash -lc 'codex --version' 2>/dev/null | grep -Fq "$CODEX_CLI_VERSION" \
     || die "Codex CLI version does not match ${CODEX_CLI_VERSION}"
+  sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py" >/dev/null \
+    || die "could not turn off the Codex startup update check"
+  ok "codex stays on the vetted ${CODEX_CLI_VERSION} (startup update check off)"
 fi
 install -d -o root -g root -m 0755 /var/log/bux
 
@@ -578,7 +596,7 @@ say "5/7  Hivra authenticated access gateway (${AGENT_KIND})"
 # ===========================================================================
 if [ "$AGENT_KIND" != "deepseek-harness" ]; then
 install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 "${BUX_DIR}/hivra-chat"
-for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js; do
+for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do
   install -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0644 \
     "$SRC_DIR/hivra-chat/$f" "${BUX_DIR}/hivra-chat/$f"
 done
@@ -590,11 +608,11 @@ if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" = 1 ]; then
   done
   chown root:root "${BUX_DIR}" "${BUX_DIR}/hivra-chat"
   chmod 0755 "${BUX_DIR}" "${BUX_DIR}/hivra-chat"
-  for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js; do
+  for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do
     chown root:root "${BUX_DIR}/hivra-chat/$f"
   done
 fi
-ok "deployed ${BUX_DIR}/hivra-chat/{server.js,llm-application.js,index.html,app.js}"
+ok "deployed ${BUX_DIR}/hivra-chat/{server.js,llm-application.js,chat-runs.cjs,index.html,app.js}"
 fi
 
 # Record which CLI the chat server should drive. The server reads
@@ -651,6 +669,19 @@ fi
 chmod 0644 /etc/systemd/system/bux-hivra-chat.service
 ok "installed /etc/systemd/system/bux-hivra-chat.service (port ${HIVRA_CHAT_PORT}, kind ${AGENT_KIND})"
 fi
+# Chat turns run in detached runner processes (hivra-chat/chat-runs.cjs). A
+# gateway restart (runtime update, crash) must stop only the gateway itself and
+# leave in-flight agent runs working; the restarted gateway adopts them.
+case "$AGENT_KIND" in
+  claude|codex|generic)
+    if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
+      install -d -o root -g root -m 0755 /etc/systemd/system/bux-hivra-chat.service.d
+      printf '%s\n' '[Service]' 'KillMode=process' > /etc/systemd/system/bux-hivra-chat.service.d/10-hivra-detached-runs.conf
+      chmod 0644 /etc/systemd/system/bux-hivra-chat.service.d/10-hivra-detached-runs.conf
+      ok "chat runs survive gateway restarts (KillMode=process drop-in)"
+    fi
+    ;;
+esac
 
 # Narrow root helper so the chat server (runs as ${AGENT_USER}, no general sudo)
 # can (de)activate the bux Telegram bot via a SCOPED NOPASSWD sudoers rule.
@@ -1040,6 +1071,13 @@ docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
   || die "Agent Zero image digest is unavailable after pull"
 
 # --- systemd unit: run the pinned image loopback-bound, env + state mounted ---
+# Stop grace: `docker stop` defaults to 10 s before SIGKILL; give Agent Zero 25 s
+# to finish and save. It is capped so the whole guest shutdown fits inside the
+# shortest host budget that stops a Hivra computer (`qm shutdown --timeout 40`
+# on restart, resize and idle parking; past it the host hard-stops the VM, which
+# is no grace at all). systemd waits 30 s for `docker stop` itself, so it never
+# kills it before the grace ends, and the other 10 s are left for the rest of
+# the guest to power off. A contract test keeps these numbers together.
 cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT
 [Unit]
 Description=Hivra Agent Zero (agent0ai/agent-zero on 127.0.0.1:${A0_PORT}, mounted at /agent-zero)
@@ -1047,11 +1085,12 @@ After=network-online.target docker.service
 Requires=docker.service
 [Service]
 TimeoutStartSec=0
+TimeoutStopSec=30
 Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f hivra-agent-zero
 ExecStart=/usr/bin/docker run --rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
-ExecStop=/usr/bin/docker stop hivra-agent-zero
+ExecStop=/usr/bin/docker stop -t 25 hivra-agent-zero
 [Install]
 WantedBy=multi-user.target
 UNIT
@@ -1201,15 +1240,50 @@ wait_for_exact_http_200() {
   done
   return 1
 }
+wait_for_unix_http_200() {
+  local socket="$1" url="$2" code
+  for _ in $(seq 1 60); do
+    code="$(curl -sS --max-time 5 --unix-socket "$socket" -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+    [ "$code" = 200 ] && return 0
+    sleep 2
+  done
+  return 1
+}
 verify_native_terminals() {
   local unit
   for unit in bux-ttyd.service bux-box-ttyd.service; do
     systemctl is-active --quiet "$unit" || die "native terminal service is not active: $unit"
   done
-  wait_for_exact_http_200 'http://127.0.0.1:7681/terminal/' \
-    || die "agent terminal did not pass its loopback readiness check"
-  wait_for_exact_http_200 'http://127.0.0.1:7682/box-terminal/' \
-    || die "box terminal did not pass its loopback readiness check"
+  # Both terminals listen only on bux-owned unix sockets (no loopback port).
+  wait_for_unix_http_200 /run/hivra-terminal/ttyd.sock 'http://localhost/terminal/' \
+    || die "agent terminal did not pass its socket readiness check"
+  wait_for_unix_http_200 /run/hivra-box-terminal/ttyd.sock 'http://localhost/box-terminal/' \
+    || die "box terminal did not pass its socket readiness check"
+}
+# The owner reaches both terminals only through the gateway, so check them the
+# same way once it answers: the gateway must report each on its owner-only
+# socket (its own owner and mode checks) and answer a proxied request with 200.
+# A check made around the gateway would pass while the gateway refused the
+# socket, since nothing listens on the old loopback ports.
+verify_terminals_through_gateway() {
+  local header meta
+  header="$(mktemp /run/hivra-terminal-check.XXXXXX)"
+  chmod 0600 "$header"
+  printf 'Authorization: Bearer %s\n' "$(cat "${AGENT_HOME}/.hivra/api-token")" > "$header"
+  for _ in $(seq 1 30); do
+    meta="$(curl -fsS --max-time 5 -H @"$header" "http://127.0.0.1:${HIVRA_CHAT_PORT}/api/meta" 2>/dev/null || true)"
+    if printf '%s' "$meta" | python3 -I -c 'import json, sys
+t = json.load(sys.stdin).get("terminals") or {}
+sys.exit(0 if t.get("terminal") == "socket" and t.get("boxTerminal") == "socket" else 1)' 2>/dev/null \
+      && [ "$(curl -sS --max-time 5 -H @"$header" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HIVRA_CHAT_PORT}/terminal/" 2>/dev/null || true)" = 200 ] \
+      && [ "$(curl -sS --max-time 5 -H @"$header" -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HIVRA_CHAT_PORT}/box-terminal/" 2>/dev/null || true)" = 200 ]; then
+      rm -f -- "$header"
+      return 0
+    fi
+    sleep 2
+  done
+  rm -f -- "$header"
+  return 1
 }
 wait_for_browser_ready() {
   local env_file="$1" cdp_port="$2" cdp_code novnc_code unit units_ready
@@ -1257,6 +1331,11 @@ if ! wait_for_exact_http_200 "http://127.0.0.1:${HIVRA_CHAT_PORT}/healthz"; then
   die "hivra-chat health endpoint is not ready"
 fi
 ok "hivra-chat answering on 127.0.0.1:${HIVRA_CHAT_PORT}/healthz"
+if ! verify_terminals_through_gateway; then
+  journalctl -u bux-hivra-chat.service -u bux-ttyd.service -u bux-box-ttyd.service -n 50 --no-pager >&2 2>/dev/null || true
+  die "terminals did not answer through the gateway on their owner-only sockets"
+fi
+ok "Terminal and computer terminal answer through the gateway on their owner-only sockets"
 
 if [ "$AGENT_KIND" = "linux-desktop" ]; then
   say "Linux Desktop capability installation"

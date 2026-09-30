@@ -1,6 +1,10 @@
 /**
  * Deposit quote service.
  *
+ * Quotes are in one platform token (token_key): the token the user will
+ * hold. The evaluator only accepts a quote in a token the user may qualify
+ * in, and compares it with that token's balance.
+ *
  * One active quote per user per tier. Mints a fresh row that locks:
  *   - usd_target_cents     (the tier's USD price, e.g. 10000 = $100)
  *   - price_usd_at_quote   (live $HERMESOS/USD at mint time)
@@ -20,9 +24,15 @@
 
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  HERMESOS_TOKEN_DECIMALS,
-  HERMESOS_TOKEN_SYMBOL,
-} from "./token-holdings";
+  HERMESOS_TOKEN,
+  requirePlatformToken,
+  type PlatformTokenKey,
+} from "./token-registry";
+import {
+  TokenNotAllowedError,
+  resolveUserTokenAccess,
+  type UserTokenAccess,
+} from "./token-access";
 import {
   isFoundersRateUser,
   resolveActiveThresholdForTier,
@@ -33,12 +43,14 @@ import {
 } from "./tier-thresholds";
 import {
   computeTokensRequiredForUsdTarget,
-  fetchHermesPriceUsd,
+  fetchPlatformTokenPriceUsd,
   type HermesPriceQuote,
 } from "./price-feed";
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
 
 const DEPOSIT_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
+const DEPOSIT_QUOTE_SELECT =
+  "id, user_id, tier, token_key, token_address, threshold_tier_code, usd_target_cents, price_usd_at_quote, tokens_required_raw::text, tokens_required_display, quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, source, metadata, created_at, updated_at";
 type DepositQuoteStatus = "active" | "consumed" | "expired" | "cancelled";
 export type { ThresholdTierCode } from "./tier-thresholds";
 
@@ -46,6 +58,8 @@ interface DepositQuoteRow {
   id: string;
   user_id: string;
   tier: TierKey;
+  token_key?: PlatformTokenKey | null;
+  token_address?: string | null;
   threshold_tier_code: ThresholdTierCode;
   usd_target_cents: number;
   price_usd_at_quote: string;
@@ -72,6 +86,9 @@ export interface DepositQuote {
   priceUsdAtQuote: string;
   tokensRequiredRaw: bigint;
   tokensRequiredDisplay: string;
+  /** The platform token the user holds to meet this quote. */
+  tokenKey: PlatformTokenKey;
+  tokenAddress: string;
   tokenSymbol: string;
   tokenDecimals: number;
   quotedAt: string;
@@ -83,6 +100,8 @@ export interface DepositQuote {
 }
 
 function asQuote(row: DepositQuoteRow): DepositQuote {
+  const tokenKey: PlatformTokenKey = row.token_key === "hivra" ? "hivra" : "hermesos";
+  const token = tokenKey === "hivra" ? requirePlatformToken("hivra") : HERMESOS_TOKEN;
   return {
     id: row.id,
     userId: row.user_id,
@@ -93,8 +112,10 @@ function asQuote(row: DepositQuoteRow): DepositQuote {
     priceUsdAtQuote: row.price_usd_at_quote,
     tokensRequiredRaw: BigInt(row.tokens_required_raw),
     tokensRequiredDisplay: row.tokens_required_display,
-    tokenSymbol: HERMESOS_TOKEN_SYMBOL,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenKey,
+    tokenAddress: row.token_address ?? token.address,
+    tokenSymbol: token.symbol,
+    tokenDecimals: token.decimals,
     quotedAt: row.quoted_at,
     expiresAt: row.expires_at,
     status: row.status,
@@ -107,6 +128,14 @@ function asQuote(row: DepositQuoteRow): DepositQuote {
 interface CreateDepositQuoteParams {
   userId: string;
   tier: TierKey;
+  /**
+   * Token to hold. Defaults to the first token the user may newly qualify in:
+   * $HermesOS before $HIVRA is active and for the grandfather cohort, else
+   * $HIVRA. A token the user may not qualify in is refused.
+   */
+  token?: PlatformTokenKey;
+  /** Resolved token access, when the caller already has it. */
+  access?: UserTokenAccess;
   now?: Date;
   // Test seam: caller can inject a price quote and bypass the network
   // call. Production calls leave undefined.
@@ -130,6 +159,14 @@ export async function createDepositQuote(
 ): Promise<DepositQuote> {
   if (!supabaseAdmin) throw new Error("Database not configured");
   const now = params.now ?? new Date();
+
+  // Server-side token rule: new users hold $HIVRA once it is active.
+  const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now }));
+  const tokenKey = params.token ?? access.qualifyTokens[0];
+  if (!access.qualifyTokens.includes(tokenKey)) {
+    throw new TokenNotAllowedError(tokenKey, access.qualifyTokens);
+  }
+  const token = requirePlatformToken(tokenKey);
 
   // Opportunistic sweep: any quotes for this user/tier whose
   // expires_at has passed get marked 'expired'. Without this,
@@ -173,12 +210,12 @@ export async function createDepositQuote(
   const usdTargetCents = USD_TARGET_CENTS[thresholdTierCode];
 
   const priceQuote =
-    params.priceQuote ?? (await fetchHermesPriceUsd());
+    params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
 
   const tokensRequired = computeTokensRequiredForUsdTarget({
     usdTargetCents,
     priceUsdPerToken: priceQuote.priceUsd,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenDecimals: token.decimals,
     rounding: "up",
   });
 
@@ -189,6 +226,8 @@ export async function createDepositQuote(
     .insert({
       user_id: params.userId,
       tier: params.tier,
+      token_key: token.key,
+      token_address: token.address,
       threshold_tier_code: thresholdTierCode,
       usd_target_cents: usdTargetCents,
       price_usd_at_quote: priceQuote.priceUsd,
@@ -203,7 +242,7 @@ export async function createDepositQuote(
       },
     })
     .select(
-      "id, user_id, tier, threshold_tier_code, usd_target_cents, price_usd_at_quote, tokens_required_raw::text, tokens_required_display, quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, source, metadata, created_at, updated_at"
+      DEPOSIT_QUOTE_SELECT
     )
     .single<DepositQuoteRow>();
 
@@ -247,7 +286,7 @@ export async function getActiveDepositQuotes(
   let query = supabaseAdmin
     .from("deposit_quotes")
     .select(
-      "id, user_id, tier, threshold_tier_code, usd_target_cents, price_usd_at_quote, tokens_required_raw::text, tokens_required_display, quoted_at, expires_at, status, consumed_balance_raw::text, consumed_at, source, metadata, created_at, updated_at"
+      DEPOSIT_QUOTE_SELECT
     )
     .eq("user_id", params.userId)
     .eq("status", "active");

@@ -56,6 +56,7 @@ tmp_adapter="$(mktemp /tmp/hivra-gvisor-adapter.XXXXXXXX)"
 tmp_dir="$(mktemp -d /tmp/hivra-gvisor-bin.XXXXXXXX)"
 prepare_stage="bundle-download"
 curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location "$BUNDLE_URL" -o "$tmp_bundle"
+prepare_stage="bundle-checksum"
 printf '%s  %s\n' "$BUNDLE_SHA256" "$tmp_bundle" | sha256sum -c -
 prepare_stage="bundle-validation"
 if tar -tjf "$tmp_bundle" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then exit 1; fi
@@ -71,6 +72,13 @@ done
 
 # Preparation may fill in a missing pinned bundle, but it never replaces a
 # different installed runtime identity behind existing sandbox bindings.
+# Hivra's own adapter from an earlier release is checked first and reported as
+# its own stage: existing Linux Sandbox computers pin its identity too, so it
+# is left in place, and the owner is told it is Hivra's, not someone else's.
+prepare_stage="installed-adapter-check"
+if [ -e /opt/hivra/gvisor-adapter/hivra-gvisor-adapter ]; then
+  [ "$(sha256sum /opt/hivra/gvisor-adapter/hivra-gvisor-adapter | awk '{print $1}')" = "$ADAPTER_SHA256" ]
+fi
 prepare_stage="installed-identity-check"
 if command -v runsc >/dev/null 2>&1; then
   [ "$(readlink -f "$(command -v runsc)")" = /usr/local/bin/runsc ]
@@ -86,9 +94,6 @@ if [ -e /usr/local/bin/gvisor-bin ]; then
   for sidecar in checkpointgofer gvisor-sentry-prewarmer gvisor_sentry runsc-metric-server; do
     [ "$(sha256sum "/usr/local/bin/gvisor-bin/$sidecar" | awk '{print $1}')" = "$(sha256sum "$tmp_dir/gvisor-bin/$sidecar" | awk '{print $1}')" ]
   done
-fi
-if [ -e /opt/hivra/gvisor-adapter/hivra-gvisor-adapter ]; then
-  [ "$(sha256sum /opt/hivra/gvisor-adapter/hivra-gvisor-adapter | awk '{print $1}')" = "$ADAPTER_SHA256" ]
 fi
 prepare_stage="asset-installation"
 while IFS= read -r -d '' binary; do

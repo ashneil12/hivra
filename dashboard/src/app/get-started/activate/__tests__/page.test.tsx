@@ -104,6 +104,20 @@ describe("ActivatePage", () => {
     expect(screen.getByText(/setting up your/i)).toBeInTheDocument();
   });
 
+  // FTUE-16: a second progress model ("Account Created → Setting Up") sat
+  // between sign-up and Launch's own Choose / Plan / Review steps.
+  it("shows no step strip of its own while checkout starts", async () => {
+    fetchMock.mockResolvedValue({
+      json: async () => ({ success: true, data: { url: "https://checkout.stripe.test/session" } }),
+    } as Response);
+
+    render(<ActivatePage />);
+
+    expect(await screen.findByText(/setting up your/i)).toBeInTheDocument();
+    expect(screen.queryByText(/account created/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^setting up$/i)).not.toBeInTheDocument();
+  });
+
   it("passes yearly cadence from the URL through to the subscribe request", async () => {
     mockGet.mockImplementation((key: string) => {
       if (key === "plan") return "operator";
@@ -174,13 +188,13 @@ describe("ActivatePage", () => {
       });
     });
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?step=agent-type");
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1");
     });
     expect(captureClient).toHaveBeenCalledWith("activation_dashboard_reached", {
       source: "get-started-activate",
       route: "/get-started/activate",
       plan: "free",
-      destination: "/dashboard/welcome?step=agent-type",
+      destination: "/dashboard/launch?kind=agent&start=1",
       outcome: "free_plan_activated",
     });
     expect(assignMock).not.toHaveBeenCalled();
@@ -202,7 +216,8 @@ describe("ActivatePage", () => {
     render(<ActivatePage />);
 
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?step=agent-type&agentType=claude-code");
+      // The agent picked on the way in opens its own plan in Launch.
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1&profile=claude-code");
     });
   });
 

@@ -1,6 +1,10 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
+import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import {
@@ -35,10 +39,14 @@ const HERMES_PRICE_UNAVAILABLE_MESSAGE =
 const HERMES_WALLET_PENDING_MESSAGE =
   "$HermesOS top-ups are still being connected. Card credits are available now.";
 
+// Optional platform token; the account's payment token when absent.
+const TokenSchema = z.enum(["hermesos", "hivra"]).optional();
+
 const QuoteRequestSchema = z.union([
   z.object({
     tokenAmountRaw: z.string().regex(/^[1-9]\d*$/),
     targetPaidMicroUsd: z.never().optional(),
+    token: TokenSchema,
   }),
   z.object({
     targetPaidMicroUsd: z
@@ -47,6 +55,7 @@ const QuoteRequestSchema = z.union([
       .positive()
       .max(MAX_MANAGED_VENICE_TARGET_PAID_MICRO_USD),
     tokenAmountRaw: z.never().optional(),
+    token: TokenSchema,
   }),
 ]);
 
@@ -56,6 +65,8 @@ function serializeQuote(quote: ManagedVeniceTokenQuote) {
     accountId: quote.accountId,
     userId: quote.userId,
     tokenAmountRaw: quote.tokenAmountRaw,
+    tokenKey: quote.tokenKey,
+    tokenAddress: quote.tokenAddress,
     tokenSymbol: quote.tokenSymbol,
     tokenDecimals: quote.tokenDecimals,
     snapshotPriceUsd: quote.snapshotPriceUsd,
@@ -121,6 +132,18 @@ export async function POST(req: NextRequest) {
     const { userId } = await auth();
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
+
+    // Token geo-policy: a new token top-up quote is a new token payment.
+    // Checking or settling a quote already issued is never refused.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/managed-venice/hermesos/quote",
+        route: "/api/billing/managed-venice/hermesos/quote",
+        method: "POST",
+        userId,
+      });
+    }
 
     let body: unknown;
     try {
@@ -225,14 +248,30 @@ export async function POST(req: NextRequest) {
               userId,
               targetMicroUsd: parsed.data.targetPaidMicroUsd,
               depositAddress,
+              ...(parsed.data.token ? { token: parsed.data.token } : {}),
             })
           : await createManagedVeniceTokenQuote({
               userId,
               tokenAmountRaw: parsed.data.tokenAmountRaw,
               depositAddress,
+              ...(parsed.data.token ? { token: parsed.data.token } : {}),
             });
     } catch (error) {
+      if (error instanceof TokenNotAllowedError) {
+        return apiError(error.message, 403, {
+          failureType: "token_not_allowed",
+          token: error.tokenKey,
+          allowedTokens: error.allowedTokens,
+        });
+      }
       if (error instanceof ManagedVeniceTokenQuotePriceError) {
+        // The rate-limited gate log and ops alert are the signal; the per-request
+        // line stays at info so a gate that holds for hours cannot flood the logs.
+        const { refusal } = await reportPriceGateRefusal(error, {
+          source: "billing/managed-venice/hermesos/quote",
+          route: "/api/billing/managed-venice/hermesos/quote",
+          method: "POST",
+        });
         return apiError(
           HERMES_PRICE_UNAVAILABLE_MESSAGE,
           503,
@@ -241,6 +280,8 @@ export async function POST(req: NextRequest) {
             step: "price_oracle",
             errorName: error.name,
             errorMessage: error.message,
+            gate: refusal.gate,
+            gateReason: refusal.reason,
           },
           { reason: "pricing_unavailable" },
           {
@@ -250,6 +291,7 @@ export async function POST(req: NextRequest) {
             userId: userIdForLog,
             failureType: "managed_venice_quote_price_unavailable",
             cause: error,
+            logLevel: "info",
           }
         );
       }

@@ -49,6 +49,11 @@ jest.mock("@/lib/billing/price-feed", () => ({
     await mockState.priceGate?.();
     return mockPriceQuote;
   },
+  // Yearly quotes price the quote's own platform token.
+  fetchPlatformTokenPriceUsd: async () => {
+    await mockState.priceGate?.();
+    return mockPriceQuote;
+  },
 }));
 
 import { POST } from "../route";

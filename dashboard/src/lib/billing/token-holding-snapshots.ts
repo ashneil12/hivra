@@ -4,6 +4,7 @@ import {
   normalizeNumericToBigIntString,
 } from "@/lib/billing/token-holdings";
 import { supabaseAdmin } from "@/lib/supabase";
+import { livePlatformTokens, type PlatformTokenKey } from "@/lib/billing/token-registry";
 
 interface SnapshotRow {
   user_id: string;
@@ -72,4 +73,24 @@ export async function fetchLatestVvvSnapshotsByUser(
   db: SnapshotReaderDb | null | undefined = supabaseAdmin
 ): Promise<Map<string, bigint>> {
   return fetchLatestSnapshotsByUserForToken(VVV_TOKEN_ADDRESS, userIds, db);
+}
+
+/**
+ * Latest balance per live platform token ($HermesOS, plus $HIVRA once active)
+ * per user. A token with no snapshot for a user is absent from that user's
+ * entry, so the evaluator never judges a tier on a balance it did not read.
+ */
+export async function fetchLatestPlatformTokenBalancesByUser(
+  userIds: string[],
+  db: SnapshotReaderDb | null | undefined = supabaseAdmin,
+  now: Date = new Date()
+): Promise<Map<string, Partial<Record<PlatformTokenKey, bigint>>>> {
+  const out = new Map<string, Partial<Record<PlatformTokenKey, bigint>>>();
+  for (const token of livePlatformTokens(now)) {
+    const byUser = await fetchLatestSnapshotsByUserForToken(token.address, userIds, db);
+    for (const [userId, balance] of byUser) {
+      out.set(userId, { ...(out.get(userId) ?? {}), [token.key]: balance });
+    }
+  }
+  return out;
 }

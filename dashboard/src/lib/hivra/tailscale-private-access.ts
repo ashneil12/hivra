@@ -15,6 +15,7 @@ import {
   buildTailscaleInstallScript,
   parseTailscaleStatusJson,
 } from "@/lib/services/tailscale-private-access";
+import { privateNetworkReason, type PrivateNetworkReason } from "@/lib/hivra/lifecycle-support";
 
 export const DEFAULT_TAILSCALE_LOGIN_SERVER = "https://controlplane.tailscale.com";
 
@@ -119,15 +120,19 @@ export function sameHivraPrivateAccessAuthority(left: unknown, right: Record<str
   return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
 }
 
+/**
+ * A running, owner-bound Ubuntu computer on Proxmox with no operation in
+ * progress. The static half (kind and binding) and the live half (running,
+ * idle, addressable) live in lifecycle-support.ts, which Manage shares, so the
+ * reason a computer is refused is the one Manage shows.
+ */
 export function isCompatibleHivraPrivateAccessAgent(agent: HivraPrivateAccessAgentRow): boolean {
-  return agent.type === "linux-desktop"
-    && (agent.computer_profile == null || agent.computer_profile === "ubuntu-desktop")
-    && agent.computer_substrate === "proxmox-kvm"
-    && agent.infrastructure_binding_token_enforced === true
-    && agent.status === "running" && agent.desired_state === "running"
-    && agent.operation_id == null && agent.operation_kind == null
-    && Number.isSafeInteger(agent.vmid) && Number(agent.vmid) >= 100
-    && typeof agent.ip === "string" && IPV4.test(agent.ip);
+  return privateNetworkReason(agent) === null;
+}
+
+/** Why the computer can't use a private network right now, or null. */
+export function hivraPrivateAccessReason(agent: HivraPrivateAccessAgentRow): PrivateNetworkReason | null {
+  return privateNetworkReason(agent);
 }
 
 export function buildHivraTailscaleGuestInvocation(program: string): string {

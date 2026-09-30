@@ -11,43 +11,55 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#0d0d0d",
     theme_color: "#0d0d0d",
     categories: ["productivity", "utilities", "business"],
+    // The approved Hivra mark (docs/brand/hivra-logo.jpg), exported by
+    // docs/brand/export-brand-assets.py. It is a full-bleed opaque square whose
+    // red H sits inside the maskable safe zone, so one file serves both purposes.
     icons: [
       {
-        src: "/pwa-icon-192",
+        src: "/brand/hivra-icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: "/brand/hivra-icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: "/brand/hivra-icon-192.png",
         sizes: "192x192",
         type: "image/png",
         purpose: "maskable",
       },
       {
-        src: "/pwa-icon-512",
+        src: "/brand/hivra-icon-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",
       },
-      {
-        src: "/apple-icon",
-        sizes: "180x180",
-        type: "image/png",
-      },
     ],
+    // Where the installed app's long-press menu goes: the two inventories,
+    // the one place to start something new, then money.
     shortcuts: [
       {
         name: "Agents",
         short_name: "Agents",
-        description: "Open your Hivra agents",
-        url: "/dashboard",
+        description: "Open your agents",
+        url: "/dashboard/agents",
       },
       {
-        name: "Chat",
-        short_name: "Chat",
-        description: "Open the original chat flow",
-        url: "/dashboard/chat",
+        name: "Computers",
+        short_name: "Computers",
+        description: "Open your computers",
+        url: "/dashboard/computers",
       },
       {
-        name: "Workspace preview",
-        short_name: "Workspace",
-        description: "Open the optional Hivra workspace preview",
-        url: "/dashboard/workspace",
+        name: "Launch",
+        short_name: "Launch",
+        description: "Launch an agent or a computer",
+        url: "/dashboard/launch",
       },
       {
         name: "Wallet",

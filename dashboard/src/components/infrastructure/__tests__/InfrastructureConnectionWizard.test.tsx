@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 
 import {
@@ -15,17 +15,23 @@ import type {
   ProxmoxPreflightResult,
 } from "@/lib/infrastructure/contracts";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
+import { captureServerHostKey } from "@/lib/infrastructure/server-enrollment-client";
 import {
+  InfrastructureApiError,
+  checkGvisorConnection,
   createInfrastructureConnection,
   discoverInfrastructureHost,
   preflightInfrastructureConnection,
 } from "@/lib/infrastructure/client";
 
+jest.mock("@/lib/infrastructure/server-enrollment-client", () => ({ captureServerHostKey: jest.fn() }));
 jest.mock("@/lib/infrastructure/client", () => ({
+  ...jest.requireActual("@/lib/infrastructure/client"),
   createInfrastructureConnection: jest.fn(),
   discoverInfrastructureHost: jest.fn(),
   preflightInfrastructureConnection: jest.fn(),
   updateInfrastructureConnection: jest.fn(),
+  checkGvisorConnection: jest.fn(),
 }));
 
 const PRIVATE_KEY = [
@@ -42,7 +48,10 @@ function form(overrides: Partial<InfrastructureConnectionFormValues> = {}): Infr
     sshPort: "22",
     sshUser: "root",
     sshHostFingerprintSha256: "a".repeat(64),
+    sshHostKeyType: null,
+    sshPrivilege: "login",
     sshPrivateKey: PRIVATE_KEY,
+    sshPrivateKeyPassphrase: "",
     node: "",
     bridge: "",
     storage: "",
@@ -96,7 +105,7 @@ const savedHost: InfrastructureConnectionDto = {
   lastCheckedAt: null,
 };
 
-const supportedDiscovery: HostDiscoveryResult = {
+const supportedDiscovery: Extract<HostDiscoveryResult, { ok: true }> = {
   ok: true,
   snapshot: {
     discoveryId: "22222222-2222-4222-8222-222222222222",
@@ -136,6 +145,39 @@ const supportedDiscovery: HostDiscoveryResult = {
     ],
   },
 };
+
+function gvisorDiscovery(installed: boolean): Extract<HostDiscoveryResult, { ok: true }> {
+  return {
+    ok: true,
+    snapshot: {
+      ...supportedDiscovery.snapshot,
+      host: {
+        ...supportedDiscovery.snapshot.host,
+        os: { family: "linux", id: "ubuntu", versionId: "24.04" },
+        environment: { ...supportedDiscovery.snapshot.host.environment, virtualization: "virtual-machine" },
+        kvm: { devicePresent: false, cpuVirtualization: true },
+      },
+      engines: supportedDiscovery.snapshot.engines.map((engine) => engine.id === "proxmox-kvm"
+        ? { ...engine, availability: "unavailable" as const, supported: false, detectedVersion: null, unmetRequirements: ["ENGINE_NOT_INSTALLED" as const] }
+        : engine.id === "gvisor"
+          ? {
+              ...engine,
+              availability: installed ? "installed" as const : "installable" as const,
+              supported: true,
+              detectedVersion: installed ? "runsc version release-20260907.0" : null,
+              unmetRequirements: installed ? [] : ["ENGINE_NOT_INSTALLED" as const, "DOCKER_REQUIRED" as const],
+            }
+          : engine),
+    },
+  };
+}
+
+function fillAndConnect() {
+  fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "host.example.com" } });
+  fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
+  fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+}
 
 const incompletePreflight: ProxmoxPreflightResult = {
   ok: true,
@@ -394,6 +436,20 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     );
     expect(screen.getByRole("button", { name: /Advanced/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Network bridge")).toHaveValue("vmbr0");
+    // Touch keyboards must not turn vmbr0 into Vmbr0 or autocorrect paths.
+    for (const label of [
+      "Node",
+      "Network bridge",
+      "VM storage",
+      "Expected template name",
+      "Provisioner directory",
+      "Provisioner version",
+    ]) {
+      const input = screen.getByLabelText(label);
+      expect(input).toHaveAttribute("autocapitalize", "none");
+      expect(input).toHaveAttribute("autocorrect", "off");
+      expect(input).toHaveAttribute("spellcheck", "false");
+    }
   });
 
   it("saves a generic host, discovers it first, then requires an explicit strict readiness check", async () => {
@@ -413,7 +469,7 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
 
     expect(await screen.findByRole("heading", {
-      name: "A supported isolation engine is installed.",
+      name: "My host runs Proxmox VE 8.4.1.",
     })).toBeInTheDocument();
     expect(createInfrastructureConnection).toHaveBeenCalledWith(expect.objectContaining({
       provider: "host",
@@ -426,8 +482,177 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     expect(await screen.findByRole("heading", { name: "Host inspected - setup needed" })).toBeInTheDocument();
     expect(preflightInfrastructureConnection).toHaveBeenCalledWith(savedHost.id);
 
-    fireEvent.click(screen.getByRole("button", { name: "Prepare recommended setup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review setup" }));
     expect(onPrepareRequested).toHaveBeenCalledWith(savedHost);
+  });
+
+  it("hands Linux Sandbox setup to the shared review dialog", async () => {
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(gvisorDiscovery(false));
+    const onGvisorSetupRequested = jest.fn();
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        onGvisorSetupRequested={onGvisorSetupRequested}
+      />,
+    );
+    fillAndConnect();
+
+    expect(await screen.findByRole("heading", { name: "My host can run Linux Sandbox after a short setup." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review setup" }));
+    expect(onGvisorSetupRequested).toHaveBeenCalledWith(savedHost, "prepare");
+  });
+
+  // INF-17: the progress bar used to stop at Recommend on the Linux Sandbox path.
+  it("moves the progress bar to Ready when this wizard's Linux Sandbox check passes", async () => {
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(gvisorDiscovery(true));
+    (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: "44444444-4444-4444-8444-444444444444", ready: true });
+    const onGvisorReady = jest.fn();
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        onGvisorReady={onGvisorReady}
+      />,
+    );
+    fillAndConnect();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check readiness" }));
+    expect(await screen.findByRole("heading", { name: "My host is ready for Linux Sandbox." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "Ready, current" })).toHaveAttribute("aria-current", "step");
+    expect(onGvisorReady).toHaveBeenCalledWith(savedHost.id);
+  });
+
+  // Review of slice 5: the header kept saying ready after the check lapsed.
+  it("stops calling the host ready once this wizard's Linux Sandbox check is 15 minutes old", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+    try {
+      (discoverInfrastructureHost as jest.Mock).mockResolvedValue(gvisorDiscovery(true));
+      (checkGvisorConnection as jest.Mock).mockResolvedValue({ targetId: "44444444-4444-4444-8444-444444444444", ready: true });
+      render(
+        <InfrastructureConnectionWizard
+          onClose={jest.fn()}
+          onConnectionSaved={jest.fn()}
+          onPreflightComplete={jest.fn()}
+          onGvisorReady={jest.fn()}
+        />,
+      );
+      fillAndConnect();
+      fireEvent.click(await screen.findByRole("button", { name: "Check readiness" }));
+      expect(await screen.findByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).toBeInTheDocument();
+
+      act(() => { jest.advanceTimersByTime(15 * 60_000 + 1_000); });
+      expect(screen.getByRole("heading", { level: 1, name: "Needs a check" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { level: 1, name: "Ready for Linux Sandbox" })).not.toBeInTheDocument();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it("offers Change SSH user when discovery signed in without root or passwordless sudo", async () => {
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue({
+      ...supportedDiscovery,
+      snapshot: {
+        ...gvisorDiscovery(false).snapshot,
+        host: { ...gvisorDiscovery(false).snapshot.host, environment: { ...gvisorDiscovery(false).snapshot.host.environment, effectivePrivilege: "non-root" } },
+        engines: gvisorDiscovery(false).snapshot.engines.map((engine) => engine.id === "gvisor"
+          ? { ...engine, availability: "unavailable" as const, supported: false, unmetRequirements: ["ROOT_REQUIRED" as const, "ENGINE_NOT_INSTALLED" as const] }
+          : engine),
+      },
+    } satisfies HostDiscoveryResult);
+    const onEditRequested = jest.fn();
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        onEditRequested={onEditRequested}
+      />,
+    );
+    fireEvent.click(screen.getByText("SSH settings"));
+    fireEvent.change(screen.getByLabelText("SSH user"), { target: { value: "ubuntu" } });
+    fillAndConnect();
+
+    expect(await screen.findByRole("heading", { name: "Signed in as ubuntu without passwordless sudo." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change SSH user" }));
+    expect(onEditRequested).toHaveBeenCalledWith(savedHost);
+  });
+
+  it.each([
+    ["phone", "visible", true],
+    ["desktop", "auto", false],
+  ])("on %s layouts, starts each in-place phase at the top only when the page scrolls the dialog", async (_layout, overflowY, scrolls) => {
+    // Phone CSS makes the in-flow dialog overflow visible so the dashboard
+    // main scrolls it; desktop dialogs scroll themselves.
+    const layout = document.createElement("style");
+    layout.textContent = `[role="dialog"] { overflow-y: ${overflowY}; }`;
+    document.head.appendChild(layout);
+    try {
+      render(
+        <InfrastructureConnectionWizard
+          onClose={jest.fn()}
+          onConnectionSaved={jest.fn()}
+          onPreflightComplete={jest.fn()}
+        />,
+      );
+      const dialog = screen.getByRole("dialog");
+      const scrollIntoView = jest.fn();
+      dialog.scrollIntoView = scrollIntoView;
+
+      // A validation error keeps the form phase; focus goes to the field instead.
+      fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+      expect(screen.getByLabelText("SSH host")).toHaveFocus();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "host.example.com" } });
+      fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
+      fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+      await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
+
+      if (scrolls) {
+        expect(scrollIntoView).toHaveBeenCalled();
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "start" });
+      } else {
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      }
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it("shows a failed save's error instead of the form top when the page scrolls the dialog", async () => {
+    (createInfrastructureConnection as jest.Mock).mockRejectedValue(new Error("The host rejected the saved SSH key."));
+    const layout = document.createElement("style");
+    layout.textContent = '[role="dialog"] { overflow-y: visible; }';
+    document.head.appendChild(layout);
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    const scrolled: Array<[Element, unknown]> = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element, options?: unknown) {
+      scrolled.push([this, options]);
+    };
+    try {
+      render(
+        <InfrastructureConnectionWizard
+          onClose={jest.fn()}
+          onConnectionSaved={jest.fn()}
+          onPreflightComplete={jest.fn()}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "host.example.com" } });
+      fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
+      fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+
+      const error = (await screen.findByText("The host rejected the saved SSH key.")).closest('[role="alert"]');
+      expect(error).not.toBeNull();
+      expect(scrolled.at(-1)).toEqual([error, { block: "center" }]);
+    } finally {
+      if (original) Object.defineProperty(Element.prototype, "scrollIntoView", original);
+      else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      layout.remove();
+    }
   });
 
   it("keeps the recommendation step current while the strict readiness check is running", async () => {
@@ -449,7 +674,7 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
     fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
-    await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+    await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
 
     fireEvent.click(screen.getByRole("button", { name: "Check Proxmox readiness" }));
     expect(screen.getByRole("listitem", { name: "Recommend, current" })).toHaveAttribute("aria-current", "step");
@@ -483,13 +708,132 @@ describe("InfrastructureConnectionWizard payload builders", () => {
     fireEvent.change(screen.getByLabelText("Pinned SSH fingerprint"), { target: { value: "c".repeat(64) } });
     fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
-    await screen.findByRole("heading", { name: "A supported isolation engine is installed." });
+    await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
 
     fireEvent.click(screen.getByRole("button", { name: "Check Proxmox readiness" }));
 
     expect(await screen.findByRole("heading", { name: "Readiness issue" })).toBeInTheDocument();
     expect(screen.getByRole("listitem", { name: "Recommend, current" })).toHaveAttribute("aria-current", "step");
     expect(screen.getByRole("listitem", { name: "Prepare" })).not.toHaveAttribute("aria-current");
-    expect(screen.queryByRole("button", { name: "Prepare recommended setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review setup" })).not.toBeInTheDocument();
+  });
+});
+
+// INF-14 and T44: the advanced wizard keeps the pasted fingerprint as its
+// default, adds a key passphrase and a sudo-user option, and offers reading
+// the key from the server only as a fallback that pins nothing by itself.
+describe("advanced SSH details", () => {
+  const presented = { publicKey: "ssh-ed25519 " + "A".repeat(68), fingerprintSha256: "SHA256:" + "Q".repeat(43) };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (createInfrastructureConnection as jest.Mock).mockResolvedValue(savedHost);
+    (discoverInfrastructureHost as jest.Mock).mockResolvedValue(supportedDiscovery);
+  });
+
+  function renderWizard(extra: Record<string, unknown> = {}) {
+    render(
+      <InfrastructureConnectionWizard
+        onClose={jest.fn()}
+        onConnectionSaved={jest.fn()}
+        onPreflightComplete={jest.fn()}
+        {...extra}
+      />,
+    );
+  }
+
+  it("sends a passphrase only when one is typed, and never keeps it in the form after saving", async () => {
+    const withPassphrase = buildInfrastructureConnectionCreate(form({ setupMode: "simple", sshPrivateKeyPassphrase: "open sesame" }));
+    expect(withPassphrase.ok && withPassphrase.value.credentials).toEqual({ sshPrivateKey: PRIVATE_KEY, sshPrivateKeyPassphrase: "open sesame" });
+    const without = buildInfrastructureConnectionCreate(form());
+    expect(without.ok && without.value.credentials).toEqual({ sshPrivateKey: PRIVATE_KEY });
+
+    renderWizard();
+    fireEvent.change(screen.getByLabelText("Key passphrase (only if your key has one)"), { target: { value: "open sesame" } });
+    fillAndConnect();
+    expect(await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." })).toBeInTheDocument();
+    expect((createInfrastructureConnection as jest.Mock).mock.calls[0][0].credentials)
+      .toEqual({ sshPrivateKey: PRIVATE_KEY, sshPrivateKeyPassphrase: "open sesame" });
+  });
+
+  it("shows a wrong or missing passphrase under the passphrase field", async () => {
+    (createInfrastructureConnection as jest.Mock).mockRejectedValue(
+      new InfrastructureApiError("That passphrase didn't unlock this key.", 422, "key_passphrase_incorrect"));
+    renderWizard();
+    fillAndConnect();
+    expect(await screen.findByText("That passphrase didn't unlock this key.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Key passphrase (only if your key has one)")).toBeInTheDocument();
+    expect(discoverInfrastructureHost).not.toHaveBeenCalled();
+  });
+
+  it("offers passwordless sudo for a non-root user only, and sends it as the connection's privilege", () => {
+    const endpointOf = (built: ReturnType<typeof buildInfrastructureConnectionCreate>) =>
+      built.ok && "endpoint" in built.value ? built.value.endpoint : null;
+    expect(endpointOf(buildInfrastructureConnectionCreate(form({ sshUser: "ubuntu", sshPrivilege: "sudo" }))))
+      .toMatchObject({ sshUser: "ubuntu", sshPrivilege: "sudo" });
+    // Root never uses sudo: its login already is root.
+    const root = endpointOf(buildInfrastructureConnectionCreate(form({ sshUser: "root", sshPrivilege: "sudo" })));
+    expect(root).not.toBeNull();
+    expect(root).not.toHaveProperty("sshPrivilege");
+    // Turning sudo off on a saved sudo connection says so explicitly.
+    const back = buildInfrastructureConnectionUpdate(form({ sshUser: "ubuntu", sshPrivilege: "login", sshPrivateKey: "" }), {
+      ...savedHost, endpoint: { ...savedHost.endpoint!, sshUser: "ubuntu", sshPrivilege: "sudo" },
+    });
+    expect(back.ok && back.value?.endpoint).toMatchObject({ sshPrivilege: "login" });
+
+    renderWizard();
+    fireEvent.click(screen.getByText("SSH settings"));
+    expect(screen.queryByText(/uses passwordless sudo/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("SSH user"), { target: { value: "ubuntu" } });
+    expect(screen.getByText("ubuntu uses passwordless sudo")).toBeInTheDocument();
+    expect(screen.getByText(/Proxmox launches need a root login for now\./)).toBeInTheDocument();
+  });
+
+  it("keeps the pasted fingerprint as the default and offers the setup command next to it", () => {
+    const onSetupCommandRequested = jest.fn();
+    renderWizard({ onSetupCommandRequested });
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toBeRequired();
+    expect(screen.getByRole("button", { name: "Copy the fingerprint command" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use the setup command" }));
+    expect(onSetupCommandRequested).toHaveBeenCalledTimes(1);
+    for (const provider of ["AWS:", "Hetzner:", "DigitalOcean:"]) expect(screen.getByText(provider)).toBeInTheDocument();
+    expect(captureServerHostKey).not.toHaveBeenCalled();
+  });
+
+  it("reads the key from the server only when asked, warns, and pins it only after the owner confirms (T44)", async () => {
+    (captureServerHostKey as jest.Mock).mockResolvedValue(presented);
+    renderWizard();
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "203.0.113.9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read it from the server" }));
+    expect(captureServerHostKey).toHaveBeenCalledWith("203.0.113.9", 22);
+    const result = await screen.findByRole("group", { name: "SSH identity the server presented" });
+    expect(within(result).getByText(presented.fingerprintSha256)).toBeInTheDocument();
+    expect(within(result).getByText(/If someone is intercepting Hivra's connection, this could be their key instead of your server's\./))
+      .toBeInTheDocument();
+    expect(within(result).getByRole("button", { name: "Copy the presented fingerprint" })).toBeInTheDocument();
+    // Nothing is pinned or saved yet.
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toHaveValue("");
+    expect(createInfrastructureConnection).not.toHaveBeenCalled();
+    fireEvent.click(within(result).getByRole("button", { name: /It matches: use this fingerprint/ }));
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toHaveValue(presented.fingerprintSha256);
+    expect(createInfrastructureConnection).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("SSH private key"), { target: { value: PRIVATE_KEY } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect and inspect" }));
+    await screen.findByRole("heading", { name: "My host runs Proxmox VE 8.4.1." });
+    // A key read from the server is Ed25519, so SSH offers only that algorithm.
+    expect((createInfrastructureConnection as jest.Mock).mock.calls[0][0].endpoint)
+      .toMatchObject({ sshHostFingerprintSha256: presented.fingerprintSha256, sshHostKeyType: "ssh-ed25519" });
+  });
+
+  it("says the same thing for every capture failure and lets the owner dismiss a key", async () => {
+    (captureServerHostKey as jest.Mock).mockRejectedValue(new Error("Hivra couldn't read an Ed25519 SSH identity from 203.0.113.9:22."));
+    renderWizard();
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "203.0.113.9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read it from the server" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Hivra couldn't read an Ed25519 SSH identity from 203.0.113.9:22.");
+    (captureServerHostKey as jest.Mock).mockResolvedValue(presented);
+    fireEvent.click(screen.getByRole("button", { name: "Read it from the server" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Don't use it" }));
+    expect(screen.getByLabelText("Pinned SSH fingerprint")).toHaveValue("");
   });
 });

@@ -9,6 +9,7 @@ import {
   seedBankrSkillsOntoBox,
   type BankrSkillFile,
 } from "../bankr-skills-seed";
+import { skillFrontmatterProblem } from "../skill-file";
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   __esModule: true,
@@ -59,6 +60,19 @@ describe("collectBankrSkillFiles", () => {
   it("produces unique slugs (no on-disk collisions)", () => {
     const slugs = files.map((f) => f.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
+  });
+
+  it("writes only SKILL.md files Codex can load", () => {
+    const problems = files
+      .map((f) => ({ slug: f.slug, problem: skillFrontmatterProblem(f.content) }))
+      .filter((result) => result.problem !== null);
+    expect(problems).toEqual([]);
+  });
+
+  it("seeds one twitter-agent skill, not upstream's nested copy", () => {
+    const slugs = files.map((f) => f.slug);
+    expect(slugs).toContain("bankr-twitter-agent");
+    expect(slugs).not.toContain("skills-bankr-twitter-agent");
   });
 });
 

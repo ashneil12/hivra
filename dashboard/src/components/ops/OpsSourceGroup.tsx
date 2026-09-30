@@ -39,7 +39,7 @@ export function OpsSourceGroup({ source, incidentCount, defaultOpen = false, chi
         }}
         aria-expanded={open}
       >
-        <div>
+        <div style={{ minWidth: 0 }}>
           <p
             className="mono"
             style={{
@@ -55,9 +55,10 @@ export function OpsSourceGroup({ source, incidentCount, defaultOpen = false, chi
           <h2
             className="serif"
             style={{
-              fontSize: '1.7rem',
+              fontSize: 'clamp(1.2rem, 5vw, 1.7rem)',
               margin: '0.35rem 0 0',
               color: 'var(--ink-black)',
+              overflowWrap: 'anywhere',
             }}
           >
             {source}

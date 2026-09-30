@@ -9,6 +9,8 @@ const STATUS: Record<ManagedSessionErrorCode, number> = {
   not_found: 404,
   invalid_request: 400,
   not_ready: 409,
+  session_paused: 409,
+  connection_changed: 409,
   conflict: 409,
   invalid_credentials: 422,
   provider_forbidden: 422,

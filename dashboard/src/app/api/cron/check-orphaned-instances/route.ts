@@ -51,6 +51,7 @@ function buildShutdownInstance(
         "@/lib/services/proxmox-instance-service"
       );
       const result = await shutdownProxmoxInstance(proxmox, {
+        expectedInstanceId: row.id,
         hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmox, { host_id: row.host_id ?? null }),
       });
       if (result.ok) return { ok: true };

@@ -2,13 +2,17 @@
 // The Hivra-lane analogue of /api/instances/[id]/bankr-wallet: same wallet table
 // + provisioning code (keyed by hivra_agent_id instead of instance_id), but the
 // creds are delivered to the box over SSH as ~/.hivra/bankr.env rather than baked
-// into an agent YAML. Lazy: the wallet is minted on the first POST.
+// into an agent YAML. POST only keeps a wallet Hivra already created working;
+// new agent wallets connect the user's own Bankr account via ./connect.
 
 import type { NextRequest } from "next/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import {
-  buildInstanceBankrAgentConfig,
+  loadOwnedHivraWalletAgent,
+  syncBankrEnvToRunningHivraAgent,
+} from "@/lib/agent-wallets/hivra-lane";
+import {
   getBankrWalletForHivraAgent,
   instanceBankrWalletPublicSummary,
   provisionBankrWalletForHivraAgent,
@@ -16,11 +20,9 @@ import {
 } from "@/lib/billing/bankr-instance-wallets";
 import { resolveWalletRouteIdentity } from "@/lib/billing/bankr-wallet-route-shared";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
-import { seedBankrWalletEnvOntoBox } from "@/lib/hivra/bankr-wallet-env-seed";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { log } from "@/lib/logger";
-import { supabaseAdmin } from "@/lib/supabase";
 import {
   describeHivraAgentExecutionContextError,
   resolveHivraAgentExecutionContext,
@@ -34,29 +36,6 @@ export const maxDuration = 60;
 
 const LOG_SOURCE = "hivra-bankr-wallet-route";
 
-interface HivraAgentRow {
-  id: string;
-  user_id: string;
-  type: string;
-  status: string;
-  ip: string | null;
-  proxmox_host: string | null;
-  infrastructure_connection_id: string | null;
-  deployment_target_id: string | null;
-  infrastructure_connection_revision: number | null;
-}
-
-async function loadOwnedAgent(id: string, userId: string): Promise<HivraAgentRow | null> {
-  if (!supabaseAdmin) return null;
-  const { data } = await supabaseAdmin
-    .from("hivra_agents")
-    .select("id,user_id,type,status,ip,proxmox_host,infrastructure_connection_id,deployment_target_id,infrastructure_connection_revision")
-    .eq("id", id)
-    .eq("user_id", userId)
-    .maybeSingle();
-  return (data as HivraAgentRow | null) || null;
-}
-
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
@@ -64,7 +43,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     if (!identity.ok) return identity.response;
     const { id, userId } = identity;
 
-    const agent = await loadOwnedAgent(id, userId);
+    const agent = await loadOwnedHivraWalletAgent(id, userId);
     if (!agent) return apiError("Agent not found", 404);
     if (!bankrSkillsDirForType(agent.type)) return apiError("Wallet not supported for this agent type", 400);
 
@@ -98,7 +77,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (!identity.ok) return identity.response;
     const { id, userId } = identity;
 
-    const agent = await loadOwnedAgent(id, userId);
+    const agent = await loadOwnedHivraWalletAgent(id, userId);
     if (!agent) return apiError("Agent not found", 404);
     if (!bankrSkillsDirForType(agent.type)) return apiError("Wallet not supported for this agent type", 400);
 
@@ -114,41 +93,31 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
 
     const result = await provisionBankrWalletForHivraAgent({ hivraAgentId: id, userId });
+    if (result.status === "connect_required") {
+      // Hivra no longer creates agent wallets. Only a wallet it already
+      // created is kept working; everything else connects the user's own
+      // Bankr account via POST ./connect.
+      return apiError(
+        "New agent wallets connect to your own Bankr account. Use Connect Bankr account instead.",
+        409,
+        { failureType: "hivra_bankr_wallet_connect_required" },
+      );
+    }
 
     // When the wallet is live, push the creds onto the running box so the agent
     // CLI can sign with it. Best-effort: the wallet row is already persisted, so a
     // failed env-sync is retryable (POST again) and never loses the wallet.
     let envSync: "synced" | "skipped" | "failed" = "skipped";
     if (result.record?.status === "active") {
-      const cfg = await buildInstanceBankrAgentConfig(result.record);
-      if (cfg && agent.status === "running" && agent.ip) {
-        try {
-          if (!executionContext) {
-            throw new Error("Agent execution context was not resolved for wallet sync");
-          }
-          const seed = await seedBankrWalletEnvOntoBox(
-            { id, type: agent.type, ip: agent.ip },
-            cfg,
-            executionContext.env,
-          );
-          envSync = seed.ok ? "synced" : "failed";
-          if (!seed.ok) {
-            log.warn("hivra bankr wallet env seed failed", {
-              source: LOG_SOURCE,
-              agentId: id,
-              failureType: "hivra_bankr_env_seed_failed",
-              error: seed.error ?? seed.skipped ?? null,
-            });
-          }
-        } catch (err) {
-          envSync = "failed";
-          log.warn("hivra bankr wallet env seed threw", {
-            source: LOG_SOURCE,
-            agentId: id,
-            failureType: "hivra_bankr_env_seed_threw",
-            errorMessage: err instanceof Error ? err.message : String(err),
-          });
-        }
+      const sync = await syncBankrEnvToRunningHivraAgent({ agent, record: result.record, executionContext });
+      envSync = sync.status;
+      if (sync.status === "failed") {
+        log.warn("hivra bankr wallet env seed failed", {
+          source: LOG_SOURCE,
+          agentId: id,
+          failureType: "hivra_bankr_env_seed_failed",
+          error: sync.error,
+        });
       }
       await logHivraAgentEvent({
         userId,

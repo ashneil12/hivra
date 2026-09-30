@@ -10,6 +10,7 @@ import { Sparkline } from "@/components/stats/Sparkline";
 import { useAgentsDeployedPolling } from "@/hooks/useAgentsDeployedPolling";
 import { useLocale } from "@/components/i18n/LocaleProvider";
 import type { PublicStats } from "@/lib/public-stats";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 interface Stats {
   total: number;
@@ -301,9 +302,10 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
           marginBottom: "4rem",
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+        {/* One column on phones so long totals never push the page sideways. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2">
           {/* All-time deploys */}
-          <div style={heroPanelStyle}>
+          <div className="min-w-0" style={heroPanelStyle}>
             <span className="mono" style={{ ...heroLabelStyle, color: "var(--text-secondary)" }}>
               {t.allTimeLabel}
             </span>
@@ -323,7 +325,10 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
           </div>
 
           {/* Agents live now */}
-          <div style={{ ...heroPanelStyle, borderLeft: "1px solid var(--etched-border)" }}>
+          <div
+            className="min-w-0 border-t border-[var(--etched-border)] sm:border-t-0 sm:border-l"
+            style={heroPanelStyle}
+          >
             <span
               className="mono"
               style={{
@@ -458,7 +463,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
                 fontWeight: 600,
               }}
             >
-              Cumulative — hover any day for that day&apos;s count
+              Cumulative — tap or hover a day for its count
             </p>
           </header>
           <Sparkline
@@ -483,7 +488,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
         }}
       >
         <Link
-          href="/get-started?plan=free"
+          href={PUBLIC_START_HREF}
           className="action-button"
           style={{
             padding: "16px 36px",

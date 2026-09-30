@@ -95,7 +95,7 @@ describe("POST /api/instances/[id]/sftp", () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(sftpList).toHaveBeenCalledWith("203.0.113.4", "/root/config");
+    expect(sftpList).toHaveBeenCalledWith("203.0.113.4", "/root/config", null);
   });
 
   it("blocks traversal outside the allowed roots", async () => {
@@ -199,7 +199,7 @@ describe("POST /api/instances/[id]/sftp", () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(sftpWrite).toHaveBeenCalledWith("203.0.113.4", "/root/notes.txt", "hello");
+    expect(sftpWrite).toHaveBeenCalledWith("203.0.113.4", "/root/notes.txt", "hello", null);
   });
 
   it("allows host instance directories under /opt/hermes/instances", async () => {
@@ -213,7 +213,7 @@ describe("POST /api/instances/[id]/sftp", () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(sftpList).toHaveBeenCalledWith("203.0.113.4", "/opt/hermes/instances/inst-123");
+    expect(sftpList).toHaveBeenCalledWith("203.0.113.4", "/opt/hermes/instances/inst-123", null);
   });
 
   it("allows browsing the /opt parent folder so users can move above the instance directory", async () => {
@@ -227,7 +227,7 @@ describe("POST /api/instances/[id]/sftp", () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(sftpList).toHaveBeenCalledWith("203.0.113.4", "/opt");
+    expect(sftpList).toHaveBeenCalledWith("203.0.113.4", "/opt", null);
   });
 
   it("returns 502 when the instance has no public IPv4", async () => {
@@ -320,7 +320,7 @@ describe("GET /api/instances/[id]/sftp", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/pdf");
     expect(res.headers.get("content-disposition")).toContain("inline");
-    expect(sftpReadBinary).toHaveBeenCalledWith("203.0.113.4", "/root/Manual.pdf", 8 * 1024 * 1024);
+    expect(sftpReadBinary).toHaveBeenCalledWith("203.0.113.4", "/root/Manual.pdf", 8 * 1024 * 1024, null);
   });
 
   it("rejects unsupported preview file types", async () => {
@@ -349,7 +349,7 @@ describe("GET /api/instances/[id]/sftp", () => {
     expect(res.headers.get("content-type")).toBe("application/octet-stream");
     expect(res.headers.get("content-disposition")).toContain("attachment");
     expect(res.headers.get("content-disposition")).toContain('filename="archive.zip"');
-    expect(sftpReadBinary).toHaveBeenCalledWith("203.0.113.4", "/root/archive.zip");
+    expect(sftpReadBinary).toHaveBeenCalledWith("203.0.113.4", "/root/archive.zip", undefined, null);
   });
 
   it("blocks downloads when a symlink resolves outside the allowed roots", async () => {

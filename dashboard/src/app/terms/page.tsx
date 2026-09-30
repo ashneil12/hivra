@@ -1,6 +1,21 @@
 import PublicSite from "@/components/public-site/PublicSite";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 
+import { buildWebsiteMetadata } from "@/lib/metadata";
+
+// Self-referencing canonical: without this the page inherits the root
+// layout's canonical (the homepage) and search engines treat it as a
+// duplicate of /.
+export const metadata = {
+  title: "Terms of Service",
+  description: "The terms that govern your use of Hivra.",
+  ...buildWebsiteMetadata({
+    path: "/terms",
+    title: "Terms of Service",
+    description: "The terms that govern your use of Hivra.",
+  }),
+};
+
 const LAST_UPDATED = "May 2, 2026";
 
 export default function TermsPage() {

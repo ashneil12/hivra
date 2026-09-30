@@ -64,13 +64,43 @@ describe("FreeTierCardVerification", () => {
       fireEvent.click(verify);
     });
     expect(confirmSetup).toHaveBeenCalledWith(expect.objectContaining({ redirect: "if_required" }));
-    expect(screen.getByRole("status")).toHaveTextContent(/card verification accepted/i);
+    expect(screen.getByRole("status")).toHaveTextContent("Card verified. Launching again…");
 
     await act(async () => {
       jest.advanceTimersByTime(1500);
     });
     await waitFor(() => expect(onVerified).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Retry Deployment" })).toBeInTheDocument();
+    // The only place this check opens is Launch, so it speaks Launch's words.
+    expect(await screen.findByRole("button", { name: "Launch again" })).toBeInTheDocument();
     jest.useRealTimers();
+  });
+
+  // F13: the fine print pointed a new user at a token route they can't use
+  // while crypto billing is switched off.
+  describe("the fine print on the Launch card check", () => {
+    const original = process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
+    afterEach(() => {
+      if (original === undefined) delete process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
+      else process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = original;
+    });
+
+    it("names no crypto or token route while crypto billing is off", async () => {
+      delete process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
+      render(<FreeTierCardVerification open onClose={jest.fn()} onVerified={jest.fn()} />);
+
+      await screen.findByTestId("payment-element");
+      const dialog = screen.getByRole("dialog", { name: "Card verification required" });
+      expect(dialog).toHaveTextContent("This is a fraud-prevention card-on-file check for Free plan access.");
+      expect(dialog.textContent).not.toMatch(/crypto|token|\$HermesOS/i);
+    });
+
+    it("still offers token access as the alternative when crypto billing is on", async () => {
+      process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = "true";
+      render(<FreeTierCardVerification open onClose={jest.fn()} onVerified={jest.fn()} />);
+
+      await screen.findByTestId("payment-element");
+      expect(screen.getByRole("dialog", { name: "Card verification required" }))
+        .toHaveTextContent("Crypto/token access does not require this card flow.");
+    });
   });
 });

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { AgentActivityPanel } from "@/components/dashboard/AgentActivityPanel";
 import type {
@@ -24,11 +32,25 @@ import {
   sourceExplanation,
   type CapabilityContext,
 } from "./presentation";
-import { AgentRuns } from "./AgentRuns";
+import { AgentRuns, AgentRunsIntro } from "./AgentRuns";
 import { selectRuns } from "./run-groups";
 import styles from "./ActivityObservatory.module.css";
 
 type View = "runs" | "timeline" | "attention" | "coverage" | "usage";
+
+// Below this width the list and inspector share one column, so the inspector
+// opens inline under the selected record instead of after the whole list.
+const NARROW_QUERY = "(max-width: 760px)";
+function subscribeNarrow(onChange: () => void) {
+  const media = window.matchMedia?.(NARROW_QUERY);
+  if (!media?.addEventListener) return () => {};
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+const narrowSnapshot = () => window.matchMedia?.(NARROW_QUERY).matches ?? false;
+function useNarrowLayout() {
+  return useSyncExternalStore(subscribeNarrow, narrowSnapshot, () => false);
+}
 const label = (value: string) => value.replaceAll("_", " ");
 function timestamp(value?: string) {
   if (!value) return "Not recorded";
@@ -150,17 +172,34 @@ function ReportingCoverage({
 
 function Inspector({
   event,
-  selected,
+  inline = false,
+  claimReveal,
 }: {
   event: ActivityEvent;
-  selected: boolean;
+  inline?: boolean;
+  /** True once, for the record the user just tapped open. */
+  claimReveal?: (id: string) => boolean;
 }) {
   const panel = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (selected && window.matchMedia?.("(max-width: 760px)").matches) {
-      panel.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
-    }
-  }, [event.id, selected]);
+  // Inline, keep the tapped record on screen (collapsing a previously open
+  // record can shift it). When its detail would open below the fold or behind
+  // the bottom navigation (the record's bottom scroll margin), bring the record
+  // to the top so the detail shows. Only a tap scrolls: a record that remounts
+  // because the view or filters changed leaves the page where the user is.
+  useLayoutEffect(() => {
+    if (!inline || !panel.current || !claimReveal?.(event.id)) return;
+    const record = panel.current.previousElementSibling;
+    if (!record) return;
+    const reserved =
+      Number.parseFloat(getComputedStyle(record).scrollMarginBottom) || 0;
+    const hidden =
+      panel.current.getBoundingClientRect().bottom >
+      window.innerHeight - reserved;
+    record.scrollIntoView?.({
+      block: hidden ? "start" : "nearest",
+      behavior: "instant",
+    });
+  }, [event.id, inline, claimReveal]);
   const presentation = presentEvent(event);
   const facts = [
     ["Original title", event.title],
@@ -185,7 +224,7 @@ function Inspector({
   ];
   return (
     <aside
-      className={styles.inspector}
+      className={`${styles.inspector} ${inline ? styles.inspectorInline : ""}`}
       ref={panel}
       aria-label="Event inspector"
       aria-live="polite"
@@ -264,6 +303,16 @@ export function ActivityObservatory({
   const [agent, setAgent] = useState("all");
   const [kind, setKind] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
+  const narrow = useNarrowLayout();
+  const tabsRef = useRef<HTMLElement>(null);
+  // The record a tap just opened on a narrow screen, until its inline
+  // inspector has brought it into view.
+  const revealRef = useRef<string | null>(null);
+  const claimReveal = useCallback((id: string) => {
+    if (revealRef.current !== id) return false;
+    revealRef.current = null;
+    return true;
+  }, []);
   const request = useRef<AbortController | null>(null);
   const load = useCallback(async (cursor?: string) => {
     request.current?.abort();
@@ -352,6 +401,19 @@ export function ActivityObservatory({
     void refresh();
     return () => request.current?.abort();
   }, [refresh]);
+  // The tab strip scrolls sideways on phones; keep the active view in sight
+  // without moving the page vertically.
+  useEffect(() => {
+    const strip = tabsRef.current;
+    const tab = strip?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
+    const bounds = strip.getBoundingClientRect();
+    const target = tab.getBoundingClientRect();
+    if (target.left < bounds.left)
+      strip.scrollLeft -= bounds.left - target.left + 16;
+    else if (target.right > bounds.right)
+      strip.scrollLeft += target.right - bounds.right + 16;
+  }, [view]);
   const events = data?.events ?? [];
   const now = data?.generatedAt ?? "";
   const query = search.trim().toLowerCase();
@@ -415,6 +477,17 @@ export function ActivityObservatory({
   const active =
     selectable.find((event) => event.id === selected) ??
     selectable.find(matchesQuery);
+  // Narrow screens open only the record the user tapped, in place; a second
+  // tap closes it.
+  const expandedId =
+    narrow && active && active.id === selected ? active.id : undefined;
+  const selectEvent = narrow
+    ? (id: string | null) => {
+        const next = id === null || selected === id ? null : id;
+        revealRef.current = next;
+        setSelected(next);
+      }
+    : setSelected;
   // Reporting gaps follow the same filters as records: the agent filter and
   // search (by computer and gap), and a kind filter hides them because a gap
   // is not an activity type. The badge counts everything, and the view says
@@ -464,6 +537,12 @@ export function ActivityObservatory({
     ["coverage", "What is monitored"],
     ...(showUsage ? [["usage", "Usage"] as [View, string]] : []),
   ];
+  const viewHelp =
+    view === "runs"
+      ? "Follow reported agent steps in order. Select a step to inspect what was reported; a quiet run does not mean it finished."
+      : view === "attention"
+        ? "Only records marked for review and reporting gaps on running computers appear here. The count covers loaded records and current reporting, not all activity or a guarantee that everything is fine."
+        : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems.";
   return (
     <section className={styles.root} aria-label="Activity">
       <header className={styles.heading}>
@@ -499,7 +578,7 @@ export function ActivityObservatory({
           </button>
         </div>
       </header>
-      <nav className={styles.tabs} aria-label="Activity views">
+      <nav className={styles.tabs} aria-label="Activity views" ref={tabsRef}>
         {views.map(([key, title]) => (
           <button
             key={key}
@@ -628,13 +707,15 @@ export function ActivityObservatory({
           </section>
         ) : (
           <>
-            <p className={styles.viewHelp}>
-              {view === "runs"
-                ? "Follow reported agent steps in order. Select a step to inspect what was reported; a quiet run does not mean it finished."
-                : view === "attention"
-                  ? "Only records marked for review and reporting gaps on running computers appear here. The count covers loaded records and current reporting, not all activity or a guarantee that everything is fine."
-                  : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems."}
-            </p>
+            {narrow ? (
+              <details className={`${styles.technical} ${styles.aboutView}`}>
+                <summary>About this view</summary>
+                <p className={styles.viewHelp}>{viewHelp}</p>
+                {view === "runs" && <AgentRunsIntro />}
+              </details>
+            ) : (
+              <p className={styles.viewHelp}>{viewHelp}</p>
+            )}
             {view === "attention" && visibleAlerts.length > 0 && (
               <section aria-label="Reporting gaps" className={styles.alerts}>
                 <h2 className={styles.kicker}>Reporting gaps</h2>
@@ -690,6 +771,10 @@ export function ActivityObservatory({
                 type="search"
                 aria-label="Search recorded events"
                 placeholder="Search activity…"
+                enterKeyHint="search"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -726,8 +811,19 @@ export function ActivityObservatory({
                   events={runEvents}
                   matches={query ? matchesQuery : undefined}
                   hasOlder={Boolean(data.nextCursor)}
-                  selected={active?.id}
-                  onSelect={setSelected}
+                  selected={narrow ? expandedId : active?.id}
+                  onSelect={selectEvent}
+                  accordion={narrow}
+                  showIntro={!narrow}
+                  detail={
+                    expandedId && active ? (
+                      <Inspector
+                        event={active}
+                        inline
+                        claimReveal={claimReveal}
+                      />
+                    ) : null
+                  }
                   limited={
                     data.truncated ||
                     data.degraded ||
@@ -743,44 +839,54 @@ export function ActivityObservatory({
                   </div>
                   {filtered.length ? (
                     filtered.map((event) => (
-                      <button
-                        key={event.id}
-                        className={styles.event}
-                        aria-pressed={active?.id === event.id}
-                        onClick={() => setSelected(event.id)}
-                      >
-                        {event.needsAttention || presentEvent(event).warning ? (
-                          <AlertTriangle
-                            size={16}
-                            className={styles.warning}
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <Activity size={16} aria-hidden="true" />
-                        )}
-                        <span>
-                          <strong>{presentEvent(event).title}</strong>
-                          <span className={styles.meta}>
-                            {event.agentName} ·{" "}
-                            {kindLabels[event.kind] ?? label(event.kind)}
-                          </span>
-                          <span className={styles.eventBottom}>
-                            <span
-                              className={
-                                event.needsAttention ||
-                                presentEvent(event).warning
-                                  ? styles.warning
-                                  : undefined
-                              }
-                            >
-                              {presentEvent(event).status}
+                      <Fragment key={event.id}>
+                        <button
+                          className={styles.event}
+                          {...(narrow
+                            ? { "aria-expanded": expandedId === event.id }
+                            : { "aria-pressed": active?.id === event.id })}
+                          onClick={() => selectEvent(event.id)}
+                        >
+                          {event.needsAttention || presentEvent(event).warning ? (
+                            <AlertTriangle
+                              size={16}
+                              className={styles.warning}
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <Activity size={16} aria-hidden="true" />
+                          )}
+                          <span>
+                            <strong>{presentEvent(event).title}</strong>
+                            <span className={styles.meta}>
+                              {event.agentName} ·{" "}
+                              {kindLabels[event.kind] ?? label(event.kind)}
                             </span>
-                            <time dateTime={event.occurredAt}>
-                              {timestamp(event.occurredAt)}
-                            </time>
+                            <span className={styles.eventBottom}>
+                              <span
+                                className={
+                                  event.needsAttention ||
+                                  presentEvent(event).warning
+                                    ? styles.warning
+                                    : undefined
+                                }
+                              >
+                                {presentEvent(event).status}
+                              </span>
+                              <time dateTime={event.occurredAt}>
+                                {timestamp(event.occurredAt)}
+                              </time>
+                            </span>
                           </span>
-                        </span>
-                      </button>
+                        </button>
+                        {expandedId === event.id && active && (
+                          <Inspector
+                            event={active}
+                            inline
+                            claimReveal={claimReveal}
+                          />
+                        )}
+                      </Fragment>
                     ))
                   ) : (
                     <p className={styles.empty}>
@@ -795,9 +901,7 @@ export function ActivityObservatory({
                   )}
                 </section>
               )}
-              {active && (
-                <Inspector event={active} selected={selected === active.id} />
-              )}
+              {active && !narrow && <Inspector event={active} />}
             </div>
             {olderError && (
               <p role="alert" className={styles.notice}>

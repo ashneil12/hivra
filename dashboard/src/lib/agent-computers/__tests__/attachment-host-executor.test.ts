@@ -1,9 +1,9 @@
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
-jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScriptWithStdin: jest.fn() }));
 
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScriptWithStdin as runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { executeAttachmentGuestAction } from "../attachment-host-executor";
 import { ATTACHMENT_ACTION_TIMEOUTS } from "../attachment-host-action";
@@ -34,8 +34,9 @@ it.each(["fetch", "stage", "observe"] as const)("executes one bounded %s action 
   expect(await executeAttachmentGuestAction("owner", agent, action, expected)).toEqual(action === "fetch"
     ? { ok: true, action, artifact } : { ok: true, action, staged: captured });
   expect(runProxmoxHostScript).toHaveBeenCalledTimes(1);
-  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"), context.env,
-    { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32768 });
+  // The bundle travels as the script's own stdin stream, not inside the script.
+  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"), expect.stringContaining(`"action":"${action}"`),
+    context.env, { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32768 });
 });
 
 it("snapshots nested expectations and target before awaiting context resolution", async () => {
@@ -51,7 +52,8 @@ it("snapshots nested expectations and target before awaiting context resolution"
   mutableExpected.bootId = expected.identity.sourceId;
   resolve(context);
   expect(await pending).toEqual({ ok: true, action: "stage", staged: captured });
-  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"), context.env, expect.anything());
+  expect(runProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1234"),
+    expect.stringContaining(`"bootId":"${expected.bootId}"`), context.env, expect.anything());
 });
 
 it.each([{ user_id: "other" }, { id: expected.identity.computerId }, { operation_id: null }, { operation_kind: "restart" },
@@ -87,4 +89,16 @@ it("retains uncertainty without retry or raw-error disclosure", async () => {
     expect(await executeAttachmentGuestAction("owner", agent, action, expected)).toEqual({ ok: false, code: "invalid_result" });
   }
   expect(runProxmoxHostScript).toHaveBeenCalledTimes(9);
+});
+
+it("reads the one refusal the runner named when a step raised in the VM, and only a name it knows (T3)", async () => {
+  jest.mocked(runProxmoxHostScript).mockResolvedValueOnce({ ok: false, stdout: "HIVRA_GUEST_STEP_REFUSED staging_failed\n", stderr: "" });
+  expect(await executeAttachmentGuestAction("owner", agent, "stage", expected)).toEqual({ ok: false, code: "guest_refused", reason: "staging_failed" });
+  jest.mocked(runProxmoxHostScript).mockResolvedValueOnce({ ok: false, stdout: "HIVRA_GUEST_STEP_REFUSED staging_in_progress\n", stderr: "" });
+  expect(await executeAttachmentGuestAction("owner", agent, "observe", expected))
+    .toEqual({ ok: false, code: "guest_refused", reason: "staging_in_progress" });
+  for (const stdout of ["HIVRA_GUEST_STEP_REFUSED ../etc/passwd\n", "HIVRA_GUEST_STEP_REFUSED staging_failed\nHIVRA_GUEST_STEP_REFUSED staging_failed\n"]) {
+    jest.mocked(runProxmoxHostScript).mockResolvedValueOnce({ ok: false, stdout, stderr: "" });
+    expect(await executeAttachmentGuestAction("owner", agent, "observe", expected)).toEqual({ ok: false, code: "transport_failed" });
+  }
 });

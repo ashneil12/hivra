@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import '@testing-library/jest-dom';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AgentSwitcher } from '../AgentSwitcher';
 import { listAgents } from '@/lib/hivra/agent-api';
 
@@ -25,7 +25,8 @@ afterEach(() => jest.restoreAllMocks());
 
 it('preserves the existing web switcher, browser buttons and resource navigation', async () => {
   render(<AgentSwitcher activeKind="hermes" activeId="item" />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Show agent switcher' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Agents: show agent switcher' }));
+  expect(screen.getByRole('link', { name: 'Open console' })).toHaveAttribute('href', '/dashboard/instances/item/console');
   expect(screen.getByRole('button', { name: 'View live browser' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Import cookies' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Switch agent' }));
@@ -92,4 +93,55 @@ it('keeps Hivra Browser access in its own resource surface', () => {
   expect(fetch).not.toHaveBeenCalled();
   expect(listAgents).not.toHaveBeenCalled();
   expect(screen.queryByRole('group', { name: 'Agent browser tools' })).not.toBeInTheDocument();
+});
+
+it('keeps the console link to Hermes agents and accepts a CSS top offset', async () => {
+  jest.mocked(listAgents).mockResolvedValue([]);
+  const { container } = render(<AgentSwitcher activeKind="hermes" activeId="item" top="calc(4px + 1px)" />);
+  const handle = await screen.findByRole('button', { name: 'Agents: show agent switcher' });
+  expect(handle.parentElement).toHaveStyle({ top: 'calc(4px + 1px)' });
+  expect(within(handle).getByText('Agents')).toBeInTheDocument();
+  fireEvent.click(handle);
+  expect(container.querySelector('a[href="/dashboard/instances/item/console"]')).not.toBeNull();
+});
+
+it('hosts only the collapsed handle in a toolbar slot and expands in place', async () => {
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  try {
+    const view = render(<div data-testid="chat-column"><AgentSwitcher activeKind="hermes" activeId="item" showConsole={false} handleHost={host} /></div>);
+    const handle = await within(host).findByRole('button', { name: 'Agents: show agent switcher' });
+    // The visible label is part of the accessible name.
+    expect(handle.getAttribute('aria-label')).toContain(within(handle).getByText('Agents').textContent);
+    expect(within(view.getByTestId('chat-column')).queryByRole('button', { name: /show agent switcher/i })).not.toBeInTheDocument();
+
+    fireEvent.click(handle);
+    const column = view.getByTestId('chat-column');
+    expect(within(column).getByRole('button', { name: 'Switch agent' })).toBeInTheDocument();
+    expect(within(column).queryByRole('link', { name: 'Open console' })).not.toBeInTheDocument();
+    expect(host).toBeEmptyDOMElement();
+
+    fireEvent.click(within(column).getByRole('button', { name: 'Hide agent switcher' }));
+    expect(within(host).getByRole('button', { name: 'Agents: show agent switcher' })).toBeInTheDocument();
+  } finally {
+    host.remove();
+  }
+});
+
+it('renders no handle while its toolbar slot is still mounting', async () => {
+  await act(async () => { render(<AgentSwitcher activeKind="hermes" activeId="item" handleHost={null} />); });
+  expect(screen.queryByRole('button', { name: /show agent switcher/i })).not.toBeInTheDocument();
+});
+
+it('keeps native browser tools in place when a toolbar slot is offered', async () => {
+  mockWorkspace = { enabled: true, ownerKey: 'user_123' };
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  try {
+    const view = render(<div data-testid="chat-column"><AgentSwitcher activeKind="hermes" activeId="item" handleHost={host} /></div>);
+    expect(await within(view.getByTestId('chat-column')).findByRole('group', { name: 'Agent browser tools' })).toBeInTheDocument();
+    expect(host).toBeEmptyDOMElement();
+  } finally {
+    host.remove();
+  }
 });

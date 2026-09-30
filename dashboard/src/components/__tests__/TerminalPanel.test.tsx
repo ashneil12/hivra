@@ -138,6 +138,19 @@ async function advanceConnectTimer() {
   });
 }
 
+// jsdom has no matchMedia; tests that need a media query install one.
+function mockMatchMedia(matching: string[]) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: jest.fn((query: string) => ({ matches: matching.includes(query), media: query, addEventListener: jest.fn(), removeEventListener: jest.fn() })),
+  });
+}
+
+function restoreMatchMedia() {
+  delete (window as unknown as { matchMedia?: unknown }).matchMedia;
+}
+
 describe("TerminalPanel", () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -358,9 +371,14 @@ describe("TerminalPanel", () => {
     mockTerminal.cols = 144;
     mockTerminal.rows = 48;
 
+    // The terminal viewport's observer, not the key strip's overflow observer.
+    const viewportObserver = MockResizeObserver.instances.find((observer) =>
+      observer.observe.mock.calls.some(([target]) => (target as Element).id === "terminal-inst_1"),
+    );
+    expect(viewportObserver).toBeDefined();
     act(() => {
-      MockResizeObserver.instances[0]?.callback([], MockResizeObserver.instances[0] as unknown as ResizeObserver);
-      MockResizeObserver.instances[0]?.callback([], MockResizeObserver.instances[0] as unknown as ResizeObserver);
+      viewportObserver?.callback([], viewportObserver as unknown as ResizeObserver);
+      viewportObserver?.callback([], viewportObserver as unknown as ResizeObserver);
       jest.advanceTimersByTime(119);
     });
 
@@ -533,6 +551,7 @@ describe("TerminalPanel", () => {
     fireEvent.click(screen.getByLabelText("Copy output"));
     expect(writeText).toHaveBeenCalledWith("alpha\nbeta");
 
+    // A mouse (fine pointer) restarts on the first click, as before.
     await act(async () => {
       fireEvent.click(screen.getByLabelText("Restart"));
       await Promise.resolve();
@@ -551,6 +570,36 @@ describe("TerminalPanel", () => {
       sessionKey: "term:user_123:inst_1:shell",
       sessionToken: "11111111-1111-4111-8111-111111111111",
     });
+  });
+
+  it("asks for a second tap before restarting on a coarse pointer", async () => {
+    mockMatchMedia(["(pointer: coarse)"]);
+    try {
+      render(<TerminalPanel instanceId="inst_1" isActive sessionMode="shell" />);
+
+      await flushInitialMount();
+      await advanceConnectTimer();
+      await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+
+      const restart = screen.getByLabelText("Restart");
+      expect(restart).toHaveTextContent("Restart");
+      fireEvent.click(restart);
+      expect(mockTerminal.reset).not.toHaveBeenCalled();
+      expect(terminalRequestCalls("stop")).toHaveLength(0);
+      // Same element, relabelled in place, so a second tap lands on it.
+      expect(screen.getByLabelText("Tap again to restart")).toBe(restart);
+      expect(restart).toHaveTextContent("Tap again");
+
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText("Tap again to restart"));
+        await Promise.resolve();
+      });
+
+      expect(mockTerminal.reset).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(terminalRequestCalls("stop")).toHaveLength(1));
+    } finally {
+      restoreMatchMedia();
+    }
   });
 
   it("keeps RTT telemetry env-gated and emits samples from SSE echoes", async () => {
@@ -636,6 +685,167 @@ describe("TerminalPanel", () => {
     fireEvent.pointerDown(terminalSurface!);
 
     expect(mockTerminal.focus).toHaveBeenCalledTimes(initialFocusCalls + 1);
+  });
+
+  it("drops the restart confirmation after three seconds without a second tap", async () => {
+    mockMatchMedia(["(pointer: coarse)"]);
+    try {
+      render(<TerminalPanel instanceId="inst_1" isActive sessionMode="shell" />);
+
+      await flushInitialMount();
+      await advanceConnectTimer();
+      await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+
+      fireEvent.click(screen.getByLabelText("Restart"));
+      expect(screen.getByLabelText("Tap again to restart")).toBeInTheDocument();
+
+      act(() => {
+        jest.advanceTimersByTime(3000);
+      });
+
+      expect(screen.getByLabelText("Restart")).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText("Restart"));
+      expect(mockTerminal.reset).not.toHaveBeenCalled();
+      expect(terminalRequestCalls("stop")).toHaveLength(0);
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("sends the touch key strip's Esc, Tab, arrows and a sticky Ctrl chord to the session", async () => {
+    render(<TerminalPanel instanceId="inst_1" isActive sessionMode="tui" />);
+
+    await flushInitialMount();
+    await advanceConnectTimer();
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const socket = MockWebSocket.instances[0];
+    const sent = () => socket.send.mock.calls.map(([payload]) => JSON.parse(payload as string)).filter((m) => m.type === "input").map((m) => m.data);
+
+    const strip = screen.getByRole("toolbar", { name: "Terminal keys" });
+    expect(strip).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Escape" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Up arrow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Left arrow" }));
+    expect(sent()).toEqual(["\x1b", "\t", "\x1b[A", "\x1b[D"]);
+
+    const ctrl = screen.getByRole("button", { name: "Control" });
+    fireEvent.click(ctrl);
+    expect(ctrl).toHaveAttribute("aria-pressed", "true");
+
+    const onData = mockTerminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    act(() => {
+      onData?.("c");
+    });
+    expect(sent().at(-1)).toBe("\x03");
+    expect(ctrl).toHaveAttribute("aria-pressed", "false");
+
+    act(() => {
+      onData?.("c");
+    });
+    expect(sent().at(-1)).toBe("c");
+  });
+
+  it("maps sticky Ctrl chords the way xterm does and passes unmappable keys through", async () => {
+    render(<TerminalPanel instanceId="inst_1" isActive sessionMode="tui" />);
+
+    await flushInitialMount();
+    await advanceConnectTimer();
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+    const socket = MockWebSocket.instances[0];
+    const sent = () => socket.send.mock.calls.map(([payload]) => JSON.parse(payload as string)).filter((m) => m.type === "input").map((m) => m.data);
+    const ctrl = screen.getByRole("button", { name: "Control" });
+    const onData = mockTerminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+
+    // The strip's own - and / are readline undo (^_), never Enter or ^O.
+    fireEvent.click(ctrl);
+    fireEvent.click(screen.getByRole("button", { name: "Dash" }));
+    fireEvent.click(ctrl);
+    fireEvent.click(screen.getByRole("button", { name: "Slash" }));
+    expect(sent().slice(-2)).toEqual(["\x1f", "\x1f"]);
+
+    const chords: Array<[string, string]> = [
+      ["A", "\x01"], ["z", "\x1a"], ["[", "\x1b"], ["@", "\x00"], [" ", "\x00"],
+      ["?", "\x7f"], ["2", "\x00"], ["5", "\x1d"], ["8", "\x7f"], ["1", "1"], ["|", "|"], ["é", "é"],
+    ];
+    for (const [key, expected] of chords) {
+      fireEvent.click(ctrl);
+      act(() => {
+        onData?.(key);
+      });
+      expect([key, sent().at(-1)]).toEqual([key, expected]);
+      expect(ctrl).toHaveAttribute("aria-pressed", "false");
+    }
+  });
+
+  it("leads the key strip with the keyboard toggle, Esc, Ctrl and the four arrows, and fades its edge while keys overflow", async () => {
+    render(<TerminalPanel instanceId="inst_1" isActive sessionMode="tui" />);
+    await flushInitialMount();
+
+    const strip = screen.getByRole("toolbar", { name: "Terminal keys" });
+    const labels = Array.from(strip.querySelectorAll("button")).map((button) => button.getAttribute("aria-label"));
+    expect(labels.slice(0, 8)).toEqual(["Show or hide keyboard", "Escape", "Control", "Left arrow", "Up arrow", "Down arrow", "Right arrow", "Tab"]);
+
+    Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 600 });
+    Object.defineProperty(strip, "clientWidth", { configurable: true, value: 340 });
+    fireEvent.scroll(strip);
+    expect(strip).toHaveAttribute("data-more", "true");
+
+    Object.defineProperty(strip, "scrollLeft", { configurable: true, value: 260 });
+    fireEvent.scroll(strip);
+    expect(strip).not.toHaveAttribute("data-more");
+  });
+
+  it("keeps xterm focused when a strip key is pressed", async () => {
+    render(<TerminalPanel instanceId="inst_1" isActive sessionMode="shell" />);
+    await flushInitialMount();
+
+    const pressed = fireEvent.pointerDown(screen.getByRole("button", { name: "Escape" }));
+    expect(pressed).toBe(false);
+  });
+
+  it("focuses on a touch tap but not when a touch scrolls the output", async () => {
+    class TestPointerEvent extends MouseEvent {
+      pointerType: string;
+      constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+        super(type, init);
+        this.pointerType = init.pointerType ?? "mouse";
+      }
+    }
+    const originalPointerEvent = (window as unknown as { PointerEvent?: unknown }).PointerEvent;
+    Object.defineProperty(window, "PointerEvent", { configurable: true, writable: true, value: TestPointerEvent });
+
+    try {
+      const { container } = render(<TerminalPanel instanceId="inst_1" isActive surfaceKey="shell-tab-3" />);
+      await flushInitialMount();
+      const surface = container.querySelector("#terminal-inst_1-shell-tab-3")!;
+      const baseline = mockTerminal.focus.mock.calls.length;
+
+      fireEvent.pointerDown(surface, { pointerType: "touch", clientX: 40, clientY: 200 });
+      fireEvent.pointerUp(surface, { pointerType: "touch", clientX: 42, clientY: 120 });
+      expect(mockTerminal.focus).toHaveBeenCalledTimes(baseline);
+
+      fireEvent.pointerDown(surface, { pointerType: "touch", clientX: 40, clientY: 200 });
+      fireEvent.pointerUp(surface, { pointerType: "touch", clientX: 43, clientY: 203 });
+      expect(mockTerminal.focus).toHaveBeenCalledTimes(baseline + 1);
+
+      fireEvent.pointerDown(surface, { pointerType: "mouse", clientX: 40, clientY: 200 });
+      expect(mockTerminal.focus).toHaveBeenCalledTimes(baseline + 2);
+    } finally {
+      Object.defineProperty(window, "PointerEvent", { configurable: true, writable: true, value: originalPointerEvent });
+    }
+  });
+
+  it("uses a smaller terminal font on phone-width viewports", async () => {
+    mockMatchMedia(["(max-width: 767px)"]);
+    try {
+      render(<TerminalPanel instanceId="inst_1" isActive sessionMode="tui" />);
+      await flushInitialMount();
+      expect(mockTerminalConstructor).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 11 }));
+    } finally {
+      restoreMatchMedia();
+    }
   });
 
   it("updates the existing xterm palette when the color mode changes", async () => {

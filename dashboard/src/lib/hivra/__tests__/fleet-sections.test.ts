@@ -1,6 +1,7 @@
 import {
   duplicateFleetNames,
   fleetEntryHref,
+  fleetEntryOpenLabel,
   fleetSections,
   matchesFleetQuery,
 } from "../fleet-sections";
@@ -111,6 +112,20 @@ describe("fleet entry destination", () => {
     expect(fleetEntryHref(ubuntu)).toBe("/dashboard/agent/ubuntu?tab=desktop");
   });
 
+  it("opens a Linux Sandbox on Manage and never promises it a desktop", () => {
+    // A sandbox is terminal-only; the agent page lands it on Manage.
+    const sandbox = agent("x-sandbox", "MY_LINUX_SANDBOX", {
+      resourceKind: "computer",
+      typeLabel: "Linux Sandbox",
+      agentType: "linux-terminal",
+      computerProfile: null,
+    });
+    expect(fleetEntryHref(sandbox)).toBe("/dashboard/agent/sandbox?tab=manage");
+    expect(fleetEntryOpenLabel(sandbox)).toBe("Open sandbox");
+    expect(fleetEntryOpenLabel(ubuntu)).toBe("Open desktop");
+    expect(fleetEntryOpenLabel(codexAgent)).toBe("Open agent");
+  });
+
   it("sends a Hermes instance to the instance route, not the agent route", () => {
     // Different family, different shell. The agent route would render the wrong
     // thing for a Hermes box.
@@ -121,5 +136,17 @@ describe("fleet entry destination", () => {
     expect(fleetEntryHref(agent("x-a b/c", "Odd"))).toBe(
       "/dashboard/agent/a%20b%2Fc?tab=chat",
     );
+  });
+});
+
+describe("an agent added to a computer (design 5.8)", () => {
+  it("opens the href it carries: its computer's Chat tab, or its progress", () => {
+    const attached = agent("x-computer", "Codex on MY_UBUNTU_DESKTOP", {
+      uid: "a-44444444-4444-4444-8444-444444444444", resourceKind: "agent",
+      attachment: { id: "44444444-4444-4444-8444-444444444444", computerId: "computer", computerName: "MY_UBUNTU_DESKTOP", phase: "attached" },
+      href: "/dashboard/agent/computer?tab=chat" });
+    expect(fleetEntryHref(attached)).toBe("/dashboard/agent/computer?tab=chat");
+    expect(fleetEntryHref({ ...attached, attachment: { ...attached.attachment!, phase: "claimed" }, href: "/dashboard/agent/computer?tab=manage" }))
+      .toBe("/dashboard/agent/computer?tab=manage");
   });
 });

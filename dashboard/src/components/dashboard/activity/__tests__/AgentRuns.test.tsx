@@ -275,3 +275,62 @@ it("says plainly when no run matches the search", () => {
     runs.getByText("No agent run has a step that matches your search."),
   ).toBeVisible();
 });
+
+it("opens the selected step in place as an accordion and can hide the intro", () => {
+  render(
+    <AgentRuns
+      events={finishedRun}
+      selected="read-end"
+      onSelect={jest.fn()}
+      limited={false}
+      accordion
+      showIntro={false}
+      detail={<aside aria-label="Step detail">Read evidence</aside>}
+    />,
+  );
+  const runs = within(screen.getByRole("region", { name: "Agent runs" }));
+  const read = runs.getByRole("button", { name: /Tool: Read/ });
+  expect(read).toHaveAttribute("aria-expanded", "true");
+  expect(read).not.toHaveAttribute("aria-pressed");
+  expect(read.nextElementSibling).toBe(
+    runs.getByRole("complementary", { name: "Step detail" }),
+  );
+  expect(runs.getAllByRole("complementary")).toHaveLength(1);
+  expect(runs.getByRole("button", { name: /Tool: Bash/ })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  expect(runs.queryByText(/not an audit of the computer/)).not.toBeInTheDocument();
+});
+
+it("closes an open paired step on tap even when its start record is selected", () => {
+  const onSelect = jest.fn();
+  const { rerender } = render(
+    <AgentRuns
+      events={finishedRun}
+      selected="read-start"
+      onSelect={onSelect}
+      limited={false}
+      accordion
+    />,
+  );
+  const runs = within(screen.getByRole("region", { name: "Agent runs" }));
+  const read = runs.getByRole("button", { name: /Tool: Read/ });
+  expect(read).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(read);
+  expect(onSelect).toHaveBeenLastCalledWith(null);
+  // A closed step still opens on its primary record.
+  fireEvent.click(runs.getByRole("button", { name: /Tool: Bash/ }));
+  expect(onSelect).toHaveBeenLastCalledWith("bash-end");
+  // Wide screens keep the pressed step selected on a repeat tap.
+  rerender(
+    <AgentRuns
+      events={finishedRun}
+      selected="read-start"
+      onSelect={onSelect}
+      limited={false}
+    />,
+  );
+  fireEvent.click(runs.getByRole("button", { name: /Tool: Read/ }));
+  expect(onSelect).toHaveBeenLastCalledWith("read-end");
+});

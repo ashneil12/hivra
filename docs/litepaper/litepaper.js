@@ -81,6 +81,33 @@
     { passive: true },
   );
 
+  // Wrap each word in a mask so a scene can raise it into place. The words
+  // read and look exactly the same when nothing animates.
+  function splitWords(element) {
+    if (!element || element.classList.contains("split-words")) return;
+    element.classList.add("split-words");
+    [...element.childNodes].forEach((node) => {
+      if (node.nodeType !== Node.TEXT_NODE) return;
+      const fragment = document.createDocumentFragment();
+      node.textContent.split(/(\s+)/).forEach((part) => {
+        if (!part) return;
+        if (/^\s+$/.test(part)) {
+          fragment.append(part);
+          return;
+        }
+        const word = document.createElement("span");
+        const inner = document.createElement("span");
+        word.className = "w";
+        inner.className = "wi";
+        inner.textContent = part;
+        word.append(inner);
+        fragment.append(word);
+      });
+      node.replaceWith(fragment);
+    });
+  }
+  all(".passage-room, .passage-decide").forEach(splitWords);
+
   function refreshLayout() {
     if (!motionAvailable || refreshFrame) return;
     refreshFrame = requestAnimationFrame(() => {
@@ -314,19 +341,165 @@
     }),
   );
 
-  all("[data-boundary]").forEach((button) =>
-    button.addEventListener("click", () => {
-      const separated = button.dataset.boundary === "separate";
-      const lab = query(".boundary-lab");
-      if (lab) lab.dataset.separated = String(separated);
-      all("[data-boundary]").forEach((control) => {
+  // The boundary lab: the three setups from the "Try it" copy. Lines show what
+  // sits within the agent's reach and stop where a boundary cuts them off.
+  const lab = query(".boundary-lab");
+  if (lab) {
+    const svg = query(".reach-map", lab);
+    const agent = query(".agent-core", lab);
+    const gate = query(".boundary-gate", lab);
+    const items = all(".lab-item", lab);
+    const readout = query(".lab-readout", lab);
+    const NS = "http://www.w3.org/2000/svg";
+    const lines = items.map(() => {
+      const line = document.createElementNS(NS, "path");
+      const cut = document.createElementNS(NS, "path");
+      cut.setAttribute("class", "cut");
+      svg.append(line, cut);
+      return { line, cut };
+    });
+    const statusFor = (mode, resource) =>
+      mode === "shared"
+        ? "Beside the agent"
+        : mode === "project" && resource === "project"
+          ? "Shared with the agent"
+          : "Outside its computer";
+    let followUntil = 0;
+    let followFrame = 0;
+    let demo = [];
+    const centre = (element, box) => {
+      const rect = element.getBoundingClientRect();
+      return [
+        rect.left + rect.width / 2 - box.left,
+        rect.top + rect.height / 2 - box.top,
+      ];
+    };
+    function drawReach() {
+      const box = lab.getBoundingClientRect();
+      if (!box.width) return;
+      svg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+      const [ax, ay] = centre(agent, box);
+      const gateX = gate.getBoundingClientRect().left - box.left + 7;
+      const mode = lab.dataset.mode;
+      items.forEach((item, index) => {
+        const [x, y] = centre(item, box);
+        const { line, cut } = lines[index];
+        const open =
+          mode === "shared" ||
+          (mode === "project" && item.dataset.resource === "project");
+        if (open || ax <= gateX || x >= gateX) {
+          line.setAttribute("class", open ? "reach" : "blocked is-hidden");
+          line.setAttribute("d", `M${ax} ${ay}L${x} ${y}`);
+          cut.classList.add("is-hidden");
+          return;
+        }
+        // The line runs from the agent to the boundary and stops there.
+        const cy = ay + ((y - ay) * (ax - gateX)) / (ax - x);
+        line.setAttribute("class", "blocked");
+        line.setAttribute("d", `M${ax} ${ay}L${gateX} ${cy}`);
+        cut.setAttribute("d", `M${gateX} ${cy - 6}L${gateX} ${cy + 6}`);
+        cut.classList.remove("is-hidden");
+      });
+    }
+    function followReach(duration = 1000) {
+      followUntil = performance.now() + duration;
+      if (followFrame) return;
+      const step = (now) => {
+        drawReach();
+        followFrame = now < followUntil ? requestAnimationFrame(step) : 0;
+      };
+      followFrame = requestAnimationFrame(step);
+    }
+    function setLabMode(mode) {
+      lab.dataset.mode = mode;
+      all("[data-boundary]").forEach((control) =>
         control.setAttribute(
           "aria-pressed",
-          String(control.dataset.boundary === button.dataset.boundary),
-        );
+          String(control.dataset.boundary === mode),
+        ),
+      );
+      items.forEach((item) => {
+        item.dataset.status = statusFor(mode, item.dataset.resource);
       });
-    }),
-  );
+      const selected = items.find(
+        (item) => item.getAttribute("aria-pressed") === "true",
+      );
+      if (selected)
+        readout.textContent = `${selected.textContent}: ${selected.dataset.status}.`;
+      followReach();
+    }
+    function stopDemo() {
+      demo.forEach(clearTimeout);
+      demo = [];
+    }
+    all("[data-boundary]").forEach((button) =>
+      button.addEventListener("click", () => {
+        stopDemo();
+        setLabMode(button.dataset.boundary);
+      }),
+    );
+    items.forEach((item) =>
+      item.addEventListener("click", () => {
+        stopDemo();
+        const pressed = item.getAttribute("aria-pressed") !== "true";
+        items.forEach((other) =>
+          other.setAttribute("aria-pressed", String(pressed && other === item)),
+        );
+        readout.textContent = pressed
+          ? `${item.textContent}: ${item.dataset.status}.`
+          : "";
+      }),
+    );
+    setLabMode(lab.dataset.mode || "shared");
+    if ("ResizeObserver" in window) new ResizeObserver(() => drawReach()).observe(lab);
+    if (document.fonts?.ready) document.fonts.ready.then(drawReach);
+    // Once, when a reader first reaches it with motion on, the lab walks
+    // through its three setups. Any touch of the controls takes over.
+    if ("IntersectionObserver" in window) {
+      const firstView = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry.isIntersecting) return;
+          firstView.disconnect();
+          if (!shouldAnimate()) return;
+          demo = [
+            setTimeout(() => setLabMode("separate"), 1500),
+            setTimeout(() => setLabMode("project"), 3500),
+          ];
+        },
+        { threshold: 0.6 },
+      );
+      firstView.observe(lab);
+    }
+  }
+
+  // Where it fits: one red frame around Hivra's column, measured from the
+  // table so it follows the layout at every width.
+  const fitTable = query(".fit-table");
+  let fitFrame = null;
+  function placeFitFrame() {
+    const head = fitTable && query("thead th.is-hivra", fitTable);
+    const cells = fitTable ? all("td.is-hivra", fitTable) : [];
+    if (!head || !cells.length) return;
+    if (!fitFrame) {
+      fitFrame = document.createElement("div");
+      fitFrame.className = "fit-frame";
+      fitFrame.setAttribute("aria-hidden", "true");
+      fitTable.append(fitFrame);
+    }
+    const base = fitTable.getBoundingClientRect();
+    const top = head.getBoundingClientRect();
+    const bottom = cells[cells.length - 1].getBoundingClientRect();
+    fitFrame.style.left = `${top.left - base.left + fitTable.scrollLeft}px`;
+    fitFrame.style.top = `${top.top - base.top}px`;
+    fitFrame.style.width = `${top.width}px`;
+    fitFrame.style.height = `${bottom.bottom - top.top}px`;
+  }
+  if (fitTable) {
+    placeFitFrame();
+    if ("ResizeObserver" in window)
+      new ResizeObserver(placeFitFrame).observe(fitTable);
+    if (document.fonts?.ready) document.fonts.ready.then(placeFitFrame);
+  }
 
   // The canvas is a decorative layer. It owns one cancellable, 30 fps loop only while visible.
   const particles = (() => {
@@ -481,31 +654,6 @@
           }
         });
         motionMedia.add(
-          "(min-width: 1000px) and (min-height: 700px)",
-          () => {
-            const stage = query(".quality-stage");
-            const track = query(".quality-track");
-            if (stage && track) {
-              const distance = () =>
-                Math.max(0, track.scrollWidth - window.innerWidth);
-              gsap.to(track, {
-                x: () => -distance(),
-                ease: "none",
-                scrollTrigger: {
-                  id: "hivra-qualities",
-                  trigger: stage,
-                  start: "top top",
-                  end: () => `+=${Math.max(1, distance())}`,
-                  pin: true,
-                  scrub: 1,
-                  anticipatePin: 1,
-                  invalidateOnRefresh: true,
-                },
-              });
-            }
-          },
-        );
-        motionMedia.add(
           { compact: "(max-width: 999px)", tall: "(min-height: 600px)" },
           (context) => {
             if (!hero || !context.conditions.compact) return;
@@ -549,33 +697,100 @@
           },
         );
 
-        if (passage)
-          all(".passage-lines i", passage).forEach((line, index) => {
-            gsap.fromTo(
-              line,
-              {
-                rotationX: 24,
-                rotationY: -18,
-                rotationZ: (index - 3.5) * 2,
-                z: -250 - index * 34,
-                scale: 0.72,
-              },
-              {
-                rotationX: -15,
-                rotationY: 20,
-                rotationZ: (index - 3.5) * -3,
-                z: 100 + index * 25,
-                scale: 1.14,
-                ease: "none",
-                scrollTrigger: {
-                  trigger: passage,
-                  start: "top bottom",
-                  end: "bottom top",
-                  scrub: 1,
+        if (passage) {
+          const frames = all(".passage-lines i", passage);
+          const roomWords = all(".passage-room .wi", passage);
+          const decideWords = all(".passage-decide .wi", passage);
+          // Room, then a decision: the frames open out loose around the first
+          // line, then square up and close in as the second line lands.
+          const passageScene = (timeline, unit) =>
+            timeline
+              .fromTo(
+                frames,
+                {
+                  scale: (index) => 0.12 + index * 0.02,
+                  rotation: (index) => (index % 2 ? 1 : -1) * (18 + index * 4),
+                  opacity: 0,
                 },
-              },
-            );
+                {
+                  scale: (index) => 1.3 + (index % 3) * 0.06,
+                  rotation: (index) => (index % 2 ? 1 : -1) * (4 + index * 1.4),
+                  opacity: 0.55,
+                  duration: 0.42 * unit,
+                  stagger: 0.016 * unit,
+                  ease: "power2.out",
+                },
+                0,
+              )
+              .fromTo(
+                roomWords,
+                { yPercent: 118 },
+                {
+                  yPercent: 0,
+                  duration: 0.22 * unit,
+                  stagger: 0.035 * unit,
+                  ease: "power3.out",
+                },
+                0.05 * unit,
+              )
+              .to(
+                frames,
+                {
+                  scale: 1,
+                  rotation: 0,
+                  opacity: 0.6,
+                  duration: 0.3 * unit,
+                  stagger: { each: 0.02 * unit, from: "end" },
+                  ease: "power3.inOut",
+                },
+                0.48 * unit,
+              )
+              .fromTo(
+                decideWords,
+                { yPercent: 118 },
+                {
+                  yPercent: 0,
+                  duration: 0.22 * unit,
+                  stagger: 0.04 * unit,
+                  ease: "power3.out",
+                },
+                0.62 * unit,
+              )
+              .fromTo(
+                frames[6],
+                { "--glow": 0 },
+                { "--glow": 1, opacity: 1, duration: 0.12 * unit },
+                0.8 * unit,
+              );
+          motionMedia.add("(min-width: 1000px) and (min-height: 700px)", () => {
+            gsap.set(passage, { height: "100vh" });
+            passageScene(
+              gsap.timeline({
+                defaults: { ease: "none" },
+                scrollTrigger: {
+                  id: "hivra-passage",
+                  trigger: passage,
+                  start: "top top",
+                  end: () => `+=${Math.round(innerHeight * 1.5)}`,
+                  scrub: 0.8,
+                  pin: true,
+                  anticipatePin: 1,
+                  invalidateOnRefresh: true,
+                },
+              }),
+              1,
+            ).to({}, { duration: 0.14 });
           });
+          motionMedia.add("(max-width: 999px), (max-height: 699px)", () => {
+            const scene = passageScene(gsap.timeline({ paused: true }), 2.6);
+            ScrollTrigger.create({
+              trigger: passage,
+              start: "top 68%",
+              once: true,
+              onEnter: () => scene.play(),
+            });
+          });
+        }
         if (open)
           all(".open-frame", open).forEach((frame, index) => {
             gsap.fromTo(
@@ -601,6 +816,127 @@
               },
             );
           });
+
+        const fit = query(".fit");
+        if (fit) {
+          const options = all(".fit-option", fit);
+          gsap
+            .timeline({
+              scrollTrigger: {
+                trigger: query(".fit-options", fit),
+                start: "top 80%",
+                once: true,
+              },
+            })
+            .from(options, {
+              y: 40,
+              opacity: 0,
+              duration: 0.8,
+              stagger: 0.14,
+              ease: "power3.out",
+            })
+            .fromTo(
+              options,
+              { "--fill": 0 },
+              { "--fill": 1, duration: 0.9, stagger: 0.14, ease: "power2.inOut" },
+              0.15,
+            );
+          gsap.from(query(".fit-verdict", fit), {
+            y: 34,
+            opacity: 0,
+            duration: 0.9,
+            ease: "power3.out",
+            scrollTrigger: {
+              trigger: query(".fit-verdict", fit),
+              start: "top 82%",
+              once: true,
+            },
+          });
+          const frame = query(".fit-frame", fit);
+          const scene = gsap
+            .timeline({
+              scrollTrigger: {
+                trigger: query(".fit-table", fit),
+                start: "top 76%",
+                once: true,
+              },
+            })
+            .from(all(".fit-table tbody tr", fit), {
+              opacity: 0,
+              x: -20,
+              duration: 0.55,
+              stagger: 0.09,
+              ease: "power3.out",
+            })
+            .fromTo(
+              all(".fit-table td.is-hivra", fit),
+              { "--pop": 0 },
+              {
+                "--pop": 1,
+                duration: 0.45,
+                stagger: 0.09,
+                ease: "back.out(2.6)",
+              },
+              0.3,
+            );
+          if (frame)
+            scene.fromTo(
+              frame,
+              { clipPath: "inset(0 0 100% 0)" },
+              { clipPath: "inset(0 0 0% 0)", duration: 1, ease: "power2.inOut" },
+              0.2,
+            );
+        }
+
+        const rule = query(".delegation");
+        if (rule) {
+          // Each step lands in turn, and the blocked one is struck through last.
+          gsap
+            .timeline({
+              scrollTrigger: { trigger: rule, start: "top 78%", once: true },
+            })
+            .from(all(".rule-step", rule), {
+              y: 34,
+              opacity: 0,
+              duration: 0.7,
+              stagger: 0.28,
+              ease: "power3.out",
+            })
+            .from(
+              all(".rule-verdict", rule),
+              { opacity: 0, x: -10, duration: 0.4, stagger: 0.28 },
+              0.35,
+            );
+        }
+
+        // The four scenes stack; each image eases in and its word drifts.
+        all(".quality-panel").forEach((panel) => {
+          const word = query(".quality-word", panel);
+          const figure = query(".quality-layout figure", panel);
+          if (word)
+            gsap.fromTo(
+              word,
+              { xPercent: -3 },
+              {
+                xPercent: 3,
+                ease: "none",
+                scrollTrigger: {
+                  trigger: panel,
+                  start: "top bottom",
+                  end: "bottom top",
+                  scrub: 1,
+                },
+              },
+            );
+          if (figure)
+            gsap.from(query("img", figure), {
+              scale: 1.14,
+              opacity: 0,
+              duration: 1.2,
+              ease: "power3.out",
+              scrollTrigger: { trigger: panel, start: "top 70%", once: true },
+            });
+        });
 
         all(
           ".chapter-heading h2, .founder-heading h2, .open-copy h2, .reading-room h2, .finale h2",
@@ -889,6 +1225,36 @@
   dockLinks.forEach((link) =>
     link.addEventListener("click", scheduleChapterUpdate),
   );
+
+  // The dock steps aside while the reader moves down the page, so it never
+  // sits on a line they are reading, and returns as soon as they scroll back
+  // up, reach the end or move keyboard focus into it.
+  const dock = query(".chapter-dock");
+  let dockLastY = window.scrollY;
+  let dockTravel = 0;
+  let dockFrame = 0;
+  function updateDock() {
+    dockFrame = 0;
+    const y = window.scrollY;
+    const delta = y - dockLastY;
+    dockLastY = y;
+    if (!delta) return;
+    dockTravel =
+      Math.sign(delta) === Math.sign(dockTravel) ? dockTravel + delta : delta;
+    const atEnd = y + innerHeight >= root.scrollHeight - 200;
+    if (atEnd || dockTravel < -40) body.classList.remove("dock-tucked");
+    else if (dockTravel > 90) body.classList.add("dock-tucked");
+  }
+  if (dock) {
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (!dockFrame) dockFrame = requestAnimationFrame(updateDock);
+      },
+      { passive: true },
+    );
+    dock.addEventListener("focusin", () => body.classList.remove("dock-tucked"));
+  }
 
   root.classList.add("js-enhanced");
   renderProducts();

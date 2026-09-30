@@ -3,7 +3,7 @@ import {
   markFirstBootFirewallDispatch, markFirstBootPowerDispatch, recordFirstBootFirewallVerified,
   releaseFirstBootOperation, saveFirstBootFirewallReceipt, saveFirstBootPowerAction,
 } from "../first-boot-operations";
-import { FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
+import { FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
 
 const mockRpc = jest.fn();
 const mockQuery = { select: jest.fn(), eq: jest.fn(), maybeSingle: jest.fn() };
@@ -14,9 +14,11 @@ const binding = { userId: "fixture-owner", connectionId: "11111111-1111-4111-811
   connectionRevision: 7, orderId: "22222222-2222-4222-8222-222222222222",
   attemptId: "33333333-3333-4333-8333-333333333333", quoteFingerprint: "a".repeat(64), recipeVersion: FIRST_BOOT_RECIPE_VERSION };
 const scope = { binding, providerServerId: "42" };
+// Order-only callers know neither the attempt nor its recipe.
 const orderScope = { binding: { userId: binding.userId, connectionId: binding.connectionId,
   connectionRevision: binding.connectionRevision, orderId: binding.orderId,
-  quoteFingerprint: binding.quoteFingerprint, recipeVersion: binding.recipeVersion }, providerServerId: "42" };
+  quoteFingerprint: binding.quoteFingerprint }, providerServerId: "42" };
+const recipe = (recipeVersion: string = FIRST_BOOT_RECIPE_VERSION) => ({ data: { recipe_version: recipeVersion }, error: null });
 const lease = { ...scope, leaseId: "44444444-4444-4444-8444-444444444444" };
 const date = "2026-08-27T19:00:00.000Z";
 const firewall = { version: 1, scope: { orderId: binding.orderId, attemptId: binding.attemptId,
@@ -91,36 +93,62 @@ describe("private first-boot operation adapter", () => {
     await expect(loadFirstBootOperation(scope)).resolves.toBeNull();
   });
   it("discovers an attempt for cleanup only within its full original order binding", async () => {
-    mockQuery.maybeSingle.mockResolvedValue({ data: row({ encrypted_token: "secret", encrypted_bundle: "private" }), error: null });
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: row({ encrypted_token: "secret", encrypted_bundle: "private" }), error: null })
+      .mockResolvedValueOnce(recipe());
     const result = await loadFirstBootOperationForOrder(orderScope);
     expect(result?.binding.attemptId).toBe(binding.attemptId);
-    expect(mockQuery.eq.mock.calls).toEqual([["user_id", binding.userId], ["connection_id", binding.connectionId],
+    expect(mockQuery.eq.mock.calls.slice(0, 6)).toEqual([["user_id", binding.userId], ["connection_id", binding.connectionId],
       ["connection_revision", 7], ["order_id", binding.orderId],
       ["quote_fingerprint_sha256", binding.quoteFingerprint], ["provider_server_id", "42"]]);
     expect(mockQuery.select.mock.calls[0][0]).not.toMatch(/token|encrypted|key/);
     expect(JSON.stringify(result)).not.toMatch(/secret|private|encrypted/);
     expect(mockRpc).not.toHaveBeenCalled();
   });
+  it.each([FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION])("binds the discovered attempt's own recipe %s, never an assumed one", async version => {
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce(recipe(version));
+    const result = await loadFirstBootOperationForOrder(orderScope);
+    expect(result?.binding).toEqual({ ...binding, recipeVersion: version });
+    // The recipe comes from this exact attempt's enrollment, inside its full binding.
+    expect(mockQuery.select.mock.calls[1][0]).toBe("recipe_version");
+    expect(mockQuery.eq.mock.calls.slice(6)).toEqual([["order_id", binding.orderId], ["attempt_id", binding.attemptId],
+      ["user_id", binding.userId], ["connection_id", binding.connectionId], ["connection_revision", 7],
+      ["quote_fingerprint_sha256", binding.quoteFingerprint]]);
+  });
+  it("fails closed when the attempt's recipe cannot be read", async () => {
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: null, error: null });
+    await expect(loadFirstBootOperationForOrder(orderScope)).rejects.toThrow("invalid_record");
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce(recipe("2026.09.99.1"));
+    await expect(loadFirstBootOperationForOrder(orderScope)).rejects.toThrow("invalid_record");
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: row(), error: null }).mockResolvedValueOnce({ data: null, error: { message: "private" } });
+    await expect(loadFirstBootOperationForOrder(orderScope)).rejects.toThrow("database_error");
+  });
+  it("keeps the recipe the caller's full scope names", async () => {
+    const legacy = { binding: { ...binding, recipeVersion: FIRST_BOOT_LEGACY_RECIPE_VERSION }, providerServerId: "42" };
+    mockQuery.maybeSingle.mockResolvedValue({ data: row(), error: null });
+    await expect(loadFirstBootOperation(legacy)).resolves.toMatchObject(legacy);
+    await expect(loadFirstBootOperation({ ...scope, binding: { ...binding, recipeVersion: "later" } } as never)).rejects.toThrow("invalid_scope");
+  });
   it.each([{ user_id: "foreign" }, { connection_id: lease.leaseId }, { connection_revision: 8 },
     { order_id: lease.leaseId }, { quote_fingerprint_sha256: "b".repeat(64) }, { provider_server_id: "43" },
     { attempt_id: "not-a-uuid" }])("rejects mismatched cleanup lookup evidence: %j", async change => {
-    mockQuery.maybeSingle.mockResolvedValue({ data: row(change), error: null });
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: row(change), error: null }).mockResolvedValueOnce(recipe());
     await expect(loadFirstBootOperationForOrder(orderScope)).rejects.toThrow("invalid_record");
   });
   it("returns no attempt for an absent record and snapshots cleanup input before awaiting the database", async () => {
     const input = structuredClone(orderScope);
-    mockQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
+    mockQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
     await expect(loadFirstBootOperationForOrder(input)).resolves.toBeNull();
     let resolve!: (value: unknown) => void;
-    mockQuery.maybeSingle.mockReturnValue(new Promise(done => { resolve = done; }));
+    mockQuery.maybeSingle.mockReturnValueOnce(new Promise(done => { resolve = done; })).mockResolvedValueOnce(recipe());
     const pending = loadFirstBootOperationForOrder(input);
     input.binding.quoteFingerprint = "b".repeat(64); input.providerServerId = "43";
     resolve({ data: row(), error: null });
     await expect(pending).resolves.toMatchObject({ binding, providerServerId: "42" });
   });
-  it("rejects supplied attempts or extra scope fields and redacts cleanup lookup failures", async () => {
+  it("rejects supplied attempts, an assumed recipe or extra scope fields and redacts cleanup lookup failures", async () => {
     await expect(loadFirstBootOperationForOrder(scope)).rejects.toThrow("invalid_scope");
     const input = structuredClone(orderScope);
+    await expect(loadFirstBootOperationForOrder({ ...input, binding: { ...input.binding, recipeVersion: FIRST_BOOT_RECIPE_VERSION } } as never)).rejects.toThrow("invalid_scope");
     await expect(loadFirstBootOperationForOrder({ ...input, token: "extra" } as never)).rejects.toThrow("invalid_scope");
     expect(mockQuery.maybeSingle).not.toHaveBeenCalled();
     mockQuery.maybeSingle.mockRejectedValue(new Error("private token detail"));

@@ -15,10 +15,12 @@ describe("GET /llms.txt", () => {
     // H1 product line first.
     expect(body.startsWith("# Hivra\n")).toBe(true);
     // A short '> ' description blurb.
-    expect(body).toMatch(/\n> Hivra \(formerly HermesOS\) is managed cloud hosting/);
+    expect(body).toMatch(/\n> Hivra \(formerly HermesOS\) gives AI agents computers of their own\./);
     // Markdown link sections.
     expect(body).toContain("## Product");
     expect(body).toContain("## Updates");
+    expect(body).toContain("## Papers");
+    expect(body).toContain("## Source and self-hosting");
     expect(body).toContain("## Status");
     expect(body).toContain("## Legal");
   });
@@ -39,6 +41,13 @@ describe("GET /llms.txt", () => {
       `${SITE_URL}/stats`,
       `${SITE_URL}/privacy`,
       `${SITE_URL}/terms`,
+      `${SITE_URL}/ecosystem`,
+      `${SITE_URL}/LITEPAPER.md`,
+      `${SITE_URL}/WHITEPAPER.md`,
+      `${SITE_URL}/TOKENOMICS.md`,
+      `${SITE_URL}/token`,
+      "https://github.com/ashneil12/hivra",
+      "https://github.com/ashneil12/hivra/blob/main/docs/self-host/QUICKSTART.md",
     ];
     for (const url of expectedUrls) {
       expect(body).toContain(`(${url})`);

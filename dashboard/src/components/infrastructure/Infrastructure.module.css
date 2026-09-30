@@ -19,6 +19,14 @@
   overflow: hidden;
 }
 
+/* The Capacity page inside Launch's capacity sheet: no page chrome of its own. */
+.embeddedPage {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  position: relative;
+}
+
 .page::before {
   content: "";
   position: absolute;
@@ -1545,6 +1553,63 @@
   text-transform: capitalize;
 }
 
+.capacityOperationFacts .copyableValue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  /* Ids wrap instead of truncating; the copy button's focus ring stays visible. */
+  overflow: visible;
+  white-space: normal;
+}
+
+.copyableValue > span:first-child {
+  min-width: 0;
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+}
+
+/* Shown only when the clipboard is blocked and the value was selected instead. */
+.copyStatus {
+  flex: 1 0 100%;
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.copyValueButton {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--infra-line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--infra-muted);
+  cursor: pointer;
+}
+
+.copyValueButton:hover,
+.copyValueButton:focus-visible {
+  color: var(--ink-black);
+  border-color: color-mix(in srgb, var(--ink-black) 34%, transparent);
+}
+
+.copyValueButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.copyValueButton[data-copied="true"] {
+  color: var(--skills-success-text);
+  border-color: var(--skills-success-border);
+}
+
 .capacityResultInventory {
   margin-top: 20px;
 }
@@ -1979,6 +2044,36 @@
   background: var(--skills-danger-bg);
 }
 
+.providerInventoryError > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* An inline retry that keeps the alert's height but a full touch target. */
+.providerInventoryError > button {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  margin: -14px -8px -14px 0;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.providerInventoryError > button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
 .providerConnectionCard .cardActions a {
   text-decoration: none;
 }
@@ -2075,6 +2170,7 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
+  container: connection-card / inline-size;
   padding: 24px;
   border: 1px solid var(--infra-line);
   background:
@@ -2113,6 +2209,15 @@
 
 .connectionIdentity {
   min-width: 0;
+}
+
+/* A narrow card (two columns beside the sidebar) gives the server's name the
+   full row and puts its status badge underneath. */
+@container connection-card (max-width: 400px) {
+  .connectionCardHeader > .statusBadge {
+    grid-column: 1 / -1;
+    width: fit-content;
+  }
 }
 
 .connectionIdentity .eyebrow::before {
@@ -2295,6 +2400,7 @@
 
 .cardActions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   margin-top: 18px;
@@ -2302,6 +2408,22 @@
 
 .actionSpacer {
   flex: 1;
+}
+
+/* A card's one primary action leads on its own row, so the secondary
+   actions and the delete control never get pushed out of a narrow card. */
+.connectionCard:not(.providerConnectionCard) .cardActions > .primaryButton {
+  flex: 1 1 100%;
+}
+
+.cardActions > .disconnectIcon {
+  margin-left: auto;
+}
+
+/* Narrow cards label the connection-level disconnect instead of relying on
+   an icon-only trash button next to server-level removal. */
+.disconnectLabelled {
+  display: none;
 }
 
 .iconButton,
@@ -2314,6 +2436,7 @@
 }
 
 .closeButton {
+  flex-shrink: 0;
   background: var(--vellum-bg);
 }
 
@@ -2609,6 +2732,20 @@
   position: relative;
 }
 
+/* Opened from the connection wizard, setup keeps the wizard's width and its
+   Connect → Ready progress bar, so connecting a host reads as one journey. */
+.confirmDialog.prepareDialog.prepareContinues {
+  width: min(920px, 100%);
+}
+
+.prepareDialog > .prepareProgress {
+  margin: -32px -32px 26px;
+}
+
+.prepareContinues > .prepareCloseButton {
+  top: 69px;
+}
+
 .prepareDialog > .prepareIcon,
 .prepareDialog > .successIcon,
 .prepareDialog > .dangerIcon {
@@ -2656,6 +2793,171 @@
   flex: 0 0 auto;
   margin-top: 1px;
   color: var(--hivra-red);
+}
+
+/* The shared host setup dialog lists every named step up front, then marks
+   only what it observed. */
+.prepareSteps {
+  display: grid;
+  gap: 0;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--infra-line-soft);
+  counter-reset: none;
+}
+
+.prepareSteps > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+  padding: 11px 13px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.prepareSteps > li + li {
+  border-top: 1px solid var(--infra-line-soft);
+}
+
+.prepareStepMarker {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--infra-line);
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prepareSteps > li[data-state="done"] {
+  color: var(--ink-black);
+}
+
+.prepareSteps > li[data-state="done"] .prepareStepMarker {
+  border-color: var(--skills-success-border);
+  background: var(--skills-success-bg);
+  color: var(--skills-success-text);
+}
+
+.prepareSteps > li[data-state="failed"],
+.prepareSteps > li[data-state="attention"] {
+  color: var(--ink-black);
+  background: color-mix(in srgb, var(--skills-danger-bg) 55%, transparent);
+}
+
+.prepareSteps > li[data-state="failed"] .prepareStepMarker,
+.prepareSteps > li[data-state="attention"] .prepareStepMarker {
+  border-color: var(--skills-danger-border);
+  background: var(--skills-danger-bg);
+  color: var(--skills-danger-text);
+}
+
+.prepareElapsed {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 16px;
+  padding: 11px 13px;
+  border: 1px solid var(--infra-line);
+  background: color-mix(in srgb, var(--bg-elevated) 64%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.prepareElapsed > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hivra-red);
+}
+
+.prepareElapsed strong {
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Raw inspection evidence, one click away from the single outcome. */
+.technicalDetails {
+  margin-top: 20px;
+  border: 1px solid var(--infra-line-soft);
+  background: color-mix(in srgb, var(--bg-elevated) 48%, transparent);
+}
+
+.technicalDetails > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.technicalDetails > summary::-webkit-details-marker {
+  display: none;
+}
+
+.technicalDetails > summary::after {
+  content: "+";
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.technicalDetails[open] > summary::after {
+  content: "−";
+}
+
+.technicalDetails > summary:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: -2px;
+}
+
+.technicalDetailsBody {
+  padding: 0 14px 16px;
+}
+
+.technicalDetailsBody > .discoveryIdentity,
+.technicalDetailsBody > .targetIdentity,
+.technicalDetailsBody > .metricGrid {
+  margin-top: 0;
+}
+
+.technicalDetailsBody > .metricGrid {
+  margin-top: 12px;
+}
+
+.technicalFacts {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.technicalFacts strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.technicalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .prepareReceipt {
@@ -3730,13 +4032,32 @@
     flex-direction: column;
   }
 
+  /* Name on the first line, Open and Manage resources as full tap targets
+     on the second. */
   .managedComputerRow {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 13px;
+  }
+
+  .managedComputerRow > span:nth-child(2) {
+    flex: 1 1 calc(100% - 21px);
   }
 
   .managedComputerRow > span:nth-child(3),
   .managedComputerRow > span:nth-child(4) {
     display: none;
+  }
+
+  .managedComputerRow > a {
+    min-width: 0;
+    min-height: 44px;
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 0 10px;
+    border: 1px solid var(--infra-line);
+    font-size: 10px;
   }
 
   .providerSteps {
@@ -3781,6 +4102,79 @@
 
   .capacityOperationFacts > div:nth-last-child(-n + 2) {
     border-bottom: 0;
+  }
+
+  /* Recovery and operation ids must stay readable and selectable. */
+  .capacityOperationFacts dd,
+  .connectionMeta strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .copyableValue > span:first-child {
+    font-family: var(--font-mono), "Space Mono", monospace;
+    text-transform: none;
+  }
+
+  /* One recovery id per row keeps each value on a single line. */
+  .capacityOperationFacts.capacityRecoveryFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .capacityOperationFacts.capacityRecoveryFacts > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--infra-line-soft);
+  }
+
+  .capacityOperationFacts.capacityRecoveryFacts > div:last-child {
+    border-bottom: 0;
+  }
+
+  .savedTargetFacts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .savedTargetFacts small,
+  .savedTargetFacts strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .capacityOperationFacts dt,
+  .providerServerFacts dt,
+  .connectionMeta span,
+  .savedTargetFacts small,
+  .savedTargetHeading > span,
+  .prepareReceipt small,
+  .quoteExpiry,
+  .capacitySelectionFacts dt,
+  .managedCapacityPlan span,
+  .managedCapacityFacts span,
+  .managedComputerRow small,
+  .providerServerHeader > div > span,
+  .providerLaunchBoundary,
+  .capacityPriceBreakdown dd span,
+  .capacityTraffic > strong small,
+  .capacityNextActions li,
+  .capacityNextActions strong {
+    font-size: 10px;
+  }
+
+  .capacityOperationFacts dd,
+  .providerServerFacts dd,
+  .savedTargetFacts strong,
+  .capacityReviewGrid dt,
+  .capacityReviewGrid dd,
+  .capacityVatNote,
+  .capacityResultInventory article div span,
+  .providerInventoryEmpty span,
+  .providerInventoryLoading,
+  .providerInventoryError,
+  .providerSteps p,
+  .providerSafetyNote span,
+  .whatHappens li,
+  .managedEntryAction > p {
+    font-size: 11px;
   }
 
   .whatHappens ol {
@@ -3833,13 +4227,59 @@
     border: 0;
   }
 
+  /* In-flow dialogs become the page on phones: the dashboard main is the
+     only scroller, so the sticky header pins under the shell header and the
+     final actions clear the bottom bar. overflow: clip keeps the page glow
+     clipped without making .page the sticky scroll container. */
+  .page {
+    overflow: clip;
+  }
+
+  .modalAnchor:has(.modalBackdrop),
+  .modalAnchor > .modalTheme {
+    display: flex;
+    flex: 1 0 auto;
+    flex-direction: column;
+  }
+
+  /* The inert page is not rendered under an open dialog, so main's scroll
+     range is the dialog alone. React removes the dialog before its focus
+     cleanup runs, so the opener is visible again when focus returns to it. */
+  .page:has(> .modalAnchor .modalBackdrop) > .pageInner {
+    display: none;
+  }
+
+  /* A short confirm still fills the area between the shell header and the
+     bottom bar. */
+  .modalAnchor .modalBackdrop {
+    flex: 1 0 auto;
+    min-height: calc(
+      var(--workspace-viewport-height, 100dvh) - var(--dashboard-mobile-header-height, 0px) -
+        var(--hivra-bottom-chrome, 0px) - env(safe-area-inset-bottom, 0px)
+    );
+    padding: 0;
+  }
+
+  .modalAnchor .wizard,
+  .modalAnchor .confirmDialog {
+    width: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* Focus scrolling keeps body controls below the pinned dialog header. */
+  .modalAnchor :is(.wizardBody, .cleanupContent) :is(a[href], button, input, select, textarea, summary, [tabindex]) {
+    scroll-margin-top: 160px;
+  }
+
   .wizardHeader {
     padding: 22px 18px 19px;
   }
 
   .wizardProgress {
     padding: 10px 12px;
-    font-size: 7px;
+    font-size: 10px;
     letter-spacing: 0.03em;
   }
 
@@ -3884,6 +4324,11 @@
     grid-column: auto;
   }
 
+  .field textarea {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
   .connectionMeta {
     grid-template-columns: 1fr 1fr;
   }
@@ -3923,6 +4368,19 @@
     justify-content: flex-start;
     justify-content: safe center;
     padding: 28px 22px;
+  }
+
+  /* The carried-on progress bar stays at the top, as in the wizard. */
+  .confirmDialog.prepareContinues {
+    justify-content: flex-start;
+  }
+
+  .prepareDialog > .prepareProgress {
+    margin: -28px -22px 22px;
+  }
+
+  .prepareContinues > .prepareCloseButton {
+    top: 76px;
   }
 }
 
@@ -4015,7 +4473,8 @@
     flex-wrap: wrap;
   }
 
-  .cardActions .secondaryButton {
+  .cardActions .secondaryButton,
+  .cardActions .primaryButton {
     width: 100%;
   }
 
@@ -4027,9 +4486,24 @@
     flex: 1;
   }
 
+  .disconnectIcon {
+    display: none;
+  }
+
+  .cardActions .disconnectLabelled {
+    display: inline-flex;
+    flex: 1 0 100%;
+  }
+
   .wizardActions,
   .resultActions {
     flex-direction: column-reverse;
+  }
+
+  /* The safe first action takes initial focus; keep it above the destructive
+     one so it opens in view rather than under the bottom bar. */
+  .confirmDialog[role="alertdialog"] > .resultActions {
+    flex-direction: column;
   }
 
   .wizardActions button,
@@ -4052,7 +4526,7 @@
   }
 }
 
-@media (max-width: 380px) {
+@media (max-width: 520px) {
   .wizardProgress li {
     min-height: 36px;
   }
@@ -4064,6 +4538,46 @@
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
+  }
+}
+
+/* Touch tablets keep the row layout; each link gets a 44px hit area. */
+@media (pointer: coarse) and (min-width: 761px) {
+  .managedComputerRow > a {
+    position: relative;
+  }
+
+  .managedComputerRow > a::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -6px;
+    left: -6px;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}
+
+@media (pointer: coarse) {
+  .copyValueButton {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* The disclosure to the force-forget fallback is a full-height tap target. */
+@media (max-width: 760px), (pointer: coarse) {
+  .cleanupFallback {
+    padding-top: 4px;
+  }
+
+  .cleanupFallback summary {
+    min-height: 44px;
+    padding-block: 12px;
+  }
+
+  .cleanupFallback p {
+    margin-top: 4px;
   }
 }
 
@@ -4223,4 +4737,497 @@
   .pageHeading h1 {
     font-size: 36px;
   }
+}
+
+/* Hetzner create, setup and token flows (Connect redesign slices 1 and 11). */
+.providerStepsInline {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 18px;
+  padding: 0;
+}
+
+.providerStepsInline a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.providerConnectionCard .cardActions {
+  flex-wrap: wrap;
+}
+
+.providerServerReadiness {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--infra-line-soft);
+}
+
+.providerServerReadiness > span:not(.statusBadge) {
+  flex: 1 1 180px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.providerServerReadiness > .primaryButton,
+.providerServerReadiness > .secondaryButton {
+  min-height: 34px;
+}
+
+.providerCreateReason {
+  margin-top: 14px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.capacityQuoteHero > div > strong.capacityQuoteServer {
+  font-size: clamp(20px, 3.4vw, 28px);
+}
+
+.createTimelineSection {
+  margin-top: 20px;
+}
+
+.createTimeline {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--infra-line);
+  background: color-mix(in srgb, var(--bg-elevated) 58%, transparent);
+}
+
+.createTimeline > li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--infra-line-soft);
+}
+
+.createTimeline > li:last-child {
+  border-bottom: 0;
+}
+
+.createTimeline > li > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--hivra-red);
+  border: 1px solid var(--hivra-red-line);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.createTimeline strong {
+  display: block;
+  font-size: 11.5px;
+}
+
+.createTimeline p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.createTimelineSkipped {
+  opacity: 0.55;
+}
+
+.capacityDisclosure {
+  margin-top: 14px;
+  border: 1px solid var(--infra-line-soft);
+  background: color-mix(in srgb, var(--bg-elevated) 48%, transparent);
+}
+
+.capacityDisclosure > summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.capacityDisclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.capacityDisclosure > summary::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--hivra-red);
+  font-size: 13px;
+}
+
+.capacityDisclosure[open] > summary::after {
+  content: "−";
+}
+
+.capacityDisclosure > summary:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.capacityDisclosureBody {
+  padding: 0 13px 14px;
+}
+
+.capacityDisclosureBody > .capacityPriceBreakdown {
+  margin-top: 0;
+}
+
+.capacityDetailList {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.capacityAdvancedOption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.capacityAdvancedOption input {
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: var(--hivra-red);
+}
+
+.capacityAdvancedOption strong,
+.capacityAdvancedOption > span > span {
+  display: block;
+}
+
+.capacityAdvancedOption strong {
+  font-size: 11px;
+}
+
+.capacityAdvancedOption > span > span {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.setupPanel {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.setupNote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--skills-success-text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.setupNote > svg {
+  flex: none;
+}
+
+.setupPanel > .resultActions {
+  margin-top: 4px;
+}
+
+.setupCountdown,
+.setupElapsed {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 11px 13px;
+  color: var(--text-secondary);
+  border: 1px solid var(--infra-line);
+  background: color-mix(in srgb, var(--bg-elevated) 64%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.setupCountdown > svg,
+.setupElapsed > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hivra-red);
+}
+
+.setupCountdown strong,
+.setupElapsed strong {
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.setupCountdownUrgent {
+  border-color: var(--hivra-red-line);
+  background: color-mix(in srgb, var(--hivra-red-soft) 45%, var(--infra-panel));
+}
+
+.setupProgress {
+  display: grid;
+  gap: 10px;
+}
+
+.setupObservedStages {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setupObservedStages > li {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.setupObservedStages > li > span {
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .providerStepsInline {
+    grid-template-columns: 1fr;
+  }
+
+  .providerServerReadiness > .primaryButton,
+  .providerServerReadiness > .secondaryButton {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Copy button and host identity comparison (server enrollment, INF-14). */
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--infra-line);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+  color: var(--ink-black);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.copyButton:hover {
+  border-color: color-mix(in srgb, var(--ink-black) 34%, transparent);
+  background: var(--bg-elevated);
+}
+
+.copyButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 3px;
+}
+
+@media (pointer: coarse) {
+  .copyButton {
+    min-height: 44px;
+  }
+}
+
+.hostKeyComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 16px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-line);
+}
+
+.hostKeyComparison > div {
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--infra-panel-strong);
+}
+
+.hostKeyComparison dt {
+  margin-bottom: 6px;
+  color: var(--infra-muted);
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.hostKeyComparison dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.hostKeyComparison code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .hostKeyComparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Advanced SSH wizard: sudo user, fingerprint help and key capture. */
+.checkField {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--infra-line);
+  background: var(--infra-panel);
+  cursor: pointer;
+}
+
+.checkField input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--hivra-red);
+}
+
+.checkField strong,
+.checkField small {
+  display: block;
+}
+
+.checkField strong {
+  font-size: 12px;
+}
+
+.checkField small {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.checkField code,
+.fingerprintHelp code {
+  font-family: var(--font-mono), "Space Mono", monospace;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.fingerprintHelp {
+  display: grid;
+  gap: 8px;
+  margin-top: -4px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.fingerprintCommand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fingerprintCommand .commandHint {
+  flex: 1 1 260px;
+  margin-top: 0;
+}
+
+.inlineLinkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-black);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.inlineLinkButton:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 2px;
+}
+
+.fingerprintSources summary {
+  cursor: pointer;
+  color: var(--ink-black);
+  font-weight: 700;
+}
+
+.fingerprintSources ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.fingerprintSources a {
+  color: var(--ink-black);
+}
+
+.hostKeyCapture {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hostKeyCaptureResult {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--infra-line));
+  background: color-mix(in srgb, var(--yellow) 7%, var(--infra-panel));
+  color: var(--ink-black);
+}
+
+.hostKeyCaptureResult p {
+  margin: 0;
+  color: var(--text-secondary);
 }

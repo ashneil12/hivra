@@ -1,5 +1,6 @@
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
-import { loadCurrentComputeUsage, validateAgentResources } from "../resource-gate";
+import { attachPlanAgentLimitMessage, loadCurrentComputeUsage, planAgentLimitMessage, resolvePlanAgentSlots,
+  validateAgentResources } from "../resource-gate";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 
@@ -10,6 +11,15 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supaba
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 type NotCall = { column: string; operator: string; value: string };
+
+// The agent count is the database's slot count (hivra_owner_agent_slot_count);
+// CPU and memory are still summed from the rows below.
+let slotCount: unknown = 0;
+beforeEach(() => {
+  slotCount = 0;
+  (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async (name: string) => name === "hivra_owner_agent_slot_count"
+    ? { data: slotCount, error: null } : { data: null, error: { message: "unexpected rpc" } });
+});
 
 /**
  * Builds a chainable PostgREST stub for one table. Records every `.not()` call
@@ -87,6 +97,7 @@ describe("loadCurrentComputeUsage", () => {
       throw new Error(`Unexpected table ${table}`);
     });
 
+    slotCount = 1;
     await expect(loadCurrentComputeUsage("user_x")).resolves.toEqual({
       activeCount: 1,
       usedCpu: 1,
@@ -112,11 +123,81 @@ describe("loadCurrentComputeUsage", () => {
       throw new Error(`Unexpected table ${table}`);
     });
 
+    slotCount = 1;
     const usage = await loadCurrentComputeUsage("user_x");
 
     expect(usage.activeCount).toBe(1);
     expect(usage.usedCpu).toBe(2);
     expect(usage.usedRamGb).toBe(4); // 4096 MB / 1024
+  });
+});
+
+describe("the database slot count", () => {
+  beforeEach(() => {
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hivra_agents") return buildTableStub([{ id: "desktop", cpu: 2, ram: 4, status: "running", type: "linux-desktop" }]).stub;
+      if (table === "hermes_instances") return buildTableStub([]).stub;
+      throw new Error(`Unexpected table ${table}`);
+    });
+  });
+
+  it("counts an agent attached to a computer as a slot but adds none of its compute", async () => {
+    // One Ubuntu Desktop row plus Codex attached to it: the database counts two.
+    slotCount = 2;
+    await expect(loadCurrentComputeUsage("user_x")).resolves.toEqual({ activeCount: 2, usedCpu: 2, usedRamGb: 4 });
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("hivra_owner_agent_slot_count", { p_owner: "user_x" });
+  });
+
+  it.each([null, "2", -1, 1.5])("refuses to guess when the slot count is %p", async value => {
+    slotCount = value;
+    await expect(loadCurrentComputeUsage("user_x")).rejects.toThrow("Could not verify remaining compute");
+  });
+
+  it("refuses to guess when the slot count query fails", async () => {
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: null, error: { message: "private detail" } });
+    await expect(loadCurrentComputeUsage("user_x")).rejects.toThrow("Could not verify remaining compute");
+  });
+});
+
+describe("attach admission", () => {
+  beforeEach(() => {
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "free", source: "free", total_cpu_budget: 0.5, total_ram_budget: 1024, instance_limit: 1 });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hivra_agents") return buildTableStub([{ id: "desktop", cpu: 0.5, ram: 1, status: "running", type: "linux-desktop" }]).stub;
+      if (table === "hermes_instances") return buildTableStub([]).stub;
+      throw new Error(`Unexpected table ${table}`);
+    });
+  });
+  const attach = { userId: "user_x", type: "codex", agentLabel: "Codex", browser: false, mode: "attach" as const, cpu: 0, ram: 0 };
+
+  it("refuses before the Review when the plan's agent limit is reached, with the plan copy", async () => {
+    slotCount = 1;
+    await expect(validateAgentResources(attach)).resolves.toEqual({
+      ok: false, status: 403,
+      message: "Your Free plan allows 1 active agent and you already have 1. Upgrade for more slots, or remove an agent first.",
+    });
+  });
+
+  it("checks only the slot count: a full CPU and memory pool does not block an agent that shares the computer", async () => {
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "operator", source: "stripe", total_cpu_budget: 0.5, total_ram_budget: 1024, instance_limit: 3 });
+    slotCount = 1;
+    await expect(validateAgentResources(attach)).resolves.toEqual({ ok: true });
+  });
+
+  it("requires plan access", async () => {
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(null);
+    await expect(validateAgentResources(attach)).resolves.toMatchObject({ ok: false, status: 403 });
+    await expect(resolvePlanAgentSlots("user_x")).resolves.toBeNull();
+  });
+
+  it("resolves the limit exactly as the gate does", async () => {
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "operator", source: "stripe", instance_limit: 7 });
+    await expect(resolvePlanAgentSlots("user_x")).resolves.toEqual({ agentLimit: 7, planName: expect.any(String) });
+  });
+
+  it("keeps the existing launch copy for a database refusal", () => {
+    expect(planAgentLimitMessage("Free", 1)).toBe("Your Free plan allows 1 active agent.");
+    expect(attachPlanAgentLimitMessage("Pro", 3, 3)).toBe("Your Pro plan allows 3 active agents and you already have 3. Upgrade for more slots, or remove an agent first.");
   });
 });
 

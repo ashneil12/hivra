@@ -37,7 +37,7 @@ describe("ProfileService.deleteProfile", () => {
   });
 
   it("safely stops gateway, deletes profile from disk and db, and reloads caddy", async () => {
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
     const updateAgentCaddyRoutingSpy = jest
       .spyOn(ProfileService, "updateAgentCaddyRouting")
@@ -66,7 +66,7 @@ describe("ProfileService.deleteProfile", () => {
   });
 
   it("throws when the profile record cannot be deleted from the database", async () => {
-    jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+    jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
     jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
     const updateAgentCaddyRoutingSpy = jest
       .spyOn(ProfileService, "updateAgentCaddyRouting")

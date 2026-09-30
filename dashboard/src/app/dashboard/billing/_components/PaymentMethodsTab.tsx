@@ -17,6 +17,8 @@ import {
   type YearlyTokenTier,
 } from "@/lib/billing/token-plan-prices";
 import type { BillingController } from "../useBillingController";
+import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
+import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import type { BillingTabId } from "./billing-tabs";
 import styles from "../Billing.module.css";
 
@@ -25,7 +27,7 @@ export const CRYPTO_PAYMENT_RULES = [
   "Base network only.",
   "Send the exact amount in one transfer.",
   "Prices lock for 20 minutes.",
-  "Token payments are final.",
+  TOKEN_PAYMENT_FINALITY,
   "Yearly access doesn't renew automatically.",
 ] as const;
 
@@ -90,7 +92,9 @@ export function PaymentMethodsTab({
   // Model-credit top-ups with $HermesOS are part of billing v2 and live in
   // Credits whatever the crypto flag says, so don't call crypto unavailable
   // while that button is there.
-  const hermesCreditTopUpsOffered = c.flags.billingV2Enabled && Boolean(c.managedVeniceSummary);
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenFeatures = c.tokenGeo.status === "allowed";
+  const hermesCreditTopUpsOffered = c.flags.billingV2Enabled && tokenFeatures && Boolean(c.managedVeniceSummary);
 
   return (
     <div className={styles.stack}>
@@ -138,7 +142,7 @@ export function PaymentMethodsTab({
           </span>
           <div className={styles.methodBody}>
             <h2 className={styles.panelTitle} id="billing-method-crypto">$HermesOS and USDC on Base</h2>
-            {!c.flags.cryptoBillingEnabled ? (
+            {!c.flags.cryptoBillingEnabled || !tokenFeatures ? (
               <p className={styles.panelText}>
                 {hermesCreditTopUpsOffered
                   ? "Paying for your plan with $HermesOS or USDC isn't available right now. You can still top up model credits with $HermesOS in Credits."
@@ -152,7 +156,20 @@ export function PaymentMethodsTab({
           </div>
         </div>
 
-        {!c.flags.cryptoBillingEnabled ? (
+        {!tokenFeatures ? (
+          // The token geo-policy blocks this viewer (or hasn't answered yet):
+          // no token payment paths. An existing holding stays manageable on
+          // the Wallet page.
+          <>
+            {c.tokenGeo.notice ? <TokenGeoNotice notice={c.tokenGeo.notice} /> : null}
+            <p className={styles.quietLine}>
+              <Link className={styles.link} href="/dashboard/wallet?from=billing">
+                Manage an existing token holding
+                <ArrowRight size={13} aria-hidden="true" />
+              </Link>
+            </p>
+          </>
+        ) : !c.flags.cryptoBillingEnabled ? (
           <p className={styles.quietLine}>
             {hermesCreditTopUpsOffered && (
               <button
@@ -213,9 +230,10 @@ export function PaymentMethodsTab({
               <div className={styles.methodBlock}>
                 <h3 className={styles.blockTitle}>Hold $HermesOS for ongoing access</h3>
                 <p className={styles.blockText}>
-                  Hold enough $HermesOS in a verified wallet and Pro or Power stays unlocked while you hold. The
-                  amount for each plan is on the wallet page.
+                  Hold enough $HermesOS in a verified wallet and Pro or Power stays unlocked while you hold. No
+                  payment, and you can move your tokens any time; access ends when the balance drops below the amount.
                 </p>
+                <HoldAmountsTable amounts={c.holdAmounts} />
                 {source === "token_holding" && (
                   <p className={styles.blockStatus}>
                     <ShieldCheck size={14} aria-hidden="true" />
@@ -236,7 +254,7 @@ export function PaymentMethodsTab({
                 </div>
                 <div className={styles.panelActions}>
                   <Link className={styles.link} href="/dashboard/wallet?from=billing">
-                    See how much to hold
+                    Verify a wallet and track your holding
                     <ArrowRight size={13} aria-hidden="true" />
                   </Link>
                 </div>
@@ -269,6 +287,63 @@ export function PaymentMethodsTab({
           </>
         )}
       </section>
+    </div>
+  );
+}
+
+function formatUsd(value: number): string {
+  return `$${value.toLocaleString("en-US")}`;
+}
+
+/**
+ * The server's per-plan hold amounts for this account (they follow the token
+ * price and the user's pricing epoch), plus the VVV compute boost.
+ */
+function HoldAmountsTable({ amounts }: { amounts: BillingController["holdAmounts"] }) {
+  if (!amounts) {
+    return <p className={styles.blockText}>Checking how much to hold…</p>;
+  }
+  const rows = [
+    { name: "Pro", tier: amounts.pro },
+    { name: "Power", tier: amounts.power },
+  ];
+  return (
+    <div className={styles.holdTable}>
+      <table>
+        <caption className={styles.srOnly}>$HermesOS to hold for each plan</caption>
+        <thead>
+          <tr>
+            <th scope="col">Plan</th>
+            <th scope="col">Hold</th>
+            <th scope="col">Worth about</th>
+            <th scope="col">You</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ name, tier }) => (
+            <tr key={name}>
+              <th scope="row">{name}</th>
+              <td className={styles.holdAmount}>{tier.amountDisplay} $HermesOS</td>
+              <td>{tier.usdApprox !== null ? formatUsd(tier.usdApprox) : "—"}</td>
+              <td>{tier.eligible ? "Unlocked" : "Not yet"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className={styles.blockText}>
+        {amounts.balanceDisplay !== null
+          ? `Your verified balance: ${amounts.balanceDisplay} $HermesOS. `
+          : "Verify a wallet below to count your balance. "}
+        Amounts follow the token price, so they move as it does.
+      </p>
+      {amounts.vvvBoost && (
+        <p className={styles.blockText}>
+          Also holding VVV? {amounts.vvvBoost.requiredDisplay} VVV
+          {amounts.vvvBoost.countsStaked ? " (staked counts)" : ""}, about {formatUsd(amounts.vvvBoost.usdThreshold)},
+          adds +{amounts.vvvBoost.cpuBonus} vCPU and +{amounts.vvvBoost.ramBonusGb} GB per agent
+          {amounts.vvvBoost.eligible ? ". Your boost is on." : "."}
+        </p>
+      )}
     </div>
   );
 }

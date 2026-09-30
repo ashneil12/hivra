@@ -39,6 +39,7 @@ test('all tracked npm application roots declare Apache-2.0 consistently', () => 
     'services/browser-sidecar',
     'services/posthog-proxy-worker',
     'services/venice-proxy-worker',
+    'services/host-relay-worker',
   ]) {
     const manifest = JSON.parse(read(`${directory}/package.json`));
     const lock = JSON.parse(read(`${directory}/package-lock.json`));
@@ -52,7 +53,7 @@ test('public-address sanitization cannot rewrite dependency semver or engine con
   assert.equal(browser.packages['node_modules/mailparser'].dependencies['html-to-text'], '10.0.1');
   assert.equal(browser.packages['node_modules/socks'].engines.node, '>= 10.0.0');
 
-  for (const directory of ['services/posthog-proxy-worker', 'services/venice-proxy-worker']) {
+  for (const directory of ['services/posthog-proxy-worker', 'services/venice-proxy-worker', 'services/host-relay-worker']) {
     const lock = JSON.parse(read(`${directory}/package-lock.json`));
     assert.equal(lock.packages['node_modules/@poppinss/dumper'].dependencies['supports-color'], '^10.0.0');
     assert.equal(lock.packages['node_modules/ws'].engines.node, '>=10.0.0');
@@ -94,7 +95,7 @@ test('release policies preserve third-party and incomplete-release boundaries', 
 
   const security = read('SECURITY.md');
   assert.match(security, /Report a vulnerability privately/);
-  assert.match(security, /info@hermesos\.cloud/);
+  assert.match(security, /info@hivra\.cloud/);
   assert.match(security, /https:\/\/github\.com\/ashneil12\/hivra\/security\/advisories\/new/);
 
   const readme = read('README.md');
@@ -116,7 +117,11 @@ test('release policies preserve third-party and incomplete-release boundaries', 
   assert.match(runtime, /self-host acceptance and independent export review/i);
 
   const roadmap = read('ROADMAP.md');
-  assert.match(roadmap, /Phase 0 — Canonical truth and public-release safety[\s\S]*?\*\*Status:\*\* Building/);
+  // Phase 0 is complete only for the initial export; every later candidate and
+  // every separately built artifact keeps its own review gate.
+  assert.match(roadmap, /Phase 0 — Canonical truth and public-release safety\s+\*\*Status:\*\* Complete for the initial source export/);
+  assert.match(roadmap, /Each later\s+source candidate is reviewed at its exact revision/);
+  assert.match(roadmap, /separately built\s+runtime, image, desktop bundle or mirror is its own release gate/);
   assert.match(roadmap, /first public artifact\s+is explicitly source-only/i);
   assert.match(roadmap, /separate byte-level evidence is complete/i);
   assert.match(roadmap, /\[x\] Decide preserved-history versus fresh-public-repository/);
@@ -180,14 +185,36 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.match(credentialEvidenceBuilder, /current-authorization-boundary-reconciled/);
   assert.equal(assetPolicy.format, 'hivra-asset-provenance-policy-v1');
   assert.equal(assetPolicy.releaseApproved, false);
-  assert.equal(assetPolicy.assets.length, 16);
-  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 16);
+  assert.equal(assetPolicy.assets.length, 37);
+  assert.equal(new Set(assetPolicy.assets.map((entry) => entry.path)).size, 37);
   assert.ok(assetPolicy.assets.every((entry) => entry.redistributionDecision === 'include'));
   assert.ok(assetPolicy.assets.some((entry) => entry.rightsStatus === 'documented-project-generated'));
   assert.equal(assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-third-party-font').length, 4);
   assert.equal(assetPolicy.assets.filter(
     (entry) => entry.rightsStatus === 'documented-owner-asserted-original-artwork',
-  ).length, 5);
+  ).length, 21);
+  // Twelve of those are resized exports of the approved logo (token image,
+  // listing-site logos, app icons and the homepage mark) and two are
+  // launch-banner drafts.
+  assert.equal(assetPolicy.assets.filter(
+    (entry) => entry.class === 'owner-asserted-brand-artwork-export',
+  ).length, 12);
+  assert.equal(assetPolicy.assets.filter(
+    (entry) => entry.class === 'owner-asserted-brand-artwork-draft',
+  ).length, 2);
+  // Six are light WebP exports of the three generated litepaper renders. They
+  // name their source and carry no generation record of their own.
+  const derivedRecords = JSON.parse(read('docs/release/asset-derived-exports.json'));
+  const derivedAssets = assetPolicy.assets.filter((entry) => entry.rightsStatus === 'documented-derived-export');
+  assert.equal(derivedAssets.length, 6);
+  assert.equal(derivedRecords.format, 'hivra-asset-derived-exports-v1');
+  assert.equal(derivedRecords.derivedAssets.length, 6);
+  assert.deepEqual(derivedRecords.derivedAssets.map((entry) => entry.path).sort(), derivedAssets.map((entry) => entry.path).sort());
+  assert.ok(derivedRecords.derivedAssets.every((entry) => assetRecords.generatedAssets.some(
+    (record) => record.path === entry.sourcePath && record.sha256 === entry.sourceSha256,
+  )));
+  assert.ok(derivedAssets.every((entry) => !assetRecords.generatedAssets.some((record) => record.path === entry.path)));
+  assert.equal(assetPolicy.rightsReview.derivedExportsSha256, sha256('docs/release/asset-derived-exports.json'));
   assert.equal(assetRecords.format, 'hivra-asset-generation-records-v1');
   assert.equal(assetRecords.generatedAssets.length, 3);
   assert.equal(assetPolicy.rightsReview.generationRecordsSha256, sha256('docs/release/asset-generation-records.json'));
@@ -197,7 +224,7 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.ok(fontEvidence.fonts.every((entry) => entry.sha256 === entry.upstreamDownloadedSha256));
   assert.equal(assetPolicy.rightsReview.fontLicenseEvidenceSha256, sha256('docs/release/font-license-evidence.json'));
   assert.equal(ownerAssertions.format, 'hivra-asset-owner-assertions-v1');
-  assert.equal(ownerAssertions.assertions.length, 5);
+  assert.equal(ownerAssertions.assertions.length, 21);
   assert.equal(ownerAssertions.assertions.filter(
     (entry) => entry.independentEvidenceLevel === 'owner-supplied-original-byte-match',
   ).length, 1);
@@ -289,6 +316,8 @@ test('release metadata changes cannot bypass the CI guard path filters', () => {
     'services/browser-sidecar/package-lock.json',
     'services/posthog-proxy-worker/**',
     'services/venice-proxy-worker/**',
+    'services/host-relay-worker/**',
+    'services/host-connector/**',
     'scripts/release/**',
     '.github/workflows/worker-builds.yml',
     '.github/workflows/public-release-safety.yml',
@@ -329,7 +358,10 @@ test('every third-party GitHub Action is pinned to an immutable commit', () => {
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   ], 'the offline VM fixture adds only the reviewed checkout and evidence upload');
-  assert.equal(actionCount, 12, 'review the complete workflow action inventory when it changes');
+  // 13: the host-connector job adds one pinned actions/checkout.
+  // 19: Dashboard CI's parallel jobs each pin checkout and setup-node, and the
+  // attach fixtures job adds one more of each.
+  assert.equal(actionCount, 19, 'review the complete workflow action inventory when it changes');
 });
 
 test('workflow action inventory fails closed on alternate uses-key forms', () => {
@@ -362,7 +394,7 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
 
   const fingerprints = read('.gitleaksignore').split(/\r?\n/)
     .filter((line) => line && !line.startsWith('#'));
-  assert.equal(fingerprints.length, 60);
+  assert.equal(fingerprints.length, 44);
   assert.equal(new Set(fingerprints).size, fingerprints.length);
   for (const fingerprint of fingerprints) {
     assert.match(fingerprint, /^[^:\r\n]+:(?:curl-auth-header|discord-client-id|generic-api-key|private-key|stripe-access-token):\d+$/);
@@ -386,7 +418,6 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
     .filter((file) => !/(?:__tests__|\/tests\/)/.test(file));
   assert.deepEqual([...new Set(reviewedNonTestPaths)].sort(), [
     'dashboard/auth.ts',
-    'dashboard/src/components/landing/DemoVideoSection.tsx',
     'dashboard/src/data/curated-skills.ts',
     'dashboard/src/lib/blog/articles/hermes-agent-telegram-discord-setup.ts',
     'dashboard/src/lib/encryption-rotation.ts',
@@ -417,7 +448,8 @@ test('Operator OS is not a new-launch or private-build path in the public source
   assert.equal(existsSync(path.join(root, '.github/workflows/operatoros-box-publish.yml')), false);
   assert.equal(existsSync(path.join(root, '.github/workflows/operatoros-save-images.yml')), false);
   assert.doesNotMatch(read('dashboard/src/lib/welcome-agent-catalog.ts'), /key:\s*["']operatoros["']/);
-  assert.doesNotMatch(read('dashboard/src/components/dashboard/welcome/DeployForm.tsx'), /Agent Runtime|Operator OS/);
+  assert.equal(existsSync(path.join(root, 'dashboard/src/components/dashboard/welcome/DeployForm.tsx')), false);
+  assert.doesNotMatch(read('dashboard/src/components/launch/LaunchJourney.tsx'), /Agent Runtime|Operator OS/);
   assert.match(read('dashboard/src/lib/services/instance-service.ts'), /agentFlavor:\s*z\.literal\(["']vanilla["']\)/);
   assert.match(read('docs/release/RUNTIME-DISTRIBUTION.md'), /Compatibility only; no new launch or default image/);
 

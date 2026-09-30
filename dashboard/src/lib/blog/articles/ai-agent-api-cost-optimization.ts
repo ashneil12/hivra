@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Real developer breakdowns of AI agent API costs in 2026, including how one developer cut costs from $847 to $159/month. Model pricing tables, optimization techniques, and what multi-agent systems actually cost.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-24",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "Actual monthly numbers from developers who track them.",
@@ -45,7 +45,7 @@ export const article: BlogArticle = {
     {
       heading: "What Hivra usage actually costs",
       paragraphs: [
-        "On the Hivra Pro plan ($9.99/month), the most common token spend for a developer running 5-7 scheduled tasks: competitive monitoring and daily summaries on Haiku 4.5 via Batch API ($0.50/$2.50 per MTok) — approximately $2-4/month. Weekly research tasks on Sonnet 4.6 — $5-10/month. Occasional complex reasoning on Opus 4.6 — $3-8/month. Total API costs: $10-22/month. Full stack: $20-32/month for a persistent agent running autonomous scheduled tasks.",
+        "On Hivra's $9.99/month plan, the most common token spend for a developer running 5-7 scheduled tasks: competitive monitoring and daily summaries on Haiku 4.5 via Batch API ($0.50/$2.50 per MTok) — approximately $2-4/month. Weekly research tasks on Sonnet 4.6 — $5-10/month. Occasional complex reasoning on Opus 4.6 — $3-8/month. Total API costs: $10-22/month. Full stack: $20-32/month for a persistent agent running autonomous scheduled tasks.",
         "For browser-intensive workloads — daily scraping of 5-10 competitor pages with screenshot analysis — expect $15-30/month in API tokens using Haiku for vision steps and Sonnet for synthesis. Ten pages per day for 30 days at Haiku rates: $3-4.50/month in screenshot tokens alone, before the reasoning steps. Budget accordingly before enabling browser automation on a daily schedule.",
       ],
     },
@@ -69,7 +69,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What does it actually cost per month to run a Hermes agent?",
-      a: "At typical Hivra usage (5-7 scheduled tasks, mixed Haiku/Sonnet): $10-22/month in API tokens plus $9.99/month for the Pro plan = $20-32/month total. Browser-heavy workloads with daily scraping add $15-30/month. Full range: $25-62/month for a fully operational persistent agent.",
+      a: "At typical Hivra usage (5-7 scheduled tasks, mixed Haiku/Sonnet): $10-22/month in API tokens plus $9.99/month for Hivra's entry plan = $20-32/month total. Browser-heavy workloads with daily scraping add $15-30/month. Full range: $25-62/month for a fully operational persistent agent.",
     },
   ],
   relatedArticles: [

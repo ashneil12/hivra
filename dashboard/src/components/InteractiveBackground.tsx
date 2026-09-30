@@ -165,10 +165,22 @@ function InteractiveBackground({
       mouse.y = null;
     };
 
+    // iOS Safari resizes the height whenever its toolbar collapses; re-seeding
+    // on every one of those made the background jump. Only a width change
+    // re-seeds; a height-only change keeps the particles inside the new edge.
+    let seededWidth = -1;
     const handleResize = () => {
-      canvas.width = window.innerWidth;
+      const width = window.innerWidth;
+      canvas.width = width;
       canvas.height = window.innerHeight;
-      init();
+      if (width !== seededWidth || particlesArray.length === 0) {
+        seededWidth = width;
+        init();
+      } else {
+        for (const particle of particlesArray) {
+          particle.y = Math.min(particle.y, canvas.height);
+        }
+      }
       if (!isPaused) {
         startAnimation();
       }

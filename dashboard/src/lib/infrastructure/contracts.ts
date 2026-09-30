@@ -354,6 +354,9 @@ function validateVmidRange(
 export const ProxmoxVmidRangeSchema =
   ProxmoxVmidRangeObjectSchema.superRefine(validateVmidRange);
 
+export const SSH_PRIVILEGES = ["login", "sudo"] as const;
+export type SshPrivilege = (typeof SSH_PRIVILEGES)[number];
+
 const ProxmoxSshEndpointSchema = z
   .object({
     sshHost: ProxmoxSshHostSchema,
@@ -365,6 +368,13 @@ const ProxmoxSshEndpointSchema = z
       .max(32)
       .regex(/^[A-Za-z_][A-Za-z0-9_.-]*$/, "SSH user contains unsupported characters"),
     sshHostFingerprintSha256: ProxmoxSshHostFingerprintSchema,
+    /** How host scripts reach root. "login": the SSH user itself (today's
+     * behaviour). "sudo": every host script runs through passwordless sudo.
+     * Absent means "login". */
+    sshPrivilege: z.enum(SSH_PRIVILEGES).optional(),
+    /** Set when Hivra knows the pinned key is Ed25519 (the setup command, or
+     * a key read from the server): SSH then offers only that algorithm. */
+    sshHostKeyType: z.literal("ssh-ed25519").nullable().optional(),
   })
   .strict();
 
@@ -404,6 +414,9 @@ export const ProxmoxAdvancedConfigurationSchema = z
 export const ProxmoxConnectionCredentialsSchema = z
   .object({
     sshPrivateKey: ProxmoxSshPrivateKeySchema,
+    /** Unlocks a passphrase-protected key once, on the server. The unlocked
+     * key goes into the sealed bundle; the passphrase is never stored. */
+    sshPrivateKeyPassphrase: z.string().min(1).max(1_024).optional(),
   })
   .strict();
 
@@ -421,6 +434,13 @@ const ProxmoxConnectionCreateObjectSchema = z
 
 export const ProxmoxConnectionCreateSchema = ProxmoxConnectionCreateObjectSchema.superRefine(
   (value, context) => {
+    if (value.endpoint.sshPrivilege === "sudo") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endpoint", "sshPrivilege"],
+        message: "Proxmox servers need a root login for now",
+      });
+    }
     const simplePlacementOverrides = value.configuration
       ? Object.keys(value.configuration).filter((key) => key !== "capacityPolicy")
       : [];
@@ -479,6 +499,34 @@ const DigitalOceanApiTokenSchema = z
     message: "DigitalOcean API token cannot contain whitespace or control characters",
   });
 
+const CalendarDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date")
+  .refine((value) => {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }, { message: "Choose a real date" });
+
+/** What the owner tells Hivra about when a provider token stops working.
+ * DigitalOcean does not report a personal access token's expiry through the
+ * API, so this is the owner's declaration, never provider evidence. */
+export const ProviderTokenExpiryInputSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("none") }).strict(),
+  z.object({ mode: z.literal("date"), date: CalendarDateSchema }).strict(),
+]);
+
+export const CredentialExpiryDtoSchema = z
+  .object({
+    source: z.literal("owner-declared"),
+    noExpiry: z.boolean(),
+    expiresOn: CalendarDateSchema.nullable(),
+    declaredAt: IsoDateTimeSchema,
+  })
+  .strict()
+  .refine((value) => value.noExpiry === (value.expiresOn === null), {
+    message: "Token expiry is inconsistent",
+  });
+
 export const DigitalOceanConnectionCreateSchema = z
   .object({
     name: ConnectionNameSchema,
@@ -490,6 +538,7 @@ export const DigitalOceanConnectionCreateSchema = z
         apiToken: DigitalOceanApiTokenSchema,
       })
       .strict(),
+    tokenExpiry: ProviderTokenExpiryInputSchema.optional(),
   })
   .strict();
 
@@ -612,6 +661,8 @@ export const InfrastructureConnectionDtoSchema = z.discriminatedUnion("provider"
         })
         .strict(),
       lastErrorCode: z.enum(DIGITALOCEAN_CONNECTION_ERROR_CODES).nullable(),
+      /** Owner-declared token expiry; absent when never recorded. */
+      credentialExpiry: CredentialExpiryDtoSchema.nullable().optional(),
     })
     .strict(),
 ]);
@@ -1565,6 +1616,8 @@ export type DigitalOceanConnectionDto = Extract<
   { provider: "digitalocean" }
 >;
 export type DigitalOceanConnectionCreate = z.infer<typeof DigitalOceanConnectionCreateSchema>;
+export type ProviderTokenExpiryInput = z.infer<typeof ProviderTokenExpiryInputSchema>;
+export type CredentialExpiryDto = z.infer<typeof CredentialExpiryDtoSchema>;
 export type DigitalOceanConnectionErrorCode = (typeof DIGITALOCEAN_CONNECTION_ERROR_CODES)[number];
 export type DigitalOceanHarness = (typeof DIGITALOCEAN_HARNESSES)[number];
 export type DigitalOceanSandboxSize = (typeof DIGITALOCEAN_SANDBOX_SIZES)[number];

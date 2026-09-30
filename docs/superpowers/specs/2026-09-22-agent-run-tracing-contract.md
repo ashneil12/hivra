@@ -33,8 +33,8 @@ verified producer exists.
 | `/var/lib/hivra-agent-trace/credential.json` | 0600 | root | `{endpoint, resourceId, token, expiresAt}` |
 | `/var/lib/hivra-agent-trace/state.json` | 0600 | root | File offsets and bounded parser state |
 
-Installation is one idempotent entry point, used by the launch installer and
-by the start path:
+Installation is one idempotent entry point, used by the launch installer, by
+the start path and by the in-place runtime update:
 
 ```
 python3 -I -B <dir>/hivra-agent-trace.py install --source-dir <dir>
@@ -48,8 +48,9 @@ token.
 
 Reporter installation is fail-open everywhere: a malformed credential document
 is refused, but a failure to install or start the reporter never fails a
-launch or a start. The launch installer and the start helper each emit exactly
-one marker line into the host log,
+launch, a start or a runtime update. The launch installer and the start helper each emit exactly
+one marker line into the host log (the in-place runtime updater emits the same
+line on its host-authored stdout),
 `HIVRA_ACTIVITY_COLLECTOR status=installed` or
 `HIVRA_ACTIVITY_COLLECTOR status=failed reason=<enum>`, which the control plane
 records as the computer's install status. Issuance is recorded only when the
@@ -179,6 +180,29 @@ Native events are stored in `hivra_agent_events` with `event = 'otel_log'`,
 `detail.source = 'otlp_log'`, and `detail.telemetry` extended with
 `role`, `producer`, `toolName`, `durationMs`, `conversationId`,
 `parentSpanId`, `errorType`; the feed re-validates every field on read.
+
+## Retention and deletion
+
+Records stay content-free (no prompts, commands or file contents), and they are
+kept for a bounded time (migration `20260923190000_hivra_activity_retention.sql`):
+
+- **Computer deleted:** when `hivra_agents.status` becomes `deleted` (only after
+  verified teardown, on every delete path), the trigger
+  `delete_hivra_activity_after_agent_delete` deletes that computer's
+  `hivra_agent_events` rows (up to 20,000; the job removes any rest) and its
+  `hivra_activity_collectors` row in the same transaction. A `deleted`
+  lifecycle event that a delete path logs after the flip is kept as a
+  tombstone and ages out with the window. No audit consumer needs the rest:
+  billing reads its own ledgers, and ops reads `ops_events`.
+- **Age:** `/api/cron/prune-hivra-activity` (daily) calls
+  `prune_hivra_activity(cutoff, batch, dry_run)` in bounded batches to delete
+  rows older than `ACTIVITY_RETENTION_DAYS` (default and maximum 90, minimum 30), plus
+  leftovers of computers deleted before the trigger existed. It is OFF unless
+  `ACTIVITY_RETENTION_ENABLED=true`; while off, every run is a dry run that
+  reports counts. `?dryRun=1` forces a preview.
+- **Account deleted:** `ACCOUNT_DELETION_TABLES` deletes both tables by
+  `user_id`. Account deletion refuses to apply while the user still has a Hivra
+  computer that is not deleted.
 
 ## Coverage states (per computer, capability `native_tracing`)
 

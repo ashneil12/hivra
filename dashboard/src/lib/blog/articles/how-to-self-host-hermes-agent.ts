@@ -1,12 +1,13 @@
 import { BlogArticle } from "../types";
+import { ENTRY_PLAN_PRICE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "how-to-self-host-hermes-agent",
   title: "How to self-host Hermes Agent on a VPS: complete setup guide (2026)",
   metaDescription:
-    "Step-by-step guide to self-hosting Hermes Agent on a Linux VPS. Covers server requirements, Docker setup, Telegram gateway, systemd service, and the common errors that kill most first attempts — plus why a one-click managed deployment might be the better call.",
+    "Step-by-step guide to self-hosting Hermes Agent on a Linux VPS. Covers server requirements, Docker setup, Telegram gateway, systemd service, and the common errors that kill most first attempts — plus when a managed host might be the better call.",
   publishedDate: "2026-04-11",
-  lastModified: "2026-04-11",
+  lastModified: "2026-09-24",
   readingTimeMin: 14,
   author: "Hivra team",
   tagline: "Every command on this page came from the official NousResearch GitHub. Set aside 2-4 hours.",
@@ -17,14 +18,14 @@ export const article: BlogArticle = {
       heading: "Before you start: do you actually want to self-host?",
       paragraphs: [
         "Self-hosting makes sense if you want full control over your data, you're comfortable with Linux server administration, you have specific compliance or privacy requirements, or you want to modify the agent's core behavior. The MIT license means you can do anything with it.",
-        "Skip this guide if your hourly rate is above $50, you want to be running within the next 30 minutes, or you'd rather spend your time on the work the agent will do rather than configuring the environment it runs in. Hivra deploys a fully configured Hermes instance — Docker, systemd, Telegram gateway, web UI — in one click, without any of the steps below. The rest of this guide is for the self-hosters.",
+        "Skip this guide if your hourly rate is above $50, you want to be running today without touching a server, or you'd rather spend your time on the work the agent will do rather than configuring the environment it runs in. Hivra launches a configured Hermes agent from its dashboard, with the server, container, and messaging gateway set up and chat in the browser, without any of the steps below. The rest of this guide is for the self-hosters.",
         "What you need before starting: a VPS running Ubuntu 24.04 LTS (fresh install preferred), root SSH access, a domain name pointed at the server (optional but strongly recommended for the web UI), an API key from at least one LLM provider (OpenRouter recommended — gives access to 300+ models with a single key), and a Telegram account for the messaging gateway.",
       ],
     },
     {
       heading: "Server requirements",
       paragraphs: [
-        "Minimum: 2 vCPU, 4GB RAM, 20GB SSD. This runs Hermes with Docker-sandboxed execution. Hetzner CX22 at €3.99/month meets this spec and is the community's budget option. DigitalOcean's Basic Droplet at 4GB RAM is $24/month for the same spec. Hostinger KVM 2 at around $10-20/month with 8GB RAM is a solid mid-tier choice if you run several tools on the same server.",
+        "Minimum: 2 vCPU, 4GB RAM, 20GB SSD. This runs Hermes with Docker-sandboxed execution. Hetzner's CX23 at €5.49/month (excluding VAT) meets this spec and is the community's budget option. DigitalOcean's Basic Droplet at 4GB RAM is $24/month for the same spec. Hostinger KVM 2 with 8GB RAM, at $8.99/month on a two-year promotional term and $14.99/month on renewal, is a solid mid-tier choice if you run several tools on the same server.",
         "Recommended: 4 vCPU, 8GB RAM, 40GB SSD. The extra RAM matters for running local models via Ollama alongside the agent, or for heavy parallel task workloads. 4GB is the hard floor — below it, you hit OOM errors on complex tasks. Operating system: Ubuntu 24.04 LTS. The official install script is written for this. Debian 12 works with minor adjustments. Nothing else unless you're confident rewriting the installer.",
       ],
     },
@@ -77,19 +78,19 @@ export const article: BlogArticle = {
     {
       heading: "The honest self-hosting calculation",
       paragraphs: [
-        "Server cost: Hetzner CX22 at €3.99/month (~$4.30). LLM API costs: $5-50/month depending on task volume. Initial setup: 2-4 hours of your time. Ongoing maintenance: 30-60 minutes per month. At $50/hour, the setup alone costs $100-200 in time — enough to cover 2-4 months of a managed service.",
-        "Self-hosting wins if you are comfortable with Linux, expect to keep the agent running for a year or more, and care about complete data control. It loses if setup issues frustrate you, if maintenance distracts from the actual work, or if updates break your configuration at inconvenient times. Hivra is the one-click alternative — the same Hermes Agent, with the Docker configuration, systemd service, SSL, and updates handled. If you want it running in 30 minutes rather than 4 hours, that is what it is for.",
+        `Server cost: Hetzner CX23 at €5.49/month excluding VAT. LLM API costs: $5-50/month depending on task volume. Initial setup: 2-4 hours of your time. Ongoing maintenance: 30-60 minutes per month. At $50/hour, the setup alone costs $100-200 in time — enough to cover 10-20 months of Hivra's ${ENTRY_PLAN_PRICE} plan.`,
+        "Self-hosting wins if you are comfortable with Linux, expect to keep the agent running for a year or more, and care about complete data control. It loses if setup issues frustrate you, if maintenance distracts from the actual work, or if updates break your configuration at inconvenient times. Hivra is the managed alternative: Hermes from Hivra's maintained build of the open-source agent, with the container, service, SSL, and tested updates handled. If you would rather skip the 4 hours, that is what it is for.",
       ],
     },
   ],
   faqs: [
     {
       q: "What is the cheapest server that can actually run Hermes Agent?",
-      a: "Hetzner CX22 at €3.99/month (2 vCPU, 4GB RAM, 40GB SSD). This meets the minimum spec and the community has validated it works. Below 4GB RAM you will hit OOM errors on complex tasks.",
+      a: "Hetzner CX23 at €5.49/month excluding VAT (2 vCPU, 4GB RAM, 40GB SSD). This meets the minimum spec and the community has validated it works. Below 4GB RAM you will hit OOM errors on complex tasks.",
     },
     {
       q: "How long does the setup actually take?",
-      a: "2-4 hours for a developer comfortable with Linux and Docker, if everything goes right. Add an hour for each significant error you hit. First-time Linux server administrators typically spend 6-8 hours. Hivra completes the same setup in under 5 minutes.",
+      a: "2-4 hours for a developer comfortable with Linux and Docker, if everything goes right. Add an hour for each significant error you hit. First-time Linux server administrators typically spend 6-8 hours. On Hivra you skip this setup entirely.",
     },
     {
       q: "Do I need my own domain for self-hosting?",
@@ -105,6 +106,10 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    {
+      slug: "hermes-agent-skills-guide",
+      title: "Hermes Agent skills: how they work, how to create them, and what's on the Skills Hub",
+    },
     { slug: "what-is-hermes-agent", title: "What is Hermes Agent? A plain-English explanation" },
     { slug: "best-vps-for-hermes-agent", title: "Best VPS for Hermes Agent in 2026" },
     { slug: "persistent-memory-explained", title: "How persistent memory works in AI agents" },

@@ -5,6 +5,9 @@ export interface ManagedVeniceTokenQuotePayload {
   tokenAmountRaw: string;
   tokenSymbol: string;
   tokenDecimals: number;
+  /** Contract of the token this quote must be paid in. */
+  tokenAddress?: string;
+  tokenKey?: string;
   snapshotPriceUsd: string;
   paidValueMicroUsd: number;
   creditValueMicroUsd: number;

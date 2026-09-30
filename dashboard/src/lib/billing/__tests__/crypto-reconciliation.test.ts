@@ -302,3 +302,129 @@ describe("crypto top-up reconciliation", () => {
     expect(memory.tables.crypto_deposit_receipts[0].status).toBe("settled");
   });
 });
+
+describe("crypto top-up reconcile queue", () => {
+  const attackerAddress = normalizedDepositAddressTwo;
+
+  function attackerIntent(index: number, createdAtIso: string, queuedAt: string | null = createdAtIso): MemoryRow {
+    return makePayment({
+      id: `attacker_${index}`,
+      user_id: "user_attacker",
+      provider_reference_id: `bankr_crypto_topup:attacker_${index}`,
+      created_at: createdAtIso,
+      updated_at: createdAtIso,
+      reconcile_queued_at: queuedAt,
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: attackerAddress,
+        createdAt: createdAtIso,
+        sessionExpiresAt: new Date(Date.parse(createdAtIso) + 20 * 60_000).toISOString(),
+      },
+    });
+  }
+
+  function minutesAfter(iso: string, minutes: number) {
+    return new Date(Date.parse(iso) + minutes * 60_000).toISOString();
+  }
+
+  function legitStatus(memory: BillingMemoryDb) {
+    return memory.tables.payment_transactions.find((row) => row.id === "payment_1")?.status;
+  }
+
+  it("reaches an older paid intent even when a burst of newer intents fills every batch", async () => {
+    // The paid intent was opened at 11:50; 60 newer intents from one account
+    // arrived just before the tick. Newest-first batches of 50 never reached it.
+    const burst = Array.from({ length: 60 }, (_, index) =>
+      attackerIntent(index, minutesAfter("2026-04-24T11:51:00.000Z", index * 0.1))
+    );
+    const { memory, rpc } = setup([makePayment({ reconcile_queued_at: createdAt }), ...burst]);
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    const first = await run(memory, rpc, { limit: 50 });
+
+    expect(first.checked).toBeLessThanOrEqual(50 + 5);
+    expect(first.settled).toBe(1);
+    expect(legitStatus(memory)).toBe("succeeded");
+  });
+
+  it("checks every open intent within ceil(open intents / limit) runs while new intents keep arriving", async () => {
+    // 25 intents from one account sit ahead of the paid intent in the queue,
+    // more than the rows read ahead (limit 5 x 4), so the per-account cap cannot
+    // help: only the queue moving can. Six more arrive before every tick and
+    // take the one fresh-lane slot, leaving 4 queue slots per run.
+    const ahead = Array.from({ length: 25 }, (_, index) =>
+      attackerIntent(index, minutesAfter("2026-04-24T11:50:30.000Z", index * 0.01), "2026-04-24T11:40:00.000Z")
+    );
+    const { memory, rpc } = setup([makePayment({ reconcile_queued_at: "2026-04-24T11:45:00.000Z" }), ...ahead]);
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    let arrivals = 0;
+    let settledOnRun: number | null = null;
+    const bound = Math.ceil(26 / 4);
+    for (let tick = 0; tick < bound + 2 && settledOnRun === null; tick += 1) {
+      const tickAt = minutesAfter(now, tick);
+      for (let index = 0; index < 6; index += 1) {
+        memory.insertRow("payment_transactions", {
+          ...attackerIntent(1000 + arrivals, minutesAfter(tickAt, -0.5)),
+          reconcile_queued_at: minutesAfter(tickAt, -0.5),
+        });
+        arrivals += 1;
+      }
+      const result = await run(memory, rpc, { limit: 5, now: new Date(tickAt) });
+      expect(result.checked).toBeLessThanOrEqual(5 + 5);
+      if (legitStatus(memory) === "succeeded") settledOnRun = tick + 1;
+    }
+
+    expect(settledOnRun).not.toBeNull();
+    expect(settledOnRun!).toBeLessThanOrEqual(bound);
+  });
+
+  it("moves each checked intent to the back of the queue", async () => {
+    const intents = Array.from({ length: 4 }, (_, index) =>
+      attackerIntent(index, minutesAfter("2026-04-24T11:51:00.000Z", index), minutesAfter("2026-04-24T11:30:00.000Z", index))
+    );
+    const { memory, rpc } = setup(intents);
+
+    const first = await run(memory, rpc, { limit: 2 });
+    const second = await run(memory, rpc, { limit: 2, now: new Date(minutesAfter(now, 10)) });
+
+    const checked = (result: Awaited<ReturnType<typeof run>>) => result.results.map((entry) => entry.referenceId);
+    expect(checked(first)).toEqual(["bankr_crypto_topup:attacker_0", "bankr_crypto_topup:attacker_1"]);
+    expect(checked(second)).toEqual(["bankr_crypto_topup:attacker_2", "bankr_crypto_topup:attacker_3"]);
+    expect(memory.tables.payment_transactions.map((row) => row.reconcile_queued_at)).toEqual([now, now, minutesAfter(now, 10), minutesAfter(now, 10)]);
+  });
+
+  it("does not let one account take every slot while other accounts' intents are waiting", async () => {
+    const ahead = Array.from({ length: 12 }, (_, index) =>
+      attackerIntent(index, minutesAfter("2026-04-24T11:51:00.000Z", index * 0.1), "2026-04-24T11:40:00.000Z")
+    );
+    const otherUser = (id: string, queuedAt: string) =>
+      makePayment({
+        id,
+        user_id: `user_${id}`,
+        provider_reference_id: `bankr_crypto_topup:${id}`,
+        reconcile_queued_at: queuedAt,
+        metadata: { ...(makePayment().metadata as MemoryRow), depositAddress: `0x${id.padStart(40, "0")}` },
+      });
+    const { memory, rpc } = setup([
+      ...ahead,
+      otherUser("aaa1", "2026-04-24T11:41:00.000Z"),
+      otherUser("aaa2", "2026-04-24T11:42:00.000Z"),
+    ]);
+
+    const result = await run(memory, rpc, { limit: 5 });
+
+    const users = result.results.map(
+      (entry) => memory.tables.payment_transactions.find((row) => row.provider_reference_id === entry.referenceId)?.user_id
+    );
+    expect(users.filter((user) => user === "user_attacker")).toHaveLength(3);
+    expect(users).toEqual(expect.arrayContaining(["user_aaa1", "user_aaa2"]));
+  });
+
+  it("fails the run when the queue cannot be advanced, instead of silently re-reading the same head", async () => {
+    const { memory, rpc } = setup([makePayment()]);
+    memory.failNext({ table: "payment_transactions", op: "update", match: (patch) => "reconcile_queued_at" in patch });
+
+    await expect(run(memory, rpc)).rejects.toThrow("Failed to advance the crypto top-up reconcile queue");
+  });
+});

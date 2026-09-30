@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   metaDescription:
     "A plain-English breakdown of how Hermes Agent remembers things across sessions. Covers personality files, fact storage, conversation history search, and the Honcho semantic memory layer — with what actually persists and what gets forgotten.",
   publishedDate: "2026-04-14",
-  lastModified: "2026-04-14",
+  lastModified: "2026-09-24",
   readingTimeMin: 12,
   author: "Hivra team",
   tagline: "Three separate memory systems running at once. Here is what each one actually does.",
@@ -64,7 +64,7 @@ export const article: BlogArticle = {
     {
       heading: "Memory on Hivra",
       paragraphs: [
-        "Using [Hivra](/): all four memory layers are on and backed up automatically. SOUL.md, MEMORY.md, conversation history, and installed skills survive container restarts, redeployments, and cancellation. Nothing to configure.\n\nSelf-hosting: [the self-hosting guide](/blog/how-to-self-host-hermes-agent) covers backup setup. Worth doing before you accumulate months of conversation history you'd be sad to lose.",
+        "Using [Hivra](/): all four memory layers are on by default. SOUL.md, MEMORY.md, conversation history, and installed skills live on the agent's own disk, so they persist across restarts. Nothing to configure. Backups are not guaranteed, so keep your own export of anything you would hate to lose.\n\nSelf-hosting: [the self-hosting guide](/blog/how-to-self-host-hermes-agent) covers backup setup. Worth doing before you accumulate months of conversation history you'd be sad to lose.",
       ],
     },
   ],
@@ -83,7 +83,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What happens to memory if I lose the server?",
-      a: "Everything in ~/.hermes/ is gone unless you have backups. Run the tar command above and keep the archive somewhere safe. On Hivra, automated nightly backups handle this without any setup.",
+      a: "Everything in ~/.hermes/ is gone unless you have backups. Run the tar command above and keep the archive somewhere safe. On Hivra the memory lives on the agent's disk and persists across restarts, but keep your own export if losing it would hurt.",
     },
     {
       q: "Does Hermes use AI to search its own memory?",

@@ -6,9 +6,12 @@
 import { buildLlmsTxt } from "@/lib/llms-txt";
 import { SITE_URL } from "@/lib/seo-urls";
 
-// The content only changes on deploy (the link map is in-source), so render it
-// statically like robots.ts / sitemap.ts / the changelog feed.
+// The link map is in-source, so render it statically like robots.ts /
+// sitemap.ts / the changelog feed. The $HIVRA sentences also change at its
+// activation instant, so revalidate on the same hour the CDN caches it for,
+// rather than freezing the build-time phase.
 export const dynamic = "force-static";
+export const revalidate = 3600;
 
 export function GET() {
   const body = buildLlmsTxt({ siteUrl: SITE_URL });

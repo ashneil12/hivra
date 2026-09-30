@@ -72,7 +72,7 @@ describe("buildLifecycleEmail", () => {
 
   it("deep-links each key to the right surface", () => {
     expect(buildLifecycleEmail("day1_idle", PARAMS).ctaUrl).toBe(
-      "https://hivra.cloud/dashboard/welcome"
+      "https://hivra.cloud/dashboard/launch?kind=agent&start=1"
     );
     expect(buildLifecycleEmail("day1_active", PARAMS).ctaUrl).toBe(
       "https://hivra.cloud/dashboard/instances/inst-123"

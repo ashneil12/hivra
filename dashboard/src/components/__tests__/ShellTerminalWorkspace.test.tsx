@@ -60,6 +60,9 @@ describe("ShellTerminalWorkspace", () => {
     });
 
     expect(screen.getByTestId("terminal-panel-tab_1")).toHaveTextContent("tab_1:idle");
+    // Touch CSS keys off these: only the active tab keeps its close button.
+    expect(screen.getByTestId("shell-terminal-tab-tab_2")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("shell-terminal-tab-tab_1")).toHaveAttribute("data-active", "false");
     const surfaceKeys = terminalPanelMock.mock.calls.map(([props]) => props.surfaceKey);
     expect(surfaceKeys).toContain("tab_1");
     expect(surfaceKeys).toContain("tab_2");

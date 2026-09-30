@@ -7,6 +7,18 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 // viewport uniformly instead of cropping it or changing guest preferences.
 const MIN_LOGICAL_WIDTH = 1024;
 const MIN_LOGICAL_HEIGHT = 640;
+// Phones and touch screens cap the preset budget at 4x the panel's own pixels,
+// so fitting never shrinks the guest below half scale (unreadable, untappable).
+const COMPACT_VIEWPORT_QUERY = "(max-width: 767px), (pointer: coarse)";
+const COMPACT_MAX_PIXEL_RATIO = 4;
+
+function compactViewport(): boolean {
+  try {
+    return typeof window.matchMedia === "function" && window.matchMedia(COMPACT_VIEWPORT_QUERY).matches;
+  } catch {
+    return false;
+  }
+}
 
 export function HivraDesktopViewport({ fit, targetWidth, targetHeight, children }: {
   fit: boolean;
@@ -36,7 +48,10 @@ export function HivraDesktopViewport({ fit, targetWidth, targetHeight, children 
         // Resolution presets are a quality pixel budget, not a fixed 16:9
         // letterbox. Give the guest the panel's aspect so it fills both axes.
         // Preserve bounded sizing during transient very thin window resizes.
-        const pixels = Math.max(width * height, targetWidth * targetHeight);
+        const budget = compactViewport()
+          ? Math.min(targetWidth * targetHeight, width * height * COMPACT_MAX_PIXEL_RATIO)
+          : targetWidth * targetHeight;
+        const pixels = Math.max(width * height, budget);
         logicalWidth = Math.sqrt(pixels * aspect);
         logicalHeight = logicalWidth / aspect;
       }

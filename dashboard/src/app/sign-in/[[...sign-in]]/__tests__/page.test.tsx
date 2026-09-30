@@ -66,6 +66,38 @@ describe("SignInPage", () => {
     });
   });
 
+  it("returns a hosted sign-in to Home, never the retired welcome flow", async () => {
+    render(await SignInPage({ searchParams: Promise.resolve({}) }));
+
+    expect(mockSignIn.mock.calls[0][0]).toMatchObject({
+      fallbackRedirectUrl: "/dashboard",
+      signUpUrl: "/sign-up",
+    });
+    expect(mockSignIn.mock.calls[0][0]).not.toHaveProperty("forceRedirectUrl");
+  });
+
+  it("opens the agent a link asked for in Launch, through sign-in or sign-up", async () => {
+    render(await SignInPage({ searchParams: Promise.resolve({ agentType: "codex" }) }));
+
+    expect(mockSignIn.mock.calls[0][0]).toMatchObject({
+      forceRedirectUrl: "/dashboard/launch?kind=agent&start=1&profile=codex",
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1&profile=codex",
+      signUpUrl: "/sign-up?agentType=codex",
+    });
+  });
+
+  it("links the funnel brand home on hosted sign-in", async () => {
+    render(await SignInPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+  });
+
+  it("does not offer a home link that loops back to sign-in under local auth", async () => {
+    process.env.HIVRA_AUTH_MODE = "local";
+    render(await SignInPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.queryByRole("link", { name: "Hivra home" })).not.toBeInTheDocument();
+    expect(screen.getByText("Hivra")).toBeInTheDocument();
+  });
+
   it("returns self-hosted operators to the control plane instead of legacy onboarding", async () => {
     process.env.HIVRA_AUTH_MODE = "local";
     const page = await SignInPage({ searchParams: Promise.resolve({}) });
@@ -104,6 +136,18 @@ describe("SignInPage", () => {
       fallbackRedirectUrl: "/dashboard",
     });
     expect(mockSignIn.mock.calls[0][0]).not.toHaveProperty("forceRedirectUrl");
+  });
+
+  it("keeps a Hivra home bar above the form and lets Clerk use the full column", async () => {
+    const page = await SignInPage({ searchParams: Promise.resolve({}) });
+
+    render(page);
+
+    expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+    expect(mockSignIn.mock.calls[0][0].appearance.elements).toMatchObject({
+      rootBox: "w-full",
+      cardBox: "w-full max-w-full",
+    });
   });
 
 });

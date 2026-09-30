@@ -19,7 +19,8 @@ export type PublicRepository =
       stars: GitHubStars | null;
     }>;
 
-export type DesktopPlatform = "macos" | "windows";
+// Only a macOS app is in development. There is no Windows desktop app.
+export type DesktopPlatform = "macos";
 
 export type DesktopRelease =
   | Readonly<{ status: "pending"; href: null }>
@@ -36,11 +37,19 @@ export const PUBLIC_PROJECT_LINKS: Readonly<{
   repository: PublicRepository;
   desktop: DesktopDownloads;
   browser: string;
+  /** Official X account, the same handle as twitter:site in app/layout.tsx. */
+  x: `https://x.com/${string}`;
 }> = {
   repository: { status: "published", href: "https://github.com/ashneil12/hivra", stars: null },
   desktop: {
     macos: { status: "pending", href: null },
-    windows: { status: "pending", href: null },
   },
   browser: "/dashboard",
+  x: "https://x.com/HivraOS",
 };
+
+/** Official profiles for Organization structured data (schema.org sameAs). */
+export function officialProfileLinks(): string[] {
+  const { x, repository } = PUBLIC_PROJECT_LINKS;
+  return repository.status === "published" ? [x, repository.href] : [x];
+}

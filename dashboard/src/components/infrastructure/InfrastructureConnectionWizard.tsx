@@ -4,11 +4,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  ExternalLink,
   FileKey2,
   KeyRound,
   Loader2,
   LockKeyhole,
   RefreshCw,
+  ScanSearch,
   ServerCog,
   Settings2,
   ShieldCheck,
@@ -44,16 +46,21 @@ import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-co
 import {
   createInfrastructureConnection,
   discoverInfrastructureHost,
+  InfrastructureApiError,
   preflightInfrastructureConnection,
   updateInfrastructureConnection,
 } from "@/lib/infrastructure/client";
+import { captureServerHostKey, type CapturedHostKey } from "@/lib/infrastructure/server-enrollment-client";
 import { canPrepareFromPreflight } from "@/lib/infrastructure/preparation-eligibility";
 
 import {
   InfrastructureHostDiscoveryResult,
   supportsStrictProxmoxDiscovery,
 } from "./InfrastructureHostDiscoveryResult";
+import { gvisorCheckReadyUntil } from "@/lib/infrastructure/launch-on-server";
 import { InfrastructurePreflightResult } from "./InfrastructurePreflightResult";
+import { useDeadlinePassed } from "./LaunchOnServer";
+import { CopyButton } from "./CopyButton";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -64,7 +71,14 @@ export type InfrastructureConnectionFormValues = {
   sshPort: string;
   sshUser: string;
   sshHostFingerprintSha256: string;
+  /** Set when the fingerprint came from "Read it from the server" (an
+   * Ed25519 key), or the saved connection already recorded that type. */
+  sshHostKeyType: "ssh-ed25519" | null;
+  /** "sudo": a non-root user whose passwordless sudo runs Hivra's scripts. */
+  sshPrivilege: "login" | "sudo";
   sshPrivateKey: string;
+  /** Unlocks the key once on the server; never stored. */
+  sshPrivateKeyPassphrase: string;
   node: string;
   bridge: string;
   storage: string;
@@ -157,12 +171,29 @@ function capacityPolicyFromForm(form: InfrastructureConnectionFormValues) {
   };
 }
 
+/** Whether the form's user runs Hivra's scripts through sudo. Root never
+ * does; its login already is root. */
+function formPrivilege(form: InfrastructureConnectionFormValues): "login" | "sudo" {
+  return form.sshPrivilege === "sudo" && form.sshUser.trim() !== "root" ? "sudo" : "login";
+}
+
 function endpointFromForm(form: InfrastructureConnectionFormValues) {
+  // Only non-default values, matching the connection read model, so an
+  // untouched login connection compares equal to what was saved.
   return {
     sshHost: form.sshHost.trim(),
     sshPort: Number(form.sshPort),
     sshUser: form.sshUser.trim(),
     sshHostFingerprintSha256: form.sshHostFingerprintSha256.trim(),
+    ...(formPrivilege(form) === "sudo" ? { sshPrivilege: "sudo" as const } : {}),
+    ...(form.sshHostKeyType ? { sshHostKeyType: form.sshHostKeyType } : {}),
+  };
+}
+
+function credentialsFromForm(form: InfrastructureConnectionFormValues) {
+  return {
+    sshPrivateKey: form.sshPrivateKey,
+    ...(form.sshPrivateKeyPassphrase ? { sshPrivateKeyPassphrase: form.sshPrivateKeyPassphrase } : {}),
   };
 }
 
@@ -183,7 +214,7 @@ export function buildInfrastructureConnectionCreate(
     operatingMode: "self-managed" as const,
     setupMode: "simple" as const,
     endpoint: endpointFromForm(form),
-    credentials: { sshPrivateKey: form.sshPrivateKey },
+    credentials: credentialsFromForm(form),
   };
   const parsed = HostConnectionCreateSchema.safeParse(candidate);
   return parsed.success
@@ -206,7 +237,13 @@ export function buildInfrastructureConnectionUpdate(
 
   if (name !== current.name) patch.name = name;
   if (form.setupMode !== current.setupMode) patch.setupMode = form.setupMode;
-  if (JSON.stringify(endpoint) !== JSON.stringify(current.endpoint)) patch.endpoint = endpoint;
+  if (JSON.stringify(endpoint) !== JSON.stringify(current.endpoint)) {
+    // A privilege change back to login must say so; absent means "unchanged
+    // key type" only when the fingerprint is unchanged.
+    patch.endpoint = current.endpoint?.sshPrivilege === "sudo" && !endpoint.sshPrivilege
+      ? { ...endpoint, sshPrivilege: "login" }
+      : endpoint;
+  }
 
   if (form.setupMode === "simple") {
     if (JSON.stringify(nextConfiguration) !== JSON.stringify(current.configuration)) {
@@ -217,7 +254,7 @@ export function buildInfrastructureConnectionUpdate(
   }
 
   if (form.sshPrivateKey.trim()) {
-    patch.credentials = { sshPrivateKey: form.sshPrivateKey };
+    patch.credentials = credentialsFromForm(form);
   }
 
   if (Object.keys(patch).length === 0) return { ok: true, value: null };
@@ -227,16 +264,22 @@ export function buildInfrastructureConnectionUpdate(
     : { ok: false, errors: issueMap(parsed.error.issues) };
 }
 
-function initialForm(connection: InfrastructureConnectionDto | null): InfrastructureConnectionFormValues {
+function initialForm(
+  connection: InfrastructureConnectionDto | null,
+  prefill: InfrastructureConnectionPrefill | null = null,
+): InfrastructureConnectionFormValues {
   const configuration = connection?.configuration;
   return {
-    name: connection?.name ?? "My host",
+    name: connection?.name ?? prefill?.name ?? "My host",
     setupMode: connection?.setupMode ?? "simple",
-    sshHost: connection?.endpoint?.sshHost ?? "",
+    sshHost: connection?.endpoint?.sshHost ?? prefill?.sshHost ?? "",
     sshPort: String(connection?.endpoint?.sshPort ?? 22),
     sshUser: connection?.endpoint?.sshUser ?? "root",
     sshHostFingerprintSha256: connection?.endpoint?.sshHostFingerprintSha256 ?? "",
+    sshHostKeyType: connection?.endpoint?.sshHostKeyType ?? null,
+    sshPrivilege: connection?.endpoint?.sshPrivilege ?? "login",
     sshPrivateKey: "",
+    sshPrivateKeyPassphrase: "",
     node: configuration?.node ?? "",
     bridge: configuration?.bridge ?? "",
     storage: configuration?.storage ?? "",
@@ -262,14 +305,50 @@ function initialForm(connection: InfrastructureConnectionDto | null): Infrastruc
   };
 }
 
+/** Known facts about a new server, such as a Hetzner server Hivra didn't create. */
+export type InfrastructureConnectionPrefill = { name: string; sshHost: string };
+
 type InfrastructureConnectionWizardProps = {
   connection?: InfrastructureConnectionDto | null;
+  prefill?: InfrastructureConnectionPrefill | null;
   onClose: () => void;
   onConnectionSaved: (connection: InfrastructureConnectionDto) => void;
   onPreflightComplete: (connectionId: string, result: ProxmoxPreflightResult) => void;
   onPrepareRequested?: (connection: InfrastructureConnectionDto) => void;
+  /** Opens the shared review dialog for Linux Sandbox setup on this host. */
+  onGvisorSetupRequested?: (connection: InfrastructureConnectionDto, mode: "prepare" | "repair") => void;
+  /** Opens this saved connection's settings to change its SSH user. */
+  onEditRequested?: (connection: InfrastructureConnectionDto) => void;
+  /** This wizard's own Linux Sandbox check came back ready. */
+  onGvisorReady?: (connectionId: string) => void;
+  /** Opens the one-line setup command (the default way to connect). */
+  onSetupCommandRequested?: () => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
 };
+
+/** Where an owner can read a server's SSH identity without Hivra. */
+const FINGERPRINT_SOURCES = [
+  {
+    provider: "AWS",
+    where: "EC2 → select your server → Actions → Monitor and troubleshoot → Get system log. Look for the ED25519 line between BEGIN and END SSH HOST KEY FINGERPRINTS.",
+    href: "https://console.aws.amazon.com/ec2/",
+    link: "Open the EC2 console",
+  },
+  {
+    provider: "Hetzner",
+    where: "Cloud Console → your server → Console, then run the command above.",
+    href: "https://console.hetzner.com/projects",
+    link: "Open Hetzner Console",
+  },
+  {
+    provider: "DigitalOcean",
+    where: "Your Droplet → Access → Launch Droplet Console, then run the command above.",
+    href: "https://cloud.digitalocean.com/droplets",
+    link: "Open your Droplets",
+  },
+] as const;
+
+const FINGERPRINT_COMMAND = "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256";
 
 type WizardPhase = "form" | "discovering" | "discovery" | "preflighting" | "preflight";
 
@@ -277,13 +356,18 @@ const WIZARD_STEPS = ["Connect", "Inspect", "Recommend", "Prepare", "Ready"] as 
 
 export function InfrastructureConnectionWizard({
   connection = null,
+  prefill = null,
   onClose,
   onConnectionSaved,
   onPreflightComplete,
   onPrepareRequested,
+  onGvisorSetupRequested,
+  onEditRequested,
+  onGvisorReady,
+  onSetupCommandRequested,
   returnFocusRef,
 }: InfrastructureConnectionWizardProps) {
-  const [form, setForm] = useState(() => initialForm(connection));
+  const [form, setForm] = useState(() => initialForm(connection, prefill));
   const [sshSettingsOpen, setSshSettingsOpen] = useState(() => Boolean(
     connection?.endpoint
     && (connection.endpoint.sshPort !== 22 || connection.endpoint.sshUser !== "root"),
@@ -293,11 +377,26 @@ export function InfrastructureConnectionWizard({
   const [savedConnection, setSavedConnection] = useState<InfrastructureConnectionDto | null>(connection);
   const [discovery, setDiscovery] = useState<HostDiscoveryResult | null>(null);
   const [preflight, setPreflight] = useState<ProxmoxPreflightResult | null>(null);
+  // Set when this wizard's Linux Sandbox check passed: the host is ready.
+  // When the Linux Sandbox check passed in this browser. Like the card, the
+  // header stops saying ready once that check is more than 15 minutes old.
+  const [gvisorReadyAt, setGvisorReadyAt] = useState<number | null>(null);
+  const gvisorCheckLapsed = useDeadlinePassed(gvisorReadyAt === null ? -Infinity : gvisorCheckReadyUntil(gvisorReadyAt));
+  const gvisorReady = gvisorReadyAt !== null && !gvisorCheckLapsed;
+  const gvisorNeedsCheck = gvisorReadyAt !== null && gvisorCheckLapsed;
   const [operationError, setOperationError] = useState<string | null>(null);
   const [privateKeyFileName, setPrivateKeyFileName] = useState<string | null>(null);
+  // "Read it from the server": a fallback with its own confirmation.
+  const [capture, setCapture] = useState<
+    | { state: "reading" }
+    | { state: "read"; key: CapturedHostKey; host: string; port: string }
+    | { state: "failed"; message: string }
+    | null
+  >(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const stateHeadingRef = useRef<HTMLHeadingElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
   const editing = Boolean(connection);
   const legacyProxmox = connection?.provider === "proxmox";
   const busy = phase === "discovering" || phase === "preflighting";
@@ -311,6 +410,18 @@ export function InfrastructureConnectionWizard({
   useEffect(() => {
     closeButtonRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    // Phones scroll this dialog with the dashboard page, so a phase that
+    // replaces the body in place starts at its top. A failed save returns to
+    // the form with its error beside the actions, so that error is shown
+    // instead. Runs before the invalid-field focus below.
+    if (!dialog || window.getComputedStyle(dialog).overflowY !== "visible") return;
+    const formError = phase === "form" ? formErrorRef.current : null;
+    if (formError) formError.scrollIntoView?.({ block: "center" });
+    else dialog.scrollIntoView?.({ block: "start" });
+  }, [phase, dialogRef]);
 
   useEffect(() => {
     if (phase === "discovering" || phase === "preflighting") {
@@ -350,6 +461,7 @@ export function InfrastructureConnectionWizard({
     setOperationError(null);
     setDiscovery(null);
     setPreflight(null);
+    setGvisorReadyAt(null);
     try {
       const result = await discoverInfrastructureHost(targetConnection.id);
       setDiscovery(result);
@@ -389,6 +501,7 @@ export function InfrastructureConnectionWizard({
     setErrors({});
     setOperationError(null);
 
+    setCapture(null);
     try {
       let saved: InfrastructureConnectionDto;
       if (connection) {
@@ -414,15 +527,58 @@ export function InfrastructureConnectionWizard({
       onConnectionSaved(saved);
 
       // A stored credential is never rendered back into the form. Clear the
-      // browser copy before read-only discovery begins.
-      setForm((current) => ({ ...current, sshPrivateKey: "" }));
+      // browser copy (and the passphrase) before read-only discovery begins.
+      setForm((current) => ({ ...current, sshPrivateKey: "", sshPrivateKeyPassphrase: "" }));
       setPrivateKeyFileName(null);
       await runDiscovery(saved);
     } catch (error) {
       setPhase("form");
+      if (error instanceof InfrastructureApiError
+        && (error.code === "key_passphrase_required" || error.code === "key_passphrase_incorrect")) {
+        setErrors({ "credentials.sshPrivateKeyPassphrase": error.message });
+        return;
+      }
       setOperationError(
         error instanceof Error ? error.message : "The infrastructure connection could not be saved.",
       );
+    }
+  }
+
+  /** Fallback only: read the Ed25519 key the server presents. Nothing is
+   * pinned until the owner compares it and chooses to use it. */
+  async function readFingerprintFromServer() {
+    const host = form.sshHost.trim();
+    const port = form.sshPort.trim() || "22";
+    if (!host) {
+      setErrors((current) => ({ ...current, "endpoint.sshHost": "Enter the server's address first." }));
+      return;
+    }
+    setCapture({ state: "reading" });
+    try {
+      const key = await captureServerHostKey(host, Number(port));
+      setCapture({ state: "read", key, host, port });
+    } catch (error) {
+      setCapture({ state: "failed", message: error instanceof Error ? error.message : `Hivra couldn't read an Ed25519 SSH identity from ${host}:${port}.` });
+    }
+  }
+
+  /** "Use sudo for setup" from the inspection: an operational change that
+   * raises the revision, then a new inspection. */
+  async function switchToSudoForSetup() {
+    if (!savedConnection || savedConnection.provider !== "host" || !savedConnection.endpoint) return;
+    setPhase("discovering");
+    setOperationError(null);
+    try {
+      const updated = await updateInfrastructureConnection(savedConnection.id, {
+        endpoint: { ...savedConnection.endpoint, sshPrivilege: "sudo" },
+      });
+      setSavedConnection(updated);
+      onConnectionSaved(updated);
+      setForm((current) => ({ ...current, sshPrivilege: "sudo" }));
+      await runDiscovery(updated);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "Hivra couldn't switch this connection to sudo.");
+      setPhase("discovery");
     }
   }
 
@@ -458,7 +614,7 @@ export function InfrastructureConnectionWizard({
     : phase === "discovering"
       ? 1
       : phase === "discovery"
-        ? 2
+        ? gvisorReady ? 4 : 2
         : phase === "preflighting"
           ? 2
           : phase === "preflight" && preflight?.ok && preflight.target.launchReady
@@ -473,7 +629,7 @@ export function InfrastructureConnectionWizard({
     : phase === "discovering"
       ? `Inspecting ${savedConnection?.name ?? form.name}`
       : phase === "discovery"
-        ? "Host recommendation"
+        ? gvisorReady ? "Ready for Linux Sandbox" : gvisorNeedsCheck ? "Needs a check" : "Host recommendation"
         : phase === "preflighting"
           ? "Checking readiness"
           : preflight?.ok && preflight.target.launchReady
@@ -607,7 +763,7 @@ export function InfrastructureConnectionWizard({
                       <span>{form.sshUser || "user"} · port {form.sshPort || "-"}</span>
                     </summary>
                     <div className={styles.connectionDefaultsGrid}>
-                      <Field label="SSH user" hint="Root access is required before Hivra can prepare or run agents" error={errors["endpoint.sshUser"]}>
+                      <Field label="SSH user" hint="root, or a user with passwordless sudo" error={errors["endpoint.sshUser"]}>
                         <input
                           value={form.sshUser}
                           onChange={(event) => setField("sshUser", event.target.value)}
@@ -628,6 +784,23 @@ export function InfrastructureConnectionWizard({
                           required
                         />
                       </Field>
+                      {form.sshUser.trim() && form.sshUser.trim() !== "root" && !legacyProxmox ? (
+                        <label className={`${styles.checkField} ${styles.fullField}`}>
+                          <input
+                            type="checkbox"
+                            checked={form.sshPrivilege === "sudo"}
+                            onChange={(event) => setField("sshPrivilege", event.target.checked ? "sudo" : "login")}
+                          />
+                          <span>
+                            <strong>{form.sshUser.trim()} uses passwordless sudo</strong>
+                            <small>
+                              Hivra runs its setup and checks through <code>sudo -n</code> as this user, so it needs the
+                              rule <code>{form.sshUser.trim()} ALL=(ALL:ALL) NOPASSWD: ALL</code> in /etc/sudoers.d.
+                              Proxmox launches need a root login for now.
+                            </small>
+                          </span>
+                        </label>
+                      ) : null}
                     </div>
                   </details>
                   <Field
@@ -638,17 +811,56 @@ export function InfrastructureConnectionWizard({
                   >
                     <input
                       value={form.sshHostFingerprintSha256}
-                      onChange={(event) => setField("sshHostFingerprintSha256", event.target.value)}
+                      onChange={(event) => {
+                        setField("sshHostFingerprintSha256", event.target.value);
+                        // A typed fingerprint could be any key type.
+                        setField("sshHostKeyType", null);
+                      }}
                       placeholder="SHA256:…"
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
                       required
                     />
-                    <code className={styles.commandHint}>
-                      ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
-                    </code>
                   </Field>
+                  <div className={`${styles.fingerprintHelp} ${styles.fullField}`}>
+                    <span>Run this on the server to get it:</span>
+                    <span className={styles.fingerprintCommand}>
+                      <code className={styles.commandHint}>{FINGERPRINT_COMMAND}</code>
+                      <CopyButton value={FINGERPRINT_COMMAND} label="Copy the fingerprint command" />
+                    </span>
+                    {onSetupCommandRequested ? (
+                      <span>
+                        Don&apos;t have it? The setup command gets it from the server itself.{" "}
+                        <button type="button" className={styles.inlineLinkButton} onClick={onSetupCommandRequested}>
+                          Use the setup command
+                        </button>
+                      </span>
+                    ) : null}
+                    <details className={styles.fingerprintSources}>
+                      <summary>Where to find it at your provider</summary>
+                      <ul>
+                        {FINGERPRINT_SOURCES.map((source) => (
+                          <li key={source.provider}>
+                            <strong>{source.provider}:</strong> {source.where}{" "}
+                            <a href={source.href} target="_blank" rel="noreferrer">
+                              {source.link} <ExternalLink size={11} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span>
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                    <HostKeyCapture
+                      capture={capture}
+                      onRead={() => void readFingerprintFromServer()}
+                      onUse={(key) => {
+                        setField("sshHostFingerprintSha256", key.fingerprintSha256);
+                        setField("sshHostKeyType", "ssh-ed25519");
+                        setCapture(null);
+                      }}
+                      onDismiss={() => setCapture(null)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -701,6 +913,24 @@ export function InfrastructureConnectionWizard({
                       ?? "Encrypted before storage and never returned to this browser."}
                   </span>
                 </div>
+                <Field
+                  label="Key passphrase (only if your key has one)"
+                  hint="Hivra unlocks the key once and stores only the unlocked key, encrypted. The passphrase is never stored."
+                  error={errors["credentials.sshPrivateKeyPassphrase"]}
+                  className={styles.fullField}
+                >
+                  <input
+                    type="password"
+                    value={form.sshPrivateKeyPassphrase}
+                    onChange={(event) => setField("sshPrivateKeyPassphrase", event.target.value)}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    maxLength={1024}
+                    data-lpignore="true"
+                  />
+                </Field>
               </div>
 
               {legacyProxmox && form.setupMode === "advanced" ? (
@@ -715,7 +945,7 @@ export function InfrastructureConnectionWizard({
                         Hivra will detect the operating system, capacity, environment, KVM access,
                         and installed isolation engines without changing the host. Today, an existing
                         Proxmox KVM installation can continue to strict readiness. On a compatible
-                        Ubuntu amd64 host with root access and cgroup v2, you can explicitly prepare
+                        Ubuntu amd64 host with root or passwordless sudo and cgroup v2, you can explicitly prepare
                         the pinned gVisor adapter for Linux terminal and Python application sandboxes.
                       </span>
                     </div>
@@ -735,7 +965,7 @@ export function InfrastructureConnectionWizard({
               {editing ? <CapacityPolicyFields form={form} setField={setField} errors={errors} /> : null}
 
               {operationError || errors.form ? (
-                <div className={styles.formError} role="alert">
+                <div ref={formErrorRef} className={styles.formError} role="alert">
                   <AlertTriangle size={16} aria-hidden="true" />
                   <span>{operationError ?? errors.form}</span>
                 </div>
@@ -756,12 +986,26 @@ export function InfrastructureConnectionWizard({
           ) : phase === "discovery" && discovery ? (
             <InfrastructureHostDiscoveryResult
               result={discovery}
+              hostName={savedConnection?.name ?? form.name}
+              sshUser={form.sshUser}
               connectionId={savedConnection?.id}
               onRetry={() => savedConnection && void runDiscovery(savedConnection)}
               onDone={onClose}
               onStrictPreflightRequested={supportsStrictProxmoxDiscovery(discovery)
                 ? () => savedConnection && void runPreflight(savedConnection)
                 : undefined}
+              onGvisorSetupRequested={savedConnection && onGvisorSetupRequested
+                ? (mode) => onGvisorSetupRequested(savedConnection, mode)
+                : undefined}
+              onChangeSshUserRequested={savedConnection && onEditRequested
+                ? () => onEditRequested(savedConnection)
+                : undefined}
+              onUseSudoRequested={savedConnection?.provider === "host" ? () => void switchToSudoForSetup() : undefined}
+              onSetupCommandRequested={onSetupCommandRequested}
+              onGvisorReady={() => {
+                setGvisorReadyAt(Date.now());
+                if (savedConnection) onGvisorReady?.(savedConnection.id);
+              }}
             />
           ) : phase === "discovery" ? (
             <OperationFailure
@@ -870,25 +1114,25 @@ function AdvancedFields({
       </div>
       <div className={styles.formGrid}>
         <Field label="Node" hint="Must be the SSH-local Proxmox node" error={errors["configuration.node"]}>
-          <input value={form.node} onChange={(event) => setField("node", event.target.value)} placeholder="fixturenode1" />
+          <input value={form.node} onChange={(event) => setField("node", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="fixturenode1" />
         </Field>
         <Field label="Network bridge" error={errors["configuration.bridge"]}>
-          <input value={form.bridge} onChange={(event) => setField("bridge", event.target.value)} placeholder="vmbr0" />
+          <input value={form.bridge} onChange={(event) => setField("bridge", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="vmbr0" />
         </Field>
         <Field label="VM storage" error={errors["configuration.storage"]}>
-          <input value={form.storage} onChange={(event) => setField("storage", event.target.value)} placeholder="local-lvm" />
+          <input value={form.storage} onChange={(event) => setField("storage", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="local-lvm" />
         </Field>
         <Field label="Template VMID" error={errors["configuration.template.vmid"]}>
           <input type="number" inputMode="numeric" value={form.templateVmid} onChange={(event) => setField("templateVmid", event.target.value)} placeholder="9000" />
         </Field>
         <Field label="Expected template name" error={errors["configuration.template.expectedName"]}>
-          <input value={form.templateExpectedName} onChange={(event) => setField("templateExpectedName", event.target.value)} placeholder="hivra-template" />
+          <input value={form.templateExpectedName} onChange={(event) => setField("templateExpectedName", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="hivra-template" />
         </Field>
         <Field label="Provisioner directory" error={errors["configuration.provisioner.directory"]}>
-          <input value={form.provisionerDirectory} onChange={(event) => setField("provisionerDirectory", event.target.value)} placeholder="/root/hivra-provisioner" />
+          <input value={form.provisionerDirectory} onChange={(event) => setField("provisionerDirectory", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="/root/hivra-provisioner" />
         </Field>
         <Field label="Provisioner version" error={errors["configuration.provisioner.expectedVersion"]}>
-          <input value={form.provisionerExpectedVersion} onChange={(event) => setField("provisionerExpectedVersion", event.target.value)} placeholder="1.0.0" />
+          <input value={form.provisionerExpectedVersion} onChange={(event) => setField("provisionerExpectedVersion", event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="1.0.0" />
         </Field>
         <Field label="VMID range start" error={errors["configuration.vmidRange.start"]}>
           <input type="number" inputMode="numeric" value={form.vmidStart} onChange={(event) => setField("vmidStart", event.target.value)} />
@@ -1022,6 +1266,62 @@ function OperationFailure({
           <RefreshCw size={14} aria-hidden="true" /> {retryLabel}
         </button>
         <button type="button" className={styles.primaryButton} onClick={onDone}>Done</button>
+      </div>
+    </div>
+  );
+}
+
+/** "Read it from the server": a fallback behind the pasted fingerprint and
+ * the setup command. It shows what the server presented, with a warning, and
+ * pins nothing until the owner chooses to use it (T44). */
+function HostKeyCapture({
+  capture,
+  onRead,
+  onUse,
+  onDismiss,
+}: {
+  capture:
+    | { state: "reading" }
+    | { state: "read"; key: CapturedHostKey; host: string; port: string }
+    | { state: "failed"; message: string }
+    | null;
+  onRead: () => void;
+  onUse: (key: CapturedHostKey) => void;
+  onDismiss: () => void;
+}) {
+  if (!capture || capture.state === "failed") {
+    return (
+      <div className={styles.hostKeyCapture}>
+        <button type="button" className={styles.tertiaryButton} onClick={onRead}>
+          <ScanSearch size={14} aria-hidden="true" /> Read it from the server
+        </button>
+        {capture?.state === "failed" ? <span className={styles.fieldError} role="alert">{capture.message}</span> : null}
+      </div>
+    );
+  }
+  if (capture.state === "reading") {
+    return (
+      <div className={styles.hostKeyCapture} role="status">
+        <Loader2 size={14} className={styles.spin} aria-hidden="true" /> Reading the server&apos;s SSH identity…
+      </div>
+    );
+  }
+  return (
+    <div className={styles.hostKeyCaptureResult} role="group" aria-label="SSH identity the server presented">
+      <strong>{capture.host}:{capture.port} presented this SSH identity:</strong>
+      <span className={styles.fingerprintCommand}>
+        <code>{capture.key.fingerprintSha256}</code>
+        <CopyButton value={capture.key.fingerprintSha256} label="Copy the presented fingerprint" />
+      </span>
+      <p>
+        Check this matches your provider&apos;s console before you continue. If someone is intercepting Hivra&apos;s
+        connection, this could be their key instead of your server&apos;s.
+      </p>
+      <div className={styles.resultActions}>
+        <button type="button" className={styles.tertiaryButton} onClick={onDismiss}>Don&apos;t use it</button>
+        <button type="button" className={styles.secondaryButton} onClick={() => onUse(capture.key)}>
+          <CheckCircle2 size={14} aria-hidden="true" /> It matches: use this fingerprint
+        </button>
       </div>
     </div>
   );

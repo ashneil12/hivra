@@ -5,8 +5,10 @@ import path from "node:path";
 
 import {
   runRecoverStuckHivraProvisioningSweep,
+  STALE_DESKTOP_PREPARE_THRESHOLD_MS,
   STUCK_PROVISIONING_THRESHOLD_MS,
 } from "../recover-stuck-provisioning";
+import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
@@ -32,6 +34,11 @@ import {
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  abandonDesktopPrepare,
+  cancelUndispatchedDesktopPrepare,
+  completeDesktopPrepare,
+} from "@/lib/remote-computers/desktop-prepare-operation";
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
@@ -41,6 +48,10 @@ jest.mock("@/lib/hivra/agent-events", () => ({
 
 jest.mock("@/lib/hivra/agent-ready-telemetry", () => ({
   captureHivraAgentComputerReady: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
+  reconcileBankrEnvAfterHivraBoot: jest.fn(),
 }));
 
 jest.mock("@/lib/services/cloudflare-tunnel", () => ({
@@ -78,6 +89,13 @@ jest.mock("@/lib/hivra/agent-operation-store", () => ({
   claimHivraAgentOperationRecovery: jest.fn(),
   persistHivraAgentProvisionIdentity: jest.fn(),
   releaseHivraAgentOperation: jest.fn(),
+}));
+
+jest.mock("@/lib/remote-computers/desktop-prepare-operation", () => ({
+  DESKTOP_PREPARE_KIND: "desktop_prepare",
+  abandonDesktopPrepare: jest.fn(),
+  cancelUndispatchedDesktopPrepare: jest.fn(),
+  completeDesktopPrepare: jest.fn(),
 }));
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
@@ -174,6 +192,9 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
   const mockedPreparePrivateAccess = prepareHivraTailscaleForDelete as jest.MockedFunction<
     typeof prepareHivraTailscaleForDelete
   >;
+  const mockedReconcileWallet = reconcileBankrEnvAfterHivraBoot as jest.MockedFunction<
+    typeof reconcileBankrEnvAfterHivraBoot
+  >;
   const realFetch = global.fetch;
   let updates: RecordedUpdate[];
 
@@ -200,17 +221,19 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
         return chain;
       });
       chain.not = jest.fn((col: string, op: string, val: unknown) => {
+        if (col === "operation_kind") {
+          expect([op, val]).toEqual(["in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)"]);
+          excludesDesktopPrepare = true;
+          return chain;
+        }
         filters.push([`${col}:${op}`, val]);
         return chain;
       });
       chain.lt = jest.fn(self);
-      chain.neq = jest.fn((col: string, val: unknown) => {
-        expect([col, val]).toEqual(["operation_kind", "desktop_prepare"]);
-        excludesDesktopPrepare = true;
-        return chain;
-      });
+      chain.neq = jest.fn(self);
       chain.order = jest.fn(self);
       chain.or = jest.fn((filter: string) => {
+        if (filter === "computer_profile.is.null,computer_profile.eq.ubuntu-desktop") return chain;
         expect(filter).toBe("operation_kind.neq.restore,operation_payload->>folderRecoveryId.is.null");
         excludesFolderRecovery = true;
         return chain;
@@ -233,7 +256,14 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
             error: null,
           });
         }
-        const eligible = excludesDesktopPrepare ? rows.filter(row => row.operation_kind !== "desktop_prepare") : rows;
+        if (filters.some(([col, val]) => col === "operation_kind" && val === "desktop_prepare")) {
+          // The dedicated desktop preparation pass: exact kind, Ubuntu desktops only.
+          const prepareRows = rows.filter(row => row.operation_kind === "desktop_prepare"
+            && row.type === "linux-desktop" && (row.computer_profile ?? "ubuntu-desktop") === "ubuntu-desktop");
+          return resolve({ data: prepareRows.slice(0, candidateLimit), error: null });
+        }
+        const eligible = excludesDesktopPrepare ? rows.filter(row => !["desktop_prepare", "agent_attach", "agent_access_change", "agent_detach"]
+          .includes(String(row.operation_kind))) : rows;
         const candidates = excludesFolderRecovery ? eligible.filter((row) => row.operation_kind !== "restore"
           || (row.operation_payload as Record<string, unknown> | null)?.folderRecoveryId == null) : eligible;
         return resolve({ data: candidates.slice(0, candidateLimit), error: null });
@@ -275,6 +305,7 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     mockedReleaseOperation.mockResolvedValue(true);
     mockedCompleteDelete.mockResolvedValue(true);
     mockedPreparePrivateAccess.mockResolvedValue({ ok: true, disposition: "guest_logged_out" });
+    mockedReconcileWallet.mockReset().mockResolvedValue({ status: "skipped" });
     global.fetch = jest.fn().mockRejectedValue(new Error("no network in tests"));
   });
 
@@ -570,10 +601,12 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     }));
   });
 
-  it.each(["folder", "desktop_prepare"])("does not let twelve old %s journals starve an unrelated recoverable lifecycle operation", async kind => {
+  // An attached agent's steps (design 5.5) hold the computer's lease until the
+  // attach worker records their own receipt; this sweep never touches them.
+  it.each(["folder", "desktop_prepare", "agent_attach", "agent_access_change", "agent_detach"])("does not let twelve old %s journals starve an unrelated recoverable lifecycle operation", async kind => {
     const folderRows = Array.from({ length: 12 }, (_, index) => buildStuckRow({
       id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
-      operation_kind: kind === "folder" ? "restore" : "desktop_prepare",
+      operation_kind: kind === "folder" ? "restore" : kind,
       operation_payload: kind === "folder" ? { folderRecoveryId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } : {},
       operation_started_at: "2026-06-01T00:00:00Z",
     }));
@@ -1226,5 +1259,266 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     const summary = await runRecoverStuckHivraProvisioningSweep();
 
     expect(summary).toMatchObject({ scanned: 2, recovered: 1, skipped: 1 });
+  });
+
+  // Regression (Gap C): a box this sweep brings up after nobody polled it must
+  // get the wallet row applied to its bankr.env, as a polled boot does.
+  describe("wallet env after a recovered boot", () => {
+    const probe = (vmStatus: string, receipt: "match" | "missing", marker = "") => ({
+      ok: true,
+      stdout: [
+        "HIVRA_RECOVERY_VM exists",
+        `HIVRA_RECOVERY_VM_STATUS ${vmStatus}`,
+        "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+        "HIVRA_RECOVERY_OWNERSHIP match",
+        `HIVRA_RECOVERY_OPERATION_RECEIPT ${receipt}`,
+        ...(marker ? [`HIVRA_RECOVERY_MARKER ${marker}`] : []),
+        "",
+      ].join("\n"),
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    const staleStart = (overrides: Partial<Record<string, unknown>> = {}) => buildStuckRow({
+      status: "provisioning",
+      operation_kind: "start",
+      allocation_operation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      ...overrides,
+    });
+
+    it("re-applies the wallet row once after flipping a stale start to running, without the teardown context", async () => {
+      installSupabase([staleStart()]);
+      mockedRunScript.mockResolvedValue(probe("running", "match", READY_MARKER));
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ recovered: 1 });
+      expect(mockedReconcileWallet).toHaveBeenCalledTimes(1);
+      const [call] = mockedReconcileWallet.mock.calls[0];
+      expect(call).toEqual({
+        userId: "user_42",
+        agent: expect.objectContaining({ id: AGENT_ID, type: "claude-code", status: "running", ip: "10.250.20.93" }),
+        trigger: "recovery",
+      });
+      expect(call.executionContext).toBeUndefined();
+      expect(mockedCompleteRunning.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedReconcileWallet.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("does not touch the wallet when another poll wins the running flip", async () => {
+      installSupabase([staleStart()]);
+      mockedRunScript.mockResolvedValue(probe("running", "match", READY_MARKER));
+      mockedCompleteRunning.mockResolvedValue(false);
+
+      await runRecoverStuckHivraProvisioningSweep();
+
+      expect(mockedReconcileWallet).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["settled stale start with a receipt", staleStart, "match"],
+      ["stale start without a receipt", () => staleStart({ status: "running" }), "missing"],
+      ["stale restart without a receipt", () => staleStart({ status: "running", operation_kind: "restart" }), "missing"],
+      ["stale resize without a receipt", () => staleStart({ operation_kind: "resize", operation_payload: { cpu: 2, ram: 4 } }), "missing"],
+    ] as const)("re-applies the wallet row for a %s only when the VM is running", async (_label, row, receipt) => {
+      installSupabase([row()]);
+      mockedRunScript.mockResolvedValue(probe("stopped", receipt));
+      await runRecoverStuckHivraProvisioningSweep();
+      expect(mockedCompleteOperation).toHaveBeenCalledWith(expect.objectContaining({ status: "stopped" }));
+      expect(mockedReconcileWallet).not.toHaveBeenCalled();
+
+      installSupabase([row()]);
+      mockedRunScript.mockResolvedValue(probe("running", receipt));
+      await runRecoverStuckHivraProvisioningSweep();
+      expect(mockedCompleteOperation).toHaveBeenLastCalledWith(expect.objectContaining({ status: "running" }));
+      expect(mockedReconcileWallet).toHaveBeenCalledTimes(1);
+      expect(mockedReconcileWallet).toHaveBeenCalledWith(expect.objectContaining({
+        userId: "user_42",
+        agent: expect.objectContaining({ id: AGENT_ID, status: "running" }),
+        trigger: "recovery",
+      }));
+    });
+
+    it("does not re-apply after a lost lifecycle completion", async () => {
+      installSupabase([staleStart({ status: "running" })]);
+      mockedRunScript.mockResolvedValue(probe("running", "missing"));
+      mockedCompleteOperation.mockResolvedValue(false);
+
+      await runRecoverStuckHivraProvisioningSweep();
+
+      expect(mockedReconcileWallet).not.toHaveBeenCalled();
+    });
+
+    it("keeps the recovery outcome when the wallet sync rejects", async () => {
+      installSupabase([staleStart()]);
+      mockedRunScript.mockResolvedValue(probe("running", "match", READY_MARKER));
+      mockedReconcileWallet.mockRejectedValue(new Error("unexpected"));
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ scanned: 1, recovered: 1, skipped: 0 });
+      expect(summary.results[0]).toMatchObject({ action: "recovered_from_log" });
+      expect(mockedReconcileWallet).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("stale desktop preparation leases", () => {
+    const PREPARE_OP = "00000000-0000-4000-8000-000000002108";
+    const mockedAbandon = abandonDesktopPrepare as jest.MockedFunction<typeof abandonDesktopPrepare>;
+    const mockedCancelPrepare = cancelUndispatchedDesktopPrepare as jest.MockedFunction<typeof cancelUndispatchedDesktopPrepare>;
+    const mockedCompletePrepare = completeDesktopPrepare as jest.MockedFunction<typeof completeDesktopPrepare>;
+
+    // Mirrors the Canary Ubuntu fixture (2026-09-16): the row says running,
+    // the VM was powered off, and the dispatched lease never got a receipt.
+    function orphanedPrepareRow(overrides: Partial<Record<string, unknown>> = {}) {
+      return buildStuckRow({
+        type: "linux-desktop",
+        computer_profile: "ubuntu-desktop",
+        status: "running",
+        desired_state: "running",
+        vmid: 1108,
+        ip: "10.250.20.58",
+        operation_id: PREPARE_OP,
+        operation_kind: "desktop_prepare",
+        operation_started_at: "2026-09-16T22:06:43.878162Z",
+        operation_payload: { desktopPrepareId: PREPARE_OP },
+        allocation_operation_id: "00000000-0000-4000-8000-000000004108",
+        ...overrides,
+      });
+    }
+    function hostSays(line: string) {
+      mockedRunScript.mockResolvedValue({ ok: true, stderr: "",
+        stdout: `HIVRA_DESKTOP_PREPARE_RECOVERY ${line}\n` } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    }
+
+    beforeEach(() => {
+      mockedAbandon.mockReset().mockResolvedValue(true);
+      mockedCancelPrepare.mockReset().mockResolvedValue(false);
+      mockedCompletePrepare.mockReset().mockResolvedValue(true);
+    });
+
+    it("releases a powered-off VM's orphaned lease and reconciles the row to stopped", async () => {
+      installSupabase([orphanedPrepareRow()]);
+      hostSays("vm=stopped installer=powered_off");
+
+      const summary = await runRecoverStuckHivraProvisioningSweep({ now: new Date("2026-09-24T12:00:00Z") });
+
+      expect(summary).toMatchObject({ scanned: 1, recovered: 1, skipped: 0 });
+      expect(summary.results[0]).toMatchObject({ action: "released_desktop_prepare", vmid: 1108 });
+      // Owner-bound authority, then the exact-timestamp lease election, then the host.
+      expect(mockedCheckRecoveryAuthority.mock.invocationCallOrder[0])
+        .toBeLessThan(mockedClaimRecovery.mock.invocationCallOrder[0]);
+      expect(mockedClaimRecovery).toHaveBeenCalledWith(expect.objectContaining({
+        operationId: PREPARE_OP, expectedOperationStartedAt: "2026-09-16T22:06:43.878162Z" }));
+      expect(mockedClaimRecovery.mock.invocationCallOrder[0]).toBeLessThan(mockedRunScript.mock.invocationCallOrder[0]);
+      const script = String(mockedRunScript.mock.calls[0][0]);
+      expect(script).toContain("/run/lock/hivra-allocation.lock");
+      expect(script).toContain(`hivra-bind-${"b".repeat(32)}`);
+      expect(script).toContain(`/var/lib/hivra/desktop-prepare-fences`);
+      expect(script).toContain(PREPARE_OP);
+      expect(mockedAbandon).toHaveBeenCalledWith("user_42", {
+        version: 1, operationId: PREPARE_OP, computerId: AGENT_ID, vmid: 1108,
+        bindingTag: `hivra-bind-${"b".repeat(32)}`, vmStatus: "stopped", guestInstaller: "powered_off",
+      });
+      expect(mockedCompleteOperation).not.toHaveBeenCalled();
+      expect(mockedReleaseOperation).not.toHaveBeenCalled();
+    });
+
+    it("releases a running VM whose installer lock is free and keeps the row running", async () => {
+      installSupabase([orphanedPrepareRow()]);
+      hostSays("vm=running installer=exited");
+
+      await runRecoverStuckHivraProvisioningSweep();
+
+      expect(mockedAbandon).toHaveBeenCalledWith("user_42", expect.objectContaining({
+        vmStatus: "running", guestInstaller: "exited" }));
+    });
+
+    it("completes from the installer's exact terminal receipt instead of abandoning", async () => {
+      const receipt = { operationId: PREPARE_OP, computerId: AGENT_ID, vmid: 1108, guestIp: "10.250.20.58",
+        bindingTag: `hivra-bind-${"b".repeat(32)}`, version: 1, bootId: "00000000-0000-4000-8000-000000003108", exitCode: 0 };
+      installSupabase([orphanedPrepareRow()]);
+      hostSays(`vm=running installer=terminal ${JSON.stringify(receipt)}`);
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ recovered: 1 });
+      expect(mockedCompletePrepare).toHaveBeenCalledWith("user_42", receipt);
+      expect(mockedAbandon).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["vm=running installer=running", "installer running"],
+      ["vm=running installer=unreachable", "guest unreachable"],
+      ["vm=missing", "missing"],
+      ["ownership=mismatch", "ownership mismatch"],
+    ])("preserves the lease when the host reports %s", async (line, reason) => {
+      installSupabase([orphanedPrepareRow()]);
+      hostSays(line);
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ scanned: 1, recovered: 0, skipped: 1 });
+      expect(summary.results[0].reason).toContain(reason);
+      expect(mockedAbandon).not.toHaveBeenCalled();
+      expect(mockedCompletePrepare).not.toHaveBeenCalled();
+    });
+
+    it("preserves the lease when the host probe itself fails", async () => {
+      installSupabase([orphanedPrepareRow()]);
+      mockedRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: "timed out waiting for desktop preparation recovery lock",
+        error: "exit 1" } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ skipped: 1 });
+      expect(mockedAbandon).not.toHaveBeenCalled();
+    });
+
+    it("never probes the host when another reconciler owns the lease", async () => {
+      installSupabase([orphanedPrepareRow()]);
+      mockedClaimRecovery.mockResolvedValue(false);
+
+      await runRecoverStuckHivraProvisioningSweep();
+
+      expect(mockedRunScript).not.toHaveBeenCalled();
+      expect(mockedCancelPrepare).not.toHaveBeenCalled();
+      expect(mockedAbandon).not.toHaveBeenCalled();
+    });
+
+    it("cancels an undispatched journal without touching the host", async () => {
+      installSupabase([orphanedPrepareRow()]);
+      mockedCancelPrepare.mockResolvedValue(true);
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary.results[0]).toMatchObject({ action: "released_desktop_prepare" });
+      expect(mockedCancelPrepare).toHaveBeenCalledWith("user_42", PREPARE_OP);
+      expect(mockedRunScript).not.toHaveBeenCalled();
+    });
+
+    it("leaves Omarchy and Windows preparation leases to their own receipts", async () => {
+      installSupabase([orphanedPrepareRow({ computer_profile: "omarchy" }), orphanedPrepareRow({ computer_profile: "windows" })]);
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary.scanned).toBe(0);
+      expect(mockedClaimRecovery).not.toHaveBeenCalled();
+      const prepareQuery = mockedFrom.mock.results[1].value;
+      expect(prepareQuery.eq).toHaveBeenCalledWith("operation_kind", "desktop_prepare");
+      expect(prepareQuery.eq).toHaveBeenCalledWith("type", "linux-desktop");
+      expect(prepareQuery.or).toHaveBeenCalledWith("computer_profile.is.null,computer_profile.eq.ubuntu-desktop");
+      expect(prepareQuery.limit).toHaveBeenCalledWith(4);
+    });
+
+    it("only observes a preparation lease after twice the bounded install window", async () => {
+      installSupabase([]);
+      const now = new Date("2026-09-24T12:00:00Z");
+
+      await runRecoverStuckHivraProvisioningSweep({ now });
+
+      expect(STALE_DESKTOP_PREPARE_THRESHOLD_MS).toBe(30 * 60 * 1000);
+      expect(mockedFrom.mock.results[1].value.lt).toHaveBeenCalledWith(
+        "operation_started_at", new Date(now.getTime() - STALE_DESKTOP_PREPARE_THRESHOLD_MS).toISOString());
+    });
   });
 });

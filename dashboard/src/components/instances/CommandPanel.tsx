@@ -20,6 +20,7 @@
 // delegates all connect flows back to surfaces that already exist.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import {
   CalendarDays,
   ChevronDown,
@@ -32,7 +33,9 @@ import {
   PanelRightClose,
   Plug,
   Plus,
+  ServerCog,
   Sparkles,
+  X,
 } from 'lucide-react';
 
 import { AgentActivityDigest } from '@/components/dashboard/command-center/AgentActivityDigest';
@@ -61,7 +64,22 @@ export interface CommandPanelProps {
   onOpenChannels?: (channel?: string) => void;
   /** Collapses the panel (parent persists the toggle to localStorage). */
   onCollapse?: () => void;
+  /** "dock" is the desktop right rail; "sheet" is the narrow-viewport bottom sheet. */
+  variant?: 'dock' | 'sheet';
+  /** Console link shown in the sheet header (the page header is hidden there). */
+  consoleHref?: string;
 }
+
+// Touch sizing for the panel internals. Inline styles size the desktop rail, so
+// these rules use !important and apply inside the sheet or on coarse pointers.
+const TOUCH_RULES = (scope: string) => `
+  ${scope} .cmdp-icon-btn { min-width: 44px !important; min-height: 44px !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; }
+  ${scope} .cmdp-row { min-height: 44px !important; }
+  ${scope} .cmdp-pad { padding-top: 8px !important; padding-bottom: 8px !important; }
+  ${scope} .cmdp-small { font-size: 11px !important; }
+`;
+const COMMAND_PANEL_TOUCH_CSS = `${TOUCH_RULES('[data-cmdp][data-sheet]')}
+@media (pointer: coarse) {${TOUCH_RULES('[data-cmdp]')}}`;
 
 type StatusMap = Record<string, { configured?: boolean; partial?: boolean }>;
 
@@ -79,7 +97,7 @@ const KICKER: React.CSSProperties = {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section style={{ display: 'grid', gap: 10, minWidth: 0 }}>
-      <div className="mono" style={KICKER}>
+      <div className="mono cmdp-small" style={KICKER}>
         {title}
       </div>
       {children}
@@ -157,6 +175,7 @@ function QuickConnectRow({
       type="button"
       onClick={onClick}
       data-testid={`command-panel-connect-${label}`}
+      className="cmdp-row"
       style={{
         textAlign: 'left',
         border: '1px solid var(--etched-border)',
@@ -203,7 +222,7 @@ function QuickConnectRow({
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
       ) : (
         <span
-          className="mono"
+          className="mono cmdp-small"
           style={{
             fontSize: 9,
             textTransform: 'uppercase',
@@ -229,7 +248,9 @@ function ConnectedAppChip({ slug, onClick }: { slug: string; onClick: () => void
       type="button"
       onClick={onClick}
       title={`${slug} — connected`}
+      aria-label={`${slug} connected — manage apps`}
       data-testid={`connected-app:${slug}`}
+      className="cmdp-icon-btn"
       style={{
         position: 'relative',
         width: 32,
@@ -293,7 +314,7 @@ function AppPreviewStrip() {
           <Icon size={15} />
         </span>
       ))}
-      <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+      <span className="mono cmdp-small" style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
         + 1,400 apps
       </span>
     </div>
@@ -328,7 +349,7 @@ function StatusPill({ state }: { state: InstanceActivityDigest['state'] | null }
   return (
     <span
       data-testid="command-panel-status-pill"
-      className="mono"
+      className="mono cmdp-small"
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -356,8 +377,11 @@ export function CommandPanel({
   onRunWorkflow,
   onOpenChannels,
   onCollapse,
+  variant = 'dock',
+  consoleHref,
 }: CommandPanelProps) {
   const agentName = instanceName?.trim() || 'Your agent';
+  const isSheet = variant === 'sheet';
 
   // The Workflows section renders only when the parent supplied a working prompt
   // sender AND the run flag is on. The brief copy keys off the SAME condition so
@@ -664,22 +688,25 @@ export function CommandPanel({
   return (
     <div
       data-testid="instance-command-panel"
+      data-cmdp=""
+      data-sheet={isSheet ? '' : undefined}
       style={{
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         minHeight: 0,
         background: 'var(--bg-surface)',
-        borderLeft: '1px solid var(--etched-border)',
+        borderLeft: isSheet ? 'none' : '1px solid var(--etched-border)',
       }}
     >
+      <style>{COMMAND_PANEL_TOUCH_CSS}</style>
       {/* Sticky header with the collapse control. */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 10,
-          padding: '12px 14px',
+          padding: isSheet ? '4px 4px 4px 14px' : '12px 14px',
           borderBottom: '1px solid var(--etched-border)',
           flexShrink: 0,
         }}
@@ -700,23 +727,75 @@ export function CommandPanel({
           Command panel
         </span>
         <StatusPill state={digestLoading ? null : digest?.state ?? 'idle'} />
-        <button
-          type="button"
-          onClick={onCollapse}
-          aria-label="Hide command panel"
-          data-testid="command-panel-collapse"
-          style={{
-            border: 'none',
-            background: 'transparent',
-            cursor: 'pointer',
-            color: 'var(--text-muted)',
-            padding: 4,
-            display: 'inline-flex',
-            flexShrink: 0,
-          }}
-        >
-          <PanelRightClose size={16} />
-        </button>
+        {isSheet ? (
+          <>
+            {consoleHref ? (
+              <Link
+                href={consoleHref}
+                className="mono"
+                data-testid="command-panel-console-link"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  flexShrink: 0,
+                  minHeight: 44,
+                  padding: '0 10px',
+                  boxSizing: 'border-box',
+                  border: '1px solid var(--etched-border)',
+                  color: 'var(--ink-black)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                  textDecoration: 'none',
+                }}
+              >
+                <ServerCog size={14} aria-hidden="true" /> Console
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              autoFocus
+              onClick={onCollapse}
+              aria-label="Close command panel"
+              data-testid="command-panel-sheet-close"
+              style={{
+                width: 44,
+                height: 44,
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                color: 'var(--text-muted)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <X size={18} />
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label="Hide command panel"
+            data-testid="command-panel-collapse"
+            className="cmdp-icon-btn"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              color: 'var(--text-muted)',
+              padding: 4,
+              display: 'inline-flex',
+              flexShrink: 0,
+            }}
+          >
+            <PanelRightClose size={16} />
+          </button>
+        )}
       </div>
 
       {/* Scrollable rail of sections. */}
@@ -777,7 +856,7 @@ export function CommandPanel({
             type="button"
             onClick={toggleChannels}
             aria-expanded={channelsOpen}
-            className="mono"
+            className="mono cmdp-row cmdp-small"
             data-testid="command-panel-channels-toggle"
             style={{
               ...KICKER,
@@ -824,7 +903,7 @@ export function CommandPanel({
               <button
                 type="button"
                 onClick={() => openChannels()}
-                className="mono"
+                className="mono cmdp-row cmdp-small"
                 data-testid="command-panel-connect-viewall"
                 style={{
                   border: '1px solid var(--etched-border)',
@@ -873,7 +952,7 @@ export function CommandPanel({
                 ) : null}
                 {connectedApps.apps.size > 0 ? (
                   <div style={{ display: 'grid', gap: 6 }}>
-                    <span className="mono" style={KICKER}>
+                    <span className="mono cmdp-small" style={KICKER}>
                       Connected
                     </span>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -891,7 +970,7 @@ export function CommandPanel({
                   type="button"
                   onClick={() => setPickerOpen(true)}
                   data-testid="command-panel-connect-apps"
-                  className="mono"
+                  className="mono cmdp-row cmdp-small"
                   style={{
                     border: '1px solid var(--ink-black)',
                     background: 'var(--ink-black)',
@@ -915,8 +994,10 @@ export function CommandPanel({
                   href="https://dashboard.composio.dev"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mono"
+                  className="mono cmdp-row cmdp-small"
                   style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
                     fontSize: 10.5,
                     color: 'var(--text-muted)',
                     letterSpacing: '0.02em',

@@ -1,17 +1,19 @@
 import { planInstanceBankrBackfill } from "../../scripts/bankr-backfill-plan";
 
 describe("planInstanceBankrBackfill", () => {
-  it("provisions instances with no wallet row", () => {
-    expect(planInstanceBankrBackfill({ instance: { status: "running" }, wallet: null })).toBe("provision");
+  // Hivra no longer creates agent wallets; a backfill must never make one a
+  // user didn't ask for (new agents connect their own Bankr account).
+  it("never provisions a wallet for an instance without one", () => {
+    expect(planInstanceBankrBackfill({ instance: { status: "running" }, wallet: null })).toBe("skip");
   });
 
-  it("retries incomplete wallet rows", () => {
+  it("never retries a pending row, which may date from unrequested eager provisioning", () => {
     expect(
       planInstanceBankrBackfill({
         instance: { status: "running" },
         wallet: { status: "pending", metadata: {} },
       })
-    ).toBe("retry_provision");
+    ).toBe("skip");
   });
 
   it("seeds the Bankr suite for running agents with active unseeded wallets", () => {

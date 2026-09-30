@@ -97,3 +97,80 @@ it("asks for confirmation before deleting the session", async () => {
   await waitFor(() => expect(onDeleted).toHaveBeenCalled());
   expect(mockChange).toHaveBeenCalledWith(session.agentId, "delete");
 });
+
+it("shows Hivra's setup note as a labelled Hivra card, not as a message the owner typed (ATT-13)", async () => {
+  const note = [
+    "<!-- HIVRA:COMPUTER:START v1 rev=1 -->",
+    "## Your computer (from Hivra, revision 1)",
+    "",
+    "**Who and where.** You are the Claude Code agent \"Builder\".",
+    "<!-- HIVRA:COMPUTER:END -->",
+    "",
+    "This is a setup note from Hivra, not a task. Reply only \"Ready.\" and don't run any tools.",
+  ].join("\n");
+  mockHistory.mockResolvedValue({
+    events: [
+      { id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "Ready.", isReasoning: false } },
+      { id: "e2", runId: "run_2", type: "run.token_delta", at: null, data: { text: "Looking at the repo.", isReasoning: false } },
+    ],
+    prompts: [
+      { runId: "run_1", text: note, createdAt: "2026-09-23T10:00:01Z", source: "hivra-setup" },
+      { runId: "run_2", text: "Run the tests", createdAt: "2026-09-23T10:00:02Z", source: "user" },
+    ],
+  });
+  const { container } = render(<ManagedSessionChat initialSession={session} />);
+  expect(await screen.findByText("Hivra setup")).toBeInTheDocument();
+  expect(screen.getByText("Hivra told Builder where it runs and how you see its work.")).toBeInTheDocument();
+  // The exact note is one click away, without Hivra's block markers.
+  const card = screen.getByText("Hivra setup").closest("details")!;
+  expect(card).not.toHaveAttribute("open");
+  expect(card).toHaveTextContent("You are the Claude Code agent \"Builder\".");
+  expect(card).not.toHaveTextContent("HIVRA:COMPUTER");
+  // Only the owner's own message is drawn as an owner bubble.
+  const bubbles = Array.from(container.querySelectorAll("div")).filter((element) => element.textContent === "Run the tests" && element.children.length === 0);
+  expect(bubbles).toHaveLength(1);
+  expect(screen.queryByText(note)).not.toBeInTheDocument();
+  expect(screen.getByText("Ready.")).toBeInTheDocument();
+});
+
+describe("the launch's first task", () => {
+  const setupOnly = {
+    events: [{ id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "Ready.", isReasoning: false } }],
+    prompts: [{ runId: "run_1", text: "<!-- HIVRA:COMPUTER:START v1 rev=1 -->\n<!-- HIVRA:COMPUTER:END -->", createdAt: "2026-09-23T10:00:01Z", source: "hivra-setup" }],
+  };
+
+  it("goes back in the message box, unsent, when the conversation holds nothing from the owner", async () => {
+    mockHistory.mockResolvedValue(setupOnly);
+    render(<ManagedSessionChat initialSession={session} firstTask="  Summarize the repo  " />);
+    expect(await screen.findByText("Hivra can't find your first task in this conversation with Builder. It's in the message box; check the conversation, then send it if it's missing.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Message Builder")).toHaveValue("Summarize the repo");
+    expect(mockSend).not.toHaveBeenCalled();
+    // Only the owner's Send sends it.
+    mockSend.mockResolvedValue({ runId: "run_2" });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith(session.agentId, "Summarize the repo"));
+    expect(screen.queryByText(/can't find your first task/)).not.toBeInTheDocument();
+  });
+
+  it("stays out of the way once the owner's first task reached the session", async () => {
+    render(<ManagedSessionChat initialSession={session} firstTask="Run the tests" />);
+    expect(await screen.findByText("Looking at the repo.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Message Builder")).toHaveValue("");
+    expect(screen.queryByText(/can't find your first task/)).not.toBeInTheDocument();
+  });
+});
+
+it("reloads the stored conversation when asked, without losing what the owner is typing", async () => {
+  const { rerender } = render(<ManagedSessionChat initialSession={session} historyVersion={0} />);
+  expect(await screen.findByText("Run the tests")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Message Builder"), { target: { value: "half a thought" } });
+  expect(mockHistory).toHaveBeenCalledTimes(1);
+  mockHistory.mockResolvedValue({
+    events: [{ id: "e9", runId: "run_9", type: "run.token_delta", at: null, data: { text: "Ready.", isReasoning: false } }],
+    prompts: [{ runId: "run_9", text: "note", createdAt: "2026-09-23T10:05:00Z", source: "hivra-setup" }],
+  });
+  rerender(<ManagedSessionChat initialSession={session} historyVersion={1} />);
+  expect(await screen.findByText("Hivra setup")).toBeInTheDocument();
+  expect(mockHistory).toHaveBeenCalledTimes(2);
+  expect(screen.getByLabelText("Message Builder")).toHaveValue("half a thought");
+});

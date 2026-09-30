@@ -1,6 +1,13 @@
+import { randomUUID } from "node:crypto";
+
 const mockLoadSecret = jest.fn();
 const mockLoadTarget = jest.fn();
 const mockCreateRecord = jest.fn();
+const mockReplaceToken = jest.fn();
+const mockRefreshRecord = jest.fn();
+const mockRecordExpiry = jest.fn();
+const mockLoadExpiries = jest.fn();
+const mockClearExpiry = jest.fn();
 
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), error: jest.fn(), info: jest.fn() } }));
@@ -8,11 +15,19 @@ jest.mock("@/lib/infrastructure/digitalocean-store", () => ({
   loadDigitalOceanConnectionSecret: (...args: unknown[]) => mockLoadSecret(...args),
   loadDigitalOceanTarget: (...args: unknown[]) => mockLoadTarget(...args),
   createDigitalOceanConnectionRecord: (...args: unknown[]) => mockCreateRecord(...args),
-  refreshDigitalOceanTargetRecord: jest.fn(),
+  refreshDigitalOceanTargetRecord: (...args: unknown[]) => mockRefreshRecord(...args),
+  replaceDigitalOceanConnectionToken: (...args: unknown[]) => mockReplaceToken(...args),
+}));
+
+jest.mock("@/lib/infrastructure/credential-expiry-store", () => ({
+  ...jest.requireActual("@/lib/infrastructure/credential-expiry-store"),
+  recordCredentialExpiry: (...args: unknown[]) => mockRecordExpiry(...args),
+  loadCredentialExpiries: (...args: unknown[]) => mockLoadExpiries(...args),
+  clearCredentialExpiry: (...args: unknown[]) => mockClearExpiry(...args),
 }));
 
 type Row = Record<string, unknown>;
-const tables: Record<string, Row[]> = { hivra_agents: [], hivra_do_session_inputs: [] };
+const tables: Record<string, Row[]> = { hivra_agents: [], hivra_do_session_inputs: [], infrastructure_connections: [], hivra_computer_contracts: [] };
 
 class Query {
   private filters: Array<(row: Row) => boolean> = [];
@@ -29,7 +44,7 @@ class Query {
   private run(): { data: unknown; error: unknown } {
     const rows = tables[this.table];
     if (this.inserted) {
-      const row: Row = { created_at: new Date().toISOString(), error: null, provisioned_at: null, do_session_id: null, do_session_observation: null, ...this.inserted };
+      const row: Row = { id: randomUUID(), created_at: new Date().toISOString(), error: null, provisioned_at: null, do_session_id: null, do_session_observation: null, ...this.inserted };
       if (this.table === "hivra_do_session_inputs" && rows.some((existing) => existing.agent_id === row.agent_id && existing.run_id === row.run_id)) {
         return { data: null, error: { code: "23505" } };
       }
@@ -50,14 +65,23 @@ class Query {
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (table: string) => new Query(table) } }));
 
 import { DigitalOceanApiError } from "@/lib/digitalocean/managed-agents-client";
+import { InfrastructureConnectionStoreError } from "@/lib/infrastructure/connection-store";
 import {
   connectDigitalOcean,
+  downloadManagedSessionWorkspace,
+  forgetManagedSession,
+  listDigitalOceanModelsForConnection,
+  readDigitalOceanBalance,
+  listManagedSessionWorkspace,
+  replaceDigitalOceanToken,
+  setDigitalOceanTokenExpiry,
   digitalOceanSessionName,
   launchDigitalOceanSession,
   managedSessionAction,
   readManagedSessionHistory,
   resolveManagedSessionApproval,
   sendManagedSessionInput,
+  sendManagedSessionSetupNote,
   setManagedSessionDependenciesForTest,
 } from "../do-managed-sessions";
 import { FakeDigitalOcean } from "./helpers/fake-digitalocean";
@@ -89,11 +113,19 @@ function launchInput(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   tables.hivra_agents = [];
   tables.hivra_do_session_inputs = [];
+  tables.hivra_computer_contracts = [];
+  tables.infrastructure_connections = [{ id: connectionId, user_id: userId, provider: "digitalocean", revision: 1 }];
   fake = new FakeDigitalOcean();
   vendorFetch = jest.fn(async () => new Response("{}", { status: 200 }));
   restore = setManagedSessionDependenciesForTest({ client: fake.client, sleep: async () => undefined, fetch: vendorFetch as unknown as typeof fetch });
   mockLoadTarget.mockResolvedValue(target);
   mockLoadSecret.mockResolvedValue({ connection: { id: connectionId, status: "ready" }, revision: 1, apiToken: TOKEN });
+  mockRecordExpiry.mockReset().mockImplementation(async (input) => ({
+    source: "owner-declared", noExpiry: input.expiry.mode === "none",
+    expiresOn: input.expiry.mode === "date" ? input.expiry.date : null, declaredAt: input.now.toISOString(),
+  }));
+  mockLoadExpiries.mockReset().mockResolvedValue(new Map());
+  mockClearExpiry.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => restore());
 
@@ -127,8 +159,53 @@ describe("launchDigitalOceanSession", () => {
     });
     // The model key is a write-only session secret: Hivra never persists it.
     expect(JSON.stringify(tables.hivra_agents)).not.toContain(ANTHROPIC_KEY);
+    // The visible Hivra setup note goes first, then the owner's first task.
+    expect(fake.inputs).toEqual([
+      { sessionId: "sess_1", text: expect.stringContaining("## Your computer (from Hivra, revision 1)") },
+      { sessionId: "sess_1", text: "Summarize the repo" },
+    ]);
+    expect(tables.hivra_do_session_inputs).toEqual([
+      expect.objectContaining({ run_id: "run_1", source: "hivra-setup", text: expect.stringContaining("Reply only \"Ready.\"") }),
+      expect.objectContaining({ run_id: "run_2", text: "Summarize the repo" }),
+    ]);
+    expect(tables.hivra_do_session_inputs[1]).not.toHaveProperty("source");
+  });
+
+  it("tells the agent where it runs in a visible setup note and records it as sent, never delivered", async () => {
+    await launchDigitalOceanSession(userId, launchInput({ harness: "codex", model: { mode: "vendor", apiKey: "sk-" + "o".repeat(40) } }));
+    const [setup] = fake.inputs;
+    expect(setup.text).toContain("You are the Codex agent \"Builder\". You run in a DigitalOcean Managed Agents session");
+    expect(setup.text).toContain("a sandbox with 2 CPU and 4 GB of memory");
+    expect(setup.text).toContain("Keep your work in /workspace.");
+    expect(tables.hivra_computer_contracts).toEqual([expect.objectContaining({
+      revision: 1, channel: "do-setup-message", delivery_state: "sent",
+      receipt: expect.objectContaining({ channel: "do-setup-message", runId: "run_1", revision: 1 }),
+    })]);
+    expect(tables.hivra_computer_contracts[0].delivery_state).not.toBe("delivered");
+  });
+
+  it("still launches and sends the first task when the setup note cannot be sent", async () => {
+    const sendInput = fake.client;
+    let calls = 0;
+    restore();
+    restore = setManagedSessionDependenciesForTest({
+      client: (token: string) => {
+        const client = sendInput(token);
+        return { ...client, sendInput: async (sessionId: string, text: string) => {
+          calls += 1;
+          if (calls === 1) throw new DigitalOceanApiError("timeout", null, "POST", "/v2/agents/sessions/input");
+          return client.sendInput(sessionId, text);
+        } };
+      },
+      sleep: async () => undefined, fetch: vendorFetch as unknown as typeof fetch,
+    });
+    const session = await launchDigitalOceanSession(userId, launchInput({ firstTask: "Summarize the repo" }));
+    expect(session.status).toBe("ready");
     expect(fake.inputs).toEqual([{ sessionId: "sess_1", text: "Summarize the repo" }]);
-    expect(tables.hivra_do_session_inputs).toEqual([expect.objectContaining({ run_id: "run_1", text: "Summarize the repo" })]);
+    const contract = tables.hivra_computer_contracts[0];
+    expect(contract).toMatchObject({ last_error: "send_failed" });
+    expect(contract.delivery_state).not.toBe("sent");
+    expect(contract.delivered_at ?? null).toBeNull();
   });
 
   it("replays the same launch request instead of creating a second billable session", async () => {
@@ -181,6 +258,79 @@ describe("launchDigitalOceanSession", () => {
   });
 });
 
+// INF-16: every DigitalOcean launch asked for the provider key again, because
+// only a pasted key was accepted. A launch can now name a key the owner saved
+// in their Vault, which is read here for that owner only.
+describe("launchDigitalOceanSession with a saved Vault key", () => {
+  const VAULT_KEY_ID = "44444444-4444-4444-8444-444444444444";
+  const SAVED_OPENAI_KEY = "sk-" + "v".repeat(40);
+  let readSavedModelKey: jest.Mock;
+
+  beforeEach(() => {
+    readSavedModelKey = jest.fn(async () => ({ provider: "openai", apiKey: SAVED_OPENAI_KEY }));
+    restore();
+    restore = setManagedSessionDependenciesForTest({
+      client: fake.client, sleep: async () => undefined, fetch: vendorFetch as unknown as typeof fetch, readSavedModelKey,
+    });
+  });
+
+  const vaultLaunch = (overrides: Record<string, unknown> = {}) => launchInput({
+    harness: "codex", model: { mode: "vendor", vaultKeyId: VAULT_KEY_ID }, ...overrides,
+  });
+
+  it("sends the owner's saved key to DigitalOcean as the session secret, and stores neither it nor the reference", async () => {
+    await launchDigitalOceanSession(userId, vaultLaunch());
+
+    expect(readSavedModelKey).toHaveBeenCalledWith(userId, VAULT_KEY_ID);
+    expect(fake.manifests).toHaveLength(1);
+    expect(fake.manifests[0]).toMatchObject({ agent: "codex", secrets: { OPENAI_API_KEY: SAVED_OPENAI_KEY } });
+    // Checked with the vendor like a pasted key, before anything is created.
+    expect(vendorFetch).toHaveBeenCalledWith("https://api.openai.com/v1/models", expect.objectContaining({
+      headers: { Authorization: `Bearer ${SAVED_OPENAI_KEY}` },
+    }));
+    expect(JSON.stringify(tables.hivra_agents)).not.toContain(SAVED_OPENAI_KEY);
+    expect(JSON.stringify(tables.hivra_agents)).not.toContain(VAULT_KEY_ID);
+  });
+
+  it.each([
+    ["isn't the owner's", null],
+    ["is saved for another provider", { provider: "anthropic", apiKey: "sk-ant-" + "a".repeat(40) }],
+    ["is a ChatGPT sign-in, not an API key", { provider: "codex", apiKey: "x".repeat(40) }],
+    ["has no stored key", { provider: "openai", apiKey: null }],
+  ])("launches nothing when the saved key %s", async (_label, saved) => {
+    readSavedModelKey.mockResolvedValueOnce(saved);
+    await expect(launchDigitalOceanSession(userId, vaultLaunch())).rejects.toMatchObject({
+      code: "not_found",
+      message: "That saved OpenAI API key is no longer in your Vault. Paste the key, or choose another option.",
+    });
+    expect(fake.manifests).toHaveLength(0);
+    expect(tables.hivra_agents).toHaveLength(0);
+  });
+
+  it("reports an unreadable Vault as a retry, and launches nothing", async () => {
+    readSavedModelKey.mockRejectedValueOnce(new Error("db down"));
+    await expect(launchDigitalOceanSession(userId, vaultLaunch())).rejects.toMatchObject({ code: "database_failed" });
+    expect(fake.manifests).toHaveLength(0);
+    expect(tables.hivra_agents).toHaveLength(0);
+  });
+
+  it("refuses a saved key that isn't a complete key before DigitalOcean sees it", async () => {
+    readSavedModelKey.mockResolvedValueOnce({ provider: "openai", apiKey: "sk short" });
+    await expect(launchDigitalOceanSession(userId, vaultLaunch())).rejects.toMatchObject({ code: "invalid_request" });
+    expect(vendorFetch).not.toHaveBeenCalled();
+    expect(fake.manifests).toHaveLength(0);
+  });
+
+  it("answers a replay with the agent the first request created, without reading the Vault again", async () => {
+    const input = vaultLaunch();
+    await launchDigitalOceanSession(userId, input);
+    readSavedModelKey.mockClear();
+    await launchDigitalOceanSession(userId, input);
+    expect(readSavedModelKey).not.toHaveBeenCalled();
+    expect(fake.manifests).toHaveLength(1);
+  });
+});
+
 describe("session lifecycle", () => {
   async function launched() {
     await launchDigitalOceanSession(userId, launchInput());
@@ -197,9 +347,13 @@ describe("session lifecycle", () => {
   it("forwards input to a paused session, which DigitalOcean resumes, and records the prompt", async () => {
     const agentId = await launched();
     await managedSessionAction(userId, agentId, "pause");
-    await expect(sendManagedSessionInput(userId, agentId, "keep going")).resolves.toEqual({ runId: "run_1" });
+    // run_1 is the launch's setup note.
+    await expect(sendManagedSessionInput(userId, agentId, "keep going")).resolves.toEqual({ runId: "run_2" });
     expect(tables.hivra_agents[0].status).toBe("running");
-    expect(tables.hivra_do_session_inputs).toEqual([expect.objectContaining({ run_id: "run_1", text: "keep going" })]);
+    expect(tables.hivra_do_session_inputs).toEqual([
+      expect.objectContaining({ run_id: "run_1", source: "hivra-setup" }),
+      expect.objectContaining({ run_id: "run_2", text: "keep going" }),
+    ]);
   });
 
   it("sends approvals out of band and returns sanitized history with recorded prompts", async () => {
@@ -213,7 +367,21 @@ describe("session lifecycle", () => {
     ];
     const history = await readManagedSessionHistory(userId, agentId);
     expect(history.events).toEqual([{ id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "hi", isReasoning: false } }]);
-    expect(history.prompts).toEqual([expect.objectContaining({ runId: "run_1", text: "hello" })]);
+    // The in-memory store ignores ordering; the real query is chronological.
+    expect(history.prompts).toHaveLength(2);
+    expect(history.prompts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: "run_1", source: "hivra-setup", text: expect.stringContaining("Hivra") }),
+      expect.objectContaining({ runId: "run_2", text: "hello", source: "user" }),
+    ]));
+  });
+
+  it("sends the current setup note again only when the owner asks, as one more visible message", async () => {
+    const agentId = await launched();
+    tables.hivra_agents[0].name = "Builder 2";
+    await expect(sendManagedSessionSetupNote(userId, agentId)).resolves.toEqual({ runId: "run_2", revision: 2 });
+    expect(fake.inputs[1].text).toContain("\"Builder 2\"");
+    expect(tables.hivra_computer_contracts.map((row) => [row.revision, row.delivery_state])).toEqual([[1, "sent"], [2, "sent"]]);
+    expect(tables.hivra_do_session_inputs[1]).toMatchObject({ run_id: "run_2", source: "hivra-setup" });
   });
 
   it("deletes only after DigitalOcean reports the session gone", async () => {
@@ -231,6 +399,260 @@ describe("session lifecycle", () => {
   it("refuses to act when the connection was re-bound under a newer revision", async () => {
     const agentId = await launched();
     mockLoadSecret.mockResolvedValue({ connection: { id: connectionId, status: "ready" }, revision: 2, apiToken: TOKEN });
-    await expect(managedSessionAction(userId, agentId, "pause")).rejects.toMatchObject({ code: "not_ready" });
+    await expect(managedSessionAction(userId, agentId, "pause")).rejects.toMatchObject({ code: "connection_changed" });
+  });
+});
+
+describe("replaceDigitalOceanToken", () => {
+  const NEW_TOKEN = "dop_v1_" + "9".repeat(64);
+  beforeEach(() => {
+    mockRefreshRecord.mockImplementation(async (input) => ({ connection: { id: connectionId, status: input.errorCode ? "error" : "ready" }, target: input.target }));
+  });
+
+  it("swaps in a token from the same team without touching the agents, then republishes the target", async () => {
+    await launchDigitalOceanSession(userId, launchInput());
+    const before = { ...tables.hivra_agents[0] };
+    await expect(replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN)).resolves.toMatchObject({ connection: { status: "ready" } });
+    expect(mockReplaceToken).toHaveBeenCalledWith({ userId, connectionId, expectedRevision: 1, apiToken: NEW_TOKEN });
+    expect(tables.hivra_agents[0]).toEqual(before);
+  });
+
+  it("refuses a token from another team that cannot see this connection's sessions", async () => {
+    await launchDigitalOceanSession(userId, launchInput());
+    fake.sessions.clear();
+    await expect(replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN)).rejects.toMatchObject({ code: "provider_rejected" });
+    expect(mockReplaceToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token DigitalOcean rejects", async () => {
+    await expect(replaceDigitalOceanToken(userId, connectionId, "bad-token-000000000000000")).rejects.toMatchObject({ code: "invalid_credentials" });
+    expect(mockReplaceToken).not.toHaveBeenCalled();
+  });
+
+  it("still repairs a connection whose stored token can no longer be read", async () => {
+    mockLoadSecret.mockRejectedValueOnce(new InfrastructureConnectionStoreError("credential_error", 1));
+    await replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN);
+    expect(mockReplaceToken).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 1, apiToken: NEW_TOKEN }));
+  });
+});
+
+describe("owner-declared token expiry", () => {
+  const NEW_TOKEN = "dop_v1_" + "9".repeat(64);
+  const soon = new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10);
+
+  it("records the date the owner declared at connect and returns it on the connection", async () => {
+    mockCreateRecord.mockImplementation(async (input) => ({ connection: { id: connectionId }, target: input.target }));
+    const result = await connectDigitalOcean(userId, { name: "Team", apiToken: TOKEN, tokenExpiry: { mode: "date", date: soon } });
+    expect(mockRecordExpiry).toHaveBeenCalledWith(expect.objectContaining({ userId, connectionId, expiry: { mode: "date", date: soon } }));
+    expect(result.connection.credentialExpiry).toMatchObject({ source: "owner-declared", noExpiry: false, expiresOn: soon });
+  });
+
+  it("refuses a date that has already passed before calling DigitalOcean", async () => {
+    await expect(connectDigitalOcean(userId, { name: "Team", apiToken: TOKEN, tokenExpiry: { mode: "date", date: "2020-01-01" } }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+    expect(fake.tokens).toHaveLength(0);
+    expect(mockCreateRecord).not.toHaveBeenCalled();
+  });
+
+  it("still connects when the reminder cannot be saved, and reports no recorded expiry", async () => {
+    mockCreateRecord.mockImplementation(async (input) => ({ connection: { id: connectionId }, target: input.target }));
+    mockRecordExpiry.mockRejectedValueOnce(new InfrastructureConnectionStoreError("database_error"));
+    const result = await connectDigitalOcean(userId, { name: "Team", apiToken: TOKEN, tokenExpiry: { mode: "none" } });
+    expect(result.connection.credentialExpiry).toBeNull();
+  });
+
+  it("clears the old token's date when a replacement token has none, and records a new one when given", async () => {
+    mockRefreshRecord.mockImplementation(async (input) => ({ connection: { id: connectionId, status: "ready" }, target: input.target }));
+    await replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN);
+    expect(mockClearExpiry).toHaveBeenCalledWith(userId, connectionId);
+    const replaced = await replaceDigitalOceanToken(userId, connectionId, NEW_TOKEN, { mode: "none" });
+    expect(replaced.connection.credentialExpiry).toMatchObject({ noExpiry: true, expiresOn: null });
+  });
+
+  it("sets a reminder on an existing connection only for its owner", async () => {
+    await expect(setDigitalOceanTokenExpiry("someone_else", connectionId, { mode: "none" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(setDigitalOceanTokenExpiry(userId, connectionId, { mode: "date", date: soon })).resolves.toMatchObject({ expiresOn: soon });
+  });
+});
+
+describe("forgetManagedSession", () => {
+  async function launched() {
+    await launchDigitalOceanSession(userId, launchInput());
+    return String(tables.hivra_agents[0].id);
+  }
+
+  it("releases an agent whose token DigitalOcean now rejects, without deleting the session there", async () => {
+    const agentId = await launched();
+    fake.rejectedTokens.add(TOKEN);
+    await expect(forgetManagedSession(userId, agentId)).resolves.toMatchObject({ status: "deleted" });
+    expect(tables.hivra_agents[0]).toMatchObject({
+      status: "deleted", infrastructure_connection_id: null, deployment_target_id: null, infrastructure_connection_revision: null,
+      do_cleanup_receipt: expect.objectContaining({
+        state: "forgotten", reason: "token_rejected", sessionId: "sess_1", acknowledgedAt: expect.any(String),
+        binding: { connectionId, targetId, connectionRevision: "1" },
+      }),
+    });
+    // Nothing was destroyed: the session is still at DigitalOcean.
+    expect(fake.sessions.get("sess_1")?.status).toBe("SESSION_STATUS_READY");
+  });
+
+  it("releases an agent whose saved token can no longer be decrypted", async () => {
+    const agentId = await launched();
+    mockLoadSecret.mockRejectedValueOnce(new InfrastructureConnectionStoreError("credential_error", 1));
+    await forgetManagedSession(userId, agentId);
+    expect(tables.hivra_agents[0].do_cleanup_receipt).toMatchObject({ state: "forgotten", reason: "token_unreadable" });
+  });
+
+  it("sends the owner to Delete while Hivra can still reach the session", async () => {
+    const agentId = await launched();
+    const before = { ...tables.hivra_agents[0] };
+    await expect(forgetManagedSession(userId, agentId)).rejects.toMatchObject({ code: "conflict" });
+    expect(tables.hivra_agents[0]).toEqual(before);
+  });
+
+  it("uses the ordinary absence receipt when DigitalOcean reports the session gone", async () => {
+    const agentId = await launched();
+    fake.sessions.clear();
+    await forgetManagedSession(userId, agentId);
+    expect(tables.hivra_agents[0].do_cleanup_receipt).toMatchObject({ state: "absent", sessionId: "sess_1" });
+  });
+
+  it("does not forget on a transient DigitalOcean outage", async () => {
+    const agentId = await launched();
+    mockLoadSecret.mockResolvedValueOnce({ connection: { id: connectionId, status: "ready" }, revision: 1, apiToken: "outage-token-000000000000" });
+    const outage = fake.client("outage-token-000000000000");
+    const restoreOutage = setManagedSessionDependenciesForTest({
+      client: () => ({ ...outage, getSession: async () => { throw new DigitalOceanApiError("unavailable", 503, "GET", "/v2/agents/sessions"); } }),
+    });
+    try {
+      await expect(forgetManagedSession(userId, agentId)).rejects.toMatchObject({ code: "provider_unavailable" });
+    } finally {
+      restoreOutage();
+    }
+    expect(tables.hivra_agents[0].status).toBe("running");
+  });
+
+  it("only forgets the owner's own agents", async () => {
+    const agentId = await launched();
+    fake.rejectedTokens.add(TOKEN);
+    await expect(forgetManagedSession("someone_else", agentId)).rejects.toMatchObject({ code: "not_found" });
+    expect(tables.hivra_agents[0].status).toBe("running");
+  });
+});
+
+describe("workspace files", () => {
+  async function launched() {
+    await launchDigitalOceanSession(userId, launchInput());
+    return String(tables.hivra_agents[0].id);
+  }
+
+  beforeEach(() => {
+    fake.workspace.set("README.md", { kind: "f", size: 12, content: "hello world\n" });
+    fake.workspace.set("src", { kind: "d" });
+    fake.workspace.set("src/app.ts", { kind: "f", size: 40, content: "export {}" });
+    fake.workspace.set("a-file.txt", { kind: "f", size: 3, content: "abc" });
+  });
+
+  it("lists one folder with folders first and passes the path as an argument, never inside the script", async () => {
+    const agentId = await launched();
+    const root = await listManagedSessionWorkspace(userId, agentId, "");
+    expect(root.entries.map((entry) => [entry.kind, entry.name])).toEqual([["directory", "src"], ["file", "a-file.txt"], ["file", "README.md"]]);
+    expect(root.entries.find((entry) => entry.name === "README.md")).toMatchObject({ sizeBytes: 12, modifiedAt: expect.stringMatching(/^2026-/) });
+    const nested = await listManagedSessionWorkspace(userId, agentId, "/workspace/src/");
+    expect(nested).toMatchObject({ path: "src", entries: [expect.objectContaining({ name: "app.ts" })] });
+    const [, , script, , pathArg] = fake.execs.at(-1)!.argv;
+    expect(pathArg).toBe("/workspace/src");
+    expect(script).not.toContain("src");
+  });
+
+  it("refuses paths that leave the workspace before calling DigitalOcean", async () => {
+    const agentId = await launched();
+    for (const bad of ["../etc", "src/../../root", "a\u0000b"]) {
+      await expect(listManagedSessionWorkspace(userId, agentId, bad)).rejects.toMatchObject({ code: "invalid_request" });
+    }
+    expect(fake.execs).toHaveLength(0);
+  });
+
+  it("asks for a resume instead of waking a paused session", async () => {
+    const agentId = await launched();
+    await managedSessionAction(userId, agentId, "pause");
+    await expect(listManagedSessionWorkspace(userId, agentId, "")).rejects.toMatchObject({ code: "session_paused" });
+    expect(fake.execs).toHaveLength(0);
+  });
+
+  it("reports a missing folder and a sandbox that cannot list", async () => {
+    const agentId = await launched();
+    await expect(listManagedSessionWorkspace(userId, agentId, "gone")).rejects.toMatchObject({ code: "not_found" });
+    fake.execResult = { exitCode: 4 };
+    await expect(listManagedSessionWorkspace(userId, agentId, "")).rejects.toMatchObject({ code: "provider_rejected" });
+  });
+
+  it("marks a listing cut short at the output cap and drops the partial entry", async () => {
+    const agentId = await launched();
+    const name = "x".repeat(200);
+    const record = `f\t1\t1790000000\t${name}\u0000`;
+    fake.execResult = { exitCode: 0, stdout: record.repeat(Math.ceil((256 * 1024) / record.length)).slice(0, 256 * 1024) };
+    const listing = await listManagedSessionWorkspace(userId, agentId, "");
+    expect(listing.truncated).toBe(true);
+    expect(listing.entries.every((entry) => entry.name === name)).toBe(true);
+  });
+
+  it("streams a file or a folder archive under a safe name", async () => {
+    const agentId = await launched();
+    const file = await downloadManagedSessionWorkspace(userId, agentId, "README.md", { archive: false });
+    expect(file).toMatchObject({ fileName: "README.md", isArchive: false });
+    expect(await new Response(file.body).text()).toBe("hello world\n");
+    const folder = await downloadManagedSessionWorkspace(userId, agentId, "", { archive: true });
+    expect(folder).toMatchObject({ fileName: "workspace.tar", isArchive: true });
+    expect(fake.downloads.at(-1)).toMatchObject({ path: ".", asArchive: true });
+    await expect(downloadManagedSessionWorkspace(userId, agentId, "", { archive: false })).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  it("refuses a download larger than Hivra streams at once", async () => {
+    const agentId = await launched();
+    fake.workspace.set("big.bin", { kind: "f", size: 300 * 1024 * 1024, content: "x" });
+    await expect(downloadManagedSessionWorkspace(userId, agentId, "big.bin", { archive: false })).rejects.toMatchObject({ code: "invalid_request" });
+  });
+});
+
+describe("listDigitalOceanModelsForConnection", () => {
+  it("lists models with the connection's stored token", async () => {
+    const inferenceModels = jest.fn(async () => ["deepseek-v4-pro"]);
+    const restoreModels = setManagedSessionDependenciesForTest({ inferenceModels });
+    try {
+      await expect(listDigitalOceanModelsForConnection(userId, connectionId)).resolves.toEqual(["deepseek-v4-pro"]);
+      expect(mockLoadSecret).toHaveBeenCalledWith(userId, connectionId);
+      expect(inferenceModels).toHaveBeenCalledWith(TOKEN);
+    } finally {
+      restoreModels();
+    }
+  });
+
+  it("reports a rejected token as a credential problem", async () => {
+    const restoreModels = setManagedSessionDependenciesForTest({
+      inferenceModels: async () => { throw new DigitalOceanApiError("unauthorized", 401, "GET", "/v1/models"); },
+    });
+    try {
+      await expect(listDigitalOceanModelsForConnection(userId, connectionId)).rejects.toMatchObject({ code: "invalid_credentials" });
+    } finally {
+      restoreModels();
+    }
+  });
+});
+
+describe("readDigitalOceanBalance", () => {
+  it("reports ok, empty, blocked and unreadable from DigitalOcean's prepayment status", async () => {
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toMatchObject({ state: "ok", balance: "25.00" });
+    fake.prepayment = { balance: "0.00", blocked: false, autoPrepay: false };
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toMatchObject({ state: "empty" });
+    fake.prepayment = { balance: "4.10", blocked: true, autoPrepay: false };
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toMatchObject({ state: "blocked", balance: "4.10" });
+    fake.prepayment = null;
+    await expect(readDigitalOceanBalance(userId, connectionId)).resolves.toEqual({ state: "unreadable" });
+  });
+
+  it("maps a rejected token to a credential problem", async () => {
+    fake.rejectedTokens.add(TOKEN);
+    await expect(readDigitalOceanBalance(userId, connectionId)).rejects.toMatchObject({ code: "invalid_credentials" });
   });
 });
