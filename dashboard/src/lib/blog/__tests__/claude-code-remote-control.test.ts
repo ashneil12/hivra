@@ -306,6 +306,32 @@ describe("Claude Code Remote Control article", () => {
     expect(copy).toContain("answer `y` to `Enable Remote Control? (y/n)` and to `Trust <directory>? [y/N]`");
   });
 
+  it("lists every documented blocker in the environment check, and does not over-tell the four-hour window", () => {
+    const section = article.sections.find((candidate) => candidate.heading === "Set up an always-on machine for Remote Control")!;
+    const copy = section.paragraphs.join("\n");
+    // The grep must print every variable the text names, or a reader is told to look for something the command hides.
+    const pattern = new RegExp(/grep -E '([^']+)'/.exec(copy)![1]);
+    for (const name of [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "ANTHROPIC_UNIX_SOCKET",
+      "ANTHROPIC_BASE_URL",
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+      "DISABLE_GROWTHBOOK",
+    ]) {
+      expect(copy).toContain(`\`${name}\``);
+      expect(name).toMatch(pattern);
+    }
+    // ANTHROPIC_BASE_URL only blocks when it points away from api.anthropic.com.
+    expect(copy).toContain("`ANTHROPIC_BASE_URL` when it points at a host other than `api.anthropic.com`");
+    expect(copy).toContain("in the `env` block of a settings file");
+    // The four-hour window is for a stopped server. A crash is recovered by sending the session a message.
+    expect(copy).toContain("A Ctrl+C can be undone within about four hours, and a crashed session in server mode is served again when you message it.");
+    expect(copy).not.toContain("A Ctrl+C or a crash can be undone");
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
