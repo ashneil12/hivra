@@ -199,6 +199,14 @@ describe("Claude Code Remote Control article", () => {
     }
   });
 
+  it("sources the sleep statement to Anthropic's Projects docs instead of asserting it", () => {
+    // The Remote Control docs say only that Claude Code reconnects. "A sleeping laptop runs nothing" was our own claim.
+    expect(fullCopy).not.toContain("a sleeping laptop runs nothing");
+    expect(sectionCopy).toContain("Anthropic's [Projects docs](https://code.claude.com/docs/en/claude-projects#run-a-thread-on-your-own-computer) say a thread running on your computer pauses while that computer is asleep");
+    const sleepFaq = article.faqs.find(({ q }) => q === "Does Remote Control keep working if my computer goes to sleep?")!;
+    expect(sleepFaq.a).toContain("Anthropic's Projects docs say a thread running on your computer pauses while that computer is asleep");
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
