@@ -20,8 +20,9 @@ describe("Static copy safety", () => {
     const files = [
       path.join(__dirname, "..", "page.tsx"),
       path.join(__dirname, "..", "compare", "[slug]", "page.tsx"),
-      path.join(__dirname, "..", "..", "components", "landing", "HeroSection.tsx"),
-      path.join(__dirname, "..", "..", "components", "landing", "FinalCTASection.tsx"),
+      path.join(__dirname, "..", "..", "components", "landing", "home", "content.ts"),
+      path.join(__dirname, "..", "..", "components", "landing", "home", "Hero.tsx"),
+      path.join(__dirname, "..", "..", "components", "landing", "home", "Closing.tsx"),
       path.join(__dirname, "..", "..", "components", "layout", "LandingHeader.tsx"),
       path.join(__dirname, "..", "..", "components", "reserve", "ReserveForm.tsx"),
     ];

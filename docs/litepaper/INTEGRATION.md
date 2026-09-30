@@ -2,8 +2,14 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`8ccc34344b3a00884e6f37295ebefa9208a43c0826632508ea9a68d185dddca7`
-(v2.1, approved 23 September 2026). `test_content.py` checks the source against
+`27d7d582d04e91865e4aad5eb73dc10ccd326bd3ef9757c89fb6c2305f70cfe0`
+(v2.4, approved 28 September 2026). v2.4 opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
+language, treats every surface it names as live (no preview labels, at Ash's
+direction), adds Windows desktops to the positioning, simplifies "Keeping a
+mistake from reaching everything", trims the 15 product stories and drops the token section's closing line.
+v2.2 (same day) added "Keep the agents you like. Move them off your computer."
+and moved open source ahead of the founder letter; v2.1 (23 September) was
+`8ccc34344b3a00884e6f37295ebefa9208a43c0826632508ea9a68d185dddca7`. `test_content.py` checks the source against
 that pin. The founder section, all 15 product stories and all 12 token utilities
 are intact. The linked `THOUGHTS.md` publishes the founder section and its
 references as a standalone document.

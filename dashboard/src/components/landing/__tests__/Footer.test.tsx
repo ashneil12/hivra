@@ -18,7 +18,7 @@ jest.mock("next/link", () => {
     children: React.ReactNode;
     [key: string]: unknown;
   }) => (
-    <a href={href} {...rest}>
+    <a data-next-link href={href} {...rest}>
       {children}
     </a>
   );
@@ -96,7 +96,10 @@ describe("Footer", () => {
   });
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
     render(<Footer />);
-    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
+    // The litepaper is a static file: a plain link, so no Server Components prefetch 404s.
+    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
+    expect(screen.getByRole("link", { name: "Litepaper" })).not.toHaveAttribute("data-next-link");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("data-next-link");
     expect(screen.queryByText("A place of its own.")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Read the litepaper" })).not.toBeInTheDocument();
     // Nibbii is no longer part of Hivra or a token use.

@@ -14,6 +14,7 @@ jest.mock("@/components/public-site/PublicSite", () => ({
 
 import LandingPage from "../page";
 import StructuredData from "@/components/StructuredData";
+import { HOMEPAGE_FAQ } from "@/components/landing/home/content";
 
 type Graph = { "@graph": Array<Record<string, unknown>> };
 
@@ -36,5 +37,23 @@ describe("homepage Organization structured data", () => {
     const schema = findSchema(await LandingPage({}));
     const organization = schema?.["@graph"].find((entry) => entry["@type"] === "Organization");
     expect(organization?.sameAs).toEqual(["https://x.com/HivraOS", "https://github.com/ashneil12/hivra"]);
+  });
+});
+
+describe("homepage FAQ and offers structured data", () => {
+  it("publishes the same questions and answers the page shows", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const faq = schema?.["@graph"].find((entry) => entry["@type"] === "FAQPage") as { mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }> };
+    expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(HOMEPAGE_FAQ.map(({ q, a }) => [q, a]));
+  });
+
+  it("offers only what can be bought today: free self-hosting and the two hosted sizes", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const app = schema?.["@graph"].find((entry) => entry["@type"] === "SoftwareApplication") as { offers: Array<{ name: string; price: string }> };
+    expect(app.offers.map((offer) => [offer.name, offer.price])).toEqual([
+      ["Self-host Hivra", "0"],
+      ["Hivra Cloud, 2 vCPU and 4 GB", "9.99"],
+      ["Hivra Cloud, 4 vCPU and 8 GB", "19.99"],
+    ]);
   });
 });

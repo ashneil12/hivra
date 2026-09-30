@@ -86,8 +86,7 @@ export default function PricingPage() {
                   <span>software</span>
                 </p>
                 <p className={cardStyles.description}>
-                  Run Hivra on your own server. The source is public under the Apache-2.0 license, and self-hosting is a
-                  preview for a single operator.
+                  Run Hivra on your own server from the open source code.
                 </p>
                 <p className={cardStyles.freeCosts}>You provide and maintain the server. Server and model usage are paid separately.</p>
                 <a className={cardStyles.action} href={SELF_HOST_SOURCE_URL} target="_blank" rel="noopener noreferrer">
