@@ -280,8 +280,10 @@ advisory result for those npm trees, not a complete security audit or proof of
 zero vulnerabilities. The new Next.js critical advisories were checked directly
 against the upstream release, not inferred from a lagging repository alert list.
 
-The dashboard now pins Next.js, its environment package, third-party helpers and
-ESLint configuration to `16.3.3`; PDF.js to `6.2.108`; and Undici to `7.29.0`.
+On that date the dashboard pinned Next.js, its environment package, third-party
+helpers and ESLint configuration to `16.3.3`; PDF.js to `6.2.108`; and Undici to
+`7.29.0`. The [2026-09-30 update](#dependency-security-update-2026-09-30) below
+moved Next.js and Undici again.
 Patched transitive versions include sharp `0.35.4` (supported natively by this
 Next.js release), DOMPurify `3.4.14`, PostCSS `8.5.26`, nanoid `3.3.18`, js-yaml
 `3.15.1`/`4.3.1`, and brace-expansion `1.1.18`/`5.0.9`. The sidecar uses fast-uri
@@ -331,33 +333,43 @@ complete security, self-hosting or public-release gates.
 ## Dependency security update (2026-09-30)
 
 On 2026-09-30 `npm audit --omit=dev` on the dashboard lockfile reported one
-critical, one high and two low findings: Next.js 16.3.3 (GHSA-vcvr-r3jv-pc5j,
-a remote code execution advisory for the Node `ImageResponse` in `next/og`),
-Undici 7.29.0 (several advisories fixed in 7.30.0), and DOMPurify 3.4.14 with
+critical, one high and two low findings. The critical one was Next.js 16.3.3
+(GHSA-vcvr-r3jv-pc5j, a remote code execution advisory for the Node
+`ImageResponse` in `next/og`). The high one was Undici 7.29.0, which has several
+advisories fixed in 7.30.0. The two low ones were DOMPurify 3.4.14 and
 posthog-js, which depends on it (GHSA-p98j-92pf-mc4p, fixed in 3.4.16).
 
 The dashboard now pins Next.js, its environment package, third-party helpers and
 ESLint configuration to `16.3.8`, Undici to `7.30.0`, and the DOMPurify override
 to `3.4.16`. After the change, `npm audit --omit=dev` on the dashboard lockfile
-returns zero findings. This is the registry's advisory result for that one
-lockfile on that date, not a complete security audit.
+returns zero findings. That result covers one lockfile on one date. It is not a
+complete security audit.
 
-What was and was not exposed: `ImageResponse` is called only from two image-card
+Exposure before the update: `ImageResponse` is called only from two image-card
 helpers, and every caller passes text from static catalogs, so no path from a
 request to the image markup was found. The code uses Undici's `Agent` and
-`fetch`, not `BalancedPool`. The bump closes the advisories without relying on
-that reading.
+`fetch` and does not use `BalancedPool`. The update closes the advisories without
+relying on that reading.
 
 Boundaries of this update:
 
-- The three Cloudflare worker lockfiles carry Undici 7.29.0 only as a dev-only
-  dependency of Miniflare, which pins that exact version. They are covered in
-  the worker section above and are not part of the dashboard runtime.
+- Each of the three Cloudflare worker packages takes Undici only through
+  Miniflare, a dev-only dependency that pins 7.29.0 exactly. Each worker manifest
+  now carries an override to 7.30.0, and the dependency-security test checks the
+  overrides and the lockfile copies. Workers are not part of the dashboard
+  runtime.
+- Two other lockfiles were audited and left unchanged. The DeepSeek harness
+  lockfile under `dashboard/provisioner/deepseek-harness` carries Undici 8.10.1,
+  and its bytes are bound into every sealed provisioner release manifest, so
+  changing it needs a new provisioner release. The browser sidecar lockfile has
+  separate `fast-uri` and `ip-address` advisories and ships as a published image.
+  Both are open items for the owner.
 - Production (`hivra.cloud`) builds from `main` and receives this update only
   through a Promote. Merging it into `canary` does not change production.
-- GitHub Dependabot alerts and security updates are a repository setting and
-  were off when this was checked. Turning them on is an owner action, listed in
-  [the repository settings checklist](../security/REPO-SETTINGS-CHECKLIST.md) once the owner adds it.
+- Automatic dependency alerts (Dependabot alerts and security updates) are a
+  repository setting that no file in this tree controls, and this update does not
+  change them. Turning them on is an owner action, listed in
+  [the repository settings checklist](REPO-SETTINGS-CHECKLIST.md).
 - `npm audit` without `--omit=dev` also reports brace-expansion advisories that
   reach only the lint and test toolchain. They are not part of this update.
 

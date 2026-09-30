@@ -167,6 +167,8 @@ It checks the named GitHub/Vercel controls and fails if required settings are
 missing or weakened. It does not deploy, inspect secret values, certify application
 security, or replace revision-bound release verification. The live configuration
 is stored in GitHub/Vercel; committing this document alone does not enforce it.
+Repository settings that this audit does not read, such as Dependabot and code
+scanning, are listed in [the repository settings checklist](REPO-SETTINGS-CHECKLIST.md).
 
 Current broader dashboard CI failures remain tracked in issue #3; provider release
 identity and staged desktop activation remain in issue #2. A passing current-tree
