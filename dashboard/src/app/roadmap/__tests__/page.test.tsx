@@ -249,6 +249,26 @@ describe("/roadmap page", () => {
     expect(screen.getByText("Agents on their own computers")).toBeInTheDocument();
   });
 
+  it("makes no speed claim anywhere, including in planned Marketplace items", () => {
+    // The shared public-copy rules ban unmeasured speed claims ("one click",
+    // "instantly", "in N minutes"). The roadmap is a labelled plan, but a plan
+    // that promises a speed is still a speed claim once it is indexed.
+    const SPEED_CLAIM = /one[- ]click|\binstant(?:ly)?\b|\bin \d+ (?:minutes|seconds)\b|\bwithin (?:minutes|seconds)\b|live in minutes|deploy in \d/i;
+    const strings: string[] = [];
+    const collect = (value: unknown): void => {
+      if (typeof value === "string") strings.push(value);
+      else if (Array.isArray(value)) value.forEach(collect);
+      else if (value && typeof value === "object") Object.values(value).forEach(collect);
+    };
+    collect(roadmapContent);
+    expect(strings.length).toBeGreaterThan(100);
+    expect(strings.filter((text) => SPEED_CLAIM.test(text))).toEqual([]);
+
+    const { container } = render(<RoadmapPage />);
+    expect(container.textContent ?? "").not.toMatch(SPEED_CLAIM);
+    expect(container).toHaveTextContent("Browse, install, and deploy community-built operator packs.");
+  });
+
   it("labels every token use that is not live as proposed", () => {
     const [live, ...rest] = roadmapContent.token.utilities;
     expect(live.description).toMatch(/^Live today\./);

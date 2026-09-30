@@ -415,10 +415,10 @@ export const roadmapContent = {
           {
             heading: "Operator Marketplace",
             bullets: [
-              "Browse, install, and deploy community-built operator packs in one click.",
+              "Browse, install, and deploy community-built operator packs.",
               "Verified publisher programme for trusted creators with accountability and track records.",
               "Flexible publishing options: release packs with open access, attach a price for individual purchase, or offer revenue share. Creators choose their own model.",
-              "Community templates: free packs contributed by the community, instantly deployable.",
+              "Community templates: free packs contributed by the community, ready to deploy.",
               "Private company packs: organisations maintain their own internal operator libraries, never publicly visible.",
               "Proposed: token-based marketplace access, where token holdings determine which community packs and skills are available without individual purchase.",
               "Proposed: Users can build and publish their own operators and agents. Creators earn from usage and can withdraw through supported payout options, including token-based settlement. Additional payout methods will be introduced over time.",
