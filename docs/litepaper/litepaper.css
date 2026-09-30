@@ -4178,3 +4178,25 @@ html:not(.js-enhanced) .atlas-layout {
   bottom:auto;
   top:calc(100% + 10px)
 }
+
+.hero-links {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px
+}
+.hero-links .hero-open {
+  margin-top:26px
+}
+.hero-open.hero-token {
+  border-color:var(--accent);
+  color:var(--text)
+}
+.hero-open.hero-token:hover {
+  background:var(--accent);
+  color:var(--accent-ink)
+}
+@media(max-width:680px) {
+  .hero-links .hero-open {
+    margin-top:20px
+  }
+}

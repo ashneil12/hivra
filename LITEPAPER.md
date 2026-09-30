@@ -395,6 +395,10 @@ We're not putting dates on the map. AI speeds up building, but it doesn't speed 
 
 **The migration, new uses and treasury plans in this section are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.**
 
+Hivra gives an AI agent a computer of its own, so it does its work there and stays off yours. You pick the agent, it gets a machine, and you decide what it can reach. All of that runs today, and all of it is open source.
+
+Around that sit a lot of moving parts that have to pay each other: computers that have to run, researchers who find flaws, publishers who keep tools alive, and agents that need a small budget. This section is about the token that could pay for all of it, and why one shared token beats fifteen separate checkouts.
+
 ### There's already a token, and it already does something
 
 $HermesOS launched with the original platform, before Hivra had a name. Hold it and you get access to compute. That's live now, and it's how a real share of the people here already pay.
@@ -419,11 +423,13 @@ Keeping your access and converting your tokens are separate decisions.
 
 ### What it's for
 
-One token that works across every part of this, instead of fifteen separate paywalls. Each use still has to earn its place. Where a card or a stablecoin does the job better, we use a card or a stablecoin.
+Picture a single day on Hivra. A computer runs all night. A researcher breaks out of a test machine and gets paid for it. A publisher's tool gets a fix and its maker gets paid. An agent buys a small answer from another agent. Give every one of those its own paywall and you get fifteen checkouts, fifteen balances and fifteen sets of rules to learn.
 
-Here's the list.
+One token means one balance that works across all of it. Each use still has to earn its place, and where a card or a stablecoin does the job better, we use a card or a stablecoin.
 
-**Access to compute.** Hold for a tier of computing power, fixed when you first qualify. Live today with $HermesOS.
+Only the first use below is live today, with $HermesOS. The rest are proposals. Here's the list, and where in Hivra you'd meet each one.
+
+**Access to compute.** Hold for a tier of computing power, fixed when you first qualify. This is what runs Agent Computers, and it's live today with $HermesOS.
 
 **Metered spending.** Pay for what you use: running time, storage space, extra processor cores and data sent out of your computer. Priced per unit against a balance you top up.
 
@@ -431,7 +437,7 @@ Here's the list.
 
 **Reserved capacity.** There's a hard limit on how many computers we can run, because hardware is finite, not because somebody printed a number on a chart. Reserved room and priority placement are limited by that.
 
-**Containment bounties.** A reward pool sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
+**Containment bounties.** This is how Challenges gets funded. A reward pool sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
 
 Nearly all the money in AI security rewards today goes to the AI itself: prompt injection, jailbreaks and slipping past its safety filters. That's good work and it's well funded, but it isn't the only place things break. Almost nobody is paying people to break out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
 
@@ -439,19 +445,19 @@ We're also the right people to fund it, because the test happens on our own plat
 
 The public record shows what's covered, the reward, how long it's been open, who tested it and what they found. **An unclaimed pool doesn't prove anything is secure.** It only says no qualifying claim has been paid under those rules.
 
-**Certification bonds.** A publisher who gets a Seal badge puts money behind the claim, like a deposit. If someone proves the claim wrong within the terms, part of that deposit pays for the finding. Nothing grows just from sitting there. It only moves when a failure has been verified. The point is to make a security claim cost something when it's wrong.
+**Certification bonds.** This is what gives a Seal badge its weight. A publisher who gets one puts money behind the claim, like a deposit. If someone proves the claim wrong within the terms, part of that deposit pays for the finding. Nothing grows just from sitting there. It only moves when a failure has been verified. The point is to make a security claim cost something when it's wrong.
 
-**Threat report payouts.** Find a hacked MCP server, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
+**Threat report payouts.** This is how Signal pays for its warnings. Find a hacked MCP server, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
 
-**Publisher payouts.** Exchange pays the people who build and look after what's listed on it. It also keeps track of versions and verified names, and lets bad ones be pulled back.
+**Publisher payouts.** This is how Exchange keeps good tools alive. It pays the people who build and look after what's listed on it. It also keeps track of versions and verified names, and lets bad ones be pulled back.
 
 **Certification fees.** Seal reviews get paid for. Real review costs real time.
 
 **Experience packages.** An agent works out something difficult. That gets packaged with its method, its proof and its limits, and sold. Someone else's agent can use it after review. What one agent learned the hard way becomes something another team can buy, inspect and test.
 
-**Mission funding.** A sponsor puts up a budget for a goal, and payment happens when the proof is accepted, not just because work was done.
+**Mission funding.** This is how Missions get started. A sponsor puts up a budget for a goal, and payment happens when the proof is accepted, not just because work was done.
 
-**Agent budgets.** An agent gets an allowance. It has a cap, it can be taken back, and it's watched. It buys its own computing power, a paid tool, a Vault answer or work from another agent. Small amounts, very often, and the thing spending isn't a person. Handing a job to another agent must never multiply the money available.
+**Agent budgets.** This is Interchange. An agent gets an allowance. It has a cap, it can be taken back, and it's watched. It buys its own computing power, a paid tool, a Vault answer or work from another agent. Small amounts, very often, and the thing spending isn't a person. Handing a job to another agent must never multiply the money available.
 
 ### The treasury
 
@@ -468,6 +474,8 @@ The treasury is a fund for running the project, so it moves in both directions. 
 Fee amounts, spending rules, wallets and who can approve payments get published before any of it starts. This creates no holder payout, no ownership interest and no claim on revenue. No fixed share of revenue is committed to buying tokens. Tokens held in the treasury aren't burned. They get paid out again.
 
 ### Rules for the token
+
+A token is easy to bolt on and hard to trust. So here is what this one can't do, written down before anything launches.
 
 **No staking or yield.** Holding or locking doesn't earn more tokens, a return, or a share of profits.
 
