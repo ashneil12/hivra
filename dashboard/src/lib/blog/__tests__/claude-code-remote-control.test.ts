@@ -289,6 +289,23 @@ describe("Claude Code Remote Control article", () => {
     expect(sectionCopy).toContain("On Pro and Max you turn Trusted Devices on yourself, and on Team and Enterprise an Owner does.");
   });
 
+  it("starts the always-on server once, inside tmux, not as a foreground server plus a second one", () => {
+    // Two `claude remote-control` processes in one directory change resume and archive behaviour, and a foreground server
+    // over SSH dies on disconnect. The setup must start tmux first and run the server once inside it.
+    const section = article.sections.find((candidate) => candidate.heading === "Set up an always-on machine for Remote Control")!;
+    expect(section).toBeDefined();
+    const copy = section.paragraphs.join("\n");
+    expect([...copy.matchAll(/\*\*Step (\d+)\./g)].map((match) => Number(match[1]))).toEqual([1, 2, 3, 4, 5]);
+    const servers = fencedBlocks(copy).flatMap((block) => block.split("\n")).filter((line) => /^claude remote-control\b/.test(line));
+    expect(servers).toEqual(["claude remote-control --name \"Home server\""]);
+    const block = fencedBlocks(copy).find((candidate) => candidate.includes("claude remote-control"))!;
+    expect(block.indexOf("tmux new -s remote")).toBeGreaterThanOrEqual(0);
+    expect(block.indexOf("tmux new -s remote")).toBeLessThan(block.indexOf("claude remote-control"));
+    expect(block).toContain("tmux attach -t remote");
+    expect(copy).toContain("**Step 4. Start it inside tmux and answer the one-time prompts.**");
+    expect(copy).toContain("answer `y` to `Enable Remote Control? (y/n)` and to `Trust <directory>? [y/N]`");
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
