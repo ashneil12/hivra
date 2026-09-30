@@ -196,6 +196,18 @@ describe("says what Anthropic does not currently publish, not what it never publ
   });
 });
 
+describe("does not say Claude Code needs a plan while the page explains the API key", () => {
+  // The same post says Claude Code can bill per token on an API key with no plan
+  // limits, and the FAQ ships in FAQPage JSON-LD, so a search engine must not
+  // read two contradictory statements.
+  it("says a plan or an API key in the FAQ and the calculator's FAQ", () => {
+    const faq = article.faqs.find((candidate) => candidate.q === "Is Claude Code included in Pro?");
+    expect(faq?.a).toContain("can also be billed to an API key instead of a plan");
+    expect(bodyCopy).not.toMatch(/needs one of those paid plans|requires a paid plan|only with a paid plan/i);
+    expect(JSON.stringify(getToolEntry("claude-code-plan-calculator"))).not.toMatch(/needs one of those paid plans|requires a paid plan|only with a paid plan/i);
+  });
+});
+
 describe("reports Anthropic's model guide as it reads", () => {
   // The guide (support article 14552983, modified 2026-09-22) says Opus uses
   // meaningfully more of your quota and costs several times more per turn than

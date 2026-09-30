@@ -210,7 +210,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Is Claude Code included in Pro?",
-      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and needs one of those paid plans. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro does not include API usage through the Claude Console. Prices read on ${READ_ON} from Anthropic's pricing page.`,
+      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and can also be billed to an API key instead of a plan. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro does not include API usage through the Claude Console. Prices read on ${READ_ON} from Anthropic's pricing page.`,
     },
     {
       q: "What are Claude Max limits?",

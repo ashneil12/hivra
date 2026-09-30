@@ -163,7 +163,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
   faqs: [
     {
       q: "Is Claude Code included in Claude Pro?",
-      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and needs one of those paid plans. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro does not include API usage through the Claude Console.`,
+      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and can also be billed to an API key instead of a plan. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro does not include API usage through the Claude Console.`,
     },
     {
       q: "Is Claude Max worth it for Claude Code?",
