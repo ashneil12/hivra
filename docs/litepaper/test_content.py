@@ -145,6 +145,11 @@ def slug(value):
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
+def picture_fallback(picture):
+    """The PNG a <picture> falls back to."""
+    return next(child.attrs["src"] for child in picture.children if isinstance(child, Element) and child.tag == "img")
+
+
 class LitepaperContentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -254,7 +259,7 @@ class LitepaperContentTests(unittest.TestCase):
             self.assertEqual((mark.tag, mark.attrs.get("src"), mark.attrs.get("alt")), ("img", "/brand/hivra-icon-192.png", ""))
 
     def test_the_monolith_is_served_as_webp_with_the_png_as_fallback(self):
-        pictures = [node for node in self.page.elements if node.tag == "picture"]
+        pictures = [node for node in self.page.elements if node.tag == "picture" and "monolith" in picture_fallback(node)]
         self.assertEqual(len(pictures), 3, "hero, gallery and finale")
         for picture in pictures:
             source, image = [child for child in picture.children if isinstance(child, Element)]
@@ -266,6 +271,27 @@ class LitepaperContentTests(unittest.TestCase):
             self.assertEqual((image.tag, image.attrs.get("src")), ("img", "assets/boundary-monolith-v5.png"))
         preload = next(node for node in self.page.elements if node.tag == "link" and node.attrs.get("rel") == "preload" and node.attrs.get("as") == "image")
         self.assertEqual(preload.attrs.get("imagesrcset"), pictures[0].children[0].attrs["srcset"])
+
+    def test_the_generated_renders_are_served_as_webp_with_the_png_as_fallback(self):
+        pictures = [node for node in self.page.elements if node.tag == "picture" and "monolith" not in picture_fallback(node)]
+        self.assertEqual([picture_fallback(picture) for picture in pictures], [
+            "assets/agent-computer-opportunity-v2.png",
+            "assets/observable-run-v2.png",
+            "assets/agent-computer-hero-v2.png",
+        ])
+        for picture in pictures:
+            source, image = [child for child in picture.children if isinstance(child, Element)]
+            stem = image.attrs["src"].removesuffix(".png")
+            self.assertEqual((source.tag, source.attrs.get("type")), ("source", "image/webp"))
+            self.assertEqual(source.attrs["srcset"], f"{stem}-768.webp 768w, {stem}-1536.webp 1536w")
+            self.assertEqual(source.attrs.get("sizes"), "(max-width: 999px) 100vw, 46vw")
+            self.assertEqual((image.tag, image.attrs.get("loading")), ("img", "lazy"))
+            self.assertEqual((image.attrs.get("width"), image.attrs.get("height")), ("1536", "1024"))
+            self.assertTrue(image.attrs.get("alt"))
+
+    def test_the_share_image_stays_a_png(self):
+        tag = next(node for node in self.page.elements if node.tag == "meta" and node.attrs.get("property") == "og:image")
+        self.assertEqual(tag.attrs["content"], "https://hivra.cloud/docs/litepaper/assets/boundary-monolith-v5.png")
 
     def test_every_reader_block_survives(self):
         mains = [node for node in self.page.elements if node.tag == "main"]
