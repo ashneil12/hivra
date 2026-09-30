@@ -1,6 +1,7 @@
 import { Plus } from "lucide-react";
 import { HOMEPAGE_FAQ } from "./content";
 import styles from "./home.module.css";
+import { glossify } from "@/components/gloss/glossify";
 
 /** Native disclosure: works without script, animates where the browser can. */
 export default function Faq() {
@@ -17,7 +18,7 @@ export default function Faq() {
               <h3>{q}</h3>
               <Plus size={20} aria-hidden="true" />
             </summary>
-            <p>{a}</p>
+            <p>{glossify(a)}</p>
           </details>
         ))}
       </div>

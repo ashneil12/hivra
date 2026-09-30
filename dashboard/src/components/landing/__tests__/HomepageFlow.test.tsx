@@ -17,7 +17,7 @@ async function renderHome() {
 test("the first screen says what it is, who it is for, what it costs, and asks once", async () => {
   await renderHome();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your agent needs a computer. It doesn't need yours.");
-  expect(screen.getByText(/Run Claude Code, Codex, Hermes and more on a private cloud computer of their own\..*From \$9\.99 a month\./)).toBeInTheDocument();
+  expect(screen.getByText((_, element) => element?.tagName === "P" && /AI agents like Claude Code and Codex can do real work for you\..*private computer in the cloud\..*From \$9\.99 a month\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   expect(screen.getByRole("link", { name: /Hermes OS is now Hivra/ })).toHaveAttribute("href", "/why-hivra/evolution");
   expect(screen.getAllByText("7-day money-back guarantee on card payments.").length).toBeGreaterThan(0);
@@ -54,7 +54,7 @@ test("pricing shows only what can be bought today and links straight to checkout
   expect(pricing.getByRole("link", { name: /Connect your server/ })).toHaveAttribute("href", "/sign-up");
   expect(pricing.getByRole("link", { name: /View on GitHub/ })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   expect(pricing.getByText("Start here")).toBeInTheDocument();
-  expect(pricing.getByText("Need more room? $19.99 a month for 4 vCPU and 8 GB of RAM.")).toBeInTheDocument();
+  expect(pricing.getByText((_, element) => element?.tagName === "P" && element.textContent === "Need more room? $19.99 a month for 4 vCPU and 8 GB of RAM.")).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/Most popular|not yet available as shown|two months free|\$49|\$99/);
   expect(document.querySelector('a[href^="/dashboard/infrastructure"]')).toBeNull();
 });

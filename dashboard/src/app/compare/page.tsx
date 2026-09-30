@@ -27,21 +27,21 @@ const comparisons = [
     title: "Hivra vs Self-Hosted VPS",
     tagline: "Control vs. time. The honest tradeoff.",
     description:
-      "Self-hosting Hermes on Hetzner or DigitalOcean costs less per month — but hours of setup, ongoing maintenance, and midnight debugging sessions add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
+      "Running Hermes yourself on a server you rent from Hetzner or DigitalOcean costs less each month. But the hours of setup, the upkeep and the midnight debugging add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
   },
   {
     slug: "vs-railway",
     title: "Hivra vs Railway",
     tagline: "Generic cloud vs. purpose-built agent hosting.",
     description:
-      "Railway is a great generic cloud platform. But it's not built for Hermes agents. No agent dashboard, no multi-agent profiles, no pre-configured Hermes stack. You'd build all of that yourself.",
+      "Railway is a great generic cloud platform. But it's not built for Hermes agents. No agent dashboard, no multi-agent profiles, no ready-made Hermes setup. You'd build all of that yourself.",
   },
   {
     slug: "vs-render",
     title: "Hivra vs Render",
     tagline: "Another generic platform that wasn't built for agents.",
     description:
-      "Render is a solid general-purpose host. But \"deploy Hermes to Render\" means writing your own Dockerfile, configuring networking, and running without any agent-specific tooling. Hivra is already configured.",
+      "Render is a solid general-purpose host. But \"deploy Hermes to Render\" means writing your own Docker setup file, setting up the network, and running without any tools made for agents. Hivra is already configured.",
   },
   {
     slug: "openclaw-to-hermes",
@@ -55,7 +55,7 @@ const comparisons = [
     title: "Best AI Agent Hosting Platforms in 2026",
     tagline: "The honest landscape for hosting persistent AI agents.",
     description:
-      "From raw VPS to managed platforms, explore every option for hosting a persistent AI agent in 2026 — with honest tradeoffs on cost, setup time, and maintenance burden.",
+      "From a bare rented server to fully managed platforms, here is every option for hosting an AI agent that keeps running in 2026, with honest tradeoffs on cost, setup time and upkeep.",
   },
 ];
 

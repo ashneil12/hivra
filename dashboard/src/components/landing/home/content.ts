@@ -39,13 +39,13 @@ export const HERO = {
   titleLead: "Your agent needs a",
   titleWord: "computer.",
   titleTail: "It doesn't need yours.",
-  subhead: `Run Claude Code, Codex, Hermes and more on a private cloud computer of their own. It stays on when you close your laptop, and you decide what it can reach. From ${ENTRY_PLAN_PRICE} a month.`,
+  subhead: `AI agents like Claude Code and Codex can do real work for you. Hivra gives each one a private computer in the cloud. It keeps working when you close your laptop, and you decide what it can reach. From ${ENTRY_PLAN_PRICE} a month.`,
   primary: "Launch an agent",
   secondary: "Or start with a computer",
   proof: [
-    "Your Claude or ChatGPT login, or your own API key",
-    "Hivra Cloud, your own server, or self-hosted",
-    "Open source on GitHub.",
+    "Your own Claude or ChatGPT account, or your own AI key",
+    "We run it, or you run it on your own server",
+    "Open source on GitHub",
   ],
 } as const;
 
@@ -54,11 +54,11 @@ export const REACH = {
   eyebrow: "The problem",
   titleA: "Right now, your agent works where your life is.",
   bodyA: [
-    "They open terminals, read repositories, install software, browse the web, use signed-in accounts, write and run code, and send messages. They keep working while you're somewhere else.",
-    "And most of them run on your computer. The same machine that holds your photos, your messages, your passwords, your SSH keys, your client work and every account you're signed into.",
+    "They type commands, read through code, install software, browse the web, use accounts you're signed into, write and run code, and send messages. They keep working while you're somewhere else.",
+    "And most of them run on your computer. The same machine that holds your photos, your messages, your passwords, your secret keys, your work and every account you're signed into.",
   ],
   kicker: "Is that really what you want running on your personal computer?",
-  titleB: "Don't make the model your security boundary.",
+  titleB: "Don't make the AI its own guard.",
   bodyB: "Give it a computer of its own.",
   states: [
     { id: "shared", label: "Shared machine", caption: "The agent works beside your personal files and signed-in apps. What it can reach comes down to whatever permissions you set." },
@@ -69,9 +69,9 @@ export const REACH = {
   items: [
     { id: "photos", label: "Photos" },
     { id: "passwords", label: "Passwords" },
-    { id: "bank", label: "Bank session" },
-    { id: "clients", label: "Client work" },
-    { id: "keys", label: "SSH keys" },
+    { id: "bank", label: "Bank login" },
+    { id: "clients", label: "Work files" },
+    { id: "keys", label: "Secret keys" },
   ],
   project: "Project folder",
 } as const;
@@ -101,10 +101,10 @@ export const FIT = {
     { label: "Keeps your personal computer out of it", cells: ["No", "Yes", "Yes", "Yes"] },
     { label: "Stays on when your laptop closes", cells: ["No", "Yes", "Yes", "Yes"] },
     { label: "You choose the agent", cells: ["Yes", "No", "Yes", "Yes"] },
-    { label: "You bring your own model account", cells: ["Yes", "No", "Yes", "Yes"] },
-    { label: "Pick the system: Linux, Windows or Omarchy", cells: ["Yours", "Theirs", "Linux", "Yes"] },
+    { label: "You use your own AI account", cells: ["Yes", "No", "Yes", "Yes"] },
+    { label: "Pick the operating system: Linux, Windows or Omarchy", cells: ["Yours", "Theirs", "Linux", "Yes"] },
     { label: "You can read the code", cells: ["Depends", "No", "No", "Yes"] },
-    { label: "You can run it on your own hardware", cells: ["Yes", "No", "No", "Yes"] },
+    { label: "You can run it on your own computer or server", cells: ["Yes", "No", "No", "Yes"] },
   ],
   verdict: "Hivra is the one you can check.",
   more: "How Hivra compares",
@@ -116,7 +116,7 @@ export const AGENTS_SECTION = {
   eyebrow: "Agents",
   title: "Pick your agent.",
   titleTail: "It gets its own computer.",
-  subhead: "Sign in with your Claude or ChatGPT account, or bring an API key. Run a few side by side, each on a computer of its own.",
+  subhead: "Sign in with your own Claude or ChatGPT account, or use your own AI key. Run a few side by side, each on a computer of its own.",
   compare: "Compare every agent",
   screensNote: "Card screens are illustrations of each agent at work.",
 } as const;
@@ -126,7 +126,7 @@ export const HOME_AGENTS: HomeAgent[] = [
     id: "claude-code",
     name: "Claude Code",
     role: "Coding",
-    line: "Build, debug and review code. Uses your own Claude login.",
+    line: "Write, fix and check code. Uses your own Claude login.",
     href: buildLaunchHref({ start: true, profile: "claude-code" }),
     screen: ["> fix the flaky auth test", "● Reading tests/auth.test.ts", "● Editing src/auth.ts", "✓ Tests pass"],
   },
@@ -142,7 +142,7 @@ export const HOME_AGENTS: HomeAgent[] = [
     id: "hermes",
     name: "Hermes",
     role: "Research and automation",
-    line: "Browse, research and automate work, with its tools and memory in one place.",
+    line: "Browses the web, does research and handles repeat jobs, with its tools and memory in one place.",
     href: buildLaunchHref({ start: true, profile: "hermes" }),
     screen: ["hermes › compare these pricing pages", "reading the sources", "writing notes/pricing.md", "✓ Saved"],
   },
@@ -158,7 +158,7 @@ export const HOME_AGENTS: HomeAgent[] = [
     id: "agent-zero",
     name: "Agent Zero",
     role: "Agent workspace",
-    line: "Give it a goal. It plans, runs and reports in its own dashboard.",
+    line: "Give it a goal. It plans the steps, does them and reports back on its own screen.",
     href: buildLaunchHref({ start: true, profile: "agent-zero" }),
     screen: ["a0 › write the weekly report", "planning 3 steps", "querying the logs", "✓ Report ready"],
   },
@@ -166,7 +166,7 @@ export const HOME_AGENTS: HomeAgent[] = [
     id: "aeon",
     name: "Aeon",
     role: "Project automation",
-    line: "Scheduled agent work on your own GitHub Actions. Hivra hosts its dashboard.",
+    line: "Runs jobs on a timer through your own GitHub Actions. Hivra hosts its screen.",
     href: buildLaunchHref({ start: true, profile: "aeon" }),
     screen: ["aeon › nightly triage", "workflow queued on GitHub", "labelling new issues", "✓ Run complete"],
   },
@@ -190,12 +190,12 @@ export const HOW = {
     {
       n: "01",
       title: "It stays on when you don't.",
-      body: "Close the laptop. On a paid plan the computer stays on, with its files, sessions and logins where you left them. A run you start in tmux keeps going.",
+      body: "Close the laptop. On a paid plan the computer stays on, with its files and logins where you left them. A run you start in tmux keeps going.",
     },
     {
       n: "02",
       title: "Watch it. Take over from anywhere.",
-      body: "Open the desktop or terminal from any browser, even your phone. Check the work, then do the next bit yourself.",
+      body: "Open its desktop or text window from any browser, even on your phone. Check the work, then do the next bit yourself.",
     },
     {
       n: "03",
@@ -203,7 +203,7 @@ export const HOW = {
       body: "Your personal files and signed-in accounts aren't on its computer. Share a project, connect what the job needs, and keep the rest out.",
     },
   ],
-  allowed: ["Your repo", "Model key", "Dev tools"],
+  allowed: ["Your code", "AI key", "Coding tools"],
   blocked: ["Photos", "Passwords", "Bank"],
   note: "Illustrations.",
 } as const;
@@ -214,7 +214,7 @@ export const OPEN_SOURCE = {
   titleTail: "Run it yourself.",
   body: [
     "Every line of Hivra is open source. Read the code. Change it. Run it yourself.",
-    "This software sits between an agent and things you care about. You should be able to inspect its decisions about access, and keep going without us if we change direction.",
+    "This software sits between an agent and the things you care about. You should be able to check how it decides what the agent can touch, and keep going without us if we change direction.",
   ],
   repoOwner: "ashneil12",
   repoName: "hivra",
@@ -230,7 +230,7 @@ export const PRICING = {
   eyebrow: "Pricing",
   title: "Free to self-host.",
   titleTail: `From ${ENTRY_PLAN_PRICE} a month on Hivra Cloud.`,
-  subhead: "Pick where it runs. Your model key or login stays yours wherever it runs, and usage on it is billed by your provider.",
+  subhead: "Pick where it runs. Your own AI key or login stays yours wherever it runs, and your AI company bills you for what you use.",
   cloud: {
     name: "Hivra Cloud",
     marker: "Start here",
@@ -253,7 +253,7 @@ export const PRICING = {
   selfHost: {
     name: "Self-host Hivra",
     price: "$0",
-    body: "Run the whole platform yourself from the open source code. You provide the server and pay for it and your model usage.",
+    body: "Run the whole platform yourself from the open source code. You supply the server and pay for it, and for your AI usage.",
     cta: "View on GitHub",
     href: SELF_HOST_SOURCE_URL,
   },
@@ -277,7 +277,7 @@ export const FOUNDER = {
 export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   {
     q: "What is Hivra?",
-    a: "A private cloud computer for your agent, or for you. Launch Claude Code, Codex, Hermes and more on it, or launch Ubuntu and use it yourself.",
+    a: "A private computer in the cloud for an AI agent, or for you. Launch Claude Code, Codex, Hermes and more on it, or launch Ubuntu and use it yourself.",
   },
   {
     q: "Which agents can I use?",
@@ -285,7 +285,7 @@ export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Can I use my Claude or ChatGPT account?",
-    a: "Yes. Sign in with your own account for Claude Code and Codex, or bring an API key. Usage on your own key or login is billed by your provider.",
+    a: "Yes. Sign in with your own account for Claude Code and Codex, or bring an API key. Your AI company bills you for what you use.",
   },
   {
     q: "What happens when I close my laptop?",
@@ -293,7 +293,7 @@ export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Where can it run?",
-    a: "On Hivra Cloud, where we run the computer for you. On a server you already have. Or self-host the whole platform from the open source code.",
+    a: "On Hivra Cloud, where we run the computer for you. On a server you already have. Or run the whole platform yourself from the open source code.",
   },
   {
     q: "How much does it cost?",
@@ -305,7 +305,7 @@ export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Do I need the token?",
-    a: "No. Self-hosting needs neither a token nor a Hivra account. Available payment methods are shown in the managed checkout.",
+    a: "No. Running Hivra yourself needs neither a token nor a Hivra account. The ways to pay are shown at checkout.",
   },
 ];
 

@@ -2,8 +2,8 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`27d7d582d04e91865e4aad5eb73dc10ccd326bd3ef9757c89fb6c2305f70cfe0`
-(v2.4, approved 28 September 2026). v2.4 opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
+`e5d9711930c1bbfa60fb75e2a8057a808907df2eb30e881de965c19d3aecb1a6`
+(v2.5, plain-English pass, 30 September 2026). v2.5 rewrites the hard words outside the founder letter for a 12-year-old reader: it explains hard terms (AI agent, the cloud, open source, snapshots, virtual machines, containers and more) in hover and focus tooltips from `dashboard/src/lib/glossary.json`, and swaps jargon (terminals, repositories, SSH keys, credentials, tenants, MCP servers) for plain words. v2.4 (28 September 2026) opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
 language, treats every surface it names as live (no preview labels, at Ash's
 direction), adds Windows desktops to the positioning, simplifies "Keeping a
 mistake from reaching everything", trims the 15 product stories and drops the token section's closing line.

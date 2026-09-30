@@ -7,6 +7,9 @@ import Faq from "../Faq";
 import Fit from "../Fit";
 import { FIT, HOMEPAGE_FAQ } from "../content";
 
+/** What a reader sees: tooltip spans removed, entities decoded. */
+const readable = (markup: string) => markup.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&");
+
 const HIDDEN = /style="[^"]*(?:opacity:\s*0(?:;|")|visibility:\s*hidden|display:\s*none)/;
 
 test("the hero copy and call to action ship visible, before any script runs", () => {
@@ -16,16 +19,17 @@ test("the hero copy and call to action ship visible, before any script runs", ()
   expect(copy).toContain("Launch an agent");
   expect(copy).toContain("7-day money-back guarantee on card payments.");
   // Only the illustration may start hidden and animate in; the words never do.
-  const beforeScene = copy.slice(0, copy.indexOf("Your Claude or ChatGPT login"));
+  const beforeScene = copy.slice(0, copy.indexOf("Your own Claude or ChatGPT account"));
   expect(beforeScene).not.toMatch(HIDDEN);
 });
 
 test("pricing ships complete and visible in server HTML", () => {
   const markup = renderToStaticMarkup(<Pricing />);
   expect(markup.match(/<article\b/g)).toHaveLength(3);
-  for (const text of ["$9.99", "2 vCPU and 4 GB of RAM", "$19.99 a month for 4 vCPU and 8 GB of RAM", "$0", "Start here", "/get-started?plan=operator", "/get-started?plan=fleet"]) {
-    expect(markup).toContain(text);
+  for (const text of ["$9.99", "2 vCPU and 4 GB of RAM", "$19.99 a month for 4 vCPU and 8 GB of RAM", "$0", "Start here"]) {
+    expect(readable(markup)).toContain(text);
   }
+  for (const href of ["/get-started?plan=operator", "/get-started?plan=fleet"]) expect(markup).toContain(href);
   expect(markup).not.toMatch(HIDDEN);
 });
 
@@ -33,7 +37,7 @@ test("every answer is in the server HTML, with the first one open", () => {
   const markup = renderToStaticMarkup(<Faq />);
   expect(markup.match(/<details\b/g)).toHaveLength(HOMEPAGE_FAQ.length);
   expect(markup.match(/<details[^>]*\bopen\b/g)).toHaveLength(1);
-  for (const { a } of HOMEPAGE_FAQ) expect(markup).toContain(a.replace(/'/g, "&#x27;"));
+  for (const { a } of HOMEPAGE_FAQ) expect(readable(markup)).toContain(a);
 });
 
 test("the comparison ships complete in server HTML, with words behind every mark", () => {
