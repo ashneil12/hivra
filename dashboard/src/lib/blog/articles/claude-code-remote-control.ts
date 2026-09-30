@@ -119,7 +119,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How do I start Remote Control in Claude Code?",
-      a: "Run claude remote-control in your project directory for server mode, claude --remote-control (or --rc) for an interactive session, or type /remote-control (or /rc) inside a running session to carry its conversation over. Then open the session URL, scan the QR code, or pick the session by name in claude.ai/code or the Claude app.",
+      a: "Run claude remote-control in your project directory for server mode, or type /remote-control inside a running session to carry its conversation over. Then open the session URL, scan the QR code, or pick the session by name in claude.ai/code or the Claude app. The flag forms for an interactive session are in the commands section above.",
     },
     {
       q: "Does Remote Control keep working if my computer goes to sleep?",

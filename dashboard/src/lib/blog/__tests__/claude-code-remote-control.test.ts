@@ -322,6 +322,18 @@ describe("Claude Code Remote Control article", () => {
     }
   });
 
+  it("keeps double-hyphen flags out of the FAQ, where answers are plain text and the site font shows two hyphens as one dash", () => {
+    // In the code blocks the flags render correctly. In a plain-text FAQ answer "claude --remote-control" reads as
+    // "claude \u2013remote-control", so the visible command in the FAQ is the flag-free one.
+    for (const { q, a } of article.faqs) {
+      expect(q).not.toContain("--");
+      expect(a).not.toContain("--");
+    }
+    const start = article.faqs.find(({ q }) => q === "How do I start Remote Control in Claude Code?")!;
+    expect(start.a).toContain("Run claude remote-control in your project directory for server mode, or type /remote-control inside a running session");
+    expect(start.a).toContain("The flag forms for an interactive session are in the commands section above.");
+  });
+
   it("gives 8 to 11 real questions, including both offline messages", () => {
     expect(article.faqs.length).toBeGreaterThanOrEqual(8);
     expect(article.faqs.length).toBeLessThanOrEqual(11);
