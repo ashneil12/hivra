@@ -257,18 +257,24 @@ describe("Claude Code Remote Control article", () => {
     expect(sleepFaq.a).toContain("Anthropic's Projects docs say a thread running on your computer pauses while that computer is asleep");
   });
 
-  it("keeps the options table to short answers that stay true, with no Hivra row", () => {
-    // On a phone the table's second column is cut off by the site's 560px table minimum, so the answer must be short and
-    // the qualifiers live in the bullets. The Hivra row was dropped because its untested qualifier was the cut-off part.
-    const rows = sectionCopy.split("\n").filter((line) => line.startsWith("|") && !line.startsWith("|---"));
-    expect(rows).toEqual([
-      "| Where Claude Code runs | Keeps going, laptop shut? |",
-      "| Your laptop, as it comes | No |",
-      "| A desktop, home server or VPS | Yes, while it stays on and online |",
-      "| Anthropic's cloud sessions | Yes, until idle |",
+  it("gives the keeps-going answer in each option's lead-in, with its condition, and no table that clips on a phone", () => {
+    // The site's tables have a 560px minimum width, so on a phone the answer column of a two-column table was cut off
+    // (reading "Yes, while"). The answers are bold lead-ins instead, each with the condition the docs attach, and Hivra gets
+    // no yes at all here because Remote Control is untested on a Hivra computer.
+    const section = article.sections.find((candidate) => candidate.heading === "Keep the host online: your options")!;
+    expect(section).toBeDefined();
+    const copy = section.paragraphs.join("\n");
+    expect(copy.split("\n").filter((line) => line.startsWith("|"))).toEqual([]);
+    const bullets = copy.split("\n").filter((line) => line.startsWith("- **"));
+    expect(bullets.map((line) => line.slice(0, line.indexOf("**", 4) + 2))).toEqual([
+      "- **Your laptop, as it comes: no.**",
+      "- **A desktop, home server or VPS: yes, while it stays on and online.**",
+      "- **Anthropic's cloud sessions: yes, until they go idle.**",
+      "- **A Hivra computer.**",
     ]);
-    expect(rows.join("\n")).not.toMatch(/Hivra/);
-    expect(sectionCopy).toContain("It keeps going only while the machine, its network and the `claude` process stay up.");
+    expect(bullets[3]).toBe("- **A Hivra computer.** See the last section.");
+    expect(copy).toContain("It keeps going only while the machine, its network and the `claude` process stay up.");
+    expect(copy).toContain("and whether it keeps going with your laptop shut:");
   });
 
   it("separates Dispatch from Remote Control, since \"Remote Control vs Dispatch\" is a related search", () => {
