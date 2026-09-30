@@ -5,7 +5,7 @@ import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { buildWebsiteMetadata } from "@/lib/metadata";
-import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import { getTokenPageEntries } from "@/lib/token-verification-content";
 
 // The $HIVRA entry changes at its activation instant: re-render at least every
@@ -13,9 +13,15 @@ import { getTokenPageEntries } from "@/lib/token-verification-content";
 export const revalidate = 60;
 
 // Generated, not a constant, so the title and description follow the $HIVRA
-// phase through each revalidation. Dormant: exactly the copy from before.
-export function generateMetadata(): Metadata {
-  const { metadataTitle: title, metadataDescription: description } = getTokenPhaseCopy(getHivraTokenPhase()).tokenPage;
+// phase through each revalidation, and a viewer the token geo-policy blocks gets
+// a head that names only the contracts. Dormant: exactly the copy from before,
+// with no request read.
+export async function generateMetadata(): Promise<Metadata> {
+  const phaseCopy = getTokenPhaseCopy(getHivraTokenPhase()).tokenPage;
+  const restricted = isTokenGeoPolicyActive() && (await resolveTokenGeoBlockForPage()).blocked;
+  const { title, description } = restricted
+    ? RESTRICTED_TOKEN_METADATA
+    : { title: phaseCopy.metadataTitle, description: phaseCopy.metadataDescription };
   return {
     title,
     description,

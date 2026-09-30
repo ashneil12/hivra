@@ -205,3 +205,14 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
 export function getTokenPhaseCopy(phase: HivraTokenPhase): TokenPhaseCopy {
   return TOKEN_PHASE_COPY[phase];
 }
+
+/**
+ * The title and description of /token and /tokenomics for a viewer the token
+ * geo-policy blocks. Those pages show that viewer the contract addresses and the
+ * notice only, so the head says no more than that: no mention of a proposal, a
+ * migration or a wallet. The same words for both pages and every phase.
+ */
+export const RESTRICTED_TOKEN_METADATA = {
+  title: "Hivra token contracts",
+  description: "Official contract addresses. Information, not an offer.",
+} as const;

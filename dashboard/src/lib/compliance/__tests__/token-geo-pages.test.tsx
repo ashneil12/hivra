@@ -63,9 +63,12 @@ jest.mock("@/lib/claim/conversion-links-config", () => ({
 import { auth } from "@clerk/nextjs/server";
 import { readConversionAccessGate } from "@/lib/claim/conversion-access.server";
 import ConvertPage from "@/app/dashboard/convert/page";
-import TokenVerificationPage from "@/app/token/page";
-import TokenomicsPage from "@/app/tokenomics/page";
+import TokenVerificationPage, { generateMetadata as tokenMetadata } from "@/app/token/page";
+import TokenomicsPage, { generateMetadata as tokenomicsMetadata } from "@/app/tokenomics/page";
 import WhyHivraEvolutionPage from "@/app/why-hivra/evolution/page";
+
+import { getHivraTokenPhase } from "@/lib/billing/token-registry";
+import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 import { TOKEN_GEO_POLICY } from "../token-geo-policy";
 
@@ -102,6 +105,15 @@ describe("dormant policy", () => {
     expect(mockHeaders).not.toHaveBeenCalled();
   });
 
+  it("keeps the head of /token and /tokenomics exactly as today for a GB viewer, reading no request", async () => {
+    viewerFrom("GB");
+    // This file's mocked launch config puts $HIVRA in a live phase, so read the copy for that phase.
+    const copy = getTokenPhaseCopy(getHivraTokenPhase());
+    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle });
+    expect(await tokenomicsMetadata()).toMatchObject({ title: copy.tokenomics.metadataTitle });
+    expect(mockHeaders).not.toHaveBeenCalled();
+  });
+
   it("keeps a GB viewer's /tokenomics, /why-hivra/evolution and convert link exactly as today", async () => {
     viewerFrom("GB");
     await renderPage(TokenomicsPage);
@@ -134,6 +146,32 @@ describe("the committed country list (GB)", () => {
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
     expect(screen.getByTestId("tokenomics-contracts")).toHaveTextContent("0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3");
     expect(screen.queryByText(/costs less|bonus credits/)).not.toBeInTheDocument();
+  });
+
+  it("the head of /token and /tokenomics names only the contracts for a GB viewer, in every field a crawler reads", async () => {
+    viewerFrom("GB");
+    const { title, description } = RESTRICTED_TOKEN_METADATA;
+    for (const metadata of [await tokenMetadata(), await tokenomicsMetadata()]) {
+      expect(metadata).toMatchObject({
+        title,
+        description,
+        openGraph: { title, description },
+        twitter: { title, description },
+      });
+      const words = [metadata.title, metadata.description, metadata.openGraph?.title, metadata.openGraph?.description];
+      expect(words.join(" ")).not.toMatch(/proposed|migration|tokenomics|\$HIVRA|wallet|treasury/i);
+    }
+    // The /tokenomics share card is the contracts card, not the proposals card.
+    const card = (await tokenomicsMetadata()).openGraph?.images;
+    expect(JSON.stringify(card)).toContain("/token/opengraph-image");
+    expect(JSON.stringify(card)).not.toContain("/tokenomics/opengraph-image");
+  });
+
+  it("the head of /token and /tokenomics is unchanged for a viewer from elsewhere", async () => {
+    viewerFrom("FR");
+    const copy = getTokenPhaseCopy(getHivraTokenPhase());
+    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
+    expect(await tokenomicsMetadata()).toMatchObject({ title: copy.tokenomics.metadataTitle, description: copy.tokenomics.metadataDescription });
   });
 
   it("/why-hivra/evolution drops the token discount for a GB viewer", async () => {
