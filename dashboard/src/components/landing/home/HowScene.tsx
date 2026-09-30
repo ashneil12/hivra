@@ -5,6 +5,7 @@ import { animate, m, useMotionValue, useMotionValueEvent, useScroll, useTransfor
 import { Check, GitBranch, Image as ImageIcon, KeyRound, Landmark, Lock, RefreshCw, TerminalSquare, X, type LucideIcon } from "lucide-react";
 import { useMotionPref, usePageVisible, useRange, useTypedLines, useVisible, useWideScreen } from "./motion";
 import styles from "./home.module.css";
+import { glossify } from "@/components/gloss/glossify";
 
 export interface HowCopy {
   steps: readonly { n: string; title: string; body: string }[];
@@ -242,7 +243,7 @@ function StackedStep({ index, step, copy }: { index: number; step: HowCopy["step
       <div className={styles.howStepText} data-active="">
         <span className={styles.howNum}>{step.n}</span>
         <h3>{step.title}</h3>
-        <p>{step.body}</p>
+        <p>{glossify(step.body)}</p>
       </div>
       <div className={styles.howStage}>
         {index === 0 ? <StayOn t={t} live={inView && pageShown} /> : index === 1 ? <Handoff t={t} /> : <Boundary t={t} copy={copy} />}
@@ -283,7 +284,7 @@ export default function HowScene({ copy }: { copy: HowCopy }) {
               <li key={step.n} className={styles.howStepText} data-active={active === index ? "" : undefined}>
                 <span className={styles.howNum}>{step.n}</span>
                 <h3>{step.title}</h3>
-                <p>{step.body}</p>
+                <p>{glossify(step.body)}</p>
               </li>
             ))}
           </ol>

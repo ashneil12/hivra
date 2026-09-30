@@ -4140,3 +4140,41 @@ html:not(.js-enhanced) .atlas-layout {
     break-inside:avoid
   }
 }
+
+/* Plain-English tooltips. The definition is in data-tip; build.py adds the span. */
+.gloss {
+  position:relative;
+  cursor:help;
+  border-bottom:1px dotted var(--faint);
+  outline-offset:2px
+}
+.gloss:hover,
+.gloss:focus {
+  border-bottom-color:var(--accent)
+}
+.gloss:hover::after,
+.gloss:focus::after {
+  content:attr(data-tip);
+  position:absolute;
+  z-index:40;
+  left:var(--gloss-x,0px);
+  bottom:calc(100% + 10px);
+  width:var(--gloss-w,280px);
+  padding:10px 12px;
+  background:var(--surface-raised);
+  color:var(--text);
+  border:1px solid var(--line);
+  border-radius:4px;
+  box-shadow:0 10px 30px rgb(0 0 0 / .35);
+  font:400 14px/1.45 Manrope,'Helvetica Neue',Arial,sans-serif;
+  letter-spacing:0;
+  text-align:left;
+  text-transform:none;
+  white-space:normal;
+  pointer-events:none
+}
+.gloss[data-below]:hover::after,
+.gloss[data-below]:focus::after {
+  bottom:auto;
+  top:calc(100% + 10px)
+}

@@ -3,6 +3,7 @@ import { GitHubMark } from "@/components/public-site/SourceLink";
 import RepoCard from "./RepoCard";
 import { OPEN_SOURCE, SELF_HOST_SOURCE_URL } from "./content";
 import styles from "./home.module.css";
+import { glossify } from "@/components/gloss/glossify";
 
 export default function OpenSource() {
   return (
@@ -12,7 +13,7 @@ export default function OpenSource() {
         <h2 id="open-source-heading" className={styles.sectionTitle}>
           {OPEN_SOURCE.title} <em>{OPEN_SOURCE.titleTail}</em>
         </h2>
-        {OPEN_SOURCE.body.map(line => <p key={line} className={styles.bodyText}>{line}</p>)}
+        {OPEN_SOURCE.body.map(line => <p key={line} className={styles.bodyText}>{glossify(line)}</p>)}
         <div className={styles.openActions}>
           <a href={SELF_HOST_SOURCE_URL} className={styles.githubCta} target="_blank" rel="noopener noreferrer" data-cta="open-github">
             <GitHubMark />

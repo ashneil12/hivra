@@ -12,8 +12,6 @@ Give it room to work. Decide what it can reach.
 
 AI agents are becoming computer users.
 
-An AI agent is an AI that does jobs for you instead of just chatting. It uses a computer the way you would, and it runs on an AI model, the "brain" behind tools like Claude and ChatGPT.
-
 They type commands, read through code, install software, browse the web, use accounts you're signed into, write and run code, and send messages. They keep working while you're somewhere else.
 
 And most of them run on your computer. The same machine that holds your photos, your messages, your passwords, your secret keys, your work and every account you're signed into.
@@ -52,11 +50,11 @@ You don't have to believe AI is conscious, or that it secretly wants anything. J
 
 AI is already finding and using real security holes.
 
-Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found a hole an attacker could use in SQLite, a database that runs almost everywhere, before it shipped. The SQLite team's own automatic testing had missed it.
+Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found a hole an attacker could use in SQLite before it shipped. The SQLite team's own automatic testing had missed it.
 
-[XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) agent reached number one on the US leaderboard at HackerOne, a site where companies pay people to find security holes, in June 2025. It finished ahead of every human on it.
+[XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) agent reached number one on HackerOne's US leaderboard in June 2025. It finished ahead of every human on it.
 
-Google's security team has [caught a hacker](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a brand-new hole nobody knew about (a zero-day) that it believes was built with AI.
+Google's security team has [caught a hacker](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day it believes was built with AI.
 
 OpenAI's Astra report rates one of its models at its "Critical" level for cybersecurity. In tests run by experts, it built a working attack that broke out of a locked-down web browser, and another that started from an ordinary user account and ended up in full control of the computer. Those were research conditions, and it's OpenAI's own report. [Read it](https://openai.com/index/path-to-astra/).
 
@@ -92,9 +90,9 @@ They need a computer that stays on. Today there are three places to get one.
 
 **The maker's computer.** Muse and Grok Bot run on computers their companies provide. They stay on, but you get one company's agent, running on that company's AI.
 
-**A hosted agent computer.** Services that rent your agent a computer in the cloud, which just means one that lives in a data centre instead of on your desk. You pick the agent, but you can't read their code or run the service yourself.
+**A hosted agent computer.** Services that rent your agent a computer in the cloud. You pick the agent, but you can't read their code or run the service yourself.
 
-Hivra is the one you can check. Every line of the platform is open, which means anyone can read the code and see how it handles your access. You can also run the whole thing on your own computer or server.
+Hivra is the one you can check. Every line of the platform is open, so you can see how it handles your access. You can also run the whole thing on your own computer or server.
 
 And it's a full computer. Launch Linux, Windows or Omarchy on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. Your agent gets to use a computer like a person does, without you handing over your own.
 
@@ -122,7 +120,7 @@ If you can pick an agent and sign in to it, you can launch one.
 
 ## Open source. Yours to run.
 
-Every line of Hivra is open source, which means anyone can read the code. Read it, change it, run it yourself, host it for your clients, or copy it and go your own way if we make a call you disagree with.
+Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients, or copy it and go your own way if we make a call you disagree with.
 
 This software sits between increasingly capable agents and the things you care about. You shouldn't have to take our word for what it does there.
 
@@ -164,15 +162,15 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 Claude Code, Codex, Hermes, OpenClaw, Agent Zero or DeepSeek. Pick one, sign in the way it normally does, and it gets a machine of its own.
 
-Chat with it in its chat window, type commands in its text window (the terminal), or switch between the two. Close the laptop and pick it up from your phone.
+Chat with it in its chat window, work in its terminal, or switch between the two. Close the laptop and pick it up from your phone.
 
 ### Launch a computer
 
-Ubuntu, Windows or Omarchy. (Ubuntu and Omarchy are free versions of Linux.) A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
+Ubuntu, Windows or Omarchy. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
 
 Keep your coding tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
 
-**macOS (Apple's system) and custom images (your own ready-made setups) are coming.**
+**macOS and custom images are coming.**
 
 ### Keep several running
 
@@ -207,7 +205,7 @@ Moving work off your laptop should make your day easier.
 
 ### Come back to it
 
-Files, tools and settings stay put. Closing the browser only closes your view. Take a snapshot (a saved copy of the whole computer) before a risky change, and restore it if it goes badly.
+Files, tools and settings stay put. Closing the browser only closes your view. Take a snapshot before a risky change, and restore it if it goes badly.
 
 ### Settle in
 
@@ -219,7 +217,7 @@ See what the agent did, what it asked you to approve and what it produced. Hivra
 
 ### Know what has access
 
-See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine (a whole pretend computer of its own) or a container (a lighter box that shares more with the machine under it), because they don't protect you the same way.
+See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine or a container, because they don't protect you the same way.
 
 ---
 
@@ -269,7 +267,7 @@ With Gate, the agent asks for the refund instead. Gate checks who's asking, the 
 
 **Exchange.** *Know what you're installing.*
 
-A store for agents, tools, add-ons that give agents new skills (MCP servers), ready-made computer setups and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
+A store for agents, tools, MCP servers, ready-made computer setups and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
 
 If an update suddenly wants your email, that's a new decision you make, not a silent change. People who publish get a verified name, version tracking, a way to pull something back, and payment.
 
@@ -279,13 +277,13 @@ If an update suddenly wants your email, that's a new decision you make, not a si
 
 Attack your own agents and their tools on purpose, in a safe test area: booby-trapped documents, fake approvals, stolen logins, spending that won't stop.
 
-The report shows what the agent tried, what stopped it and where the controls failed, with a signed result (a stamp that shows it's real) for the exact version you tested.
+The report shows what the agent tried, what stopped it and where the controls failed, with a signed result for the exact version you tested.
 
 *Related: Challenges, Seal, Rescue.*
 
 **Signal.** *Share a finding before it catches someone else.*
 
-When someone finds a hacked add-on or a software package that steals files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
+When someone finds a hacked MCP server or a software package that steals files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
 
 You pick the sources you trust and what they can trigger: an alert, a suspended account, a tool locked away until it's checked. A feed can never install software on your machines.
 

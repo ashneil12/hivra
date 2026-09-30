@@ -1364,3 +1364,23 @@
     });
   }
 })();
+
+// Tooltips for plain-English terms: keep each one on screen, flip it under the
+// word near the top, and let Escape close it.
+(() => {
+  const place = (term) => {
+    const width = Math.min(300, window.innerWidth - 32);
+    const box = term.getBoundingClientRect();
+    const left = Math.max(16, Math.min(box.left + box.width / 2 - width / 2, window.innerWidth - 16 - width));
+    term.style.setProperty("--gloss-x", `${left - box.left}px`);
+    term.style.setProperty("--gloss-w", `${width}px`);
+    if (box.top < 170) term.setAttribute("data-below", "");
+    else term.removeAttribute("data-below");
+  };
+  const find = (event) => event.target instanceof Element ? event.target.closest(".gloss") : null;
+  document.addEventListener("pointerover", (event) => { const term = find(event); if (term) place(term); });
+  document.addEventListener("focusin", (event) => { const term = find(event); if (term) place(term); });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.activeElement?.classList?.contains("gloss")) document.activeElement.blur();
+  });
+})();
