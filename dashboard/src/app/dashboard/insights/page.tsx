@@ -2,7 +2,7 @@ import { auth, currentUser } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
-import { isOpsAdminUser } from '@/lib/ops-access';
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from '@/lib/ops-access';
 import { getConversionFunnel } from '@/lib/conversion-funnel';
 import { getActivationCohorts } from '@/lib/activation-cohorts';
 import { getTelegramActivationStats } from '@/lib/telegram-activation';
@@ -52,8 +52,7 @@ export default async function AdminInsightsPage(props: {
   const { userId } = await auth();
   await auth.protect();
   const user = await currentUser();
-  const userEmail =
-    user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null;
+  const userEmail = verifiedPrimaryEmailOf(user);
 
   if (!isOpsAdminUser({ userId: userId || user?.id || null, email: userEmail })) {
     redirect('/dashboard');

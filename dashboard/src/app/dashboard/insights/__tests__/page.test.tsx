@@ -33,7 +33,11 @@ jest.mock("@/components/admin/AdminInsightsContent.client", () => ({
   ),
 }));
 
-jest.mock("@/lib/ops-access", () => ({ isOpsAdminUser: jest.fn() }));
+jest.mock("@/lib/ops-access", () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual("@/lib/ops-access"),
+  isOpsAdminUser: jest.fn(),
+}));
 jest.mock("@/lib/conversion-funnel", () => ({ getConversionFunnel: jest.fn() }));
 jest.mock("@/lib/activation-cohorts", () => ({ getActivationCohorts: jest.fn() }));
 jest.mock("@/lib/platform-stats", () => ({ getPlatformStats: jest.fn() }));
@@ -52,7 +56,7 @@ describe("AdminInsightsPage", () => {
     mockedAuth.mockResolvedValue({ userId: "user_1" });
     mockedAuth.protect.mockResolvedValue(undefined);
     mockedCurrentUser.mockResolvedValue({
-      primaryEmailAddress: { emailAddress: "admin@hermesos.cloud" },
+      primaryEmailAddress: { emailAddress: "admin@hermesos.cloud", verification: { status: "verified" } },
     });
     mockedGetStats.mockResolvedValue({
       generatedAt: "2026-05-23T00:00:00.000Z",

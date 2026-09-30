@@ -7,7 +7,7 @@ import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import { PostHogIdentify } from "@/app/providers/PostHogProvider";
 import { AuthClerkProvider } from "@/components/auth/AuthClerkProvider";
 import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
-import { isOpsAdminUser } from "@/lib/ops-access";
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -26,9 +26,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     acceptLanguage: headerStore.get("accept-language"),
   });
   const userEmail = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
+  // The sidebar shows whichever email the user has; the admin link needs the
+  // verified primary one.
   const showOpsLink = isOpsAdminUser({
     userId: userId || user?.id || null,
-    email: userEmail,
+    email: verifiedPrimaryEmailOf(user),
   });
 
   return (

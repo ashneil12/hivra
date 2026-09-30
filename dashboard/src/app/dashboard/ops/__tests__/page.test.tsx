@@ -100,6 +100,8 @@ jest.mock("@/lib/ops-event-hosts", () => ({
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/ops-access", () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual("@/lib/ops-access"),
   isOpsAdminUser: jest.fn(),
 }));
 
@@ -118,7 +120,7 @@ describe("OpsPage", () => {
     mockedAuth.mockResolvedValue({ userId: "user_123" });
     mockedAuth.protect.mockResolvedValue(undefined);
     mockedCurrentUser.mockResolvedValue({
-      primaryEmailAddress: { emailAddress: "admin@example.com" },
+      primaryEmailAddress: { emailAddress: "admin@example.com", verification: { status: "verified" } },
     });
     mockedRedirect.mockImplementation(() => undefined);
 
