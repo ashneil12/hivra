@@ -393,6 +393,26 @@ describe("the post and the calculator page do not repeat each other's FAQ", () =
   });
 });
 
+describe("keeps the facts the verifiers corrected", () => {
+  // Corrected on 2026-09-30: the support article says `claude logout` and
+  // `claude login`, but the CLI reference lists `claude auth login`, `claude auth
+  // logout` and `claude auth status`, and the installed CLI has no top-level login
+  // or logout. A set ANTHROPIC_API_KEY is fixed by unsetting it, not by /login.
+  const section = sectionByHeading("API key or subscription").paragraphs.join("\n");
+
+  it("gives the real sign-out and sign-in commands, never the top-level forms", () => {
+    expect(section).toContain("`claude auth logout`, then `claude auth login`");
+    expect(bodyCopy).not.toMatch(/claude (?:logout|login)\b/);
+  });
+
+  it("fixes a set API key by unsetting it, in the section body as well as the FAQ", () => {
+    expect(section).toContain("unset ANTHROPIC_API_KEY");
+    expect(section).toContain("If `ANTHROPIC_API_KEY` is set in your environment, Claude Code uses it instead of your plan and bills API usage");
+    expect(section).toMatch(/Interactive sessions ask once whether to approve the key, and `claude -p` uses it whenever it is set/);
+    expect(section).not.toMatch(/\/login/);
+  });
+});
+
 describe("the plan changelog section", () => {
   const section = sectionByHeading("What changed and when");
   const text = section.paragraphs.join("\n");

@@ -90,6 +90,12 @@ describe("computePlanResult", () => {
     expect(result.planFits.map((plan) => plan.detail)).toEqual(["1x Pro's usage per session", "5x Pro's usage per session", "20x Pro's usage per session"]);
   });
 
+  it("says Pro already covers the sessions when Pro never stops the visitor, on every plan row", () => {
+    const fits = computePlanResult({ ...PLAN_DEFAULTS, proHit: "never" }).planFits;
+    expect(fits.map((plan) => plan.detail)).toEqual(["Pro already covers your sessions", "Pro already covers your sessions", "Pro already covers your sessions"]);
+    expect(fits.map((plan) => plan.fit)).toEqual(["headroom", "headroom", "headroom"]);
+  });
+
   it("says the API is cheaper only when the estimate is below the cheapest plan that fits", () => {
     const light = computePlanResult({ ...PLAN_DEFAULTS, daysPerWeek: 1, hoursPerDay: 1, opusPct: 0, proHit: "never" });
     expect(light.verdict).toBe("Pro at $20/month is the cheapest plan that fits, but at this volume API billing is estimated cheaper: about $19.42/month.");
