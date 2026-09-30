@@ -1,32 +1,35 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "how-to-self-host-hermes-agent",
   title: "How to self-host Hermes Agent on a VPS: complete setup guide (2026)",
+  metaTitle: "How to self-host Hermes Agent on a VPS (2026 guide)",
   metaDescription:
-    "Step-by-step guide to self-hosting Hermes Agent on a Linux VPS. Covers server requirements, Docker setup, Telegram gateway, systemd service, and the common errors that kill most first attempts — plus when a managed host might be the better call.",
+    "Self-host Hermes Agent on an Ubuntu VPS: server specs, Docker, Telegram gateway, systemd service and fixes for common errors. Allow 2-4 hours.",
   publishedDate: "2026-04-11",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 14,
   author: "Hivra team",
   tagline: "Every command on this page came from the official NousResearch GitHub. Set aside 2-4 hours.",
   intro:
-    "Hermes Agent runs on a VPS, persists memory, connects to Telegram, and runs scheduled tasks while you sleep. Getting there from a blank Ubuntu server takes 2-4 hours if everything goes right. This guide has all the actual commands — sourced from the official Nous Research GitHub — plus the errors most people hit and how to fix them.",
+    "Hermes Agent runs on a VPS, persists memory, connects to Telegram, and runs scheduled tasks while you sleep. Getting there from a blank Ubuntu server takes 2-4 hours if everything goes right. This guide has all the actual commands, sourced from the official Nous Research GitHub, plus the errors most people hit and how to fix them.",
+  shortAnswer:
+    "Rent an Ubuntu 24.04 VPS with at least 2 vCPU and 4GB RAM, create a non-root user, turn on a firewall and install Docker. Then run the official Hermes installer and setup wizard, add an LLM API key and a Telegram bot, and run the gateway as a systemd service. Expect 2-4 hours if nothing goes wrong.",
   sections: [
     {
       heading: "Before you start: do you actually want to self-host?",
       paragraphs: [
         "Self-hosting makes sense if you want full control over your data, you're comfortable with Linux server administration, you have specific compliance or privacy requirements, or you want to modify the agent's core behavior. The MIT license means you can do anything with it.",
         "Skip this guide if your hourly rate is above $50, you want to be running today without touching a server, or you'd rather spend your time on the work the agent will do rather than configuring the environment it runs in. Hivra launches a configured Hermes agent from its dashboard, with the server, container, and messaging gateway set up and chat in the browser, without any of the steps below. The rest of this guide is for the self-hosters.",
-        "What you need before starting: a VPS running Ubuntu 24.04 LTS (fresh install preferred), root SSH access, a domain name pointed at the server (optional but strongly recommended for the web UI), an API key from at least one LLM provider (OpenRouter recommended — gives access to 300+ models with a single key), and a Telegram account for the messaging gateway.",
+        "What you need before starting: a VPS running Ubuntu 24.04 LTS (fresh install preferred), root SSH access, a domain name pointed at the server (optional but strongly recommended for the web UI), an API key from at least one LLM provider (OpenRouter recommended: it gives access to 300+ models with a single key), and a Telegram account for the messaging gateway.",
       ],
     },
     {
       heading: "Server requirements",
       paragraphs: [
         "Minimum: 2 vCPU, 4GB RAM, 20GB SSD. This runs Hermes with Docker-sandboxed execution. Hetzner's CX23 at €5.49/month (excluding VAT) meets this spec and is the community's budget option. DigitalOcean's Basic Droplet at 4GB RAM is $24/month for the same spec. Hostinger KVM 2 with 8GB RAM, at $8.99/month on a two-year promotional term and $14.99/month on renewal, is a solid mid-tier choice if you run several tools on the same server.",
-        "Recommended: 4 vCPU, 8GB RAM, 40GB SSD. The extra RAM matters for running local models via Ollama alongside the agent, or for heavy parallel task workloads. 4GB is the hard floor — below it, you hit OOM errors on complex tasks. Operating system: Ubuntu 24.04 LTS. The official install script is written for this. Debian 12 works with minor adjustments. Nothing else unless you're confident rewriting the installer.",
+        "Recommended: 4 vCPU, 8GB RAM, 40GB SSD. The extra RAM matters for running local models via Ollama alongside the agent, or for heavy parallel task workloads. 4GB is the hard floor: below it, you hit OOM errors on complex tasks. Operating system: Ubuntu 24.04 LTS. The official install script is written for this. Debian 12 works with minor adjustments. Nothing else unless you're confident rewriting the installer.",
       ],
     },
     {
@@ -39,20 +42,20 @@ export const article: BlogArticle = {
     {
       heading: "Phase 2: Docker installation",
       paragraphs: [
-        "Hermes uses Docker for sandboxed terminal execution. Install from the official Docker repository — not the Ubuntu package, which is often outdated:\n\n```\nsudo apt-get install -y ca-certificates curl gnupg\ncurl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg\necho \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable\" | sudo tee /etc/apt/sources.list.d/docker.list\nsudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io\n```\n\nAdd the hermes user to the docker group:\n\n```\nsudo usermod -aG docker hermes && newgrp docker\n```\n\nVerify:\n\n```\ndocker run --rm hello-world\n```\n\nYou should see 'Hello from Docker!'. If you see a permission error, log out and back in — `newgrp docker` fixes it for the current session but the persistent change needs a re-login.",
+        "Hermes uses Docker for sandboxed terminal execution. Install from the official Docker repository (not the Ubuntu package, which is often outdated):\n\n```\nsudo apt-get install -y ca-certificates curl gnupg\ncurl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg\necho \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable\" | sudo tee /etc/apt/sources.list.d/docker.list\nsudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io\n```\n\nAdd the hermes user to the docker group:\n\n```\nsudo usermod -aG docker hermes && newgrp docker\n```\n\nVerify:\n\n```\ndocker run --rm hello-world\n```\n\nYou should see 'Hello from Docker!'. If you see a permission error, log out and back in: `newgrp docker` fixes it for the current session but the persistent change needs a re-login.",
       ],
     },
     {
       heading: "Phase 3: Hermes Agent installation",
       paragraphs: [
-        "The official one-line installer handles Python dependencies, the CLI binary, and the initial directory structure:\n\n```\ncurl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash\n```\n\nAfter it completes, reload your shell:\n\n```\nsource ~/.bashrc\n```\n\nVerify the installation and run the health check:\n\n```\nhermes --version\nhermes doctor\n```\n\n`hermes doctor` checks Docker availability, Python version, required dependencies, and write access to config directories. Fix anything it flags before continuing — common issues are Docker not being in PATH, missing Python packages, or permissions on `~/.hermes/`.",
-        "Run the interactive setup wizard:\n\n```\nhermes setup\n```\n\nThis prompts for your LLM provider preference and generates the initial config files: `~/.hermes/.env`, `~/.hermes/config.yaml`, `~/.hermes/MEMORY.md`, and `~/.hermes/USER.md`. These are the core files — do not delete them.",
+        "The official one-line installer handles Python dependencies, the CLI binary, and the initial directory structure:\n\n```\ncurl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash\n```\n\nAfter it completes, reload your shell:\n\n```\nsource ~/.bashrc\n```\n\nVerify the installation and run the health check:\n\n```\nhermes --version\nhermes doctor\n```\n\n`hermes doctor` checks Docker availability, Python version, required dependencies, and write access to config directories. Fix anything it flags before continuing. Common issues are Docker not being in PATH, missing Python packages, or permissions on `~/.hermes/`.",
+        "Run the interactive setup wizard:\n\n```\nhermes setup\n```\n\nThis prompts for your LLM provider preference and generates the initial config files: `~/.hermes/.env`, `~/.hermes/config.yaml`, `~/.hermes/MEMORY.md`, and `~/.hermes/USER.md`. These are the core files: do not delete them.",
       ],
     },
     {
       heading: "Phase 4: LLM provider configuration",
       paragraphs: [
-        "Hermes supports 400+ models. OpenRouter is the recommended starting point — one API key gives access to Anthropic, OpenAI, Mistral, Llama, and 60+ other providers. Get a key at openrouter.ai.\n\nSet permissions on the env file first:\n\n```\nchmod 600 ~/.hermes/.env\necho 'OPENROUTER_API_KEY=sk-or-v1-your-key-here' >> ~/.hermes/.env\n```\n\nSet your default model:\n\n```\nhermes config set model.provider openrouter\nhermes config set model.default anthropic/claude-sonnet-4\n```\n\nTest it:\n\n```\nhermes -m 'What is 2+2?'\n```\n\nIf you get a response, the LLM connection is working.",
+        "Hermes supports 400+ models. OpenRouter is the recommended starting point: one API key gives access to Anthropic, OpenAI, Mistral, Llama, and 60+ other providers. Get a key at openrouter.ai.\n\nSet permissions on the env file first:\n\n```\nchmod 600 ~/.hermes/.env\necho 'OPENROUTER_API_KEY=sk-or-v1-your-key-here' >> ~/.hermes/.env\n```\n\nSet your default model:\n\n```\nhermes config set model.provider openrouter\nhermes config set model.default anthropic/claude-sonnet-4\n```\n\nTest it:\n\n```\nhermes -m 'What is 2+2?'\n```\n\nIf you get a response, the LLM connection is working.",
         "Configure Docker as the terminal backend:\n\n```\nhermes config set terminal.backend docker\nhermes config get terminal\n```\n\nTest sandboxed execution:\n\n```\nhermes -m 'Run ls -la in a sandboxed environment and show me the output'\n```",
       ],
     },
@@ -72,13 +75,14 @@ export const article: BlogArticle = {
     {
       heading: "Common errors and fixes",
       paragraphs: [
-        "'Permission denied' running Docker after adding to the group: log out and back in, or run `newgrp docker`. Group membership is only picked up on new login.\n\n'hermes: command not found' after installation: run `source ~/.bashrc`. The installer adds the PATH entry but it only applies in new shell sessions.\n\n`hermes doctor` flags missing dependencies: run `hermes update` then re-check. If specific Python packages are still missing: `pip install -r ~/.hermes/requirements.txt`.\n\nTelegram bot not responding: check the token (no extra spaces), verify `TELEGRAM_ALLOWED_USERS` contains your exact numeric user ID, and check `journalctl --user -u hermes-gateway -f` for the specific error.\n\nOut of memory during tasks: 4GB RAM is the minimum — if you are below this, complex tasks will fail. Check current usage with `free -h` and upgrade the server if needed.\n\nAPI errors after it was working: your API key may have exhausted credits, especially on OpenRouter's free tier. Check your provider dashboard.",
+        "'Permission denied' running Docker after adding to the group: log out and back in, or run `newgrp docker`. Group membership is only picked up on new login.\n\n'hermes: command not found' after installation: run `source ~/.bashrc`. The installer adds the PATH entry but it only applies in new shell sessions.\n\n`hermes doctor` flags missing dependencies: run `hermes update` then re-check. If specific Python packages are still missing: `pip install -r ~/.hermes/requirements.txt`.",
+        "Telegram bot not responding: check the token (no extra spaces), verify `TELEGRAM_ALLOWED_USERS` contains your exact numeric user ID, and check `journalctl --user -u hermes-gateway -f` for the specific error.\n\nOut of memory during tasks: 4GB RAM is the minimum, so if you are below this, complex tasks will fail. Check current usage with `free -h` and upgrade the server if needed.\n\nAPI errors after it was working: your API key may have exhausted credits, especially on OpenRouter's free tier. Check your provider dashboard.",
       ],
     },
     {
       heading: "The honest self-hosting calculation",
       paragraphs: [
-        `Server cost: Hetzner CX23 at €5.49/month excluding VAT. LLM API costs: $5-50/month depending on task volume. Initial setup: 2-4 hours of your time. Ongoing maintenance: 30-60 minutes per month. At $50/hour, the setup alone costs $100-200 in time — enough to cover 10-20 months of Hivra's ${ENTRY_PLAN_PRICE} plan.`,
+        `Server cost: Hetzner CX23 at €5.49/month excluding VAT. LLM API costs: $5-50/month depending on task volume. Initial setup: 2-4 hours of your time. Ongoing maintenance: 30-60 minutes per month. At $50/hour, the setup alone costs $100-200 in time, enough to cover 10-20 months of Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}).`,
         "Self-hosting wins if you are comfortable with Linux, expect to keep the agent running for a year or more, and care about complete data control. It loses if setup issues frustrate you, if maintenance distracts from the actual work, or if updates break your configuration at inconvenient times. Hivra is the managed alternative: Hermes from Hivra's maintained build of the open-source agent, with the container, service, SSL, and tested updates handled. If you would rather skip the 4 hours, that is what it is for.",
       ],
     },
@@ -94,7 +98,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Do I need my own domain for self-hosting?",
-      a: "Not for the Telegram gateway — that runs fine without a domain. You need a domain if you want the web UI accessible externally via HTTPS. Without one, you can access the UI over the server's IP on a local port.",
+      a: "Not for the Telegram gateway: that runs fine without a domain. You need a domain if you want the web UI accessible externally via HTTPS. Without one, you can access the UI over the server's IP on a local port.",
     },
     {
       q: "Can I migrate from OpenClaw to Hermes Agent?",

@@ -9,6 +9,7 @@ export const APPROVED_SOURCE_SHA256 = 'e5d9711930c1bbfa60fb75e2a8057a808907df2eb
 export const LITEPAPER_FILES = Object.freeze([
   'LITEPAPER.md', 'TOKENOMICS.md', 'THOUGHTS.md', 'WHITEPAPER.md',
   'docs/litepaper/index.html',
+  'docs/litepaper/restricted.html',
   'docs/litepaper/litepaper.css',
   'docs/litepaper/litepaper.js',
   'docs/litepaper/experience-motion.js',
@@ -29,6 +30,13 @@ export const LITEPAPER_FILES = Object.freeze([
   'docs/litepaper/vendor/gsap-3.15.0.min.js',
   'docs/litepaper/vendor/ScrollTrigger-3.15.0.min.js',
   'docs/litepaper/vendor/NOTICE.md',
+]);
+
+/** Token-free documents served by country: source in the repository, public path beside the app's own. */
+export const RESTRICTED_COPIES = Object.freeze([
+  ['docs/litepaper/restricted/LITEPAPER.md', 'restricted/LITEPAPER.md'],
+  ['docs/litepaper/restricted/WHITEPAPER.md', 'restricted/WHITEPAPER.md'],
+  ['docs/litepaper/restricted/TOKENOMICS.md', 'restricted/TOKENOMICS.md'],
 ]);
 
 function rejectSymlinks(root, relative) {
@@ -64,14 +72,21 @@ export function stageLitepaper({ repoRoot, dashboardRoot = path.join(repoRoot, '
   }
 
   // Complete validation before writing: an absent asset must not leave a partial package.
-  const files = LITEPAPER_FILES.map((relative) => {
+  const pairs = [
+    ...LITEPAPER_FILES.map((relative) => [relative, relative]),
+    ...RESTRICTED_COPIES,
+  ];
+  const files = pairs.map(([relative, publicRelative]) => {
     rejectSymlinks(repoRoot, relative);
-    rejectSymlinks(publicRoot, relative);
+    rejectSymlinks(publicRoot, publicRelative);
     const source = path.join(repoRoot, relative);
     if (!lstatSync(source).isFile()) throw new Error(`Not a regular litepaper file: ${relative}`);
-    return { relative, source, target: path.join(publicRoot, relative), bytes: readFileSync(source) };
+    return { relative: publicRelative, source, target: path.join(publicRoot, publicRelative), bytes: readFileSync(source) };
   });
-  const unexpected = existingFiles(publicRoot, 'docs/litepaper').filter((relative) => !LITEPAPER_FILES.includes(relative));
+  const unexpected = [
+    ...existingFiles(publicRoot, 'docs/litepaper').filter((relative) => !LITEPAPER_FILES.includes(relative)),
+    ...existingFiles(publicRoot, 'restricted').filter((relative) => !RESTRICTED_COPIES.some(([, published]) => published === relative)),
+  ];
   if (unexpected.length) throw new Error(`Unexpected file in the generated litepaper directory: ${unexpected.join(', ')}`);
   const stale = files.filter(({ target, bytes }) => !existsSync(target) || !readFileSync(target).equals(bytes));
   if (check && stale.length) throw new Error(`Litepaper staging is stale: ${stale.map(({ relative }) => relative).join(', ')}`);

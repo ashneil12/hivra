@@ -3,6 +3,8 @@ import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
 import { dayToDate, PAGE_LAST_MODIFIED } from "@/lib/seo-lastmod";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
+import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
+import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
 export const SITE_URL = "https://hivra.cloud";
@@ -156,12 +158,22 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     "ai-agent-hosting-alternatives",
   ];
 
-  const comparePages: MetadataRoute.Sitemap = compareSlugs.map((slug) => ({
-    url: `${SITE_URL}/compare/${slug}`,
-    lastModified: cutoverPage(PAGE_LAST_MODIFIED.compareDetail),
-    changeFrequency: "monthly" as const,
-    priority: 0.75,
-  }));
+  const comparePages: MetadataRoute.Sitemap = [
+    ...compareSlugs.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: cutoverPage(PAGE_LAST_MODIFIED.compareDetail),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+    // The host comparisons carry the date their competitor numbers were read
+    // (lib/compare/competitor-facts.ts), so a refreshed check moves them.
+    ...HOST_COMPARISON_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: cutoverPage(COMPETITOR_FACTS_CHECKED),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+  ];
 
   // Blog articles: pulled live from the article registry. Each carries its own
   // real lastModified (or its publish date), so none is tied to a release.

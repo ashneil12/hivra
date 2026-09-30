@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from link_policy import enhance_links
+import restrict
 
 REPO = Path(__file__).resolve().parents[2]
 OUTPUT = REPO / "docs/litepaper/index.html"
@@ -520,9 +521,15 @@ def main():
     parser.add_argument("--check", action="store_true", help="Fail if the page or tokenomics download needs regeneration")
     args = parser.parse_args()
     try:
+        page = build_page()
         outputs = {
-            OUTPUT: build_page().encode("utf-8"),
+            OUTPUT: page.encode("utf-8"),
             REPO / "TOKENOMICS.md": build_tokenomics().encode("utf-8"),
+            # Token-free copies, served by country (dashboard/next.config.ts).
+            OUTPUT.parent / "restricted.html": restrict.litepaper_html(page).encode("utf-8"),
+            OUTPUT.parent / "restricted/LITEPAPER.md": restrict.litepaper_md((REPO / "LITEPAPER.md").read_text(encoding="utf-8")).encode("utf-8"),
+            OUTPUT.parent / "restricted/WHITEPAPER.md": restrict.whitepaper_md((REPO / "WHITEPAPER.md").read_text(encoding="utf-8")).encode("utf-8"),
+            OUTPUT.parent / "restricted/TOKENOMICS.md": restrict.tokenomics_md().encode("utf-8"),
         }
         if args.check:
             stale = [str(path.relative_to(REPO)) for path, content in outputs.items()
@@ -533,6 +540,7 @@ def main():
             print("Current: page and tokenomics download (15 products, {} token uses)".format(len(UTILITY_NAMES)))
         else:
             for path, content in outputs.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
                 print("Built {}: {} bytes".format(path.relative_to(REPO), len(content)))
     except (OSError, ValueError, KeyError, IndexError) as error:

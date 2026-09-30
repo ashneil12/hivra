@@ -41,8 +41,12 @@ describe("/roofing stays up but is not indexable", () => {
   });
 
   it("still serves the page: /roofing rewrites to the static file, which carries a robots meta tag", async () => {
-    const rewrites = ((await nextConfig.rewrites?.()) ?? []) as Rewrite[];
-    const rule = (Array.isArray(rewrites) ? rewrites : []).find(entry => entry.source === "/roofing");
+    const config = ((await nextConfig.rewrites?.()) ?? []) as Rewrite[] | { beforeFiles?: Rewrite[]; afterFiles?: Rewrite[]; fallback?: Rewrite[] };
+    // rewrites() returns a flat list or, since the token geo-gate, phased lists.
+    const rewrites: Rewrite[] = Array.isArray(config)
+      ? config
+      : [...(config.beforeFiles ?? []), ...(config.afterFiles ?? []), ...(config.fallback ?? [])];
+    const rule = rewrites.find(entry => entry.source === "/roofing");
     expect(rule?.destination).toBe("/roofing.html");
     // The manifest regex (what Vercel's edge matches) agrees with the source.
     expect(new RegExp(buildCustomRoute("rewrite", rule!).regex, "i").test("/roofing")).toBe(true);

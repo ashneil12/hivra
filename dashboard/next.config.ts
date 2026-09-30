@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 import { HTML_LIMITED_BOT_UA_RE } from "next/dist/shared/lib/router/utils/html-bots";
 import { htmlLimitedBotsWithAiCrawlers } from "./src/lib/ai-crawlers";
 import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
+import { BLOCKED_COUNTRIES } from "./src/lib/compliance/token-geo-list";
 
 // This is build-generation provenance only. Vercel's authoritative deployment
 // createdAt is collected from `vercel inspect --json` during Plan 08 rather
@@ -17,6 +18,24 @@ function resolveSiteHost(): string {
   } catch {
     return "hermesos.cloud";
   }
+}
+
+/**
+ * The static documents are served straight from public/, so the token geo-policy
+ * cannot gate them in the app. For a viewer in a listed country these paths are
+ * rewritten, before the filesystem is checked, to token-free copies built by
+ * docs/litepaper/restrict.py. The country is the header Vercel's edge sets; a
+ * missing or unknown country gets the full document, as on the app's own pages.
+ */
+export function tokenGeoRewrites(countries: readonly string[] = BLOCKED_COUNTRIES) {
+  if (!countries.length) return [];
+  const has = [{ type: "header" as const, key: "x-vercel-ip-country", value: `(?:${countries.join("|")})` }];
+  return [
+    ["/docs/litepaper/index.html", "/docs/litepaper/restricted.html"],
+    ["/LITEPAPER.md", "/restricted/LITEPAPER.md"],
+    ["/WHITEPAPER.md", "/restricted/WHITEPAPER.md"],
+    ["/TOKENOMICS.md", "/restricted/TOKENOMICS.md"],
+  ].map(([source, destination]) => ({ source, destination, has }));
 }
 
 const selfHostAuthEnabled = process.env.HIVRA_AUTH_MODE?.trim().toLowerCase() === "local";
@@ -210,7 +229,9 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
-    return [
+    return {
+      beforeFiles: tokenGeoRewrites(),
+      afterFiles: [
       // UK Dental DBR GTM landing page lives on a separate Vercel project
       // (clearweb.one/dental). Proxy /dental through the dashboard origin so
       // hivra.cloud/dental returns HTTP 200 instead of 404 — marketing/outreach
@@ -251,7 +272,8 @@ const nextConfig: NextConfig = {
       // the pinned @clerk/clerk-js and @clerk/ui dist/*.js files only: see
       // src/lib/clerk-assets.ts.
       ...clerkAssetRewrites(),
-    ];
+      ],
+    };
   },
   async headers() {
     return [
