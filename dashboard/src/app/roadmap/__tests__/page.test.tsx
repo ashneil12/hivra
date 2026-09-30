@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
-import RoadmapPage from "../page";
+import RoadmapPage, { metadata } from "../page";
 import { roadmapContent } from "@/lib/roadmap-content";
 
 jest.mock("next/link", () => {
@@ -199,6 +199,28 @@ describe("/roadmap page", () => {
     expect(bankrLink).toHaveAttribute("href", "https://bankr.bot");
     expect(bankrLink).toHaveAttribute("target", "_blank");
     expect(bankrLink).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("is unmistakably Hivra's roadmap, not the Hermes Agent roadmap that searchers may expect", () => {
+    // Search Console shows "hermes agent roadmap" landing on this page. Hermes
+    // Agent is Nous Research's project, so the title, description and hero all
+    // say whose roadmap this is.
+    const title = String(metadata.title);
+    const description = String(metadata.description);
+    expect(title).toMatch(/^Hivra Roadmap/);
+    // The root layout template already appends " | Hivra".
+    expect(title).not.toMatch(/\| Hivra$/);
+    expect(title.length).toBeLessThanOrEqual(58);
+    expect(description).toMatch(/^The Hivra roadmap \(hivra\.cloud, formerly HermesOS\)/);
+    expect(description).toContain("Not the Hermes Agent roadmap.");
+    expect(description.length).toBeLessThanOrEqual(160);
+    expect(title + description).not.toMatch(/[\u2013\u2014]/);
+
+    const { container } = render(<RoadmapPage />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Hivra Product Roadmap 2026$/);
+    expect(container).toHaveTextContent(
+      /This is the roadmap for Hivra \(hivra\.cloud, formerly HermesOS\), not for Hermes Agent, which is a Nous Research project\./,
+    );
   });
 
   it("does not promise token holders a governance vote while governance is undecided", () => {

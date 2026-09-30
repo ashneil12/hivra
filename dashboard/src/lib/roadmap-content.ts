@@ -58,9 +58,12 @@ export interface RoadmapPhase {
 
 export const roadmapContent = {
   metadata: {
-    title: "Hivra Roadmap April 2026",
+    // People searching "hermes agent roadmap" land here. The title and description
+    // say whose roadmap this is (Hivra, formerly HermesOS) and what it is not, so
+    // nobody mistakes it for the roadmap of Nous Research's Hermes Agent.
+    title: "Hivra Roadmap: the April 2026 Plan and What Is Live",
     description:
-      "Hivra's April 2026 roadmap, kept for the record, with what is live today. The current plan is in the Hivra litepaper.",
+      "The Hivra roadmap (hivra.cloud, formerly HermesOS): the April 2026 plan, kept for the record, and what is live today. Not the Hermes Agent roadmap.",
     canonicalPath: "/roadmap",
   },
   hero: {
@@ -68,7 +71,7 @@ export const roadmapContent = {
     title: "Hivra Product Roadmap 2026",
     subtitle: "The operating system for autonomous agents.",
     note:
-      "This is Hivra's April 2026 roadmap, kept for the record. Hivra has since become agent computers, and parts of this plan have changed. What is live today is kept current below. The current plan is in the litepaper and on the ecosystem page. Anything here that is not live is a plan or a proposal, not a commitment. This is not a financial document and makes no investment claims about $HermesOS or any other asset.",
+      "This is Hivra's April 2026 roadmap, kept for the record. Hivra has since become agent computers, and parts of this plan have changed. What is live today is kept current below. The current plan is in the litepaper and on the ecosystem page. Anything here that is not live is a plan or a proposal, not a commitment. This is the roadmap for Hivra (hivra.cloud, formerly HermesOS), not for Hermes Agent, which is a Nous Research project. This is not a financial document and makes no investment claims about $HermesOS or any other asset.",
     scrollLabel: "Scroll to explore",
   },
   whatIsHermesOS: {
