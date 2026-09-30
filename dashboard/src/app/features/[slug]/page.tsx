@@ -243,7 +243,7 @@ const FEATURES: Record<string, FeatureData> = {
         paragraphs: [
           "A single agent that handles everything, from research and coding to customer support and content writing, has to context-switch constantly. Its system prompt grows bloated trying to cover every role. The memory store accumulates unrelated history that competes for context space on every task.",
           "Specialized agents are more focused. A research agent configured for competitive intelligence has a system prompt, tool set, and memory structure optimized for that job. A coding agent has different tool access and different working memory. Each one is sharper at its task than a generalist would be.",
-          "Many larger AI teams are being built this way in 2026: a portfolio of focused agents with defined handoff points between them, rather than one big agent.",
+          "Many larger AI teams are being built this way in 2026, as a portfolio of focused agents with defined handoff points between them.",
         ],
       },
       {
@@ -373,7 +373,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "What if I want to customize the underlying container config?",
-        a: "Advanced users can access container configuration, the agent's tool directory, and a container shell through the dashboard. You are not locked out. We just do not require it.",
+        a: "Advanced users can access container configuration, the agent's tool directory, and a container shell through the dashboard. You keep access to all of it, and we do not require it.",
       },
       {
         q: "Is Hivra just a VPS with a UI wrapper?",
