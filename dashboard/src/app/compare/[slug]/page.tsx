@@ -8,33 +8,9 @@ import { CheckCircle, XCircle } from "lucide-react";
 import StructuredData from "@/components/StructuredData";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
-
-type ComparisonSection = {
-  heading: string;
-  paragraphs: string[];
-};
-
-type ComparisonData = {
-  title: string;
-  h1: string;
-  metaDescription: string;
-  tagline: string;
-  intro: string[];
-  sections: ComparisonSection[];
-  vsTable: Array<{
-    criterion: string;
-    hermesOs: string;
-    other: string;
-    hermosWins: boolean;
-  }>;
-  verdict: string;
-  faqs: Array<{ q: string; a: string }>;
-  relatedComparisons: Array<{ slug: string; title: string }>;
-  relatedBlog?: Array<{ slug: string; title: string }>;
-  relatedFeatures?: Array<{ slug: string; title: string }>;
-  /** Off-site references, such as upstream docs a paragraph relies on. */
-  externalRelated?: Array<{ label: string; href: string }>;
-};
+import type { ComparisonData } from "@/lib/compare/types";
+import { HOST_COMPARISONS } from "@/lib/compare/host-comparisons";
+import { COMPETITOR_FACTS_CHECKED, formatCheckedDate } from "@/lib/compare/competitor-facts";
 
 // Competitor prices below were re-checked on the vendors' own pages on
 // 2026-09-24: hetzner.com price adjustment (15 June 2026), digitalocean.com
@@ -43,7 +19,7 @@ type ComparisonData = {
 // OpenClaw import of its own.
 const HERMES_OPENCLAW_MIGRATION_GUIDE = "https://hermes-agent.nousresearch.com/docs/guides/migrate-from-openclaw";
 
-const COMPARISONS: Record<string, ComparisonData> = {
+const BASE_COMPARISONS: Record<string, ComparisonData> = {
   "vs-self-hosted": {
     title: "Hivra vs Self-Hosted VPS: Which Should You Choose?",
     h1: "Self-hosting Hermes: the honest tradeoff.",
@@ -488,6 +464,8 @@ const COMPARISONS: Record<string, ComparisonData> = {
   },
 };
 
+const COMPARISONS: Record<string, ComparisonData> = { ...BASE_COMPARISONS, ...HOST_COMPARISONS };
+
 interface ComparePageParams {
   params: Promise<{ slug: string }>;
 }
@@ -547,5 +525,5 @@ export default async function ComparisonPage({ params }: ComparePageParams) {
     <header className={styles.masthead}><span className={styles.eyebrow}>{comparison.tagline}</span><h1>{comparison.h1}</h1></header>
     <div className={styles.articleLayout}><ArticleNavigation items={contents} /><div className={styles.articleBody}><div className={styles.detailIntro}>{comparison.intro.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
     {comparison.sections.map((section, index) => <section key={section.heading} id={contents[index].id}><h2>{section.heading}</h2>{section.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>)}
-    <section><h2>Feature comparison</h2><div className={styles.tableScroll} role="region" aria-label="Feature comparison" tabIndex={0}><table><thead><tr><th scope="col">Criterion</th><th scope="col">Hivra</th><th scope="col">Alternative</th></tr></thead><tbody>{comparison.vsTable.map(({ criterion, hermesOs, other, hermosWins }) => <tr key={criterion}><th scope="row">{criterion}</th><td>{hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{hermesOs}</td><td>{!hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{other}</td></tr>)}</tbody></table></div></section><section className={styles.verdict}><h2>Verdict</h2><p>{comparison.verdict}</p></section><EditorialQuestions questions={comparison.faqs} /></div></div><EditorialCTA title={<>Ready to <strong>stop managing infra?</strong></>} label="Deploy My Agent" /><EditorialRelated links={[...comparison.relatedComparisons.map(({ slug, title }) => ({ label: title, href: `/compare/${slug}` })), ...(comparison.relatedBlog ?? []).map(({ slug, title }) => ({ label: `Blog: ${title}`, href: `/blog/${slug}` })), ...(comparison.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })), ...(comparison.externalRelated ?? []), { label: "Pricing", href: "/pricing" }, { label: "All Features", href: "/features" }]} /></main></PublicSite>);
+    <section><h2>Feature comparison</h2><div className={styles.tableScroll} role="region" aria-label="Feature comparison" tabIndex={0}><table><thead><tr><th scope="col">Criterion</th><th scope="col">Hivra</th><th scope="col">Alternative</th></tr></thead><tbody>{comparison.vsTable.map(({ criterion, hermesOs, other, hermosWins }) => <tr key={criterion}><th scope="row">{criterion}</th><td>{hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{hermesOs}</td><td>{!hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{other}</td></tr>)}</tbody></table></div></section><section className={styles.verdict}><h2>Verdict</h2><p>{comparison.verdict}</p></section>{comparison.factSources ? <section aria-labelledby="fact-sources"><h2 id="fact-sources">Where these numbers come from</h2><p>Prices and terms for the other provider were read from its own pages on <time dateTime={COMPETITOR_FACTS_CHECKED}>{formatCheckedDate()}</time>. Vendors change prices, so check the source before you pay.</p><ul>{comparison.factSources.map(({ label, href }) => <li key={href}><a href={href} rel="noopener noreferrer">{label}</a></li>)}</ul></section> : null}<EditorialQuestions questions={comparison.faqs} /></div></div><EditorialCTA title={<>Ready to <strong>stop managing infra?</strong></>} label="Deploy My Agent" /><EditorialRelated links={[...comparison.relatedComparisons.map(({ slug, title }) => ({ label: title, href: `/compare/${slug}` })), ...(comparison.relatedBlog ?? []).map(({ slug, title }) => ({ label: `Blog: ${title}`, href: `/blog/${slug}` })), ...(comparison.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })), ...(comparison.externalRelated ?? []), { label: "Pricing", href: "/pricing" }, { label: "All Features", href: "/features" }]} /></main></PublicSite>);
 }

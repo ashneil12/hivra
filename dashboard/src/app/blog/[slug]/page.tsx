@@ -3,6 +3,7 @@ import { Breadcrumbs, EditorialArt, EditorialCTA, EditorialQuestions, EditorialR
 import ArticleNavigation from "@/components/public-editorial/ArticleNavigation.client";
 import styles from "../../../components/public-editorial/secondary-site.module.css";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -11,6 +12,7 @@ import { BLOG_ARTICLES } from "@/lib/blog-data";
 import { blogArticleOgImagePath, buildBlogArticleMetadata } from "@/lib/blog/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { articleMarkdownComponents } from "@/components/public-editorial/article-markdown";
+import { topicAnchor, topicForArticle } from "@/lib/blog/topics";
 
 // SCRIPTURE_ANCHOR: blog-scroll | Habakkuk 2:2 | Verse: Write the vision, and make it plain on tablets, that he who runs may read it.
 
@@ -38,6 +40,7 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
   if (!article) notFound();
 
   const articleUrl = `${SITE_URL}/blog/${slug}`;
+  const topic = topicForArticle(slug);
 
   const schema = {
     "@context": "https://schema.org",
@@ -94,7 +97,7 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
         <Breadcrumbs items={[{ label: "Blog", href: "/blog" }, { label: article.title }]} />
         <header className={styles.articleHeader}>
           <div><span className={styles.eyebrow}>{article.tagline}</span><h1>{article.title}</h1><p>{article.intro}</p>
-            <div className={styles.metadata}><span>{article.author}</span><time dateTime={article.publishedDate}>{formatDate(article.publishedDate)}</time>{article.lastModified !== article.publishedDate && <time dateTime={article.lastModified}>Updated {formatDate(article.lastModified)}</time>}<span>{article.readingTimeMin} min read</span></div>
+            <div className={styles.metadata}>{topic && <Link href={`/blog#${topicAnchor(topic)}`}>{topic.title}</Link>}<span>{article.author}</span><time dateTime={article.publishedDate}>{formatDate(article.publishedDate)}</time>{article.lastModified !== article.publishedDate && <time dateTime={article.lastModified}>Updated {formatDate(article.lastModified)}</time>}<span>{article.readingTimeMin} min read</span></div>
           </div>
           <EditorialArt number={String(article.readingTimeMin).padStart(2, "0")} label="Minutes to read" />
         </header>
