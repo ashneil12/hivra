@@ -6,9 +6,9 @@ export const article: BlogArticle = {
   title: "AI agent VPS guide: specs, providers, and setup that actually works (2026)",
   metaTitle: "AI agent VPS guide: specs, providers and setup",
   metaDescription:
-    "Most AI agents run comfortably on 2 vCPU and 4GB of RAM. See specs by agent type, Hetzner, DigitalOcean, Vultr and Linode prices, and how to secure it.",
+    "Most AI agents run comfortably on 2 vCPU and 4GB of RAM. See specs by agent type, prices at Hetzner, DigitalOcean, Vultr and Linode, and how to secure it.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Most agents need a smaller server and a bigger firewall than the listicles tell you.",
@@ -61,7 +61,7 @@ export const article: BlogArticle = {
       heading: "When managed beats a raw VPS",
       paragraphs: [
         "The DIY route above is real and it works. Priced honestly, it is $5-10/month in server rent, 1-3 hours of setup, and a slow drip of maintenance: OS patches, agent updates, disk cleanup, and the occasional evening lost to a gateway that stopped restarting. If you enjoy that work, nothing here needs improving. (And if you are still deciding whether a VPS is even the right shape, the [AI agent hosting guide](/blog/ai-agent-hosting-guide) compares all four options: own hardware, VPS, serverless, and managed.)",
-        "[Hivra](/) is the version where most of the checklist above is someone else's job. Each agent runs on its own private VM, and Claude Code and Codex are the vendors' official CLIs. Claude Code uses your own Anthropic login and Codex uses your own ChatGPT login, so there is zero markup on AI usage. You get a browser view of the running session instead of a bare SSH terminal.",
+        "[Hivra](/) is the version where most of the checklist above is someone else's job. Each agent runs on its own private VM, and Claude Code and Codex are the vendors' official CLIs. Claude Code uses your own Anthropic login and Codex uses your own ChatGPT login, so usage bills through those accounts with no Hivra markup. Hivra is independent and is not affiliated with Anthropic or OpenAI. You get a browser view of the running session instead of a bare SSH terminal.",
         `The plan math, plainly: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}, shared across the agents you run. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero all launch on Hivra; OpenClaw and Agent Zero need a paid plan. Full details on the [pricing page](/pricing).`,
         `A reasonable decision rule: if you were going to buy one Hetzner box for one agent and follow this guide carefully, the DIY route saves a few dollars and teaches you things. If you want several agents, want them reachable from your phone, or do not want to own the security section personally, managed is cheaper than your time. If you are not sure your usage justifies always-on hosting at all, the [agent survival check](/tools/agent-survival-check) is a two-minute sanity test.`,
       ],
@@ -90,7 +90,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How is managed agent hosting different from renting my own VPS?",
-      a: `Same underlying idea, different owner of the work. On your own VPS you handle hardening, updates, restarts, and backups; the server costs $5-10/month. On Hivra each agent gets a private VM with the official CLI preinstalled, a browser interface, and no markup on AI usage since you sign in with your own accounts. Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}.`,
+      a: `Same underlying idea, different owner of the work. On your own VPS you handle hardening, updates, restarts, and backups; the server costs $5-10/month. On Hivra each agent gets a private VM with the official CLI for that agent, a browser interface, and no Hivra markup when you sign in with your own accounts. Hivra is independent and is not affiliated with Anthropic or OpenAI. Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}.`,
     },
   ],
   relatedArticles: [

@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hetzner CX33 (4 vCPU, 8GB, €8.49/month ex VAT) is the recommended VPS for Hermes Agent. Compare Hetzner, OVH, DigitalOcean and Vultr specs and prices.",
   publishedDate: "2026-04-16",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "The community has been running Hermes on cheap VPS servers for months. Here is what they found.",
@@ -30,7 +30,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Hetzner is the near-universal community recommendation for Hermes hosting. The price-to-spec ratio beats DigitalOcean or AWS Lightsail significantly for equivalent hardware.\n\n| Model | vCPU | RAM | NVMe | Price/mo |\n|-------|------|-----|------|----------|\n| CX23  | 2 | 4 GB | 40 GB | €5.49 |\n| CX33  | 4 | 8 GB | 80 GB | €8.49 |\n| CX43  | 8 | 16 GB | 160 GB | €15.99 |\n\n*Prices as of September 2026 for Hetzner's Germany and Finland locations, excluding VAT. Hetzner raised CX prices again on 15 June 2026, so older guides quoting €3.99 for the CX23 are out of date.*",
         "The CX23 is the minimum viable spec: adequate for a single-user instance with external API inference, Telegram gateway, and moderate task volume. The CX33 at €8.49/month is the recommended tier. The 8GB RAM headroom handles Docker backend, browser automation tasks, and occasional heavy workloads without OOM pressure. Two light Hermes instances on one CX33 is feasible with careful resource limits.",
-        "Datacenter locations: Nuremberg, Falkenstein, Helsinki (EU), Hillsboro Oregon, Ashburn Virginia (US). EU datacenters suit most European users. The US locations reduce round-trip for North American users on Telegram gateway, though the difference is modest since Telegram's own servers are distributed.",
+        "Datacenter locations: Nuremberg, Falkenstein and Helsinki in the EU. Hetzner also has US locations in Hillsboro and Ashburn, but the server lines and prices there differ from the table above, so check its current price list. EU datacenters suit most European users. A US location reduces round-trip for North American users on Telegram gateway, though the difference is modest since Telegram's own servers are distributed.",
       ],
     },
     {

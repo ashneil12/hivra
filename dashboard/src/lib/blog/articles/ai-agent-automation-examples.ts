@@ -7,14 +7,14 @@ export const article: BlogArticle = {
   metaDescription:
     "Seven AI agent automation examples, from competitor price monitoring to email triage and incident alerts, with the setup each one needs.",
   publishedDate: "2026-03-24",
-  lastModified: "2026-03-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "Specific examples, not vague use cases.",
   intro:
     "The best way to assess whether a persistent AI agent is useful for your work is specific examples. Here are seven tasks that run well as scheduled agent automation, with what setup each one actually needs.",
   shortAnswer:
-    "A persistent AI agent can run seven kinds of work overnight: competitor price monitoring, a morning research brief, email triage, a weekly codebase review, lead enrichment, content repurposing and incident monitoring. Each needs a specific instruction up front, and most end with a summary, report or drafts for you to review.",
+    "A persistent AI agent can run seven kinds of work overnight: competitor price monitoring, a morning research brief, email triage, a weekly codebase review, lead enrichment, content repurposing and incident monitoring. Most need clear criteria or a connected account set up first, and most end with a summary, report or drafts for you to review.",
   sections: [
     {
       heading: "1. Competitive price monitoring",
@@ -74,11 +74,11 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "How do I set up a scheduled task like this?",
-      a: "In the Hivra dashboard, go to Scheduled Tasks, write the task instruction in plain language (or following a template), set the schedule using natural language or cron format, and activate. The agent runs it at the specified time.",
+      a: "In the Hivra dashboard, open the agent's Tasks tab, write the task instruction in plain language, set the schedule with the frequency picker (or a raw cron expression), and activate. The agent runs it at the time you set.",
     },
     {
       q: "What happens if the agent makes a mistake on an automated task?",
-      a: "All task runs are logged with the full agent output. You can review what happened, see where it went wrong, and update the task instruction. For high-stakes tasks, add an explicit step requiring the agent to present results for your approval before taking action.",
+      a: "You can review what the agent did on each run, see where it went wrong, and update the task instruction. For high-stakes tasks, add an explicit step requiring the agent to present results for your approval before taking action.",
     },
     {
       q: "Do these tasks cost a lot in API tokens?",

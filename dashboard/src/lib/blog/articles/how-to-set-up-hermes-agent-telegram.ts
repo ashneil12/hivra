@@ -7,12 +7,12 @@ export const article: BlogArticle = {
   metaDescription:
     "Create a bot with BotFather, find your User ID, add the token to Hermes and start the gateway. Every step shown, plus fixes for the common errors.",
   publishedDate: "2026-04-21",
-  lastModified: "2026-04-21",
+  lastModified: "2026-09-30",
   readingTimeMin: 7,
   author: "Hivra team",
   tagline: "From zero to talking to your agent on your phone.",
   intro:
-    "Most people who run Hermes Agent use Telegram as their main interface. You message the bot from your phone like you'd message anyone, and the agent responds. Getting this set up takes about 10 minutes.",
+    "Telegram is one of the easiest ways to talk to a Hermes agent. You message the bot from your phone like you'd message anyone, and the agent responds. Setup is a short list of steps.",
   shortAnswer:
     "Create a bot with BotFather and copy its token, get your numeric User ID from @userinfobot, then add both to ~/.hermes/.env as TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS. Run hermes gateway to test, then hermes gateway install and hermes gateway start to keep it running in the background.",
   sections: [

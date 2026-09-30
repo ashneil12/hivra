@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "A chatbot replies when you message it. An AI agent keeps running, holds state and acts across many steps. Here is where each one is the right tool.",
   publishedDate: "2026-03-17",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 7,
   author: "Hivra team",
   tagline: "The distinction matters more than you might think.",
@@ -42,14 +42,14 @@ export const article: BlogArticle = {
     {
       heading: "Why the confused terminology matters",
       paragraphs: [
-        "When AI tools market themselves as 'AI agents' without having the actual capabilities (no tool use, no persistent state, no autonomous execution), it creates false expectations. Someone pays for a product expecting to delegate work and discovers they still have to be present for every step. The result is 40% of agentic AI projects failing due to inadequate foundations, per Cyntexa's 2026 survey of enterprise deployments.",
-        "Conversely, when people dismiss 'AI agents' because they remember the failures of early chatbot-based agent attempts from 2023 (systems that confidently executed incorrect multi-step plans without any self-correction), they miss how much the technology has matured. Modern agents with proper tool verification, checkpoint-based rollback, memory of past mistakes, and human-approval gates behave quite differently. Research shows agents resolve 70-85% of defined tasks without escalation, versus 30-40% for chatbots.",
+        "When AI tools market themselves as 'AI agents' without having the actual capabilities (no tool use, no persistent state, no autonomous execution), it creates false expectations. Someone pays for a product expecting to delegate work and discovers they still have to be present for every step. The result, in Gartner's forecast, is that over 40% of agentic AI projects will be cancelled by the end of 2027.",
+        "Conversely, when people dismiss 'AI agents' because they remember the failures of early chatbot-based agent attempts from 2023 (systems that confidently executed incorrect multi-step plans without any self-correction), they miss how much the technology has matured. Modern agents with proper tool verification, checkpoint-based rollback, memory of past mistakes, and human-approval gates behave quite differently.",
       ],
     },
     {
       heading: "The middle ground: tool-augmented models",
       paragraphs: [
-        "There is a spectrum between pure chatbots and full agents. ChatGPT on the Pro plan (from $100/month) now includes Agents mode (previously called Operator) for autonomous web tasks, but it is US-only and still session-scoped. Claude with computer use can control a browser. GPT-5.4 ships with native computer-use capabilities. These are more capable than bare chatbots but still not persistent: they do not run on schedules, do not maintain long-term memory by default, and cannot execute work while you are offline.",
+        "There is a spectrum between pure chatbots and full agents. ChatGPT on the Pro plan (from $100/month) now includes Agents mode (previously called Operator) for autonomous web tasks, but it is US-only and still session-scoped. Claude with computer use can control a browser. GPT-5.4 ships with native computer-use capabilities. These are more capable than bare chatbots but still not persistent: they are still largely session-based, with only basic scheduling and memory, and are not built to work unattended for hours.",
         "For many people, this middle ground covers the need. The step up to a fully autonomous persistent agent is significant in setup complexity and the trust required to let a system act for you. Middle-ground tools have lower friction and are appropriate for tasks that are inherently conversational or single-session in nature.",
       ],
     },
@@ -57,7 +57,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Can ChatGPT be configured to work like an agent?",
-      a: "With plugins, tool use, and memory enabled, ChatGPT can take limited actions within a session. But it cannot run on a schedule, does not maintain comprehensive long-term memory, and cannot execute multi-step tasks autonomously while you are not using the interface.",
+      a: "With tools, apps and memory enabled, ChatGPT can take limited actions and can run basic scheduled tasks. But it does not run as a persistent, always-on agent with its own computer, and it is not built to carry out multi-step work unattended for hours.",
     },
     {
       q: "Do AI agents replace chatbots?",

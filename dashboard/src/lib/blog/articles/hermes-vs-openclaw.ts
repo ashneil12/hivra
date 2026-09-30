@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "OpenClaw suits novel work and a large community, Hermes Agent suits recurring tasks. A comparison of architecture, memory, security and messaging.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 13,
   author: "Hivra team",
   tagline: "Two approaches to the same problem. Different bets.",
@@ -36,7 +36,7 @@ export const article: BlogArticle = {
       heading: "The core architectural difference: reactive tools vs skill learning",
       paragraphs: [
         "OpenClaw's design centers on tool chaining: configure which tools the agent has access to and it chains them reactively. There is a broad community library (700+ in the AgentSkills marketplace as of early 2026) and the framework handles a wide variety of tasks without significant upfront configuration. Setup overhead is genuinely low, a real reason it spread quickly.",
-        "Hermes's design centers on skill learning. When the agent completes a task, it can synthesize that experience into a Skill Document: a structured, searchable record of exactly how to approach that class of problem: which tools it used, where it got stuck, what worked. On future similar tasks, the agent retrieves and references these rather than reasoning from scratch. One user reported that within two hours of running Hermes, the agent had created three Skill Documents from assigned tasks and completed a similar research task 40% faster using those skills. No prompt tuning: the improvement came from doing.",
+        "Hermes's design centers on skill learning. When the agent completes a task, it can synthesize that experience into a Skill Document, a structured, searchable record of exactly how to approach that class of problem, including which tools it used, where it got stuck and what worked. On future similar tasks, the agent retrieves and references these rather than reasoning from scratch. One user reported that within two hours of running Hermes, the agent had created three Skill Documents from assigned tasks and completed a similar research task faster using those skills. No prompt tuning: the improvement came from doing.",
         "This is the clearest difference between the two frameworks. OpenClaw approaches every task as a new problem using the same tools. Hermes accumulates structured experience and applies it. For repetitive structured work (the same categories of tasks weekly, the same debugging patterns, the same research workflows), the compounding is a real advantage over time. For irregular, novel tasks, the difference is smaller.",
       ],
     },
@@ -53,7 +53,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Both frameworks use the agentskills.io standard for custom tool capabilities, which means their ecosystems are technically interoperable: a Clawhub skill can be loaded into a Hermes instance. The security posture of the Clawhub marketplace is worth taking seriously before doing that.",
         "Between 27 January and 8 February 2026, Bitsight researchers counted more than 30,000 OpenClaw instances exposed to the public internet, and found that trivially weak tokens were accepted on exposed gateways. CVE-2026-25253 documented a one-click remote code execution flaw, patched in OpenClaw 2026.1.29. Separately, security researchers at Immersive Labs and MITRE documented a coordinated supply chain attack, dubbed ClawHavoc, in which hundreds of malicious skills designed as info-stealers were published to Clawhub before the marketplace had systematic security review in place.",
-        "Hermes Agent's 40+ core tools are maintained and audited by the Nous Research team. The framework is not affected by CVE-2026-25253. When pulling community skills from Clawhub into Hermes, the same vetting discipline applies regardless: read the source, review what API access the skill requests, and run it in a sandboxed environment before granting it production-level permissions.",
+        "Hermes Agent's core tools are maintained by the Nous Research team, and CVE-2026-25253 is an OpenClaw flaw that does not apply to Hermes. When pulling community skills from Clawhub into Hermes, the same vetting discipline applies regardless: read the source, review what API access the skill requests, and run it in a sandboxed environment before granting it production-level permissions.",
       ],
     },
     {

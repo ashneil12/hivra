@@ -7,14 +7,14 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent skills are Markdown files with YAML frontmatter. See the file format, how the agent writes its own, the Skills Hub and hermes skills commands.",
   publishedDate: "2026-04-17",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 12,
   author: "Hivra team",
   tagline: "Skills are Hermes's extension system. The agent writes them for itself, but you can write them too.",
   intro:
     "Skills are Hermes Agent's equivalent of plugins: reusable capabilities the agent can call on demand. What separates them from every other plugin system is that Hermes writes skills for itself. When it solves a problem it will face again, it packages the solution into a skill and improves it over subsequent uses. This guide covers the format, the self-improvement loop, the community marketplace, and when to write your own.",
   shortAnswer:
-    "A Hermes skill is a Markdown file with YAML frontmatter, stored in ~/.hermes/skills/, holding plain-language instructions the agent loads when its description matches your request. Hermes can write skills for itself after solving a repeatable task, and most people can write a basic one in about five minutes without code.",
+    "A Hermes skill is a Markdown file with YAML frontmatter, stored in ~/.hermes/skills/, holding plain-language instructions the agent loads when its description matches your request. Hermes can write skills for itself after solving a repeatable task, and most people can write a basic one without code.",
   sections: [
     {
       heading: "What a skill actually is",
@@ -48,7 +48,7 @@ export const article: BlogArticle = {
       heading: "Hermes skills vs OpenClaw plugins",
       paragraphs: [
         "OpenClaw uses a plugin system hosted on ClawHub. The structural differences:\n\n| Feature | Hermes Skills | OpenClaw Plugins |\n|---------|--------------|------------------|\n| Format | Markdown + YAML | TypeScript/JavaScript module |\n| Self-creation | Yes | No |\n| Self-improvement | Yes | No |\n| Marketplace | agentskills.io | clawhub.io |\n| Security record | No public CVEs | 400+ malicious plugins reported |\n| Installation | `hermes skills install` | `openclaw plugins install` |",
-        "The OpenClaw plugin system is more powerful for developers who want to write full TypeScript modules with complex logic. Hermes skills are more accessible: most users can write a working skill in 5 minutes without writing code. The self-creation feature has no OpenClaw equivalent. The 400+ malicious plugin figure comes from OpenClaw's own ClawHub community disclosures. The Hermes Skills Hub has not had a comparable public incident, partly because it is newer and smaller.",
+        "The OpenClaw plugin system is more powerful for developers who want to write full TypeScript modules with complex logic. Hermes skills are more accessible: most users can write a working skill without writing code. The self-creation feature has no OpenClaw equivalent. The 400+ malicious plugin figure comes from OpenClaw's own ClawHub community disclosures. The Hermes Skills Hub has not had a comparable public incident, partly because it is newer and smaller.",
       ],
     },
     {
@@ -62,7 +62,7 @@ export const article: BlogArticle = {
       heading: "Managing and sharing skills",
       paragraphs: [
         "Useful skills commands:\n\n```bash\nhermes skills list                     # list all installed skills with versions\nhermes skills list --tag development   # filter by tag\nhermes skills info git-commit-format   # show skill metadata\nhermes skills edit git-commit-format   # open skill in $EDITOR\nhermes skills remove git-commit-format # uninstall\nhermes skills export git-commit-format # export as .tar.gz for sharing\nhermes skills import skill.tar.gz      # import from file\n```\n\nSkills are included in profile exports (`hermes profile export <name>`), making them portable between machines. When migrating from OpenClaw with `hermes claw migrate`, Hermes-compatible OpenClaw plugins convert to the skill format automatically where possible. Plugin types requiring TypeScript compilation fall back to stubs that describe what the original plugin did. Those need manual rewriting.",
-        "On Hivra, skills work the same way as when you self-host: they are stored on the agent's computer and survive restarts. The self-creation loop is particularly useful here: an agent you have been using for six months accumulates a skill library tuned to your exact working patterns. That library lives on the agent's computer and is included in profile exports.",
+        "On Hivra, skills are stored on the agent's computer and survive restarts. The self-creation loop is particularly useful here: an agent you have been using for six months accumulates a skill library tuned to your exact working patterns. That library lives on the agent's computer.",
       ],
     },
   ],

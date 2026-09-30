@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-hosting an AI agent costs $5-10/month in rent, 4-10 hours of setup and 1-2 hours a month of upkeep. The total-cost math, and where self-hosting wins.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The server rent is the smallest number in this comparison.",
@@ -21,7 +21,7 @@ export const article: BlogArticle = {
       heading: "What each model actually means",
       paragraphs: [
         "**Self-hosted** means you rent a VPS (or repurpose a home server), install the agent runtime yourself, wire up API keys or account logins, configure a reverse proxy if you want web access, and keep all of it patched and running. You have root. You own every decision and every failure.",
-        "**Managed** means a platform provisions the machine, installs the agent, runs the server, and hands you a working interface. On [Hivra](/), that is a private virtual machine per agent, running the agent you picked, with chat, terminal, and file access in the browser. You still sign in with your own accounts (your Anthropic login for Claude Code, your ChatGPT login for Codex), and there is zero markup on AI usage. The platform owns the server. You own the agent's brain and its data inside the box.",
+        "**Managed** means a platform provisions the machine, installs the agent, runs the server, and hands you a working interface. On [Hivra](/), that is a private virtual machine per agent, running the agent you picked, with chat, terminal, and file access in the browser. You still sign in with your own accounts (your Anthropic login for Claude Code, your ChatGPT login for Codex), and on your own logins there is no Hivra markup on AI usage. Hivra is independent and is not affiliated with Anthropic or OpenAI. The platform owns the server. You own the agent's brain and its data.",
         "One thing to check on any managed platform: which build of the agent it runs, and with which settings, because you inherit the platform's choices for both. On Hivra, Claude Code and Codex are the vendors' official CLIs, which Hivra's chat runs with permission prompts bypassed by default inside the agent's own VM (the Permissions setting on the agent's Manage tab narrows that to Limited or Read-only). Hermes runs from Hivra's maintained build of the open-source agent, so Hermes updates arrive on Hivra's tested rollout rather than the day Nous Research ships them.",
       ],
     },
@@ -37,7 +37,7 @@ export const article: BlogArticle = {
       heading: "The TCO table, including the hours",
       paragraphs: [
         "Cash cost alone makes self-hosting look like the obvious winner. Add the hours and the picture changes. The table below prices time at $50/hour, which is low for anyone doing this professionally. Substitute your own rate.",
-        `| Cost line | Self-hosted (1 agent) | Hivra managed |\n|---|---|---|\n| Server rent | $5-10/mo | Included |\n| Platform fee | $0 | ${ENTRY_PLAN_PRICE}/mo or ${LARGER_PLAN_PRICE}/mo |\n| AI usage | Your API keys or subscriptions | Same. BYO login, zero markup |\n| Setup, one time | 4-10 hours ($200-500 at $50/hr) | Pick an agent and sign in |\n| Server maintenance | 1-2 hours/mo ($50-100/mo at $50/hr) | Included |\n| When the server breaks | You, whenever it happens | Hivra runs the server |\n| First-year total | $60-120 cash + 16-34 hours | About $120-240 cash, no server hours |`,
+        `| Cost line | Self-hosted (1 agent) | Hivra managed |\n|---|---|---|\n| Server rent | $5-10/mo | Included |\n| Platform fee | $0 | ${ENTRY_PLAN_PRICE}/mo (${ENTRY_PLAN_SIZE}) or ${LARGER_PLAN_PRICE}/mo (${LARGER_PLAN_SIZE}) |\n| AI usage | Your API keys or subscriptions | Same. BYO login, zero markup |\n| Setup, one time | 4-10 hours ($200-500 at $50/hr) | Pick an agent and sign in |\n| Server maintenance | 1-2 hours/mo ($50-100/mo at $50/hr) | Included |\n| When the server breaks | You, whenever it happens | Hivra runs the server |\n| First-year total | $60-120 cash + 16-34 hours | About $120-240 cash, no server hours |`,
         "Two honest caveats on that table. First, if your time is genuinely free and you enjoy the work, the hours column costs you nothing and self-hosting wins on cash. Hobbyists are not wrong to self-host. Second, the maintenance line is not padding. OS security updates, runtime updates, agent updates, disks filling with logs, and certificate renewals are all real and recurring. Skipping them does not make the cost zero. It converts the cost into risk.",
         "Want to run the numbers for your own setup? The [AI agent hosting cost calculator](/tools/ai-agent-hosting-cost-calculator) does this math interactively, and [the real cost of running a persistent AI agent](/blog/cost-of-running-ai-agent) breaks down where the money actually goes.",
       ],
@@ -79,7 +79,7 @@ export const article: BlogArticle = {
     {
       heading: "Try the managed side",
       paragraphs: [
-        `If the hours column in the TCO table is the one that hurts, the managed route is easy to evaluate: [Hivra](/) launches Hermes, Claude Code, Codex, or Aeon on a private VM. Sign in with your own AI accounts, pay zero markup on that usage, and see whether a computer you do not have to administer fits how you work. [Plans start at ${ENTRY_PLAN_PRICE}/month](/pricing), paid plans are not paused for inactivity, they come with a ${MONEY_BACK_GUARANTEE}, and your workspace files come with you if you ever move to your own hardware.`,
+        `If the hours column in the TCO table is the one that hurts, the managed route is easy to evaluate: [Hivra](/) launches Hermes, Claude Code or Codex on a private VM. Sign in with your own AI accounts, pay no Hivra markup on that usage, and see whether a computer you do not have to administer fits how you work. [Plans start at ${ENTRY_PLAN_PRICE}/month](/pricing), paid plans are not paused for inactivity, they come with a ${MONEY_BACK_GUARANTEE}, and your workspace files come with you if you ever move to your own hardware.`,
       ],
     },
   ],

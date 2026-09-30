@@ -1,5 +1,7 @@
 import { BlogArticle } from "../types";
 
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
+
 export const article: BlogArticle = {
   slug: "ai-agent-api-cost-optimization",
   title: "AI agent API costs in 2026: real numbers and how developers cut them",
@@ -7,14 +9,14 @@ export const article: BlogArticle = {
   metaDescription:
     "Real AI agent API costs in 2026: how one developer cut an $847 monthly bill to $159, plus model prices and the techniques that worked.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "Actual monthly numbers from developers who track them.",
   intro:
     "AI agent API costs surprised most developers the first time they saw a monthly bill. Agents consume roughly 4x more tokens than equivalent chat interactions, and multi-agent systems use roughly 15x more. Here are the real numbers, including how one developer went from $847 to $159 in six weeks.",
   shortAnswer:
-    "Agents use roughly 4x more tokens than chat, and multi-agent systems roughly 15x, so bills climb fast. The biggest saving is model routing, typically 30-40% of the bill. Prompt compression, semantic caching and half-price batching add more, and hard spend limits stop runaway bills.",
+    "Agents use roughly 4x more tokens than chat, and multi-agent systems roughly 15x, so bills climb fast. One developer cut an $847 monthly bill to $159, and model routing gave the biggest saving, typically 30-40% of the bill. Prompt compression, semantic caching and half-price batching add more, and hard spend limits stop runaway bills.",
   sections: [
     {
       heading: "Why agents cost more than chat",
@@ -36,7 +38,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Developer Ari Vance documented a six-week optimization journey starting from $847.32/month. Week-by-week: $212 → $198 → $135 → $98 → $68 → $42. Final steady state: $159/month, an 81% reduction. What drove it: model routing (-35% of bill), prompt compression (-22%), semantic caching (-18%), production RAG (-14%), async batching (-11%).",
         "Developer Helen Mireille documented a three-month self-hosted OpenClaw setup: VPS $72 total, API tokens $359 total (Month 1: $187, Month 2: $94, Month 3: $78; costs dropped as she optimized model tiers), vector database $75, monitoring $45, domain/SSL $9. Total for three months: $560. Token costs dropped 58% from month 1 to month 3 via Claude Opus for complex tasks, Sonnet for standard tasks, Haiku for simple lookups. She switched to a $49/month managed platform, saving $138/month plus 3-15 hours of maintenance per month.",
-        "Reddit r/AI_Agents budget patterns as of early 2026: small teams starting out typically spend $500-$2k/month on AI APIs. One startup founder moved from $3,000/month on GPT-4 to $150/month on GPT-5 mini for 95% of tasks, saving $34,200/year. A solo AI agency founder with five clients at $5,000/month each reported $6,000/month in AI API costs against $40,000 revenue, an 85% profit margin.",
+        "Reddit r/AI_Agents budget patterns as of early 2026: small teams starting out typically spend $500-$2k/month on AI APIs. One startup founder moved from $3,000/month on GPT-4 to $150/month on GPT-5 mini for 95% of tasks, saving $34,200/year. A solo AI agency founder with eight clients at $5,000/month each reported $6,000/month in AI API costs against $40,000 revenue, an 85% profit margin.",
       ],
     },
     {
@@ -44,16 +46,16 @@ export const article: BlogArticle = {
       paragraphs: [
         "**Model routing:** classify tasks by complexity before running them and route to the appropriate tier. Simple lookups, summarizations, and format conversions hit Haiku 4.5 or GPT-5 mini. Complex reasoning, code generation, and multi-step planning hit Sonnet 4.6 or GPT-5.4. This single technique accounts for the largest cost reduction in documented cases, typically 30-40% of the bill. Everything else is secondary.",
         "**Prompt compression:** trim context before each inference call. Remove redundant history, compress older conversation turns into summaries, and cut system prompt bloat. Vance's optimization found this accounted for 22% of his total cost reduction. Every 1,000 tokens removed from the average input across a month's worth of agent tasks translates directly into billing savings.",
-        "**Semantic caching:** cache the outputs of expensive inference calls and reuse them for semantically similar inputs within a TTL window. For monitoring tasks that frequently check the same pages or ask the same analytical questions, cached responses avoid redundant API calls. The embedding model needed for similarity checking costs trivially little at GPT-5 mini rates.",
+        "**Semantic caching:** cache the outputs of expensive inference calls and reuse them for semantically similar inputs within a TTL window. For monitoring tasks that frequently check the same pages or ask the same analytical questions, cached responses avoid redundant API calls. The embedding model needed for similarity checking costs very little.",
         "**Async batching:** use the Anthropic Batch API (50% discount) or OpenAI batch mode for tasks that do not need real-time responses. Nightly reports, weekly summaries, monthly data processing: all good candidates. The tradeoff is up to 24-hour processing latency; for non-urgent scheduled tasks, this is irrelevant.",
-        "**Hard spend limits:** every major provider supports monthly spend caps on API keys. Set them immediately, well below your comfortable ceiling. A misconfigured agent in a retry loop can generate thousands of dollars overnight. Spend caps are production safety, not just cost management.",
+        "**Hard spend limits:** most major providers let you set monthly spend limits or billing alerts on your account or project. Set them immediately, well below your comfortable ceiling. A misconfigured agent in a retry loop can generate thousands of dollars overnight. Spend caps are production safety, not just cost management.",
       ],
     },
     {
-      heading: "What Hivra usage actually costs",
+      heading: "What running this on Hivra might cost",
       paragraphs: [
-        "On Hivra's $9.99/month plan, the most common token spend for a developer running 5-7 scheduled tasks: competitive monitoring and daily summaries on Haiku 4.5 via Batch API ($0.50/$2.50 per MTok), approximately $2-4/month. Weekly research tasks on Sonnet 4.6, $5-10/month. Occasional complex reasoning on Opus 4.6, $3-8/month. Total API costs: $10-22/month. Full stack: $20-32/month for a persistent agent running autonomous scheduled tasks.",
-        "For browser-intensive workloads (daily scraping of 5-10 competitor pages with screenshot analysis), expect $15-30/month in API tokens using Haiku for vision steps and Sonnet for synthesis. Ten pages per day for 30 days at Haiku rates: $3-4.50/month in screenshot tokens alone, before the reasoning steps. Budget accordingly before enabling browser automation on a daily schedule.",
+        `As an illustration, not a measurement, a developer running 5-7 scheduled tasks on Hivra's ${ENTRY_PLAN_PRICE}/month plan (${ENTRY_PLAN_SIZE}) might spend the following. Competitive monitoring and daily summaries on Haiku 4.5, using half-price batching where a task can wait ($0.50/$2.50 per MTok): approximately $2-4/month. Weekly research tasks on Sonnet 4.6, $5-10/month. Occasional complex reasoning on Opus 4.6, $3-8/month. Total API costs: $10-22/month. Full stack: $20-32/month for a persistent agent running autonomous scheduled tasks.`,
+        "For browser-intensive workloads (daily scraping of 5-10 competitor pages with screenshot analysis), expect $15-30/month in API tokens using Haiku for vision steps and Sonnet for synthesis. Ten pages per day for 30 days is about 300,000 screenshot tokens, roughly $0.30/month at Haiku input rates, so most of the cost is the reasoning steps. Budget accordingly before enabling browser automation on a daily schedule.",
       ],
     },
   ],
@@ -68,15 +70,15 @@ export const article: BlogArticle = {
     },
     {
       q: "How do I prevent runaway API costs from an agent in a retry loop?",
-      a: "Set a monthly spend cap on your API key immediately: every provider (Anthropic, OpenAI, Google) supports this. Configure per-task step limits in your agent framework so a failing tool never triggers more than N retries. Enable failure notifications so you are alerted when a task errors rather than discovering it on the next billing statement.",
+      a: "Set a monthly spend limit on your API account immediately: Anthropic, OpenAI and Google all offer spend limits or billing alerts. Configure per-task step limits in your agent framework so a failing tool never triggers more than N retries. Enable failure notifications so you are alerted when a task errors rather than discovering it on the next billing statement.",
     },
     {
       q: "Does Hivra let me control which model runs which tasks?",
-      a: "Yes. Each agent profile and each scheduled task can be configured with its own model preference. Run monitoring tasks on Haiku 4.5 (cheapest), research tasks on Sonnet 4.6 (balanced), and complex code tasks on Opus 4.6 (most capable), all from the same dashboard, using the same API key.",
+      a: "Yes, per agent. Each agent uses the model you pick in its own settings, and a scheduled task runs on the agent you assign it to, so you can put cheap monitoring on one agent and heavier reasoning on another. A scheduled task has no model setting of its own. Usage on your own key bills through your provider at its rates.",
     },
     {
       q: "What does it actually cost per month to run a Hermes agent?",
-      a: "At typical Hivra usage (5-7 scheduled tasks, mixed Haiku/Sonnet): $10-22/month in API tokens plus $9.99/month for Hivra's entry plan = $20-32/month total. Browser-heavy workloads with daily scraping add $15-30/month. Full range: $25-62/month for a fully operational persistent agent.",
+      a: `As an illustration, not a measurement (5-7 scheduled tasks, mixed Haiku/Sonnet): $10-22/month in API tokens plus ${ENTRY_PLAN_PRICE}/month for Hivra's entry plan (${ENTRY_PLAN_SIZE}) = $20-32/month total. Browser-heavy workloads with daily scraping add $15-30/month. Full range: $25-62/month for a fully operational persistent agent.`,
     },
   ],
   relatedArticles: [

@@ -7,14 +7,14 @@ export const article: BlogArticle = {
   metaDescription:
     "Set up Hermes Agent gateways for Telegram, Discord, WhatsApp, Email and Webhooks, then restrict access with allowlists or DM pairing codes.",
   publishedDate: "2026-04-15",
-  lastModified: "2026-04-15",
+  lastModified: "2026-09-30",
   readingTimeMin: 13,
   author: "Hivra team",
   tagline: "The README says 12+ platforms. It's actually 15. Here's how to set up each one.",
   intro:
     "Hermes Agent receives messages and sends responses through 15 platforms: Telegram, Discord, Slack, WhatsApp, Signal, SMS, Email, Home Assistant, Mattermost, Matrix, DingTalk, Feishu/Lark, WeCom, Open WebUI, and Webhooks. This covers practical setup for the most commonly used gateways, the security model that applies to all of them, and the tradeoffs worth knowing before you connect anything.",
   shortAnswer:
-    "To set up a Hermes Agent gateway, put your platform credentials, such as a Telegram bot token, in ~/.hermes/.env, set an ALLOWED_USERS allowlist so strangers cannot use the bot, and start hermes gateway. One process handles all 15 supported platforms at once, and the same agent answers on each.",
+    "To set up a Hermes Agent gateway, put your platform credentials, such as a Telegram bot token, in ~/.hermes/.env, set an ALLOWED_USERS allowlist so strangers cannot use the bot, and start hermes gateway. One process serves every platform you configure, out of 15 supported, and the same agent answers on each.",
   sections: [
     {
       heading: "How the gateway works",
@@ -41,7 +41,7 @@ export const article: BlogArticle = {
     {
       heading: "WhatsApp",
       paragraphs: [
-        "WhatsApp integration uses the Baileys library, an unofficial bridge that emulates the WhatsApp Web session protocol. No Meta developer account required.\n\nSetup:\n\n```bash\nhermes whatsapp\n```\n\nThe wizard installs the Baileys bridge dependencies (requires Node.js v18+), displays a QR code, and you scan it: WhatsApp → Settings → Linked Devices → Link a Device. Session saves automatically.\n\nTwo modes: a **separate bot number** (dedicate a phone number to the bot: lower ban risk, cleaner UX for multiple users) or **personal self-chat** (use your own WhatsApp number, message yourself to talk to the agent: easier to set up, more account risk).",
+        "WhatsApp integration uses the Baileys library, an unofficial bridge that emulates the WhatsApp Web session protocol. No Meta developer account required.\n\nSetup:\n\n```bash\nhermes whatsapp\n```\n\nThe wizard installs the Baileys bridge dependencies (requires Node.js v18+), displays a QR code, and you scan it: WhatsApp → Settings → Linked Devices → Link a Device. Session saves automatically.\n\nTwo modes: a **separate bot number** (dedicate a phone number to the bot for lower ban risk and a cleaner experience for multiple users) or **personal self-chat** (use your own WhatsApp number and message yourself to talk to the agent, which is easier to set up but carries more account risk).",
         "The main risk: WhatsApp's terms prohibit unofficial automation. For personal use, ban risk is low. For anything resembling bulk messaging or outreach to people who have not opted in, the risk is significant. The official WhatsApp Business API (which Hermes does not use) is the compliant path for business use.",
       ],
     },
@@ -74,7 +74,7 @@ export const article: BlogArticle = {
     {
       heading: "Hivra gateway setup",
       paragraphs: [
-        "On Hivra, gateway configuration is handled through the dashboard: paste your Telegram bot token and user ID, click connect, done. The gateway service is managed, monitored, and restarted automatically. You do not need the `hermes gateway install` → `systemctl` → `loginctl enable-linger` sequence.\n\nAll 15 gateways are available on Hivra. Multi-gateway setup (Telegram + Discord + Email simultaneously) works by adding credentials for each platform in the dashboard.",
+        "On Hivra, gateway configuration is handled through the dashboard: paste your Telegram bot token and user ID, click connect. The gateway service is managed, monitored, and restarted automatically. You do not need the `hermes gateway install` → `systemctl` → `loginctl enable-linger` sequence.\n\nThe dashboard's channel list includes Telegram, Discord, Slack, WhatsApp, Signal, SMS and Email. Multi-gateway setup (Telegram + Discord + Email simultaneously) works by adding credentials for each platform in the dashboard.",
       ],
     },
   ],

@@ -8,13 +8,13 @@ export const article: BlogArticle = {
   metaDescription:
     "What it costs to run an AI agent around the clock: server, API tokens and maintenance time, with real monthly figures for self-hosted and managed setups.",
   publishedDate: "2026-04-01",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Actual numbers, not a pricing page.",
   intro:
     "The full cost of a persistent AI agent is not just the subscription price. Here is every component (server, tokens, time, and the less-obvious costs) with real figures for early 2026.",
-  shortAnswer: `A persistent AI agent costs a server, AI tokens and your time. A minimal self-hosted setup is about $10-17 a month in cash, or $60-117 once maintenance is counted at $50 an hour. Managed hosting on Hivra starts at ${ENTRY_PLAN_PRICE} a month, plus about $4-20 in tokens, for $14-30 in all.`,
+  shortAnswer: `A persistent AI agent costs a server, AI tokens and your time. A minimal self-hosted setup is about $10-17 a month in cash, or $60-117 once maintenance is counted at $50 an hour. Hivra is ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, plus about $4-20 in tokens.`,
   sections: [
     {
       heading: "Server infrastructure",
@@ -35,7 +35,7 @@ export const article: BlogArticle = {
     {
       heading: "Coding agents cost differently: subscription login vs API",
       paragraphs: [
-        "Claude Code and Codex are a special case. Both run on Hivra as the official, unmodified CLIs, and both sign in with the subscription you already pay for. [Claude Code](/agents/claude-code) uses your Anthropic account login. [Codex](/agents/codex) uses your ChatGPT login. No API key, no per-token bill, and zero markup on AI usage.",
+        "Claude Code and Codex are a special case. Both run on Hivra using their official CLIs, and both sign in with the subscription you already pay for. [Claude Code](/agents/claude-code) uses your Anthropic account login. [Codex](/agents/codex) uses your ChatGPT login. No API key, no per-token bill, and no Hivra markup on AI usage. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
         `That changes the math. If you already pay for a Claude or ChatGPT subscription, the marginal AI cost of running these agents in the cloud is $0. Your only new cost is hosting, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. To check whether your Claude plan covers the usage you have in mind, run the numbers in the [Claude Code plan calculator](/tools/claude-code-plan-calculator).`,
       ],
     },
@@ -56,18 +56,18 @@ export const article: BlogArticle = {
     {
       heading: "Costs that do not appear in any pricing table",
       paragraphs: [
-        "Domain name: $10-15/year for self-hosted setups. You need a domain for HTTPS to work correctly. Managed hosting includes this.\n\nBackup storage: if you care about your agent's memory surviving a server failure, you need off-host backups. S3-compatible storage costs roughly $0.02/GB/month. A healthy agent memory store runs 50-500 MB, so call it $1-10/month. Managed hosting handles this.\n\nAPI error costs: agents that are misconfigured or hit edge cases can burn tokens unexpectedly. Set a monthly spend cap on your API key (every provider supports this) and check it weekly when you first run a new task configuration.\n\nRecovery time: if your self-hosted server goes down and you do not have infrastructure-as-code or a backup restore procedure, getting it back up from scratch takes 4-8 hours again. One-time per incident, but real.",
+        "Domain name: $10-15/year for self-hosted setups. You need a domain for HTTPS to work correctly. On Hivra you reach the agent through the dashboard, so you do not need a domain for it.\n\nBackup storage: if you care about your agent's memory surviving a server failure, you need off-host backups. S3-compatible storage costs roughly $0.02/GB/month. A healthy agent memory store runs 50-500 MB, so call it $1-10/month. Hivra does not guarantee backups, so keep your own off-host copy there too.\n\nAPI error costs: agents that are misconfigured or hit edge cases can burn tokens unexpectedly. Set a monthly spend cap on your API key (most providers offer a spend limit or billing alert) and check it weekly when you first run a new task configuration.\n\nRecovery time: if your self-hosted server goes down and you do not have infrastructure-as-code or a backup restore procedure, getting it back up from scratch takes 4-8 hours again. One-time per incident, but real.",
       ],
     },
   ],
   faqs: [
     {
       q: "What is the absolute cheapest way to run a Hermes agent?",
-      a: `Hetzner CX23 at €5.49/month as the server, Claude Haiku as the model (cheapest capable model), and limit automated tasks to text-only (no browser automation, which is the main token multiplier). Total: $10-17/month if you are technically comfortable doing the setup. Or skip the setup on Hivra from ${ENTRY_PLAN_PRICE}/month, with a ${MONEY_BACK_GUARANTEE}.`,
+      a: `Hetzner CX23 at €5.49/month as the server, Claude Haiku as the model (cheapest capable model), and limit automated tasks to text-only (no browser automation, which is the main token multiplier). Total: $10-17/month if you are technically comfortable doing the setup. Or skip the setup on Hivra, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}.`,
     },
     {
       q: "Can I run a Hermes agent for free?",
-      a: "Anthropic and Google offer small free API tiers. You can use these for light experimentation, but free quotas are too low for any production scheduled task use. A sustainable setup costs at minimum $8-15/month including server and tokens.",
+      a: "Some providers offer small free API tiers, and their terms change, so check the current pricing page. You can use these for light experimentation, but free quotas are too low for any production scheduled task use. A sustainable setup costs at minimum $8-15/month including server and tokens.",
     },
     {
       q: "How does pricing change as I add more agents?",

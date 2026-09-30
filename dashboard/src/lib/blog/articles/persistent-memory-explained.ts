@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Persistent memory stores what an agent learns between sessions and loads it when the next one starts. What it stores, how it works and what it cannot do.",
   publishedDate: "2026-03-19",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Not a longer context window. Something else.",

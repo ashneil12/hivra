@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-host OpenClaw on a Linux VPS with Docker or the shell installer. Covers Telegram setup, the CVE-2026-25253 patch and the real monthly upgrade work.",
   publishedDate: "2026-04-12",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 15,
   author: "Hivra team",
   tagline: "OpenClaw is powerful. Maintaining a self-hosted instance is a second job.",
@@ -101,11 +101,11 @@ export const article: BlogArticle = {
     },
     {
       q: "Can I migrate from OpenClaw to Hermes Agent without losing my data?",
-      a: "Hermes has a built-in migration tool: `hermes claw migrate`. It migrates config files, memory, skills, and environment variables. Not everything transfers perfectly (some OpenClaw-specific skill formats need manual adjustment), but the core migration is automated and typically takes 30-60 minutes.",
+      a: "Hermes has a built-in migration tool: `hermes claw migrate`. It migrates config files, memory, skills, and environment variables. Not everything transfers perfectly (some OpenClaw-specific skill formats need manual adjustment), but the core migration is automated.",
     },
     {
       q: "Is there a way to get OpenClaw-equivalent functionality without the maintenance overhead?",
-      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra on paid plans. Hivra also hosts Hermes Agent, which has a built-in `hermes claw migrate` tool to import your existing data. Hivra handles the server, container, updates, and messaging gateway for it, and the agent's memory stays on its own VM.",
+      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra on paid plans. Hivra also hosts Hermes Agent, which has its own `hermes claw migrate` command to import your existing data. You run it yourself, because Hivra has no import tool of its own. Hivra runs the server and container for it, and the agent's memory stays on its own VM.",
     },
   ],
   relatedArticles: [

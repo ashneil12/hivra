@@ -3,11 +3,11 @@ import { BlogArticle } from "../types";
 export const article: BlogArticle = {
   slug: "self-hosting-hermes-guide",
   title: "How to self-host Hermes Agent (and why most people quit halfway)",
-  metaTitle: "How to self-host Hermes Agent on a VPS",
+  metaTitle: "Self-hosting Hermes Agent: steps, costs and what breaks",
   metaDescription:
-    "Self-host Hermes Agent on a VPS with Docker. The setup steps, what breaks, what it costs in time and money, and when managed hosting makes more sense.",
+    "A guide to self-hosting Hermes Agent: the setup steps, what breaks, what it costs in time and money, and when managed hosting makes more sense.",
   publishedDate: "2026-03-13",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "Yes, you can. Here's the full picture.",
@@ -57,8 +57,8 @@ export const article: BlogArticle = {
     {
       heading: "When managed hosting makes more sense",
       paragraphs: [
-        "If your goal is a running agent rather than learning to configure one, managed hosting is faster by a significant margin. The gap between 5 minutes and 6 hours matters when you have other work to do.",
-        "If you have already tried self-hosting and spent more than one evening debugging Docker networking or update problems, the recurring cost of managed hosting is likely less than the ongoing time cost of self-management. The agents do not care where they run: Hermes capabilities are identical whether the container is on your Hetzner VPS or on Hivra infrastructure. What differs is who handles the operational overhead.",
+        "If your goal is a running agent rather than learning to configure one, managed hosting is faster by a significant margin. Managed hosting skips the 4-8 hours of first-time setup described above, and that matters when you have other work to do.",
+        "If you have already tried self-hosting and spent more than one evening debugging Docker networking or update problems, the recurring cost of managed hosting is likely less than the ongoing time cost of self-management. The agents do not care where they run. Hivra runs Hermes from its own maintained build of the open-source agent, and the biggest difference is who handles the operational overhead.",
       ],
     },
   ],

@@ -9,7 +9,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Claude Code suits long multi-hour sessions and Codex suits many small headless tasks. Compared on compaction, resume, subscription cost and server needs.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "The 20-minute benchmark tells you nothing about hour 9.",
@@ -30,14 +30,14 @@ export const article: BlogArticle = {
       paragraphs: [
         "**Claude Code** was built with long sessions in mind and it shows in the plumbing:\n\n- **Auto-compaction.** When the context window fills, Claude Code summarizes older turns and keeps going. You can also trigger it manually with `/compact`. For a task that runs all night, this is the single most important feature, because every long-running agent eventually outgrows its context window.\n- **Session resume.** `claude --continue` picks up the most recent session and `claude --resume` lets you choose an older one. A VM reboot or a crashed terminal does not erase the work; you reattach to the conversation.\n- **CLAUDE.md and skills.** Project memory lives in files, not in the session, so knowledge survives restarts by design.\n- **Headless mode.** `claude -p \"prompt\"` runs a task non-interactively, which is what cron jobs and schedulers actually call.",
         "**Codex** has grown the same organs, with different accents:\n\n- **`codex exec`** is the non-interactive lane, and it is a first-class citizen. For fire-and-forget batch work (run the tests, fix what broke, open a PR), `codex exec` is arguably the cleanest headless interface either vendor ships.\n- **Resume support** exists (`codex resume`), and AGENTS.md plays the project-memory role that CLAUDE.md plays on the other side.\n- **Sandboxing and approval modes** are more conservative by default. Codex is cautious about what it touches without a human confirming. Good instinct for an unattended machine, but it means you spend more time up front configuring approval policy so a 3 a.m. run does not stall waiting for a yes.",
-        "The honest read: for one long continuous session that has to survive context exhaustion, Claude Code's compaction story is more mature. For a stream of small, well-scoped tasks executed headlessly, Codex's `exec` mode is a beautiful fit. Neither tool falls over at hour 9; they just fail differently when they fail, and Claude Code degrades more gracefully mid-marathon.",
+        "The honest read: for one long continuous session that has to survive context exhaustion, Claude Code's compaction story is more mature. For a stream of small, well-scoped tasks executed headlessly, Codex's `exec` mode is a beautiful fit. Expect both tools to need a restart or a fresh session at some point in a long marathon, and to fail in different ways when they do.",
       ],
     },
     {
       heading: "Subscription vs API cost at a 24/7 duty cycle",
       paragraphs: [
         "This is where the always-on framing changes the math completely. At twenty minutes a day, API-key billing is pocket change. At a 24/7 duty cycle, per-token API billing is an uncapped liability: a chatty agent in a retry loop can burn through real money overnight.\n\nBoth CLIs solve this the same way: log in with the subscription you already pay for.\n\n- **Claude Code** signs in with your Anthropic account. A Claude Pro subscription runs $20/month on monthly billing, and the Max tiers start at $100/month for heavy usage. Usage is metered in rolling five-hour windows, so the worst case for a runaway agent is hitting the window limit and waiting, not a surprise bill.\n- **Codex** signs in with your ChatGPT account. ChatGPT Plus is $20/month with Codex included, and Pro starts at $100/month with 5x or 20x the Plus limits. Same shape: a usage limit rather than an open meter.\n\nFor autonomous work this cap is not a limitation, it is the feature. A capped subscription turns \"what could this cost me\" into a known number. Not sure which Claude plan a 24/7 workload actually needs? The [Claude Code plan calculator](/tools/claude-code-plan-calculator) does that estimate from your expected hours and intensity.",
-        `Where does the server itself fit in the bill? A DIY VPS adds $5-10/month per agent plus your admin time. On Hivra, hosting is a flat plan fee (from ${ENTRY_PLAN_PRICE}/month, see [pricing](/pricing)) and there is zero markup on AI usage, because there is no AI usage to mark up: your Claude Code agent bills through your Anthropic login and your Codex agent bills through your ChatGPT login. The full BYO model is covered in [BYO API key explained](/blog/byo-api-key-explained).`,
+        `Where does the server itself fit in the bill? A DIY VPS adds $5-10/month per agent plus your admin time. On Hivra, hosting is a flat plan fee (from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, see [pricing](/pricing)) and on your own logins there is no Hivra markup on AI usage, because there is no AI usage to mark up: your Claude Code agent bills through your Anthropic login and your Codex agent bills through your ChatGPT login. The full BYO model is covered in [BYO API key explained](/blog/byo-api-key-explained).`,
       ],
     },
     {
@@ -49,7 +49,7 @@ export const article: BlogArticle = {
     {
       heading: "Running both side by side on one plan",
       paragraphs: [
-        `Here is the option the versus articles never mention: you do not have to choose.\n\nOn Hivra, a plan's compute is a pool you split across your agents. The ${LARGER_PLAN_PRICE}/month plan's ${LARGER_PLAN_SIZE} fits a [Claude Code agent](/agents/claude-code) signed into your Anthropic account and a [Codex agent](/agents/codex) signed into your ChatGPT account, both with their browsers on. Each runs on its own private VM, with its own terminal, files, and chat in the browser.\n\nWhat side-by-side gets you in practice:\n\n- **A real bake-off on your code.** Give both the same task from your actual backlog and compare the PRs. One week of that beats every benchmark article, because it is scored on your repo, your stack, your conventions.\n- **Workload routing.** Once you see where each is strong, split the queue: marathon refactors to one agent, batch fixes to the other.\n- **Redundancy on usage windows.** When one subscription hits its usage limit mid-day, the other agent can take the next task. Two capped subscriptions behave like a larger pooled budget.\n\nIf you already pay for both a Claude subscription and ChatGPT, the incremental cost of running both agents 24/7 is one hosting plan.`,
+        `Here is the option the versus articles never mention: you do not have to choose.\n\nOn Hivra, a plan's compute is a pool you split across your agents. The ${LARGER_PLAN_PRICE}/month plan's ${LARGER_PLAN_SIZE} fits a [Claude Code agent](/agents/claude-code) signed into your Anthropic account and a [Codex agent](/agents/codex) signed into your ChatGPT account, both with their browsers on. Each runs on its own private VM, with its own terminal, files, and chat in the browser.\n\nWhat side-by-side gets you in practice:\n\n- **A real bake-off on your code.** Give both the same task from your actual backlog and compare the PRs. One week of that beats every benchmark article, because it is scored on your repo, your stack, your conventions.\n- **Workload routing.** Once you see where each is strong, split the queue: marathon refactors to one agent, batch fixes to the other.\n- **Redundancy on usage windows.** When one subscription hits its usage limit mid-day, the other agent can take the next task. Two capped subscriptions give you two separate usage windows to draw on.\n\nIf you already pay for both a Claude subscription and ChatGPT, the incremental cost of running both agents 24/7 is one hosting plan.`,
       ],
     },
     {
@@ -80,7 +80,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Do I need API keys to host Claude Code or Codex?",
-      a: "No. On Hivra, Claude Code signs in with your own Anthropic account and Codex signs in with your own ChatGPT account, the same login flows the CLIs use on a laptop. The logins are stored on each agent's VM, and there is no markup on AI usage.",
+      a: "No. On Hivra, Claude Code signs in with your own Anthropic account and Codex signs in with your own ChatGPT account, the same login flows the CLIs use on a laptop. The logins are stored on each agent's VM, and Hivra adds no markup when you sign in with your own accounts.",
     },
     {
       q: "What happens when a hosted agent hits its subscription usage limit mid-task?",

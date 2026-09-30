@@ -7,10 +7,10 @@ export const article: BlogArticle = {
   metaDescription:
     "How Hermes Agent memory works: SOUL.md for personality, MEMORY.md for facts, searchable session history, and optional Honcho recall, plus what persists.",
   publishedDate: "2026-04-14",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 12,
   author: "Hivra team",
-  tagline: "Three separate memory systems running at once. Here is what each one actually does.",
+  tagline: "Four separate memory layers running at once. Here is what each one actually does.",
   intro:
     "Most AI tools forget everything the moment you close the window. Hermes keeps memory in four overlapping places, and each one does something the others don't. This covers how they work, what actually persists across sessions, and where memory still falls short.",
   shortAnswer:
@@ -67,7 +67,7 @@ export const article: BlogArticle = {
     {
       heading: "Memory on Hivra",
       paragraphs: [
-        "Using [Hivra](/): all four memory layers are on by default. SOUL.md, MEMORY.md, conversation history, and installed skills live on the agent's own disk, so they persist across restarts. Nothing to configure. Backups are not guaranteed, so keep your own export of anything you would hate to lose.\n\nSelf-hosting: [the self-hosting guide](/blog/how-to-self-host-hermes-agent) covers backup setup. Worth doing before you accumulate months of conversation history you'd be sad to lose.",
+        "Using [Hivra](/): SOUL.md, MEMORY.md, conversation history, and installed skills are on by default and live on the agent's own disk, so they persist across restarts. Honcho is optional. Backups are not guaranteed, so keep your own export of anything you would hate to lose.\n\nSelf-hosting: [the self-hosting guide](/blog/how-to-self-host-hermes-agent) covers backup setup. Worth doing before you accumulate months of conversation history you'd be sad to lose.",
       ],
     },
   ],

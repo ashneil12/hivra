@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "How multi-agent AI systems work: four orchestration patterns, LangGraph vs CrewAI vs AutoGen, what they cost (3-15x a single agent) and when to skip them.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "One agent thinking. Three agents working. The architecture behind both.",
@@ -29,7 +29,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "LangGraph is the most widely deployed multi-agent framework in production as of 2026. It models agent workflows as directed graphs: nodes are agent steps (LLM calls, tool calls, human checkpoints) and edges define the flow between them. This gives precise control over execution order, conditional branching, and parallel execution. LangGraph integrates with PostgresSaver for checkpointing and supports time-travel debugging. Verbose to set up, but precise for production workflows.",
         "CrewAI takes a higher-level abstraction: define agents with roles (researcher, writer, analyst) and tasks, and CrewAI handles orchestration. Faster to prototype than LangGraph but gives less control over exact execution flow. The March 2026 AutoGen vs CrewAI comparison at f3fundit identifies CrewAI as the fastest path to a working multi-agent prototype: 'no manual glue code, no brittle cron jobs, just workflow logic that adapts.' AutoGen (Microsoft) focuses on conversational multi-agent patterns: agents that communicate through dialogue rather than explicit task handoff. Best fit for workflows where agents debate or iterate on outputs.",
-        "Hermes Agent supports multi-agent coordination through subagent delegation: the primary agent can spawn up to 3 concurrent subagents, pass them structured tasks, and aggregate their outputs. This is built into the core tool set, not a separate framework layer. For Hivra users, a scheduled research task can automatically spawn a browser agent, a summarization agent, and a synthesis agent running in parallel, no additional configuration required.",
+        "Hermes Agent supports multi-agent coordination through subagent delegation: the primary agent can spawn up to 3 concurrent subagents, pass them structured tasks, and aggregate their outputs. This is built into the core tool set, not a separate framework layer. Hivra runs Hermes on each agent's own computer, but Hivra adds no orchestrator of its own; the coordination here is Hermes's built-in delegation.",
       ],
     },
     {

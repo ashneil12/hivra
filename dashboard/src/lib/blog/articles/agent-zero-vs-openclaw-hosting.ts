@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Agent Zero recommends 2 vCPU and 4 GB of RAM; OpenClaw's daemon needs less. Hosting requirements, security risks and monthly costs compared.",
   publishedDate: "2026-07-16",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "One agent lives in a dashboard. The other lives in your messages. Both need a box.",
@@ -100,8 +100,8 @@ export const article: BlogArticle = {
       a: "It can be, if you do the security work. Bitsight researchers counted more than 30,000 OpenClaw instances exposed to the internet in early 2026, and CVE-2026-25253, a one-click remote code execution flaw, was patched in v2026.1.29. Both agents' web UIs control software that can run code on your server, so a correctly configured reverse proxy, authentication, and prompt patching are non-negotiable.",
     },
     {
-      q: "Are the hosted versions of Agent Zero and OpenClaw modified?",
-      a: "No. Hivra runs both open-source projects unmodified on private VMs: Agent Zero as the container the project ships, OpenClaw with its Control UI exactly as the project ships it. Hivra is an independent hosting service and is not affiliated with or endorsed by either project.",
+      q: "Is this the real Agent Zero and OpenClaw?",
+      a: "Yes. Hivra hosts the open-source projects themselves on private VMs: Agent Zero as the container the project ships, and OpenClaw with its own Control UI. Hivra is an independent hosting service and is not affiliated with or endorsed by either project.",
     },
   ],
   relatedArticles: [

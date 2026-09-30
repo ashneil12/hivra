@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "how-to-self-host-hermes-agent",
@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-host Hermes Agent on an Ubuntu VPS: server specs, Docker, Telegram gateway, systemd service and fixes for common errors. Allow 2-4 hours.",
   publishedDate: "2026-04-11",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 14,
   author: "Hivra team",
   tagline: "Every command on this page came from the official NousResearch GitHub. Set aside 2-4 hours.",
@@ -76,13 +76,13 @@ export const article: BlogArticle = {
       heading: "Common errors and fixes",
       paragraphs: [
         "'Permission denied' running Docker after adding to the group: log out and back in, or run `newgrp docker`. Group membership is only picked up on new login.\n\n'hermes: command not found' after installation: run `source ~/.bashrc`. The installer adds the PATH entry but it only applies in new shell sessions.\n\n`hermes doctor` flags missing dependencies: run `hermes update` then re-check. If specific Python packages are still missing: `pip install -r ~/.hermes/requirements.txt`.",
-        "Telegram bot not responding: check the token (no extra spaces), verify `TELEGRAM_ALLOWED_USERS` contains your exact numeric user ID, and check `journalctl --user -u hermes-gateway -f` for the specific error.\n\nOut of memory during tasks: 4GB RAM is the minimum: if you are below this, complex tasks will fail. Check current usage with `free -h` and upgrade the server if needed.\n\nAPI errors after it was working: your API key may have exhausted credits, especially on OpenRouter's free tier. Check your provider dashboard.",
+        "Telegram bot not responding: check the token (no extra spaces), verify `TELEGRAM_ALLOWED_USERS` contains your exact numeric user ID, and check `journalctl --user -u hermes-gateway -f` for the specific error.\n\nOut of memory during tasks: 4GB RAM is the minimum, so if you are below this, complex tasks will fail. Check current usage with `free -h` and upgrade the server if needed.\n\nAPI errors after it was working: your API key may have exhausted credits, especially on OpenRouter's free tier. Check your provider dashboard.",
       ],
     },
     {
       heading: "The honest self-hosting calculation",
       paragraphs: [
-        `Server cost: Hetzner CX23 at €5.49/month excluding VAT. LLM API costs: $5-50/month depending on task volume. Initial setup: 2-4 hours of your time. Ongoing maintenance: 30-60 minutes per month. At $50/hour, the setup alone costs $100-200 in time, enough to cover 10-20 months of Hivra's ${ENTRY_PLAN_PRICE} plan.`,
+        `Server cost: Hetzner CX23 at €5.49/month excluding VAT. LLM API costs: $5-50/month depending on task volume. Initial setup: 2-4 hours of your time. Ongoing maintenance: 30-60 minutes per month. At $50/hour, the setup alone costs $100-200 in time, enough to cover 10-20 months of Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}).`,
         "Self-hosting wins if you are comfortable with Linux, expect to keep the agent running for a year or more, and care about complete data control. It loses if setup issues frustrate you, if maintenance distracts from the actual work, or if updates break your configuration at inconvenient times. Hivra is the managed alternative: Hermes from Hivra's maintained build of the open-source agent, with the container, service, SSL, and tested updates handled. If you would rather skip the 4 hours, that is what it is for.",
       ],
     },

@@ -1,5 +1,7 @@
 import { BlogArticle } from "../types";
 
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
+
 export const article: BlogArticle = {
   slug: "hermes-agent-vs-chatgpt",
   title: "Hermes Agent vs ChatGPT: what is actually different",
@@ -7,7 +9,7 @@ export const article: BlogArticle = {
   metaDescription:
     "ChatGPT responds when you ask. Hermes Agent runs on a server, remembers past sessions, works on a schedule and executes tasks. See how they compare.",
   publishedDate: "2026-04-19",
-  lastModified: "2026-04-19",
+  lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Not better vs worse. Different jobs.",
@@ -32,7 +34,7 @@ export const article: BlogArticle = {
     {
       heading: "Scheduling",
       paragraphs: [
-        "ChatGPT can't run on a schedule. It responds to you. Full stop.\n\nHermes has a built-in scheduler. Set it up once: daily morning briefing, weekly repo summary, price drop alert, server uptime check every 5 minutes. It fires and delivers to Telegram (or Discord, or Email) whether you're awake or not.\n\nThis is why it gets described as 'a colleague who works while you sleep.' That's accurate.",
+        "ChatGPT mostly responds to you. It has basic scheduled tasks inside its own app, but it does not run shell commands or scripts on a timer.\n\nHermes has a built-in scheduler. Set it up once: daily morning briefing, weekly repo summary, price drop alert, server uptime check every 5 minutes. It fires and delivers to Telegram (or Discord, or Email) whether you're awake or not.\n\nThis is why it gets described as 'a colleague who works while you sleep.' That's accurate.",
       ],
     },
     {
@@ -57,7 +59,7 @@ export const article: BlogArticle = {
     {
       heading: "Privacy",
       paragraphs: [
-        "ChatGPT sends conversations to OpenAI's servers. By default they're used to improve future models (opt-out is available).\n\nHermes runs on your server. Conversations, memory files, API keys: stored where you choose. For [Hivra managed hosting](/), data is stored but never used to train models and never shared.",
+        "ChatGPT sends conversations to OpenAI's servers. By default they're used to improve future models (opt-out is available).\n\nHermes runs on your server. Conversations, memory files, API keys: stored where you choose. With [Hivra managed hosting](/), Hermes runs on its own computer, and what you send goes to the model provider whose key you connect, under that provider's data policy.",
       ],
     },
     {
@@ -82,7 +84,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is Hermes Agent free?",
-      a: "The software is open source and free. Running it costs server costs (~$4-25/month for a VPS) plus whatever the model provider charges per API call. Hivra starts at $9.99/month including the server. No markup on API calls either way.",
+      a: `The software is open source and free. Running it costs server costs (~$4-25/month for a VPS) plus whatever the model provider charges per API call. Hivra plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, including the server. With your own model key there is no markup on API calls, whether you self-host or use Hivra.`,
     },
     {
       q: "Can Hermes browse the internet?",

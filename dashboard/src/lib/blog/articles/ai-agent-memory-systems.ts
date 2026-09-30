@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "How AI agent memory works in production: Zep, Mem0, Letta and LangGraph checkpointers compared, plus the hot path and cold path pattern.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Context windows are not memory. Here's what is.",
@@ -44,13 +44,13 @@ export const article: BlogArticle = {
       paragraphs: [
         "LangGraph checkpointers (PostgresSaver being the production recommendation) serve a different purpose than memory systems. They handle reliability: if an agent process crashes mid-task, it can resume from the last checkpoint rather than starting over. They also enable time-travel debugging: winding back agent state to understand why a particular sequence of decisions occurred.",
         "LangGraph checkpointers are thread-scoped (one agent instance, one task thread). They are not knowledge that persists across different task executions or user interactions. For long-term knowledge (user models, accumulated experience, skill patterns), a separate memory layer (Zep, Mem0, Letta, or simpler vector stores) is still required. The complete 2026 production stack pairs PostgresSaver checkpointing for reliability with a user-scoped memory system for knowledge persistence.",
-        "Hermes Agent implements this directly: MEMORY.md and USER.md serve as the structured knowledge layer, Skill Documents in the agentskills.io format hold procedural memory, and the event log provides the historical record. The optional Honcho integration adds cross-session user modeling for deployments serving multiple users.",
+        "Hermes Agent covers the same ground in its own way: MEMORY.md and USER.md serve as the structured knowledge layer, Skill Documents in the agentskills.io format hold procedural memory, and the event log provides the historical record. The optional Honcho integration adds cross-session user modeling for deployments serving multiple users.",
       ],
     },
     {
       heading: "What memory actually changes about agent performance",
       paragraphs: [
-        "The compounding effect is well-documented in the Hermes Agent community. One user's report, referenced in the Hermes documentation: within two hours of first running Hermes, the agent had created three Skill Documents from assigned tasks and completed a similar research task 40% faster using those skills. No prompt engineering from the user: the improvement came from the agent's self-synthesized procedural knowledge.",
+        "The compounding effect is well-documented in the Hermes Agent community. One user's report, referenced in the Hermes documentation: within two hours of first running Hermes, the agent had created three Skill Documents from assigned tasks and completed a similar research task faster using those skills, by the user's own estimate. No prompt engineering from the user: the improvement came from the agent's self-synthesized procedural knowledge.",
         "Medium developer Sam Sahin, writing in March 2026 about the Mem0 + LangGraph integration, describes the core experience: 'You built a beautiful agent. It answers questions, calls tools, reasons through multi-step problems. Users love it during the session. Then they come back the next day, and the agent asks them their name again.' Persistent memory is the fix for this. The agent that greets you by name, references your last project, and applies lessons from your previous interactions is not doing anything architecturally exotic: it is running the same inference loop with richer, structured context.",
       ],
     },
@@ -74,7 +74,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How does Hermes Agent handle memory?",
-      a: "Hermes uses a three-layer system: MEMORY.md (general knowledge the agent reads at session start), USER.md (structured user model: preferences, working style, project context), and Skill Documents in the agentskills.io open format (procedural memory about how to handle specific task types). An optional Honcho integration adds cross-session user modeling. Daily encrypted backups cover all three layers.",
+      a: "Hermes uses a three-layer system: MEMORY.md (general knowledge the agent reads at session start), USER.md (structured user model: preferences, working style, project context), and Skill Documents in the agentskills.io open format (procedural memory about how to handle specific task types). An optional Honcho integration adds cross-session user modeling.",
     },
   ],
   relatedArticles: [

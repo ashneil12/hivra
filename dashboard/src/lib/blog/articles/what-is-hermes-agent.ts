@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent is an open-source AI agent from Nous Research that runs on a server, keeps memory across sessions and takes actions, unlike a chatbot.",
   publishedDate: "2026-03-10",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Not a chatbot. Not a wrapper. Something different.",

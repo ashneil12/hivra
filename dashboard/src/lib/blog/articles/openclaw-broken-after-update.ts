@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "OpenClaw broken after an update? Every fix, in the order to try them",
   metaTitle: "OpenClaw Broken After Update? Every Fix, in Order",
   metaDescription:
-    "OpenClaw broken after an update? Run openclaw doctor --fix for config changes, reset tools.profile if permissions vanished, or roll back to a backup.",
+    "OpenClaw broken after an update? Run openclaw doctor --fix for config changes, reset tools.profile if permissions vanished, or roll back the release.",
   publishedDate: "2026-07-23",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The update did not eat your data. It probably moved your config.",
   intro:
     "OpenClaw ships new releases several times a month, and breaking changes are a known part of that cadence. If your agent stopped responding, lost its permissions, or will not start after an update, this guide walks the known failure modes in the order they most often occur, with the exact commands to fix each one.",
   shortAnswer:
-    "The most common cause of OpenClaw breaking after an update is a changed config schema. Run openclaw doctor --fix, then openclaw config validate, and restart the gateway. If the agent replies but cannot act, set tools.profile back to your previous profile. If the update is the problem, roll back to your last-good version and restore your pre-upgrade backup.",
+    "The most common cause of OpenClaw breaking after an update is a changed config schema. Run openclaw doctor --fix, then openclaw config validate, and restart the gateway. If the agent replies but cannot act, set tools.profile back to your previous profile. If the update is the problem, on Docker, pin your last-good image tag and restore your pre-upgrade backup.",
   sections: [
     {
       heading: "Triage: three commands before you change anything",
@@ -96,7 +96,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a way to run OpenClaw without running the server myself?",
-      a: `Yes. Hivra runs the open-source OpenClaw agent on a private managed VM with the server side handled for you, on paid plans from ${ENTRY_PLAN_PRICE} a month. The alternative route is migrating to Hermes Agent with hermes claw migrate, which has a more stable release cadence.`,
+      a: `Yes. Hivra runs the open-source OpenClaw agent on a private managed VM with the server side handled for you, on paid plans from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. The alternative route is migrating to Hermes Agent with hermes claw migrate, which has a more stable release cadence.`,
     },
   ],
   relatedArticles: [

@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "A plain explanation of how AI agents work: the reasoning loop, tool calling, memory retrieval and multi-step planning, and why agents fail.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "Not magic. A loop, some tools, and memory.",
@@ -21,7 +21,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "A standard LLM used as a chatbot runs a single inference pass: it takes your message plus conversation history, generates a response, and stops. The model cannot call external services, take actions in the world, or run for more than the duration of that single generation.",
         "An agent wraps that same LLM in a loop. Rather than generating a final answer directly, the LLM generates an intermediate step: either a thought about what to do next, or an action to take (calling a tool). The result of that action comes back as an observation. The LLM then generates the next step. This continues until the task is complete. IBM's technical documentation for AI agents frames it: 'AI agents use tool calling on the backend to obtain up-to-date information, optimize workflows and create subtasks autonomously.'",
-        "This loop (Thought → Action → Observation → repeat) is called the ReAct pattern (Reasoning + Acting), introduced in a 2022 Google Research paper and now standard across every major agent framework including LangGraph, CrewAI, AutoGen, and Hermes Agent. It is the architecture that turns a language model from an answer generator into a task executor.",
+        "This loop (Thought → Action → Observation → repeat) is called the ReAct pattern (Reasoning + Acting), introduced in a 2022 paper from Princeton and Google Research and now widely used across agent frameworks such as LangGraph, CrewAI, AutoGen, and Hermes Agent. It is the architecture that turns a language model from an answer generator into a task executor.",
       ],
     },
     {
@@ -77,7 +77,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How do agents handle tasks that take hours to complete?",
-      a: "Long-running agents checkpoint their state periodically, storing the current task plan, completed steps, and relevant memory to a database. If the process is interrupted, it resumes from the last checkpoint rather than starting over. Hermes Agent implements this via LangGraph-style checkpointing with PostgresSaver for thread-scoped state persistence.",
+      a: "Long-running agents checkpoint their state periodically, storing the current task plan, completed steps, and relevant memory to a database. If the process is interrupted, it resumes from the last checkpoint rather than starting over.",
     },
   ],
   relatedArticles: [

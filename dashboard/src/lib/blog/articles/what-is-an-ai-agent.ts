@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "An AI agent is a language model in a loop with memory and tools. How it works, how it differs from a chatbot, where it pays off and where it falls short.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "43 sources. One clear answer.",
@@ -29,7 +29,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Every AI agent has the same four components:\n\n- **The LLM** is the brain: it generates reasoning and decides which actions to take.\n- **Memory** stores context across steps and sessions: in-context (the current window), short-term external (Redis or in-memory stores for the current task), and long-term external (vector databases, knowledge graphs, markdown files for facts that persist across weeks).\n- **Tools** are the actions the agent can take: web search, browser navigation, terminal commands, file read/write, API calls, code execution.\n- **The runtime** is the execution engine running the loop: LangChain, CrewAI, LangGraph, Hermes, or a custom implementation.",
         "The perceive-reason-act-check loop:\n\n1. **Perceive:** receive input from the user, a schedule trigger, or a previous step's output.\n2. **Reason:** the LLM analyzes the current state and decides the next action.\n3. **Act:** execute a tool call (web search, browser click, API call).\n4. **Check:** examine the tool result and determine whether the goal is complete or another step is needed.\n\nThis continues until the task is done or a maximum step limit is reached.",
-        "Tools are defined with structured contracts: a name, a natural language description, and a JSON schema specifying arguments. The model reads these definitions in the system prompt and generates valid function call JSON. The Model Context Protocol (MCP), donated to the Linux Foundation in 2026 by Google (Agent2Agent) and Anthropic (MCP), is the emerging open standard for how agents discover and call tools across different providers and deployments.",
+        "Tools are defined with structured contracts: a name, a natural language description, and a JSON schema specifying arguments. The model reads these definitions in the system prompt and generates valid function call JSON. The Model Context Protocol (MCP), which Anthropic donated to the Linux Foundation, is the emerging open standard for how agents discover and call tools across different providers and deployments.",
       ],
     },
     {

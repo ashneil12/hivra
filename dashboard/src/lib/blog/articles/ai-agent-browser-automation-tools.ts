@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Browser Use, Stagehand, Playwright and Puppeteer compared on success rate, speed and cost per task, and where each one breaks down.",
   publishedDate: "2026-04-03",
-  lastModified: "2026-04-03",
+  lastModified: "2026-09-30",
   readingTimeMin: 12,
   author: "Hivra team",
   tagline: "Four tools. One job. Different tradeoffs.",

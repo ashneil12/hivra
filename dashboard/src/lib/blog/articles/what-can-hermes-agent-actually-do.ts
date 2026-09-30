@@ -1,5 +1,7 @@
 import { BlogArticle } from "../types";
 
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
+
 export const article: BlogArticle = {
   slug: "what-can-hermes-agent-actually-do",
   title: "What can Hermes Agent actually do? Real things people use it for",
@@ -7,7 +9,7 @@ export const article: BlogArticle = {
   metaDescription:
     "What Hermes Agent can do on a 24/7 server: scheduled briefings, monitoring, coding help, browser automation, email drafts and research, with examples.",
   publishedDate: "2026-04-18",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "Not what the marketing says. What people actually use it for every day.",
@@ -101,7 +103,7 @@ export const article: BlogArticle = {
     {
       heading: "How to get started",
       paragraphs: [
-        "Two options: self-host it on a server ([full guide here](/blog/how-to-self-host-hermes-agent)) or use [Hivra](/), which handles the server, setup, and maintenance so there is nothing to install.\n\nSelf-hosting costs around $10-25/month total. Hivra starts at $9.99/month with no server to manage. [Full cost breakdown here](/blog/cost-of-running-ai-agent).",
+        `Two options: self-host it on a server ([full guide here](/blog/how-to-self-host-hermes-agent)) or use [Hivra](/), which handles the server, setup, and maintenance so there is nothing to install.\n\nSelf-hosting costs around $10-25/month total. Hivra starts at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, with no server to manage. [Full cost breakdown here](/blog/cost-of-running-ai-agent).`,
       ],
     },
   ],

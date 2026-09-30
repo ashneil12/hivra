@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "A BYO API key means you connect your own Anthropic, OpenAI or OpenRouter account, so the provider bills you directly and your tokens carry no markup.",
   publishedDate: "2026-03-21",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 6,
   author: "Hivra team",
   tagline: "No markup. No routing through a middleman. Your key.",
@@ -21,7 +21,7 @@ export const article: BlogArticle = {
       heading: "How the two billing models compare",
       paragraphs: [
         "Most AI SaaS products buy tokens wholesale, mark them up, and bundle AI usage into the subscription fee. Convenient, but you are paying the markup and have limited visibility into how much you are actually using.",
-        `In the BYO key model, you create a developer account directly with the provider (Anthropic, OpenAI, Google, Mistral, or OpenRouter as an aggregator), generate an API key, and paste it into the product. Your usage is billed directly by the provider. The product company charges only for the platform or infrastructure. Hivra uses this model. You pay Hivra for managed hosting and the dashboard, from ${ENTRY_PLAN_PRICE}/month. Every AI request your agent makes goes directly through your API key to the provider, and Hivra has nothing to do with your token billing.`,
+        `In the BYO key model, you create a developer account directly with the provider (Anthropic, OpenAI, Google, Mistral, or OpenRouter as an aggregator), generate an API key, and paste it into the product. Your usage is billed directly by the provider. The product company charges only for the platform or infrastructure. Hivra supports this model. You pay Hivra for managed hosting and the dashboard, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. With your own key, every AI request your agent makes goes directly to the provider, and Hivra has nothing to do with that token billing. Hivra also sells managed Venice credits if you would rather not bring a key.`,
       ],
     },
     {
@@ -36,7 +36,7 @@ export const article: BlogArticle = {
     {
       heading: "Which provider to use",
       paragraphs: [
-        "Anthropic's Claude family (Haiku 4.5 for speed, Sonnet 4.6 for reasoning, Opus 4.6 for depth) is the best default for most agent tasks. Claude's instruction-following is reliable for multi-step agent workflows: the models are trained to follow structured procedures without going off-script. Hermes Agent's tool-calling format was designed alongside the Claude model family, so the two work particularly well together.",
+        "Anthropic's Claude family (Haiku 4.5 for speed, Sonnet 4.6 for reasoning, Opus 4.6 for depth) is the best default for most agent tasks. Claude's instruction-following is reliable for multi-step agent workflows: the models are trained to follow structured procedures without going off-script.",
         "OpenAI's API offers GPT-5 and GPT-5 mini. GPT-5 mini at $0.25/$2 per MTok is a low-cost capable model, useful if you are running very high-frequency lightweight tasks where cost-per-request matters. Note: ChatGPT Plus and ChatGPT Pro subscriptions do not include API access. The API is a completely separate billing relationship with OpenAI at pay-per-token rates.",
         "OpenRouter gives you access to 300+ models from 60+ providers under a single API key and credit balance. No monthly minimums: you top up credits and pay only for what you use. Useful for evaluation (try 5 models against the same task), for accessing open-weight models hosted by third parties, or for building agents that route different task types to different models.",
       ],
@@ -44,7 +44,7 @@ export const article: BlogArticle = {
     {
       heading: "BYO login for Claude Code and Codex",
       paragraphs: [
-        "BYO is not only about API keys. For coding agents, Hivra runs the official CLIs, unmodified, and you sign in with the account you already have. [Claude Code](/agents/claude-code) uses your Anthropic or Claude subscription login. [Codex](/agents/codex) uses your ChatGPT login. You sign in on the agent's computer after launch, the same flow as on your laptop. The login is stored on the agent's VM.",
+        "BYO is not only about API keys. For coding agents, Hivra runs the official CLIs, and you sign in with the account you already have. [Claude Code](/agents/claude-code) uses your Anthropic or Claude subscription login. [Codex](/agents/codex) uses your ChatGPT login. You sign in on the agent's computer after launch, the same flow as on your laptop. The login is stored on the agent's VM. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
         `The billing consequence is the same as BYO keys: zero markup on AI usage. If you already pay for Claude or ChatGPT, running these agents in the cloud adds no new AI cost. For that usage, hosting is the only thing you pay Hivra for. Plans on [the pricing page](/pricing) start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. To check whether your existing Claude subscription covers the usage you plan to run, use the [Claude Code plan calculator](/tools/claude-code-plan-calculator).`,
       ],
     },
