@@ -102,7 +102,7 @@ const homepageSchema = {
           name: "Self-host Hivra",
           price: "0",
           priceCurrency: "USD",
-          description: "Run the whole platform yourself from the open source code. You provide the server and pay for it and your model usage.",
+          description: "Run the whole platform yourself from the open source code. You provide the server and pay for it and for your AI usage.",
           url: `${SITE_URL}/#pricing`,
         },
         ...HOSTED_SIZES.map(size => ({
@@ -125,7 +125,7 @@ const homepageSchema = {
         "Terminal and graphical interfaces",
         "Persistent files, tools and settings",
         "Use Hivra Cloud or your own infrastructure",
-        "Bring your own model API key",
+        "Bring your own AI key",
       ],
     },
     {

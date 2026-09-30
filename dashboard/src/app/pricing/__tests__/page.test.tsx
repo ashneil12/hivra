@@ -62,6 +62,17 @@ describe("/pricing page", () => {
     expect(container.querySelector('a[href="/#pricing"]')).not.toBeNull();
   });
 
+  // F-21: the homepage says "AI key", "AI company" and "AI usage". The pricing
+  // page, its FAQ and its JSON-LD say the same, not "model key" or "model provider".
+  it("says AI key, AI company and AI usage, in the page and in the JSON-LD", () => {
+    const { container } = render(<PricingPage />);
+    const text = [container.textContent ?? "", jsonLd(container)].join("\n");
+    expect(text).not.toMatch(/\bmodel (?:key|usage|provider|API key)\b/i);
+    expect(text).toContain("Can I use my own AI key or login?");
+    expect(text).toContain("Your AI company bills you for that usage.");
+    expect(text).toContain("pay for it and for your AI usage");
+  });
+
   it("marks up the pricing questions it shows", () => {
     const { container } = render(<PricingPage />);
     const schema = JSON.parse(jsonLd(container));

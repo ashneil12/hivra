@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import LandingPage from "@/app/page";
 import DownloadPage from "@/app/download/page";
-import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, HOME_AGENTS } from "@/components/landing/home/content";
+import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, HOME_AGENTS, REACH } from "@/components/landing/home/content";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: null }) }));
 jest.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }), headers: async () => ({ get: () => null }) }));
@@ -26,6 +26,15 @@ test("the first screen says what it is, who it is for, what it costs, and asks o
   // The old page's app download and tab switcher are gone.
   expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+});
+
+test("the reach picture describes the same things its labels show", async () => {
+  await renderHome();
+  const picture = document.querySelector('svg[role="img"][aria-label^="Illustration: an agent on your laptop"]');
+  expect(picture).not.toBeNull();
+  const description = picture?.getAttribute("aria-label") ?? "";
+  for (const { label } of REACH.items) expect(description.toLowerCase()).toContain(label.toLowerCase());
+  expect(description).not.toMatch(/\bsession\b/i);
 });
 
 test("every section the header and footer link to is still on the page", async () => {
