@@ -49,7 +49,7 @@ const SUMMARY = [
   },
   {
     title: "Public source",
-    body: "Hivra's source is public under the Apache-2.0 license, and self-hosting is available as a preview for a single operator.",
+    body: "Hivra is open source, and you can self-host it.",
   },
 ] as const;
 
