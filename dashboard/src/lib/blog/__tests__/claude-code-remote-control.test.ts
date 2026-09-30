@@ -347,6 +347,26 @@ describe("Claude Code Remote Control article", () => {
     expect(article.readingTimeMin).toBeLessThanOrEqual(Math.ceil(words / 200));
   });
 
+  it("pins the remaining documented numbers, versions and dates to their exact wording", () => {
+    // Substring checks such as toContain("about four hours") also match unrelated sentences, so a wrong number elsewhere
+    // passed. These anchor each figure to the clause that carries it.
+    expect(sectionCopy).toContain("a sign-in no more than 18 hours old");
+    expect(sectionCopy).toContain("about 30 days after it started");
+    expect(sectionCopy).toContain("within three days of expiring");
+    expect(sectionCopy).toContain("(v2.1.238 or later)");
+    expect(sectionCopy.match(/\(v2\.1\.200 or later\)/g)).toHaveLength(2);
+    expect(sectionCopy).toContain("Since Claude Code 2.1.236 (19 August 2026) it is marked offline within seconds.");
+    expect(sectionCopy).toContain("(Claude Code changelog, 2.1.139, 11 May 2026)");
+    expect(sectionCopy).toContain("`same-dir` (the default)");
+    expect(sectionCopy).toContain("After a stop, these work for about four hours, in the same directory:");
+    expect(sectionCopy).toContain("The default is 32.");
+    // A link to the docs must end at the closing parenthesis, or "remote-controls" would pass.
+    expect(sectionCopy).toContain("(https://code.claude.com/docs/en/remote-control)");
+    expect(sectionCopy).toContain("(https://code.claude.com/docs/en/claude-code-on-the-web)");
+    expect(sectionCopy).toContain("(https://code.claude.com/docs/en/authentication)");
+    expect(sectionCopy).toContain("(https://code.claude.com/docs/en/mobile)");
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
@@ -451,7 +471,7 @@ describe("Claude Code Remote Control article", () => {
   });
 
   it("keeps the operator voice guardrails", () => {
-    expect(JSON.stringify(article)).not.toMatch(/[–—]/);
+    expect(JSON.stringify(article)).not.toMatch(/[\u2013\u2014]/);
     expect(fullCopy).not.toMatch(/\b(?:seamless|robust|unlock|leverage|transform)\b/i);
     expect(fullCopy).not.toMatch(/it's not just .+ it's /i);
     expect(fullCopy).not.toMatch(/\b(?:box|boxes|runtimes?|instances?)\b/i);
