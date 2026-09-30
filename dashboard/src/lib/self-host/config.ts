@@ -15,10 +15,22 @@ export function requireLocalAuthMode(): void {
   }
 }
 
+// The Supabase CLI signs its local stack with this published value unless the
+// project config sets another one. Older self-host installs stored it as the
+// session secret, which let anyone forge an operator session. Refuse it so a
+// stale configuration fails closed. scripts/hivra-self-host.mjs replaces it with
+// a generated secret on the next start, and a test keeps the two copies equal.
+export const PUBLIC_SUPABASE_DEFAULT_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
+
 export function requireLocalJwtSecret(): string {
   const secret = process.env.HIVRA_LOCAL_JWT_SECRET?.trim();
   if (!secret || secret.length < 32) {
     throw new Error("HIVRA_LOCAL_JWT_SECRET must contain at least 32 characters.");
+  }
+  if (secret === PUBLIC_SUPABASE_DEFAULT_JWT_SECRET) {
+    throw new Error(
+      "HIVRA_LOCAL_JWT_SECRET is the public Supabase default, so it cannot sign sessions. Run self-host:start again to generate a private one.",
+    );
   }
   return secret;
 }

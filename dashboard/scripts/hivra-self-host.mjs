@@ -594,7 +594,31 @@ async function startSupabase(stateDirectory, { initialize = false } = {}) {
   };
 }
 
-function buildEnvironment(supabase, operator, previous = {}) {
+// The Supabase CLI signs its local stack with this published value unless the
+// project config sets another one. Anyone can read it, so it can never sign an
+// operator session. Keep in step with src/lib/self-host/config.ts, which refuses
+// it too (a test compares the two).
+export const SUPABASE_CLI_DEFAULT_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
+
+/**
+ * The secret that signs the operator's dashboard session.
+ *
+ * It used to be the local Supabase JWT secret. That made the session cookie a
+ * valid Supabase "authenticated" token, and because the CLI's default secret is
+ * public, anyone who could reach the dashboard could forge a session with no
+ * password. The session secret is now its own random value, kept across
+ * restarts so operators stay signed in. A stored value is replaced (once) when
+ * it is missing, too short, equal to the Supabase secret, or the public default.
+ */
+export function chooseLocalSessionSecret(existing, supabaseJwtSecret, generate = secureRandomHex) {
+  const current = typeof existing === "string" ? existing.trim() : "";
+  if (current.length >= 32 && current !== supabaseJwtSecret && current !== SUPABASE_CLI_DEFAULT_JWT_SECRET) {
+    return current;
+  }
+  return generate();
+}
+
+export function buildEnvironment(supabase, operator, previous = {}) {
   return {
     ...previous,
     API_SERVER_KEY: previous.API_SERVER_KEY || secureRandomHex(),
@@ -605,7 +629,7 @@ function buildEnvironment(supabase, operator, previous = {}) {
       ? { LAUNCH_FINGERPRINT_KEY: previous.LAUNCH_FINGERPRINT_KEY || secureRandomHex() }
       : {}),
     HIVRA_AUTH_MODE: "local",
-    HIVRA_LOCAL_JWT_SECRET: supabase.JWT_SECRET,
+    HIVRA_LOCAL_JWT_SECRET: chooseLocalSessionSecret(previous.HIVRA_LOCAL_JWT_SECRET, supabase.JWT_SECRET),
     HIVRA_OPERATOR_EMAIL: operator.email,
     HIVRA_OPERATOR_NAME: operator.name,
     HIVRA_OPERATOR_PASSWORD_HASH: operator.passwordHash,
@@ -787,10 +811,11 @@ async function readPrivateConfig(stateDirectory) {
   return { target, values };
 }
 
-async function refreshSupabaseCredentials(target, values, supabase) {
+export async function refreshSupabaseCredentials(target, values, supabase) {
+  const sessionSecret = chooseLocalSessionSecret(values.HIVRA_LOCAL_JWT_SECRET, supabase.JWT_SECRET);
   const next = withRequiredSelfHostedDefaults({
     ...values,
-    HIVRA_LOCAL_JWT_SECRET: supabase.JWT_SECRET,
+    HIVRA_LOCAL_JWT_SECRET: sessionSecret,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: supabase.ANON_KEY,
     NEXT_PUBLIC_SUPABASE_URL: supabase.API_URL,
     SUPABASE_SERVICE_ROLE_KEY: supabase.SERVICE_ROLE_KEY,
@@ -798,6 +823,9 @@ async function refreshSupabaseCredentials(target, values, supabase) {
   if (renderPrivateEnvironment(next) !== renderPrivateEnvironment(values)) {
     await atomicPrivateWrite(target, renderPrivateEnvironment(next));
     line("Updated local database connection values in the private configuration.");
+    if (sessionSecret !== values.HIVRA_LOCAL_JWT_SECRET) {
+      line("Generated a separate operator session secret. You will be signed out once; sign in again.");
+    }
   }
   return next;
 }
