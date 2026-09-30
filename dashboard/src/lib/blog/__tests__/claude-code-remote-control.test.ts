@@ -8,11 +8,12 @@ import { article } from "../articles/claude-code-remote-control";
 // github.com/anthropics/claude-code (90172, 90877, 91839, 95577, 98310) and Search Console queries, with typographic
 // apostrophes (U+2019). A reworded or "tidied" quote would send readers looking for a string nobody sees, so these
 // are pinned character for character.
-const CANT_REACH = "Can’t reach your computer\nIt may be asleep or offline. This session will reconnect when it’s back.";
+const CANT_REACH_TITLE = "Can\u2019t reach your computer";
+const CANT_REACH_BODY = "It may be asleep or offline. This session will reconnect when it\u2019s back.";
 const SESSION_OFFLINE =
-  "Claude Code on the computer running this session is offline. If that computer is asleep or lost its connection, this session reconnects when it’s back. If Claude Code was closed, start it there again and reopen this conversation.";
+  "Claude Code on the computer running this session is offline. If that computer is asleep or lost its connection, this session reconnects when it\u2019s back. If Claude Code was closed, start it there again and reopen this conversation.";
 const MACHINE_NAME_VARIANT =
-  "Claude Code on <machine> is offline. If <machine> is asleep or lost its connection, this session reconnects when it’s back...";
+  "Claude Code on <machine> is offline. If <machine> is asleep or lost its connection, this session reconnects when it\u2019s back...";
 
 const sectionCopy = article.sections.flatMap((section) => section.paragraphs).join("\n\n");
 const fullCopy = [
@@ -25,6 +26,14 @@ const fullCopy = [
   ...article.sections.flatMap((section) => [section.heading, ...section.paragraphs]),
   ...article.faqs.flatMap(({ q, a }) => [q, a]),
 ].join("\n");
+
+/**
+ * The messages sit in blockquotes as inline code, not in fenced blocks: a fenced block does not wrap, so the long
+ * second message scrolled sideways at every width and hid most of the string a reader came to match.
+ */
+function quotedCode(copy: string): string[] {
+  return [...copy.matchAll(/^> `([^`]+)`$/gm)].map((match) => match[1]);
+}
 
 /** The contents of every fenced code block in the section copy. */
 function fencedBlocks(copy: string): string[] {
@@ -54,13 +63,14 @@ describe("Claude Code Remote Control article", () => {
     expect(answer).toContain("that machine must stay on and the `claude` process must keep running");
   });
 
-  it("quotes the first offline message exactly, in a code block", () => {
-    expect(fencedBlocks(sectionCopy)).toContain(CANT_REACH);
+  it("quotes the first offline message exactly, as code", () => {
+    expect(quotedCode(sectionCopy)).toContain(CANT_REACH_TITLE);
+    expect(quotedCode(sectionCopy)).toContain(CANT_REACH_BODY);
     expect(sectionCopy).toContain("`Remote Control host unreachable (computer_unreachable)`");
   });
 
-  it("quotes the second offline message exactly, in a code block, and its machine-name variant", () => {
-    expect(fencedBlocks(sectionCopy)).toContain(SESSION_OFFLINE);
+  it("quotes the second offline message exactly, as code, and its machine-name variant", () => {
+    expect(quotedCode(sectionCopy)).toContain(SESSION_OFFLINE);
     expect(sectionCopy).toContain(`\`${MACHINE_NAME_VARIANT}\``);
   });
 
@@ -74,7 +84,7 @@ describe("Claude Code Remote Control article", () => {
   });
 
   it("gives each message its own fix", () => {
-    const first = article.sections.find((section) => section.heading === "The \"Can’t reach your computer\" message")!;
+    const first = article.sections.find((section) => section.heading === "The \"Can\u2019t reach your computer\" message")!;
     const second = article.sections.find((section) => section.heading === "The \"Claude Code on the computer running this session is offline\" message")!;
     expect(first).toBeDefined();
     expect(second).toBeDefined();
@@ -173,11 +183,11 @@ describe("Claude Code Remote Control article", () => {
     expect(article.faqs.length).toBeGreaterThanOrEqual(8);
     expect(article.faqs.length).toBeLessThanOrEqual(11);
     const questions = article.faqs.map(({ q }) => q);
-    expect(questions).toContain("What does \"Can’t reach your computer\" mean in Claude Code?");
+    expect(questions).toContain("What does \"Can\u2019t reach your computer\" mean in Claude Code?");
     expect(questions).toContain("What does \"Claude Code on the computer running this session is offline\" mean?");
     expect(new Set(questions).size).toBe(questions.length);
     // The FAQ quotes the first message's body exactly as the section does.
-    expect(article.faqs.map(({ a }) => a).join("\n")).toContain("It may be asleep or offline. This session will reconnect when it’s back.");
+    expect(article.faqs.map(({ a }) => a).join("\n")).toContain("It may be asleep or offline. This session will reconnect when it\u2019s back.");
   });
 
   it("puts Hivra in as one honest option: the verified keep-running statement, plan facts, and no Remote Control promise", () => {
