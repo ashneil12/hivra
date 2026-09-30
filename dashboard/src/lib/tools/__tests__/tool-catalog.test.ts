@@ -11,6 +11,7 @@ import {
   type ToolComponentKey,
 } from "../tool-catalog";
 import { findBannedClaims } from "../copy-rules";
+import { CLAUDE_PLAN_FACTS, usd } from "../claude-plan-facts";
 import { agentDeployHref, getAgentSeoEntry, unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
@@ -75,6 +76,14 @@ describe("tools catalog", () => {
   it.each(TOOL_ENTRIES)("$slug: metaDescription is 120-155 characters", (entry) => {
     expect(entry.metaDescription.length).toBeGreaterThanOrEqual(120);
     expect(entry.metaDescription.length).toBeLessThanOrEqual(155);
+  });
+
+  it("builds the plan calculator's meta description from the plan facts, so a price change cannot leave it stale", () => {
+    const description = getToolEntry("claude-code-plan-calculator")!.metaDescription;
+    for (const plan of Object.values(CLAUDE_PLAN_FACTS.plans)) expect(description).toContain(`${plan.label} at ${usd(plan.priceUsd)}`);
+    expect(description).toBe(
+      "Estimate your Claude Code usage and see which Anthropic plan fits: Pro at $20, Max 5x at $100, or Max 20x at $200 a month. With an API cost comparison.",
+    );
   });
 
   it("gives the hub a short title and a description within limits", () => {

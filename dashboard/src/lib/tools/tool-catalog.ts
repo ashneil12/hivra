@@ -154,8 +154,9 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
   subhead:
     "Enter how much you code with Claude and where Pro's limit stops you today. Get the cheapest plan that fits, and what the same usage would cost at API rates.",
   metaTitle: "Claude Code Plan Calculator: Pro vs Max",
-  metaDescription:
-    "Estimate your Claude Code usage and see which Anthropic plan fits: Pro at $20, Max 5x at $100, or Max 20x at $200 a month. With an API cost comparison.",
+  // Built from the plan facts like the rest of the page, so a price change cannot
+  // leave the title, og tags and WebApplication JSON-LD description stale.
+  metaDescription: `Estimate your Claude Code usage and see which Anthropic plan fits: Pro at ${usd(PRO.priceUsd)}, Max 5x at ${usd(MAX5.priceUsd)}, or Max 20x at ${usd(MAX20.priceUsd)} a month. With an API cost comparison.`,
   longIntro: [
     `Claude Code is included in Anthropic's Pro plan at ${usd(PRO.priceUsd)} a month and in its Max plans at ${usd(MAX5.priceUsd)} (5x) and ${usd(MAX20.priceUsd)} (20x). Max gives five or twenty times Pro's usage per five-hour session. Anthropic publishes no fixed caps and no weekly multiple for Max, so most people guess.`,
     `This calculator works from what you already know. Set your days, hours and model mix, then tell it how far into a five-hour window Pro's limit stops you. You get a fit rating per plan and an estimate of what the same work costs at API list price. Everything Anthropic publishes is dated ${PLAN_FACTS.lastVerified} and linked below. Anything it does not publish is labelled an estimate.`,
