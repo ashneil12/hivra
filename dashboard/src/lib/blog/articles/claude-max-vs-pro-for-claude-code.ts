@@ -53,9 +53,12 @@ const exampleMonth = usd(EXAMPLE_DAYS * COST.perActiveDayUsd);
 
 const link = (source: { label: string; url: string }, text: string = source.label) => `[${text}](${source.url})`;
 
+/** Every ISO day inside a sentence as "30 September 2026", so the post reads one date format. */
+const proseDates = (text: string): string => text.replace(/\d{4}-\d{2}-\d{2}/g, longDate);
+
 // A list, not a table: each row is a sentence and a source, which a phone shows whole instead of in a scroll box.
 const changelogList = CLAUDE_PLAN_CHANGELOG.map(
-  (row) => `- **${row.date}**: ${row.text} Source: [${row.source.label}](${row.source.url}).`,
+  (row) => `- **${longDate(row.date)}**: ${proseDates(row.text)} Source: [${row.source.label}](${row.source.url}).`,
 ).join("\n");
 
 export const article: BlogArticle = {

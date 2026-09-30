@@ -9,7 +9,7 @@
 // and the pin is only changed after the page it came from is read again.
 //
 // Every value was read on 2026-09-30 on Anthropic's own pages (the URLs in
-// `sources`) and confirmed by two independent readers that day. Update
+// `sources`) and checked against them a second time that day. Update
 // `lastVerified` only when every value and every changelog row is re-checked.
 //
 // What Anthropic does NOT publish is deliberately absent: message or token

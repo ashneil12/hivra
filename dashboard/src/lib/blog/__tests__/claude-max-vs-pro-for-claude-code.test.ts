@@ -416,12 +416,18 @@ describe("keeps the facts the verifiers corrected", () => {
 describe("the plan changelog section", () => {
   const section = sectionByHeading("What changed and when");
   const text = section.paragraphs.join("\n");
+  // The post reads one date format, "30 September 2026", in the changelog as in the prose.
+  const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const long = (iso: string) => {
+    const [year, month, dayOfMonth] = iso.split("-").map(Number);
+    return `${dayOfMonth} ${MONTH_NAMES[month - 1]} ${year}`;
+  };
 
   it("prints every changelog row, newest first, with its date and a link to the page that states it", () => {
-    const rows = text.split("\n").filter((line) => /^- \*\*\d{4}-\d{2}-\d{2}\*\*: /.test(line));
+    const rows = text.split("\n").filter((line) => /^- \*\*\d{1,2} [A-Z][a-z]+ \d{4}\*\*: /.test(line));
     expect(rows).toHaveLength(CLAUDE_PLAN_CHANGELOG.length);
     CLAUDE_PLAN_CHANGELOG.forEach((entry, index) => {
-      expect(rows[index]).toBe(`- **${entry.date}**: ${entry.text} Source: [${entry.source.label}](${entry.source.url}).`);
+      expect(rows[index]).toBe(`- **${long(entry.date)}**: ${entry.text.replace(/\d{4}-\d{2}-\d{2}/g, long)} Source: [${entry.source.label}](${entry.source.url}).`);
       expect(entry.source.url).toMatch(/^https:\/\//);
       expect((OFFICIAL_SOURCE_HOSTS as readonly string[]).includes(new URL(entry.source.url).hostname)).toBe(true);
     });
@@ -435,8 +441,14 @@ describe("the plan changelog section", () => {
 
   it("has rows for the changes the calculator depends on", () => {
     for (const date of [F.limitChanges.fiveHourDoubled, F.limitChanges.weeklyChanged, F.limitChanges.fiveHourRaised, F.defaultModel.since]) {
-      expect(text).toContain(`- **${date}**: `);
+      expect(text).toContain(`- **${long(date)}**: `);
     }
+  });
+
+  it("uses one date format in the body, with no ISO date outside code and links", () => {
+    const prose = bodyCopy.replace(/\]\([^)]*\)/g, "]").replace(/```[\s\S]*?```/g, "");
+    expect(prose.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []).toEqual([]);
+    expect(text).toContain("It ran through 13 September 2026.");
   });
 });
 

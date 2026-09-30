@@ -78,6 +78,13 @@ describe("tools catalog", () => {
     expect(entry.metaDescription.length).toBeLessThanOrEqual(155);
   });
 
+  it("does not call the second look at the Anthropic figures a second reader", () => {
+    // A visitor reads "a second reader" as a human editor. It was a second pass over the same pages.
+    const plan = JSON.stringify(getToolEntry("claude-code-plan-calculator"));
+    expect(plan).not.toMatch(/second reader|independent readers/i);
+    expect(plan).toContain("checked against them a second time the same day");
+  });
+
   it("builds the plan calculator's meta description from the plan facts, so a price change cannot leave it stale", () => {
     const description = getToolEntry("claude-code-plan-calculator")!.metaDescription;
     for (const plan of Object.values(CLAUDE_PLAN_FACTS.plans)) expect(description).toContain(`${plan.label} at ${usd(plan.priceUsd)}`);

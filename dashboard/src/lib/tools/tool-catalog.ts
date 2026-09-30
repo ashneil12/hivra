@@ -231,7 +231,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         sources: [PLAN_SOURCES.modelConfig, PLAN_SOURCES.fable, PLAN_SOURCES.fastMode],
       },
       {
-        text: `How this was checked: every value on this page was read on ${PLAN_FACTS.lastVerified} on the Anthropic pages linked above and confirmed by a second reader the same day. Anthropic changes plans often, so the date is part of the answer. Your inputs stay in your browser.`,
+        text: `How this was checked: every value on this page was read on ${PLAN_FACTS.lastVerified} on the Anthropic pages linked above and checked against them a second time the same day. Anthropic changes plans often, so the date is part of the answer. Your inputs stay in your browser.`,
       },
     ],
   },
