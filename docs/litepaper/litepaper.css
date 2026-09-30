@@ -1861,15 +1861,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   margin-bottom:10px;
   font-size:16px
 }
-#economy-rules-for-the-token .prose p:last-child {
-  grid-column:1/-1;
-  font-size:22px;
-  line-height:1.45;
-  border:0;
-  letter-spacing:-.03em;
-  padding-top:12px;
-  color:var(--text)
-}
 /* Reading room and closing scene */
 .reading-room {
   border-top:1px solid var(--line)
@@ -2533,7 +2524,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     line-height:1.3
   }
   .hero-object-stage {
-    top:290px;
+    top:405px;
     bottom:104px;
     width:58%;
     right:-8px
@@ -3029,10 +3020,6 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   }
   #economy-rules-for-the-token .prose p {
     margin-bottom:24px
-  }
-  #economy-rules-for-the-token .prose p:last-child {
-    font-size:23px;
-    margin:0
   }
   .reading-room h2 {
     margin-bottom:30px

@@ -86,9 +86,11 @@ They need a computer that stays on. Today there are three places to get one.
 
 **A hosted agent computer.** Services that rent your agent a machine in the cloud. You pick the agent, but you can't read their code or run the service yourself.
 
-Hivra is the one you can check. Every line of the platform is open, so you can see exactly how it handles your access, and you can run the whole thing on your own hardware.
+Hivra is the one you can check. Every line of the platform is open, so you can see how it handles your access, and you can run the whole thing on your own hardware.
 
-And it's a full computer. Linux, Windows or Omarchy, a real desktop that stays on when your laptop closes. Launch it on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. You get computer use without handing over your own machine. And your plan is a pool you divide however you like, so one plan can run several agents and a desktop, not just one agent in one box.
+And it's a full computer. Launch Linux, Windows or Omarchy on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. That's computer use without handing over your own machine.
+
+Your plan is a pool you split however you like: one powerful agent, or several agents and a desktop.
 
 | | Your own computer | The maker's computer | A hosted agent computer | Hivra |
 |---|---|---|---|---|
