@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const APPROVED_SOURCE_SHA256 = 'b5795cc3174e5ab80bc3989e9cbee466ab16a82e53196f664cdd3b4997939d3a';
+export const APPROVED_SOURCE_SHA256 = 'e5356ba8dfd07df08deec1c0d9361a763b55cee02fb6de9459df09a409a731f2';
 export const LITEPAPER_FILES = Object.freeze([
   'LITEPAPER.md', 'TOKENOMICS.md', 'THOUGHTS.md', 'WHITEPAPER.md',
   'docs/litepaper/index.html',

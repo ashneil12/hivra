@@ -380,8 +380,8 @@ def build_page():
     before_quote, quote_and_after = protection.split('\n\n> ', 1)
     quote, after_quote = quote_and_after.split('\n\n', 1)
     problem_paragraphs = problem.split('\n\n')
-    problem_opening = '\n\n'.join(problem_paragraphs[:3])
-    problem_context = '\n\n'.join(problem_paragraphs[3:])
+    problem_opening = '\n\n'.join(problem_paragraphs[:4])
+    problem_context = '\n\n'.join(problem_paragraphs[4:])
     chapter_links = [('opportunity', 'The problem'), ('threat', 'Not a future problem'), ('fit', 'Where it fits'), ('platform', 'Open source'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
     index_links = ''.join(f'<a href="#{target}"><span class="index-number">{i+1:02d}</span><span>{label}</span>{explore_arrow}</a>' for i, (target, label) in enumerate(chapter_links))
     share_width, share_height = png_size(OUTPUT.parent / SHARE_IMAGE)

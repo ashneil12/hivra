@@ -10,7 +10,9 @@ Give it room to work. Decide what it can reach.
 
 ## The problem is where it lives
 
-AI agents are becoming computer users. An AI agent is an AI that does jobs for you instead of just chatting. It uses a computer the way you would, and it runs on an AI model, the "brain" behind tools like Claude and ChatGPT.
+AI agents are becoming computer users.
+
+An AI agent is an AI that does jobs for you instead of just chatting. It uses a computer the way you would, and it runs on an AI model, the "brain" behind tools like Claude and ChatGPT.
 
 They type commands, read through code, install software, browse the web, use accounts you're signed into, write and run code, and send messages. They keep working while you're somewhere else.
 
