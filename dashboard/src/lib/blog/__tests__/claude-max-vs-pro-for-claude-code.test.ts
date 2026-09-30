@@ -196,6 +196,25 @@ describe("says what Anthropic does not currently publish, not what it never publ
   });
 });
 
+describe("reports Anthropic's model guide as it reads", () => {
+  // The guide (support article 14552983, modified 2026-09-22) says Opus uses
+  // meaningfully more of your quota and costs several times more per turn than
+  // Sonnet, and gives no figure. It was modified the day Opus became the default,
+  // so nothing shows it predates that change.
+  const section = sectionByHeading("Model choice changes").paragraphs.join("\n");
+
+  it("says what the guide says about Opus and gives no quota figure", () => {
+    const notPublished = sectionByHeading("What Anthropic does not publish").paragraphs.join("\n");
+    expect(notPublished).toContain("Opus uses meaningfully more quota and costs several times more per turn, and gives no figure for quota");
+    expect(notPublished).not.toMatch(/says only that Opus/);
+  });
+
+  it("does not claim the guide predates the new default", () => {
+    expect(bodyCopy).not.toMatch(/predates/i);
+    expect(section).toContain("The default is Opus, so switching is your lever");
+  });
+});
+
 describe("the plan changelog section", () => {
   const section = sectionByHeading("What changed and when");
   const text = section.paragraphs.join("\n");

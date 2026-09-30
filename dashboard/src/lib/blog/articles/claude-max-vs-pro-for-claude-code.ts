@@ -114,7 +114,7 @@ export const article: BlogArticle = {
           "- Any weekly multiple for Max 5x or Max 20x. The 5x and 20x are stated per five-hour session.",
           `- What any limit is in hours or tokens, including how big the ${longDate(CHANGES.fiveHourRaised)} five-hour increase was.`,
           "- What opens the five-hour window. Anthropic calls it a rolling window. That your first message opens it is widely reported, not documented.",
-          "- How much faster Opus uses your quota than Sonnet. Anthropic says only that Opus uses meaningfully more.",
+          "- How much faster Opus uses your quota than Sonnet. Anthropic says Opus uses meaningfully more quota and costs several times more per turn, and gives no figure for quota.",
           "- How \"up to 50% of weekly limits\" for Fable converts to tokens, or how long that rule will last.",
           "- Whether the paused credit for Agent SDK and `claude -p` usage will come back, or when.",
         ].join("\n"),
@@ -172,7 +172,7 @@ export const article: BlogArticle = {
       paragraphs: [
         [
           `- **The default changed.** ${F.defaultModel.label} has been Claude Code's default on Pro, Max, Team and Enterprise since ${longDate(F.defaultModel.since)} (Claude Code 2.1.280). Before that, Pro and Team Standard defaulted to Sonnet (${link(S.modelConfig, "Claude Code docs")}).`,
-          `- **The advice and the default point different ways.** Anthropic's own guide says Sonnet is the right choice for the large majority of coding work and that Opus uses meaningfully more of your quota (${link(S.modelGuide, "Anthropic's guide")}). That guide predates the new default, so switching is your lever: \`/model\` picks a model, and \`/model opusplan\` plans with Opus and executes with Sonnet.`,
+          `- **The advice and the default point different ways.** Anthropic's own guide says Sonnet is the right choice for the large majority of coding work and that Opus uses meaningfully more of your quota (${link(S.modelGuide, "Anthropic's guide")}). The default is Opus, so switching is your lever: \`/model\` picks a model, and \`/model opusplan\` plans with Opus and executes with Sonnet.`,
           `- **Fable is never the default.** Max plans include Fable 5 and 5.1 up to 50% of their weekly limits, drawing the same pool faster. Pro uses usage credits for them (${link(S.fable, "Anthropic's article")}).`,
           "- **Thinking cannot be turned off** on Opus 5.5, Sonnet 5.5 or the Fable models, and thinking tokens bill as output. `/effort` lowers the effort, which is the cost lever.",
           `- **Fast mode** is a research preview that runs Opus 5.5 up to 2.5x faster at $8 input and $40 output per million tokens. On a plan it runs on usage credits only and does not count against your plan's limits (${link(S.fastMode, "docs")}).`,
