@@ -20,6 +20,7 @@ jest.mock("@/lib/rate-limit", () => ({
 import { GET, POST } from "../route";
 import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { createReservationsFake } from "@/test-utils/reservations-fake";
 
 const supabaseAdminMock = supabaseAdmin as unknown as { from: jest.Mock };
 
@@ -247,7 +248,10 @@ describe("POST /api/reserve", () => {
   it("treats unique-violation race as an idempotent existing reservation", async () => {
     const { insertSpy } = mockReservationsTable({
       selects: [
+        // First lookup: exact match, then the legacy-case fallback. Both miss.
         { data: null, error: null },
+        { data: null, error: null },
+        // Re-read after the unique index refuses the insert.
         {
           data: { position: 11, tier_intent: "free", status: "queued" },
           error: null,
@@ -287,6 +291,73 @@ describe("POST /api/reserve", () => {
     expect(body.error).toBe("Failed to record reservation");
     expect(JSON.stringify(body)).not.toContain("boom");
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("POST /api/reserve email matching", () => {
+  // The email is a literal. It used to go into .ilike() as a pattern, so a
+  // caller could read another person's position with `a%@gmail.com`, or be
+  // told they were already queued because `john_smith` matched `john.smith`.
+  const aliceRow = {
+    id: "alice",
+    email: "alice@gmail.com",
+    position: 1,
+    status: "queued",
+    tier_intent: "free",
+    clerk_user_id: null,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: null });
+  });
+
+  it.each(["a%@gmail.com", "%@gmail.com", "a_ice@gmail.com", "a*@gmail.com"])(
+    "does not return someone else's queue row for the pattern email %s",
+    async (email) => {
+      const fake = createReservationsFake([aliceRow]);
+      supabaseAdminMock.from.mockImplementation(fake.admin.from as never);
+
+      const res = await POST(postRequest({ email, tier_intent: "power" }));
+      const body = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(body.data).toMatchObject({ already_existed: false, tier_intent: "power" });
+      // Alice's row is untouched and the pattern was stored as the literal text it is.
+      expect(fake.rows.find((row) => row.id === "alice")).toEqual(aliceRow);
+      expect(fake.rows.some((row) => row.email === email)).toBe(true);
+    },
+  );
+
+  it("does not link a signed-in caller to someone else's row through a pattern email", async () => {
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_attacker" });
+    const fake = createReservationsFake([aliceRow]);
+    supabaseAdminMock.from.mockImplementation(fake.admin.from as never);
+
+    await POST(postRequest({ email: "a%@gmail.com", tier_intent: "free" }));
+
+    expect(fake.rows.find((row) => row.id === "alice")?.clerk_user_id).toBeNull();
+  });
+
+  it("still returns the existing position for the exact email, in any case", async () => {
+    const fake = createReservationsFake([aliceRow]);
+    supabaseAdminMock.from.mockImplementation(fake.admin.from as never);
+
+    const res = await POST(postRequest({ email: "ALICE@Gmail.com", tier_intent: "pro" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ position: 1, tier_intent: "free", status: "queued", already_existed: true });
+  });
+
+  it("looks the email up by equality on its lower-cased form", async () => {
+    const fake = createReservationsFake([aliceRow]);
+    supabaseAdminMock.from.mockImplementation(fake.admin.from as never);
+
+    await POST(postRequest({ email: "  Alice@Gmail.com ", tier_intent: "free" }));
+
+    expect(fake.emailEqValues[0]).toBe("alice@gmail.com");
+    expect(fake.ilikePatterns).toEqual([]);
   });
 });
 

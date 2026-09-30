@@ -22,6 +22,7 @@ import { randomBytes } from "crypto";
 import { sendReservationConfirmation } from "@/lib/email/reservation-confirmation";
 import { sendReservationInvite } from "@/lib/email/reservation-invite";
 import { log } from "@/lib/logger";
+import { findReservationByEmail, normalizeReservationEmail } from "@/lib/reservations/email-lookup";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const LOG_SOURCE = "reservations:promote-next";
@@ -262,17 +263,22 @@ export async function enqueueWaitlist(
 ): Promise<{ position: number | null; alreadyQueued: boolean }> {
   if (!supabaseAdmin || !email) return { position: null, alreadyQueued: false };
 
-  const { data: existing, error: lookupErr } = await supabaseAdmin
-    .from("reservations")
-    .select("id, position, clerk_user_id")
-    .ilike("email", email)
-    .maybeSingle();
+  // Stored trimmed and lower-cased, like every other writer, so the lookups
+  // below are exact matches (see lib/reservations/email-lookup.ts).
+  const storedEmail = normalizeReservationEmail(email);
+  if (!storedEmail) return { position: null, alreadyQueued: false };
+
+  const { data: existing, error: lookupErr } = await findReservationByEmail<{
+    id: string;
+    position: number | null;
+    clerk_user_id: string | null;
+  }>(supabaseAdmin, storedEmail, "id, position, clerk_user_id");
   if (lookupErr) {
     log.warn("enqueueWaitlist lookup failed", { source: LOG_SOURCE, error: lookupErr.message });
     return { position: null, alreadyQueued: false };
   }
   if (existing) {
-    const row = existing as { id: string; position: number | null; clerk_user_id: string | null };
+    const row = existing;
     if (clerkUserId && !row.clerk_user_id) {
       await supabaseAdmin.from("reservations").update({ clerk_user_id: clerkUserId }).eq("id", row.id);
     }
@@ -281,17 +287,17 @@ export async function enqueueWaitlist(
 
   const { data: inserted, error: insertErr } = await supabaseAdmin
     .from("reservations")
-    .insert({ email, tier_intent: "free", clerk_user_id: clerkUserId })
+    .insert({ email: storedEmail, tier_intent: "free", clerk_user_id: clerkUserId })
     .select("position")
     .single();
   if (insertErr || !inserted) {
     // Race: same email inserted between lookup and insert — re-read the position.
-    const { data: race } = await supabaseAdmin
-      .from("reservations")
-      .select("position")
-      .ilike("email", email)
-      .maybeSingle();
-    return { position: (race as { position: number | null } | null)?.position ?? null, alreadyQueued: true };
+    const { data: race } = await findReservationByEmail<{ position: number | null }>(
+      supabaseAdmin,
+      storedEmail,
+      "position",
+    );
+    return { position: race?.position ?? null, alreadyQueued: true };
   }
   void sendReservationConfirmation({ email }).catch(() => {});
   return { position: (inserted as { position: number | null }).position ?? null, alreadyQueued: false };
@@ -305,10 +311,19 @@ export async function enqueueWaitlist(
 export async function markReservationOnboardedByEmail(email: string): Promise<void> {
   if (!supabaseAdmin || !email) return;
   try {
+    // Find the one row for this exact email first, then update it by id. The
+    // old `.update().ilike("email", email)` took the email as a pattern, so a
+    // Clerk email with `_` or `%` could flip other people's queued rows.
+    const { data: row } = await findReservationByEmail<{ id: string; status: string }>(
+      supabaseAdmin,
+      email,
+      "id, status",
+    );
+    if (!row || !["invited", "queued"].includes(row.status)) return;
     await supabaseAdmin
       .from("reservations")
       .update({ status: "onboarded", notes: { onboarded_at: new Date().toISOString() } })
-      .ilike("email", email)
+      .eq("id", row.id)
       .in("status", ["invited", "queued"]);
   } catch (e) {
     log.warn("markReservationOnboardedByEmail failed", { source: LOG_SOURCE, error: String(e) });
