@@ -169,7 +169,7 @@ describe("SettingsPage", () => {
 
   it.each([
     ["Plan and billing", "Billing", "/dashboard/billing", "Plan, payment methods, credits and invoices"],
-    ["Plan and billing", "Wallets", "/dashboard/wallet", "Agent wallets and $HermesOS access"],
+    ["Plan and billing", "Wallets", "/dashboard/wallet", "Agent wallets"],
     ["Keys and connections", "API keys", "/dashboard/vault", "Provider keys and which agents use them"],
     ["Agent toolkit", "Shared agent memory", "/dashboard/settings/memory", "What every new agent starts out knowing"],
     ["Agent toolkit", "Tools and capabilities", "/dashboard/tools", "Add tools to the agents you choose"],

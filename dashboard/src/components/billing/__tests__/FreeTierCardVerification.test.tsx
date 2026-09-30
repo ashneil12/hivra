@@ -4,6 +4,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 const confirmSetup = jest.fn();
 
+// What the token geo-policy says about this viewer (hooks/useTokenGeoAccess.ts).
+let mockTokenGeo: { status: string; notice: string | null } = { status: "allowed", notice: null };
+jest.mock("@/hooks/useTokenGeoAccess", () => ({
+  useTokenGeoAccess: () => mockTokenGeo,
+  tokenFeaturesShown: (access: { status: string }) => access.status === "allowed",
+}));
+
 jest.mock("@stripe/stripe-js", () => ({
   loadStripe: jest.fn(() => Promise.resolve({})),
 }));
@@ -92,6 +99,25 @@ describe("FreeTierCardVerification", () => {
       const dialog = screen.getByRole("dialog", { name: "Card verification required" });
       expect(dialog).toHaveTextContent("This is a fraud-prevention card-on-file check for Free plan access.");
       expect(dialog.textContent).not.toMatch(/crypto|token|\$HermesOS/i);
+    });
+
+    it.each([
+      ["a viewer the token geo-policy blocks", { status: "blocked", notice: "Token features aren't available to people in the United Kingdom." }],
+      ["a viewer the server has not answered for yet", { status: "checking", notice: null }],
+      ["a viewer whose geo check failed", { status: "unavailable", notice: null }],
+    ])("names no crypto or token route to %s, even with crypto billing on", async (_name, access) => {
+      process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED = "true";
+      mockTokenGeo = access;
+      try {
+        render(<FreeTierCardVerification open onClose={jest.fn()} onVerified={jest.fn()} />);
+
+        await screen.findByTestId("payment-element");
+        const dialog = screen.getByRole("dialog", { name: "Card verification required" });
+        expect(dialog).toHaveTextContent("This is a fraud-prevention card-on-file check for Free plan access.");
+        expect(dialog.textContent).not.toMatch(/crypto|token|\$HermesOS/i);
+      } finally {
+        mockTokenGeo = { status: "allowed", notice: null };
+      }
     });
 
     it("still offers token access as the alternative when crypto billing is on", async () => {

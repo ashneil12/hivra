@@ -606,7 +606,7 @@ const BASE_MARKETING_COPY = {
           },
           rows: {
             billing: { description: "Plan, payment methods, credits and invoices" },
-            wallets: { title: "Wallets", description: "Agent wallets and $HermesOS access" },
+            wallets: { title: "Wallets", description: "Agent wallets" },
             apiKeys: { title: "API keys", description: "Provider keys and which agents use them" },
             infrastructure: { description: "The machines and cloud accounts your agents run on" },
             memory: { title: "Shared agent memory", description: "What every new agent starts out knowing" },
@@ -1147,7 +1147,7 @@ const BASE_MARKETING_COPY = {
           },
           rows: {
             billing: { description: "计划、付款方式、额度和发票" },
-            wallets: { title: "钱包", description: "Agent 钱包和 $HermesOS 访问权限" },
+            wallets: { title: "钱包", description: "Agent 钱包" },
             apiKeys: { title: "API 密钥", description: "服务商密钥，以及使用它们的 Agent" },
             infrastructure: { description: "运行你的 Agent 的机器和云账户" },
             memory: { title: "共享 Agent 记忆", description: "每个新 Agent 一开始就知道的内容" },
@@ -1727,7 +1727,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Plan, métodos de pago, créditos y facturas" },
-            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes y acceso con $HermesOS" },
+            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes" },
             "apiKeys": { "title": "Claves de API", "description": "Claves de proveedores y qué agentes las usan" },
             "infrastructure": { "description": "Las máquinas y cuentas en la nube donde se ejecutan tus agentes" },
             "memory": { "title": "Memoria compartida de agentes", "description": "Lo que cada agente nuevo sabe desde el principio" },
@@ -2260,7 +2260,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Plano, formas de pagamento, créditos e faturas" },
-            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes e acesso com $HermesOS" },
+            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes" },
             "apiKeys": { "title": "Chaves de API", "description": "Chaves de provedores e quais agentes as usam" },
             "infrastructure": { "description": "As máquinas e contas de nuvem onde seus agentes rodam" },
             "memory": { "title": "Memória compartilhada dos agentes", "description": "O que todo agente novo já sabe desde o início" },
@@ -2793,7 +2793,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Offre, moyens de paiement, crédits et factures" },
-            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents et accès $HermesOS" },
+            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents" },
             "apiKeys": { "title": "Clés API", "description": "Clés des fournisseurs et agents qui les utilisent" },
             "infrastructure": { "description": "Les machines et comptes cloud sur lesquels tournent vos agents" },
             "memory": { "title": "Mémoire partagée des agents", "description": "Ce que chaque nouvel agent sait dès le départ" },
@@ -3326,7 +3326,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Tarif, Zahlungsmethoden, Guthaben und Rechnungen" },
-            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets und $HermesOS-Zugang" },
+            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets" },
             "apiKeys": { "title": "API-Schlüssel", "description": "Anbieter-Schlüssel und welche Agents sie nutzen" },
             "infrastructure": { "description": "Die Maschinen und Cloud-Konten, auf denen deine Agents laufen" },
             "memory": { "title": "Gemeinsames Agent-Gedächtnis", "description": "Was jeder neue Agent von Anfang an weiß" },
@@ -3859,7 +3859,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "プラン、支払い方法、クレジット、請求書" },
-            "wallets": { "title": "ウォレット", "description": "エージェントのウォレットと $HermesOS アクセス" },
+            "wallets": { "title": "ウォレット", "description": "エージェントのウォレット" },
             "apiKeys": { "title": "API キー", "description": "プロバイダーのキーと、それを使うエージェント" },
             "infrastructure": { "description": "エージェントが動くマシンとクラウドアカウント" },
             "memory": { "title": "共有エージェントメモリー", "description": "新しいエージェントが最初から知っていること" },
@@ -4392,7 +4392,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "요금제, 결제 수단, 크레딧, 청구서" },
-            "wallets": { "title": "지갑", "description": "에이전트 지갑과 $HermesOS 이용 권한" },
+            "wallets": { "title": "지갑", "description": "에이전트 지갑" },
             "apiKeys": { "title": "API 키", "description": "제공업체 키와 이를 쓰는 에이전트" },
             "infrastructure": { "description": "에이전트가 실행되는 머신과 클라우드 계정" },
             "memory": { "title": "공유 에이전트 메모리", "description": "새 에이전트가 처음부터 알고 있는 내용" },
