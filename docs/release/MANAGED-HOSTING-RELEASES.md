@@ -148,6 +148,12 @@ system exists or that every current integration has been audited.
   and cost, not the safety of the contributed code.
 - Do not use `pull_request_target` or privileged `workflow_run` jobs to execute
   untrusted PR code. Do not put hosting credentials in repository-level secrets.
+- Pull request titles, descriptions and comments are public, and GitHub keeps
+  their edit history. Before posting one, run it through
+  `node scripts/release/public-tree-hygiene.mjs --text-file -` and keep live host
+  names, storage box addresses, wallet addresses, database project references and
+  customer ids out of it. CI scans the files of a pull request with the same
+  rules. It does not read the text of the pull request, so this step is manual.
 - Live Instance Smoke is manual-only, runs only from `main` and uses the `managed-live-smoke`
   environment. That environment permits only main, requires owner approval, and
   disallows administrator bypass. Put any future smoke credentials there, scoped
