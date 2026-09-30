@@ -157,11 +157,41 @@ describe("Claude Code Remote Control article", () => {
       "`Remote Control requires a full-scope login token`",
       "`Remote credentials fetch failed`",
       "`Workspace not trusted`",
+      // The "not available" family, which the top related search ("claude code remote control not available") is about.
+      "`You must be logged in to use Remote Control. Remote Control is only available with claude.ai subscriptions.`",
+      "`Remote Control isn't enabled for this account`",
+      "`Remote Control is disabled by your organization's policy`",
+      "`Remote Control is only available when using Claude via api.anthropic.com`",
+      "`Remote Control requires feature-flag evaluation`",
     ]) {
       expect(sectionCopy).toContain(message);
     }
     expect(sectionCopy).toContain("`claude auth login`");
     expect(sectionCopy).toContain("`claude remote-control --verbose`");
+    expect(sectionCopy).toContain("`claude doctor`");
+    expect(sectionCopy).toContain("`/status`");
+    // Causes of the org-policy message, in the docs' order, with the HIPAA and Owner cases kept.
+    const policy = sectionCopy.split("\n").find((line) => line.startsWith("- `Remote Control is disabled by your organization's policy`"))!;
+    expect(policy.indexOf("`disableRemoteControl`")).toBeLessThan(policy.indexOf("a Pro or Max plan"));
+    expect(policy.indexOf("a Pro or Max plan")).toBeLessThan(policy.indexOf("HIPAA"));
+    expect(policy.indexOf("HIPAA")).toBeLessThan(policy.indexOf("Owner who has not switched"));
+    // "Session creation failed" is its own docs bullet: only then is the subscription the suspect.
+    expect(sectionCopy).toContain("If `Session creation failed` also appears, the subscription may be inactive.");
+    expect(sectionCopy).not.toContain("or the subscription is inactive");
+  });
+
+  it("answers the 'not available' search with the three eligibility messages and the API key rule", () => {
+    const faq = article.faqs.find(({ q }) => q === "Why is Claude Code Remote Control not available?")!;
+    expect(faq).toBeDefined();
+    for (const fragment of [
+      "Remote Control isn't enabled for this account",
+      "Remote Control is disabled by your organization's policy",
+      "Remote Control is only available when using Claude via api.anthropic.com",
+      "claude doctor",
+      "API keys are not supported either",
+    ]) {
+      expect(faq.a).toContain(fragment);
+    }
   });
 
   it("states the documented numbers with their source", () => {
