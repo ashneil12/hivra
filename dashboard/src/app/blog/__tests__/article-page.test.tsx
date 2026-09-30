@@ -6,6 +6,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import BlogArticlePage, { generateMetadata, generateStaticParams } from "../[slug]/page";
 import { BLOG_ARTICLES, BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { CUTOVER_BLOG_SLUGS } from "@/lib/blog/__tests__/cutover-slugs";
+import { topicAnchor, topicForArticle } from "@/lib/blog/topics";
 
 jest.mock("@/components/public-site/PublicSite", () => ({
   __esModule: true,
@@ -60,6 +61,16 @@ describe("/blog/[slug] article page", () => {
     expect(box).toHaveTextContent(article.shortAnswer!.slice(0, 40));
     expect(screen.getByRole("heading", { level: 2, name: "Short answer" })).toBeInTheDocument();
     expect(container.querySelector(`time[datetime="${article.lastModified}"]`)).toHaveTextContent(/^Updated /);
+  });
+
+  it("links every article back to its topic hub on the blog index", async () => {
+    for (const article of BLOG_ARTICLES_LIST) {
+      const topic = topicForArticle(article.slug)!;
+      const { container } = await renderArticle(article.slug);
+      const link = container.querySelector(`a[href="/blog#${topicAnchor(topic)}"]`);
+      expect({ slug: article.slug, text: link?.textContent }).toEqual({ slug: article.slug, text: topic.title });
+      cleanup();
+    }
   });
 
   it("shows an updated date only when the article changed after it was published", async () => {

@@ -7,7 +7,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ignore from 'ignore';
-import { LITEPAPER_FILES, stageLitepaper } from './stage-litepaper.mjs';
+import { LITEPAPER_FILES, RESTRICTED_COPIES, stageLitepaper } from './stage-litepaper.mjs';
+
+// Every source the staging script reads, and each source beside the public path it is served at.
+const PAIRS = [...LITEPAPER_FILES.map((relative) => [relative, relative]), ...RESTRICTED_COPIES];
+const SOURCES = PAIRS.map(([source]) => source);
 
 const FIXTURE_SOURCE = 'LITEPAPER.md\n';
 const FIXTURE_SHA256 = createHash('sha256').update(FIXTURE_SOURCE).digest('hex');
@@ -16,7 +20,7 @@ function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'hivra-litepaper-stage-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(path.join(root, 'dashboard/public'), { recursive: true });
-  for (const relative of LITEPAPER_FILES) {
+  for (const relative of SOURCES) {
     mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
     writeFileSync(path.join(root, relative), relative === 'LITEPAPER.md' ? FIXTURE_SOURCE : `${relative}\n`);
   }
@@ -29,8 +33,8 @@ test('stages approved bytes only, preserves unrelated public files and checks fr
   mkdirSync(path.join(root, 'docs/litepaper/review'), { recursive: true });
   writeFileSync(path.join(root, 'docs/litepaper/review/review.zip'), 'private review');
   writeFileSync(path.join(root, 'dashboard/public/unrelated.txt'), 'keep');
-  assert.equal(stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }).files, LITEPAPER_FILES.length);
-  for (const relative of LITEPAPER_FILES) assert.deepEqual(readFileSync(path.join(root, 'dashboard/public', relative)), readFileSync(path.join(root, relative)));
+  assert.equal(stageLitepaper({ repoRoot: root, approvedSha256: FIXTURE_SHA256 }).files, PAIRS.length);
+  for (const [source, published] of PAIRS) assert.deepEqual(readFileSync(path.join(root, 'dashboard/public', published)), readFileSync(path.join(root, source)));
   assert.equal(existsSync(path.join(root, 'dashboard/public/.env')), false);
   assert.equal(existsSync(path.join(root, 'dashboard/public/docs/litepaper/review')), false);
   assert.equal(readFileSync(path.join(root, 'dashboard/public/unrelated.txt'), 'utf8'), 'keep');
@@ -80,7 +84,7 @@ test('Vercel-filtered source package stages successfully without private documen
   const input = path.join(temporary, 'input');
   const uploaded = path.join(temporary, 'uploaded');
   const stageScript = 'dashboard/scripts/stage-litepaper.mjs';
-  const required = [...LITEPAPER_FILES, stageScript];
+  const required = [...SOURCES, stageScript];
   const privatePaths = [
     'docs/PRODUCT-ARCHITECTURE.md', 'docs/internal/operations.md',
     'docs/litepaper/build.py', 'docs/litepaper/INTEGRATION.md',
@@ -139,7 +143,7 @@ test('Vercel-filtered source package stages successfully without private documen
   const result = spawnSync(process.execPath, [realpathSync(path.join(uploaded, stageScript))], { cwd: path.join(uploaded, 'dashboard'), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   stageLitepaper({ repoRoot: uploaded, check: true });
-  for (const relative of LITEPAPER_FILES) {
-    assert.deepEqual(readFileSync(path.join(uploaded, 'dashboard/public', relative)), readFileSync(path.join(repo, relative)));
+  for (const [source, published] of PAIRS) {
+    assert.deepEqual(readFileSync(path.join(uploaded, 'dashboard/public', published)), readFileSync(path.join(repo, source)));
   }
 });
