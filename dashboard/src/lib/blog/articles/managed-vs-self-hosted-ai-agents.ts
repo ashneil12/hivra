@@ -6,7 +6,7 @@ export const article: BlogArticle = {
   title: "Managed vs self-hosted AI agents: the honest total-cost math (2026)",
   metaTitle: "Managed vs self-hosted AI agents: total-cost math",
   metaDescription:
-    "Self-hosting an AI agent costs $5-10/month in server rent plus 4-10 hours of setup and upkeep. The full total-cost math, and where self-hosting wins.",
+    "Self-hosting an AI agent costs $5-10/month in rent, 4-10 hours of setup and 1-2 hours a month of upkeep. The total-cost math, and where self-hosting wins.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-24",
   readingTimeMin: 9,
@@ -14,6 +14,8 @@ export const article: BlogArticle = {
   tagline: "The server rent is the smallest number in this comparison.",
   intro:
     "The cash difference between self-hosting an AI agent and paying for managed hosting is a few dollars a month. The real difference is measured in hours: setup, updates, security, and who gets paged when the agent dies at 3am. Here is the honest math for both.",
+  shortAnswer:
+    "Self-hosting an AI agent costs $5-10 a month in server rent, but adds 4-10 hours of setup and 1-2 hours a month of upkeep. For a handful of agents, managed hosting is usually cheaper once you count your time. Self-hosting wins when you have hard data-control rules or already run servers.",
   sections: [
     {
       heading: "What each model actually means",

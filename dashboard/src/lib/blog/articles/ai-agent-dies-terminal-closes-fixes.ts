@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   title: "Why your AI agent dies when you close the terminal (and every fix that works)",
   metaTitle: "Why your AI agent dies when the terminal closes",
   metaDescription:
-    "Your AI agent stops when the terminal closes, SSH drops, or the laptop sleeps. Why it happens, and every fix: tmux, nohup, systemd, caffeinate.",
+    "Your AI agent dies because closing the terminal or dropping SSH sends it SIGHUP, and sleep suspends it. Fixes: tmux, nohup, systemd, caffeinate.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-24",
   readingTimeMin: 10,
@@ -15,6 +15,8 @@ export const article: BlogArticle = {
   tagline: "The agent did not crash. Your shell took it down.",
   intro:
     `Claude Code, Codex, OpenClaw, Hermes: every terminal AI agent dies the same way when the terminal closes or the laptop sleeps. This is the full troubleshooting guide, from the 90 second tmux fix to systemd to the honest case for a ${ENTRY_PLAN_PRICE} always-on computer.`,
+  shortAnswer:
+    "Your agent is a child process of your shell. Closing the terminal or dropping SSH sends it SIGHUP, and a sleeping laptop suspends it. tmux, screen, nohup or systemd detach it from your session. Sleep needs a different fix: keep the machine awake, or move the agent to an always-on machine.",
   sections: [
     {
       heading: "Why the process dies in the first place",

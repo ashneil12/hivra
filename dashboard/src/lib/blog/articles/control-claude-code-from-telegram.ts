@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   title: "How to control Claude Code from Telegram",
   metaTitle: "Control Claude Code From Telegram",
   metaDescription:
-    "Connect Claude Code to Telegram with Anthropic's official channel plugin. Follow the setup, pairing, security, persistence, and troubleshooting steps.",
+    "Control Claude Code from Telegram with Anthropic's official channel plugin. Create a bot, pair your account, and keep the host machine online.",
   publishedDate: "2026-09-03",
   lastModified: "2026-09-24",
   readingTimeMin: 9,
@@ -15,6 +15,8 @@ export const article: BlogArticle = {
   tagline: "Send tasks from your phone while Claude Code works on the machine holding your repository.",
   intro:
     "Claude Code can receive messages from Telegram through Anthropic's official Telegram channel plugin. You create a bot, install and configure the plugin, start Claude Code with channels enabled, then pair your Telegram account. The session still runs on your computer or server, so that machine and the Claude Code process must stay online.",
+  shortAnswer:
+    "Install Anthropic's official Telegram channel plugin in Claude Code, configure it with a bot token from BotFather, relaunch Claude Code with the Telegram channel enabled, and pair your Telegram account. The session still runs on your own computer or server, so that machine and the Claude Code process must stay online.",
   sections: [
     {
       heading: "The short answer",
@@ -84,7 +86,8 @@ export const article: BlogArticle = {
       heading: "Keep the host online without running another laptop",
       paragraphs: [
         "Telegram is only the control surface. Reliable remote use still depends on a machine that stays online, a recoverable Claude Code process, and sensible permission boundaries. You can assemble that on a VPS with tmux and a service manager. Keep the bot token outside the repository and isolate the agent from unrelated personal files.",
-        `If you want the host managed for you, [Hivra](/agents/claude-code) launches the official Claude Code CLI on a private VM and lets you use your own Anthropic login. You can reach the computer from a phone browser and manage chat, terminal, and files there, and the agent's Telegram tab connects your own bot: paste the BotFather token, open the pairing link, and messages to the bot run as work on the computer, so they keep going after you close the laptop. Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Compare the options on the [pricing page](/pricing). You can still configure Anthropic's Telegram channel inside that machine instead if you prefer the official plugin and the current Claude Code and plugin requirements are met. Hivra is independent and is not affiliated with Anthropic.`,
+        `If you want the host managed for you, [Hivra](/agents/claude-code) launches the official Claude Code CLI on a private VM and lets you use your own Anthropic login. You can reach the computer from a phone browser and manage chat, terminal, and files there, and the agent's Telegram tab connects your own bot: paste the BotFather token, open the pairing link, and messages to the bot run as work on the computer, so they keep going after you close the laptop.`,
+        `Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Compare the options on the [pricing page](/pricing). You can still configure Anthropic's Telegram channel inside that machine instead if you prefer the official plugin and the current Claude Code and plugin requirements are met. Hivra is independent and is not affiliated with Anthropic.`,
       ],
     },
   ],

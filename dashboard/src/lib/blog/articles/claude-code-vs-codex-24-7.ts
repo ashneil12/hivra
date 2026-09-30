@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?",
   metaTitle: "Claude Code vs Codex for 24/7 autonomous work",
   metaDescription:
-    "Claude Code vs Codex as hosted always-on agents, not IDE sidekicks: session persistence, compaction, subscription vs API cost, and server needs.",
+    "Claude Code suits long multi-hour sessions and Codex suits many small headless tasks. Compared on compaction, resume, subscription cost and server needs.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-24",
   readingTimeMin: 10,
@@ -15,6 +15,8 @@ export const article: BlogArticle = {
   tagline: "The 20-minute benchmark tells you nothing about hour 9.",
   intro:
     "Plenty of articles compare Claude Code and Codex as coding assistants you babysit in a terminal. Almost none compare them the way people increasingly run them: on a server, around the clock, working while you sleep. That comparison has different winners.",
+  shortAnswer:
+    "Neither wins everywhere. Claude Code suits long multi-hour work on one big codebase, because compaction and session resume keep a run going. Codex suits a steady stream of small scoped tasks, because codex exec is a clean headless lane. Both sign in with a subscription, so spend is capped, and neither needs a big server.",
   sections: [
     {
       heading: "The comparison everyone writes vs the one that matters",

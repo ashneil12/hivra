@@ -14,6 +14,8 @@ export const article: BlogArticle = {
   tagline: "The scary failure is rare. The boring failure happens weekly.",
   intro:
     "Leaving an AI agent running while you sleep is safe for most workloads, but only if you have deliberately controlled four things: what the agent is allowed to touch, what it can spend, where it runs, and what happens when it dies. This article walks each risk honestly, with the mitigations that actually work.",
+  shortAnswer:
+    "Yes, for most workloads, if you control four things before you walk away: what the agent can touch, what it can spend, where it runs, and what happens when it crashes. Scope its permissions, cap spending on the AI account, run it on its own machine, and use a process supervisor to restart it.",
   sections: [
     {
       heading: "The short answer",
@@ -65,7 +67,8 @@ export const article: BlogArticle = {
       heading: "Does managed hosting change the safety picture?",
       paragraphs: [
         "Partly. Be precise about which risks a hosting platform can and cannot take off your plate.",
-        "What it does handle: isolation, and the machine underneath the agent. On Hivra, every agent runs on a private VM per agent rather than your laptop or a shared container, so the boundary from risk 3 exists by default. Hivra runs that machine for you, paid plans are not paused for inactivity, and you get chat, terminal, and file access from a browser, which means the kill switch in your checklist is your phone. Know what runs inside that boundary, too. Hivra's chat runs the official [Claude Code](/agents/claude-code) and Codex CLIs with permission prompts bypassed by default, so the VM is the boundary rather than a per-command prompt; the Permissions setting on the agent's Manage tab narrows that to Limited or Read-only. [Hermes](/agents/hermes) runs from Hivra's maintained build of the open-source agent.",
+        "What it does handle: isolation, and the machine underneath the agent. On Hivra, every agent runs on a private VM per agent rather than your laptop or a shared container, so the boundary from risk 3 exists by default. Hivra runs that machine for you, paid plans are not paused for inactivity, and you get chat, terminal, and file access from a browser, which means the kill switch in your checklist is your phone.",
+        "Know what runs inside that boundary, too. Hivra's chat runs the official [Claude Code](/agents/claude-code) and Codex CLIs with permission prompts bypassed by default, so the VM is the boundary rather than a per-command prompt; the Permissions setting on the agent's Manage tab narrows that to Limited or Read-only. [Hermes](/agents/hermes) runs from Hivra's maintained build of the open-source agent.",
         "What it cannot handle: permissions and spend stay yours under any hosting model. Hivra is built around bring-your-own login, so your Anthropic or ChatGPT account bills you directly with zero markup, and the spending caps you set with your provider are the caps that protect you. No host can decide which credentials your agent deserves. That judgment is the part of unattended safety that never gets outsourced.",
       ],
     },

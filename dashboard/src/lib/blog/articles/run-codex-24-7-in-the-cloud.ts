@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   title: "How to run Codex 24/7 in the cloud (Codex CLI hosting explained)",
   metaTitle: "How to run Codex 24/7 in the cloud",
   metaDescription:
-    "The Codex CLI dies with your terminal. How to keep it alive: tmux, codex exec for headless runs, a DIY VPS, and managed hosting with your ChatGPT login.",
+    "Codex CLI stops when your terminal closes, SSH drops or your laptop sleeps. Keep it running with tmux, codex exec and nohup, a VPS or managed hosting.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-24",
   readingTimeMin: 8,
@@ -15,6 +15,8 @@ export const article: BlogArticle = {
   tagline: "Codex works as long as your terminal lives. Fix that.",
   intro:
     "OpenAI's Codex CLI is an interactive terminal agent. Close the terminal, drop the SSH connection, or let your laptop sleep, and the run dies with it. Here is how to give Codex a machine that stays awake: tmux, a cheap VPS, or a managed computer with your own ChatGPT login.",
+  shortAnswer:
+    "To run Codex 24/7, the process has to live on a machine that stays awake, because the CLI dies when your terminal closes, your SSH drops or your laptop sleeps. Use tmux on an always-on machine, codex exec with nohup for one-shot runs, a $5-10/month VPS, or managed hosting.",
   sections: [
     {
       heading: "The problem: Codex lives and dies with your terminal",

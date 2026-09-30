@@ -8,7 +8,7 @@ export const article: BlogArticle = {
     "AI agent hosting in 2026: every real option compared (VPS, serverless, managed)",
   metaTitle: "AI agent hosting in 2026: every option compared",
   metaDescription:
-    "Where should an AI agent live? Your own hardware, a VPS, serverless, or managed hosting, compared on real costs, security basics, and upkeep.",
+    "Host an AI agent on your own hardware, a $5-10/month VPS or managed hosting. Serverless fits poorly. Real costs, security basics and upkeep compared.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-24",
   readingTimeMin: 11,
@@ -16,6 +16,8 @@ export const article: BlogArticle = {
   tagline: "An agent that lives on your laptop is not really an agent.",
   intro:
     "Search for AI agent hosting and you get enterprise cloud docs and thin listicles. Neither answers the actual question: where should a personal or CLI agent live so it keeps working when you close your laptop? Here is every real option, with real prices.",
+  shortAnswer:
+    "An AI agent needs a machine that stays awake, a persistent disk and a way back in. Your own hardware, a VPS ($5-10 a month) or managed hosting can provide all three. Serverless cannot, because it stops your process between requests and wipes local disk. Managed hosting trades root access for a setup you do not build.",
   sections: [
     {
       heading: "What hosting an AI agent actually means",
@@ -59,7 +61,7 @@ export const article: BlogArticle = {
     {
       heading: "One-click deploys: what is real",
       paragraphs: [
-        "Deploy an AI agent in one click is a claim worth auditing, because it hides two very different products. Version one: a template that spins up a container with a chatbot wrapper and a text box. It demos well and does little, because there is no persistent workspace, no browser, and often no real CLI underneath. Version two: a platform that provisions actual infrastructure with the real agent on it.",
+        "\"Deploy an AI agent in one click\" is a claim worth auditing, because it hides two very different products. Version one: a template that spins up a container with a chatbot wrapper and a text box. It demos well and does little, because there is no persistent workspace, no browser, and often no real CLI underneath. Version two: a platform that provisions actual infrastructure with the real agent on it.",
         "The test is what exists after the click. You should be able to answer yes to all of these:\n\n- Is the real agent underneath (the vendor's CLI or the open-source project), and does the host tell you which build it runs and with which permission settings?\n- Do you sign in with your own model account, so usage bills at provider rates with no markup?\n- Is there a persistent VM with a workspace, or just a stateless container?\n- Can the agent drive a real browser?\n- Can you reach the terminal, the files, and the running session from a browser, including on your phone?",
         "On Hivra the launch provisions a private VM with the agent running on it, and chat, terminal, files, and browser tabs on top. Six agents are launchable today: Hermes, Claude Code, Codex, [Aeon](/agents/aeon), [OpenClaw](/agents/openclaw), and [Agent Zero](/agents/agent-zero). OpenClaw and Agent Zero need a paid plan. If you are weighing those last two against each other, we compared them in [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting).",
       ],

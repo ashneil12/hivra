@@ -3,8 +3,9 @@ import { BlogArticle } from "../types";
 export const article: BlogArticle = {
   slug: "hermes-agent-telegram-discord-setup",
   title: "Hermes Agent gateway setup: Telegram, Discord, WhatsApp, Email and 11 more",
+  metaTitle: "Hermes Agent gateway setup for Telegram and Discord",
   metaDescription:
-    "Complete setup guide for all 15 Hermes Agent messaging gateways. Covers Telegram bot creation, Discord slash commands, WhatsApp via Baileys bridge, Email IMAP/SMTP config, Webhooks, and security via DM pairing codes and allowlists.",
+    "Set up Hermes Agent gateways for Telegram, Discord, WhatsApp, Email and Webhooks, then restrict access with allowlists or DM pairing codes.",
   publishedDate: "2026-04-15",
   lastModified: "2026-04-15",
   readingTimeMin: 13,
@@ -12,11 +13,13 @@ export const article: BlogArticle = {
   tagline: "The README says 12+ platforms. It's actually 15. Here's how to set up each one.",
   intro:
     "Hermes Agent receives messages and sends responses through 15 platforms: Telegram, Discord, Slack, WhatsApp, Signal, SMS, Email, Home Assistant, Mattermost, Matrix, DingTalk, Feishu/Lark, WeCom, Open WebUI, and Webhooks. This covers practical setup for the most commonly used gateways, the security model that applies to all of them, and the tradeoffs worth knowing before you connect anything.",
+  shortAnswer:
+    "To set up a Hermes Agent gateway, put your platform credentials, such as a Telegram bot token, in ~/.hermes/.env, set an ALLOWED_USERS allowlist so strangers cannot use the bot, and start hermes gateway. One process handles all 15 supported platforms at once, and the same agent answers on each.",
   sections: [
     {
       heading: "How the gateway works",
       paragraphs: [
-        "A single `hermes gateway` process handles all connected platforms simultaneously. You run it once and it listens on all configured channels — delivering messages to the agent, running the inference loop, and sending responses back to the originating platform.",
+        "A single `hermes gateway` process handles all connected platforms simultaneously. You run it once and it listens on all configured channels, delivering messages to the agent, running the inference loop, and sending responses back to the originating platform.",
         "Security is opt-in per platform. Every platform has an `ALLOWED_USERS` environment variable that acts as an allowlist. Without it, the gateway accepts messages from anyone who finds your bot. That is a serious problem for an agent with shell access. Set allowlists before exposing any gateway publicly.",
         "The alternative to manual allowlists is DM pairing codes: unknown users message your bot and receive a one-time pairing code that expires after one hour. You approve it with `hermes pairing approve <platform> <code>`. More scalable than maintaining a static list if you have multiple users.",
       ],
@@ -38,7 +41,7 @@ export const article: BlogArticle = {
     {
       heading: "WhatsApp",
       paragraphs: [
-        "WhatsApp integration uses the Baileys library — an unofficial bridge that emulates the WhatsApp Web session protocol. No Meta developer account required.\n\nSetup:\n\n```bash\nhermes whatsapp\n```\n\nThe wizard installs the Baileys bridge dependencies (requires Node.js v18+), displays a QR code, and you scan it: WhatsApp → Settings → Linked Devices → Link a Device. Session saves automatically.\n\nTwo modes: a **separate bot number** (dedicate a phone number to the bot — lower ban risk, cleaner UX for multiple users) or **personal self-chat** (use your own WhatsApp number, message yourself to talk to the agent — easier to set up, more account risk).",
+        "WhatsApp integration uses the Baileys library, an unofficial bridge that emulates the WhatsApp Web session protocol. No Meta developer account required.\n\nSetup:\n\n```bash\nhermes whatsapp\n```\n\nThe wizard installs the Baileys bridge dependencies (requires Node.js v18+), displays a QR code, and you scan it: WhatsApp → Settings → Linked Devices → Link a Device. Session saves automatically.\n\nTwo modes: a **separate bot number** (dedicate a phone number to the bot: lower ban risk, cleaner UX for multiple users) or **personal self-chat** (use your own WhatsApp number, message yourself to talk to the agent: easier to set up, more account risk).",
         "The main risk: WhatsApp's terms prohibit unofficial automation. For personal use, ban risk is low. For anything resembling bulk messaging or outreach to people who have not opted in, the risk is significant. The official WhatsApp Business API (which Hermes does not use) is the compliant path for business use.",
       ],
     },
@@ -57,21 +60,21 @@ export const article: BlogArticle = {
     {
       heading: "The full list: all 15 platforms",
       paragraphs: [
-        "The complete gateway list confirmed in the official documentation (15 total, not 12 as the README states):\n\n1. **Telegram** — most popular, long-polling or webhook mode\n2. **Discord** — slash commands, voice channel, thread support\n3. **Slack** — Slack app with OAuth, works in DMs and channels\n4. **WhatsApp** — Baileys bridge, unofficial\n5. **Signal** — requires Signal CLI installed and linked phone number\n6. **SMS** — Twilio integration, sends/receives SMS\n7. **Email** — IMAP/SMTP, any provider\n8. **Home Assistant** — integrates directly as a conversation agent\n9. **Mattermost** — self-hosted Slack alternative\n10. **Matrix** — decentralized messaging protocol (Element, etc.)\n11. **DingTalk** — Alibaba's enterprise messaging platform\n12. **Feishu/Lark** — ByteDance enterprise messenger\n13. **WeCom** — Tencent's enterprise WeChat variant\n14. **Open WebUI / API Server** — HTTP API endpoint for custom frontends\n15. **Webhooks** — generic HTTP webhook receiver",
-        "All gateways share the same security model: `ALLOWED_USERS` allowlist or DM pairing code approval. `GATEWAY_ALLOWED_USERS` applies across all connected platforms as a global setting. Per-platform variables override it. `GATEWAY_ALLOW_ALL_USERS=true` accepts messages from anyone — do not set this on a gateway with shell access.",
+        "The complete gateway list confirmed in the official documentation (15 total, not 12 as the README states):\n\n1. **Telegram**: most popular, long-polling or webhook mode\n2. **Discord**: slash commands, voice channel, thread support\n3. **Slack**: Slack app with OAuth, works in DMs and channels\n4. **WhatsApp**: Baileys bridge, unofficial\n5. **Signal**: requires Signal CLI installed and linked phone number\n6. **SMS**: Twilio integration, sends/receives SMS\n7. **Email**: IMAP/SMTP, any provider\n8. **Home Assistant**: integrates directly as a conversation agent\n9. **Mattermost**: self-hosted Slack alternative\n10. **Matrix**: decentralized messaging protocol (Element, etc.)\n11. **DingTalk**: Alibaba's enterprise messaging platform\n12. **Feishu/Lark**: ByteDance enterprise messenger\n13. **WeCom**: Tencent's enterprise WeChat variant\n14. **Open WebUI / API Server**: HTTP API endpoint for custom frontends\n15. **Webhooks**: generic HTTP webhook receiver",
+        "All gateways share the same security model: `ALLOWED_USERS` allowlist or DM pairing code approval. `GATEWAY_ALLOWED_USERS` applies across all connected platforms as a global setting. Per-platform variables override it. `GATEWAY_ALLOW_ALL_USERS=true` accepts messages from anyone. Do not set this on a gateway with shell access.",
       ],
     },
     {
       heading: "Running multiple gateways simultaneously",
       paragraphs: [
-        "One `hermes gateway` process handles all configured platforms. Set credentials for Telegram and Discord both, and the same agent responds on both channels with shared memory and context. A message from Telegram and a message from Discord reach the same agent — your task history and preferences persist regardless of which platform you are messaging from.",
-        "The built-in cron scheduler runs inside the gateway process and can deliver to any connected platform. A morning briefing goes to Telegram, a work-hours alert to Slack, an end-of-day summary to Email — all from the same scheduled task configuration.\n\nToken usage is higher through messaging gateways than CLI. Telegram adds roughly 15,000-20,000 tokens of overhead per message (versus 6,000-8,000 in CLI) due to AGENTS.md workspace files and additional context. At Sonnet 4.6 pricing, that is approximately $0.03-0.06 per message in overhead alone. Disable unused tool categories with `hermes tools` to reduce the baseline cost.",
+        "One `hermes gateway` process handles all configured platforms. Set credentials for Telegram and Discord both, and the same agent responds on both channels with shared memory and context. A message from Telegram and a message from Discord reach the same agent: your task history and preferences persist regardless of which platform you are messaging from.",
+        "The built-in cron scheduler runs inside the gateway process and can deliver to any connected platform. A morning briefing goes to Telegram, a work-hours alert to Slack, an end-of-day summary to Email, all from the same scheduled task configuration.\n\nToken usage is higher through messaging gateways than CLI. Telegram adds roughly 15,000-20,000 tokens of overhead per message (versus 6,000-8,000 in CLI) due to AGENTS.md workspace files and additional context. At Sonnet 4.6 pricing, that is approximately $0.03-0.06 per message in overhead alone. Disable unused tool categories with `hermes tools` to reduce the baseline cost.",
       ],
     },
     {
       heading: "Hivra gateway setup",
       paragraphs: [
-        "On Hivra, gateway configuration is handled through the dashboard — paste your Telegram bot token and user ID, click connect, done. The gateway service is managed, monitored, and restarted automatically. You do not need the `hermes gateway install` → `systemctl` → `loginctl enable-linger` sequence.\n\nAll 15 gateways are available on Hivra. Multi-gateway setup (Telegram + Discord + Email simultaneously) works by adding credentials for each platform in the dashboard.",
+        "On Hivra, gateway configuration is handled through the dashboard: paste your Telegram bot token and user ID, click connect, done. The gateway service is managed, monitored, and restarted automatically. You do not need the `hermes gateway install` → `systemctl` → `loginctl enable-linger` sequence.\n\nAll 15 gateways are available on Hivra. Multi-gateway setup (Telegram + Discord + Email simultaneously) works by adding credentials for each platform in the dashboard.",
       ],
     },
   ],
@@ -90,7 +93,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How do I prevent strangers from using my Hermes bot?",
-      a: "Set the ALLOWED_USERS variable for each platform: TELEGRAM_ALLOWED_USERS=your-numeric-id, DISCORD_ALLOWED_USERS=your-18-digit-id, etc. Alternatively, use DM pairing codes — unknown users receive a one-time code that you approve with `hermes pairing approve <platform> <code>`. Never set GATEWAY_ALLOW_ALL_USERS=true on an agent with shell access.",
+      a: "Set the ALLOWED_USERS variable for each platform: TELEGRAM_ALLOWED_USERS=your-numeric-id, DISCORD_ALLOWED_USERS=your-18-digit-id, etc. Alternatively, use DM pairing codes: unknown users receive a one-time code that you approve with `hermes pairing approve <platform> <code>`. Never set GATEWAY_ALLOW_ALL_USERS=true on an agent with shell access.",
     },
     {
       q: "Why does my agent use more API tokens through Telegram than the CLI?",

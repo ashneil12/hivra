@@ -4,15 +4,17 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE,
 export const article: BlogArticle = {
   slug: "cost-of-running-ai-agent",
   title: "The real cost of running a persistent AI agent in 2026",
+  metaTitle: "The real cost of running an AI agent in 2026",
   metaDescription:
-    "A breakdown of every cost involved in running a persistent AI agent: server hosting, API tokens, maintenance time, and hidden costs. With specific numbers, not estimates.",
+    "What it costs to run an AI agent around the clock: server, API tokens and maintenance time, with real monthly figures for self-hosted and managed setups.",
   publishedDate: "2026-04-01",
   lastModified: "2026-09-24",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Actual numbers, not a pricing page.",
   intro:
-    "The full cost of a persistent AI agent is not just the subscription price. Here is every component — server, tokens, time, and the less-obvious costs — with real figures for early 2026.",
+    "The full cost of a persistent AI agent is not just the subscription price. Here is every component (server, tokens, time, and the less-obvious costs) with real figures for early 2026.",
+  shortAnswer: `A persistent AI agent costs a server, AI tokens and your time. A minimal self-hosted setup is about $10-17 a month in cash, or $60-117 once maintenance is counted at $50 an hour. Managed hosting on Hivra starts at ${ENTRY_PLAN_PRICE} a month, plus about $4-20 in tokens, for $14-30 in all.`,
   sections: [
     {
       heading: "Server infrastructure",
@@ -24,9 +26,9 @@ export const article: BlogArticle = {
     {
       heading: "AI provider tokens",
       paragraphs: [
-        "Token prices as of April 2026 (check provider pages — these move frequently): Claude Haiku 4.5 ($1 input / $5 output per MTok); Claude Sonnet 4.6 ($3 / $15 per MTok, now with 1M token context at no surcharge); Claude Opus 4.6 ($5 / $25 per MTok, 1M context, 128K max output); GPT-5 mini ($0.25 / $2 per MTok — cheapest capable option currently available). The Anthropic Batch API cuts Haiku 4.5 to $0.50/$2.50 per MTok for async workloads.",
-        "What does this cost in practice? For a lean setup — 10-15 scheduled tasks per day, browsing a few URLs each, text-only outputs on Haiku 4.5 — you are typically spending $3-8/month. Mixed Haiku/Sonnet workloads with research and code generation run $20-50/month. Heavy Sonnet usage with long context tasks can push $60-120/month.",
-        "Browser automation is where tokens compound. Vision inputs — screenshots, page captures — are large. A task taking 10 screenshots at ~1,000 tokens each, running daily, costs roughly 300,000 tokens per month just for screenshot processing. Use Haiku for the vision steps and Sonnet only for the reasoning steps if you are doing frequent browser-heavy work. [Which browser automation tool you pick](/blog/ai-agent-browser-automation-tools) changes that number too, because they differ in how much of the page they send to the model.",
+        "Token prices as of April 2026 (check provider pages, as these move frequently): Claude Haiku 4.5 ($1 input / $5 output per MTok); Claude Sonnet 4.6 ($3 / $15 per MTok, now with 1M token context at no surcharge); Claude Opus 4.6 ($5 / $25 per MTok, 1M context, 128K max output); GPT-5 mini ($0.25 / $2 per MTok, the cheapest capable option currently available). The Anthropic Batch API cuts Haiku 4.5 to $0.50/$2.50 per MTok for async workloads.",
+        "What does this cost in practice? For a lean setup (10-15 scheduled tasks per day, browsing a few URLs each, text-only outputs on Haiku 4.5), you are typically spending $3-8/month. Mixed Haiku/Sonnet workloads with research and code generation run $20-50/month. Heavy Sonnet usage with long context tasks can push $60-120/month.",
+        "Browser automation is where tokens compound. Vision inputs (screenshots, page captures) are large. A task taking 10 screenshots at ~1,000 tokens each, running daily, costs roughly 300,000 tokens per month just for screenshot processing. Use Haiku for the vision steps and Sonnet only for the reasoning steps if you are doing frequent browser-heavy work. [Which browser automation tool you pick](/blog/ai-agent-browser-automation-tools) changes that number too, because they differ in how much of the page they send to the model.",
         "Model choice is the biggest lever on this line, but it is not the only one. Prompt caching, batching, and trimming what you send each turn routinely cut a bill by more than switching models does. [AI agent API costs and how developers cut them](/blog/ai-agent-api-cost-optimization) goes through those with real numbers.",
       ],
     },
@@ -40,7 +42,7 @@ export const article: BlogArticle = {
     {
       heading: "Time (the cost most people miss)",
       paragraphs: [
-        "Self-hosted agents require time. Initial setup: 4-8 hours for someone with Linux experience. Ongoing minimum: 1-2 hours per month for updates, log review, and debugging intermittent failures. When something breaks meaningfully — a Docker update causes a compatibility issue, an API schema change breaks a tool the agent depends on — add 2-6 hours for the incident.",
+        "Self-hosted agents require time. Initial setup: 4-8 hours for someone with Linux experience. Ongoing minimum: 1-2 hours per month for updates, log review, and debugging intermittent failures. When something breaks meaningfully (a Docker update causes a compatibility issue, an API schema change breaks a tool the agent depends on), add 2-6 hours for the incident.",
         "If your time is worth $50/hour, 2 hours/month of maintenance is $100/month in opportunity cost. More than the server cost itself. The actual economics of self-hosting depend heavily on how you value your own time and how much you enjoy the infrastructure work. Do not do the comparison without counting maintenance.",
       ],
     },
@@ -48,13 +50,13 @@ export const article: BlogArticle = {
       heading: "The total picture",
       paragraphs: [
         `**Self-hosted, minimal:** Hetzner CX23 (€5.49/month excluding VAT) + $3-10/month API tokens (Haiku, text-only tasks) + 1-2 hours/month maintenance. Cash cost: $10-17/month. Real cost with time at $50/hour: $60-117/month.\n\n**Self-hosted, active use:** Hetzner CX33 (€8.49/month excluding VAT) + $20-50/month API tokens (mixed Haiku/Sonnet with some browser automation) + 2-3 hours/month maintenance. Cash cost: $30-60/month. Real cost with time: $130-210/month.\n\n**Serverless option (Modal or Daytona):** near-zero idle cost, pay only per execution. Suits agents with infrequent but compute-heavy tasks. Latency is higher on cold starts. Not suitable for sub-minute cron tasks that need instant execution.\n\n**Managed hosting (Hivra, ${ENTRY_PLAN_PRICE} plan):** ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} + $4-20/month API tokens + no server maintenance. Real cost: $14-30/month. Full plan details on [the pricing page](/pricing).`,
-        "These comparisons favour managed hosting more than the sticker prices suggest, because maintenance time is real and compounds. If you genuinely value root-level control or have strict data residency requirements, self-hosting on Hetzner is a reasonable choice — the infrastructure is good and the community around self-hosted Hermes setups is active.",
+        "These comparisons favour managed hosting more than the sticker prices suggest, because maintenance time is real and compounds. If you genuinely value root-level control or have strict data residency requirements, self-hosting on Hetzner is a reasonable choice: the infrastructure is good and the community around self-hosted Hermes setups is active.",
       ],
     },
     {
       heading: "Costs that do not appear in any pricing table",
       paragraphs: [
-        "Domain name: $10-15/year for self-hosted setups. You need a domain for HTTPS to work correctly. Managed hosting includes this.\n\nBackup storage: if you care about your agent's memory surviving a server failure, you need off-host backups. S3-compatible storage costs roughly $0.02/GB/month. A healthy agent memory store runs 50-500 MB, so call it $1-10/month. Managed hosting handles this.\n\nAPI error costs: agents that are misconfigured or hit edge cases can burn tokens unexpectedly. Set a monthly spend cap on your API key — every provider supports this — and check it weekly when you first run a new task configuration.\n\nRecovery time: if your self-hosted server goes down and you do not have infrastructure-as-code or a backup restore procedure, getting it back up from scratch takes 4-8 hours again. One-time per incident, but real.",
+        "Domain name: $10-15/year for self-hosted setups. You need a domain for HTTPS to work correctly. Managed hosting includes this.\n\nBackup storage: if you care about your agent's memory surviving a server failure, you need off-host backups. S3-compatible storage costs roughly $0.02/GB/month. A healthy agent memory store runs 50-500 MB, so call it $1-10/month. Managed hosting handles this.\n\nAPI error costs: agents that are misconfigured or hit edge cases can burn tokens unexpectedly. Set a monthly spend cap on your API key (every provider supports this) and check it weekly when you first run a new task configuration.\n\nRecovery time: if your self-hosted server goes down and you do not have infrastructure-as-code or a backup restore procedure, getting it back up from scratch takes 4-8 hours again. One-time per incident, but real.",
       ],
     },
   ],

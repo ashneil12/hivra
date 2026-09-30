@@ -4,9 +4,9 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 export const article: BlogArticle = {
   slug: "openclaw-broken-after-update",
   title: "OpenClaw broken after an update? Every fix, in the order to try them",
-  metaTitle: "OpenClaw Broken After Update: Every Fix That Works",
+  metaTitle: "OpenClaw Broken After Update? Every Fix, in Order",
   metaDescription:
-    "OpenClaw broke after an update? The fixes in order: doctor --fix for schema changes, the tools.profile permission reset, broken skills, and rollback.",
+    "OpenClaw broken after an update? Run openclaw doctor --fix for config changes, reset tools.profile if permissions vanished, or roll back to a backup.",
   publishedDate: "2026-07-23",
   lastModified: "2026-09-24",
   readingTimeMin: 9,
@@ -14,6 +14,8 @@ export const article: BlogArticle = {
   tagline: "The update did not eat your data. It probably moved your config.",
   intro:
     "OpenClaw ships new releases several times a month, and breaking changes are a known part of that cadence. If your agent stopped responding, lost its permissions, or will not start after an update, this guide walks the known failure modes in the order they most often occur, with the exact commands to fix each one.",
+  shortAnswer:
+    "The most common cause of OpenClaw breaking after an update is a changed config schema. Run openclaw doctor --fix, then openclaw config validate, and restart the gateway. If the agent replies but cannot act, set tools.profile back to your previous profile. If the update is the problem, roll back to your last-good version and restore your pre-upgrade backup.",
   sections: [
     {
       heading: "Triage: three commands before you change anything",
@@ -32,7 +34,8 @@ export const article: BlogArticle = {
     {
       heading: "Fix 2: the agent replies but cannot do anything",
       paragraphs: [
-        "This one looks strange: the bot answers in Telegram, chats normally, but claims it cannot read files, write files, or run commands. Tasks it handled last week now come back with permission errors.\n\nThe cause is a known update behavior: `tools.profile` defaulting back to `messaging`, which strips read, write, and exec permissions from the agent. Your agent did not lose its abilities. Its permission profile got reset.\n\nOpen `~/.openclaw/openclaw.json`, check what `tools.profile` is set to now, and set it back to the profile you were running before the update:\n\n```\nopenclaw config set tools.profile <your-previous-profile>\nopenclaw config validate\nopenclaw gateway restart\n```\n\nIf you never changed it and do not know what it was, check the release notes for your previous version or your pre-upgrade backup of `openclaw.json`. After every future upgrade, verifying `tools.profile` should be part of your checklist, because this reset has bitten the community more than once.",
+        "This one looks strange: the bot answers in Telegram, chats normally, but claims it cannot read files, write files, or run commands. Tasks it handled last week now come back with permission errors.\n\nThe cause is a known update behavior: `tools.profile` defaulting back to `messaging`, which strips read, write, and exec permissions from the agent. Your agent did not lose its abilities. Its permission profile got reset.",
+        "Open `~/.openclaw/openclaw.json`, check what `tools.profile` is set to now, and set it back to the profile you were running before the update:\n\n```\nopenclaw config set tools.profile <your-previous-profile>\nopenclaw config validate\nopenclaw gateway restart\n```\n\nIf you never changed it and do not know what it was, check the release notes for your previous version or your pre-upgrade backup of `openclaw.json`. After every future upgrade, verifying `tools.profile` should be part of your checklist, because this reset has bitten the community more than once.",
       ],
     },
     {
@@ -65,7 +68,8 @@ export const article: BlogArticle = {
     {
       heading: "If you are tired of fixing this every month",
       paragraphs: [
-        `Some people enjoy the maintenance. If you just want the agent to work, there are two ways to shrink the monthly breakage loop.\n\nThe first is letting someone else run the machine OpenClaw lives on. [Hivra hosts OpenClaw](/agents/openclaw) on a private managed VM: the open-source agent unmodified, its Control UI bound to localhost and reached through Hivra's authenticated gateway, with the server and the install handled for you. You configure your model providers and your Telegram, WhatsApp, or Signal channels inside that UI. It needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Details on [the pricing page](/pricing). Hivra is independent and is not affiliated with the OpenClaw project.\n\nThe second is switching to an agent with a calmer release cadence. Hermes Agent is architecturally comparable (persistent agent, messaging gateway, skills) with fewer breaking changes, and it ships a migration tool (\`hermes claw migrate\`) that imports your OpenClaw config, memories, skills, and environment variables. The full comparison is in [Hermes vs OpenClaw](/blog/hermes-vs-openclaw).\n\nEither way, the fixes above will get today's breakage sorted first.`,
+        `Some people enjoy the maintenance. If you just want the agent to work, there are two ways to shrink the monthly breakage loop.\n\nThe first is letting someone else run the machine OpenClaw lives on. [Hivra hosts OpenClaw](/agents/openclaw) on a private managed VM: the open-source agent unmodified, its Control UI bound to localhost and reached through Hivra's authenticated gateway, with the server and the install handled for you. You configure your model providers and your Telegram, WhatsApp, or Signal channels inside that UI. It needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Details on [the pricing page](/pricing). Hivra is independent and is not affiliated with the OpenClaw project.`,
+        `The second is switching to an agent with a calmer release cadence. Hermes Agent is architecturally comparable (persistent agent, messaging gateway, skills) with fewer breaking changes, and it ships a migration tool (\`hermes claw migrate\`) that imports your OpenClaw config, memories, skills, and environment variables. The full comparison is in [Hermes vs OpenClaw](/blog/hermes-vs-openclaw).\n\nEither way, the fixes above will get today's breakage sorted first.`,
       ],
     },
   ],
