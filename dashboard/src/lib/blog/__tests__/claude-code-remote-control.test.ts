@@ -236,6 +236,21 @@ describe("Claude Code Remote Control article", () => {
     // Nothing may say Remote Control works, runs or survives a closed laptop on Hivra: it is untested.
     expect(fullCopy).not.toMatch(/Remote Control (?:works|runs|survives|keeps (?:going|running))[^.]*\bHivra\b/i);
     expect(fullCopy).not.toMatch(/\bHivra\b[^.]*(?:supports|certifies|certified|tested with) Remote Control/i);
+    // The regexes above only catch a few verbs, and "You can run Remote Control on a Hivra computer and it stays up when
+    // you close the laptop" passes every one of them. So the rule is per sentence: any sentence or table row that names
+    // both Remote Control and Hivra must be a question or must say it is untested.
+    const hivraSection = article.sections.find((section) => section.heading === "Hivra computers and Remote Control")!;
+    expect(hivraSection).toBeDefined();
+    const both = fullCopy
+      .split(/\n+|(?<=[.!?:])\s+/)
+      .filter((sentence) => sentence !== hivraSection.heading && /Remote Control/i.test(sentence) && /\bHivra\b/i.test(sentence));
+    expect(both.length).toBeGreaterThan(0);
+    for (const sentence of both) {
+      expect(sentence).toMatch(/\?$|has not been tested|treat it as untested|not about Remote Control|untested/);
+    }
+    // The Hivra section must not reuse the Remote Control rule ("the machine that has to stay on") as a Hivra benefit.
+    expect(hivraSection.paragraphs.join("\n").replace(CLI_RUN_LIFETIME, "")).not.toMatch(/(?:has|have|must) (?:to )?stay on|the machine that has to stay on/i);
+    expect(fullCopy).not.toContain("the machine that has to stay on is not your laptop");
     // Hivra's Telegram tab is not Anthropic's Channels feature and not Remote Control.
     expect(sectionCopy).toContain("Hivra's Telegram tab is Hivra's own connection, separate from Anthropic's Channels feature");
     // Claude Code is pinned on Hivra computers, and that version is not a public claim.

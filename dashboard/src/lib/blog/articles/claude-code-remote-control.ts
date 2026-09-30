@@ -104,9 +104,9 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Where a Hivra computer fits",
+      heading: "Hivra computers and Remote Control",
       paragraphs: [
-        `[Hivra](/) gives a coding agent a computer of its own, so the machine that has to stay on is not your laptop. ${CLI_RUN_LIFETIME}`,
+        `[Hivra](/) gives a coding agent a computer of its own, separate from your laptop. ${CLI_RUN_LIFETIME}`,
         `Remote Control has not been tested on a Hivra computer, so this page does not say it works there. The keep-running statement above is about tmux and Telegram, not about Remote Control, and Hivra's Telegram tab is Hivra's own connection, separate from Anthropic's Channels feature. If you try Remote Control on a Hivra computer, treat it as untested and check the requirements above first.`,
         `${PLAN_SUMMARY} The ${LARGER_PLAN_PRICE} plan is ${LARGER_PLAN_SIZE}. Details are on [the pricing page](/pricing), and you can launch Claude Code from [the Claude Code agent page](/agents/claude-code). Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
       ],
