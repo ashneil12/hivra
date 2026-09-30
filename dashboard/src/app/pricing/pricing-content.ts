@@ -48,7 +48,7 @@ export const PRICING_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Can I self-host Hivra for free?",
-    a: "Yes. Hivra's source is public under the Apache-2.0 license at github.com/ashneil12/hivra, and self-hosting is available as a preview for a single operator. You provide the server and pay for it, and for model usage, yourself.",
+    a: "Yes. Hivra is open source at github.com/ashneil12/hivra, and you can self-host it. You provide the server and pay for it, and for model usage, yourself.",
   },
   {
     q: "Is a hosted computer paused when I am not using it?",
