@@ -224,6 +224,35 @@ describe("does not say Claude Code needs a plan while the page explains the API 
   });
 });
 
+describe("the limit-hit playbook matches the interactive-mode docs", () => {
+  // Docs (code.claude.com/docs/en/interactive-mode, read 2026-09-30): the
+  // automatic wait is not started on its own when the reset is more than 24 hours
+  // away ("a weekly limit can reset days out"), so a weekly limit that resets
+  // sooner is still waited out. A wait picked from /rate-limit-options keeps
+  // counting down.
+  const section = sectionByHeading("What happens when you hit a limit").paragraphs.join("\n");
+
+  it("does not say the 24-hour case covers weekly limits outright", () => {
+    expect(section).not.toMatch(/which covers weekly limits/);
+    expect(section).toContain("more than 24 hours away, which is often the case for a weekly limit, or in Remote Control sessions");
+    expect(section).toContain("continues the task after a usage limit resets");
+  });
+
+  it("tells the reader they can start the wait themselves, in one short step", () => {
+    expect(section).toContain("you can start a wait from `/rate-limit-options` and it keeps counting down");
+    const step = section.split("\n").find((line) => line.startsWith("2. **Wait in the same session.**")) ?? "";
+    expect(step.length).toBeLessThan(800);
+    // The hand-off and re-arm details sit in a note, not in the step.
+    expect(step).not.toMatch(/re-arms/);
+    expect(section).toContain("The wait ends if you exit Claude Code or hand the session to another surface, and it re-arms at most twice in a row.");
+  });
+
+  it("links the limit reset calculator once, with the caveat that the window opening is reported, not documented", () => {
+    expect(section.split("](/tools/claude-code-limit-reset-calculator)")).toHaveLength(2);
+    expect(section).toContain("which is how the window is widely reported to open");
+  });
+});
+
 describe("reports Anthropic's model guide as it reads", () => {
   // The guide (support article 14552983, modified 2026-09-22) says Opus uses
   // meaningfully more of your quota and costs several times more per turn than
@@ -284,7 +313,7 @@ describe("links", () => {
   });
 
   it("links only to routes that exist", () => {
-    const allowed = new Set(["/", "/agents/claude-code", "/tools/claude-code-plan-calculator", "/tools/keep-mac-awake"]);
+    const allowed = new Set(["/", "/agents/claude-code", "/tools/claude-code-plan-calculator", "/tools/claude-code-limit-reset-calculator", "/tools/keep-mac-awake"]);
     for (const target of internal) {
       const blog = /^\/blog\/([^/]+)$/.exec(target);
       expect({ target, ok: allowed.has(target) || (blog ? blog[1] in BLOG_ARTICLES : false) }).toEqual({ target, ok: true });
