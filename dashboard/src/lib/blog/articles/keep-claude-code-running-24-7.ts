@@ -46,7 +46,7 @@ export const article: BlogArticle = {
     {
       heading: "Can I control it from my phone while the laptop is closed?",
       paragraphs: [
-        "It depends which phone option you mean. Remote Control connects your phone or browser to a session that is still running on your computer, so the computer must stay on and awake. It helps when you walk away from your desk, not when you shut the lid and leave.\n\nClaude Code on the web runs on Anthropic's infrastructure, so the session keeps going after you close your laptop and you can check it from any device ([Claude Code docs](https://code.claude.com/docs/en/claude-code-on-the-web)). The third route is a machine that stays on, which you reach over SSH or a browser view. On Hivra you can also send Claude Code work from your phone through the Telegram tab, and those runs execute on the computer.",
+        "It depends which phone option you mean. Remote Control connects your phone or browser to a session that is still running on your computer, so the computer must stay on and awake. It helps when you walk away from your desk, not when you shut the lid and leave. The [Remote Control guide](/blog/claude-code-remote-control) has the commands, both offline messages and how to keep the host machine online.\n\nClaude Code on the web runs on Anthropic's infrastructure, so the session keeps going after you close your laptop and you can check it from any device ([Claude Code docs](https://code.claude.com/docs/en/claude-code-on-the-web)). The third route is a machine that stays on, which you reach over SSH or a browser view. On Hivra you can also send Claude Code work from your phone through the Telegram tab, and those runs execute on the computer.",
       ],
     },
     {

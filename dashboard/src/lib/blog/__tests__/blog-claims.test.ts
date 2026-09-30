@@ -251,6 +251,7 @@ const CLI_24_7_POSTS = [
   "ai-agent-hosting-guide",
   "ai-agent-dies-terminal-closes-fixes",
   "run-ai-agents-24-7",
+  "claude-code-remote-control",
 ];
 
 describe("blog claims", () => {
@@ -446,6 +447,7 @@ describe("blog claims", () => {
       "run-codex-24-7-in-the-cloud": /not affiliated with OpenAI/,
       "claude-code-vs-codex-24-7": /not affiliated with Anthropic or OpenAI/,
       "control-claude-code-from-telegram": /not affiliated with Anthropic/,
+      "claude-code-remote-control": /not affiliated with Anthropic or OpenAI/,
       "openclaw-broken-after-update": /not affiliated with the OpenClaw project/,
       "agent-zero-vs-openclaw-hosting": /not affiliated with or endorsed by either project/,
     };
