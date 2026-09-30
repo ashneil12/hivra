@@ -91,7 +91,7 @@ export default function PlanCalculatorTool() {
             ))}
           </select>
           <p className={styles.hint}>
-            The one shown is an example, not an Anthropic figure. Use a reading from after {F.limitChanges.fiveHourRaised}, when Anthropic raised five-hour limits.
+            Anthropic publishes no figure for where Pro stops you, so this is your own reading, and until you choose one the plans are not rated. Use a reading from after {F.limitChanges.fiveHourRaised}, when Anthropic raised five-hour limits.
           </p>
         </div>
         <div>

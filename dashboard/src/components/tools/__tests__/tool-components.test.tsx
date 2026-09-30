@@ -81,9 +81,19 @@ describe("PlanCalculatorTool", () => {
     expect(screen.getByText("Model mix: 100% Opus 5.5 / 0% Sonnet 5.5")).toBeInTheDocument();
     expect(screen.getByText(/Opus 5\.5 has been Claude Code's default model on Pro and Max since 2026-09-22/)).toBeInTheDocument();
 
+    // No Pro reading yet: Anthropic publishes none, so nothing is rated and the
+    // page says so instead of resting a verdict on an invented reading.
+    expect((container.querySelector("#pc-pro-hit") as HTMLSelectElement).value).toBe("unknown");
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(
+      "Anthropic does not publish Pro's cap, so tell the calculator where Pro stops you to rate each plan. At API list price this schedule is an estimated $376/month."
+    );
+    expect(screen.queryByText("Fits with headroom")).not.toBeInTheDocument();
+    expect(screen.getAllByText("5x Pro's usage per session")).toHaveLength(1);
+
     // Pro stops the visitor 2 hours in; a 3 hour day needs Max 5x. API: 64.95h x
     // the cache-aware Opus 5.5 hour ($5.7952) is an estimated $376 a month, and
     // Anthropic's own $13 per active day across 21.65 active days is $281.
+    fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "2" } });
     expect(screen.getByTestId("pc-verdict")).toHaveTextContent(
       "Max 5x at $100/month is the cheapest plan that fits. The same usage at API list price is an estimated $376/month."
     );
@@ -147,6 +157,19 @@ describe("PlanCalculatorTool", () => {
     expect(container.textContent).toMatch(/about 50K\s+output tokens in a normal hour \(100K in a heavy one\), and 98%\s+of input read from the prompt cache/);
     // The retired unsourced throughput claim is gone.
     expect(container.textContent).not.toMatch(/0\.5M input|2M input/);
+  });
+
+  it("tells the visitor the Pro reading is their own, that nothing is rated until they choose one, and how old a reading may be", () => {
+    const { container } = render(<PlanCalculatorTool />);
+    const hint = screen.getByText(/Anthropic publishes no figure for where Pro stops you/);
+    expect(hint).toHaveTextContent(
+      "Anthropic publishes no figure for where Pro stops you, so this is your own reading, and until you choose one the plans are not rated. Use a reading from after 2026-09-22, when Anthropic raised five-hour limits.",
+    );
+    // The first option is the unrated default, and the old "example" wording is gone.
+    const select = container.querySelector("#pc-pro-hit") as HTMLSelectElement;
+    expect(select.options[0].value).toBe("unknown");
+    expect(select.options[0].textContent).toBe("Not sure, or I have not used Pro");
+    expect(container.textContent).not.toMatch(/The one shown is an example/);
   });
 });
 

@@ -52,9 +52,14 @@ describe("server HTML of /tools/claude-code-plan-calculator", () => {
   it("carries the H1, the default verdict and the estimate without any script running", () => {
     const entry = getToolEntry("claude-code-plan-calculator")!;
     expect(html).toMatch(new RegExp(`<h1[^>]*>${escaped(entry.h1)}</h1>`));
+    // No Pro reading is preselected: the page a crawler reads rates nothing and says why.
     expect(textOf(html)).toContain(
-      "Max 5x at $100/month is the cheapest plan that fits. The same usage at API list price is an estimated $376/month.",
+      escaped("Anthropic does not publish Pro's cap, so tell the calculator where Pro stops you to rate each plan. At API list price this schedule is an estimated $376/month."),
     );
+    // The verdict paragraph itself rates no plan (the worked examples below it still name one).
+    const verdict = /data-testid="pc-verdict"[^>]*>([^<]*)</.exec(html)?.[1] ?? "";
+    expect(verdict).toMatch(/^Anthropic does not publish Pro/);
+    expect(verdict).not.toMatch(/cheapest plan that fits/);
     expect(textOf(html)).toContain("API list price, estimated");
     expect(textOf(html)).toContain("Every number here is an estimate, not a quote");
     // Opus 5.5 is the default model, so the mix starts there.

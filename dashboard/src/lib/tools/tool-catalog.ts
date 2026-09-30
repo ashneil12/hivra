@@ -241,7 +241,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
   },
   examples: [
     {
-      title: "The default schedule",
+      title: "A typical week",
       inputs: `5 days a week, 3 hours a day, 100% ${API.opus.label}, normal use, Pro stops you about 2 hours in, weekly limit not hit`,
       command: [
         "Pro      $20/mo   Would hit limits",

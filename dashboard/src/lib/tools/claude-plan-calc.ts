@@ -28,16 +28,18 @@ export type FitLevel = "headroom" | "tight" | "over";
 
 /**
  * Where Pro's five-hour limit stops the visitor today, in hours into a window.
- * "never" means Pro has not stopped them; "unknown" means they have not used Pro.
+ * "never" means Pro has not stopped them; "unknown" means they have not chosen a
+ * reading or have not used Pro. It is the first option and the default: Anthropic
+ * publishes no figure for where Pro stops anyone, so the tool starts unrated.
  */
 export const PRO_HIT_OPTIONS = [
+  { value: "unknown", label: "Not sure, or I have not used Pro" },
   { value: "0.5", label: "About 30 minutes in" },
   { value: "1", label: "About 1 hour in" },
   { value: "2", label: "About 2 hours in" },
   { value: "3", label: "About 3 hours in" },
   { value: "4", label: "About 4 hours in" },
   { value: "never", label: "Pro never stops me" },
-  { value: "unknown", label: "I have not used Pro" },
 ] as const;
 
 export type ProHit = (typeof PRO_HIT_OPTIONS)[number]["value"];
@@ -62,15 +64,17 @@ export interface PlanInput {
 
 /**
  * Opus 5.5 is Claude Code's default model on Pro and Max, so a visitor who
- * never runs /model is at 100% Opus. The Pro reading is an example the visitor
- * replaces, not an Anthropic figure.
+ * never runs /model is at 100% Opus. The Pro reading starts on "unknown": the
+ * visitor's own reading is the one number the ratings rest on, and Anthropic
+ * publishes none, so the first render, which crawlers and answer engines quote,
+ * rates nothing and says why instead of resting a verdict on an invented reading.
  */
 export const PLAN_DEFAULTS: PlanInput = {
   daysPerWeek: 5,
   hoursPerDay: 3,
   opusPct: 100,
   heavyUse: false,
-  proHit: "2",
+  proHit: "unknown",
   proWeekly: "no",
 };
 

@@ -46,8 +46,27 @@ describe("computePlanResult", () => {
     expect(PLAN_DEFAULTS.opusPct).toBe(100);
   });
 
-  it("gives the default schedule Max 5x and an estimated $376 a month at API list price", () => {
+  it("starts without a Pro reading, so the default rates nothing and still prices the schedule", () => {
+    // Anthropic publishes no figure for where Pro stops anyone. The default render
+    // is what crawlers and answer engines quote, so it must not rest a verdict on
+    // an invented reading.
+    expect(PLAN_DEFAULTS.proHit).toBe("unknown");
     const result = computePlanResult(PLAN_DEFAULTS);
+    expect(result.planFits.every((plan) => plan.fit === null)).toBe(true);
+    expect(result.verdict).toBe(
+      "Anthropic does not publish Pro's cap, so tell the calculator where Pro stops you to rate each plan. At API list price this schedule is an estimated $376/month.",
+    );
+    expect(result.verdict).not.toMatch(/cheapest plan that fits/);
+    expect(result.tableLines).toEqual([
+      "Pro      $20/mo   Not rated",
+      "Max 5x   $100/mo  Not rated",
+      "Max 20x  $200/mo  Not rated",
+      "API list price, estimated: $376/mo",
+    ]);
+  });
+
+  it("gives the typical week, Pro stopping about 2 hours in, Max 5x and an estimated $376 a month at API list price", () => {
+    const result = computePlanResult({ ...PLAN_DEFAULTS, proHit: "2" });
     expect(result.weeklyHours).toBe(15);
     expect(result.monthlyHours).toBeCloseTo(64.95, 6);
     expect(formatUsd(result.apiCostPerMonth)).toBe("$376");
@@ -100,8 +119,9 @@ describe("computePlanResult", () => {
     expect(wild.weeklyHours).toBe(7);
   });
 
-  it("offers the Pro readings the page shows, with 'never' and 'unknown' last", () => {
-    expect(PRO_HIT_OPTIONS.map((option) => option.value)).toEqual(["0.5", "1", "2", "3", "4", "never", "unknown"]);
+  it("offers the Pro readings the page shows, with 'unknown' first because it is the default", () => {
+    expect(PRO_HIT_OPTIONS.map((option) => option.value)).toEqual(["unknown", "0.5", "1", "2", "3", "4", "never"]);
+    expect(PRO_HIT_OPTIONS[0].value).toBe(PLAN_DEFAULTS.proHit);
   });
 });
 
@@ -126,7 +146,7 @@ describe("the worked examples on /tools/claude-code-plan-calculator", () => {
   };
 
   const EXPECTED: Array<{ input: PlanInput; verdictPlan: string; mentionsApi: boolean }> = [
-    { input: PLAN_DEFAULTS, verdictPlan: "Max 5x", mentionsApi: true },
+    { input: { ...PLAN_DEFAULTS, proHit: "2" }, verdictPlan: "Max 5x", mentionsApi: true },
     { input: { ...PLAN_DEFAULTS, daysPerWeek: 1, hoursPerDay: 1, opusPct: 0, proHit: "never" }, verdictPlan: "Pro", mentionsApi: true },
     { input: { ...PLAN_DEFAULTS, daysPerWeek: 4, hoursPerDay: 6, opusPct: 50, proHit: "1", proWeekly: "yes" }, verdictPlan: "Max 5x", mentionsApi: false },
     { input: { ...PLAN_DEFAULTS, daysPerWeek: 5, hoursPerDay: 5, opusPct: 100, proHit: "0.5" }, verdictPlan: "Max 20x", mentionsApi: true },
