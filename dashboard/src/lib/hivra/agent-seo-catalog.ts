@@ -80,7 +80,7 @@ export const PRICING_HREF = "/pricing";
 
 const SELF_HOST_FAQ: AgentSeoFaq = {
   q: "Can I run Hivra on my own server instead?",
-  a: "Hivra's own source is public under the Apache-2.0 license at github.com/ashneil12/hivra, and self-hosting is available as a preview for a single operator. The managed plans are for people who would rather not run the server themselves.",
+  a: "Hivra's own source is open source at github.com/ashneil12/hivra, and you can self-host it. The managed plans are for people who would rather not run the server themselves.",
 };
 
 export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
