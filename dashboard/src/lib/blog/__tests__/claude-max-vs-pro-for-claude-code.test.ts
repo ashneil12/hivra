@@ -64,6 +64,16 @@ describe("registry and wiring", () => {
     expect(article.faqs.length).toBeLessThanOrEqual(11);
   });
 
+  it("puts the plan questions first, in the order a reader asks them", () => {
+    expect(article.faqs.map((faq) => faq.q).slice(0, 5)).toEqual([
+      "Is Claude Code included in Pro?",
+      "What is the Claude Max plan?",
+      "What are Claude Max limits?",
+      "What is the difference between Claude Pro and Max?",
+      "Is Max worth it for Claude Code?",
+    ]);
+  });
+
   it("answers the questions people search for", () => {
     const questions = article.faqs.map((faq) => faq.q);
     for (const expected of [
@@ -129,7 +139,7 @@ describe("the page targets the pricing queries and answers on the first screen",
 
   it("says Max is not a faster model, from the benefits Anthropic lists", () => {
     const faq = article.faqs.find((candidate) => candidate.q === "Does Claude Max work faster than Pro?");
-    expect(faq?.a).toMatch(/^Anthropic does not list speed as a Max benefit\. Pro and Max both run Opus and Sonnet\./);
+    expect(faq?.a).toMatch(/^Anthropic's pricing page does not list speed as a Max benefit\. Pro and Max both run Opus and Sonnet\./);
     expect(faq?.a).toMatch(/billed through usage credits on Pro and Max alike and does not count against plan limits/);
   });
 });

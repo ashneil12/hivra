@@ -215,16 +215,28 @@ export const article: BlogArticle = {
       a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and can also be billed to an API key instead of a plan. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro does not include API usage through the Claude Console. Prices read on ${READ_ON} from Anthropic's pricing page.`,
     },
     {
+      q: "What is the Claude Max plan?",
+      a: `Max is Anthropic's higher-usage individual plan, in two sizes: Max 5x at ${usd(MAX5.priceUsd)} a month and Max 20x at ${usd(MAX20.priceUsd)} a month, billed monthly only. It gives five or twenty times Pro's usage per five-hour session, includes Claude Code, and includes the Fable models up to 50% of its weekly limits. Anthropic also lists higher output limits, early access to advanced features and priority access at high traffic times. Prices read on ${READ_ON}, before tax.`,
+    },
+    {
       q: "What are Claude Max limits?",
       a: `Anthropic states them as multiples of Pro's usage per five-hour session: Max 5x is five times and Max 20x twenty times. Both also have weekly limits, which apply across all models and reset at a fixed time assigned to your account. Anthropic publishes no weekly multiple, no message or token counts and no size for Pro's own allowance, so a weekly multiple or hour count you see elsewhere is not one Anthropic currently publishes.`,
+    },
+    {
+      q: "What is the difference between Claude Pro and Max?",
+      a: `Price, capacity and a few extras. Pro is ${usd(PRO.priceUsd)} a month, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan. Max 5x is ${usd(MAX5.priceUsd)} and Max 20x is ${usd(MAX20.priceUsd)}, both billed monthly only. The capacity gap is stated per five-hour session, at five and twenty times Pro's. Max also lists higher output limits, early access to advanced features and priority access at high traffic times, and includes Fable models up to 50% of its weekly limits, where Pro pays usage credits for them.`,
     },
     {
       q: "Is Max worth it for Claude Code?",
       a: `Only if Pro stops you. If Pro's five-hour limit stops you in most sessions, Max 5x at ${usd(MAX5.priceUsd)} a month gives five times the per-session allowance, and Max 20x at ${usd(MAX20.priceUsd)} gives twenty times. If Pro rarely stops you, Max is money you do not need to spend. Check /usage after your first full week to see how the weekly limit treats you.`,
     },
     {
-      q: "What is the difference between Claude Pro and Max?",
-      a: `Price, capacity and a few extras. Pro is ${usd(PRO.priceUsd)} a month, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan. Max 5x is ${usd(MAX5.priceUsd)} and Max 20x is ${usd(MAX20.priceUsd)}, both billed monthly only. The capacity gap is stated per five-hour session, at five and twenty times Pro's. Max also lists higher output limits, early access to advanced features and priority access at high traffic times, and includes Fable models up to 50% of its weekly limits, where Pro pays usage credits for them.`,
+      q: "Is Claude Pro enough for Claude Code?",
+      a: `It is if Pro's limits cover your sessions, and Anthropic does not publish how many hours that is. Claude Code is included in Pro at ${usd(PRO.priceUsd)} a month, and Pro runs both Opus and Sonnet. ${F.defaultModel.label} has been the default on Pro since ${longDate(F.defaultModel.since)} and uses more quota than Sonnet, so if Pro stops you often, try /model to Sonnet before you pay for Max. /usage shows where you stand.`,
+    },
+    {
+      q: "Does Claude Max work faster than Pro?",
+      a: `Anthropic's pricing page does not list speed as a Max benefit. Pro and Max both run Opus and Sonnet. The extras it lists for Max are higher output limits, early access to advanced features and priority access at high traffic times, on top of more usage per session and Fable models up to 50% of weekly limits. Fast mode, a research preview that runs Opus 5.5 up to 2.5x faster, is billed through usage credits on Pro and Max alike and does not count against plan limits.`,
     },
     {
       q: "What happens when I hit the Claude Code limit?",
@@ -237,18 +249,6 @@ export const article: BlogArticle = {
     {
       q: "Does Claude Code use my subscription or my API key?",
       a: "If ANTHROPIC_API_KEY is set in your environment, Claude Code uses the key instead of your plan and bills API usage. Interactive sessions ask you once to approve it, and claude -p uses it whenever it is set. Run unset ANTHROPIC_API_KEY and check /status to go back to your plan.",
-    },
-    {
-      q: "What is the Claude Max plan?",
-      a: `Max is Anthropic's higher-usage individual plan, in two sizes: Max 5x at ${usd(MAX5.priceUsd)} a month and Max 20x at ${usd(MAX20.priceUsd)} a month, billed monthly only. It gives five or twenty times Pro's usage per five-hour session, includes Claude Code, and includes the Fable models up to 50% of its weekly limits. Anthropic also lists higher output limits, early access to advanced features and priority access at high traffic times. Prices read on ${READ_ON}, before tax.`,
-    },
-    {
-      q: "Is Claude Pro enough for Claude Code?",
-      a: `It is if Pro's limits cover your sessions, and Anthropic does not publish how many hours that is. Claude Code is included in Pro at ${usd(PRO.priceUsd)} a month, and Pro runs both Opus and Sonnet. ${F.defaultModel.label} has been the default on Pro since ${longDate(F.defaultModel.since)} and uses more quota than Sonnet, so if Pro stops you often, try /model to Sonnet before you pay for Max. /usage shows where you stand.`,
-    },
-    {
-      q: "Does Claude Max work faster than Pro?",
-      a: `Anthropic does not list speed as a Max benefit. Pro and Max both run Opus and Sonnet. The extras it lists for Max are higher output limits, early access to advanced features and priority access at high traffic times, on top of more usage per session and Fable models up to 50% of weekly limits. Fast mode, a research preview that runs Opus 5.5 up to 2.5x faster, is billed through usage credits on Pro and Max alike and does not count against plan limits.`,
     },
     {
       q: "Does running Claude Code on a server or on Hivra give me more usage?",
