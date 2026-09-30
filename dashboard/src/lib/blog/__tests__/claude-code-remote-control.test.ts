@@ -332,6 +332,21 @@ describe("Claude Code Remote Control article", () => {
     expect(copy).not.toContain("A Ctrl+C or a crash can be undone");
   });
 
+  it("declares a reading time that matches the page's length (it was 13 minutes for about 5,000 words)", () => {
+    const words = [
+      article.intro,
+      article.shortAnswer ?? "",
+      ...article.sections.flatMap((section) => [section.heading, ...section.paragraphs]),
+      ...article.faqs.flatMap(({ q, a }) => [q, a]),
+    ]
+      .join(" ")
+      .split(/\s+/)
+      .filter(Boolean).length;
+    // 200 to 300 words a minute covers slow and fast readers; the page shows this number in two places.
+    expect(article.readingTimeMin).toBeGreaterThanOrEqual(Math.floor(words / 300));
+    expect(article.readingTimeMin).toBeLessThanOrEqual(Math.ceil(words / 200));
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");

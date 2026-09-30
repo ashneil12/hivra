@@ -17,7 +17,7 @@ export const article: BlogArticle = {
     "Claude Code Remote Control commands, what \"Can\u2019t reach your computer\" and \"computer running this session is offline\" mean, and how to keep it online.",
   publishedDate: "2026-09-30",
   lastModified: "2026-09-30",
-  readingTimeMin: 13,
+  readingTimeMin: 22,
   author: "Hivra team",
   tagline: "It is a window into a session on your machine, so the machine has to stay on.",
   intro:
