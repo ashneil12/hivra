@@ -207,6 +207,20 @@ describe("Claude Code Remote Control article", () => {
     expect(sleepFaq.a).toContain("Anthropic's Projects docs say a thread running on your computer pauses while that computer is asleep");
   });
 
+  it("keeps the options table to short answers that stay true, with no Hivra row", () => {
+    // On a phone the table's second column is cut off by the site's 560px table minimum, so the answer must be short and
+    // the qualifiers live in the bullets. The Hivra row was dropped because its untested qualifier was the cut-off part.
+    const rows = sectionCopy.split("\n").filter((line) => line.startsWith("|") && !line.startsWith("|---"));
+    expect(rows).toEqual([
+      "| Where Claude Code runs | Keeps going, laptop shut? |",
+      "| Your laptop, as it comes | No |",
+      "| A desktop, home server or VPS | Yes, while it stays on and online |",
+      "| Anthropic's cloud sessions | Yes, until idle |",
+    ]);
+    expect(rows.join("\n")).not.toMatch(/Hivra/);
+    expect(sectionCopy).toContain("It keeps going only while the machine, its network and the `claude` process stay up.");
+  });
+
   it("keeps the one rule and the requirements Anthropic documents", () => {
     expect(sectionCopy).toContain("your computer has to stay on and the `claude` process has to keep running");
     expect(sectionCopy).toContain("API keys are not supported");
