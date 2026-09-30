@@ -43,7 +43,7 @@ describe("buildLlmsTxt", () => {
   it("separates what is available now from preview, coming and proposed work", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     expect(txt).toContain("Available now:");
-    expect(txt).toMatch(/In private preview: Windows[^.]*and Omarchy\./);
+    expect(txt).toMatch(/Also available: Windows[^.]*and Omarchy\./);
     expect(txt).toContain("In preview: DeepSeek.");
     expect(txt).toContain("$HIVRA is a proposed new token and does not exist yet.");
     expect(txt).not.toMatch(/one click|Free tier is live/i);

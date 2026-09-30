@@ -75,7 +75,7 @@ export const roadmapContent = {
     eyebrow: "01 · WHAT IS HIVRA",
     title: "What Is Hivra",
     paragraphs: [
-      "Hivra gives AI agents computers of their own. Launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu computer and use it yourself. Windows and Omarchy are in private preview.",
+      "Hivra gives AI agents computers of their own. Launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu, Windows or Omarchy computer and use it yourself.",
       "Run it on Hivra Cloud, on your own cloud account or server, or self-host the whole platform with no Hivra account and no token. You bring your own model key.",
     ],
     callout:
@@ -116,7 +116,7 @@ export const roadmapContent = {
       {
         name: "Computers without an agent",
         description:
-          "Launch an Ubuntu computer and use it yourself. Windows and Omarchy are in private preview.",
+          "Launch an Ubuntu, Windows or Omarchy computer and use it yourself.",
       },
       {
         name: "Your choice of where it runs",

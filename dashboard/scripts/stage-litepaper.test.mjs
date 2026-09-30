@@ -88,6 +88,8 @@ test('Vercel-filtered source package stages successfully without private documen
     'docs/litepaper/review/21-final-copy-verification.md',
     'docs/litepaper/review/internal/founder-notes.md',
     'docs/litepaper/assets/unreviewed.png',
+    'docs/litepaper/assets/unreviewed-768.webp',
+    'docs/litepaper/export-litepaper-images.py',
     'docs/litepaper/assets/fonts/unreviewed.ttf',
     'docs/litepaper/vendor/unreviewed.js',
     '.codex/private.md', '.agents/private.md', '.env.local',

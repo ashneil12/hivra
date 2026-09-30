@@ -25,6 +25,7 @@ const RIGHTS_STATUSES = new Set([
   'documented-project-generated',
   'documented-third-party-font',
   'documented-owner-asserted-original-artwork',
+  'documented-derived-export',
   'quiver-creator-plan-attestation-pending',
   'generation-record-attestation-pending',
 ]);
@@ -33,6 +34,7 @@ const INCLUDABLE_RIGHTS_STATUSES = new Set([
   'documented-project-generated',
   'documented-third-party-font',
   'documented-owner-asserted-original-artwork',
+  'documented-derived-export',
 ]);
 const DECISIONS = new Set(['include', 'hold-for-rights-review']);
 const commandOptions = {
@@ -171,6 +173,7 @@ function boundRecord(root, policy, { pathField, shaField, format, label }) {
 function committedFileHash(root, relative, label) {
   const absolute = path.resolve(root, ...relative.split('/'));
   if (!absolute.startsWith(`${root}${path.sep}`)) throw new Error(`${label} path escaped the repository.`);
+  if (!existsSync(absolute)) throw new Error(`${label} is missing: ${relative}`);
   const info = lstatSync(absolute);
   if (!info.isFile() || realpathSync(absolute) !== absolute || info.size > 4 * 1024 * 1024) {
     throw new Error(`${label} must be one bounded regular file.`);
@@ -322,6 +325,56 @@ function validateGenerationRecords(root, policy, assets) {
   return { path: relative, sha256: expectedSha256, recordedAssets: generated.length };
 }
 
+function validateDerivedExports(root, policy, assets) {
+  const derived = assets.filter((asset) => asset.rightsStatus === 'documented-derived-export');
+  if (derived.length === 0) return null;
+  const evidence = boundRecord(root, policy, {
+    pathField: 'derivedExports',
+    shaField: 'derivedExportsSha256',
+    format: 'hivra-asset-derived-exports-v1',
+    label: 'Derived export records',
+  });
+  if (!Array.isArray(evidence.value?.derivedAssets)) throw new Error('Derived export records have an invalid shape.');
+  const byPath = new Map(evidence.value.derivedAssets.map((record) => [record?.path, record]));
+  const derivedPaths = derived.map((asset) => asset.path).sort();
+  const recordedPaths = [...byPath.keys()].sort();
+  if (byPath.size !== evidence.value.derivedAssets.length || JSON.stringify(recordedPaths) !== JSON.stringify(derivedPaths)) {
+    throw new Error('Derived export records are not exhaustive for derived exports.');
+  }
+  const byAssetPath = new Map(assets.map((asset) => [asset.path, asset]));
+  const sources = new Set();
+  for (const asset of derived) {
+    const record = byPath.get(asset.path);
+    const source = byAssetPath.get(record?.sourcePath);
+    // A derived export is rooted in a recorded, includable, non-derived asset
+    // whose bytes are exactly the ones the derivation was made from.
+    if (
+      record?.sha256 !== asset.sha256 || !source || source.path === asset.path ||
+      source.rightsStatus === 'documented-derived-export' ||
+      source.redistributionDecision !== 'include' || !INCLUDABLE_RIGHTS_STATUSES.has(source.rightsStatus) ||
+      record?.sourceSha256 !== source.sha256
+    ) throw new Error(`Derived export source is missing, derived, held, or changed: ${asset.path}`);
+    if (
+      typeof record?.method !== 'string' || !record.method.trim() ||
+      typeof record?.reproduction !== 'string' || !record.reproduction.trim() ||
+      typeof record?.command !== 'string' || !record.command.includes(record?.script ?? '\0') ||
+      !record?.parameters || typeof record.parameters !== 'object' || Array.isArray(record.parameters) ||
+      Object.keys(record.parameters).length === 0 ||
+      !record?.toolVersions || typeof record.toolVersions !== 'object' || Array.isArray(record.toolVersions) ||
+      Object.keys(record.toolVersions).length === 0
+    ) throw new Error(`Derived export derivation is missing or incomplete: ${asset.path}`);
+    // The script that reproduces the bytes must be in the committed tree.
+    committedFileHash(root, safeRelative(record.script, 'Derived export script path'), 'Derived export script');
+    sources.add(source.path);
+  }
+  return {
+    path: evidence.relative,
+    sha256: evidence.expectedSha256,
+    recordedAssets: derived.length,
+    sources: sources.size,
+  };
+}
+
 function trackedAssetPaths(root, head) {
   return git(root, ['ls-tree', '-r', '-z', '--name-only', head])
     .split('\0')
@@ -387,6 +440,7 @@ export function generateAssetProvenanceEvidence({ root, output, policyPath } = {
   const generationRecords = validateGenerationRecords(root, policy.value, assets);
   const fontLicenseEvidence = validateFontEvidence(root, policy.value, assets);
   const ownerAssertions = validateOwnerAssertions(root, policy.value, assets);
+  const derivedExports = validateDerivedExports(root, policy.value, assets);
 
   const groups = new Map();
   for (const asset of assets.filter((entry) => entry.redistributionDecision === 'hold-for-rights-review')) {
@@ -409,6 +463,7 @@ export function generateAssetProvenanceEvidence({ root, output, policyPath } = {
     generationRecords,
     fontLicenseEvidence,
     ownerAssertions,
+    derivedExports,
     scope: 'Tracked binary, image, vector, font, archive, media and PDF assets in the exact committed source tree.',
     summary: {
       trackedAssets: assets.length,
