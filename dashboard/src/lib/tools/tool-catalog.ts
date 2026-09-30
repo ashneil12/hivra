@@ -191,7 +191,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
     {
       q: "Do the plan limits apply if Claude Code runs in the cloud?",
-      a: "Yes. The limits follow your Anthropic account, not the machine, and Anthropic's own cloud sessions draw from the same limits as everything else you do with Claude. Running Claude Code on an always-on computer does not raise your caps. It does mean a run you start inside tmux there keeps working after your laptop sleeps, so the hours you pay for produce finished work.",
+      a: "Yes. When you sign in with your plan, the limits follow your Anthropic account, not the machine, and Anthropic's own cloud sessions draw from the same limits as everything else you do with Claude. Running Claude Code on an always-on computer does not raise your caps. It does mean a run you start inside tmux there keeps working after your laptop sleeps, so the hours you pay for produce finished work.",
     },
     {
       q: "Which model does Claude Code use by default?",

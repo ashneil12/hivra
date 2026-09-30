@@ -335,10 +335,21 @@ describe("the Hivra section and the claims rules", () => {
     expect(hivraText).not.toMatch(/zero markup/i);
   });
 
+  it("scopes the shared limits to a plan sign-in and keeps to files, sessions and login", () => {
+    const cloud = sectionByHeading("When Anthropic's own cloud is enough").paragraphs.join("\n");
+    expect(cloud).toContain("When you sign in with your plan, every one of these options draws on the same plan limits");
+    expect(cloud).toContain("On an API key there is no plan allowance to raise");
+    expect(hivraText).toContain("your files, sessions and login to stay in place between tasks");
+    // One Hivra computer per agent: nothing here says several agents share a computer.
+    expect(hivraText).not.toMatch(/other agents/i);
+  });
+
   it("says Hivra does not raise Claude's limits, and where the alternative is the better choice", () => {
     expect(hivraText).toMatch(/does not raise them/);
     expect(hivraText).toMatch(/Hivra is not the better choice in every case/);
-    expect(hivraText).toMatch(/Anthropic's cloud sessions cost nothing beyond your plan/);
+    // Anthropic's own wording is "no separate compute charge" on a plan that shares its limits.
+    expect(hivraText).toMatch(/Anthropic's cloud sessions have no separate compute charge and draw on your plan's limits/);
+    expect(bodyCopy).not.toMatch(/cost nothing beyond your plan/);
     expect(hivraText).toMatch(/ordinary, individual usage of Claude Code and the Agent SDK/);
   });
 
@@ -357,7 +368,8 @@ describe("the Hivra section and the claims rules", () => {
   it("answers the server question without promising a browser run outlives its tab", () => {
     const faq = article.faqs.find((candidate) => candidate.q.startsWith("Does running Claude Code on a server or on Hivra"));
     expect(faq?.a).toContain(CLI_RUN_LIFETIME);
-    expect(faq?.a).toMatch(/^No\. Your limits follow your Anthropic account/);
+    // The shared allowance only holds when you sign in with the plan, not an API key.
+    expect(faq?.a).toMatch(/^No\. When you sign in with your plan, your limits follow your Anthropic account/);
   });
 });
 

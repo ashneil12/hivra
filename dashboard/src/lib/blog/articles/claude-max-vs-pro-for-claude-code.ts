@@ -185,7 +185,7 @@ export const article: BlogArticle = {
         `Anthropic will run Claude Code in the cloud for you. A cloud session runs on Anthropic-managed machines, so it keeps going while your laptop is shut. It is available on Pro, Max and Team plans and to Enterprise users on premium or Chat + Claude Code seats, it shares your plan's limits, and Anthropic says there is no separate compute charge for the cloud machine (${link(S.cloudSessions, "Claude Code docs")}).`,
         "It fits when your work is tasks on GitHub repositories that can run unattended. Cloning a repository and opening pull requests need GitHub. A repository hosted elsewhere can be sent as a local bundle, but the results cannot be pushed back. By default you get Anthropic's environment, not a computer of your own.",
         `Remote Control is different. It lets you drive a session from your phone or browser, but the session runs on your own machine, which has to stay on with the \`claude\` process running. It reconnects after the machine sleeps, and it does not work with API keys (${link(S.remoteControl, "Claude Code docs")}).`,
-        "Every one of these options draws on the same plan limits. A cloud session, Remote Control, a VPS and a Hivra computer all spend your account's five-hour and weekly allowance. None raises it. For the full comparison of ways to keep a run going with the lid shut, see [Will Claude Code keep running if I close my laptop?](/blog/keep-claude-code-running-24-7)",
+        "When you sign in with your plan, every one of these options draws on the same plan limits. A cloud session, Remote Control, a VPS and a Hivra computer all spend your account's five-hour and weekly allowance, and none raises it. On an API key there is no plan allowance to raise. For the full comparison of ways to keep a run going with the lid shut, see [Will Claude Code keep running if I close my laptop?](/blog/keep-claude-code-running-24-7)",
       ],
     },
     {
@@ -195,7 +195,7 @@ export const article: BlogArticle = {
         `Hivra plans are ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. Hivra runs the official Claude Code CLI, and on your own Anthropic login it adds no markup on Claude usage: usage bills through Anthropic against your plan.`,
         CLI_RUN_LIFETIME,
         `Anthropic sets the terms for hosting Claude Code, and its legal page says the advertised usage limits for Pro and Max assume ordinary, individual usage of Claude Code and the Agent SDK. Read ${link(S.legal, "that page")} before you put a plan behind round-the-clock automation.`,
-        "Hivra is not the better choice in every case. If your tasks live in GitHub repositories and can run unattended, Anthropic's cloud sessions cost nothing beyond your plan. If you only need a run to keep going while the laptop stays open and plugged in, a keep-awake command is enough, and the [keep-awake command builder](/tools/keep-mac-awake) writes it. A computer of your own pays off when you want your files, logins and other agents to stay in place between tasks.",
+        "Hivra is not the better choice in every case. If your tasks live in GitHub repositories and can run unattended, Anthropic's cloud sessions have no separate compute charge and draw on your plan's limits. If you only need a run to keep going while the laptop stays open and plugged in, a keep-awake command is enough, and the [keep-awake command builder](/tools/keep-mac-awake) writes it. A computer of your own pays off when you want your files, sessions and login to stay in place between tasks.",
         "Start Claude Code from [the Claude Code agent page](/agents/claude-code). Hivra is independent and is not affiliated with Anthropic or OpenAI.",
       ],
     },
@@ -246,7 +246,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does running Claude Code on a server or on Hivra give me more usage?",
-      a: `No. Your limits follow your Anthropic account, not the machine, so Anthropic's cloud sessions, Remote Control, a VPS and a Hivra computer all draw on the same allowance. What a computer that stays on changes is whether the hours you pay for get used. ${CLI_RUN_LIFETIME} Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
+      a: `No. When you sign in with your plan, your limits follow your Anthropic account, not the machine, so Anthropic's cloud sessions, Remote Control, a VPS and a Hivra computer all draw on the same allowance. What a computer that stays on changes is whether the hours you pay for get used. ${CLI_RUN_LIFETIME} Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
     },
   ],
   relatedArticles: [
