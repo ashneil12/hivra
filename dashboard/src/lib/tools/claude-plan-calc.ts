@@ -106,9 +106,9 @@ export const FIT_LABELS: Record<FitLevel, string> = {
   over: "Would hit limits",
 };
 
-/** "$117", "$7.79": whole dollars from $100 up, cents below. */
+/** "$117", "$1,506", "$7.79": whole dollars from $100 up, with a thousands comma, cents below. */
 export function formatUsd(value: number): string {
-  if (value >= 100) return `$${Math.round(value)}`;
+  if (value >= 100) return `$${Math.round(value).toLocaleString("en-US")}`;
   return usd(Number.isInteger(value) ? value : Math.round(value * 100) / 100);
 }
 

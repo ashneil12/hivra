@@ -75,10 +75,11 @@ export default function PlanCalculatorTool() {
             Model mix: {opusPct}% {F.api.opus.label} / {100 - opusPct}% {F.api.sonnet.label}
           </label>
           <input id="pc-opus" className={styles.range} type="range" min={0} max={100} step={5} value={opusPct} onChange={(e) => setOpusPct(Number(e.target.value))} />
-          <p className={styles.hint}>
-            {F.defaultModel.label} has been Claude Code&apos;s default model on Pro and Max since {F.defaultModel.since}, so 100% Opus is what you get if you never run /model.
-          </p>
         </div>
+        {/* A row of its own, so the three sliders share one short row instead of the first two leaving a gap under them. */}
+        <p className={[styles.hint, styles.hintRow].join(" ")}>
+          {F.defaultModel.label} has been Claude Code&apos;s default model on Pro and Max since {F.defaultModel.since}, so 100% Opus is what you get if you never run /model.
+        </p>
         <div>
           <label className={styles.label} htmlFor="pc-pro-hit">
             On Pro, the five-hour limit stops me

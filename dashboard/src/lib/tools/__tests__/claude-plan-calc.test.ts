@@ -117,6 +117,49 @@ describe("computePlanResult", () => {
   it("keeps out-of-range inputs inside the tool's ranges", () => {
     const wild = computePlanResult({ ...PLAN_DEFAULTS, daysPerWeek: 99, hoursPerDay: -4, opusPct: 500 });
     expect(wild.weeklyHours).toBe(7);
+    // The page's hours slider stops at 12, and days at 7.
+    expect(computePlanResult({ ...PLAN_DEFAULTS, hoursPerDay: 99 }).weeklyHours).toBe(PLAN_DEFAULTS.daysPerWeek * 12);
+    expect(computePlanResult({ ...PLAN_DEFAULTS, daysPerWeek: 99, hoursPerDay: 99 }).weeklyHours).toBe(7 * 12);
+  });
+
+  describe("fit thresholds, as the method text states them", () => {
+    // "Headroom at 60% of that capacity or less, tight up to 100%, over beyond it."
+    // capacity = the hours into a window where Pro stops you, times the plan's multiple;
+    // the busiest window is the day's hours, at most the five-hour window.
+    const fit = (input: Partial<PlanInput>, plan: "pro" | "max5x" | "max20x") =>
+      computePlanResult({ ...PLAN_DEFAULTS, ...input }).planFits.find((entry) => entry.key === plan)!.fit;
+
+    it("rates 67% of capacity tight, not headroom", () => {
+      // Pro capacity 3h, busiest window 2h: ratio 0.67.
+      expect(fit({ hoursPerDay: 2, proHit: "3" }, "pro")).toBe("tight");
+    });
+
+    it("rates exactly 60% of capacity headroom and exactly 100% tight", () => {
+      // Max 5x capacity 5h, busiest window 3h: ratio 0.6.
+      expect(fit({ hoursPerDay: 3, proHit: "1" }, "max5x")).toBe("headroom");
+      // Max 5x capacity 5h, busiest window 5h: ratio 1.
+      expect(fit({ hoursPerDay: 5, proHit: "1" }, "max5x")).toBe("tight");
+    });
+
+    it("rates 120% of capacity over, not tight", () => {
+      // Max 5x capacity 2.5h, busiest window 3h: ratio 1.2.
+      expect(fit({ hoursPerDay: 3, proHit: "0.5" }, "max5x")).toBe("over");
+    });
+
+    it("never counts more than one five-hour window of work, however long the day", () => {
+      // A 12 hour day is still a 5 hour busiest window: Max 5x capacity 10h, ratio 0.5.
+      expect(fit({ hoursPerDay: 12, proHit: "2" }, "max5x")).toBe("headroom");
+    });
+  });
+
+  it("prints dollar amounts of $1,000 or more with a thousands comma", () => {
+    expect(formatUsd(1506.4)).toBe("$1,506");
+    expect(formatUsd(999.4)).toBe("$999");
+    expect(formatUsd(100)).toBe("$100");
+    expect(formatUsd(7.789)).toBe("$7.79");
+    const heaviest = computePlanResult({ ...PLAN_DEFAULTS, daysPerWeek: 7, hoursPerDay: 12, opusPct: 100, heavyUse: true, proHit: "never" });
+    expect(heaviest.apiCostPerMonth).toBeGreaterThan(1000);
+    expect(heaviest.verdict).toMatch(/\$\d,\d{3}\/month/);
   });
 
   it("offers the Pro readings the page shows, with 'unknown' first because it is the default", () => {

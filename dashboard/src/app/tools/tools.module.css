@@ -29,6 +29,8 @@
 .radio { display:flex; align-items:center; gap:10px; min-height:40px; font-size:15px; line-height:1.45; color:var(--text-secondary); cursor:pointer; }
 .radio[data-checked="true"] { color:var(--ink-black); font-weight:600; }
 .hint { font-size:13px; line-height:1.6; color:var(--text-muted); margin-top:8px; }
+/* A hint that sits in the inputs grid as a full-width row under the controls it explains. */
+.hintRow { grid-column:1 / -1; margin:-12px 0 0; }
 .smallButton { min-height:44px; margin-top:10px; padding:0 14px; font:11px var(--public-mono,monospace); color:var(--ink-black); background:transparent; border:1px solid var(--etched-border); cursor:pointer; transition:border-color .2s,color .2s; }
 .smallButton:hover { border-color:var(--gold-leaf); color:var(--gold-leaf); }
 .smallButton[data-active="true"] { background:var(--ink-black); color:var(--vellum-bg); border-color:var(--ink-black); }
