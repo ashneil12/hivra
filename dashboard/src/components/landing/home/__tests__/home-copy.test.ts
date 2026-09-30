@@ -76,6 +76,16 @@ describe("homepage copy", () => {
     expect(ownWords.flatMap(text => unqualifiedKeepRunningClaims(text))).toEqual([]);
   });
 
+  // The guard that scans the homepage must flag the exact sentence it replaced,
+  // so a repeat of the old wording fails here and not in review.
+  it("flags the retired hero sentence", () => {
+    const retired =
+      "Hivra gives each one a private computer in the cloud. It keeps working when you close your laptop, and you decide what it can reach.";
+    expect(unqualifiedKeepRunningClaims(retired)).toEqual([
+      "It keeps working when you close your laptop, and you decide what it can reach.",
+    ]);
+  });
+
   // F-15. No page states how long setting up a server takes.
   it("states no invented time for renting and setting up a server", () => {
     const rentAServer = HOMEPAGE_FAQ.find(({ q }) => q === "Why not just rent a server?");
