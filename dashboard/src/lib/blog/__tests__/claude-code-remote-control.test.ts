@@ -4,7 +4,7 @@ import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
 import { BLOG_TOPICS, topicForArticle } from "../topics";
 import { article } from "../articles/claude-code-remote-control";
 
-// The two offline messages are not in Anthropic's docs. They are quoted as recorded in user-filed issues on
+// The two offline messages are not in Anthropic's docs. They are assembled from user-filed issues on
 // github.com/anthropics/claude-code (90172, 90877, 91839, 95577, 98310) and Search Console queries, with typographic
 // apostrophes (U+2019). A reworded or "tidied" quote would send readers looking for a string nobody sees, so these
 // are pinned character for character.
@@ -85,6 +85,13 @@ describe("Claude Code Remote Control article", () => {
   it("quotes the second offline message exactly, as code, and its machine-name variant", () => {
     expect(quotedCode(sectionCopy)).toContain(SESSION_OFFLINE);
     expect(sectionCopy).toContain(`\`${MACHINE_NAME_VARIANT}\``);
+  });
+
+  it("discloses that the capital letters in the middle of the second message are our reading", () => {
+    // The middle sentence comes from a lowercase Search Console query; the issues quote only the opening and closing
+    // sentences (and issue 98310's machine-name variant has capitals). The page must not present it as a screenshot.
+    expect(sectionCopy).toContain("The search query is lowercase, so the capital letters in that sentence are our reading.");
+    expect(sectionCopy).toContain("We could not check it against a live session");
   });
 
   it("says both offline messages come from user reports, not from Anthropic's docs", () => {
