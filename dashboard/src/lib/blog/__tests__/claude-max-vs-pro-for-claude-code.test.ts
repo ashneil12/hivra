@@ -71,6 +71,11 @@ describe("registry and wiring", () => {
       "What are Claude Max limits?",
       "Is Max worth it for Claude Code?",
       "What happens when I hit the Claude Code limit?",
+      // The Claude Max plan and "claude pro vs max" intents, and the People Also Ask ones.
+      "What is the Claude Max plan?",
+      "What is the difference between Claude Pro and Max?",
+      "Is Claude Pro enough for Claude Code?",
+      "Does Claude Max work faster than Pro?",
     ]) {
       expect(questions).toContain(expected);
     }
@@ -81,13 +86,52 @@ describe("registry and wiring", () => {
   });
 });
 
+describe("the page targets the pricing queries and answers on the first screen", () => {
+  // Research 2026-09-30: "claude code pricing" (27,100 a month in the US, 33,100
+  // in August 2026), "claude max plan" (4,400) and "claude pro vs max" (2,400).
+  // The results for the first are mostly articles, so the article owns it.
+  it("names Claude Code pricing, Pro vs Max and the Claude Max plan in the title, meta and headings", () => {
+    expect(article.title).toBe("Claude Code pricing: Pro vs Max, and when API billing is cheaper");
+    expect(article.metaTitle).toBe("Claude Code Pricing: Pro vs Max and API costs");
+    expect(article.metaDescription).toMatch(/^Claude Code pricing: Pro \$20, Max 5x \$100, Max 20x \$200 a month\./);
+    expect(article.sections[0].heading).toBe("Claude Code pricing by plan, read 30 September 2026");
+    expect(bodyCopy).toMatch(/Claude Max plan/);
+    expect(article.slug).toBe("claude-max-vs-pro-for-claude-code");
+  });
+
+  it("puts the recommendation and the three prices in the tagline and the intro, from the constants", () => {
+    const { pro, max5x, max20x } = F.plans;
+    expect(article.tagline).toBe(`Start on Pro at ${usd(pro.priceUsd)}. Move to Max only when Pro's limit stops you.`);
+    expect(article.intro).toContain(`Pro (${usd(pro.priceUsd)} a month), Max 5x (${usd(max5x.priceUsd)}) and Max 20x (${usd(max20x.priceUsd)})`);
+    expect(article.intro).toContain("prices read 30 September 2026");
+    expect(article.intro).not.toMatch(/^This page gives/);
+  });
+
+  it("keeps the weekly-multiple point to a pointer outside the table, the rule and the not-published list", () => {
+    const mentions = bodyCopy.match(/weekly multiple/g) ?? [];
+    expect(mentions.length).toBeLessThanOrEqual(6);
+    const worth = article.faqs.find((faq) => faq.q === "Is Max worth it for Claude Code?");
+    expect(worth?.a).not.toMatch(/weekly multiple/);
+  });
+
+  it("says a Team Premium seat is not a Max plan", () => {
+    expect(sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n")).toMatch(/A Premium seat is not a Max plan: it is bought as a seat on a Team plan with at least 2 members, and its 6\.25x sits between Max 5x and Max 20x/);
+  });
+
+  it("says Max is not a faster model, from the benefits Anthropic lists", () => {
+    const faq = article.faqs.find((candidate) => candidate.q === "Does Claude Max work faster than Pro?");
+    expect(faq?.a).toMatch(/^Anthropic does not list speed as a Max benefit\. Pro and Max both run Opus and Sonnet\./);
+    expect(faq?.a).toMatch(/billed through usage credits on Pro and Max alike and does not count against plan limits/);
+  });
+});
+
 describe("the post reads its numbers from the calculator's constants", () => {
   it("states each plan price the calculator holds, in the short answer and the plans table", () => {
     const { pro, max5x, max20x } = F.plans;
     expect(article.shortAnswer).toContain(`Pro (${usd(pro.priceUsd)})`);
     expect(article.shortAnswer).toContain(`Max 5x (${usd(max5x.priceUsd)})`);
     expect(article.shortAnswer).toContain(`Max 20x (${usd(max20x.priceUsd)})`);
-    const table = sectionByHeading("The plans side by side").paragraphs.join("\n");
+    const table = sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n");
     expect(table).toContain(`${usd(pro.priceUsd)} a month, or ${usd(pro.annualMonthlyUsd)} a month on the annual plan (${usd(pro.annualUpfrontUsd)} billed up front)`);
     expect(table).toContain(`${usd(max5x.priceUsd)} a month`);
     expect(table).toContain(`${usd(max20x.priceUsd)} a month`);
@@ -274,7 +318,7 @@ describe("reports Anthropic's model guide as it reads", () => {
 
 describe("Team seat prices read as a month, not a year", () => {
   it("says a month on the annual plan for both seats, in the plans section and the changelog", () => {
-    const plans = sectionByHeading("The plans side by side").paragraphs.join("\n");
+    const plans = sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n");
     expect(plans).toContain("$25 a month ($20 a month on the annual plan) for Standard");
     expect(plans).toContain("$125 ($100 a month on the annual plan) for Premium");
     expect(bodyCopy).not.toMatch(/billed annually\) for (?:Standard|Premium)/);
@@ -350,7 +394,7 @@ describe("the Hivra section and the claims rules", () => {
     const index = article.sections.indexOf(hivra);
     expect(article.sections.slice(0, index).map((section) => section.heading)).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^The plans side by side/),
+        expect.stringMatching(/^Claude Code pricing by plan/),
         "API key or subscription: the break-even",
         "What happens when you hit a limit, and what to do",
         "When Anthropic's own cloud is enough",
