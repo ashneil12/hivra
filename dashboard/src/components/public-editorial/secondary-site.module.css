@@ -25,6 +25,13 @@
 .artLines { position:absolute; inset:0; display:grid; grid-template-columns:repeat(5,1fr); pointer-events:none; transform:skewY(-26deg) scale(1.4); }
 .artLines i { border-right:1px solid color-mix(in srgb,var(--ink-black) 16%,transparent); }
 .artArrow { position:absolute; width:24%; height:auto; right:7%; bottom:7%; color:var(--ink-black); }
+/* Blog topic hubs: a row of jump links, then one section per topic. */
+.topicNav { display:flex; flex-wrap:wrap; gap:10px 12px; align-items:center; margin:72px 0 0; }
+.topicNav span { font:11px var(--public-mono,monospace); color:var(--text-muted); margin-right:8px; }
+.topicNav a { font-size:14px; line-height:1; padding:11px 16px; border:1px solid var(--etched-border); color:var(--ink-black); text-decoration:none; transition:background .2s, color .2s, border-color .2s; }
+.topicNav a:hover, .topicNav a:focus-visible { background:var(--ink-black); color:var(--public-bg, var(--vellum-bg)); border-color:var(--ink-black); }
+.topicSection { scroll-margin-top:110px; }
+.topicBlurb { max-width:62ch; margin:-8px 0 28px; font-size:16px; line-height:1.75; color:var(--text-secondary); }
 .rows { border-top:1px solid var(--etched-border); }
 .row { display:grid; grid-template-columns:65px minmax(0,1fr) 185px 28px; align-items:start; gap:28px; padding:35px 0; border-bottom:1px solid var(--etched-border); text-decoration:none; color:inherit; transition:background .2s; }
 .row:hover { background:color-mix(in srgb,var(--ink-black) 3%,transparent); }
