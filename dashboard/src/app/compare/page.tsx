@@ -8,20 +8,49 @@ import StructuredData from "@/components/StructuredData";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { COMPETITOR_FACTS_CHECKED, PRICE_TABLE, formatCheckedDate } from "@/lib/compare/competitor-facts";
 
 export const metadata: Metadata = {
   title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
   description:
-    "Compare Hivra to self-hosting, Railway, Render, and OpenClaw. Find the right way to host an AI agent such as Hermes, OpenClaw, Claude Code or Codex.",
+    "Hivra compared with Agent 37, Hostinger, xCloud, Nous Hermes Cloud, self-hosting, Railway and Render, with prices checked against each vendor's own pages.",
   ...buildWebsiteMetadata({
     path: "/compare",
     title: "Hivra vs Alternatives: AI Agent Hosting Comparison",
     description:
-      "Compare Hivra to self-hosting, Railway, Render, and OpenClaw for running persistent AI agents.",
+      "Hivra compared with Agent 37, Hostinger, xCloud, Nous Hermes Cloud, self-hosting, Railway and Render for running persistent AI agents.",
   }),
 };
 
 const comparisons = [
+  {
+    slug: "vs-agent-37",
+    title: "Hivra vs Agent 37",
+    tagline: "Metered API or flat monthly price.",
+    description:
+      "Agent 37 is cheaper on raw compute and has a free tier and a SOC 2 Type I report. Hivra is a flat monthly price and an open-source platform. Both keep an agent running when your laptop is closed.",
+  },
+  {
+    slug: "vs-hostinger",
+    title: "Hivra vs Hostinger",
+    tagline: "Prepaid low price or monthly flat price.",
+    description:
+      "Hostinger's managed plan is $5.99 a month on a 24-month prepaid term and renews at $11.99. Here is what that price assumes, what Hostinger does not publish, and where its VPS is the better buy.",
+  },
+  {
+    slug: "vs-xcloud",
+    title: "Hivra vs xCloud",
+    tagline: "More hardware on promotion, or a fixed monthly price.",
+    description:
+      "xCloud gives 4 vCPU and 6 GB of RAM for $9.99 a month on promotion. Its docs still call OpenClaw hosting a beta, and refunds work by request. Checked against its own pages.",
+  },
+  {
+    slug: "vs-nous-hermes-cloud",
+    title: "Hivra vs Nous Hermes Cloud",
+    tagline: "The maker's own hosting, or a flat price for more agents.",
+    description:
+      "Nous Hermes Cloud bills by the second and costs about $16.80 over 30 days for the Medium size, plus model usage. Hivra hosts Hermes and other agents at a flat monthly price. Not affiliated.",
+  },
   {
     slug: "vs-self-hosted",
     title: "Hivra vs Self-Hosted VPS",
@@ -71,5 +100,6 @@ const breadcrumbSchema = {
 export default function ComparePage() {
   return (<PublicSite className={styles.page} data-page="compare"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Compare" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Honest Comparisons</span><h1>Hivra vs <strong>everything else.</strong></h1><p>We&apos;ll tell you when self-hosting makes more sense, and what it costs in time when it doesn&apos;t.</p></header>
   <div className={styles.directory}>{comparisons.map(({ slug, title, tagline, description }, index) => <Link key={slug} href={`/compare/${slug}`}><span>{String(index + 1).padStart(2, "0")}</span><h2>{title}</h2><div><h3>{tagline}</h3><p>{description}</p><span className={styles.readLink}>Read comparison<ArrowUpRight size={20} aria-hidden="true" /></span></div></Link>)}</div>
+  <section aria-labelledby="price-table-heading"><h2 id="price-table-heading">Price table, checked {formatCheckedDate()}</h2><p>Sizes differ between providers, so each row states its own. Prices are in US dollars and read from each provider&apos;s own pages on <time dateTime={COMPETITOR_FACTS_CHECKED}>{formatCheckedDate()}</time>. Model usage is extra unless a row says otherwise. Cloudways is not listed because its page does not say whether its prices already include its launch discount.</p><div className={styles.tableScroll} role="region" aria-label="Price table" tabIndex={0}><table><thead><tr><th scope="col">Provider</th><th scope="col">Price for the size</th><th scope="col">Billing and what it leaves out</th><th scope="col">Source</th></tr></thead><tbody>{PRICE_TABLE.map(({ provider, price, terms, source }, index) => <tr key={`${provider}-${index}`}><th scope="row">{provider}</th><td>{price}</td><td>{terms}</td><td>{source.href.startsWith("/") ? <Link href={source.href}>{source.label}</Link> : <a href={source.href} rel="noopener noreferrer">{source.label}</a>}</td></tr>)}</tbody></table></div></section>
   <section className={styles.cta}><p>From $9.99/mo for 2 vCPU and 4 GB. 7-day money-back guarantee on card payments.</p><Link href={PUBLIC_START_HREF} className={styles.button}>Deploy My Agent<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "Pricing", href: "/pricing" }, { label: "All Hivra features", href: "/features" }]} /></main></PublicSite>);
 }

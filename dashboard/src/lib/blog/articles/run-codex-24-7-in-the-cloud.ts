@@ -7,14 +7,16 @@ export const article: BlogArticle = {
   title: "How to run Codex 24/7 in the cloud (Codex CLI hosting explained)",
   metaTitle: "How to run Codex 24/7 in the cloud",
   metaDescription:
-    "The Codex CLI dies with your terminal. How to keep it alive: tmux, codex exec for headless runs, a DIY VPS, and managed hosting with your ChatGPT login.",
+    "Codex CLI stops when your terminal closes, SSH drops or your laptop sleeps. Keep it running with tmux, codex exec and nohup, a VPS or managed hosting.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Codex works as long as your terminal lives. Fix that.",
   intro:
     "OpenAI's Codex CLI is an interactive terminal agent. Close the terminal, drop the SSH connection, or let your laptop sleep, and the run dies with it. Here is how to give Codex a machine that stays awake: tmux, a cheap VPS, or a managed computer with your own ChatGPT login.",
+  shortAnswer:
+    "To run Codex 24/7, the process has to live on a machine that stays awake, because the CLI dies when your terminal closes, your SSH drops or your laptop sleeps. Use tmux on an always-on machine, codex exec with nohup for one-shot runs, a $5-10/month VPS, or managed hosting.",
   sections: [
     {
       heading: "The problem: Codex lives and dies with your terminal",
@@ -52,7 +54,7 @@ export const article: BlogArticle = {
     {
       heading: "DIY vs managed",
       paragraphs: [
-        `| | DIY VPS + tmux | Hivra managed |\n|---|---|---|\n| Cash cost | $5-10/mo | From ${ENTRY_PLAN_PRICE}/mo |\n| Setup | 1-2 hours of your time | Pick the agent, then sign in |\n| Login | Your ChatGPT account | Your ChatGPT account, entered on the computer |\n| Interface | SSH terminal only | Browser: chat, terminal, files, skills |\n| Agent browser automation | You install and maintain it | Optional toggle on the Codex computer |\n| Server setup | You | Done for you |\n| Root access to the machine | Yes | Managed VM, resize CPU/RAM in the dashboard |\n\nBoth routes end in the same place: the official Codex CLI, on your own OpenAI account, on a machine that stays on. The difference is who runs the server. On either one, put a long run where you know it survives a disconnect: tmux, \`codex exec\`, or on Hivra tmux in the computer's Terminal tab.`,
+        `| | DIY VPS + tmux | Hivra managed |\n|---|---|---|\n| Cash cost | $5-10/mo | From ${ENTRY_PLAN_PRICE}/mo (${ENTRY_PLAN_SIZE}) |\n| Setup | 1-2 hours of your time | Pick the agent, then sign in |\n| Login | Your ChatGPT account | Your ChatGPT account, entered on the computer |\n| Interface | SSH terminal only | Browser: chat, terminal, files, skills |\n| Agent browser automation | You install and maintain it | Optional toggle on the Codex computer |\n| Server setup | You | Done for you |\n| Root access to the machine | Yes | Managed VM, resize CPU/RAM in the dashboard |\n\nBoth routes end in the same place: the official Codex CLI, on your own OpenAI account, on a machine that stays on. The difference is who runs the server. On either one, put a long run where you know it survives a disconnect: tmux, \`codex exec\`, or on Hivra tmux in the computer's Terminal tab.`,
       ],
     },
     {

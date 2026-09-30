@@ -4,22 +4,25 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 export const article: BlogArticle = {
   slug: "best-vps-for-hermes-agent",
   title: "Best VPS for Hermes Agent in 2026: Hetzner, DigitalOcean, OVH compared",
+  metaTitle: "Best VPS for Hermes Agent in 2026 (Specs and Prices)",
   metaDescription:
-    "Which VPS actually runs Hermes Agent well? Real specs, current pricing, and community recommendations for Hetzner CX23/CX33, DigitalOcean, OVH, Vultr, and Raspberry Pi. Covers multi-instance setup, storage growth, and ARM compatibility.",
+    "Hetzner CX33 (4 vCPU, 8GB, €8.49/month ex VAT) is the recommended VPS for Hermes Agent. Compare Hetzner, OVH, DigitalOcean and Vultr specs and prices.",
   publishedDate: "2026-04-16",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "The community has been running Hermes on cheap VPS servers for months. Here is what they found.",
   intro:
     "Hermes Agent runs well on inexpensive cloud infrastructure. The question is not whether you can afford a VPS. At €5.49/month you can. The question is which tier is enough for your usage, which providers the community trusts, and what breaks when you underspec. Here are the real numbers.",
+  shortAnswer:
+    "Hetzner is the community favourite for running Hermes Agent. The CX33 (4 vCPU, 8GB RAM, 80GB NVMe, €8.49/month excluding VAT) is the recommended tier, and the CX23 (2 vCPU, 4GB RAM, 40GB NVMe) is the minimum. OVH VPS-2 slightly undercuts the CX33. DigitalOcean and Vultr cost far more.",
   sections: [
     {
       heading: "Minimum specs and what happens below them",
       paragraphs: [
-        "Minimum: 2 vCPU, 4GB RAM, 40GB SSD. At this spec, Hermes Agent with an external API provider (OpenRouter, Anthropic, OpenAI) runs reliably for a single user. The 4GB RAM floor is hard — at 2GB you see OOM errors on complex tasks involving browser automation or heavy file processing. The errors are not always graceful; they can corrupt the session in progress.",
+        "Minimum: 2 vCPU, 4GB RAM, 40GB SSD. At this spec, Hermes Agent with an external API provider (OpenRouter, Anthropic, OpenAI) runs reliably for a single user. The 4GB RAM floor is hard: at 2GB you see OOM errors on complex tasks involving browser automation or heavy file processing. The errors are not always graceful; they can corrupt the session in progress.",
         "The 40GB storage recommendation exists because `~/.hermes/` grows over time. Session logs accumulate in `~/.hermes/sessions/` and the SQLite database (`state.db`) grows with every conversation. On a 20GB disk at several sessions per day, you can fill it in 6-12 months. Start with 40GB or configure log rotation early.",
-        "Docker adds overhead. If you use `hermes config set terminal.backend docker` — which sandbox-isolates shell commands — Docker needs an additional 1-2GB for container spin-up. On a 4GB server running the gateway and Docker simultaneously, run `free -h` before enabling the Docker backend. It is easy to forget it and discover the problem at 2am when a task fails.",
+        "Docker adds overhead. If you use `hermes config set terminal.backend docker` (which sandbox-isolates shell commands), Docker needs an additional 1-2GB for container spin-up. On a 4GB server running the gateway and Docker simultaneously, run `free -h` before enabling the Docker backend. It is easy to forget it and discover the problem at 2am when a task fails.",
       ],
     },
     {
@@ -27,7 +30,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Hetzner is the near-universal community recommendation for Hermes hosting. The price-to-spec ratio beats DigitalOcean or AWS Lightsail significantly for equivalent hardware.\n\n| Model | vCPU | RAM | NVMe | Price/mo |\n|-------|------|-----|------|----------|\n| CX23  | 2 | 4 GB | 40 GB | €5.49 |\n| CX33  | 4 | 8 GB | 80 GB | €8.49 |\n| CX43  | 8 | 16 GB | 160 GB | €15.99 |\n\n*Prices as of September 2026 for Hetzner's Germany and Finland locations, excluding VAT. Hetzner raised CX prices again on 15 June 2026, so older guides quoting €3.99 for the CX23 are out of date.*",
         "The CX23 is the minimum viable spec: adequate for a single-user instance with external API inference, Telegram gateway, and moderate task volume. The CX33 at €8.49/month is the recommended tier. The 8GB RAM headroom handles Docker backend, browser automation tasks, and occasional heavy workloads without OOM pressure. Two light Hermes instances on one CX33 is feasible with careful resource limits.",
-        "Datacenter locations: Nuremberg, Falkenstein, Helsinki (EU), Hillsboro Oregon, Ashburn Virginia (US). EU datacenters suit most European users. The US locations reduce round-trip for North American users on Telegram gateway, though the difference is modest since Telegram's own servers are distributed.",
+        "Datacenter locations: Nuremberg, Falkenstein and Helsinki in the EU. Hetzner also has US locations in Hillsboro and Ashburn, but the server lines and prices there differ from the table above, so check its current price list. EU datacenters suit most European users. A US location reduces round-trip for North American users on Telegram gateway, though the difference is modest since Telegram's own servers are distributed.",
       ],
     },
     {
@@ -40,14 +43,14 @@ export const article: BlogArticle = {
     {
       heading: "Raspberry Pi: does it actually work?",
       paragraphs: [
-        "Raspberry Pi 5 (8GB): yes, with caveats. Community members have run Hermes Agent on Pi 5 for multi-week stretches using external API inference. The limitations are practical:\n\n- SD card I/O under heavy SQLite writes causes periodic hangs — use NVMe via USB or an official M.2 hat\n- Power outages corrupt the SQLite session database without a UPS\n- ARM64 support: the Docker image supports arm64, so the Docker install works\n- No useful local model inference — small quantised models (Phi-3-mini, Llama 3.2 3B) on Pi 5 run at 5-15 tokens/second on CPU alone\n\nPi is a legitimate option for a personal assistant that only hits external APIs. Not production-viable for anything where availability matters.",
+        "Raspberry Pi 5 (8GB): yes, with caveats. Community members have run Hermes Agent on Pi 5 for multi-week stretches using external API inference. The limitations are practical:\n\n- SD card I/O under heavy SQLite writes causes periodic hangs, so use NVMe via USB or an official M.2 hat\n- Power outages corrupt the SQLite session database without a UPS\n- ARM64 support: the Docker image supports arm64, so the Docker install works\n- No useful local model inference: small quantised models (Phi-3-mini, Llama 3.2 3B) on Pi 5 run at 5-15 tokens/second on CPU alone\n\nPi is a legitimate option for a personal assistant that only hits external APIs. Not production-viable for anything where availability matters.",
       ],
     },
     {
       heading: "Shared VPS vs dedicated",
       paragraphs: [
-        "Shared VPS (Hetzner CX series, DigitalOcean Basic) is the right call for Hermes Agent with external API inference. CPU is the bottleneck for Hermes orchestration and tool execution — not inference — and shared vCPU handles it without problem.",
-        "Dedicated or bare metal only makes sense if you run local Ollama inference on the same machine. Llama 3.1 70B on CPU needs 48+ GB RAM and 16+ physical cores to run at acceptable speed. That territory is far beyond the cost/use-case for most Hermes users. GPU VPS runs $200-500/month — at that price, Hivra managed hosting plus a premium API key is more economical than self-hosted GPU inference.",
+        "Shared VPS (Hetzner CX series, DigitalOcean Basic) is the right call for Hermes Agent with external API inference. CPU is the bottleneck for Hermes orchestration and tool execution (not inference), and shared vCPU handles it without problem.",
+        "Dedicated or bare metal only makes sense if you run local Ollama inference on the same machine. Llama 3.1 70B on CPU needs 48+ GB RAM and 16+ physical cores to run at acceptable speed. That territory is far beyond the cost/use-case for most Hermes users. GPU VPS runs $200-500/month, and at that price, Hivra managed hosting plus a premium API key is more economical than self-hosted GPU inference.",
       ],
     },
     {
@@ -60,7 +63,7 @@ export const article: BlogArticle = {
     {
       heading: "Storage growth and disk management",
       paragraphs: [
-        "What grows over time in `~/.hermes/`:\n- `state.db` — SQLite session database. Expect 50-200MB/year at moderate usage.\n- `sessions/` — JSONL session log files. Prune with `hermes sessions export` then delete old files.\n- `logs/` — gateway logs. Configure log rotation: `hermes config set logging.max_size_mb 100`.\n- `downloads/` — files created during tasks. Clean manually or set task-specific output directories.\n\n```bash\ndf -h                      # total disk\ndu -sh ~/.hermes/          # hermes directory\ndu -sh ~/.hermes/state.db  # session database specifically\nhermes sessions stats      # session count and estimated storage\n```",
+        "What grows over time in `~/.hermes/`:\n- `state.db`: SQLite session database. Expect 50-200MB/year at moderate usage.\n- `sessions/`: JSONL session log files. Prune with `hermes sessions export` then delete old files.\n- `logs/`: gateway logs. Configure log rotation: `hermes config set logging.max_size_mb 100`.\n- `downloads/`: files created during tasks. Clean manually or set task-specific output directories.\n\n```bash\ndf -h                      # total disk\ndu -sh ~/.hermes/          # hermes directory\ndu -sh ~/.hermes/state.db  # session database specifically\nhermes sessions stats      # session count and estimated storage\n```",
         "A 40GB disk with normal single-user usage handles 2-3 years before storage becomes a concern. If your agent runs browser automation tasks that download files, use a dedicated data directory outside `~/.hermes/` from the beginning.",
       ],
     },
@@ -86,11 +89,11 @@ export const article: BlogArticle = {
     },
     {
       q: "Does Hermes Agent support ARM64 for Raspberry Pi or ARM VPS?",
-      a: "Yes. The Docker image supports arm64 and the shell installer works on ARM Linux. Raspberry Pi 5 (8GB) has been tested by community members for multi-week runs with external API inference. Local Ollama inference on Pi is too slow for practical use — 5-15 tokens/second on CPU.",
+      a: "Yes. The Docker image supports arm64 and the shell installer works on ARM Linux. Raspberry Pi 5 (8GB) has been tested by community members for multi-week runs with external API inference. Local Ollama inference on Pi is too slow for practical use: 5-15 tokens/second on CPU.",
     },
     {
       q: "How much does storage grow over time?",
-      a: "Expect 50-200MB/year for the SQLite session database on moderate single-user usage. The sessions/ directory also grows — configure log rotation or prune old sessions. A 40GB disk handles normal single-user usage for 2-3 years.",
+      a: "Expect 50-200MB/year for the SQLite session database on moderate single-user usage. The sessions/ directory also grows, so configure log rotation or prune old sessions. A 40GB disk handles normal single-user usage for 2-3 years.",
     },
     {
       q: "Can I run multiple Hermes agents on one VPS?",

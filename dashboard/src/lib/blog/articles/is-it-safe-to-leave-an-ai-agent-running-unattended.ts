@@ -8,12 +8,14 @@ export const article: BlogArticle = {
   metaDescription:
     "Mostly yes, if you control four things: what the agent can touch, what it can spend, where it runs, and what happens when it crashes. The risk rundown.",
   publishedDate: "2026-08-04",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The scary failure is rare. The boring failure happens weekly.",
   intro:
     "Leaving an AI agent running while you sleep is safe for most workloads, but only if you have deliberately controlled four things: what the agent is allowed to touch, what it can spend, where it runs, and what happens when it dies. This article walks each risk honestly, with the mitigations that actually work.",
+  shortAnswer:
+    "Yes, for most workloads, if you control four things before you walk away: what the agent can touch, what it can spend, where it runs, and what happens when it crashes. Scope its permissions, cap spending on the AI account, run it on its own machine, and use a process supervisor to restart it.",
   sections: [
     {
       heading: "The short answer",
@@ -34,7 +36,7 @@ export const article: BlogArticle = {
       heading: "Risk 2: runaway spend",
       paragraphs: [
         "The most common unattended failure that costs real money is a loop: the agent tries something, fails, retries with a slight variation, fails again, and repeats for six hours. Each attempt is an API call. None of this requires anything malicious. It is a stuck process with a credit card.",
-        "Three controls handle it:\n\n- **Set hard spending limits on the AI account itself.** Anthropic, OpenAI, and every major provider let you cap monthly spend or set billing alerts. A hard cap turns the worst case from \"a surprising invoice\" into \"the agent stopped at your limit.\" This is the single highest-value five minutes in this article.\n- **Use subscription-based access where it fits.** Running Claude Code on a Claude subscription or Codex on a ChatGPT plan means a stuck loop hits a rate limit, not an open-ended meter.\n- **Give long-running tasks a budget in the prompt.** Telling the agent to stop and report after a set number of attempts is crude, but it works, because well-behaved agent runtimes respect it.",
+        "Three controls handle it:\n\n- **Set hard spending limits on the AI account itself.** Anthropic, OpenAI, and most other providers let you cap monthly spend or set billing alerts. A hard cap turns the worst case from \"a surprising invoice\" into \"the agent stopped at your limit.\" This is the single highest-value five minutes in this article.\n- **Use subscription-based access where it fits.** Running Claude Code on a Claude subscription or Codex on a ChatGPT plan means a stuck loop hits a rate limit, not an open-ended meter.\n- **Give long-running tasks a budget in the prompt.** Telling the agent to stop and report after a set number of attempts is crude, but it works, because well-behaved agent runtimes respect it.",
         "Note that where the agent is hosted does not save you here. Whether the process runs on your laptop, your VPS, or a managed platform, the spend flows through your AI account, so the account-level cap is the control that matters. We break down the full cost picture in [the real cost of running a persistent AI agent](/blog/cost-of-running-ai-agent).",
       ],
     },
@@ -65,14 +67,15 @@ export const article: BlogArticle = {
       heading: "Does managed hosting change the safety picture?",
       paragraphs: [
         "Partly. Be precise about which risks a hosting platform can and cannot take off your plate.",
-        "What it does handle: isolation, and the machine underneath the agent. On Hivra, every agent runs on a private VM per agent rather than your laptop or a shared container, so the boundary from risk 3 exists by default. Hivra runs that machine for you, paid plans are not paused for inactivity, and you get chat, terminal, and file access from a browser, which means the kill switch in your checklist is your phone. Know what runs inside that boundary, too. Hivra's chat runs the official [Claude Code](/agents/claude-code) and Codex CLIs with permission prompts bypassed by default, so the VM is the boundary rather than a per-command prompt; the Permissions setting on the agent's Manage tab narrows that to Limited or Read-only. [Hermes](/agents/hermes) runs from Hivra's maintained build of the open-source agent.",
-        "What it cannot handle: permissions and spend stay yours under any hosting model. Hivra is built around bring-your-own login, so your Anthropic or ChatGPT account bills you directly with zero markup, and the spending caps you set with your provider are the caps that protect you. No host can decide which credentials your agent deserves. That judgment is the part of unattended safety that never gets outsourced.",
+        "What it does handle: isolation, and the machine underneath the agent. On Hivra, every agent runs on a private VM per agent rather than your laptop or a shared container, so the boundary from risk 3 exists by default. Hivra runs that machine for you, paid plans are not paused for inactivity, and you get chat, terminal, and file access from a browser, which means you can check on the agent from your phone.",
+        "Know what runs inside that boundary, too. Hivra's chat runs the official [Claude Code](/agents/claude-code) and Codex CLIs with permission prompts bypassed by default, so the VM is the boundary rather than a per-command prompt; the Permissions setting on the agent's Manage tab narrows that to Limited or Read-only. [Hermes](/agents/hermes) runs from Hivra's maintained build of the open-source agent.",
+        "What it cannot handle: permissions and spend stay yours under any hosting model. Hivra is built around bring-your-own login, so your Anthropic or ChatGPT account bills you directly, with no Hivra markup on that usage, and the spending caps you set with your provider are the caps that protect you. No host can decide which credentials your agent deserves. That judgment is the part of unattended safety that never gets outsourced. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
       ],
     },
     {
       heading: "Try it with the boundaries already built",
       paragraphs: [
-        `If you want to run an agent unattended without assembling the isolation pieces yourself, [Hivra](/) launches Hermes, Claude Code, Codex, or Aeon on a private VM. [Plans start at ${ENTRY_PLAN_PRICE} a month](/pricing) for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. You bring your own AI login, keep your own spending limits, and can check on the agent or stop it from any browser. The permission decisions stay yours, including the Manage tab setting that decides how much a Claude Code or Codex agent may do on its computer.`,
+        `If you want to run an agent unattended without assembling the isolation pieces yourself, [Hivra](/) launches Hermes, Claude Code or Codex on a private VM. [Plans start at ${ENTRY_PLAN_PRICE} a month](/pricing) for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. You bring your own AI login, keep your own spending limits, and can check on the agent from any browser. The permission decisions stay yours, including the Manage tab setting that decides how much a Claude Code or Codex agent may do on its computer.`,
       ],
     },
   ],
@@ -99,7 +102,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does using a managed platform make unattended agents safe?",
-      a: "It helps with two of the four risks. A platform like Hivra provides isolation (a private VM per agent) and runs the machine underneath the agent for you, with paid plans that are not paused for inactivity, plus browser access that works as a kill switch from your phone. Permission scoping and spending limits remain your job under every hosting model. On Hivra, Claude Code and Codex run with permission prompts bypassed by default until you pick Limited or Read-only on the agent's Manage tab, and usage runs through your own AI accounts.",
+      a: "It helps with two of the four risks. A platform like Hivra provides isolation (a private VM per agent) and runs the machine underneath the agent for you, with paid plans that are not paused for inactivity, plus browser access so you can check on it from your phone. Permission scoping and spending limits remain your job under every hosting model. On Hivra, Claude Code and Codex run with permission prompts bypassed by default until you pick Limited or Read-only on the agent's Manage tab, and usage runs through your own AI accounts.",
     },
   ],
   relatedArticles: [

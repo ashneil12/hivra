@@ -16,6 +16,12 @@
 !/docs/litepaper
 /docs/litepaper/*
 !/docs/litepaper/index.html
+!/docs/litepaper/restricted.html
+!/docs/litepaper/restricted
+/docs/litepaper/restricted/*
+!/docs/litepaper/restricted/LITEPAPER.md
+!/docs/litepaper/restricted/WHITEPAPER.md
+!/docs/litepaper/restricted/TOKENOMICS.md
 !/docs/litepaper/litepaper.css
 !/docs/litepaper/litepaper.js
 !/docs/litepaper/experience-motion.js

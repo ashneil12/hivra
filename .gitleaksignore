@@ -6,6 +6,8 @@
 # 2026-09-24: re-pinned the two unchanged managed-Venice proxy-key fixtures in the agents route test after
 # the saved-Vault-key launch tests moved them down 57 lines, and again after the plan-limit tests moved them.
 # 2026-09-26: dropped the DemoVideoSection.tsx pin; the unused component was deleted with the homepage rebuild.
+# 2026-09-30: re-pinned the discord-client-id line in the Telegram and Discord blog post after the short answer moved it down
+# 3 lines; the flagged text is the prose step "Go to discord.com/developers/applications", not a credential.
 dashboard/auth.ts:generic-api-key:40
 dashboard/src/app/api/billing/crypto/top-up/__tests__/route.test.ts:generic-api-key:63
 dashboard/src/app/api/billing/token-holding/__tests__/route.test.ts:generic-api-key:22
@@ -40,7 +42,7 @@ dashboard/src/lib/billing/__tests__/withdraw-for-owner.test.ts:generic-api-key:3
 dashboard/src/lib/billing/__tests__/withdraw-for-owner.test.ts:generic-api-key:37
 dashboard/src/lib/billing/__tests__/withdrawal-history.test.ts:generic-api-key:120
 dashboard/src/lib/billing/__tests__/withdrawal-history.test.ts:generic-api-key:80
-dashboard/src/lib/blog/articles/hermes-agent-telegram-discord-setup.ts:discord-client-id:34
+dashboard/src/lib/blog/articles/hermes-agent-telegram-discord-setup.ts:discord-client-id:37
 dashboard/src/lib/encryption-rotation.ts:generic-api-key:26
 dashboard/src/lib/infrastructure/__tests__/first-boot-ssh.test.ts:private-key:44
 dashboard/src/lib/proxmox/__tests__/wake-admission.test.ts:generic-api-key:88
