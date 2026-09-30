@@ -69,13 +69,13 @@ export const article: BlogArticle = {
   author: "Hivra team",
   tagline: "Pro, Max 5x or Max 20x: the numbers Anthropic publishes, dated.",
   intro:
-    "Anthropic sells Claude Code inside its Pro and Max plans and publishes the limits as multiples, never as counts. This page gives the prices and multiples as read on 30 September 2026, a rule for choosing between them, the break-even against API billing, what to do at a limit, and when Anthropic's own cloud is enough.",
+    "Anthropic sells Claude Code inside its Pro and Max plans and publishes the limits as multiples and does not currently publish message or token counts. This page gives the prices and multiples as read on 30 September 2026, a rule for choosing between them, the break-even against API billing, what to do at a limit, and when Anthropic's own cloud is enough.",
   shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Anthropic publishes the gap per session, not per week, so measure with /usage. At Anthropic's ${DAY} average day, API billing beats Pro below ${proDays} active days a month.`,
   sections: [
     {
       heading: `The plans side by side, read ${READ_ON}`,
       paragraphs: [
-        `Claude Code is included in every paid Claude plan: Pro, Max, Team and Enterprise. Anthropic states the gap between plans as a multiple of Pro's usage per five-hour session, never as a count of messages or tokens. This is what ${link(S.pricing, "its pricing page")}, ${link(S.maxPlan, "the Max article")} and ${link(S.proPlan, "the Pro article")} say today.`,
+        `Claude Code is included in every paid Claude plan: Pro, Max, Team and Enterprise. Anthropic states the gap between plans as a multiple of Pro's usage per five-hour session, not as a count of messages or tokens. This is what ${link(S.pricing, "its pricing page")}, ${link(S.maxPlan, "the Max article")} and ${link(S.proPlan, "the Pro article")} say today.`,
         [
           "| | Pro | Max 5x | Max 20x |",
           "|---|---|---|---|",
@@ -107,7 +107,7 @@ export const article: BlogArticle = {
     {
       heading: "What Anthropic does not publish",
       paragraphs: [
-        `A lot of Claude plan advice online states numbers Anthropic has never given. This is what no Anthropic page states, as of ${READ_ON}:`,
+        `A lot of Claude plan advice online states numbers Anthropic does not currently publish. This is what no Anthropic page states, as of ${READ_ON}:`,
         [
           "- How many messages or tokens a five-hour window or a week holds on any plan. The pricing FAQ says there is no fixed message count.",
           `- Pro's own allowance. Only multiples of Pro are published: ${MAX5.multiplier}x and ${MAX20.multiplier}x for Max, and ${F.team.standardMultiplier}x and ${F.team.premiumMultiplier}x for Team seats.`,
@@ -214,7 +214,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What are Claude Max limits?",
-      a: `Anthropic states them as multiples of Pro's usage per five-hour session: Max 5x is five times and Max 20x twenty times. Both also have weekly limits, which apply across all models and reset at a fixed time assigned to your account. Anthropic publishes no weekly multiple, no message or token counts and no size for Pro's own allowance, so any weekly figure you see elsewhere is not an Anthropic number.`,
+      a: `Anthropic states them as multiples of Pro's usage per five-hour session: Max 5x is five times and Max 20x twenty times. Both also have weekly limits, which apply across all models and reset at a fixed time assigned to your account. Anthropic publishes no weekly multiple, no message or token counts and no size for Pro's own allowance, so a weekly multiple or hour count you see elsewhere is not one Anthropic currently publishes.`,
     },
     {
       q: "Is Max worth it for Claude Code?",

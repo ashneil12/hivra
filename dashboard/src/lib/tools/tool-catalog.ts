@@ -175,7 +175,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
     {
       q: "How much more usage does Claude Max give than Pro?",
-      a: "Anthropic says five times (Max 5x) or twenty times (Max 20x) Pro's usage per five-hour session. It publishes no weekly multiple, no token or message counts and no size for Pro's own allowance, so a weekly figure you see elsewhere is not an Anthropic number.",
+      a: "Anthropic says five times (Max 5x) or twenty times (Max 20x) Pro's usage per five-hour session. It publishes no weekly multiple, no token or message counts and no size for Pro's own allowance, so a weekly multiple or hour count you see elsewhere is not one Anthropic currently publishes.",
     },
     {
       q: "What are the Claude Code usage limits?",

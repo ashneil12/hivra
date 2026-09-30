@@ -176,6 +176,26 @@ describe("the post reads its numbers from the calculator's constants", () => {
   });
 });
 
+describe("says what Anthropic does not currently publish, not what it never published", () => {
+  // Anthropic's July 2025 weekly-limit notice gave hours-per-week estimates that
+  // were later removed, so "never" is false. "As of the read date, no Anthropic
+  // page states it" is the claim the page can back.
+  const ABSOLUTE = /\bnever (?:as a|as counts|given|published|stated)|has never (?:given|published|stated)|not an Anthropic number|any weekly figure/i;
+
+  it("makes no absolute claim about what Anthropic has or has not published", () => {
+    expect(bodyCopy).not.toMatch(ABSOLUTE);
+    expect(article.intro).toMatch(/does not currently publish message or token counts/);
+    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic does not currently publish\. This is what no Anthropic page states, as of 30 September 2026/);
+    const faq = article.faqs.find((candidate) => candidate.q === "What are Claude Max limits?");
+    expect(faq?.a).toMatch(/a weekly multiple or hour count you see elsewhere is not one Anthropic currently publishes/);
+  });
+
+  it("carries the same wording on the calculator page", () => {
+    const strings = JSON.stringify(getToolEntry("claude-code-plan-calculator"));
+    expect(strings).not.toMatch(ABSOLUTE);
+  });
+});
+
 describe("the plan changelog section", () => {
   const section = sectionByHeading("What changed and when");
   const text = section.paragraphs.join("\n");
