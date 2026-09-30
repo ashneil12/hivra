@@ -328,6 +328,39 @@ open repository dependency alerts. Production, existing agents and provider
 resources were not changed. This closes this dependency-update milestone, not the
 complete security, self-hosting or public-release gates.
 
+## Dependency security update (2026-09-30)
+
+On 2026-09-30 `npm audit --omit=dev` on the dashboard lockfile reported one
+critical, one high and two low findings: Next.js 16.3.3 (GHSA-vcvr-r3jv-pc5j,
+a remote code execution advisory for the Node `ImageResponse` in `next/og`),
+Undici 7.29.0 (several advisories fixed in 7.30.0), and DOMPurify 3.4.14 with
+posthog-js, which depends on it (GHSA-p98j-92pf-mc4p, fixed in 3.4.16).
+
+The dashboard now pins Next.js, its environment package, third-party helpers and
+ESLint configuration to `16.3.8`, Undici to `7.30.0`, and the DOMPurify override
+to `3.4.16`. After the change, `npm audit --omit=dev` on the dashboard lockfile
+returns zero findings. This is the registry's advisory result for that one
+lockfile on that date, not a complete security audit.
+
+What was and was not exposed: `ImageResponse` is called only from two image-card
+helpers, and every caller passes text from static catalogs, so no path from a
+request to the image markup was found. The code uses Undici's `Agent` and
+`fetch`, not `BalancedPool`. The bump closes the advisories without relying on
+that reading.
+
+Boundaries of this update:
+
+- The three Cloudflare worker lockfiles carry Undici 7.29.0 only as a dev-only
+  dependency of Miniflare, which pins that exact version. They are covered in
+  the worker section above and are not part of the dashboard runtime.
+- Production (`hivra.cloud`) builds from `main` and receives this update only
+  through a Promote. Merging it into `canary` does not change production.
+- GitHub Dependabot alerts and security updates are a repository setting and
+  were off when this was checked. Turning them on is an owner action, listed in
+  [the repository settings checklist](../security/REPO-SETTINGS-CHECKLIST.md) once the owner adds it.
+- `npm audit` without `--omit=dev` also reports brace-expansion advisories that
+  reach only the lint and test toolchain. They are not part of this update.
+
 ## Runtime inputs are a separate inventory
 
 The npm SBOMs above do **not** describe installed agent computers. The observed
