@@ -67,6 +67,29 @@ export const BANNED_PUBLIC_CLAIMS: ReadonlyArray<readonly [string, RegExp]> = [
     "own-server location advice that includes Hermes",
     /^(?![\s\S]*\b(?:OpenClaw|Claude Code|Codex|Agent Zero)\b)[\s\S]*\bown Hetzner Cloud project\b[\s\S]*\blocation\b/i,
   ],
+  // Added with the 2026-09-30 copy audit (F-15). Nothing measured backs an
+  // hour count for setting up or keeping a server running, and these pages
+  // gave three different answers for the same job (4-8, 6-8 and 2-8+ hours).
+  // The hosting cost calculator at /tools lets readers enter their own hours
+  // and rate, so no page states a figure for them.
+  [
+    "invented hours to set up or keep a server running",
+    /\b\d+\s*(?:-|–|to)\s*\d+\+?\s*(?:hours?|hrs?)\b|\b\d+\+?\s*(?:hours?|hrs?)\b[^.!?]*\b(?:of|for) (?:setup|set-up|upkeep|maintenance)\b|\b(?:an? hour|\d+ hours?) (?:per|a|each|\/) ?month\b|\bmulti-day project\b|\b(?:full|whole) (?:weekend|afternoon)\b|\bspend (?:a|the) weekend\b|\b(?:the|a) weekend (?:you|setting|configuring|of)\b/i,
+  ],
+  [
+    "invented hourly-rate arithmetic",
+    /\$\s?\d+\s*(?:\/|an |per )\s?(?:hour|hr)\b|\beffective rate\b|\btime factored in\b/i,
+  ],
+  // Added with the same audit (F-24): the body text says memory stays on the
+  // agent's server only "for as long as the agent exists", that backups are not
+  // guaranteed, that results vary on sites with strong bot protection, and that
+  // paid plans are the ones set up for you.
+  ["memory kept forever or total recall", /\bforever\b|\bremembers everything\b|\bevery lesson retained\b/i],
+  ["any website promise", /\b(?:interact with|use|visit|browse|access) any (?:web ?site|site)s?\b/i],
+  ["nothing-to-set-up promise", /\bnothing to set up\b|\beverything pre-configured\b/i],
+  // Added with the same audit (F-19): the owner's copy rule is no em or en
+  // dashes, and /tools, /agents and the blog already enforce it.
+  ["em or en dash", /[–—]/],
 ];
 
 export function sentences(text: string): string[] {
@@ -156,6 +179,30 @@ export const KNOWN_FALSE_CLAIMS = [
   "Send results to Telegram, email, Slack, or a webhook",
   "7-day money-back guarantee on paid plans.",
   "Yes (7-day)",
+  // Invented hour and dollar figures these pages carried until the 2026-09-30
+  // copy audit (F-15).
+  "Initial setup: 4-8 hours for a developer who knows Linux. At $50/hour effective rate, that is $200-400 of time just to get started.",
+  "Ongoing maintenance: budget 1-2 hours per month minimum \u2014 Hermes updates, Docker daemon issues, certificate renewals, dependency conflicts.",
+  "Total real cost of self-hosting for one year at CX23 pricing, with time factored in: roughly $950-1,400 against about €66 in raw server fees.",
+  "Setting up a Hermes agent on a raw VPS takes 6-8 hours the first time.",
+  "Setup takes 6-8 hours for someone comfortable with Linux.",
+  "Over a year: 15-20 hours. At $50/hour: $750-1000.",
+  "6–8 hours, by our estimate",
+  "2–8+ hours for alternatives",
+  "For everyone else, it is a multi-day project.",
+  "It can easily take a full weekend.",
+  "None of this is extraordinarily difficult if you know Linux, but it is a full afternoon of work minimum.",
+  "You would spend a weekend setting it up.",
+  "you still need to factor in 6-8 hours of setup time and ongoing maintenance.",
+  // Overclaims the features pages carried until the same audit (F-24).
+  "Your agent remembers. Every session. Forever.",
+  "Your agent remembers everything.",
+  "Every session. Every project. Every lesson retained.",
+  "Everything pre-configured. Nothing to set up.",
+  "Your agent can browse, click, fill forms, extract data, and interact with any website \u2014 24 hours a day, from a stable cloud IP.",
+  // Em and en dashes (F-19).
+  "You are not saving money with Hivra \u2014 you are saving time.",
+  "6\u20138 hours",
 ];
 
 // True copy the scanner must leave alone.
@@ -165,7 +212,6 @@ export const KNOWN_TRUE_CLAIMS = [
   "Hosting starts at $9.99/month for 2 vCPU and 4 GB RAM.",
   "Backup coverage depends on the agent and provider and is not guaranteed.",
   "Hivra does not coordinate work between them today; built-in orchestration is planned, not shipped.",
-  "Initial setup: 4-8 hours for a developer who knows Linux.",
   "Runs at 7am, arrives in Telegram as a formatted message by 7:15am.",
   "Hosting is $9.99/mo for 2 vCPU and 4 GB RAM, or $19.99/mo for 4 vCPU and 8 GB RAM.",
   "The $19.99/mo size (4 vCPU, 8 GB RAM) adds room for parallel work.",

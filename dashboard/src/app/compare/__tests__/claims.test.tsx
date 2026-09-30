@@ -109,6 +109,37 @@ describe("comparison page claims", () => {
     }
   });
 
+  // F-15: nothing measured backs an hour count or an hourly rate for setting up
+  // a server, and the pages used to give three different answers. The reader's
+  // own hours go into the calculator instead.
+  it("states no setup-hour or hourly-rate figure for self-hosting, and sends readers to the calculator", async () => {
+    for (const slug of ["vs-self-hosted", "ai-agent-hosting-alternatives"]) {
+      const { container } = await renderComparison(slug);
+      const text = container.textContent ?? "";
+      expect(text).not.toMatch(/\d+\s*(?:-|\u2013)\s*\d+\+?\s*hours?|\$\d+\s*\/\s*hour|by our estimate|multi-day project/i);
+      expect(container.querySelector('a[href="/tools/ai-agent-hosting-cost-calculator"]')).not.toBeNull();
+      cleanup();
+    }
+  });
+
+  // F-29: the options table must not say something about every alternative that
+  // the page's own sections contradict (OpenClaw has its own memory, browser
+  // tools and scheduler), and must not state other providers' guarantees.
+  it("scopes the alternatives table to the options the page covers", async () => {
+    const { container } = await renderComparison("ai-agent-hosting-alternatives");
+    const text = container.textContent ?? "";
+    expect(text).not.toMatch(/None in any alternative|on all alternatives|for alternatives\b/);
+    expect(text).toMatch(/None in the options above/);
+    expect(text).toMatch(/Varies by provider/);
+    expect(text).toMatch(/OpenClaw has its own scheduler/);
+    expect(container.querySelector("h1")?.textContent).not.toMatch(/\bEvery option\b/i);
+    cleanup();
+    // The index describes the page the same way: the main options, not every one.
+    const index = render(<ComparePage />);
+    expect(index.container.textContent).not.toMatch(/here is every option/i);
+    expect(index.container.textContent).toMatch(/here are the main options for hosting an AI agent/);
+  });
+
   it("does not say Hivra cannot run OpenClaw, or that it imports OpenClaw itself", async () => {
     const text = await comparisonText("openclaw-to-hermes");
     expect(text).toMatch(/Hivra can host OpenClaw itself/);
