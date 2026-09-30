@@ -113,11 +113,30 @@ While the policy lists a country, dashboard components hide promotions until
 `GET /api/token-geo` answers, and keep them hidden if it fails; the card path
 is always there. With the empty list no component asks.
 
+## The static documents
+
+The litepaper, white paper and `TOKENOMICS.md` are served from `public/`, so
+the app cannot gate them. For a listed country `dashboard/next.config.ts`
+rewrites these paths, before the filesystem is checked, to token-free copies:
+
+| Path | Listed country gets |
+|---|---|
+| `/docs/litepaper/index.html` (and `/docs/litepaper`) | `docs/litepaper/restricted.html`: no economy chapter, no Tokenomics button, no link into either |
+| `/LITEPAPER.md` | the same text without the economy section |
+| `/WHITEPAPER.md` | without sections 7 and 8 and every other line about the token |
+| `/TOKENOMICS.md` | a two-line notice |
+
+Every copy is cut from the approved source by `docs/litepaper/restrict.py` and
+the build fails if one still mentions the token (`test_restricted.py`). The
+rewrite uses the same `x-vercel-ip-country` header as the gate and reads the
+same list, so one edit covers both. Checked locally against a real Next server:
+a `GB` request gets the token-free files and every other country, or none,
+gets the full ones. It cannot be checked from outside the UK.
+
 ## Not covered
 
-- The static litepaper and white paper (`/docs/litepaper/…`), `/TOKENOMICS.md`
-  and other files served straight from `public/` bypass the app and are
-  unchanged. So are emails, X posts and anything posted off-site.
+- Emails, X posts and anything posted off-site.
+- Search-engine and archive copies of the documents made before the change.
 - Agent wallets (the user's own Bankr account) and `POST /api/billing/bankr/wallet`
   (provisions a deposit address; every payment that uses it is gated).
 - **The 1-token base tier is not gated.** It has no qualification record, so
