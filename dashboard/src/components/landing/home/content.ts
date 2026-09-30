@@ -34,12 +34,10 @@ export function computerLaunchHref(profile: "ubuntu-desktop" | "windows" | "omar
 export const GUARANTEE_LINE = `${MONEY_BACK_GUARANTEE}.`;
 
 export const HERO = {
-  eyebrow: "Hermes OS is now Hivra",
-  eyebrowHref: "/why-hivra/evolution",
   titleLead: "Your agent needs a",
   titleWord: "computer.",
   titleTail: "It doesn't need yours.",
-  subhead: `AI agents like Claude Code and Codex can do real work for you. Hivra gives each one a private computer in the cloud. It keeps working when you close your laptop, and you decide what it can reach. From ${ENTRY_PLAN_PRICE} a month.`,
+  subhead: `AI agents like Claude Code and Codex can do real work for you. Hivra gives each one a private computer in the cloud. It keeps working when you close your laptop, and you decide what it can reach.`,
   primary: "Launch an agent",
   secondary: "Or start with a computer",
   proof: [

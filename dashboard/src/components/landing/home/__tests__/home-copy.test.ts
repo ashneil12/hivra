@@ -74,7 +74,6 @@ describe("homepage copy", () => {
     expect(PRICING.cloud.href).toBe("/get-started?plan=operator");
     expect(PRICING.cloud.moreHref).toBe("/get-started?plan=fleet");
     expect(GUARANTEE_LINE).toBe(`${MONEY_BACK_GUARANTEE}.`);
-    expect(HERO.subhead).toContain(`From ${ENTRY_PLAN_PRICE} a month.`);
     expect(CLOSING.body).toContain(MONEY_BACK_GUARANTEE);
     expect(STICKY.note).toBe(`From ${ENTRY_PLAN_PRICE} a month`);
   });

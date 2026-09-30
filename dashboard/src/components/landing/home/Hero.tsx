@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Code2, KeyRound, Server } from "lucide-react";
 import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
-import { AGENT_LAUNCH_HREF, GUARANTEE_LINE, HERO } from "./content";
+import { AGENT_LAUNCH_HREF, HERO } from "./content";
 import HeroScene from "./HeroScene";
 import styles from "./home.module.css";
 import { glossify } from "@/components/gloss/glossify";
@@ -20,11 +20,6 @@ export default function Hero() {
       <div className={styles.heroBackdrop} aria-hidden="true" />
       <div className={styles.heroGrid}>
         <div className={styles.heroCopy}>
-          <Link className={styles.heroEyebrow} href={HERO.eyebrowHref}>
-            <i aria-hidden="true" />
-            {HERO.eyebrow}
-            <ArrowRight size={14} aria-hidden="true" />
-          </Link>
           <h1 id="home-title" className={styles.heroTitle}>
             {HERO.titleLead} <em className={styles.heroWord}>{HERO.titleWord}</em>{" "}
             <span className={styles.heroTail}>{HERO.titleTail}</span>
@@ -40,7 +35,6 @@ export default function Hero() {
               <ArrowRight size={16} aria-hidden="true" />
             </a>
           </div>
-          <p className={styles.guarantee}>{GUARANTEE_LINE}</p>
           <ul className={styles.heroProof} aria-label="What you bring and where it runs">
             {HERO.proof.map((point, index) => {
               const Icon = PROOF_ICONS[index];
