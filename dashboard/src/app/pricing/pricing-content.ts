@@ -48,7 +48,7 @@ export const PRICING_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Can I self-host Hivra for free?",
-    a: "Yes. Hivra is open source at github.com/ashneil12/hivra, which means anyone can read the code, and you can run it yourself. You supply the server and pay for it, and for your AI usage.",
+    a: "Yes. Hivra is open source at github.com/ashneil12/hivra, and you can run it yourself. You supply the server and pay for it, and for your AI usage.",
   },
   {
     q: "Is a hosted computer paused when I am not using it?",
@@ -56,7 +56,7 @@ export const PRICING_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Can I use my own model key or login?",
-    a: "Yes. Bring your own AI key (an API key, a password that lets a program use an AI), or sign in with your own account for Claude Code and Codex. Your AI company bills you for what you use.",
+    a: "Yes. Bring your own AI key, or sign in with your own account for Claude Code and Codex. Your AI company bills you for what you use.",
   },
   {
     q: "Is there a money-back guarantee?",

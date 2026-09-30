@@ -12,6 +12,7 @@ import { MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import pageStyles from "./pricing.module.css";
+import { glossify } from "@/components/gloss/glossify";
 import {
   HOSTED_SIZES,
   PRICING_DESCRIPTION,
@@ -105,7 +106,7 @@ export default function PricingPage() {
                   <p className={cardStyles.machinePrice}>
                     <strong>{size.price}</strong>
                     <span className={pageStyles.priceFor}>
-                      a month for {size.cpu} vCPU and {size.ramGb} GB of RAM
+                      {glossify(`a month for ${size.cpu} vCPU and ${size.ramGb} GB of RAM`)}
                     </span>
                   </p>
                   <p className={cardStyles.description}>{size.body}</p>
@@ -123,7 +124,6 @@ export default function PricingPage() {
               <p>
                 Larger sizes are planned. The proposed sizes are in the <Link href="/#pricing">pricing preview</Link>.
               </p>
-              <p>A vCPU is one slice of a processor, and RAM is the computer&apos;s working memory.</p>
             </div>
           </section>
         </div>

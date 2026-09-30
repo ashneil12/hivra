@@ -4,7 +4,7 @@
 
 ## There's already a token, and it already does something
 
-$HermesOS launched with the original platform, before Hivra had a name. Hold it and you get access to compute, which means computing power for your agents and computers. That's live now, and it's how a real share of the people here already pay.
+$HermesOS launched with the original platform, before Hivra had a name. Hold it and you get access to compute. That's live now, and it's how a real share of the people here already pay.
 
 **The amount you need is fixed when your holding first qualifies.** A price fall doesn't take away access you already have, as long as you keep holding it. Nobody gets downgraded by the market.
 
@@ -14,11 +14,11 @@ Holding is one way to qualify for compute. You can also pay through ordinary pay
 
 ## The migration
 
-$HIVRA is the proposed new token. It would live on Base (a blockchain) and launch through Bankr, a service that launches tokens.
+$HIVRA is the proposed new token. It would live on Base and launch through Bankr.
 
 The proposed route is an active claim, which means you choose to convert. New tokens aren't sent automatically to every wallet that holds the old one.
 
-The claim would sell your old tokens into their existing trading pool (a pool of tokens and ETH that people trade against) and use the ETH it gets to buy $HIVRA from the new pool. That way the value moves across instead of being left behind. Bankr would run the conversion. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.
+The claim would sell your old tokens into their existing trading pool and use the ETH it gets to buy $HIVRA from the new pool. That way the value moves across instead of being left behind. Bankr would run the conversion. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.
 
 **Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new amounts run side by side for people who already have access, and the final terms will set out exactly who is covered and how it carries over. Once $HIVRA launches, new users hold and pay with $HIVRA.
 
@@ -26,7 +26,7 @@ Keeping your access and converting your tokens are separate decisions.
 
 ## What it's for
 
-One token that works across every part of this, instead of fifteen separate paywalls. Each use still has to earn its place. Where a card or a stablecoin (a token pegged to the dollar) does the job better, we use a card or a stablecoin.
+One token that works across every part of this, instead of fifteen separate paywalls. Each use still has to earn its place. Where a card or a stablecoin does the job better, we use a card or a stablecoin.
 
 Here's the list.
 
@@ -38,9 +38,9 @@ Here's the list.
 
 **Reserved capacity.** There's a hard limit on how many computers we can run, because hardware is finite, not because somebody printed a number on a chart. Reserved room and priority placement are limited by that.
 
-**Containment bounties.** A bounty is a reward for finding a problem. Here, a pool of money sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
+**Containment bounties.** A reward pool sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
 
-Nearly all the money in AI security rewards today goes to the AI itself: tricking it with hidden orders (prompt injection), getting it to ignore its rules (jailbreaks), or slipping past its safety filters. That's good work and it's well funded, but it isn't the only place things break. Almost nobody is paying people to break out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
+Nearly all the money in AI security rewards today goes to the AI itself: prompt injection, jailbreaks and slipping past its safety filters. That's good work and it's well funded, but it isn't the only place things break. Almost nobody is paying people to break out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
 
 We're also the right people to fund it, because the test happens on our own platform. A researcher gets a real, approved Agent Computer instead of a description of a target, and the activity record means the argument is about the finding, not about whether anyone can repeat it.
 
@@ -48,7 +48,7 @@ The public record shows what's covered, the reward, how long it's been open, who
 
 **Certification bonds.** A publisher who gets a Seal badge puts money behind the claim, like a deposit. If someone proves the claim wrong within the terms, part of that deposit pays for the finding. Nothing grows just from sitting there. It only moves when a failure has been verified. The point is to make a security claim cost something when it's wrong.
 
-**Threat report payouts.** Find a hacked add-on, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
+**Threat report payouts.** Find a hacked MCP server, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
 
 **Publisher payouts.** Exchange pays the people who build and look after what's listed on it. It also keeps track of versions and verified names, and lets bad ones be pulled back.
 
@@ -76,16 +76,16 @@ Fee amounts, spending rules, wallets and who can approve payments get published 
 
 ## Rules for the token
 
-**No staking or yield.** Staking is locking tokens up to earn more. Here, holding or locking doesn't earn more tokens, a return, or a share of profits.
+**No staking or yield.** Holding or locking doesn't earn more tokens, a return, or a share of profits.
 
 **No time locks.** A holding period doesn't earn a benefit. Any certification deposit needs terms consistent with that.
 
 **No buying extra authority.** A balance can't get you wider logins, another person's computer, or a pass from the steps taken when something goes wrong. A token vote can't weaken those controls either.
 
-**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting (the schedule it's released on) get published before launch.
+**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.
 
 **No company ownership.** Holding the token isn't owning Hivra.
 
-**No manufactured activity.** No wash trading (fake trades made to look busy), no circular treasury transactions, no rewards designed to make a chart look busy.
+**No manufactured activity.** No wash trading, no circular treasury transactions, no rewards designed to make a chart look busy.
 
 ---

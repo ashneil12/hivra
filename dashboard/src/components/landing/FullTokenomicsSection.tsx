@@ -4,6 +4,7 @@ import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-re
 import { getTokenPhaseCopy, type TokenomicsPhaseCopy } from "@/lib/token-phase-copy";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
+import { glossify } from "@/components/gloss/glossify";
 
 /** Set only when the token geo-policy blocks this viewer. */
 export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
@@ -71,20 +72,20 @@ export default function FullTokenomicsSection({
       <article className={styles.migration}>
         <span className={styles.eyebrow}>Proposed migration</span>
         <h3>Keeping access and converting tokens are separate decisions.</h3>
-        <p>{copy.migrationParagraphs[0]}</p>
+        <p>{glossify(copy.migrationParagraphs[0], { token: true })}</p>
         <ol className={styles.claimFlow} aria-label="Proposed claim flow"><li><span>01</span>$HermesOS</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>ETH proceeds</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>$HIVRA</li></ol>
-        <p>{copy.migrationParagraphs[1]}</p>
+        <p>{glossify(copy.migrationParagraphs[1], { token: true })}</p>
       </article>
     </div>
 
     <div className={styles.proposalNote}><span>What comes next</span><p>The migration, new uses and treasury plans are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.</p></div>
-    <div className={styles.uses}>{USES.map(({ name, text }, index) => <article key={name}><span>{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><p>{text}</p></article>)}</div>
+    <div className={styles.uses}>{USES.map(({ name, text }, index) => <article key={name}><span>{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><p>{glossify(text, { token: true })}</p></article>)}</div>
 
     <div className={styles.treasury}>
       <div><span className={styles.eyebrow}>The proposed treasury</span><h3>An operating fund.<br />{" "}Its job is to spend.</h3></div>
       <div><p>Trading fees and platform revenue would fund maintenance, independent audits, sponsored compute and security bounties. Contributors choose stablecoin or $HIVRA at equivalent value.</p><p>The treasury would sell to cover bills and contributor payments, and buy only when the $HIVRA it holds falls below what contributors have chosen to be paid in $HIVRA. Purchases, sales and payments would all be published, with what each one funded. Tokens held in the treasury aren&apos;t burned. They get paid out again.</p><p>No price target, holder payout or claim on revenue. No fixed share of revenue committed to buying tokens.</p></div>
     </div>
     <div className={styles.rules}><span>No staking or yield.</span><span>No company ownership.</span><span>No buying extra authority.</span></div>
-    <div className={styles.economyEnding}><p>No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting (the schedule it&apos;s released on) get published before launch.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+    <div className={styles.economyEnding}><p>No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
   </section>;
 }

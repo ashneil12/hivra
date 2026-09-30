@@ -56,7 +56,7 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
     "The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.",
     "Once $HIVRA launches, new users hold and pay with $HIVRA.",
     "Nothing here is an offer or an inducement to buy any asset.",
-    "The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting (the schedule it's released on) get published before launch.",
+    "The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.",
   ]) {
     expect(litepaper).toContain(sentence);
     expect(container.textContent).toContain(sentence);

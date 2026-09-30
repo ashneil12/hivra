@@ -4,6 +4,7 @@ import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
 import { AGENT_LAUNCH_HREF, GUARANTEE_LINE, HERO } from "./content";
 import HeroScene from "./HeroScene";
 import styles from "./home.module.css";
+import { glossify } from "@/components/gloss/glossify";
 
 const PROOF_ICONS = [KeyRound, Server, Code2];
 
@@ -28,7 +29,7 @@ export default function Hero() {
             {HERO.titleLead} <em className={styles.heroWord}>{HERO.titleWord}</em>{" "}
             <span className={styles.heroTail}>{HERO.titleTail}</span>
           </h1>
-          <p className={styles.heroSubhead}>{HERO.subhead}</p>
+          <p className={styles.heroSubhead}>{glossify(HERO.subhead)}</p>
           <div className={styles.heroActions}>
             <Link id="hero-primary-cta" href={AGENT_LAUNCH_HREF} className={styles.primaryCta} data-cta="hero-primary">
               <span>{HERO.primary}</span>
@@ -46,7 +47,7 @@ export default function Hero() {
               return (
                 <li key={point}>
                   <Icon size={14} aria-hidden="true" />
-                  {point}
+                  {glossify(point)}
                 </li>
               );
             })}

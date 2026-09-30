@@ -10,6 +10,7 @@ are separate assets and are never rewritten by this script.
 import argparse
 import html
 import hashlib
+import json
 import math
 import re
 import struct
@@ -181,6 +182,51 @@ def table(block):
     return '<div class="fit-table" role="region" aria-label="Where each option stands" tabindex="0"><table><thead><tr>{}</tr></thead><tbody>{}</tbody></table></div>'.format(head, rows_html)
 
 
+GLOSSARY = json.loads((REPO / "dashboard/src/lib/glossary.json").read_text(encoding="utf-8"))
+# Token-facing tooltips are part of the token copy and wait for its review.
+GLOSS_TOKEN_TERMS = True
+GLOSS_SKIP = {"a", "button", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code"}
+
+
+def glossify(markup, seen):
+    """Wrap the first use of each glossary term in a hover and focus tooltip.
+
+    The definition lives in data-tip, so it is never reader text: the approved
+    wording is unchanged, and the Markdown file stays plain. Links and headings
+    are skipped. `seen` holds the terms already explained in this stretch of copy."""
+    entries = [(entry, re.compile(r"\b(?:" + entry["pattern"] + r")\b",
+                                  0 if entry.get("caseSensitive") else re.IGNORECASE))
+               for entry in GLOSSARY if GLOSS_TOKEN_TERMS or not entry.get("token")]
+    parts, depth = re.split(r"(<[^>]+>)", markup), 0
+    for index, part in enumerate(parts):
+        if part.startswith("<"):
+            tag = re.match(r"</?([a-zA-Z0-9]+)", part)
+            if tag and tag[1].lower() in GLOSS_SKIP and not part.endswith("/>"):
+                depth += -1 if part.startswith("</") else 1
+            continue
+        if depth > 0 or not part.strip():
+            continue
+        hits = []
+        for entry, pattern in entries:
+            if entry["key"] in seen:
+                continue
+            match = pattern.search(part)
+            if match and not any(match.start() < end and start < match.end() for start, end, _, _ in hits):
+                hits.append((match.start(), match.end(), entry, match[0]))
+        if not hits:
+            continue
+        out, cursor = [], 0
+        for start, end, entry, text in sorted(hits, key=lambda hit: hit[0]):
+            seen.add(entry["key"])
+            out.append(part[cursor:start])
+            out.append('<span class="gloss" tabindex="0" aria-description="{0}" data-tip="{0}">{1}</span>'.format(
+                escape(entry["tip"], quote=True), text))
+            cursor = end
+        out.append(part[cursor:])
+        parts[index] = "".join(out)
+    return "".join(parts)
+
+
 def blocks(value):
     rendered = []
     for block in re.split(r"\n\s*\n", value.strip()):
@@ -199,7 +245,7 @@ def blocks(value):
             rendered.append("<pre>" + escape(block.strip("`\n")) + "</pre>")
         else:
             rendered.append("<p>" + inline(block) + "</p>")
-    return "\n".join(rendered)
+    return glossify("\n".join(rendered), set())
 
 
 def split_sub(value):
@@ -380,8 +426,8 @@ def build_page():
     before_quote, quote_and_after = protection.split('\n\n> ', 1)
     quote, after_quote = quote_and_after.split('\n\n', 1)
     problem_paragraphs = problem.split('\n\n')
-    problem_opening = '\n\n'.join(problem_paragraphs[:4])
-    problem_context = '\n\n'.join(problem_paragraphs[4:])
+    problem_opening = '\n\n'.join(problem_paragraphs[:3])
+    problem_context = '\n\n'.join(problem_paragraphs[3:])
     chapter_links = [('opportunity', 'The problem'), ('threat', 'Not a future problem'), ('fit', 'Where it fits'), ('platform', 'Open source'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
     index_links = ''.join(f'<a href="#{target}"><span class="index-number">{i+1:02d}</span><span>{label}</span>{explore_arrow}</a>' for i, (target, label) in enumerate(chapter_links))
     share_width, share_height = png_size(OUTPUT.parent / SHARE_IMAGE)

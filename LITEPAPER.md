@@ -12,8 +12,6 @@ Give it room to work. Decide what it can reach.
 
 AI agents are becoming computer users.
 
-An AI agent is an AI that does jobs for you instead of just chatting. It uses a computer the way you would, and it runs on an AI model, the "brain" behind tools like Claude and ChatGPT.
-
 They type commands, read through code, install software, browse the web, use accounts you're signed into, write and run code, and send messages. They keep working while you're somewhere else.
 
 And most of them run on your computer. The same machine that holds your photos, your messages, your passwords, your secret keys, your work and every account you're signed into.
@@ -52,11 +50,11 @@ You don't have to believe AI is conscious, or that it secretly wants anything. J
 
 AI is already finding and using real security holes.
 
-Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found a hole an attacker could use in SQLite, a database that runs almost everywhere, before it shipped. The SQLite team's own automatic testing had missed it.
+Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found a hole an attacker could use in SQLite before it shipped. The SQLite team's own automatic testing had missed it.
 
-[XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) agent reached number one on the US leaderboard at HackerOne, a site where companies pay people to find security holes, in June 2025. It finished ahead of every human on it.
+[XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) agent reached number one on HackerOne's US leaderboard in June 2025. It finished ahead of every human on it.
 
-Google's security team has [caught a hacker](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a brand-new hole nobody knew about (a zero-day) that it believes was built with AI.
+Google's security team has [caught a hacker](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day it believes was built with AI.
 
 OpenAI's Astra report rates one of its models at its "Critical" level for cybersecurity. In tests run by experts, it built a working attack that broke out of a locked-down web browser, and another that started from an ordinary user account and ended up in full control of the computer. Those were research conditions, and it's OpenAI's own report. [Read it](https://openai.com/index/path-to-astra/).
 
@@ -92,9 +90,9 @@ They need a computer that stays on. Today there are three places to get one.
 
 **The maker's computer.** Muse and Grok Bot run on computers their companies provide. They stay on, but you get one company's agent, running on that company's AI.
 
-**A hosted agent computer.** Services that rent your agent a computer in the cloud, which just means one that lives in a data centre instead of on your desk. You pick the agent, but you can't read their code or run the service yourself.
+**A hosted agent computer.** Services that rent your agent a computer in the cloud. You pick the agent, but you can't read their code or run the service yourself.
 
-Hivra is the one you can check. Every line of the platform is open, which means anyone can read the code and see how it handles your access. You can also run the whole thing on your own computer or server.
+Hivra is the one you can check. Every line of the platform is open, so you can see how it handles your access. You can also run the whole thing on your own computer or server.
 
 And it's a full computer. Launch Linux, Windows or Omarchy on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. Your agent gets to use a computer like a person does, without you handing over your own.
 
@@ -122,7 +120,7 @@ If you can pick an agent and sign in to it, you can launch one.
 
 ## Open source. Yours to run.
 
-Every line of Hivra is open source, which means anyone can read the code. Read it, change it, run it yourself, host it for your clients, or copy it and go your own way if we make a call you disagree with.
+Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients, or copy it and go your own way if we make a call you disagree with.
 
 This software sits between increasingly capable agents and the things you care about. You shouldn't have to take our word for what it does there.
 
@@ -164,15 +162,15 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 Claude Code, Codex, Hermes, OpenClaw, Agent Zero or DeepSeek. Pick one, sign in the way it normally does, and it gets a machine of its own.
 
-Chat with it in its chat window, type commands in its text window (the terminal), or switch between the two. Close the laptop and pick it up from your phone.
+Chat with it in its chat window, work in its terminal, or switch between the two. Close the laptop and pick it up from your phone.
 
 ### Launch a computer
 
-Ubuntu, Windows or Omarchy. (Ubuntu and Omarchy are free versions of Linux.) A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
+Ubuntu, Windows or Omarchy. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
 
 Keep your coding tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
 
-**macOS (Apple's system) and custom images (your own ready-made setups) are coming.**
+**macOS and custom images are coming.**
 
 ### Keep several running
 
@@ -207,7 +205,7 @@ Moving work off your laptop should make your day easier.
 
 ### Come back to it
 
-Files, tools and settings stay put. Closing the browser only closes your view. Take a snapshot (a saved copy of the whole computer) before a risky change, and restore it if it goes badly.
+Files, tools and settings stay put. Closing the browser only closes your view. Take a snapshot before a risky change, and restore it if it goes badly.
 
 ### Settle in
 
@@ -219,7 +217,7 @@ See what the agent did, what it asked you to approve and what it produced. Hivra
 
 ### Know what has access
 
-See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine (a whole pretend computer of its own) or a container (a lighter box that shares more with the machine under it), because they don't protect you the same way.
+See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine or a container, because they don't protect you the same way.
 
 ---
 
@@ -269,7 +267,7 @@ With Gate, the agent asks for the refund instead. Gate checks who's asking, the 
 
 **Exchange.** *Know what you're installing.*
 
-A store for agents, tools, add-ons that give agents new skills (MCP servers), ready-made computer setups and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
+A store for agents, tools, MCP servers, ready-made computer setups and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
 
 If an update suddenly wants your email, that's a new decision you make, not a silent change. People who publish get a verified name, version tracking, a way to pull something back, and payment.
 
@@ -279,13 +277,13 @@ If an update suddenly wants your email, that's a new decision you make, not a si
 
 Attack your own agents and their tools on purpose, in a safe test area: booby-trapped documents, fake approvals, stolen logins, spending that won't stop.
 
-The report shows what the agent tried, what stopped it and where the controls failed, with a signed result (a stamp that shows it's real) for the exact version you tested.
+The report shows what the agent tried, what stopped it and where the controls failed, with a signed result for the exact version you tested.
 
 *Related: Challenges, Seal, Rescue.*
 
 **Signal.** *Share a finding before it catches someone else.*
 
-When someone finds a hacked add-on or a software package that steals files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
+When someone finds a hacked MCP server or a software package that steals files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
 
 You pick the sources you trust and what they can trigger: an alert, a suspended account, a tool locked away until it's checked. A feed can never install software on your machines.
 
@@ -399,7 +397,7 @@ We're not putting dates on the map. AI speeds up building, but it doesn't speed 
 
 ### There's already a token, and it already does something
 
-$HermesOS launched with the original platform, before Hivra had a name. Hold it and you get access to compute, which means computing power for your agents and computers. That's live now, and it's how a real share of the people here already pay.
+$HermesOS launched with the original platform, before Hivra had a name. Hold it and you get access to compute. That's live now, and it's how a real share of the people here already pay.
 
 **The amount you need is fixed when your holding first qualifies.** A price fall doesn't take away access you already have, as long as you keep holding it. Nobody gets downgraded by the market.
 
@@ -409,11 +407,11 @@ Holding is one way to qualify for compute. You can also pay through ordinary pay
 
 ### The migration
 
-$HIVRA is the proposed new token. It would live on Base (a blockchain) and launch through Bankr, a service that launches tokens.
+$HIVRA is the proposed new token. It would live on Base and launch through Bankr.
 
 The proposed route is an active claim, which means you choose to convert. New tokens aren't sent automatically to every wallet that holds the old one.
 
-The claim would sell your old tokens into their existing trading pool (a pool of tokens and ETH that people trade against) and use the ETH it gets to buy $HIVRA from the new pool. That way the value moves across instead of being left behind. Bankr would run the conversion. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.
+The claim would sell your old tokens into their existing trading pool and use the ETH it gets to buy $HIVRA from the new pool. That way the value moves across instead of being left behind. Bankr would run the conversion. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.
 
 **Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new amounts run side by side for people who already have access, and the final terms will set out exactly who is covered and how it carries over. Once $HIVRA launches, new users hold and pay with $HIVRA.
 
@@ -421,7 +419,7 @@ Keeping your access and converting your tokens are separate decisions.
 
 ### What it's for
 
-One token that works across every part of this, instead of fifteen separate paywalls. Each use still has to earn its place. Where a card or a stablecoin (a token pegged to the dollar) does the job better, we use a card or a stablecoin.
+One token that works across every part of this, instead of fifteen separate paywalls. Each use still has to earn its place. Where a card or a stablecoin does the job better, we use a card or a stablecoin.
 
 Here's the list.
 
@@ -433,9 +431,9 @@ Here's the list.
 
 **Reserved capacity.** There's a hard limit on how many computers we can run, because hardware is finite, not because somebody printed a number on a chart. Reserved room and priority placement are limited by that.
 
-**Containment bounties.** A bounty is a reward for finding a problem. Here, a pool of money sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
+**Containment bounties.** A reward pool sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
 
-Nearly all the money in AI security rewards today goes to the AI itself: tricking it with hidden orders (prompt injection), getting it to ignore its rules (jailbreaks), or slipping past its safety filters. That's good work and it's well funded, but it isn't the only place things break. Almost nobody is paying people to break out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
+Nearly all the money in AI security rewards today goes to the AI itself: prompt injection, jailbreaks and slipping past its safety filters. That's good work and it's well funded, but it isn't the only place things break. Almost nobody is paying people to break out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
 
 We're also the right people to fund it, because the test happens on our own platform. A researcher gets a real, approved Agent Computer instead of a description of a target, and the activity record means the argument is about the finding, not about whether anyone can repeat it.
 
@@ -443,7 +441,7 @@ The public record shows what's covered, the reward, how long it's been open, who
 
 **Certification bonds.** A publisher who gets a Seal badge puts money behind the claim, like a deposit. If someone proves the claim wrong within the terms, part of that deposit pays for the finding. Nothing grows just from sitting there. It only moves when a failure has been verified. The point is to make a security claim cost something when it's wrong.
 
-**Threat report payouts.** Find a hacked add-on, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
+**Threat report payouts.** Find a hacked MCP server, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
 
 **Publisher payouts.** Exchange pays the people who build and look after what's listed on it. It also keeps track of versions and verified names, and lets bad ones be pulled back.
 
@@ -471,17 +469,17 @@ Fee amounts, spending rules, wallets and who can approve payments get published 
 
 ### Rules for the token
 
-**No staking or yield.** Staking is locking tokens up to earn more. Here, holding or locking doesn't earn more tokens, a return, or a share of profits.
+**No staking or yield.** Holding or locking doesn't earn more tokens, a return, or a share of profits.
 
 **No time locks.** A holding period doesn't earn a benefit. Any certification deposit needs terms consistent with that.
 
 **No buying extra authority.** A balance can't get you wider logins, another person's computer, or a pass from the steps taken when something goes wrong. A token vote can't weaken those controls either.
 
-**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting (the schedule it's released on) get published before launch.
+**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.
 
 **No company ownership.** Holding the token isn't owning Hivra.
 
-**No manufactured activity.** No wash trading (fake trades made to look busy), no circular treasury transactions, no rewards designed to make a chart look busy.
+**No manufactured activity.** No wash trading, no circular treasury transactions, no rewards designed to make a chart look busy.
 
 ---
 

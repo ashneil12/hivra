@@ -33,9 +33,6 @@ export function computerLaunchHref(profile: "ubuntu-desktop" | "windows" | "omar
 
 export const GUARANTEE_LINE = `${MONEY_BACK_GUARANTEE}.`;
 
-/** tmux is named in the verified runtime sentence, so the FAQ explains it after the facts. */
-export const TMUX_GLOSS = "(tmux is a tool that keeps a program running after you disconnect.)";
-
 export const HERO = {
   eyebrow: "Hermes OS is now Hivra",
   eyebrowHref: "/why-hivra/evolution",
@@ -48,7 +45,7 @@ export const HERO = {
   proof: [
     "Your own Claude or ChatGPT account, or your own AI key",
     "We run it, or you run it on your own server",
-    "Open source: anyone can read the code",
+    "Open source on GitHub",
   ],
 } as const;
 
@@ -193,7 +190,7 @@ export const HOW = {
     {
       n: "01",
       title: "It stays on when you don't.",
-      body: "Close the laptop. On a paid plan the computer stays on, with its files and logins where you left them. A run you start in tmux (a tool that keeps programs going) keeps going.",
+      body: "Close the laptop. On a paid plan the computer stays on, with its files and logins where you left them. A run you start in tmux keeps going.",
     },
     {
       n: "02",
@@ -216,7 +213,7 @@ export const OPEN_SOURCE = {
   title: "Read every line.",
   titleTail: "Run it yourself.",
   body: [
-    "Every line of Hivra is open source, so anyone can read the code. Change it. Run it yourself.",
+    "Every line of Hivra is open source. Read the code. Change it. Run it yourself.",
     "This software sits between an agent and the things you care about. You should be able to check how it decides what the agent can touch, and keep going without us if we change direction.",
   ],
   repoOwner: "ashneil12",
@@ -260,7 +257,7 @@ export const PRICING = {
     cta: "View on GitHub",
     href: SELF_HOST_SOURCE_URL,
   },
-  footnote: "Larger sizes are planned. A vCPU is one slice of a processor, and RAM is the computer's working memory.",
+  footnote: "Larger sizes are planned.",
 } as const;
 
 /** From FOUNDER_EXCERPTS and LITEPAPER.md, verbatim. */
@@ -280,7 +277,7 @@ export const FOUNDER = {
 export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   {
     q: "What is Hivra?",
-    a: "A private computer in the cloud for an AI agent, or for you. An agent is an AI that does jobs for you. Launch Claude Code, Codex, Hermes and more on it, or launch Ubuntu and use it yourself.",
+    a: "A private computer in the cloud for an AI agent, or for you. Launch Claude Code, Codex, Hermes and more on it, or launch Ubuntu and use it yourself.",
   },
   {
     q: "Which agents can I use?",
@@ -288,11 +285,11 @@ export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Can I use my Claude or ChatGPT account?",
-    a: "Yes. Sign in with your own account for Claude Code and Codex, or bring an API key (a password that lets a program use an AI). Your AI company bills you for what you use.",
+    a: "Yes. Sign in with your own account for Claude Code and Codex, or bring an API key. Your AI company bills you for what you use.",
   },
   {
     q: "What happens when I close my laptop?",
-    a: `${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING} ${TMUX_GLOSS}`,
+    a: `${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING}`,
   },
   {
     q: "Where can it run?",
