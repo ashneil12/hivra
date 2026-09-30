@@ -24,7 +24,7 @@
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 import { apiCostPerActiveHour, formatUsd } from "./claude-plan-calc";
-import { CLAUDE_PLAN_FACTS, breakEvenDays, formatDays, usd } from "./claude-plan-facts";
+import { CLAUDE_PLAN_FACTS, usd } from "./claude-plan-facts";
 import { KEEP_AWAKE_FACTS } from "./keep-awake";
 import { TMUX_FACTS } from "./tmux-sheet";
 
