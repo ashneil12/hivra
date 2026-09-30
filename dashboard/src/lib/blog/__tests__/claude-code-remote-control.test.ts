@@ -63,6 +63,19 @@ describe("Claude Code Remote Control article", () => {
     expect(answer).toContain("that machine must stay on and the `claude` process must keep running");
   });
 
+  it("names both offline messages in the meta description and the intro, and does not say the session never leaves the machine", () => {
+    // These two strings are the only proven Hivra demand (86 impressions in 28 days), so the snippet must contain them.
+    expect(article.metaDescription.length).toBeGreaterThanOrEqual(70);
+    expect(article.metaDescription.length).toBeLessThanOrEqual(155);
+    expect(article.metaDescription).toContain(CANT_REACH_TITLE);
+    expect(article.metaDescription).toContain("computer running this session is offline");
+    expect(article.intro).toContain(`"${CANT_REACH_TITLE}"`);
+    expect(article.intro).toContain("\"Claude Code on the computer running this session is offline\"");
+    // The transcript is stored on Anthropic's servers while connected, so the session does not "never leave" the machine.
+    expect(fullCopy).not.toMatch(/never leaves your machine/i);
+    expect(article.intro).toContain("while Claude keeps running on your machine, with code execution and file access staying there");
+  });
+
   it("quotes the first offline message exactly, as code", () => {
     expect(quotedCode(sectionCopy)).toContain(CANT_REACH_TITLE);
     expect(quotedCode(sectionCopy)).toContain(CANT_REACH_BODY);

@@ -14,14 +14,14 @@ export const article: BlogArticle = {
   title: "Claude Code Remote Control: how it works and how to keep it online",
   metaTitle: "Claude Code Remote Control: Setup, Limits and Fixes",
   metaDescription:
-    "How Claude Code Remote Control works, the exact commands to start it, what the two offline messages mean, and how to keep the host machine online.",
+    "Claude Code Remote Control commands, what \"Can\u2019t reach your computer\" and \"computer running this session is offline\" mean, and how to keep it online.",
   publishedDate: "2026-09-30",
   lastModified: "2026-09-30",
   readingTimeMin: 13,
   author: "Hivra team",
   tagline: "It is a window into a session on your machine, so the machine has to stay on.",
   intro:
-    "Remote Control lets you steer a Claude Code session from your phone or a browser while the session itself never leaves your machine. This page has the exact commands, what the two offline messages mean and which fix applies, and the honest ways to keep the machine online.",
+    "Remote Control lets you steer a Claude Code session from your phone or a browser while Claude keeps running on your machine, with code execution and file access staying there. This page has the exact commands, what \"Can\u2019t reach your computer\" and \"Claude Code on the computer running this session is offline\" mean, and the honest ways to keep the machine online.",
   shortAnswer:
     "Remote Control lets claude.ai/code or the Claude mobile app steer a Claude Code session that keeps running on your own machine. Start it with `claude remote-control`. The one rule: that machine must stay on and the `claude` process must keep running. If either stops, the session goes offline until you bring it back.",
   sections: [
