@@ -163,7 +163,7 @@ describe("the plan changelog", () => {
     expect(text).toContain(`${usd(F.plans.max20x.priceUsd)} a month for 20x`);
     expect(text).toContain(`Opus 5.5 launched at ${usd(F.api.opus.input)} and ${usd(F.api.opus.output)} per million tokens`);
     expect(text).toContain(`Sonnet 5.5 launched at ${usd(F.api.sonnet.input)} and ${usd(F.api.sonnet.output)} per million tokens`);
-    expect(text).toContain(`${usd(F.team.standardAnnualUsd)} (annual) or ${usd(F.team.standardMonthlyUsd)} (monthly) for a Standard seat`);
-    expect(text).toContain(`${usd(F.team.premiumAnnualUsd)} (annual) or ${usd(F.team.premiumMonthlyUsd)} (monthly) for a Premium seat`);
+    expect(text).toContain(`${usd(F.team.standardAnnualUsd)} a month on the annual plan or ${usd(F.team.standardMonthlyUsd)} a month on the monthly plan for a Standard seat`);
+    expect(text).toContain(`${usd(F.team.premiumAnnualUsd)} a month on the annual plan or ${usd(F.team.premiumMonthlyUsd)} a month on the monthly plan for a Premium seat`);
   });
 });

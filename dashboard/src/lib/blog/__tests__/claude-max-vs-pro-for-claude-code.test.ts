@@ -272,6 +272,18 @@ describe("reports Anthropic's model guide as it reads", () => {
   });
 });
 
+describe("Team seat prices read as a month, not a year", () => {
+  it("says a month on the annual plan for both seats, in the plans section and the changelog", () => {
+    const plans = sectionByHeading("The plans side by side").paragraphs.join("\n");
+    expect(plans).toContain("$25 a month ($20 a month on the annual plan) for Standard");
+    expect(plans).toContain("$125 ($100 a month on the annual plan) for Premium");
+    expect(bodyCopy).not.toMatch(/billed annually\) for (?:Standard|Premium)/);
+    const row = CLAUDE_PLAN_CHANGELOG.find((entry) => entry.date === "2026-01-28")!;
+    expect(row.text).toMatch(/\$20 a month on the annual plan or \$25 a month on the monthly plan/);
+    expect(row.text).not.toMatch(/\(annual\)|\(monthly\)/);
+  });
+});
+
 describe("the plan changelog section", () => {
   const section = sectionByHeading("What changed and when");
   const text = section.paragraphs.join("\n");

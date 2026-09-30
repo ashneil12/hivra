@@ -246,7 +246,7 @@ export const CLAUDE_PLAN_CHANGELOG: readonly ClaudePlanChange[] = [
   { date: "2026-02-12", text: "Self-serve Enterprise plans launched with one seat type covering Claude and Claude Code.", source: S.releaseNotes },
   {
     date: "2026-01-28",
-    text: "Team prices were lowered to $20 (annual) or $25 (monthly) for a Standard seat and $100 (annual) or $125 (monthly) for a Premium seat, with Claude Code in every seat.",
+    text: "Team prices were lowered to $20 a month on the annual plan or $25 a month on the monthly plan for a Standard seat, and $100 a month on the annual plan or $125 a month on the monthly plan for a Premium seat, with Claude Code in every seat.",
     source: S.teamBlog,
   },
   { date: "2026-01-16", text: "Claude Code was added to Team Standard seats.", source: S.releaseNotes },
