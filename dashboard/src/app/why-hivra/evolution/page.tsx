@@ -20,7 +20,7 @@ const SITE_ROOT = buildAbsoluteSiteUrl("/");
 const PAGE_URL = buildAbsoluteSiteUrl(PAGE_PATH);
 const PAGE_TITLE = "Why Hivra? The Evolution of HermesOS";
 const PAGE_DESCRIPTION =
-  "HermesOS (Hermes Agent OS) is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
+  "HermesOS is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
 
 // The $HIVRA copy changes at its activation instant: re-render at least every
 // minute rather than freezing the build-time phase into static HTML.
@@ -58,7 +58,9 @@ const pageSchema = {
       isPartOf: { "@id": `${SITE_ROOT}/#website` },
       about: [
         { "@type": "SoftwareApplication", name: "Hivra", alternateName: "HermesOS" },
-        { "@type": "SoftwareApplication", name: "HermesOS", alternateName: "Hermes Agent OS" },
+        // Hermes Agent is Nous Research's product name, so it is not an alternate
+        // name for HermesOS in markup.
+        { "@type": "SoftwareApplication", name: "HermesOS" },
       ],
     },
   ],
@@ -184,7 +186,7 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
 
         <div className={styles.sectionList}>
           <SectionShell number="01" title="Why change the name?">
-            <p>HermesOS (the Hermes Agent OS) was originally built around a single agent ecosystem.</p>
+            <p>HermesOS was originally built around a single agent ecosystem.</p>
             <p>Today the platform is expanding to support multiple AI workers, frameworks, and deployment types.</p>
             <p>The future of the platform is not one agent.</p>
             <p>It is networks of specialised agents working together.</p>

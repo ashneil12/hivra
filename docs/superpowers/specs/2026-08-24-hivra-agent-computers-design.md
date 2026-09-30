@@ -736,6 +736,8 @@ The release also includes:
 
 An open Hivra adapter or installer does not make a third-party runtime open source. Product copy and distribution artifacts must preserve that distinction. Do not describe the repository as open source before the license and dependency review are complete.
 
+> Update, 2026-09-30: the owner decided that copy may call Hivra open source and self-hostable and link the repository (see `AGENTS.md`), and a root `LICENSE` is committed. That decision does not record the outcome of the dependency and third-party distribution review, and it does not change the rule above that an open Hivra adapter or installer does not make a third-party runtime open source.
+
 ## Public-Release Audit
 
 Before making the repository public, perform a read-only audit of the complete reachable Git history and current tree for:

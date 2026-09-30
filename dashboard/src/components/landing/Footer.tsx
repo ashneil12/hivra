@@ -26,9 +26,11 @@ const COLUMNS = [
     { label: "Token", href: "/token" },
   ] },
   { title: "Company", links: [
+    { label: "About", href: "/about" },
     { label: "Why I’m building Hivra", href: "/why-hivra" },
     { label: "Stats", href: "/stats" },
     { label: "Contact", href: "mailto:info@hivra.cloud" },
+    { label: "Security", href: "/security" },
     { label: "Terms", href: "/terms" },
     { label: "Privacy", href: "/privacy" },
   ] },

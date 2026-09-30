@@ -10,7 +10,7 @@ import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
 import { isOpsAdminUser } from "@/lib/ops-access";
 
 export const metadata: Metadata = {
-  title: "Dashboard | Hivra",
+  title: "Dashboard",
   robots: {
     index: false,
     follow: false,
