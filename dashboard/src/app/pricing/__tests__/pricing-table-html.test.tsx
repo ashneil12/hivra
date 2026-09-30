@@ -1,4 +1,6 @@
 /** @jest-environment node */
+import fs from "fs";
+import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -42,5 +44,23 @@ describe("/pricing raw server HTML", () => {
     expect(app?.offers?.map((offer) => [offer.name, offer.price])).toEqual(
       PRICING_ROWS.map((row) => [row.option, row.priceAmount]),
     );
+  });
+});
+
+// The row header carries a size ("Hivra Cloud, 2 vCPU and 4 GB"). At 1440px a
+// min-width alone still left "GB" alone on a second line, so the header must not
+// wrap at all. jsdom does no layout, so this guards the stylesheet rule itself;
+// the rendered result was measured in a real browser (one line per row header).
+describe("/pricing table stylesheet", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "pricing.module.css"), "utf8");
+
+  it("keeps each row header on one line", () => {
+    const rule = css.match(/\.table tbody th\s*\{([^}]*)\}/);
+    expect(rule).not.toBeNull();
+    expect(rule?.[1]).toMatch(/white-space:\s*nowrap/);
+  });
+
+  it("still scrolls inside its own region rather than widening the page", () => {
+    expect(css).toMatch(/\.tableScroll\s*\{[^}]*overflow-x:\s*auto/);
   });
 });
