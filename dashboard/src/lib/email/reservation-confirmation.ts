@@ -2,9 +2,15 @@
  * Reservation confirmation email.
  *
  * Sent immediately after a successful reservation insert in
- * POST /api/reserve. Best-effort and non-blocking — the API response is
- * not gated on email delivery. If RESEND_API_KEY is missing or the send
- * fails, we log and continue.
+ * POST /api/reserve. Best-effort and non-blocking: the API response is
+ * not gated on email delivery.
+ *
+ * If RESEND_API_KEY is missing or the send fails, we log and continue.
+ *
+ * It carries no token wording for anyone. It goes to an address a stranger typed
+ * into a public POST, so the token geo-policy cannot tell where the reader is,
+ * and a promotion with a deadline is not something to send to an unverified
+ * inbox. Card prices only; reservation-confirmation.test.ts pins it.
  *
  * Env:
  *   RESEND_API_KEY              required to actually send
@@ -28,7 +34,6 @@ interface SendResult {
 
 const SUBJECT = "You're on the Hivra waitlist";
 const PLANS_URL = `${SITE_URL}/get-started`;
-const TOKEN_URL = `${SITE_URL}/token`;
 
 function buildText(): string {
   return [
@@ -36,26 +41,21 @@ function buildText(): string {
     "",
     "Hey,",
     "",
-    "You're in. We'll send you an invite when Free plan access opens up — we're rolling out in waves to keep the platform fast as we scale.",
+    "You're in. We'll send you an invite when Free plan access opens up. We're rolling out in waves to keep the platform fast as we scale.",
     "",
-    "In the meantime, two things to know.",
+    "In the meantime, one thing to know.",
     "",
-    "— If you want to skip the wait",
+    "If you want to skip the wait",
     "Pro and Power tiers are available now.",
     "",
-    "  Pro:   $9.99/mo card · $79/yr card · $49/yr in $HermesOS · or hold ~$99 worth to maintain access",
-    "  Power: $19.99/mo card · $149/yr card · $99/yr in $HermesOS · or hold ~$199 worth",
+    "  Pro:   $9.99/mo card · $79/yr card",
+    "  Power: $19.99/mo card · $149/yr card",
     "",
     `See plans → ${PLANS_URL}`,
     "",
-    "— For $HermesOS holders",
-    "The launch rate for hold-to-access is only available for the first 30 days. After that, thresholds move up. If you're going to deposit, sooner is better.",
-    "",
-    `Token verification page → ${TOKEN_URL}`,
-    "",
     "Otherwise, sit tight. We'll be in touch when capacity opens.",
     "",
-    "— Ash",
+    "Ash",
     "Founder, Hivra",
   ].join("\n");
 }
@@ -74,7 +74,7 @@ function buildHtml(): string {
     <title>${SUBJECT}</title>
   </head>
   <body style="margin:0;padding:0;background:#f5f1e8;font-family:${sansStack};color:#1a1a1a;-webkit-font-smoothing:antialiased;">
-    <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">You're in. Invites roll out in waves — here's how to skip the line.</span>
+    <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">You're in. Invites roll out in waves. Here's how to skip the line.</span>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f1e8;">
       <tr>
         <td align="center" style="padding:40px 16px;">
@@ -84,8 +84,8 @@ function buildHtml(): string {
                 <p style="margin:0 0 18px;font-family:${monoStack};font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#b3261e;font-weight:700;">Waitlist</p>
                 <h1 style="margin:0 0 20px;font-family:${serifStack};font-size:30px;line-height:1.15;font-weight:700;color:#1a1a1a;">You're in.</h1>
                 <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">Hey,</p>
-                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">We'll send you an invite when Free plan access opens up — we're rolling out in waves to keep the platform fast as we scale.</p>
-                <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#1a1a1a;">In the meantime, two things to know.</p>
+                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">We'll send you an invite when Free plan access opens up. We're rolling out in waves to keep the platform fast as we scale.</p>
+                <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#1a1a1a;">In the meantime, one thing to know.</p>
               </td>
             </tr>
 
@@ -97,13 +97,13 @@ function buildHtml(): string {
                   <tr>
                     <td style="padding:16px 18px;border-bottom:1px solid #ece7da;">
                       <p style="margin:0 0 6px;font-family:${serifStack};font-size:17px;font-weight:700;color:#1a1a1a;">Pro</p>
-                      <p style="margin:0;font-size:14px;line-height:1.6;color:#444;">$9.99/mo card &middot; $79/yr card &middot; $49/yr in $HermesOS &middot; or hold ~$99 worth to maintain access</p>
+                      <p style="margin:0;font-size:14px;line-height:1.6;color:#444;">$9.99/mo card &middot; $79/yr card</p>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding:16px 18px;">
                       <p style="margin:0 0 6px;font-family:${serifStack};font-size:17px;font-weight:700;color:#1a1a1a;">Power</p>
-                      <p style="margin:0;font-size:14px;line-height:1.6;color:#444;">$19.99/mo card &middot; $149/yr card &middot; $99/yr in $HermesOS &middot; or hold ~$199 worth</p>
+                      <p style="margin:0;font-size:14px;line-height:1.6;color:#444;">$19.99/mo card &middot; $149/yr card</p>
                     </td>
                   </tr>
                 </table>
@@ -118,21 +118,10 @@ function buildHtml(): string {
             </tr>
 
             <tr>
-              <td style="padding:0 36px;border-top:1px solid #ece7da;">
-                <div style="height:24px;line-height:24px;font-size:0;">&nbsp;</div>
-                <p style="margin:0 0 10px;font-family:${monoStack};font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#888;font-weight:700;">For $HermesOS holders</p>
-                <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#333;">The launch rate for hold-to-access is only available for the first 30 days. After that, thresholds move up. If you're going to deposit, sooner is better.</p>
-                <p style="margin:0 0 28px;">
-                  <a href="${TOKEN_URL}" style="font-family:${monoStack};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#b3261e;text-decoration:none;font-weight:700;">Token verification page &rarr;</a>
-                </p>
-              </td>
-            </tr>
-
-            <tr>
               <td style="padding:0 36px 36px;border-top:1px solid #ece7da;">
                 <div style="height:24px;line-height:24px;font-size:0;">&nbsp;</div>
                 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#444;">Otherwise, sit tight. We'll be in touch when capacity opens.</p>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#1a1a1a;">— Ash<br /><span style="font-size:13px;color:#888;">Founder, Hivra</span></p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#1a1a1a;">Ash<br /><span style="font-size:13px;color:#888;">Founder, Hivra</span></p>
               </td>
             </tr>
           </table>
