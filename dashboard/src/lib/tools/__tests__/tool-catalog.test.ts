@@ -31,7 +31,12 @@ const COMPONENTS_DIR = path.join(__dirname, "..", "..", "..", "components", "too
 // Destinations a tools page may link to. /pricing and the two /agents pages
 // are ported from the retired site alongside /tools; nothing else is linked
 // because several older blog posts still carry stale prices.
-const ALLOWED_RELATED = new Set(["/pricing", "/agents/claude-code", "/agents/codex", ...TOOL_ENTRIES.map((entry) => toolPath(entry.slug))]);
+const ALLOWED_RELATED = new Set([
+  "/pricing",
+  "/agents/claude-code",
+  "/agents/codex",
+  ...TOOL_ENTRIES.map((entry) => toolPath(entry.slug)),
+]);
 
 // Every user-facing string in an entry, walked recursively.
 function collectStrings(value: unknown, out: string[] = []): string[] {
@@ -197,13 +202,14 @@ describe("tools catalog", () => {
     expect(getToolEntry("claude-code-plan-calculator")?.slug).toBe("claude-code-plan-calculator");
     expect(getToolEntry("not-a-tool")).toBeUndefined();
   });
-  // The optional page-level method section and worked examples. The two newer
-  // tools carry both; the four older ones are upgraded in a later slice.
+  // The optional page-level method section and worked examples. The plan
+  // calculator and the two newer tools carry both; the other three are upgraded
+  // in a later slice.
   describe("method section and worked examples", () => {
     const WITH_METHOD = TOOL_ENTRIES.filter((entry) => entry.method);
 
-    it("is carried by the keep-awake builder and the tmux cheat sheet", () => {
-      expect(WITH_METHOD.map((entry) => entry.slug)).toEqual(["keep-mac-awake", "tmux-cheat-sheet"]);
+    it("is carried by the plan calculator, the keep-awake builder and the tmux cheat sheet", () => {
+      expect(WITH_METHOD.map((entry) => entry.slug)).toEqual(["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]);
     });
 
     it.each(WITH_METHOD)("$slug: method has a heading, an ISO verified date and linked https sources", (entry) => {
@@ -246,7 +252,7 @@ describe("tools catalog", () => {
     });
 
     it("never names the operating system the public copy rules ban, in any catalog string", () => {
-      for (const slug of ["keep-mac-awake", "tmux-cheat-sheet"]) {
+      for (const slug of ["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]) {
         for (const text of collectStrings(getToolEntry(slug))) {
           expect(text).not.toMatch(/\bWindows\b/);
         }

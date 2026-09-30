@@ -69,7 +69,7 @@ describe("tool components carry no retired claims", () => {
 });
 
 describe("PlanCalculatorTool", () => {
-  it("scales Pro's observed limit by Anthropic's published multiples and prices the API side", () => {
+  it("scales Pro's observed limit by Anthropic's published multiples and prices the API side as an estimate", () => {
     const { container } = render(<PlanCalculatorTool />);
 
     // Default schedule: 5 days x 3 hours = 15 active hours per week.
@@ -77,20 +77,29 @@ describe("PlanCalculatorTool", () => {
     for (const label of ["Pro", "Max 5x", "Max 20x"]) expect(screen.getByText(label)).toBeInTheDocument();
     for (const price of ["$20/mo", "$100/mo", "$200/mo"]) expect(screen.getByText(price)).toBeInTheDocument();
 
+    // Opus 5.5 is Claude Code's default model, so the mix starts at 100% Opus.
+    expect(screen.getByText("Model mix: 100% Opus 5.5 / 0% Sonnet 5.5")).toBeInTheDocument();
+    expect(screen.getByText(/Opus 5\.5 has been Claude Code's default model on Pro and Max since 2026-09-22/)).toBeInTheDocument();
+
     // Pro stops the visitor 2 hours in; a 3 hour day needs Max 5x. API: 64.95h x
-    // (0.5M in, 0.05M out) at 80% Sonnet 5 ($2/$10) and 20% Opus 5.5 ($4/$20).
+    // the cache-aware Opus 5.5 hour ($5.7952) is an estimated $376 a month, and
+    // Anthropic's own $13 per active day across 21.65 active days is $281.
     expect(screen.getByTestId("pc-verdict")).toHaveTextContent(
-      "Max 5x at $100/month is the cheapest plan that fits. The same usage at API rates: about $117/month."
+      "Max 5x at $100/month is the cheapest plan that fits. The same usage at API list price is an estimated $376/month."
     );
+    expect(screen.getByText("$376/mo")).toBeInTheDocument();
+    expect(screen.getByText("$281/mo")).toBeInTheDocument();
+    expect(screen.getByText("Anthropic's average ($13 per active day)")).toBeInTheDocument();
 
     // Pro never stopping you means Pro is the answer.
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "never" } });
     expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/^Pro at \$20\/month is the cheapest plan that fits/);
 
-    // One short session a week costs less at API rates than any plan.
+    // One short Sonnet session a week costs a little less at API list price than Pro.
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "1" } });
     fireEvent.change(container.querySelector("#pc-hours") as HTMLInputElement, { target: { value: "1" } });
-    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/plain API billing is cheaper: about \$7\.79\/month/);
+    fireEvent.change(container.querySelector("#pc-opus") as HTMLInputElement, { target: { value: "0" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/API billing is estimated cheaper: about \$19\.42\/month/);
 
     // Without a Pro reading the tool refuses to guess a cap.
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "unknown" } });
@@ -101,7 +110,7 @@ describe("PlanCalculatorTool", () => {
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "7" } });
     expect(screen.getByText("7h")).toBeInTheDocument();
 
-    expect(screen.getByText(/last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/last verified 2026-09-30/)).toBeInTheDocument();
     // The button promises Claude Code, so it preselects the runtime.
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
@@ -110,6 +119,33 @@ describe("PlanCalculatorTool", () => {
     expect(screen.getByText(/start long runs inside tmux or from Telegram/)).toBeInTheDocument();
     expectKeepRunningClaimsQualified(container);
     expectNoBannedClaims(container);
+  });
+
+  it("says the weekly limit cannot be rated, because Anthropic publishes no weekly multiple for Max", () => {
+    const { container } = render(<PlanCalculatorTool />);
+
+    // A weekly stop on Pro is a separate limit. Anthropic publishes no weekly
+    // multiple for Max, so the verdict says the ratings cover five-hour windows only.
+    expect(screen.getByTestId("pc-verdict")).not.toHaveTextContent(/weekly limit is a separate limit/);
+    fireEvent.change(container.querySelector("#pc-pro-weekly") as HTMLSelectElement, { target: { value: "yes" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/Your weekly limit is a separate limit/);
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/publishes no weekly multiple/);
+
+    // Even a 30-minute Pro reading leaves Max 20x covering a whole five-hour
+    // window, so the verdict still names a plan, and still carries the weekly note.
+    fireEvent.change(container.querySelector("#pc-hours") as HTMLInputElement, { target: { value: "12" } });
+    fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "0.5" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/^Max 20x at \$200\/month is the cheapest plan that fits/);
+    expectNoBannedClaims(container);
+  });
+
+  it("labels every dollar figure an estimate and states the assumptions that are not Anthropic's", () => {
+    const { container } = render(<PlanCalculatorTool />);
+    expect(screen.getByText("API list price, estimated")).toBeInTheDocument();
+    expect(container.textContent).toMatch(/Every number here is an estimate, not a quote/);
+    expect(container.textContent).toMatch(/about 50K\s+output tokens in a normal hour \(100K in a heavy one\), and 98%\s+of input read from the prompt cache/);
+    // The retired unsourced throughput claim is gone.
+    expect(container.textContent).not.toMatch(/0\.5M input|2M input/);
   });
 });
 

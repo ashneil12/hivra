@@ -11,9 +11,11 @@
 // plan name, because the public ladder and checkout still use different names.
 //
 // External facts (Anthropic plan prices and limits, API rates, VPS prices) live
-// in ONE const table inside each tool component, with a lastVerified date that
-// the page renders. Every figure in this file was checked against the vendor's
-// own page on 2026-09-24.
+// in ONE const table per tool, with a lastVerified date that the page renders.
+// The Claude plan facts are in lib/tools/claude-plan-facts.ts, shared with the
+// plan calculator and the blog post it backs, and were read on 2026-09-30. Every
+// other figure in this file was checked against the vendor's own page on
+// 2026-09-24.
 //
 // Copy rules (CI-tested in __tests__/tool-catalog.test.ts): no em dashes or en
 // dashes, no trial or card claims, no unmeasured speed claims, short sentences,
@@ -21,6 +23,8 @@
 
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { apiCostPerActiveHour, formatUsd } from "./claude-plan-calc";
+import { CLAUDE_PLAN_FACTS, breakEvenDays, formatDays, usd } from "./claude-plan-facts";
 import { KEEP_AWAKE_FACTS } from "./keep-awake";
 import { TMUX_FACTS } from "./tmux-sheet";
 
@@ -127,54 +131,167 @@ export const TOOLS_CTA = {
   secondaryHref: "/pricing",
 } as const;
 
-export const TOOL_ENTRIES: ToolEntry[] = [
-  {
-    slug: "claude-code-plan-calculator",
-    name: "Claude Code Plan Calculator",
-    h1: "Claude Code plan calculator",
-    subhead:
-      "Enter how much you code with Claude and where Pro's limit stops you today. Get the cheapest plan that fits, and what the same usage would cost at API rates.",
-    metaTitle: "Claude Code Plan Calculator: Pro vs Max",
-    metaDescription:
-      "Estimate your Claude Code usage and see which Anthropic plan fits: Pro at $20, Max 5x at $100, or Max 20x at $200 a month. With an API cost comparison.",
-    longIntro: [
-      "Anthropic sells Claude Code on three individual plans: Pro at $20 a month, Max 5x at $100, and Max 20x at $200. Max 5x gives five times Pro's usage per five-hour session and Max 20x gives twenty times. Anthropic does not publish fixed caps, so most people guess.",
-      "This calculator works from what you already know. Set your days, hours and model mix, then tell it how far into a session Pro's limit usually stops you. You get a fit rating for each plan and what the same usage would cost at API rates. If Pro covers you, it says so.",
+// The Claude Code plan calculator. Its figures are the shared Claude plan facts
+// (claude-plan-facts.ts, read 2026-09-30), so the page copy, the calculator and
+// the blog post it backs cannot disagree. Anything Anthropic does not publish is
+// labelled an estimate here, with the assumption stated.
+const PLAN_FACTS = CLAUDE_PLAN_FACTS;
+const PLAN_SOURCES = PLAN_FACTS.sources;
+const PRO = PLAN_FACTS.plans.pro;
+const MAX5 = PLAN_FACTS.plans.max5x;
+const MAX20 = PLAN_FACTS.plans.max20x;
+const API = PLAN_FACTS.api;
+const ANTHROPIC_COST = PLAN_FACTS.anthropicCost;
+const LIMIT_CHANGES = PLAN_FACTS.limitChanges;
+const PLAN_DAY = usd(ANTHROPIC_COST.perActiveDayUsd);
+/** What the estimate gives for a normal three-hour Sonnet day, beside Anthropic's average. */
+const NORMAL_SONNET_DAY = formatUsd(apiCostPerActiveHour("sonnet", false) * 3);
+
+const PLAN_CALCULATOR_ENTRY: ToolEntry = {
+  slug: "claude-code-plan-calculator",
+  name: "Claude Code Plan Calculator",
+  h1: "Claude Code plan calculator",
+  subhead:
+    "Enter how much you code with Claude and where Pro's limit stops you today. Get the cheapest plan that fits, and what the same usage would cost at API rates.",
+  metaTitle: "Claude Code Plan Calculator: Pro vs Max",
+  metaDescription:
+    "Estimate your Claude Code usage and see which Anthropic plan fits: Pro at $20, Max 5x at $100, or Max 20x at $200 a month. With an API cost comparison.",
+  longIntro: [
+    `Claude Code is included in Anthropic's Pro plan at ${usd(PRO.priceUsd)} a month and in its Max plans at ${usd(MAX5.priceUsd)} (5x) and ${usd(MAX20.priceUsd)} (20x). Max gives five or twenty times Pro's usage per five-hour session. Anthropic publishes no fixed caps and no weekly multiple for Max, so most people guess.`,
+    `This calculator works from what you already know. Set your days, hours and model mix, then tell it how far into a five-hour window Pro's limit stops you. You get a fit rating per plan and an estimate of what the same work costs at API list price. Everything Anthropic publishes is dated ${PLAN_FACTS.lastVerified} and linked below. Anything it does not publish is labelled an estimate.`,
+  ],
+  faqs: [
+    {
+      q: "Is Claude Code included in Claude Pro?",
+      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and needs one of those paid plans. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro does not include API usage through the Claude Console.`,
+    },
+    {
+      q: "Is Claude Max worth it for Claude Code?",
+      a: `Only if Pro's limits stop you. Max 5x is ${usd(MAX5.priceUsd)} a month and gives five times Pro's usage per five-hour session. Max 20x is ${usd(MAX20.priceUsd)} and gives twenty times. If Pro rarely stops you, Max is money you do not need to spend. If Pro stops you early in most sessions, the calculator above shows which multiple covers your day. Anthropic publishes no weekly multiple for Max, so a plan that covers your sessions is not promised to cover your week.`,
+    },
+    {
+      q: "What is the difference between Claude Pro and Max?",
+      a: `Price, capacity and a few extras. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan. Max 5x is ${usd(MAX5.priceUsd)} and Max 20x is ${usd(MAX20.priceUsd)}, both billed monthly only. The capacity gap is stated per five-hour session, at five and twenty times Pro's. Max also lists higher output limits, early access to advanced features and priority access at high traffic times, and includes Fable models up to 50% of its weekly limits, where Pro pays usage credits for them.`,
+    },
+    {
+      q: "How much more usage does Claude Max give than Pro?",
+      a: "Anthropic says five times (Max 5x) or twenty times (Max 20x) Pro's usage per five-hour session. It publishes no weekly multiple, no token or message counts and no size for Pro's own allowance, so a weekly figure you see elsewhere is not an Anthropic number.",
+    },
+    {
+      q: "What are the Claude Code usage limits?",
+      a: `Two layers. A session limit on a rolling five-hour window, and weekly limits on top that reset at a fixed time each week assigned to your account. Claude Code shares both with Claude on the web, desktop and mobile. Anthropic does not publish fixed hour or message caps, and it changes the limits often: five-hour limits doubled on ${LIMIT_CHANGES.fiveHourDoubled} and rose again on ${LIMIT_CHANGES.fiveHourRaised}, and weekly limits have been 25% higher than before the May to September promotion since ${LIMIT_CHANGES.weeklyRaised}. The Opus and Sonnet limits apply to that model family only.`,
+    },
+    {
+      q: "Is the API cheaper than a Claude subscription?",
+      a: `Only for light use. At API list price Sonnet 5.5 costs ${usd(API.sonnet.input)} per million input tokens and ${usd(API.sonnet.output)} per million output tokens, and Opus 5.5 costs ${usd(API.opus.input)} and ${usd(API.opus.output)}, with cache reads at ${usd(API.opus.cacheRead)}. Anthropic's docs put API-billed Claude Code at about ${PLAN_DAY} per developer per active day and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} a month, below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} a day for 90% of users. At ${PLAN_DAY} a day, Pro costs less than the API from about ${formatDays(breakEvenDays(PRO.priceUsd, ANTHROPIC_COST.perActiveDayUsd))} active days a month.`,
+    },
+    {
+      q: "What happens when I hit my Claude Code limit?",
+      a: `Claude Code stops and names the limit with its reset time, for example "You've hit your session limit · resets 3:45pm". You can wait: recent versions keep the open session and pick the task back up after the reset. You can run /usage to see your limits, turn on usage credits with /usage-credits to keep working at standard API rates, switch to a Claude Console account for API-billed work, or move to a bigger plan. An Opus or Sonnet limit applies to that model family only, so /model to another family keeps you working.`,
+    },
+    {
+      q: "Do the plan limits apply if Claude Code runs in the cloud?",
+      a: "Yes. The limits follow your Anthropic account, not the machine, and Anthropic's own cloud sessions draw from the same limits as everything else you do with Claude. Running Claude Code on an always-on computer does not raise your caps. It does mean a run you start inside tmux there keeps working after your laptop sleeps, so the hours you pay for produce finished work.",
+    },
+    {
+      q: "Which model does Claude Code use by default?",
+      a: `${PLAN_FACTS.defaultModel.label} on Pro, Max, Team and Enterprise, since ${PLAN_FACTS.defaultModel.since} (Claude Code v2.1.280). Before that, Pro and Team Standard defaulted to Sonnet. Fable models are never the default. Switch with /model, and /model opusplan plans with Opus and executes with Sonnet.`,
+    },
+  ],
+  relatedLinks: [
+    { href: "/agents/claude-code", label: "Run Claude Code on Hivra" },
+    { href: "/pricing", label: "Hivra pricing" },
+  ],
+  componentKey: "plan-calculator",
+  primaryKeyword: "claude code plan calculator",
+  vendors: ["Anthropic"],
+  method: {
+    heading: "Where these numbers come from",
+    lastVerified: PLAN_FACTS.lastVerified,
+    paragraphs: [
+      {
+        text: `Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Max 5x is ${usd(MAX5.priceUsd)} a month and Max 20x is ${usd(MAX20.priceUsd)}, both billed monthly only. Prices exclude tax, and Anthropic says prices and plans are subject to change at its discretion. Claude Code is included in Pro and Max.`,
+        sources: [PLAN_SOURCES.pricing, PLAN_SOURCES.maxPlan, PLAN_SOURCES.proPlan],
+      },
+      {
+        text: `Anthropic states the Max multiples per five-hour session: Max 5x is five times and Max 20x twenty times Pro's per-session usage allowance. No Anthropic page states a weekly multiple, a token or message count, or the size of Pro's allowance, so the calculator prints none. Its fit rating takes the hours into a window where Pro stops you, multiplies them by 1, 5 or 20, and compares the result with the hours you work in your busiest five-hour window: headroom at 60% of that capacity or less, tight up to 100%, over beyond it. That scaling is arithmetic on the published multiples, not a promise from Anthropic. The weekly limit is never rated.`,
+        sources: [PLAN_SOURCES.maxPlan, PLAN_SOURCES.pricing],
+      },
+      {
+        text: `Anthropic changes Claude Code's limits often. Five-hour limits doubled on ${LIMIT_CHANGES.fiveHourDoubled} and rose again on ${LIMIT_CHANGES.fiveHourRaised}. Weekly limits were 50% higher from ${LIMIT_CHANGES.weeklyPromotionStart} to ${LIMIT_CHANGES.weeklyPromotionEnd} and have been 25% higher than before that promotion since ${LIMIT_CHANGES.weeklyRaised}. Anthropic did not publish the size of the ${LIMIT_CHANGES.fiveHourRaised} increase in hours or tokens. A reading of where Pro stops you taken before ${LIMIT_CHANGES.fiveHourRaised} is out of date, which is why the calculator asks for a recent one.`,
+        sources: [PLAN_SOURCES.spacex, PLAN_SOURCES.weeklyPromotion, PLAN_SOURCES.opus55],
+      },
+      {
+        text: `The dollar figure is an estimate at API list price. It is not what a plan costs and not a quote. Per million tokens, ${API.opus.label} is ${usd(API.opus.input)} input, ${usd(API.opus.output)} output, ${usd(API.opus.cacheRead)} cache read and ${usd(API.opus.cacheWrite5m)} for a five-minute cache write. ${API.sonnet.label} is ${usd(API.sonnet.input)}, ${usd(API.sonnet.output)}, ${usd(API.sonnet.cacheRead)} and ${usd(API.sonnet.cacheWrite5m)}. Anthropic reports that Claude Code reads ${ANTHROPIC_COST.inputToOutputRatio} input tokens for every output token and that cache reads make up most of the cost. So the estimate takes ${ANTHROPIC_COST.inputToOutputRatio} times the output tokens as input and prices ${Math.round(PLAN_FACTS.estimate.cacheReadShare * 100)}% of it as cache reads and the rest as cache writes. That split, and ${Math.round(PLAN_FACTS.estimate.outputMPerHour.normal * 1000)}K output tokens in a normal hour and ${Math.round(PLAN_FACTS.estimate.outputMPerHour.heavy * 1000)}K in a heavy one, are Hivra's assumptions. Anthropic publishes neither.`,
+        sources: [PLAN_SOURCES.apiPricing, PLAN_SOURCES.sessionsBlog],
+      },
+      {
+        text: `As a check on those assumptions, Anthropic's docs put API-billed Claude Code at about ${PLAN_DAY} per developer per active day and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} per developer per month across enterprise deployments, with costs below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} per active day for 90% of users. The assumptions are set so that a normal three-hour day on Sonnet 5.5 comes to about ${NORMAL_SONNET_DAY}, close to that average, and a heavy three-hour day on Opus 5.5 lands above the ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} line. The second figure on the page is the ${PLAN_DAY} average times your active days. It is an average, not a forecast for you.`,
+        sources: [PLAN_SOURCES.costs],
+      },
+      {
+        text: `${PLAN_FACTS.defaultModel.label} has been Claude Code's default model on Pro, Max, Team and Enterprise since ${PLAN_FACTS.defaultModel.since}, so the model mix starts at 100% Opus. ${API.fable.label} (${usd(API.fable.input)} input, ${usd(API.fable.output)} output) is never the default: Max includes it up to 50% of weekly limits and Pro uses usage credits for it, so it is not modelled. Nor are ${API.haiku.label} (${usd(API.haiku.input)} and ${usd(API.haiku.output)}), fast mode, which is available through usage credits only, Team and Enterprise seats, or usage credits themselves.`,
+        sources: [PLAN_SOURCES.modelConfig, PLAN_SOURCES.fable, PLAN_SOURCES.fastMode],
+      },
+      {
+        text: `How this was checked: every value on this page was read on ${PLAN_FACTS.lastVerified} on the Anthropic pages linked above and confirmed by a second reader the same day. Anthropic changes plans often, so the date is part of the answer. Your inputs stay in your browser.`,
+      },
     ],
-    faqs: [
-      {
-        q: "Is Claude Max worth it?",
-        a: "Only if Pro's limits stop you. Max 5x gives five times Pro's usage per five-hour session and Max 20x gives twenty times. If you rarely see a session limit on Pro, Max is money you do not need to spend. If Pro stops you early in most sessions, the calculator above shows which multiple covers your day.",
-      },
-      {
-        q: "What is the difference between Claude Pro and Max?",
-        a: "Price and capacity. Pro is $20 a month billed monthly, or $17 a month on an annual plan. Max 5x is $100 a month and Max 20x is $200. Max 5x gives five times Pro's usage per five-hour session and Max 20x gives twenty times. All three include Claude Code, and Anthropic lists Opus and Sonnet on all three.",
-      },
-      {
-        q: "What are the Claude Code usage limits?",
-        a: "Two layers. A session limit on a rolling five-hour window, and weekly limits on top that reset at a fixed time each week assigned to your account. Claude Code shares both with Claude on the web, desktop and mobile. Anthropic does not publish fixed hour or message caps, so this calculator scales from where Pro stops you today instead of guessing a number.",
-      },
-      {
-        q: "Is the API cheaper than a Claude subscription?",
-        a: "For light use, yes. At API rates Sonnet 5 costs $2 per million input tokens and $10 per million output tokens. A few short sessions a week can land under $20 a month, and then the API or Pro is the right call. Heavy daily use adds up fast. Anthropic puts the average for enterprise Claude Code deployments at about $13 per developer per active day at API rates, and at that level a flat plan wins.",
-      },
-      {
-        q: "What happens when I hit my Claude Code limit?",
-        a: "Claude Code stops and shows the time the limit resets. You can wait, turn on usage credits to keep working at standard API rates, or move to a bigger plan. Recent versions can also wait in the open session and pick the task back up on their own after the reset.",
-      },
-      {
-        q: "Do the plan limits apply if Claude Code runs in the cloud?",
-        a: "Yes. The limits follow your Anthropic account, not the machine. Running Claude Code on an always-on computer does not raise your caps. It does mean a run you start inside tmux there keeps working after your laptop sleeps, so the hours you pay for produce finished work.",
-      },
-    ],
-    relatedLinks: [
-      { href: "/agents/claude-code", label: "Run Claude Code on Hivra" },
-      { href: "/pricing", label: "Hivra pricing" },
-    ],
-    componentKey: "plan-calculator",
-    primaryKeyword: "claude code plan calculator",
-    vendors: ["Anthropic"],
   },
+  examples: [
+    {
+      title: "The default schedule",
+      inputs: `5 days a week, 3 hours a day, 100% ${API.opus.label}, normal use, Pro stops you about 2 hours in, weekly limit not hit`,
+      command: [
+        "Pro      $20/mo   Would hit limits",
+        "Max 5x   $100/mo  Fits with headroom",
+        "Max 20x  $200/mo  Fits with headroom",
+        "API list price, estimated: $376/mo",
+      ].join("\n"),
+      result:
+        "Pro stops you two hours into a three-hour day, and five times two hours covers the window, so Max 5x is the cheapest plan that fits. The same work at API list price is an estimated $376 a month, well above Max 5x's $100.",
+    },
+    {
+      title: "Light use, where the API can win",
+      inputs: `1 day a week, 1 hour a day, 100% ${API.sonnet.label}, normal use, Pro never stops you, weekly limit not hit`,
+      command: [
+        "Pro      $20/mo   Fits with headroom",
+        "Max 5x   $100/mo  Fits with headroom",
+        "Max 20x  $200/mo  Fits with headroom",
+        "API list price, estimated: $19.42/mo",
+      ].join("\n"),
+      result:
+        "Pro covers you, but one hour a week is light enough that the estimate at API list price, $19.42 a month, comes out a little under Pro's $20. That is the one kind of schedule where paying per token can be cheaper, and it leans on the assumptions above.",
+    },
+    {
+      title: "Long days and a weekly stop",
+      inputs: `4 days a week, 6 hours a day, 50% ${API.opus.label}, normal use, Pro stops you about 1 hour in, Pro's weekly limit stops you`,
+      command: [
+        "Pro      $20/mo   Would hit limits",
+        "Max 5x   $100/mo  Tight",
+        "Max 20x  $200/mo  Fits with headroom",
+        "API list price, estimated: $534/mo",
+      ].join("\n"),
+      result:
+        "Five times one hour is five hours against a five-hour window, so Max 5x is rated tight and Max 20x has headroom. The weekly stop on Pro is a separate limit the calculator cannot rate, because Anthropic publishes no weekly multiple for Max. It says so in the verdict.",
+    },
+    {
+      title: "Pro stops you almost at once",
+      inputs: `5 days a week, 5 hours a day, 100% ${API.opus.label}, normal use, Pro stops you about 30 minutes in, weekly limit not hit`,
+      command: [
+        "Pro      $20/mo   Would hit limits",
+        "Max 5x   $100/mo  Would hit limits",
+        "Max 20x  $200/mo  Fits with headroom",
+        "API list price, estimated: $627/mo",
+      ].join("\n"),
+      result:
+        "Five times thirty minutes is about two and a half hours, short of a five-hour window, so only Max 20x clears it. At API list price the same work is an estimated $627 a month, above Max 20x's $200.",
+    },
+  ],
+};
+
+export const TOOL_ENTRIES: ToolEntry[] = [
+  PLAN_CALCULATOR_ENTRY,
   {
     slug: "agent-survival-check",
     name: "Agent Survival Check",

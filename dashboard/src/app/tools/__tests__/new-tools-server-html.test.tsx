@@ -1,7 +1,7 @@
 /** @jest-environment node */
-// What a crawler that does not run JavaScript receives for the two newer tools:
-// the H1, the default result, the method section with its verified date, the
-// worked examples, the FAQ and the structured data. Rendered without a window,
+// What a crawler that does not run JavaScript receives for the plan calculator
+// and the two newer tools: the H1, the default result, the method section with
+// its verified date, the worked examples, the FAQ and the structured data. Rendered without a window,
 // exactly as the server renders the static page.
 import React from "react";
 import { renderToString } from "react-dom/server";
@@ -42,6 +42,58 @@ const textOf = (markup: string) => markup.replace(/<script[\s\S]*?<\/script>/g, 
 
 /** React escapes quotes and apostrophes in text; compare against the escaped form. */
 const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+
+describe("server HTML of /tools/claude-code-plan-calculator", () => {
+  let html: string;
+  beforeAll(async () => {
+    html = await serverHtml("claude-code-plan-calculator");
+  });
+
+  it("carries the H1, the default verdict and the estimate without any script running", () => {
+    const entry = getToolEntry("claude-code-plan-calculator")!;
+    expect(html).toMatch(new RegExp(`<h1[^>]*>${escaped(entry.h1)}</h1>`));
+    expect(textOf(html)).toContain(
+      "Max 5x at $100/month is the cheapest plan that fits. The same usage at API list price is an estimated $376/month.",
+    );
+    expect(textOf(html)).toContain("API list price, estimated");
+    expect(textOf(html)).toContain("Every number here is an estimate, not a quote");
+    // Opus 5.5 is the default model, so the mix starts there.
+    expect(textOf(html)).toContain("100% Opus 5.5");
+  });
+
+  it("prints the verified date as plain contiguous text, so a grep for it matches the raw HTML", () => {
+    const dates = html.match(/[Ll]ast verified [0-9]{4}-[0-9]{2}-[0-9]{2}/g) ?? [];
+    expect(dates.length).toBeGreaterThanOrEqual(2);
+    for (const date of dates) expect(date).toMatch(/2026-09-30$/);
+  });
+
+  it("carries the method heading, every dated source link, the worked examples, the FAQ and the cite block", () => {
+    const entry = getToolEntry("claude-code-plan-calculator")!;
+    expect(html).toContain(`<h2 id="method-heading">${entry.method!.heading}</h2>`);
+    const sources = entry.method!.paragraphs.flatMap((paragraph) => paragraph.sources ?? []);
+    expect(sources.length).toBeGreaterThanOrEqual(8);
+    for (const source of sources) expect(html).toContain(`href="${source.url}"`);
+    expect(html).toContain("<h2>Worked examples</h2>");
+    for (const example of entry.examples!) expect(html).toContain(escaped(example.command).split("\n")[0]);
+    for (const faq of entry.faqs) expect(html).toContain(escaped(faq.q));
+    expect(html).toContain("Cite this page");
+    expect(html).toContain('data-testid="cite-block"');
+  });
+
+  it("names what Anthropic does not publish instead of inventing it", () => {
+    const text = textOf(html);
+    expect(text).toContain(escaped("No Anthropic page states a weekly multiple, a token or message count, or the size of Pro"));
+    expect(text).toContain(escaped("Hivra's assumptions. Anthropic publishes neither."));
+  });
+
+  it("has the structured data, the vendor line and no placeholder leakage or banned name", () => {
+    expect(html).toContain('"@type":"WebApplication"');
+    expect(html).toContain('"@type":"FAQPage"');
+    expect(textOf(html)).toContain("Hivra is independent and is not affiliated with Anthropic.");
+    expect(html).not.toMatch(/undefined|\[object Object\]|NaN/);
+    expect(html.replace(/<script[\s\S]*?<\/script>/g, "")).not.toMatch(/\bWindows\b/);
+  });
+});
 
 describe("server HTML of /tools/keep-mac-awake", () => {
   let html: string;

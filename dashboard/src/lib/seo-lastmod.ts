@@ -34,8 +34,10 @@ export const PAGE_LAST_MODIFIED = {
   // truth pass (speed, backup, import and price claims removed, FAQs changed).
   featureDetail: "2026-09-24",
   compareDetail: "2026-09-24",
-  // Free tools: restored and truth-checked on 2026-09-24, unchanged since.
-  tools: "2026-09-24",
+  // Free tools: restored and truth-checked on 2026-09-24. The Claude plan
+  // calculator got new copy, a method section with linked sources, worked
+  // examples and re-read figures on 2026-09-30, and two tools were added.
+  tools: "2026-09-30",
   // Phase-aware token copy and official accounts, 2026-09-24.
   token: "2026-09-24",
   // The founder note was reworded on 2026-09-30 (open source, no preview label).
