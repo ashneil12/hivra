@@ -521,10 +521,15 @@
       // Whatever the attack did on the way, the end state is the setup's own.
       setMeter(items.filter((item) => isOpen(item, mode)).length);
       // The verdict is only spoken here, so a pressed resource adds its line to it.
-      const selected = items.find((item) => item.getAttribute("aria-pressed") === "true");
-      readout.textContent = selected
-        ? `${verdict.text} ${selected.dataset.label}: ${selected.dataset.status}.`
-        : verdict.text;
+      // Nothing is spoken until the reader has used the lab: the first paint and the
+      // first-view walk-through are not theirs, and a live region filled at load can
+      // be announced before they have asked for anything.
+      if (touched) {
+        const selected = items.find((item) => item.getAttribute("aria-pressed") === "true");
+        readout.textContent = selected
+          ? `${verdict.text} ${selected.dataset.label}: ${selected.dataset.status}.`
+          : verdict.text;
+      }
       setReplayBusy(false);
     }
     function clearAttack() {

@@ -315,6 +315,21 @@ describe("the boundary lab", () => {
   });
 
   describe("the spoken readout", () => {
+    it("says nothing until the reader has used the lab (CR-08)", () => {
+      const doc = loadPage();
+      // The live region is empty on first paint, and stays empty through the
+      // first-view walk-through, which is not the reader's doing.
+      expect(readout(doc)).toBe("");
+      firstView(doc);
+      elapse(30000);
+      expect(lab(doc).dataset.mode).toBe("project");
+      expect(readout(doc)).toBe("");
+      // The first press is what it speaks for.
+      pick(doc, "separate");
+      elapse(SETTLED + 2000);
+      expect(readout(doc)).toMatch(/hits a wall/);
+    });
+
     it("keeps the pressed resource's line next to the verdict (CR-08)", () => {
       const doc = loadPage({ reducedMotion: true });
       resource(doc, "files").click();
