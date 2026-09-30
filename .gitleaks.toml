@@ -2,3 +2,166 @@ title = "Hivra public current-tree secret scan"
 
 [extend]
 useDefault = true
+
+# The default rules find a token only when it sits next to a key-like name, so a
+# bare Hivra token in prose, a list or a neutrally named variable is missed.
+# These rules match the formats this repository issues, wherever they appear.
+# Every rule has a high-entropy floor and an exact length, so the short fixtures
+# in tests do not match. scripts/release/test_gitleaks_config.py holds the
+# positive and negative samples, and the CI run re-proves detection with freshly
+# generated tokens.
+
+[[rules]]
+id = "hivra-managed-venice-proxy-key"
+description = "Hivra managed Venice proxy key: hven_live_ plus 43 base64url characters"
+regex = '''\bhven_live_[A-Za-z0-9_-]{43}\b'''
+entropy = 3.5
+keywords = ["hven_live_"]
+
+[[rules]]
+id = "hivra-activity-collector-token"
+description = "Hivra agent-run collector token: hvra_otlp_v1.<claims>.<signature>"
+regex = '''\bhvra_otlp_v1\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}'''
+entropy = 3.0
+keywords = ["hvra_otlp_v1"]
+
+[[rules]]
+id = "hivra-server-enrollment-code"
+description = "Hivra one-time server enrollment code: hse1_ plus 32 base32 characters"
+regex = '''\bhse1_[a-z2-7]{32}\b'''
+entropy = 3.0
+keywords = ["hse1_"]
+
+[[rules]]
+id = "bankr-api-key"
+description = "Bankr API key or partner key: bk_ or bk_ptr_ plus 32 or more letters and digits"
+regex = '''\bbk_(?:ptr_)?[A-Za-z0-9]{32,}\b'''
+entropy = 3.5
+keywords = ["bk_"]
+
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret API key: sb_secret_ plus a long random tail"
+regex = '''\bsb_secret_[A-Za-z0-9_-]{20,}'''
+entropy = 3.0
+keywords = ["sb_secret_"]
+
+# Reviewed false positives. There are no line-number pins: a line pin binds a
+# path, a rule and a line but not the matched value, so a real credential pasted
+# on a pinned line would inherit it, and every edit above the line breaks it.
+# Each entry below is bound to the exact matched value (regexTarget "secret") and,
+# unless the value is a published constant, to one file. Do not add a path-only
+# or pattern-only entry, and do not allowlist a whole rule.
+# scripts/release/test_gitleaks_config.py checks this shape and fails on an entry
+# that no longer matches anything in the tree.
+
+[[allowlists]]
+description = "Public token and contract addresses on Base and the well-known Anvil test account; published values, not credentials"
+regexTarget = "secret"
+regexes = [
+  '''(?i)^0x833589fcd6edb6e08f4c7c32d4f71b54bda02913$''',
+  '''(?i)^0x95ccfd2b81a9667b0cc979992632f98fc853eba3$''',
+  '''(?i)^0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf$''',
+  '''(?i)^0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266$''',
+]
+
+[[allowlists]]
+description = "The public Qwen OAuth client id in the Qwen sign-in helper"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/auth\.ts$''']
+regexes = ['''^f0304373b74a44d2b584a3fb70ca9e56$''']
+
+[[allowlists]]
+description = "A public token contract address inside the curated skill text"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/data/curated-skills\.ts$''']
+regexes = ['''(?i)^0x316ffb9c875f900adcf04889e415cc86b564eba3$''']
+
+[[allowlists]]
+description = "A database column name in the encryption key-rotation field list"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/encryption-rotation\.ts$''']
+regexes = ['''^mem0ApiKeyEncrypted$''']
+
+[[allowlists]]
+description = "Example Discord ids in the Telegram and Discord setup article"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/blog/articles/hermes-agent-telegram-discord-setup\.ts$''']
+regexes = ['''^123456789012345678$''', '''^987654321098765432$''']
+
+[[allowlists]]
+description = "Synthetic collector token used as a sentinel in the runtime receipt test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/scripts/test-runtime-receipt-agent-trace\.py$''']
+regexes = ['''^hvra_otlp_v1\.synthetic-never-read\.receipt-sentinel$''']
+
+[[allowlists]]
+description = "Short synthetic proxy-key fixtures in the agents route test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/app/api/hivra/agents/__tests__/route\.test\.ts$''']
+regexes = ['''^hven_live_TESTKEY123$''', '''^hven_live_AZKEY123$''']
+
+[[allowlists]]
+description = "Synthetic encryption key and Stripe-shaped key in the crypto test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/__tests__/crypto\.test\.ts$''']
+regexes = [
+  '''^0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$''',
+  '''^sk_live_1234567890abcdef$''',
+]
+
+[[allowlists]]
+description = "Synthetic Daytona key fixture in the instance settings test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/__tests__/instance-settings\.test\.ts$''']
+regexes = ['''^dtn_secret_abc123$''']
+
+[[allowlists]]
+description = "The public PostHog project token in the PostHog client test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/__tests__/posthog\.test\.ts$''']
+regexes = ['''^phc_zNoQPCQxtRRysXyyxdCwnMyXSvDW8bEPGosSzZRXCQKn$''']
+
+[[allowlists]]
+description = "The RFC 6455 sample nonce in the workspace router test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/infrastructure/__tests__/workspace-router\.test\.ts$''']
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
+
+[[allowlists]]
+description = "Test code that assembles a private-key file from generated bytes; no key is stored in the file"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/infrastructure/__tests__/first-boot-ssh\.test\.ts$''']
+regexes = ['''^-----BEGIN OPENSSH PRIVATE KEY-----\\n"\+binary\.toString\("base64"\)\.match\(/\.\{1,70\}/g\)!\.join\("\\n"\)\+"\\n-----END OPENSSH PRIVATE KEY-----$''']
+
+[[allowlists]]
+description = "Synthetic token fixture in the desktop launcher test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^dashboard/src/lib/webui/__tests__/desktop-launcher\.test\.ts$''']
+regexes = ['''^abc123def456$''']
+
+[[allowlists]]
+description = "Synthetic signing secret in the browser sidecar test fakes"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/browser-sidecar/tests/_fakes\.ts$''']
+regexes = ['''^test-secret-at-least-16-chars-long$''']
+
+[[allowlists]]
+description = "Synthetic signing secret in the browser sidecar auth test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^services/browser-sidecar/tests/auth\.test\.ts$''']
+regexes = ['''^test-secret-1234567890$''']
