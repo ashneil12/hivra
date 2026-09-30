@@ -24,10 +24,10 @@ export function generateMetadata(): Metadata {
 }
 
 export default function TokenVerificationPage() {
-  // Token geo-policy dormant: the page renders exactly as before, without
-  // reading the request country.
+  // No country is listed (the list is empty, so the policy is dormant): the
+  // page renders as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) return <TokenPageClient entries={getTokenPageEntries()} />;
-  // A country is listed: render per request, with the notice for a blocked viewer.
+  // A country is listed (GB today): render per request, with the notice for a blocked viewer.
   return renderForViewer();
 }
 

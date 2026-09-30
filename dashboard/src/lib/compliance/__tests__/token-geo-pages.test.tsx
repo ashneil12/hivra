@@ -10,6 +10,12 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen } from "@testing-library/react";
 
+// The blocked-country cases run against the COMMITTED country list, not the empty
+// one jest.setup.tsx gives other suites, and never replace the policy for them:
+// if the list stopped reaching the pages, these would fail. The dormant cases
+// below still empty the policy on purpose.
+jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
+
 const mockHeaders = jest.fn();
 jest.mock("next/headers", () => ({ ...jest.requireActual("next/headers"), headers: () => mockHeaders() }));
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn(async () => ({ userId: null })) }));
@@ -109,8 +115,10 @@ describe("dormant policy", () => {
   });
 });
 
-describe("policy of ['GB']", () => {
-  beforeEach(() => jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]));
+describe("the committed country list (GB)", () => {
+  it("is what the pages read: GB is listed and the policy is active", () => {
+    expect(TOKEN_GEO_POLICY.blockedCountries).toContain("GB");
+  });
 
   it("/token keeps the contracts and adds the notice for a GB viewer", async () => {
     viewerFrom("GB");

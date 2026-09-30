@@ -18,9 +18,9 @@ export function generateMetadata(): Metadata {
 }
 export default function TokenomicsPage() {
   const phase = getHivraTokenPhase();
-  // Token geo-policy dormant: render exactly as before, without reading the request country.
+  // No country is listed (the list is empty, so the policy is dormant): render as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) return <PublicSite><main id="main-content"><FullTokenomicsSection headingLevel={1} phase={phase} /></main></PublicSite>;
-  // A country is listed: render per request; a blocked viewer gets the facts and the notice only.
+  // A country is listed (GB today): render per request; a blocked viewer gets the facts and the notice only.
   return renderForViewer(phase);
 }
 async function renderForViewer(phase: HivraTokenPhase) {

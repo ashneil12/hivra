@@ -148,10 +148,11 @@ function SectionShell({
 }
 
 export default function WhyHivraPage() {
-  // Token geo-policy dormant: render exactly as before, without reading the request country.
+  // No country is listed (the list is empty, so the policy is dormant): render
+  // as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) return <WhyHivraContent geoNotice={null} />;
-  // A country is listed: render per request; a blocked viewer doesn't see the
-  // token payment discount.
+  // A country is listed (GB today): render per request; a blocked viewer sees
+  // the notice and the facts, not the token payment discount or the proposal.
   return renderForViewer();
 }
 

@@ -74,6 +74,28 @@ describe("token geo-policy", () => {
   });
 });
 
+describe("the policy reads the country list file", () => {
+  // Every other suite runs with an empty list (jest.setup.tsx), so without this
+  // nothing fails if the policy stops reading the list at all.
+  it("takes blockedCountries from whatever token-geo-list.ts exports", () => {
+    // resetModules, not isolateModules: an isolated registry still answers from
+    // the already-created mock of the list, so it would see the empty list.
+    jest.resetModules();
+    try {
+      jest.doMock("../token-geo-list", () => ({ BLOCKED_COUNTRIES: ["FR", "DE"] }));
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fresh = require("../token-geo-policy") as typeof import("../token-geo-policy");
+      expect(fresh.TOKEN_GEO_POLICY.blockedCountries).toEqual(["FR", "DE"]);
+      expect(fresh.isTokenGeoPolicyActive()).toBe(true);
+      expect(fresh.isCountryBlockedForTokens("FR")).toBe(true);
+      expect(fresh.isCountryBlockedForTokens("GB")).toBe(false);
+    } finally {
+      jest.doMock("../token-geo-list", () => ({ BLOCKED_COUNTRIES: [] }));
+      jest.resetModules();
+    }
+  });
+});
+
 describe("the committed country list", () => {
   it("blocks the United Kingdom", () => {
     const real = jest.requireActual<typeof import("../token-geo-list")>("../token-geo-list").BLOCKED_COUNTRIES;

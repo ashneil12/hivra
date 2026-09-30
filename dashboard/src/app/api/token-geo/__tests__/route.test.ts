@@ -1,5 +1,11 @@
 import { NextRequest } from "next/server";
 
+// The blocked-country cases run against the COMMITTED country list, not the empty
+// one jest.setup.tsx gives other suites, and never replace the policy for them:
+// if the list stopped reaching this route, they would fail. The dormant case
+// below still empties the policy on purpose.
+jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
+
 const mockFrom = jest.fn();
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
@@ -81,8 +87,7 @@ describe("GET /api/token-geo", () => {
     expect(clerkFetch).not.toHaveBeenCalled();
   });
 
-  it("with ['GB'] blocks a GB visitor with the notice, signed out", async () => {
-    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+  it("with the committed list (GB) blocks a GB visitor with the notice, signed out", async () => {
     const response = await GET(request("GB"));
     await expect(response.json()).resolves.toEqual({
       blocked: true,
@@ -90,8 +95,7 @@ describe("GET /api/token-geo", () => {
     });
   });
 
-  it("with ['GB'] blocks a signed-in user whose stored country is GB, and allows others", async () => {
-    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+  it("with the committed list (GB) blocks a signed-in user whose stored country is GB, and allows others", async () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
     await expect((await GET(request("US"))).json()).resolves.toMatchObject({ blocked: true });
 
@@ -99,8 +103,7 @@ describe("GET /api/token-geo", () => {
     await expect((await GET(request("US"))).json()).resolves.toEqual({ blocked: false, notice: null });
   });
 
-  it("with ['GB'] answers {blocked:false} to an ops admin from a UK IP with a stored UK country", async () => {
-    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+  it("with the committed list (GB) answers {blocked:false} to an ops admin from a UK IP with a stored UK country", async () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: ADMIN_ID });
     await expect((await GET(request("GB"))).json()).resolves.toEqual({ blocked: false, notice: null });
     expect(clerkFetch).not.toHaveBeenCalled();
@@ -112,8 +115,7 @@ describe("GET /api/token-geo", () => {
     await expect((await GET(request("GB"))).json()).resolves.toEqual({ blocked: false, notice: null });
   });
 
-  it("with ['GB'] still blocks a non-admin, and a signed-out visitor, from a UK IP", async () => {
-    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+  it("with the committed list (GB) still blocks a non-admin, and a signed-out visitor, from a UK IP", async () => {
     clerkPrimaryEmail("customer@example.test");
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_b" });
     await expect((await GET(request("GB"))).json()).resolves.toEqual({
