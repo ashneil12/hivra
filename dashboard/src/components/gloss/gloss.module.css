@@ -1,8 +1,8 @@
 /* A plain-English term with its meaning on hover and focus. The meaning is in
-   data-tip, so it never becomes page text. The tooltip is dark on every page,
+   data-tip, so it never becomes page text. gloss-tip.ts draws one shared bubble
+   on the page body, so no card can clip it. The bubble is dark on every page,
    so it reads the same on light and dark sections. */
 .gloss {
-  position: relative;
   cursor: help;
   border-bottom: 1px dotted currentColor;
   text-decoration: none;
@@ -14,14 +14,11 @@
   border-bottom-style: solid;
 }
 
-.gloss:hover::after,
-.gloss:focus::after {
-  content: attr(data-tip);
-  position: absolute;
+.tip {
+  position: fixed;
+  top: 0;
+  left: 0;
   z-index: 60;
-  left: var(--gloss-x, 0px);
-  bottom: calc(100% + 10px);
-  width: var(--gloss-w, 280px);
   padding: 10px 12px;
   background: #1a1c1f;
   color: #f0efe9;
@@ -33,11 +30,31 @@
   text-align: left;
   text-transform: none;
   white-space: normal;
-  pointer-events: none;
 }
 
-.gloss[data-below]:hover::after,
-.gloss[data-below]:focus::after {
-  bottom: auto;
-  top: calc(100% + 10px);
+.tip[hidden] {
+  display: none;
+}
+
+/* A strip across the gap to the word, so the pointer can cross onto the bubble. */
+.tip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+}
+
+.tip[data-side="above"]::before {
+  top: 100%;
+}
+
+.tip[data-side="below"]::before {
+  bottom: 100%;
+}
+
+@media print {
+  .tip {
+    display: none;
+  }
 }

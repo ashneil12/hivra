@@ -1,37 +1,26 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import styles from "./gloss.module.css";
+import { retainGlossTips } from "./gloss-tip";
 
-/** One term with a hover and focus tooltip, kept on screen and dismissed with Escape. */
+/**
+ * One term with a hover and focus tooltip. The tooltip itself is drawn by
+ * gloss-tip.ts on the page body, so a card's overflow cannot cut it off.
+ * Hover, focus and a tap open it, and Escape closes it without moving focus.
+ * The term stays a tab stop so a keyboard reader can reach the meaning.
+ */
 export default function Gloss({ tip, children }: { tip: string; children: ReactNode }) {
-  const ref = useRef<HTMLSpanElement>(null);
-
-  function place() {
-    const term = ref.current;
-    if (!term) return;
-    const width = Math.min(300, window.innerWidth - 32);
-    const box = term.getBoundingClientRect();
-    const left = Math.max(16, Math.min(box.left + box.width / 2 - width / 2, window.innerWidth - 16 - width));
-    term.style.setProperty("--gloss-x", `${left - box.left}px`);
-    term.style.setProperty("--gloss-w", `${width}px`);
-    if (box.top < 170) term.setAttribute("data-below", "");
-    else term.removeAttribute("data-below");
-  }
+  useEffect(() => retainGlossTips(), []);
 
   return (
     <span
-      ref={ref}
       className={styles.gloss}
+      data-gloss=""
       tabIndex={0}
       data-tip={tip}
       // aria-description is not in React's typings yet.
       {...{ "aria-description": tip }}
-      onPointerEnter={place}
-      onFocus={place}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") event.currentTarget.blur();
-      }}
     >
       {children}
     </span>
