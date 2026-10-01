@@ -6,8 +6,9 @@
  * can't tell a live gate from a dead one: changing token-geo-policy.ts to
  * `blockedCountries: []`, or the rewrites to read another list, passed every
  * geo test. This file opts back in to the real list and never replaces the
- * policy, so it fails when the list stops reaching the policy, the gate, the
- * token-geo route or the rewrites. The other geo suites do the same for their
+ * policy, so it fails when the list stops reaching the policy, the gate or the
+ * token-geo route. The four token documents are covered the same way by
+ * src/__tests__/token-geo-document-routes.test.ts. The other geo suites do the same for their
  * blocked-country cases (billing token-geo-routes, token-geo-pages, the
  * token-geo route), so the list is proven to reach every token route and page.
  */
@@ -23,7 +24,6 @@ jest.mock("@/lib/supabase", () => ({
 }));
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn(async () => ({ userId: null })) }));
 
-import nextConfig, { tokenGeoRewrites } from "../../../../next.config";
 import { GET as tokenGeoRoute } from "@/app/api/token-geo/route";
 import { BLOCKED_COUNTRIES } from "../token-geo-list";
 import { resolveTokenGeoBlock } from "../token-geo-gate";
@@ -66,32 +66,5 @@ describe("GET /api/token-geo with the committed list", () => {
     await expect(blocked.json()).resolves.toMatchObject({ blocked: true, notice: GB_NOTICE });
     const allowed = await tokenGeoRoute(requestFrom("FR"));
     await expect(allowed.json()).resolves.toEqual({ blocked: false, notice: null });
-  });
-});
-
-describe("the static-document rewrites with the committed list", () => {
-  it("are built for the committed countries, from the default list", () => {
-    const rules = tokenGeoRewrites();
-    expect(rules.length).toBeGreaterThan(0);
-    for (const rule of rules) {
-      expect(rule.has).toEqual([{ type: "header", key: "x-vercel-ip-country", value: `(?:${BLOCKED_COUNTRIES.join("|")})` }]);
-    }
-  });
-
-  it("run before the filesystem, and in no other bucket, so they reach files served from public/", async () => {
-    const rewrites = (await nextConfig.rewrites?.()) as {
-      beforeFiles: Array<{ source: string }>;
-      afterFiles: Array<{ source: string }>;
-      fallback?: Array<{ source: string }>;
-    };
-    const sources = tokenGeoRewrites().map((rule) => rule.source);
-    expect(sources).toEqual(expect.arrayContaining(["/LITEPAPER.md", "/WHITEPAPER.md", "/TOKENOMICS.md", "/docs/litepaper/index.html"]));
-    // The rules that the config really serves, not a copy of the function's output.
-    const before = rewrites.beforeFiles.map((rule) => rule.source);
-    for (const source of sources) expect(before).toContain(source);
-    for (const bucket of [rewrites.afterFiles, rewrites.fallback ?? []]) {
-      const later = bucket.map((rule) => rule.source);
-      for (const source of sources) expect(later).not.toContain(source);
-    }
   });
 });
