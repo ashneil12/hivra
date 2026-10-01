@@ -6,7 +6,7 @@ it("closes the public schema to the API roles by default, pins the trigger searc
   const output = execFileSync(
     process.execPath,
     [path.resolve(__dirname, "../../scripts/test-lock-down-api-role-grants.cjs")],
-    { encoding: "utf8", timeout: 90_000 }
+    { encoding: "utf8", timeout: 150_000 }
   );
   expect(output).toContain("PASS lock down API role grants");
-}, 100_000);
+}, 160_000);

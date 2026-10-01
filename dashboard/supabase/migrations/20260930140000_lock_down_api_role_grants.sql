@@ -53,7 +53,10 @@
 --      policy for PUBLIC or authenticated applies to it, or when another
 --      table's policy or a view depends on it (hermes_instances, which the
 --      hermes_messages policy reads, is one). That keeps the hermes_messages
---      Realtime path and every policy subquery working. Functions that a row
+--      Realtime path and every policy subquery working. On those tables
+--      authenticated keeps SELECT only: its write privileges go too, which
+--      20260926090000 already removes where it has run, so this file does not
+--      depend on that one having been applied first. Functions that a row
 --      level security policy or a view calls (today only requesting_user_id())
 --      and functions that belong to an extension are left as they are. The
 --      service role keeps everything it could use before, including EXECUTE it
@@ -61,7 +64,10 @@
 --   4. Removes anon, authenticated and PUBLIC from the postgres role's default
 --      privileges for new tables, sequences and functions, including the
 --      default that is not limited to one schema. service_role keeps its
---      default grants, so new objects stay usable by the dashboard.
+--      default grants, so new objects stay usable by the dashboard. That
+--      includes a function that an extension installed by a later migration
+--      creates in any schema: with PUBLIC gone from the default, the service
+--      role needs a default of its own to keep running it.
 --   5. Fails, rather than being recorded as applied, if any of that did not
 --      take effect or if the service role lost anything.
 --
@@ -72,7 +78,7 @@
 -- A correction to two earlier comments. 20260625120000 and 20260922172439 call
 -- NEXT_PUBLIC_SUPABASE_ANON_KEY "shipped to the browser". An import check found
 -- no client component that reaches a client built with it, and the script
--- bundles the audit fetched from the two sites held no Supabase key.
+-- bundles served by the two sites held no Supabase key.
 -- Migrations are append-only, so the wording stays there; the anon-key client
 -- export is removed from src/lib/supabase.ts in the same change.
 --
@@ -310,7 +316,7 @@ begin
   -- policy or something depends on it. Column-level grants survive a
   -- table-level REVOKE, so they go too.
   for t in
-    select c.oid, c.relname, c.oid = any (readable) as authenticated_reads
+    select c.oid, c.relname, c.relkind, c.oid = any (readable) as authenticated_reads
       from pg_class c
      where c.relnamespace = 'public'::regnamespace
        and c.relkind in ('r', 'p', 'v', 'm', 'f')
@@ -318,6 +324,18 @@ begin
     execute format('revoke all on table public.%I from public, anon', t.relname);
     if not t.authenticated_reads then
       execute format('revoke all on table public.%I from authenticated', t.relname);
+    elsif t.relkind in ('r', 'p') then
+      -- A table authenticated reads through a policy: SELECT stays, writes go.
+      execute format(
+        'revoke insert, update, delete, truncate, references, trigger on table public.%I from authenticated',
+        t.relname
+      );
+      -- MAINTAIN exists from PostgreSQL 17 and is part of Supabase's default grant.
+      if current_setting('server_version_num')::int >= 170000 then
+        execute format('revoke maintain on table public.%I from authenticated', t.relname);
+      end if;
+    else
+      execute format('revoke insert, update, delete on table public.%I from authenticated', t.relname);
     end if;
     for col in
       select a.attname
@@ -330,6 +348,8 @@ begin
       execute format('revoke all (%I) on table public.%I from public, anon', col.attname, t.relname);
       if not t.authenticated_reads then
         execute format('revoke all (%I) on table public.%I from authenticated', col.attname, t.relname);
+      else
+        execute format('revoke insert (%I), update (%I), references (%I) on table public.%I from authenticated', col.attname, col.attname, col.attname, t.relname);
       end if;
     end loop;
   end loop;
@@ -418,6 +438,34 @@ begin
     raise exception 'authenticated still holds table privileges on tables no policy lets it read: %', leftover;
   end if;
 
+  -- Fail if authenticated still holds anything but SELECT on a table it keeps.
+  select string_agg(c.relname, ', ' order by c.relname)
+    into leftover
+    from pg_class c
+   where c.relnamespace = 'public'::regnamespace
+     and c.relkind in ('r', 'p', 'v', 'm', 'f')
+     and (
+       exists (
+         select 1
+           from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+          where a.grantee = authenticated_role and a.privilege_type <> 'SELECT'
+       )
+       or exists (
+         select 1
+           from pg_attribute at,
+                aclexplode(at.attacl) a
+          where at.attrelid = c.oid
+            and at.attnum > 0
+            and not at.attisdropped
+            and at.attacl is not null
+            and a.grantee = authenticated_role
+            and a.privilege_type <> 'SELECT'
+       )
+     );
+  if leftover is not null then
+    raise exception 'authenticated still holds more than SELECT on: %', leftover;
+  end if;
+
   -- Fail if the API roles still hold anything on a sequence.
   select string_agg(c.relname, ', ' order by c.relname)
     into leftover
@@ -496,6 +544,14 @@ alter default privileges for role postgres
 alter default privileges for role postgres in schema public
   grant execute on functions to service_role;
 
+-- A function created later in any other schema (an extension installed by a
+-- later migration, for example) used to be executable by the service role only
+-- through PUBLIC. The unscoped default above removes PUBLIC, so give the service
+-- role its own, again without a schema: the API roles get nothing, and the
+-- service role keeps what it has always been able to run.
+alter default privileges for role postgres
+  grant execute on functions to service_role;
+
 do $$
 declare
   leftover text;
@@ -543,6 +599,19 @@ begin
        and a.privilege_type = 'EXECUTE'
   ) then
     raise exception 'new public functions would not be executable by service_role';
+  end if;
+
+  if not exists (
+    select 1
+      from pg_default_acl d,
+           aclexplode(d.defaclacl) a
+     where d.defaclrole = 'postgres'::regrole
+       and d.defaclnamespace = 0
+       and d.defaclobjtype = 'f'
+       and a.grantee = 'service_role'::regrole
+       and a.privilege_type = 'EXECUTE'
+  ) then
+    raise exception 'new functions in other schemas would not be executable by service_role';
   end if;
 end
 $$;

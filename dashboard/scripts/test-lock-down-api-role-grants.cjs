@@ -13,7 +13,11 @@
 //   any public function except the ones a policy or a view calls, the service
 //   role keeps everything it could use (including EXECUTE it held only through
 //   PUBLIC), authenticated keeps its table reads, and a new table, sequence or
-//   function starts closed to the API roles;
+//   function starts closed to the API roles, and authenticated holds nothing
+//   but SELECT on the tables it keeps (even on a database where an earlier
+//   migration did not already remove its write privileges);
+// - a function that a later migration or extension creates in any schema stays
+//   open to the service role and closed to the API roles;
 // - the eight trigger functions stay closed to the API roles and still fire;
 //   the four mutable-search_path functions are pinned and behave exactly as
 //   before, including a database whose body differs from the repository's;
@@ -25,6 +29,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { PGlite } = require("@electric-sql/pglite");
 const { citext } = require("@electric-sql/pglite/contrib/citext");
+const { cube } = require("@electric-sql/pglite/contrib/cube");
 const { openMigratedDatabase, readMigration, SUPABASE_STUBS } = require("./lib/pglite-all-migrations.cjs");
 
 const MIGRATION = "20260930140000_lock_down_api_role_grants.sql";
@@ -216,6 +221,10 @@ async function mainDatabase() {
         using (exists (select 1 from public.parent_probe p where p.id = child_probe.parent_id) and public.requesting_user_id() = user_id);
       create policy "insert only" on public.write_policy_probe for insert to authenticated with check (true);
       create policy "service only" on public.service_policy_probe for select to service_role using (true);
+      -- authenticated also holds write privileges on tables it may read, as it does
+      -- on a database where the write-revoke migration has not run.
+      grant insert, update, delete, truncate, references, trigger on public.read_policy_probe to authenticated;
+      grant update (user_id), insert (user_id) on public.child_probe to authenticated;
       insert into public.read_policy_probe values (1, '${ATTACKER}');
       insert into public.parent_probe values (1);
       insert into public.child_probe values (1, 1, '${ATTACKER}');
@@ -262,6 +271,16 @@ async function mainDatabase() {
         `pre: authenticated holds SELECT on ${table}, which no policy lets it read`
       );
     }
+    assert.equal(
+      (await one(db, "select has_table_privilege('authenticated', 'public.read_policy_probe', 'INSERT, UPDATE, DELETE, TRUNCATE') as can")).can,
+      true,
+      "pre: authenticated holds write privileges on a table it may read"
+    );
+    assert.equal(
+      (await one(db, "select has_any_column_privilege('authenticated', 'public.child_probe', 'INSERT, UPDATE') as can")).can,
+      true,
+      "pre: authenticated holds a column-level write privilege on a table it may read"
+    );
     const chatRead = "select content from public.hermes_messages";
     assert.deepEqual(
       (await asRole(db, "authenticated", ATTACKER, chatRead)).rows,
@@ -386,6 +405,36 @@ async function mainDatabase() {
     }
     for (const table of ["read_policy_probe", "parent_probe", "child_probe", "view_source_probe", "hermes_conversations", "hermes_messages", "hermes_instances"]) {
       assert.equal(heldAfter.includes(table), true, `authenticated keeps ${table}`);
+    }
+    assert.deepEqual(
+      await all(
+        db,
+        `select c.relname from pg_class c
+          where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p', 'v', 'm', 'f')
+            and (
+              exists (select 1 from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+                       where a.grantee = 'authenticated'::regrole and a.privilege_type <> 'SELECT')
+              or exists (select 1 from pg_attribute at, aclexplode(at.attacl) a
+                          where at.attrelid = c.oid and at.attnum > 0 and not at.attisdropped and at.attacl is not null
+                            and a.grantee = 'authenticated'::regrole and a.privilege_type <> 'SELECT')
+            )
+          order by 1`
+      ),
+      [],
+      "authenticated holds nothing but SELECT on every public table and view"
+    );
+    for (const table of ["read_policy_probe", "child_probe"]) {
+      assert.equal(
+        (await one(db, "select has_table_privilege('authenticated', $1, 'INSERT, UPDATE, DELETE, TRUNCATE') as can", [`public.${table}`])).can,
+        false,
+        `authenticated cannot write ${table}`
+      );
+      assert.equal(
+        (await one(db, "select has_any_column_privilege('authenticated', $1, 'INSERT, UPDATE') as can", [`public.${table}`])).can,
+        false,
+        `authenticated cannot write a column of ${table}`
+      );
+      await denied(db, "authenticated", ATTACKER, `delete from public.${table}`);
     }
     assert.deepEqual(
       (await asRole(db, "authenticated", ATTACKER, "select id from public.read_policy_probe")).rows,
@@ -640,7 +689,7 @@ async function driftedBodyDatabase() {
 async function extensionDatabase() {
   // An extension's functions in public are not the application's to close: the
   // migration must leave their privileges alone, and still pass its own checks.
-  const db = new PGlite({ extensions: { citext } });
+  const db = new PGlite({ extensions: { citext, cube } });
   try {
     await db.exec(SUPABASE_STUBS);
     await db.exec(HOSTED_DEFAULTS);
@@ -670,6 +719,22 @@ async function extensionDatabase() {
     );
     assert.equal(await canExecute(db, "anon", "public.application_probe()"), false, "the application function is closed");
     assert.equal(await canExecute(db, "service_role", "public.application_probe()"), true, "and stays open to the service role");
+    // An extension installed by a later migration, in a schema of its own: the
+    // functions it creates must stay usable by the service role (which could run
+    // them through PUBLIC before this migration) and stay closed to the API roles.
+    await db.exec("create schema probe_ext; create extension cube schema probe_ext");
+    const later = await all(
+      db,
+      `select p.oid::regprocedure::text as sig from pg_proc p
+        where p.pronamespace = 'probe_ext'::regnamespace and p.proname in ('cube', 'cube_in', 'cube_dim')`
+    );
+    assert.ok(later.length >= 3, "the later extension installs functions");
+    for (const { sig } of later) {
+      assert.equal(await canExecute(db, "service_role", sig), true, `service_role can execute ${sig}`);
+      assert.equal(await canExecute(db, "anon", sig), false, `anon cannot execute ${sig}`);
+      assert.equal(await canExecute(db, "authenticated", sig), false, `authenticated cannot execute ${sig}`);
+      assert.equal(await publicExecutes(db, sig), false, `PUBLIC cannot execute ${sig}`);
+    }
     console.log("PASS extension database");
   } finally {
     await db.close();
