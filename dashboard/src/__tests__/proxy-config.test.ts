@@ -142,6 +142,42 @@ describe("proxy config", () => {
     }
   });
 
+  // A path with a percent-encoded character runs the proxy even when it ends in
+  // a static extension or names an excluded route, so the proxy can redirect it
+  // to the plain spelling. Build assets and paths with no encoded character keep
+  // the exclusions they had.
+  it("runs the proxy for percent-encoded paths, including static documents", async () => {
+    const { config } = await import("@/proxy");
+    const id = "11111111-1111-4111-8111-111111111111";
+
+    for (const url of [
+      "/%70ricing",
+      "/docs/litepaper/%69ndex.html",
+      "/docs/litepaper/index%2ehtml",
+      "/%54OKENOMICS.md",
+      "/%72obots.txt",
+      "/api/%68ealth",
+      `/api/instances/${id}/%61eon-gate`,
+      "/enroll%2Fscript",
+    ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("keeps build assets and plain static files out of the proxy", async () => {
+    const { config } = await import("@/proxy");
+
+    for (const url of [
+      "/_next/static/chunks/%5Bturbopack%5D_runtime.js",
+      "/_next/static/chunks/%61bc.js",
+      "/docs/litepaper/index.html",
+      "/favicon.ico",
+      "/pwa-icon-192.png",
+    ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
+    }
+  });
+
   it("splits exclusions without shredding the dynamic-segment token", () => {
     expect(exclusionSegments("instances/[^/]+/aeon-gate")).toEqual([
       "instances",

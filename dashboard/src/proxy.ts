@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { canonicalRequestPath } from "@/lib/canonical-request-path";
 import { crossOriginMutationRefusal } from "@/lib/cross-origin-mutation-guard";
 import { isProtectedPath, PROTECTED_ROUTE_MATCHERS } from "@/lib/protected-routes";
 import { isHostedBillingPath } from "@/lib/self-host/hosted-surface-guard";
@@ -39,6 +40,26 @@ export default clerkMiddleware(async (auth, request) => {
       refused.headers.set("X-Robots-Tag", "noindex, nofollow");
     }
     return refused;
+  }
+
+  // A percent-encoded letter in a path (`/%70ricing`) means the same as the
+  // letter, but the app and the platform do not treat the two spellings alike:
+  // Vercel answers an encoded app route with a 500 page and serves an encoded
+  // static file around the rules written for its plain path. Send the visitor to
+  // the plain spelling so every route and rule sees the form it expects. The
+  // redirect keeps the method and the query string, and the request it sends the
+  // visitor to goes through every check in this file again on the plain path.
+  const canonicalPath = canonicalRequestPath(request.nextUrl.pathname);
+  if (canonicalPath !== null) {
+    const target = request.nextUrl.clone();
+    // The setter writes the path as given, so a leading double slash stays a
+    // path on this origin and cannot become another host.
+    target.pathname = canonicalPath;
+    const redirect = NextResponse.redirect(target, 308);
+    if (noIndexHost) {
+      redirect.headers.set("X-Robots-Tag", "noindex, nofollow");
+    }
+    return redirect;
   }
 
   if (
@@ -90,6 +111,12 @@ export const config = {
      *   /enroll/script.sha256 (page matcher only): `curl … | sudo bash`
      *   downloads the setup script with no session. Siblings stay covered.
      *
+     * One entry adds paths back. A path that contains a percent-encoded
+     * character is matched by the last entry even when it ends in a static
+     * extension or names an excluded route, so the proxy can redirect an encoded
+     * spelling such as /%70ricing or /docs/litepaper/%69ndex.html to the plain
+     * one (see lib/canonical-request-path.ts). Build assets under /_next/ stay out.
+     *
      * An api exclusion must appear in BOTH entries below. The matcher array is
      * an OR: a path excluded from one entry but matched by another still runs
      * the middleware. proxy-config.test.ts pins that, and pins that every api
@@ -117,5 +144,6 @@ export const config = {
     "/((?!_next|api/instances/[^/]+/aeon-gate$|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/api/((?!instances/[^/]+/aeon-gate$|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$).*)",
     "/trpc/(.*)",
+    "/((?!_next/).*%[0-9A-Fa-f]{2}.*)",
   ],
 };
