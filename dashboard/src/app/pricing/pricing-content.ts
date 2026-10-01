@@ -92,7 +92,7 @@ export const PRICING_ROWS: PricingRow[] = [
     price: "$0",
     priceAmount: "0",
     priceFor: "for the software, on your own server",
-    billing: "None, you pay your own server and model provider",
+    billing: "None, you pay your own server and your AI company",
     refund: "Not applicable",
     monthly: false,
   },
@@ -122,7 +122,7 @@ export function buildPricingOffers(siteUrl: string): Array<Record<string, unknow
     priceCurrency: "USD",
     description: row.monthly
       ? `${row.price} a month ${row.priceFor}. ${row.refund}.`
-      : "Run Hivra on your own server from the open source code. You provide the server and pay for it and your model usage.",
+      : "Run Hivra on your own server from the open source code. You provide the server and pay for it and for your AI usage.",
     url: `${siteUrl}/pricing#pricing-table`,
     ...(row.monthly
       ? {
@@ -151,7 +151,7 @@ export const PRICING_FAQ: { q: string; a: string }[] = [
     a: "No. Paid plans stay on and are not paused for inactivity, and the computer keeps its files, sessions and login.",
   },
   {
-    q: "Can I use my own model key or login?",
+    q: "Can I use my own AI key or login?",
     a: "Yes. Bring your own AI key, or sign in with your own account for Claude Code and Codex. Your AI company bills you for what you use.",
   },
   {

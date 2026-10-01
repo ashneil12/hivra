@@ -37,7 +37,7 @@ export const ABOUT_SECTIONS = {
   isNot: {
     heading: "What Hivra is not",
     items: [
-      "It is not an AI model. You bring your own model key, or sign in with your own Claude or ChatGPT account, and your AI company bills you for what you use.",
+      "It is not an AI model. You bring your own AI key, or sign in with your own Claude or ChatGPT account, and your AI company bills you for what you use.",
       NON_AFFILIATION_LINE + " Hermes Agent is a Nous Research project, Claude Code is Anthropic's and Codex is OpenAI's. Hivra runs them on a computer of their own.",
       "It does not need a token. Running Hivra yourself needs neither a token nor a Hivra account.",
     ],

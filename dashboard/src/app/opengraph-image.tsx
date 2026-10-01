@@ -11,7 +11,7 @@ export const contentType = OG_CONTENT_TYPE;
 
 export default async function OpengraphImage() {
   return renderOgCard({
-    title: "One control plane for agent computers",
-    subtitle: "Use Hivra Cloud, connect your own host, or bring your infrastructure provider.",
+    title: "A computer for you and your agents",
+    subtitle: "Run it on Hivra Cloud, on a server you already have, or yourself from the open source code.",
   });
 }

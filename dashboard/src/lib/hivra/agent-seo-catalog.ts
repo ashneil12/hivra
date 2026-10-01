@@ -297,7 +297,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       "Self-hosting Hermes means a VPS, Docker, a reverse proxy, SSL, and you on call when it breaks at midnight.",
       "Hivra provisions the computer and keeps the agent running for you.",
       "You keep control: the same open-source agent and your own provider key.",
-      "A DIY setup costs a VPS bill plus the weekend you spend configuring it. Hivra starts at $9.99 a month.",
+      "A DIY setup costs a VPS bill plus the time you spend configuring and updating it. Hivra starts at $9.99 a month.",
     ],
     affiliation: "Hivra is independent and is not affiliated with Nous Research.",
     relatedBlogSlugs: ["what-is-hermes-agent", "what-can-hermes-agent-actually-do", "hermes-agent-skills-guide"],
@@ -563,6 +563,11 @@ export const AGENT_COPY_BANNED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason
   { pattern: /multi-agent coordination|orchestrat/i, reason: "coordination is not built in" },
   { pattern: /\b(Free|Pro|Power|Starter|Studio|Max|Command) plan\b/, reason: "plan names collide between checkout and the public ladder; use price and size" },
   { pattern: /[–—]/, reason: "no em or en dashes in page copy" },
+  // Nothing measured backs an hour count for setting up a server (2026-09-30 copy audit, F-15).
+  {
+    pattern: /\b\d+\s*(?:-|to)\s*\d+\+?\s*hours?\b|\b(?:an? hour|\d+ hours?) (?:per|a|each|\/) ?month\b|\b(?:spend|spent) (?:a|the) weekend\b|\b(?:the|a) weekend (?:you|setting|configuring|of)\b|\b(?:full|whole) (?:weekend|afternoon)\b/i,
+    reason: "no invented hours for setting up or running a server",
+  },
   // Claude Code and Codex keep-running claims, shared with the blog and /tools
   // (lib/blog/runtime-facts.ts): the old survives-anything claims, "stops when
   // you close the tab" (false on updated computers) and "the browser chat keeps

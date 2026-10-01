@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen } from "@testing-library/react";
 
-import ChangelogPage from "../page";
+import ChangelogPage, { metadata } from "../page";
 
 jest.mock("next/link", () => {
   const MockLink = ({
@@ -92,6 +92,15 @@ describe("/changelog page", () => {
     expect(bodies[0]).toHaveTextContent("A small **change** that lands today.");
     expect(bodies[1]).toHaveTextContent("- Bullet one");
     expect(bodies[1]).toHaveTextContent("- Bullet two");
+  });
+
+  it("writes the masthead and the metadata without em or en dashes", () => {
+    const { container } = render(<ChangelogPage />);
+    const masthead = container.querySelector("h1")?.parentElement?.textContent ?? "";
+    expect(masthead).toContain("Dated notes on every notable change to Hivra: bug fixes, new features");
+    expect(masthead).not.toMatch(/[\u2013\u2014]/);
+    expect(String(metadata.title)).not.toMatch(/[\u2013\u2014]/);
+    expect(String(metadata.description)).not.toMatch(/[\u2013\u2014]/);
   });
 
   it("links to /roadmap from the top nav so users can reach the sibling page", () => {
