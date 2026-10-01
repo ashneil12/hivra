@@ -70,8 +70,9 @@ export const config = {
      * - _next static files
      * - static assets
      * - public PWA metadata/icon routes
-     * - /api/instances/:id/aeon-gate, which the in-box aeon setup script calls
-     *   without a Clerk session.
+     * - exactly /api/instances/:id/aeon-gate, which the in-box aeon setup script
+     *   calls without a Clerk session. The exclusion ends in `$` like the rest, so
+     *   a longer path that only starts with it stays covered by Clerk.
      * - exactly /api/infrastructure/first-boot/enroll: its one-time bearer
      *   capability is authenticated by the receiver, not as a Clerk token.
      *   Siblings and child paths remain covered by Clerk. The receiver still
@@ -113,8 +114,8 @@ export const config = {
      * the box's own dashboard in a cross-origin iframe (WebuiIframe). No SSE
      * route needs a bypass, so there is no SSE bypass list.
      */
-    "/((?!_next|api/instances/[^/]+/aeon-gate|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/api/((?!instances/[^/]+/aeon-gate|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$).*)",
+    "/((?!_next|api/instances/[^/]+/aeon-gate$|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/api/((?!instances/[^/]+/aeon-gate$|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$).*)",
     "/trpc/(.*)",
   ],
 };

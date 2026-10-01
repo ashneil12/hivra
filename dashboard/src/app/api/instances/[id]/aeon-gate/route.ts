@@ -3,6 +3,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
+// hermes_instances.id is a uuid column, so text of any other shape cannot match
+// a row. The route has no credential, so it does not pass such text to the
+// database; it answers the same not_found a missing row gets.
+const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * AEON run-eligibility gate.
  *
@@ -19,7 +24,10 @@ export const dynamic = "force-dynamic";
  * more tenant-scoped than a shared bearer secret (you must already know the
  * specific instance's id). Fail-closed: unknown id, missing db, or any non-
  * "running" status => active:false. Follow-up hardening: per-instance HMAC token
- * once the install flow can mint + plumb it.
+ * once the install flow can mint + plumb it. It cannot be required yet: running
+ * boxes and the tenants' Aeon workflows call this URL with no token, would read
+ * active:false and stop their scheduled work, so a credential needs a window
+ * where both forms are accepted.
  *
  * "running" is sufficient on its own: every pause path (inactivity / dormant /
  * ram-cap) and the non-payment suspend path flip `status` off "running".
@@ -29,6 +37,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!INSTANCE_ID_PATTERN.test(id)) {
+    return NextResponse.json({ active: false, status: "not_found" });
+  }
   try {
     if (!supabaseAdmin) {
       return NextResponse.json({ active: false, status: "unconfigured" });

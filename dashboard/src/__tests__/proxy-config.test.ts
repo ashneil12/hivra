@@ -80,7 +80,28 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$"]);
+  });
+
+  // The exclusion used to end at "aeon-gate" with no `$`, unlike every other
+  // one. A lookahead without an end anchor also skips Clerk for any longer path
+  // that starts with the same text, so a later route named `aeon-gate-foo`, or
+  // anything nested under `aeon-gate/`, would have shipped without a session
+  // check and nobody would have noticed.
+  it("exempts only the exact aeon-gate path from Clerk, not paths that merely start with it", async () => {
+    const { config } = await import("@/proxy");
+    const id = "11111111-1111-4111-8111-111111111111";
+
+    expect(unstable_doesMiddlewareMatch({ config, url: `/api/instances/${id}/aeon-gate` })).toBe(false);
+    for (const url of [
+      `/api/instances/${id}/aeon-gate/extra`,
+      `/api/instances/${id}/aeon-gate-foo`,
+      `/api/instances/${id}/aeon-gates`,
+      `/api/instances/${id}/aeon-gate.json`,
+      `/api/instances/${id}`,
+    ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
   });
 
   it("routes only the exact server setup report and script paths around Clerk", async () => {
