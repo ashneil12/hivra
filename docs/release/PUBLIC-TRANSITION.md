@@ -40,9 +40,9 @@ reference.
 A review on 2026-09-30 scanned that history with Gitleaks, a list of provider
 credential formats and a private-key check, and reported only test fixtures. What
 remains in it is operational detail without a credential attached: pseudonymised
-plans, a few identifiers of disposable test infrastructure, and database project
-references that any client of the app can already see. This page records that
-finding. It is not a new audit.
+plans, a few identifiers of disposable test infrastructure, and a database
+project reference, which names a database and holds no credential. This page
+records that finding and is not a new audit.
 
 The review recommended keeping the history as it is, and the owner has not
 decided otherwise. Open owner checks that no file in this repository can do:

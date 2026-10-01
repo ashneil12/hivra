@@ -347,9 +347,9 @@ complete security audit.
 
 Exposure before the update: `ImageResponse` is called only from two image-card
 helpers, and every caller passes text from static catalogs, so no path from a
-request to the image markup was found. The code uses Undici's `Agent` and
-`fetch` and does not use `BalancedPool`. The update closes the advisories without
-relying on that reading.
+request to the image markup was found. The dashboard source imports only
+Undici's `Agent` and has no use of `BalancedPool`. The update closes the
+advisories without relying on that reading.
 
 Boundaries of this update:
 
