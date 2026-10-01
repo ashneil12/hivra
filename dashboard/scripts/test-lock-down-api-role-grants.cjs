@@ -144,7 +144,7 @@ async function exerciseTriggers(db, tag) {
   const instance = (
     await db.query(
       `insert into public.hermes_instances (user_id, name, status, hetzner_server_id, ipv4_address, gateway_url)
-       values ($1, 'probe', 'running', 77, ' 10.20.30.40 ', 'https://custom.example')
+       values ($1, 'probe', 'running', 77, ' 192.0.2.40 ', 'https://custom.example')
        returning id, gateway_url`,
       [`user_${tag}`]
     )
@@ -258,7 +258,7 @@ async function mainDatabase() {
     const behaviourBefore = await exerciseTriggers(db, "before");
     assert.deepEqual(
       behaviourBefore,
-      { gateway: "https://10-20-30-40.sslip.io", firstActive: true, walletTouched: true, dailyTouched: true },
+      { gateway: "https://192-0-2-40.sslip.io", firstActive: true, walletTouched: true, dailyTouched: true },
       "the four triggers do their work before the migration"
     );
 
@@ -676,7 +676,7 @@ async function driftedBodyDatabase() {
     }
     assert.deepEqual(
       await exerciseTriggers(db, "drift"),
-      { gateway: "https://10-20-30-40.sslip.io", firstActive: true, walletTouched: true, dailyTouched: true },
+      { gateway: "https://192-0-2-40.sslip.io", firstActive: true, walletTouched: true, dailyTouched: true },
       "the drifted trigger still works after the migration"
     );
     assert.equal((await one(db, "select count(*)::int as n from public.drift_probe_log")).n, 1, "and still reaches its table");
