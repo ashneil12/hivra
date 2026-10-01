@@ -87,7 +87,7 @@ async function main() {
       `insert into public.yearly_token_subscriptions
          (user_id, tier, yearly_quote_id, expires_at, amount_received_raw, sweep_status, metadata)
        values ('user_legacy', 'pro', $1, now() + interval '200 days', 5, 'swept',
-               '{"depositAddress": "0x78F4ff3c8d68afdb11d09c4201e800c55432bb05"}'::jsonb)`,
+               '{"depositAddress": "0x0000000000000000000000000000000000001E6a"}'::jsonb)`,
       [legacyQuote]
     );
 
@@ -96,7 +96,7 @@ async function main() {
     await db.exec(migration); // Rerun-safe.
 
     const [legacy] = await subs("user_legacy");
-    assert.equal(legacy.deposit_address, "0x78f4ff3c8d68afdb11d09c4201e800c55432bb05");
+    assert.equal(legacy.deposit_address, "0x0000000000000000000000000000000000001e6a");
     assert.equal(legacy.status, "active");
     // Final legacy quotes are closed for attribution; open ones stay watched.
     const closedAt = async (id) =>

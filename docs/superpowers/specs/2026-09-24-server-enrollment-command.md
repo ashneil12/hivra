@@ -2029,7 +2029,7 @@ proposal's original target and stays optional, for the owner to approve.
    production origin there makes the panel say setup commands are unavailable,
    or print a command that points at `hivra.cloud`. (Revision 6.)
 1. Apply the migration to the Canary database (`hermesos-canary`,
-   `srrwbdvxlqvqjuexitaf`) **before the PR is merged into `canary`**, not with
+   `<canary-project-ref>`) **before the PR is merged into `canary`**, not with
    the build (section 20: once merged, the new code serves at once, and
    without the migration every connection read fails for every user):
    `20260924213000_server_enrollment_command.sql` (additive + compatible

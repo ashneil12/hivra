@@ -25,6 +25,10 @@
 - Manual checks performed:
 - Post-deploy/canary check needed? yes / no
 
+## Public text check
+
+- [ ] The title and this description pass `node scripts/release/public-tree-hygiene.mjs --text-file -` (paste the text on stdin). It flags live host names, storage box addresses, wallet addresses, database project references and customer ids. Pull request text is public and its edit history stays visible, so run it before you open the pull request and after any edit.
+
 ## Rollback Notes
 
 - Fastest rollback path if this misbehaves:
