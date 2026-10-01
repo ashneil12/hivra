@@ -22,6 +22,9 @@ jobs:
       - name: Checkout exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The pull request range scan below needs the commits between the base
+          # and the head, not only the merge commit.
+          fetch-depth: 0
           persist-credentials: false
 
       # The wiring guard covers every test file in the repository, so it runs
@@ -36,7 +39,7 @@ jobs:
         run: node --test scripts/release/check-managed-hosting-controls.test.mjs
 
       - name: Reject tracked secrets, generated output, and scan bypasses
-        run: node --test scripts/release/asset-provenance-evidence.test.mjs scripts/release/check-dashboard-public-artifact.test.mjs scripts/release/credential-reconciliation-evidence.test.mjs scripts/release/notice-source-offer-evidence.test.mjs scripts/release/public-release-metadata.test.mjs scripts/release/public-source-approval.test.mjs scripts/release/public-source-candidate.test.mjs scripts/release/public-tree-hygiene.test.mjs scripts/release/runtime-distribution-boundary.test.mjs scripts/release/source-third-party-provenance.test.mjs dashboard/scripts/test-public-source-bootstrap-e2e.test.mjs dashboard/scripts/test-self-host-recovery-e2e.test.mjs && python3 -I -B dashboard/scripts/test-runtime-receipt.py && node scripts/release/public-tree-hygiene.mjs
+        run: node --test scripts/release/asset-provenance-evidence.test.mjs scripts/release/check-dashboard-public-artifact.test.mjs scripts/release/credential-reconciliation-evidence.test.mjs scripts/release/gitleaks-format-probe.test.mjs scripts/release/notice-source-offer-evidence.test.mjs scripts/release/public-release-metadata.test.mjs scripts/release/public-source-approval.test.mjs scripts/release/public-source-candidate.test.mjs scripts/release/public-tree-hygiene.test.mjs scripts/release/runtime-distribution-boundary.test.mjs scripts/release/source-third-party-provenance.test.mjs dashboard/scripts/test-public-source-bootstrap-e2e.test.mjs dashboard/scripts/test-self-host-recovery-e2e.test.mjs && python3 -I -B dashboard/scripts/test-runtime-receipt.py && python3 -I -B scripts/release/test_gitleaks_config.py && node scripts/release/public-tree-hygiene.mjs
 
       # Litepaper sources live outside dashboard/**, so Dashboard CI never sees
       # them. The export test needs Pillow and skips without it. The renderer imports link_policy from its own directory: no -I.
@@ -136,6 +139,18 @@ jobs:
           node -e 'const fs=require("fs"); const v=JSON.parse(fs.readFileSync(process.argv[1])); if (!Array.isArray(v) || v.length < 1) process.exit(1)' \
             "$RUNNER_TEMP/gitleaks-detector-probe.json"
 
+          # Prove the custom Hivra rules fire on freshly generated tokens in the
+          # neutral contexts the default rules miss. The tokens are random per run
+          # and match no fixture in the tree. Fail-closed like the probe above: a
+          # config edit or a Gitleaks change that loads fewer rules fails here.
+          node scripts/release/gitleaks-format-probe.mjs write "$RUNNER_TEMP/gitleaks-format-probe"
+          format_code=0
+          scan "$RUNNER_TEMP/gitleaks-format-probe" \
+            "$RUNNER_TEMP/gitleaks-format-probe.json" \
+            "$RUNNER_TEMP/gitleaks-format-probe.err" || format_code=$?
+          test "$format_code" -eq 1
+          node scripts/release/gitleaks-format-probe.mjs verify "$RUNNER_TEMP/gitleaks-format-probe.json"
+
           # Raw scan covers every ordinary tracked byte.
           scan . "$RUNNER_TEMP/gitleaks-current-tree.json" "$RUNNER_TEMP/gitleaks-current-tree.err"
 
@@ -144,3 +159,40 @@ jobs:
           scan . "$RUNNER_TEMP/gitleaks-expanded-tree.json" "$RUNNER_TEMP/gitleaks-expanded-tree.err" \
             --max-archive-depth 2 \
             --max-decode-depth 3
+
+      # A token added in one commit and removed in the next is not in the final
+      # tree, so the tree scans above cannot see it, but it stays in history. Scan
+      # the pull request's own commits for this repository's token formats. Only
+      # the custom rules run here: the default rules are covered by the tree scan,
+      # and git-mode findings carry commit ids, so the reviewed values in
+      # .gitleaks.toml are what keep test fixtures quiet.
+      - name: Scan this pull request's commits for Hivra token formats
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          errors="$RUNNER_TEMP/gitleaks-range.err"
+          code=0
+          "$RUNNER_TEMP/gitleaks/gitleaks" git "$GITHUB_WORKSPACE" \
+            --config "$GITHUB_WORKSPACE/.gitleaks.toml" \
+            --gitleaks-ignore-path "$GITHUB_WORKSPACE/.gitleaksignore" \
+            --log-opts "$BASE_SHA..$HEAD_SHA" \
+            --enable-rule hivra-managed-venice-proxy-key \
+            --enable-rule hivra-activity-collector-token \
+            --enable-rule hivra-server-enrollment-code \
+            --enable-rule bankr-api-key \
+            --enable-rule supabase-secret-key \
+            --redact=100 \
+            --no-banner \
+            --no-color \
+            --log-level error \
+            --report-format json \
+            --report-path "$RUNNER_TEMP/gitleaks-range.json" 2>"$errors" || code=$?
+          if [ -s "$errors" ]; then
+            echo '::error::Gitleaks reported a scan/parsing error on the pull request range; refusing a partial scan.'
+            exit 2
+          fi
+          exit "$code"

@@ -6,6 +6,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { planFromAppleProductId } from "@/lib/billing/apple-products";
+import {
+  APPLE_LIVE_STATUS_ACTIVE,
+  AppleLiveStatusConfigError,
+  getAppleLiveSubscriptionStatus,
+} from "@/lib/billing/apple-live-status";
 import { AppleWebhookService } from "@/lib/services/apple-webhook-service";
 
 const LOG_SOURCE = "mobile-iap-attach";
@@ -29,7 +34,12 @@ const LOG_SOURCE = "mobile-iap-attach";
  *  - a transaction already bound to a DIFFERENT user is refused with 409 —
  *    attach can never steal another account's subscription;
  *  - an expired transaction is refused — attach can only grant access Apple
- *    currently vouches for (the reconciler owns lapsed state).
+ *    currently vouches for (the reconciler owns lapsed state);
+ *  - a transaction with a revocationDate is refused, and so is one whose live
+ *    App Store status is anything but active. The signed record is static, so
+ *    a copy saved before a refund still looks valid; only the live status
+ *    shows the refund. If Apple cannot be asked, attach answers 503 and grants
+ *    nothing.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -84,6 +94,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Apple sets revocationDate on a transaction it refunded or revoked
+    // (family sharing removed, for example). That record is never a grant.
+    if (typeof transaction.revocationDate === "number") {
+      return apiError("Subscription is not active", 400, {
+        failureType: "mobile_iap_attach_revoked_transaction",
+        userId,
+      });
+    }
+
     const expiresMs = transaction.expiresDate;
     if (typeof expiresMs !== "number" || expiresMs <= Date.now()) {
       return apiError("Subscription is not active", 400, {
@@ -106,6 +125,48 @@ export async function POST(req: NextRequest) {
         boundUserId: existing.user_id,
       });
       return apiError("This subscription is linked to a different account", 409);
+    }
+
+    // The signed transaction is a saved record, so it cannot say the
+    // subscription was refunded after it was signed. Ask Apple now, and fail
+    // closed: no answer means no grant.
+    let liveStatus: number | "missing";
+    try {
+      liveStatus = await getAppleLiveSubscriptionStatus(originalTransactionId, environment);
+    } catch (err) {
+      if (err instanceof AppleLiveStatusConfigError) {
+        log.error("attach cannot confirm the subscription: App Store Server API is not configured", err, {
+          source: LOG_SOURCE,
+          failureType: "mobile_iap_attach_apple_api_not_configured",
+          userId,
+        });
+        return apiError("Purchases cannot be confirmed right now. Please try again later.", 503, {
+          failureType: "mobile_iap_attach_apple_api_not_configured",
+          userId,
+        });
+      }
+      log.warn("attach could not reach the App Store Server API", {
+        source: LOG_SOURCE,
+        failureType: "mobile_iap_attach_apple_api_unavailable",
+        userId,
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return apiError("Could not confirm this subscription with Apple. Please try again in a moment.", 503, {
+        failureType: "mobile_iap_attach_apple_api_unavailable",
+        userId,
+      });
+    }
+    if (liveStatus !== APPLE_LIVE_STATUS_ACTIVE) {
+      log.warn("attach refused: Apple does not report the subscription as active", {
+        source: LOG_SOURCE,
+        failureType: "mobile_iap_attach_not_active_at_apple",
+        userId,
+        liveStatus,
+      });
+      return apiError("Subscription is not active", 400, {
+        failureType: "mobile_iap_attach_not_active_at_apple",
+        userId,
+      });
     }
 
     const outcome = await AppleWebhookService.activateFromTransaction({

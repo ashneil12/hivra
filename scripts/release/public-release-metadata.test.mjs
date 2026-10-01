@@ -390,38 +390,36 @@ test('workflow action inventory fails closed on alternate uses-key forms', () =>
 });
 
 test('current-tree secret scanning cannot be weakened with broad allowlists or path filters', () => {
-  assert.equal(read('.gitleaks.toml'), 'title = "Hivra public current-tree secret scan"\n\n[extend]\nuseDefault = true\n');
-
-  const fingerprints = read('.gitleaksignore').split(/\r?\n/)
-    .filter((line) => line && !line.startsWith('#'));
-  assert.equal(fingerprints.length, 44);
-  assert.equal(new Set(fingerprints).size, fingerprints.length);
-  for (const fingerprint of fingerprints) {
-    assert.match(fingerprint, /^[^:\r\n]+:(?:curl-auth-header|discord-client-id|generic-api-key|private-key|stripe-access-token):\d+$/);
+  // The detailed shape of the rules and the value-bound allowlists is checked by
+  // scripts/release/test_gitleaks_config.py. This guards the parts that turn the
+  // scan off or widen it.
+  const config = read('.gitleaks.toml');
+  assert.match(config, /^\[extend\]\nuseDefault = true$/m, 'the default rules stay on');
+  assert.doesNotMatch(config, /^\[allowlist\]/m, 'use [[allowlists]] entries bound to exact values');
+  assert.doesNotMatch(config, /^\s*(?:disabledRules|commits|stopwords)\s*=/m);
+  // In `gitleaks dir` a global allowlist with `paths` skips the whole file for every rule and
+  // ignores condition and regexes, so a path entry without targetRules would blind the file.
+  // Every path entry names the rule(s) it applies to; targetRules is otherwise not used.
+  for (const block of config.split(/^(?=\[\[allowlists\]\])/m).filter((part) => part.startsWith('[[allowlists]]'))) {
+    if (/^\s*paths\s*=/m.test(block)) {
+      assert.match(block, /^\s*targetRules\s*=\s*\[(?:\s*"[a-z0-9-]+"\s*,?)+\]/m, 'a path allowlist must be scoped to rules with targetRules');
+    } else {
+      assert.doesNotMatch(block, /^\s*targetRules\s*=/m, 'targetRules is only for path entries');
+    }
+  }
+  assert.doesNotMatch(config, /^\s*paths\s*=[^\n]*\n(?!(?:regexes|condition)\b)/m,
+    'a path list is only valid next to a value regex');
+  for (const rule of ['hivra-managed-venice-proxy-key', 'hivra-activity-collector-token',
+    'hivra-server-enrollment-code', 'bankr-api-key', 'supabase-secret-key']) {
+    assert.match(config, new RegExp(`^id = "${rule}"$`, 'm'), `${rule} rule`);
   }
 
-  // Directory-scan fingerprints identify path/rule/line, not the matched
-  // value. Bind every reviewed line to its content hash so replacing a fixture
-  // with a real credential at the same line cannot inherit the exception.
-  const reviewedLineMaterial = [...fingerprints].sort().map((fingerprint) => {
-    const lineSeparator = fingerprint.lastIndexOf(':');
-    const ruleSeparator = fingerprint.lastIndexOf(':', lineSeparator - 1);
-    const file = fingerprint.slice(0, ruleSeparator);
-    const lineNumber = Number(fingerprint.slice(lineSeparator + 1));
-    const line = read(file).split(/\r?\n/)[lineNumber - 1];
-    assert.notEqual(line, undefined, `${fingerprint} points outside its reviewed file`);
-    return `${fingerprint}\0${createHash('sha256').update(line).digest('hex')}`;
-  }).join('\n');
-
-  const reviewedNonTestPaths = fingerprints
-    .map((fingerprint) => fingerprint.slice(0, fingerprint.lastIndexOf(':', fingerprint.lastIndexOf(':') - 1)))
-    .filter((file) => !/(?:__tests__|\/tests\/)/.test(file));
-  assert.deepEqual([...new Set(reviewedNonTestPaths)].sort(), [
-    'dashboard/auth.ts',
-    'dashboard/src/data/curated-skills.ts',
-    'dashboard/src/lib/blog/articles/hermes-agent-telegram-discord-setup.ts',
-    'dashboard/src/lib/encryption-rotation.ts',
-  ]);
+  // Line-number fingerprints bind a path, a rule and a line but not the matched
+  // value, so a real credential on a pinned line would inherit the exception.
+  // Reviewed false positives are value-bound allowlists in .gitleaks.toml.
+  const fingerprints = read('.gitleaksignore').split(/\r?\n/)
+    .filter((line) => line && !line.startsWith('#'));
+  assert.deepEqual(fingerprints, []);
 
   const workflow = read('.github/workflows/public-release-safety.yml');
   assert.doesNotMatch(workflow, /^\s+paths:/m);
@@ -438,6 +436,17 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
   assert.match(workflow, /test "\$probe_code" -eq 1/);
   assert.match(workflow, /scan \. "\$RUNNER_TEMP\/gitleaks-current-tree.json"/);
   assert.match(workflow, /scan \. "\$RUNNER_TEMP\/gitleaks-expanded-tree.json"/);
+  assert.match(workflow, /node scripts\/release\/gitleaks-format-probe\.mjs write/);
+  assert.match(workflow, /node scripts\/release\/gitleaks-format-probe\.mjs verify/);
+  assert.match(workflow, /gitleaks-format-probe\.test\.mjs/);
+  assert.match(workflow, /test_gitleaks_config\.py/);
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /if: github\.event_name == 'pull_request'/);
+  assert.match(workflow, /--log-opts "\$BASE_SHA\.\.\$HEAD_SHA"/);
+  for (const rule of ['hivra-managed-venice-proxy-key', 'hivra-activity-collector-token',
+    'hivra-server-enrollment-code', 'bankr-api-key', 'supabase-secret-key']) {
+    assert.ok(workflow.includes(`--enable-rule ${rule}`), `range scan enables ${rule}`);
+  }
   assert.doesNotMatch(workflow, /missed_call_demo|gitleaks-forced-text/);
   assert.equal(existsSync(path.join(root, 'tests/missed_call_demo.browser.cjs')), false);
   assert.equal(workflow.split(/gitleaks\/gitleaks" dir "\$target"/).length - 1, 1,

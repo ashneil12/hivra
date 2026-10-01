@@ -9,6 +9,15 @@ export const UNHANDLED_ROTATION_DEPENDENCIES = [
   { table: "hivra_launch_model_requests", column: "encrypted_key" },
   { table: "hivra_launch_model_requests", column: "fingerprint_key_tag", equals: { fingerprint_version: 1 } },
   { table: "infrastructure_first_boot_enrollments", column: "encrypted_token" },
+  // Buzz identities are encrypted with the primary ENCRYPTION_KEY and are not
+  // rewrapped by this script: service_role can only read the table, and the
+  // lifecycle RPCs own every write (migration 20260901000000), so a rewrap needs
+  // its own migration. Until that exists, rotating and then retiring the old
+  // key would leave these rows unreadable, so the gate reports them and blocks
+  // apply while any is set.
+  { table: "hivra_buzz_agent_bindings", column: "encrypted_private_key" },
+  { table: "hivra_buzz_agent_bindings", column: "encrypted_invite_code" },
+  { table: "hivra_buzz_agent_bindings", column: "encrypted_runtime_api_key" },
 ] as const;
 
 export type RotationDependency = (typeof UNHANDLED_ROTATION_DEPENDENCIES)[number];

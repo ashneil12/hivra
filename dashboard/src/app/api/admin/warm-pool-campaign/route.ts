@@ -29,7 +29,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
-import { isOpsAdminUser } from "@/lib/ops-access";
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 import { runWarmPoolCampaign } from "@/lib/recovery/warm-pool-campaign-sweep";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -49,10 +49,7 @@ async function isAuthorized(req: NextRequest): Promise<{ ok: boolean; status: 40
   const { userId } = await auth();
   if (!userId) return { ok: false, status: 401 };
   const user = await currentUser();
-  const userEmail =
-    user?.primaryEmailAddress?.emailAddress ||
-    user?.emailAddresses?.[0]?.emailAddress ||
-    null;
+  const userEmail = verifiedPrimaryEmailOf(user);
   if (!isOpsAdminUser({ userId: userId || user?.id || null, email: userEmail })) {
     return { ok: false, status: 403 };
   }

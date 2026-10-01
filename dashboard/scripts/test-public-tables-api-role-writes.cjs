@@ -20,6 +20,9 @@ const { openMigratedDatabase } = require("./lib/pglite-all-migrations.cjs");
 
 const MIGRATIONS = path.resolve(__dirname, "../supabase/migrations");
 const MIGRATION = "20260926090000_public_tables_api_role_writes.sql";
+// A later migration that removes the same privileges. This test reproduces the
+// finding on the schema as it stood before MIGRATION, so it leaves that one out too.
+const LATER_LOCKDOWN = "20260930140000_lock_down_api_role_grants.sql";
 const VICTIM_SERVER = 4242;
 const ATTACKER = "attacker-sub";
 
@@ -33,7 +36,7 @@ const WRITE_POLICY_FILTER = `
   and not (coalesce(qual, 'false') = 'false' and coalesce(with_check, 'false') = 'false')`;
 
 async function main() {
-  const db = await openMigratedDatabase({ skip: [MIGRATION] });
+  const db = await openMigratedDatabase({ skip: [MIGRATION, LATER_LOCKDOWN] });
   try {
     // Hosted Supabase grants EXECUTE on new public functions to authenticated
     // by name (see test-hermes-instances-api-role-writes.cjs); the harness does
