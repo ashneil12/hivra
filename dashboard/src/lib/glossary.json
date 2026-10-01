@@ -33,5 +33,6 @@
   {"key": "vesting", "pattern": "vesting", "tip": "A schedule that releases tokens bit by bit over time.", "token": true},
   {"key": "wash-trading", "pattern": "wash trading", "tip": "Fake trades made to make something look busier than it is.", "token": true},
   {"key": "bankr", "pattern": "Bankr", "caseSensitive": true, "tip": "A service that launches tokens.", "token": true},
-  {"key": "base-chain", "pattern": "(?<=on )Base", "caseSensitive": true, "tip": "Base is a public blockchain, a shared record of who owns what.", "token": true}
+  {"key": "base-chain", "pattern": "(?<=on )Base", "caseSensitive": true, "tip": "Base is a public blockchain, a shared record of who owns what.", "token": true},
+  {"key": "compute", "pattern": "compute", "tip": "Computing power. The more you have, the more work your agents and computers can do."}
 ]

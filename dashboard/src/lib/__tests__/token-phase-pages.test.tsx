@@ -61,6 +61,9 @@ function renderPage(page: () => unknown) {
 
 afterEach(() => setPhase("dormant"));
 
+/** Matches a paragraph by its whole text, since glossary tooltips split it into spans. */
+const whole = (text: string) => (_: string, element: Element | null) => element?.tagName === "P" && element.textContent === text;
+
 describe("dormant $HIVRA: the copy from before", () => {
   const copy = TOKEN_PHASE_COPY.dormant;
 
@@ -80,7 +83,7 @@ describe("dormant $HIVRA: the copy from before", () => {
     expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: copy.tokenomics.metadataDescription });
     renderPage(TokenomicsPage);
     expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(paragraph)).toBeInTheDocument();
+    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
   });
 
   it("/why-hivra/evolution keeps its $HIVRA lines", () => {
@@ -132,7 +135,7 @@ describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
     expect(await tokenomicsMetadata()).toMatchObject({ title: "$HIVRA tokenomics" });
     renderPage(TokenomicsPage);
     expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    expect(screen.getByText(copy.tokenomics.migrationParagraphs[0])).toBeInTheDocument();
+    expect(screen.getByText(whole(copy.tokenomics.migrationParagraphs[0]))).toBeInTheDocument();
     const { container } = renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(copy.evolution.hivraStatus)).toBeInTheDocument();
     expect(screen.getByText(copy.evolution.relationship)).toBeInTheDocument();
