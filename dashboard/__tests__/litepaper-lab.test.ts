@@ -366,6 +366,24 @@ describe("the boundary lab", () => {
       expect(readout(doc)).toContain("Files: Outside its computer.");
     });
 
+    it("does not keep the last setup's verdict while the next attack runs (CR-08)", () => {
+      const doc = loadPage();
+      pick(doc, "shared");
+      elapse(SETTLED + 2000);
+      expect(readout(doc)).toMatch(/reaches everything/);
+      pick(doc, "separate");
+      elapse(1500);
+      // Mid-attack: nothing left over from the shared machine, and nothing new yet.
+      expect(readout(doc)).toBe("");
+      elapse(SETTLED);
+      expect(readout(doc)).toMatch(/hits a wall/);
+      // A pressed resource still speaks for itself while the attack runs.
+      resource(doc, "files").click();
+      pick(doc, "project");
+      elapse(1500);
+      expect(readout(doc)).toBe("Files: Outside its computer.");
+    });
+
     it("does the same after the animated attack settles (CR-08)", () => {
       const doc = loadPage();
       resource(doc, "files").click();

@@ -421,6 +421,13 @@
       };
       followFrame = requestAnimationFrame(step);
     }
+    // What the pressed resource says about itself, or nothing when none is pressed.
+    function selectedLine() {
+      const selected = items.find(
+        (item) => item.getAttribute("aria-pressed") === "true",
+      );
+      return selected ? `${selected.dataset.label}: ${selected.dataset.status}.` : "";
+    }
     function setLabMode(mode) {
       lab.dataset.mode = mode;
       all("[data-boundary]").forEach((control) =>
@@ -432,11 +439,7 @@
       items.forEach((item) => {
         item.dataset.status = statusFor(mode, item.dataset.resource);
       });
-      const selected = items.find(
-        (item) => item.getAttribute("aria-pressed") === "true",
-      );
-      if (selected)
-        readout.textContent = `${selected.dataset.label}: ${selected.dataset.status}.`;
+      if (selectedLine()) readout.textContent = selectedLine();
       followReach();
     }
     function stopDemo() {
@@ -471,9 +474,7 @@
         items.forEach((other) =>
           other.setAttribute("aria-pressed", String(pressed && other === item)),
         );
-        readout.textContent = pressed
-          ? `${item.dataset.label}: ${item.dataset.status}.`
-          : "";
+        readout.textContent = selectedLine();
       }),
     );
     setLabMode(lab.dataset.mode || "shared");
@@ -527,10 +528,8 @@
       // first-view walk-through are not theirs, and a live region filled at load can
       // be announced before they have asked for anything.
       if (touched) {
-        const selected = items.find((item) => item.getAttribute("aria-pressed") === "true");
-        readout.textContent = selected
-          ? `${verdict.text} ${selected.dataset.label}: ${selected.dataset.status}.`
-          : verdict.text;
+        const line = selectedLine();
+        readout.textContent = line ? `${verdict.text} ${line}` : verdict.text;
       }
       setReplayBusy(false);
     }
@@ -609,6 +608,9 @@
         return;
       }
       setReplayBusy(true);
+      // The last verdict belongs to the last attack. Until this one settles the
+      // live region keeps only what the reader pressed, not a stale result.
+      if (touched) readout.textContent = selectedLine();
       lab.dataset.state = "idle";
       verdictEl.classList.remove("is-on");
       verdictEl.textContent = "";
