@@ -77,12 +77,12 @@ const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
   "billing/withdrawals": "Read-only withdrawal history. Exits are never gated.",
   "cron/reconcile-crypto-topups": "Settles crypto top-ups that were already started. Settlement never consults the policy.",
   "internal/billing/crypto/top-up/settle":
-    "Settles one crypto top-up that was already started, called with the settlement secret. Settlement never consults the policy.",
+    "Settles one crypto top-up that was already started, called by the internal settlement job. Settlement never consults the policy.",
   "cron/refresh-token-tiers":
     "Applies tiers from existing entitlements and holdings. A new qualification row is created only inside the evaluator, and the 1-token base tier is listed as not gated in TOKEN-GEO-POLICY.md.",
   "cron/yearly-token-expiry":
     "Moves existing yearly years to grace and expired, and emails the holder. It starts no payment. The emails send a holder in a listed country to card renewal.",
-  "ops/managed-venice/readiness": "Ops-only readiness read, called with a bearer secret. It starts no token action.",
+  "ops/managed-venice/readiness": "Ops-only readiness read, called by the ops job. It starts no token action.",
   "hivra/agents/[id]/bankr-wallet": "An agent's wallet is the user's own Bankr account. TOKEN-GEO-POLICY.md lists agent wallets under Not covered.",
   "hivra/agents/[id]/bankr-wallet/connect": "Connects the user's own Bankr account to an agent. Agent wallets are listed under Not covered.",
   "hivra/agents/[id]/bankr-wallet/set-destination": "Sets where an agent wallet withdraws to. Agent wallets are listed under Not covered, and exits are never gated.",
@@ -94,7 +94,7 @@ const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
   "hivra/agents": "Creates and lists agents. It names Bankr only to seed the Bankr skill suite onto the agent's computer.",
   "hivra/agents/[id]": "Reads and manages one agent. It names Bankr only to seed skills and to reconcile the agent's wallet settings.",
   "hivra/agents/[id]/skills/install": "Installs a skill on an agent's computer. It starts no token action.",
-  "hivra/templates/shared/[token]": "The [token] in the path is a share-link secret, not a crypto token.",
+  "hivra/templates/shared/[token]": "The [token] in the path is a share link, not a crypto token.",
   "infrastructure/connections/[id]/digitalocean/token": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
   "infrastructure/connections/[id]/digitalocean/token-expiry": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
   "infrastructure/connections/[id]/hetzner-cloud/token": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
