@@ -116,7 +116,7 @@ export function createReservationsFake(initial: ReservationFakeRow[] = []): Rese
                 error: { code: "23505", message: "duplicate key value violates unique constraint" },
               };
             }
-            const created = { id: `res-${nextId++}`, position: fake.rows.length + 1, status: "queued", ...row } as ReservationFakeRow;
+            const created: ReservationFakeRow = { id: `res-${nextId++}`, position: fake.rows.length + 1, status: "queued", ...row, email };
             fake.rows.push(created);
             return { data: { position: created.position, tier_intent: created.tier_intent, status: created.status }, error: null };
           },
