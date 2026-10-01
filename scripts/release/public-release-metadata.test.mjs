@@ -396,7 +396,17 @@ test('current-tree secret scanning cannot be weakened with broad allowlists or p
   const config = read('.gitleaks.toml');
   assert.match(config, /^\[extend\]\nuseDefault = true$/m, 'the default rules stay on');
   assert.doesNotMatch(config, /^\[allowlist\]/m, 'use [[allowlists]] entries bound to exact values');
-  assert.doesNotMatch(config, /^\s*(?:disabledRules|targetRules|commits|stopwords)\s*=/m);
+  assert.doesNotMatch(config, /^\s*(?:disabledRules|commits|stopwords)\s*=/m);
+  // In `gitleaks dir` a global allowlist with `paths` skips the whole file for every rule and
+  // ignores condition and regexes, so a path entry without targetRules would blind the file.
+  // Every path entry names the rule(s) it applies to; targetRules is otherwise not used.
+  for (const block of config.split(/^(?=\[\[allowlists\]\])/m).filter((part) => part.startsWith('[[allowlists]]'))) {
+    if (/^\s*paths\s*=/m.test(block)) {
+      assert.match(block, /^\s*targetRules\s*=\s*\[(?:\s*"[a-z0-9-]+"\s*,?)+\]/m, 'a path allowlist must be scoped to rules with targetRules');
+    } else {
+      assert.doesNotMatch(block, /^\s*targetRules\s*=/m, 'targetRules is only for path entries');
+    }
+  }
   assert.doesNotMatch(config, /^\s*paths\s*=[^\n]*\n(?!(?:regexes|condition)\b)/m,
     'a path list is only valid next to a value regex');
   for (const rule of ['hivra-managed-venice-proxy-key', 'hivra-activity-collector-token',
