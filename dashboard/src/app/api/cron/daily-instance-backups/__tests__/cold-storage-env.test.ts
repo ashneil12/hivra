@@ -121,7 +121,9 @@ describe("GET /api/cron/daily-instance-backups: cold-storage address comes from 
     expect(scripts).toHaveLength(1);
     expect(scripts[0]).toContain(`${reason}; cold storage alias unavailable`);
     expect(scripts[0]).toContain("exit 20");
-    expect(scripts[0]).not.toContain("# BEGIN HERMES COLD STORAGE");
+    // It checks for an alias installed earlier (so a missing setting cannot stop a set-up host) but never writes one.
+    expect(scripts[0]).not.toContain("cat >> /root/.ssh/config");
+    expect(scripts[0]).toContain("keeping the cold storage alias already installed on this host");
     expect(scripts[0]).not.toContain("HostName");
   });
 

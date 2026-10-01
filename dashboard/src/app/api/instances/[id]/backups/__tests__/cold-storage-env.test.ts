@@ -104,7 +104,9 @@ describe("GET /api/instances/[id]/backups: cold-storage address comes from env",
     const script = String(mockedRun.mock.calls[0][0]);
     expect(script).toContain(`${reason}; cold storage alias unavailable`);
     expect(script).toContain("exit 20");
-    expect(script).not.toContain("# BEGIN HERMES COLD STORAGE");
+    // It checks for an alias installed earlier (so a missing setting cannot stop a set-up host) but never writes one.
+    expect(script).not.toContain("cat >> /root/.ssh/config");
+    expect(script).toContain("keeping the cold storage alias already installed on this host");
     expect(script).not.toContain("HostName");
   });
 

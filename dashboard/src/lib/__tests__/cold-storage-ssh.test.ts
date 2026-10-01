@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -105,10 +107,35 @@ describe("buildColdStorageInstallScript", () => {
 });
 
 describe("buildColdStorageInstallScriptOrExit", () => {
-  it("stops the host script with exit code 20 and names the missing setting", () => {
-    expect(buildColdStorageInstallScriptOrExit({ [COLD_STORAGE_KEY_ENV]: KEY_B64 })).toBe(
-      'echo "HERMES_COLD_STORAGE_HOST and HERMES_COLD_STORAGE_USER missing; cold storage alias unavailable" >&2; exit 20'
-    );
+  // The fragment is shell. Run it for real against a scratch directory by pointing its two
+  // fixed paths at temporary files.
+  function runOnHost(script: string, withAlias: boolean) {
+    const dir = mkdtempSync(join(tmpdir(), "cold-storage-"));
+    const config = join(dir, "ssh-config");
+    const key = join(dir, "cold-storage-key");
+    if (withAlias) {
+      writeFileSync(config, "# BEGIN HERMES COLD STORAGE\nHost cold\n# END HERMES COLD STORAGE\n");
+      writeFileSync(key, "installed-earlier\n");
+    }
+    const adapted = script.replaceAll("/root/.ssh/config", config).replaceAll("/etc/hivra/keys/cold-storage", key);
+    const result = spawnSync("bash", ["-c", adapted], { encoding: "utf8" });
+    rmSync(dir, { recursive: true, force: true });
+    return result;
+  }
+
+  it("stops a host that has no alias with exit code 20 and names the missing setting", () => {
+    const script = buildColdStorageInstallScriptOrExit({ [COLD_STORAGE_KEY_ENV]: KEY_B64 });
+    expect(script).toContain("HERMES_COLD_STORAGE_HOST and HERMES_COLD_STORAGE_USER missing; cold storage alias unavailable");
+    const result = runOnHost(script, false);
+    expect(result.status).toBe(20);
+    expect(result.stderr).toContain("HERMES_COLD_STORAGE_HOST and HERMES_COLD_STORAGE_USER missing");
+  });
+
+  it("lets a host that already has the alias and key carry on, so the settings can arrive after the merge", () => {
+    const script = buildColdStorageInstallScriptOrExit({ [COLD_STORAGE_KEY_ENV]: KEY_B64 });
+    const result = runOnHost(script, true);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("keeping the cold storage alias already installed on this host");
   });
 
   it("returns the install fragment when configured", () => {

@@ -111,14 +111,22 @@ HERMES_COLD_STORAGE_SSH_CONFIG`,
 }
 
 /**
- * The same fragment for callers that cannot run without the alias: when the
- * key, host or user is not configured it prints the reason and stops the host
- * script with exit code 20, so the failure names the missing setting.
+ * The same fragment for callers that cannot run without the alias. When the
+ * key, host or user is not configured it prints the reason, then checks the host:
+ * a host that already has the alias block and the key from an earlier run keeps
+ * working, so merging this change before the two new settings exist on a
+ * deployment cannot stop backups on hosts that are already set up. Only a host
+ * with no alias stops, with exit code 20, so the failure names the missing setting.
  */
 export function buildColdStorageInstallScriptOrExit(
   env: Record<string, string | undefined> = process.env
 ): string {
   const result = buildColdStorageInstallScript(env);
   if (result.ok) return result.script;
-  return `echo "${result.reason}; cold storage alias unavailable" >&2; exit 20`;
+  return `echo "${result.reason}; cold storage alias unavailable" >&2
+if grep -q '# BEGIN HERMES COLD STORAGE' /root/.ssh/config 2>/dev/null && [ -s /etc/hivra/keys/cold-storage ]; then
+  echo "keeping the cold storage alias already installed on this host" >&2
+else
+  exit 20
+fi`;
 }
