@@ -177,6 +177,40 @@ describe("OpsPage", () => {
     expect(mockedFrom).not.toHaveBeenCalled();
   });
 
+  // The admin check matches an email against OPS_ADMIN_EMAILS, so the page may
+  // only hand it the verified primary address.
+  it.each([
+    ["an unverified primary email", { primaryEmailAddress: { emailAddress: "admin@example.com", verification: { status: "unverified" } } }],
+    ["a primary email with no verification record", { primaryEmailAddress: { emailAddress: "admin@example.com" } }],
+  ])("gives the admin check no email for %s", async (_label, user) => {
+    mockedCurrentUser.mockResolvedValue(user);
+    mockedIsOpsAdminUser.mockReturnValue(false);
+
+    await OpsPage({ searchParams: Promise.resolve({}) });
+
+    expect(mockedIsOpsAdminUser).toHaveBeenCalledWith({ userId: "user_123", email: null });
+  });
+
+  it("does not fall back to the first address on the account when there is no primary one", async () => {
+    mockedCurrentUser.mockResolvedValue({
+      primaryEmailAddress: null,
+      emailAddresses: [{ emailAddress: "admin@example.com" }],
+    });
+    mockedIsOpsAdminUser.mockReturnValue(false);
+
+    await OpsPage({ searchParams: Promise.resolve({}) });
+
+    expect(mockedIsOpsAdminUser).toHaveBeenCalledWith({ userId: "user_123", email: null });
+  });
+
+  it("gives the admin check the verified primary email", async () => {
+    mockedIsOpsAdminUser.mockReturnValue(false);
+
+    await OpsPage({ searchParams: Promise.resolve({}) });
+
+    expect(mockedIsOpsAdminUser).toHaveBeenCalledWith({ userId: "user_123", email: "admin@example.com" });
+  });
+
   it("preserves the global feed controls for ops admins", async () => {
     mockedIsOpsAdminUser.mockReturnValue(true);
 
