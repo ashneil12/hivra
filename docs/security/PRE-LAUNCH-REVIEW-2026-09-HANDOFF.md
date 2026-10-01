@@ -99,8 +99,10 @@ Ranked by risk. Each needs a regression test and a PR into canary.
 1. Set a dedicated `LAUNCH_FINGERPRINT_KEY` (and optionally `CHAT_ENCRYPTION_KEY`).
 2. Drain in-flight `hivra_model_key_operations`, `hivra_launch_model_requests` and
    `infrastructure_first_boot_enrollments`.
-3. Add and rewrap `hivra_buzz_agent_bindings.encrypted_*` (not covered by the rotation
-   script today; retiring the old key without this bricks Buzz identities).
+3. Rewrap `hivra_buzz_agent_bindings.encrypted_*`. The rotation script cannot do this
+   (service_role can only read the table, so a rewrap needs its own migration), but its
+   coverage gate now lists these three columns and blocks `--apply` while any is set.
+   Retiring the old key without the rewrap bricks Buzz identities.
 4. Set `ENCRYPTION_KEY=<new>` + `ENCRYPTION_KEY_LEGACY=<old>` everywhere that shares the DB.
 5. `npm run rotate:encryption-keys -- --coverage-only`, `--dry-run`, then `--apply`; rerun
    until candidates, conflicts and failures are 0.
