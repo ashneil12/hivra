@@ -152,6 +152,14 @@ describe("homepage FAQ and offers structured data", () => {
     expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(HOMEPAGE_FAQ.map(({ q, a }) => [q, a]));
   });
 
+  it("says AI key and AI usage in the markup, as the visible page does", async () => {
+    const schema = findSchema(await LandingPage({}));
+    const markup = allStrings(schema).join("\n");
+    expect(markup).toContain("Bring your own AI key");
+    expect(markup).toContain("pay for it and for your AI usage");
+    expect(markup).not.toMatch(/\bmodel (?:key|usage|provider|API key)\b/i);
+  });
+
   it("offers only what can be bought today: free self-hosting and the two hosted sizes", async () => {
     const schema = findSchema(await LandingPage({}));
     const app = schema?.["@graph"].find((entry) => entry["@type"] === "SoftwareApplication") as { offers: Array<{ name: string; price: string }> };

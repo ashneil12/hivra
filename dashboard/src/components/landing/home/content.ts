@@ -37,7 +37,7 @@ export const HERO = {
   titleLead: "Your agent needs a",
   titleWord: "computer.",
   titleTail: "It doesn't need yours.",
-  subhead: `AI agents like Claude Code and Codex can do real work for you. Hivra gives each one a private computer in the cloud. It keeps working when you close your laptop, and you decide what it can reach.`,
+  subhead: `AI agents like Claude Code and Codex can do real work for you. Hivra gives each one a private computer in the cloud. On a paid plan it stays on when you close your laptop, and you decide what it can reach.`,
   primary: "Launch an agent",
   secondary: "Or start with a computer",
   proof: [
@@ -299,7 +299,7 @@ export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Why not just rent a server?",
-    a: "You could. It'd be cheaper and you'd spend a weekend setting it up, then an hour a month keeping it alive. Some people enjoy that. If you're one of them, go and enjoy it.",
+    a: "You could. A small server can cost less each month, but you set it up and keep it running yourself. Some people enjoy that. If you're one of them, go and enjoy it.",
   },
   {
     q: "Do I need the token?",

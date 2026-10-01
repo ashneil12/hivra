@@ -94,8 +94,8 @@ export default function AgentsIndexPage() {
           <span className={styles.eyebrow}>Agents on Hivra</span>
           <h1>Agents you can deploy <strong>today.</strong></h1>
           <p>
-            Every agent below runs on a private cloud VM of its own. You sign in with your own accounts, and Hivra
-            handles the provisioning. On a paid plan the machine stays on after you log off.
+            Every agent below runs on a private computer of its own in the cloud. You sign in with your own
+            accounts, and Hivra sets the computer up. On a paid plan it stays on after you log off.
           </p>
         </header>
 
