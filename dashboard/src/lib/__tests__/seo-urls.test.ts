@@ -1,7 +1,8 @@
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
-import { dayToDate, PAGE_LAST_MODIFIED } from "../seo-lastmod";
+import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "../seo-lastmod";
+import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { CUTOVER_LAST_MODIFIED, getSiteUrls, SITE_URL } from "../seo-urls";
 
 const day = (value: Date | string | number | undefined) => new Date(value as Date).toISOString().slice(0, 10);
@@ -154,6 +155,28 @@ describe("seo urls", () => {
         const expected = floored && dayToDate(registryDay) < CUTOVER_LAST_MODIFIED ? CUTOVER_LAST_MODIFIED : dayToDate(registryDay);
         expect([path, day(byPath.get(path)?.lastModified)]).toEqual([path, day(expected)]);
       }
+    });
+
+    it("dates each tool page by its own content, and the hub by the list of tools it shows", () => {
+      const byPath = urls();
+      // A key for every tool, and no key for a tool that is gone.
+      expect(Object.keys(TOOL_PAGE_LAST_MODIFIED).sort()).toEqual(TOOL_ENTRIES.map((entry) => entry.slug).sort());
+      for (const entry of TOOL_ENTRIES) {
+        const real = dayToDate(TOOL_PAGE_LAST_MODIFIED[entry.slug]);
+        const expected = real < CUTOVER_LAST_MODIFIED ? CUTOVER_LAST_MODIFIED : real;
+        expect([entry.slug, day(byPath.get(`/tools/${entry.slug}`)?.lastModified)]).toEqual([entry.slug, day(expected)]);
+        // No tool page is newer than the hub that lists it.
+        expect(TOOL_PAGE_LAST_MODIFIED[entry.slug] <= PAGE_LAST_MODIFIED.tools).toBe(true);
+      }
+      // The three older tools did not change their own content on 2026-09-30.
+      for (const slug of ["agent-survival-check", "ai-agent-hosting-cost-calculator", "claude-code-limit-reset-calculator"]) {
+        expect([slug, day(byPath.get(`/tools/${slug}`)?.lastModified)]).toEqual([slug, "2026-09-24"]);
+      }
+      // The plan calculator was rewritten, and the two new tools were added, on 2026-09-30.
+      for (const slug of ["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]) {
+        expect([slug, day(byPath.get(`/tools/${slug}`)?.lastModified)]).toEqual([slug, "2026-09-30"]);
+      }
+      expect(day(byPath.get("/tools")?.lastModified)).toBe("2026-09-30");
     });
 
     it("does not stamp older pages with the cutover date: /terms, /status and /changelog keep their real dates", () => {
