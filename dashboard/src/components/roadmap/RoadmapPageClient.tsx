@@ -5,19 +5,19 @@ import Link from "next/link";
 import { motion, useReducedMotion, useScroll } from "framer-motion";
 
 import PublicSite from "@/components/public-site/PublicSite";
-import {
-  roadmapContent,
-  type RoadmapMetadataItem,
-  type RoadmapPhase,
-  type RoadmapUtilityCard,
+// Types only. The content arrives as a prop from the server page, which decides
+// per viewer whether it is the full roadmap or the restricted copy. Importing the
+// content value here would put the token copy in the JavaScript sent to every
+// browser, including the ones the token geo-policy blocks.
+import type {
+  RoadmapMetadataItem,
+  RoadmapPageContent,
+  RoadmapPhase,
+  RoadmapUtilityCard,
 } from "@/lib/roadmap-content";
 
 import styles from "./RoadmapPage.module.css";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
-
-const NAV_LINKS = [
-  { label: "Token verification", href: "/token" },
-] as const;
 
 const EASE_OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
@@ -199,7 +199,7 @@ function renderMetadataValue(item: RoadmapMetadataItem) {
   );
 }
 
-function VisionStickySection() {
+function VisionStickySection({ content }: { content: RoadmapPageContent }) {
   const reduceMotion = useReducedMotion();
   const sectionRef = useRef<HTMLElement | null>(null);
   const { scrollYProgress } = useScroll({
@@ -236,9 +236,9 @@ function VisionStickySection() {
     <section ref={sectionRef} className={styles.visionSection}>
       <div className={styles.visionSticky}>
         <div className={styles.visionFrame}>
-          <p className={`mono ${styles.visionEyebrow}`}>{roadmapContent.vision.eyebrow}</p>
+          <p className={`mono ${styles.visionEyebrow}`}>{content.vision.eyebrow}</p>
           <div className={styles.visionCopyWrap}>
-            {roadmapContent.visionSticky.states.map((state, index) => {
+            {content.visionSticky.states.map((state, index) => {
               const isActive = index === activeIndex;
 
               return (
@@ -278,7 +278,7 @@ function VisionStickySection() {
             })}
           </div>
           <div className={styles.visionDots} aria-label={`Vision state ${activeIndex + 1} of 3`}>
-            {roadmapContent.visionSticky.states.map((_, index) => (
+            {content.visionSticky.states.map((_, index) => (
               <span
                 key={`vision-dot-${index}`}
                 className={`${styles.visionDot} ${index === activeIndex ? styles.visionDotActive : ""}`}
@@ -341,8 +341,10 @@ function PhaseBlock({ phase, index }: { phase: RoadmapPhase; index: number }) {
   );
 }
 
-export default function RoadmapPageClient() {
+export default function RoadmapPageClient({ content }: { content: RoadmapPageContent }) {
   const { scrollYProgress } = useScroll();
+  // Null in the restricted copy for a viewer the token geo-policy blocks.
+  const { token } = content;
 
   return (
     <PublicSite className={styles.page} data-page="roadmap">
@@ -353,7 +355,7 @@ export default function RoadmapPageClient() {
         />
       </motion.div>
 
-      <nav className={styles.chapterNav} aria-label="Roadmap navigation">{NAV_LINKS.map((link) => <Link key={`${link.label}-${link.href}`} href={link.href}>{link.label}</Link>)}</nav>
+      <nav className={styles.chapterNav} aria-label="Roadmap navigation">{content.navLinks.map((link) => <Link key={`${link.label}-${link.href}`} href={link.href}>{link.label}</Link>)}</nav>
 
       <main className={styles.main}>
         <section className={styles.hero}>
@@ -362,21 +364,21 @@ export default function RoadmapPageClient() {
               className={`mono ${styles.eyebrow} ${styles.heroReveal1}`}
               style={{ willChange: "transform, opacity" }}
             >
-              {roadmapContent.hero.eyebrow}
+              {content.hero.eyebrow}
             </motion.p>
 
             <motion.h1
               className={`serif ${styles.heroTitle} ${styles.heroReveal2}`}
               style={{ willChange: "transform, opacity" }}
             >
-              {roadmapContent.hero.title}
+              {content.hero.title}
             </motion.h1>
 
             <motion.p
               className={`${styles.heroSubtitle} ${styles.heroReveal3}`}
               style={{ willChange: "transform, opacity" }}
             >
-              {roadmapContent.hero.subtitle}
+              {content.hero.subtitle}
             </motion.p>
 
             <motion.div
@@ -396,7 +398,7 @@ export default function RoadmapPageClient() {
               style={{ willChange: "transform, opacity" }}
             >
               <div className={styles.scrollIndicator} aria-hidden="true" />
-              <span className={`mono ${styles.scrollText}`}>{roadmapContent.hero.scrollLabel}</span>
+              <span className={`mono ${styles.scrollText}`}>{content.hero.scrollLabel}</span>
             </motion.div>
           </div>
         </section>
@@ -404,7 +406,7 @@ export default function RoadmapPageClient() {
         <section className={styles.ledeSection}>
           <Reveal>
             <p className={styles.lede}>
-              <em>{roadmapContent.hero.note}</em>
+              <em>{content.hero.note}</em>
             </p>
           </Reveal>
         </section>
@@ -412,19 +414,19 @@ export default function RoadmapPageClient() {
         <section id="what-is-hermesos" className={styles.section}>
           <Reveal>
             <SectionHeading
-              eyebrow={roadmapContent.whatIsHermesOS.eyebrow}
-              title={roadmapContent.whatIsHermesOS.title}
+              eyebrow={content.whatIsHermesOS.eyebrow}
+              title={content.whatIsHermesOS.title}
             />
           </Reveal>
           <div className={styles.sectionBody}>
-            {roadmapContent.whatIsHermesOS.paragraphs.map((paragraph, index) => (
+            {content.whatIsHermesOS.paragraphs.map((paragraph, index) => (
               <Reveal key={paragraph} delay={index * 0.08}>
                 <p className={styles.bodyCopy}>{paragraph}</p>
               </Reveal>
             ))}
             <Reveal delay={0.16}>
               <div className={styles.callout}>
-                <em>{roadmapContent.whatIsHermesOS.callout}</em>
+                <em>{content.whatIsHermesOS.callout}</em>
               </div>
             </Reveal>
           </div>
@@ -432,11 +434,11 @@ export default function RoadmapPageClient() {
 
         <section id="who-is-hermesos-for" className={styles.section}>
           <Reveal>
-            <SectionHeading eyebrow={roadmapContent.audience.eyebrow} title={roadmapContent.audience.title} />
+            <SectionHeading eyebrow={content.audience.eyebrow} title={content.audience.title} />
           </Reveal>
 
           <div className={styles.sectionBody}>
-            {roadmapContent.audience.paragraphs.map((paragraph, index) => (
+            {content.audience.paragraphs.map((paragraph, index) => (
               <Reveal key={paragraph} delay={index * 0.08}>
                 <p className={styles.bodyCopy}>{paragraph}</p>
               </Reveal>
@@ -444,7 +446,7 @@ export default function RoadmapPageClient() {
           </div>
 
           <div className={styles.cardGrid}>
-            {roadmapContent.audience.cards.map((card, index) => {
+            {content.audience.cards.map((card, index) => {
               const cardLabel = "label" in card && typeof card.label === "string" ? card.label : undefined;
 
               return (
@@ -463,23 +465,23 @@ export default function RoadmapPageClient() {
 
           <Reveal delay={0.28}>
             <div className={`${styles.sectionBody} ${styles.summaryText}`}>
-              <p className={styles.bodyCopy}>{roadmapContent.audience.summary}</p>
-              <p className={styles.bodyCopy}>{roadmapContent.audience.detail}</p>
+              {content.audience.summary ? <p className={styles.bodyCopy}>{content.audience.summary}</p> : null}
+              <p className={styles.bodyCopy}>{content.audience.detail}</p>
             </div>
           </Reveal>
         </section>
 
         <section id="what-is-live-today" className={styles.sectionWide}>
           <Reveal>
-            <SectionHeading eyebrow={roadmapContent.liveToday.eyebrow} title={roadmapContent.liveToday.title} />
+            <SectionHeading eyebrow={content.liveToday.eyebrow} title={content.liveToday.title} />
           </Reveal>
           <Reveal delay={0.06}>
             <div className={styles.sectionBody}>
-              <p className={styles.bodyCopy}>{roadmapContent.liveToday.intro}</p>
+              <p className={styles.bodyCopy}>{content.liveToday.intro}</p>
             </div>
           </Reveal>
           <div className={styles.featureTable}>
-            {roadmapContent.liveToday.features.map((feature, index) => (
+            {content.liveToday.features.map((feature, index) => (
               <Reveal key={feature.name} delay={0.08 + index * 0.05}>
                 <div className={styles.featureRow}>
                   <span className={styles.liveDot} aria-hidden="true" />
@@ -493,28 +495,28 @@ export default function RoadmapPageClient() {
 
         <section id="product-vision" className={styles.section}>
           <Reveal>
-            <SectionHeading eyebrow={roadmapContent.vision.eyebrow} title={roadmapContent.vision.title} />
+            <SectionHeading eyebrow={content.vision.eyebrow} title={content.vision.title} />
           </Reveal>
           <Reveal delay={0.06}>
             <div className={styles.callout}>
-              <em>{roadmapContent.vision.callout}</em>
+              <em>{content.vision.callout}</em>
             </div>
           </Reveal>
           <div className={styles.sectionBody}>
-            {roadmapContent.vision.paragraphs.map((paragraph, index) => (
+            {content.vision.paragraphs.map((paragraph, index) => (
               <Reveal key={paragraph} delay={0.08 + index * 0.08}>
                 <p className={styles.bodyCopy}>{paragraph}</p>
               </Reveal>
             ))}
             <Reveal delay={0.18}>
-              <p className={styles.sectionLead}>{roadmapContent.vision.directionLead}</p>
+              <p className={styles.sectionLead}>{content.vision.directionLead}</p>
             </Reveal>
           </div>
         </section>
 
         <section className={`${styles.section} ${styles.visionDirectionSection}`}>
           <div className={styles.directionList}>
-            {roadmapContent.visionDirection.rows.map((row, index) => (
+            {content.visionDirection.rows.map((row, index) => (
               <Reveal key={row.number} delay={index * 0.1} x={-36}>
                 <div className={styles.directionRow}>
                   <div className={`mono ${styles.directionNumber}`}>{row.number}</div>
@@ -528,74 +530,76 @@ export default function RoadmapPageClient() {
           </div>
         </section>
 
-        <VisionStickySection />
+        <VisionStickySection content={content} />
 
-        <section id="hermesos-token" className={styles.section}>
-          <Reveal>
-            <SectionHeading eyebrow={roadmapContent.token.eyebrow} title={roadmapContent.token.title} />
-          </Reveal>
-          <div className={`${styles.sectionBody} ${styles.tokenIntro}`}>
-            {roadmapContent.token.originParagraphs.map((paragraph, index) => (
-              <Reveal key={paragraph} delay={0.08 + index * 0.08}>
-                <p className={styles.bodyCopy}>{paragraph}</p>
-              </Reveal>
-            ))}
-          </div>
-          <Reveal delay={0.24}>
-            <MetadataTable items={roadmapContent.token.metadata} />
-          </Reveal>
-
-          <Reveal delay={0.28}>
-            <div className={styles.utilitySectionLabelWrap}>
-              <h3 className={`serif ${styles.utilitySectionLabel}`}>{roadmapContent.token.utilityHeading}</h3>
-              <span className={styles.utilitySectionRule} aria-hidden="true" />
+        {token ? (
+          <section id="hermesos-token" className={styles.section}>
+            <Reveal>
+              <SectionHeading eyebrow={token.eyebrow} title={token.title} />
+            </Reveal>
+            <div className={`${styles.sectionBody} ${styles.tokenIntro}`}>
+              {token.originParagraphs.map((paragraph, index) => (
+                <Reveal key={paragraph} delay={0.08 + index * 0.08}>
+                  <p className={styles.bodyCopy}>{paragraph}</p>
+                </Reveal>
+              ))}
             </div>
-          </Reveal>
-          <Reveal delay={0.32}>
-            <div className={`${styles.sectionBody} ${styles.utilityIntro}`}>
-              <p className={styles.bodyCopy}>{roadmapContent.token.utilityIntro}</p>
-            </div>
-          </Reveal>
+            <Reveal delay={0.24}>
+              <MetadataTable items={token.metadata} />
+            </Reveal>
 
-          <div className={styles.utilityGrid}>
-            {roadmapContent.token.utilities.map((utility, index) => (
-              <Reveal
-                key={utility.number}
-                delay={index * 0.06}
-                className={styles.utilityStackItem}
-                style={{ ["--utility-index" as string]: index } as CSSProperties}
-              >
-                <article className={styles.utilityCard} tabIndex={0}>
-                  <p className={`serif ${styles.utilityGhostNumber}`} aria-hidden="true">
-                    {utility.number}
-                  </p>
-                  <div className={styles.utilityIconWrap}>
-                    <UtilityIcon icon={utility.icon} />
-                  </div>
-                  <div className={styles.utilityCardContent}>
-                    <h3 className={styles.utilityTitle}>{utility.title}</h3>
-                    <p className={styles.utilityDescription}>{utility.description}</p>
-                  </div>
-                </article>
-              </Reveal>
-            ))}
-          </div>
-          <Reveal delay={0.48}>
-            <p className={styles.finePrint}>{roadmapContent.token.utilityNote}</p>
-          </Reveal>
-        </section>
+            <Reveal delay={0.28}>
+              <div className={styles.utilitySectionLabelWrap}>
+                <h3 className={`serif ${styles.utilitySectionLabel}`}>{token.utilityHeading}</h3>
+                <span className={styles.utilitySectionRule} aria-hidden="true" />
+              </div>
+            </Reveal>
+            <Reveal delay={0.32}>
+              <div className={`${styles.sectionBody} ${styles.utilityIntro}`}>
+                <p className={styles.bodyCopy}>{token.utilityIntro}</p>
+              </div>
+            </Reveal>
+
+            <div className={styles.utilityGrid}>
+              {token.utilities.map((utility, index) => (
+                <Reveal
+                  key={utility.number}
+                  delay={index * 0.06}
+                  className={styles.utilityStackItem}
+                  style={{ ["--utility-index" as string]: index } as CSSProperties}
+                >
+                  <article className={styles.utilityCard} tabIndex={0}>
+                    <p className={`serif ${styles.utilityGhostNumber}`} aria-hidden="true">
+                      {utility.number}
+                    </p>
+                    <div className={styles.utilityIconWrap}>
+                      <UtilityIcon icon={utility.icon} />
+                    </div>
+                    <div className={styles.utilityCardContent}>
+                      <h3 className={styles.utilityTitle}>{utility.title}</h3>
+                      <p className={styles.utilityDescription}>{utility.description}</p>
+                    </div>
+                  </article>
+                </Reveal>
+              ))}
+            </div>
+            <Reveal delay={0.48}>
+              <p className={styles.finePrint}>{token.utilityNote}</p>
+            </Reveal>
+          </section>
+        ) : null}
 
         <section id="roadmap-phases" className={styles.sectionWide}>
           <Reveal>
-            <SectionHeading eyebrow={roadmapContent.roadmap.eyebrow} title={roadmapContent.roadmap.title} />
+            <SectionHeading eyebrow={content.roadmap.eyebrow} title={content.roadmap.title} />
           </Reveal>
           <Reveal delay={0.06}>
             <div className={styles.sectionBody}>
-              <p className={styles.bodyCopy}>{roadmapContent.roadmap.intro}</p>
+              <p className={styles.bodyCopy}>{content.roadmap.intro}</p>
             </div>
           </Reveal>
           <div className={styles.phaseList}>
-            {roadmapContent.roadmap.phases.map((phase, index) => (
+            {content.roadmap.phases.map((phase, index) => (
               <PhaseBlock key={phase.id} phase={phase} index={index} />
             ))}
           </div>
@@ -603,15 +607,15 @@ export default function RoadmapPageClient() {
 
         <section id="out-of-scope" className={styles.section}>
           <Reveal>
-            <SectionHeading eyebrow={roadmapContent.outOfScope.eyebrow} title={roadmapContent.outOfScope.title} />
+            <SectionHeading eyebrow={content.outOfScope.eyebrow} title={content.outOfScope.title} />
           </Reveal>
           <Reveal delay={0.06}>
             <div className={styles.sectionBody}>
-              <p className={styles.bodyCopy}>{roadmapContent.outOfScope.intro}</p>
+              <p className={styles.bodyCopy}>{content.outOfScope.intro}</p>
             </div>
           </Reveal>
           <div className={styles.outOfScopeList}>
-            {roadmapContent.outOfScope.items.map((item, index) => (
+            {content.outOfScope.items.map((item, index) => (
               <Reveal key={item.title} delay={index * 0.05}>
                 <div className={styles.outOfScopeItem}>
                   <span className={styles.outOfScopeMark} aria-hidden="true">
@@ -625,33 +629,33 @@ export default function RoadmapPageClient() {
             ))}
           </div>
           <Reveal delay={0.14}>
-            <p className={styles.finePrint}>{roadmapContent.outOfScope.note}</p>
+            <p className={styles.finePrint}>{content.outOfScope.note}</p>
           </Reveal>
         </section>
 
         <section id="where-this-is-heading" className={styles.section}>
           <Reveal>
-            <SectionHeading eyebrow={roadmapContent.closing.eyebrow} title={roadmapContent.closing.title} />
+            <SectionHeading eyebrow={content.closing.eyebrow} title={content.closing.title} />
           </Reveal>
           <Reveal delay={0.06}>
             <div className={styles.closingQuoteWrap}>
               <p className={`serif ${styles.closingQuote}`}>
-                <em>{roadmapContent.closing.quote}</em>
+                <em>{content.closing.quote}</em>
               </p>
             </div>
           </Reveal>
           <div className={styles.sectionBody} style={{ marginTop: "1.5rem" }}>
-            {roadmapContent.closing.paragraphs.map((paragraph, index) => (
+            {content.closing.paragraphs.map((paragraph, index) => (
               <Reveal key={paragraph} delay={0.08 + index * 0.08}>
                 <p className={styles.bodyCopy}>{paragraph}</p>
               </Reveal>
             ))}
           </div>
           <Reveal delay={0.18}>
-            <MetadataTable items={roadmapContent.closing.metadata} />
+            <MetadataTable items={content.closing.metadata} />
           </Reveal>
           <Reveal delay={0.24}>
-            <p className={styles.finePrint}>{roadmapContent.closing.disclaimer}</p>
+            <p className={styles.finePrint}>{content.closing.disclaimer}</p>
           </Reveal>
         </section>
       </main>

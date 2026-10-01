@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 
 import { BillingDialog, billingDialogStyles as styles } from "@/components/billing/BillingDialog";
 import { DEFAULT_CARD_REQUIRED_MESSAGE } from "@/lib/billing/card-required";
+import { tokenFeaturesShown, useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { isCryptoBillingUiEnabled } from "@/lib/billing/format";
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
@@ -167,6 +168,9 @@ function FreeTierCardVerificationForm({
 }) {
   const stripe = useStripe();
   const elements = useElements();
+  // Token geo-policy: the aside about token access is a promotion, so it shows
+  // only once the server has said this viewer may see token features.
+  const tokenGeo = useTokenGeoAccess();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
@@ -245,8 +249,9 @@ function FreeTierCardVerificationForm({
 
       <p className={styles.fineprint}>
         This is a fraud-prevention card-on-file check for Free plan access.
-        {/* Token access is a way round the card only where it is on offer. */}
-        {isCryptoBillingUiEnabled() ? " Crypto/token access does not require this card flow." : null}
+        {/* Token access is a way round the card only where it is on offer, and only
+            to a viewer the token geo-policy lets see it. */}
+        {isCryptoBillingUiEnabled() && tokenFeaturesShown(tokenGeo) ? " Crypto/token access does not require this card flow." : null}
       </p>
     </form>
   );

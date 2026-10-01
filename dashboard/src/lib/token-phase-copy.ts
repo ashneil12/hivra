@@ -32,8 +32,6 @@ export interface TokenomicsPhaseCopy {
   metadataDescription: string;
   /** FullTokenomicsSection header paragraph. */
   headerLead: string;
-  /** Header paragraph a viewer the token geo-policy blocks sees. */
-  restrictedHeaderLead: string;
   /** The migration article's two paragraphs. */
   migrationParagraphs: readonly [string, string];
 }
@@ -106,7 +104,6 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
         "Existing token access and the proposed migration, uses and treasury. Final terms are published before proposals take effect.",
       headerLead:
         "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.",
-      restrictedHeaderLead: "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra.",
       migrationParagraphs: [
         "The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.",
         `${DORMANT_TOKENOMICS_MIGRATION_TERMS} Once $HIVRA launches, new users hold and pay with $HIVRA.`,
@@ -142,8 +139,6 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
       metadataDescription: LAUNCHED_TOKENOMICS_DESCRIPTION,
       headerLead:
         "$HIVRA is live on Base, and Hivra starts using it at the launch time on the token page. $HermesOS is the existing token, and its holders keep their existing access. This page explains existing compute access, the optional conversion and the uses being planned.",
-      restrictedHeaderLead:
-        "$HIVRA is live on Base, and Hivra starts using it at the launch time on the token page. $HermesOS is the existing token.",
       migrationParagraphs: [
         LAUNCHED_TOKENOMICS_MIGRATION_INTRO,
         `${LAUNCHED_TOKENOMICS_MIGRATION_TERMS} From the launch time on the token page, new users hold and pay with $HIVRA.`,
@@ -181,7 +176,6 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
       metadataDescription: LAUNCHED_TOKENOMICS_DESCRIPTION,
       headerLead:
         "$HIVRA is live on Base, and new Hivra accounts use it for token access and token payment. $HermesOS is the earlier token, and its holders keep their existing access. This page explains existing compute access, the optional conversion and the uses being planned.",
-      restrictedHeaderLead: "$HIVRA is live on Base. $HermesOS is the earlier token.",
       migrationParagraphs: [
         LAUNCHED_TOKENOMICS_MIGRATION_INTRO,
         `${LAUNCHED_TOKENOMICS_MIGRATION_TERMS} New users hold and pay with $HIVRA.`,
@@ -205,3 +199,35 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
 export function getTokenPhaseCopy(phase: HivraTokenPhase): TokenPhaseCopy {
   return TOKEN_PHASE_COPY[phase];
 }
+
+/**
+ * The title and description of /token and /tokenomics for a viewer the token
+ * geo-policy blocks. Those pages show that viewer the contract addresses and the
+ * notice only, so the head says no more than that: no mention of a proposal, a
+ * migration or a wallet. The same words for both pages and every phase.
+ */
+export const RESTRICTED_TOKEN_METADATA = {
+  title: "Hivra token contracts",
+  description: "Official contract addresses. Information, not an offer.",
+} as const;
+
+/**
+ * The words a viewer the token geo-policy blocks reads on /token, /tokenomics and
+ * /why-hivra/evolution in place of the status, proposal and hold-to-qualify
+ * lines. The contract addresses, how to verify them and the access they already
+ * have stay; nothing says what the token is for or what is proposed. One set for
+ * every phase, so a launch does not add a status sentence to a blocked viewer's page.
+ */
+export const RESTRICTED_TOKEN_PAGE_COPY = {
+  /** /token hero. */
+  eyebrow: "CONTRACT ADDRESSES",
+  heroTitle: RESTRICTED_TOKEN_METADATA.title,
+  heroLead: "Use Hivra and pay by card without connecting a wallet. This page lists the official contract addresses.",
+  /** /token, in place of the line about holdings qualifying for compute access. */
+  accessParagraph:
+    "Existing $HermesOS holders keep the access they already have. Your account shows the verified wallet, balance and access status where holder access is enabled.",
+  /** /tokenomics, under the heading. */
+  tokenomicsLead: "The official contract addresses, and where to check them.",
+  /** /why-hivra/evolution, before the token page link. */
+  evolutionAddressNote: "Check contract addresses only on the",
+} as const;

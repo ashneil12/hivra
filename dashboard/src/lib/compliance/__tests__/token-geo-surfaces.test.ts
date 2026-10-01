@@ -2,11 +2,15 @@
  * The inventory docs/token/TOKEN-GEO-POLICY.md promises, checked against the
  * source: which routes consult the token geo-policy, and which must never
  * (card payments, and every path that serves or settles existing access).
- * A new token-action route should be added to GATED with its gate. A route
- * that imports the token billing libraries and is in none of the lists below
- * fails "classifies every API route" until someone decides which list it is in.
+ *
+ * It is also a completeness check. Every API route that mentions a token, a
+ * wallet, a deposit, Bankr or crypto must be in exactly one list below, so a
+ * new token route cannot ship without somebody deciding whether it is gated.
+ * A new token-action route goes in GATED with its gate; a route that never
+ * starts a NEW token action goes in NEVER_GATED or NOT_A_NEW_TOKEN_ACTION with
+ * the reason.
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const API = path.resolve(__dirname, "../../../app/api");
@@ -27,6 +31,16 @@ const GATED = [
 
 /** New qualification is refused inside the evaluator; the route passes its decision. */
 const DECISION_PASSED_TO_EVALUATOR = ["billing/wallet/refresh", "billing/wallet/unlock"];
+
+/**
+ * These call the tier evaluator with no request, so the evaluator decides a NEW
+ * qualification from the stored and Clerk session country
+ * (isNewTokenQualificationRefused). The route itself reads no country.
+ */
+const EVALUATOR_DECIDES_WITHOUT_A_REQUEST = [
+  "cron/refresh-token-holdings",
+  "cron/refresh-active-deposit-quotes",
+];
 
 const NEVER_GATED = [
   // Card payments.
@@ -51,69 +65,67 @@ const NEVER_GATED = [
   "cron/managed-venice-token-reconciliation",
 ];
 
-/** Crons with no request: they call the tier evaluator, which refuses a NEW qualification from the stored and Clerk session country. */
-const EVALUATOR_DECIDES = ["cron/refresh-active-deposit-quotes", "cron/refresh-token-holdings"];
-
-/** Routes that import the token billing libraries and start no new token action, each with the reason. */
-const NOT_A_TOKEN_ACTION: Record<string, string> = {
-  "billing/bankr/wallet": "provisions a deposit address; every payment that uses it is gated (TOKEN-GEO-POLICY.md, Not covered)",
-  "billing/entitlements": "reads the entitlements a user already has",
-  "cron/reconcile-crypto-topups": "settles crypto payments that were already started",
-  "cron/refresh-token-tiers": "updates the resource tier from existing qualifications and snapshots; creates no tier row",
-  "internal/billing/crypto/top-up/settle": "settles a crypto payment that was already started",
-  "ops/managed-venice/readiness": "an ops read of settlement state",
-  // The user's own Bankr account for an agent (TOKEN-GEO-POLICY.md, Not covered).
-  "hivra/agents/[id]/bankr-wallet": "the agent's own Bankr account",
-  "hivra/agents/[id]/bankr-wallet/connect": "the agent's own Bankr account",
-  "hivra/agents/[id]/bankr-wallet/set-destination": "the agent's own Bankr account",
-  "hivra/agents/[id]/bankr-wallet/withdraw": "the agent's own Bankr account; withdrawals are never gated",
-  "instances/[id]/bankr-wallet": "the instance's own Bankr account",
-  "instances/[id]/bankr-wallet/connect": "the instance's own Bankr account",
-  "instances/[id]/bankr-wallet/withdraw-destination": "the instance's own Bankr account",
-  "instances/[id]/bankr-wallet/withdraw": "the instance's own Bankr account; withdrawals are never gated",
+/**
+ * Routes the word match catches that start no NEW token action: each one says
+ * why. None of them may consult the policy; if one is ever gated it moves to
+ * GATED, and this test fails until it does.
+ */
+const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
+  "billing/bankr/wallet":
+    "Provisions a deposit address and reports wallet status. No payment starts here, and every payment that uses the address is gated. TOKEN-GEO-POLICY.md lists it under Not covered.",
+  "billing/entitlements": "Reads the compute entitlement a user already has. It starts no token action.",
+  "billing/withdrawals": "Read-only withdrawal history. Exits are never gated.",
+  "cron/reconcile-crypto-topups": "Settles crypto top-ups that were already started. Settlement never consults the policy.",
+  "internal/billing/crypto/top-up/settle":
+    "Settles one crypto top-up that was already started, called with the settlement secret. Settlement never consults the policy.",
+  "cron/refresh-token-tiers":
+    "Applies tiers from existing entitlements and holdings. A new qualification row is created only inside the evaluator, and the 1-token base tier is listed as not gated in TOKEN-GEO-POLICY.md.",
+  "cron/yearly-token-expiry":
+    "Moves existing yearly years to grace and expired, and emails the holder. It starts no payment. The emails send a holder in a listed country to card renewal.",
+  "ops/managed-venice/readiness": "Ops-only readiness read, called with a bearer secret. It starts no token action.",
+  "hivra/agents/[id]/bankr-wallet": "An agent's wallet is the user's own Bankr account. TOKEN-GEO-POLICY.md lists agent wallets under Not covered.",
+  "hivra/agents/[id]/bankr-wallet/connect": "Connects the user's own Bankr account to an agent. Agent wallets are listed under Not covered.",
+  "hivra/agents/[id]/bankr-wallet/set-destination": "Sets where an agent wallet withdraws to. Agent wallets are listed under Not covered, and exits are never gated.",
+  "hivra/agents/[id]/bankr-wallet/withdraw": "An agent wallet withdrawal. Agent wallets are listed under Not covered, and exits are never gated.",
+  "instances/[id]/bankr-wallet": "An agent's wallet is the user's own Bankr account. TOKEN-GEO-POLICY.md lists agent wallets under Not covered.",
+  "instances/[id]/bankr-wallet/connect": "Connects the user's own Bankr account to an agent. Agent wallets are listed under Not covered.",
+  "instances/[id]/bankr-wallet/withdraw": "An agent wallet withdrawal. Agent wallets are listed under Not covered, and exits are never gated.",
+  "instances/[id]/bankr-wallet/withdraw-destination": "Sets where an agent wallet withdraws to. Agent wallets are listed under Not covered, and exits are never gated.",
+  "hivra/agents": "Creates and lists agents. It names Bankr only to seed the Bankr skill suite onto the agent's computer.",
+  "hivra/agents/[id]": "Reads and manages one agent. It names Bankr only to seed skills and to reconcile the agent's wallet settings.",
+  "hivra/agents/[id]/skills/install": "Installs a skill on an agent's computer. It starts no token action.",
+  "hivra/templates/shared/[token]": "The [token] in the path is a share-link secret, not a crypto token.",
+  "infrastructure/connections/[id]/digitalocean/token": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
+  "infrastructure/connections/[id]/digitalocean/token-expiry": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
+  "infrastructure/connections/[id]/hetzner-cloud/token": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
+  "mobile/push-tokens": "A push notification device token, not a crypto token.",
 };
 
-const TOKEN_LIBRARIES = /@\/lib\/billing\/(?:token-|yearly-|managed-venice-token|wallet-verification|deposit-quotes|bankr-|crypto-)/;
+/** The gate's own endpoint: it answers whether the viewer is blocked. */
+const GATE_ENDPOINT = ["token-geo"];
 
-function routesUnder(directory: string, prefix = ""): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) return routesUnder(path.join(directory, entry.name), relative);
-    return entry.name === "route.ts" ? [prefix] : [];
-  });
+function routeDirectories(dir: string = API, found: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "__tests__") continue;
+    const child = path.join(dir, entry.name);
+    if (existsSync(path.join(child, "route.ts"))) found.push(path.relative(API, child));
+    routeDirectories(child, found);
+  }
+  return found;
+}
+
+/** A route that names a token, a wallet, a deposit, Bankr or crypto in its path, or imports the libraries that move them. */
+const TOKEN_PATH = /token|wallet|deposit|bankr|crypto|hermesos|conversion|convert/i;
+const TOKEN_SOURCE =
+  /@\/lib\/billing\/(?:token-|yearly-|managed-venice-token|wallet-verification|deposit-quotes|bankr-|crypto-)|yearly-token|token-geo|hivra-token|bankr/i;
+
+function tokenRoutes(): string[] {
+  return routeDirectories()
+    .filter((route) => TOKEN_PATH.test(route) || TOKEN_SOURCE.test(source(route)))
+    .sort();
 }
 
 describe("token geo-policy surfaces", () => {
-  it("classifies every API route that imports the token billing libraries", () => {
-    const classified = new Set([
-      ...GATED,
-      ...DECISION_PASSED_TO_EVALUATOR,
-      ...NEVER_GATED,
-      ...EVALUATOR_DECIDES,
-      ...Object.keys(NOT_A_TOKEN_ACTION),
-    ]);
-    const unclassified = routesUnder(API)
-      .filter((route) => TOKEN_LIBRARIES.test(source(route)))
-      .filter((route) => !classified.has(route));
-    // Add a new route to GATED (and gate it), or to another list with its reason.
-    expect(unclassified).toEqual([]);
-  });
-
-  it("finds the routes it is meant to classify", () => {
-    // A guard that matched nothing would pass for the wrong reason.
-    expect(routesUnder(API).filter((route) => TOKEN_LIBRARIES.test(source(route))).length).toBeGreaterThan(25);
-  });
-
-  it.each(EVALUATOR_DECIDES)("%s has no request, so the tier evaluator refuses a new qualification", (route) => {
-    expect(source(route)).toContain("evaluateAndRecordTokenTierEligibility");
-    const evaluator = readFileSync(path.resolve(__dirname, "../../billing/token-tier-eligibility.ts"), "utf8");
-    expect(evaluator).toContain("isNewTokenQualificationRefused(params.userId, params.tokenGeo)");
-  });
-
-  it.each(Object.entries(NOT_A_TOKEN_ACTION))("%s starts no new token action: %s", (route) => {
-    expect(source(route)).not.toMatch(/token-geo|x-vercel-ip-country/);
-  });
-
   it.each(GATED)("%s refuses a blocked request through the shared gate", (route) => {
     const text = source(route);
     expect(text).toContain('from "@/lib/compliance/token-geo-gate"');
@@ -129,7 +141,59 @@ describe("token geo-policy surfaces", () => {
     expect(text).toContain("...(isTokenGeoPolicyActive() ? { tokenGeo: geo } : {})");
   });
 
+  it.each(EVALUATOR_DECIDES_WITHOUT_A_REQUEST)("%s leaves a new qualification to the evaluator", (route) => {
+    const text = source(route);
+    expect(text).toContain("evaluateAndRecordTokenTierEligibility");
+    expect(text).not.toMatch(/token-geo|x-vercel-ip-country|tokenGeo/);
+  });
+
   it.each(NEVER_GATED)("%s never consults the token geo-policy", (route) => {
     expect(source(route)).not.toMatch(/token-geo|x-vercel-ip-country/);
+  });
+
+  it.each(Object.keys(NOT_A_NEW_TOKEN_ACTION))("%s is not a new token action and never consults the policy", (route) => {
+    expect(source(route)).not.toMatch(/token-geo|x-vercel-ip-country/);
+  });
+});
+
+describe("every token route is classified", () => {
+  const classified = new Map<string, string[]>();
+  const lists: Array<[string, readonly string[]]> = [
+    ["GATED", GATED],
+    ["DECISION_PASSED_TO_EVALUATOR", DECISION_PASSED_TO_EVALUATOR],
+    ["EVALUATOR_DECIDES_WITHOUT_A_REQUEST", EVALUATOR_DECIDES_WITHOUT_A_REQUEST],
+    ["NEVER_GATED", NEVER_GATED],
+    ["NOT_A_NEW_TOKEN_ACTION", Object.keys(NOT_A_NEW_TOKEN_ACTION)],
+    ["GATE_ENDPOINT", GATE_ENDPOINT],
+  ];
+  for (const [name, routes] of lists) {
+    for (const route of routes) classified.set(route, [...(classified.get(route) ?? []), name]);
+  }
+
+  it("finds the routes that start a token action, so the word match is not empty", () => {
+    const found = tokenRoutes();
+    for (const route of [...GATED, ...DECISION_PASSED_TO_EVALUATOR]) expect(found).toContain(route);
+    expect(found.length).toBeGreaterThan(35);
+  });
+
+  it("leaves no route that mentions a token, wallet, deposit, Bankr or crypto out of every list", () => {
+    const unclassified = tokenRoutes().filter((route) => !classified.has(route));
+    // A failure here names the route. Decide: does it start a NEW token action?
+    // Yes: add the gate (resolveTokenGeoBlock) and list it in GATED. No: list it in
+    // NEVER_GATED or NOT_A_NEW_TOKEN_ACTION with the reason.
+    expect(unclassified).toEqual([]);
+  });
+
+  it("lists each route once, and only routes that exist", () => {
+    const listedTwice = [...classified].filter(([, names]) => names.length > 1).map(([route]) => route);
+    expect(listedTwice).toEqual([]);
+    const missing = [...classified.keys()].filter((route) => !existsSync(path.join(API, route, "route.ts")));
+    expect(missing).toEqual([]);
+  });
+
+  it("gives every NOT_A_NEW_TOKEN_ACTION entry a real reason", () => {
+    for (const [route, reason] of Object.entries(NOT_A_NEW_TOKEN_ACTION)) {
+      expect({ route, enough: reason.trim().length >= 40 }).toEqual({ route, enough: true });
+    }
   });
 });

@@ -8,6 +8,10 @@
 //
 // The $HIVRA sentences follow the token phase (token-phase-copy.ts). Dormant,
 // the document is exactly what it was before the phase copy existed.
+//
+// `restricted` is the copy for a viewer the token geo-policy blocks (the route
+// decides from the request country): no token sentence, no Tokenomics link, no
+// token page link and no "no token" aside. Everything else is the same text.
 
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
 import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "@/lib/brand-description";
@@ -29,8 +33,14 @@ export interface LlmsTxtSection {
 // GitHub URLs. Every link is a real public page.
 export const PUBLIC_REPOSITORY_URL = "https://github.com/ashneil12/hivra";
 
-/** The curated sections for a $HIVRA phase (only the Tokenomics note differs). */
-export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): readonly LlmsTxtSection[] {
+/**
+ * The curated sections for a $HIVRA phase (only the Tokenomics note differs).
+ * `restricted` leaves out the Tokenomics and Token rows.
+ */
+export function llmsTxtSections(
+  phase: HivraTokenPhase = getHivraTokenPhase(),
+  { restricted = false }: { restricted?: boolean } = {}
+): readonly LlmsTxtSection[] {
   const { tokenomicsNote } = getTokenPhaseCopy(phase).llmsTxt;
   return [
     {
@@ -54,8 +64,12 @@ export function llmsTxtSections(phase: HivraTokenPhase = getHivraTokenPhase()): 
       links: [
         { label: "Litepaper", path: "/LITEPAPER.md", note: "The short version of what Hivra is building and why" },
         { label: "White paper", path: "/WHITEPAPER.md", note: "The long-form design and security paper" },
-        { label: "Tokenomics", path: "/TOKENOMICS.md", note: tokenomicsNote },
-        { label: "Token", path: "/token", note: "The canonical contract page. Check token addresses here and nowhere else" },
+        ...(restricted
+          ? []
+          : [
+              { label: "Tokenomics", path: "/TOKENOMICS.md", note: tokenomicsNote },
+              { label: "Token", path: "/token", note: "The canonical contract page. Check token addresses here and nowhere else" },
+            ]),
       ],
     },
     {
@@ -103,9 +117,11 @@ function absoluteUrl(siteUrl: string, path: string): string {
 export function buildLlmsTxt({
   siteUrl,
   phase = getHivraTokenPhase(),
+  restricted = false,
 }: {
   siteUrl: string;
   phase?: HivraTokenPhase;
+  restricted?: boolean;
 }): string {
   const lines: string[] = [];
 
@@ -114,17 +130,17 @@ export function buildLlmsTxt({
   lines.push(`> ${SITE_DESCRIPTION}`);
   lines.push("");
   lines.push(
-    "Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu computer and use it yourself. Hermes runs on Hivra Cloud only. OpenClaw and Agent Zero need a paid plan. You can also self-host the platform on your own server, with no Hivra account and no token."
+    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu computer and use it yourself. Hermes runs on Hivra Cloud only. OpenClaw and Agent Zero need a paid plan. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
   );
   lines.push("");
   lines.push(
-    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images. ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`
+    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images.${restricted ? "" : ` ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`}`
   );
   lines.push("");
   lines.push(NON_AFFILIATION_LINE);
   lines.push("");
 
-  for (const section of llmsTxtSections(phase)) {
+  for (const section of llmsTxtSections(phase, { restricted })) {
     lines.push(`## ${section.heading}`);
     lines.push("");
     for (const link of section.links) {

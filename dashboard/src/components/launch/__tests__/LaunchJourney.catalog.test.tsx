@@ -32,7 +32,7 @@ let tokenGeoStatus: "allowed" | "blocked" = "allowed";
 jest.mock("@/hooks/useTokenGeoAccess", () => ({
   useTokenGeoAccess: () => tokenGeoStatus === "allowed"
     ? { status: "allowed", notice: null }
-    : { status: "blocked", notice: "Token features aren't available where you are." },
+    : { status: "blocked", notice: "Token features aren't available where you are.", existingAccess: false },
 }));
 
 jest.mock("@/components/billing/ManagedVeniceDepositModal", () => ({
