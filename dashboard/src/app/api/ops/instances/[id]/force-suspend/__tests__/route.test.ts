@@ -17,6 +17,8 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/ops-access", () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual("@/lib/ops-access"),
   isOpsAdminUser: jest.fn(),
 }));
 
@@ -94,7 +96,7 @@ describe("POST /api/ops/instances/[id]/force-suspend", () => {
     jest.clearAllMocks();
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "admin_user" });
     (currentUser as jest.Mock).mockResolvedValue({
-      primaryEmailAddress: { emailAddress: "ops@example.com" },
+      primaryEmailAddress: { emailAddress: "ops@example.com", verification: { status: "verified" } },
     });
     (isOpsAdminUser as jest.Mock).mockReturnValue(true);
     (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
@@ -128,6 +130,20 @@ describe("POST /api/ops/instances/[id]/force-suspend", () => {
       email: "ops@example.com",
     });
     expect(supabaseAdmin!.from).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an unverified primary email", { primaryEmailAddress: { emailAddress: "ops@example.com", verification: { status: "unverified" } } }],
+    ["a primary email with no verification record", { primaryEmailAddress: { emailAddress: "ops@example.com" } }],
+    ["only a non-primary email", { emailAddresses: [{ emailAddress: "ops@example.com" }] }],
+  ])("never offers %s to the admin check", async (_label, clerkUser) => {
+    (currentUser as jest.Mock).mockResolvedValue(clerkUser);
+    (isOpsAdminUser as jest.Mock).mockReturnValue(false);
+
+    const res = await POST(makeRequest(), makeParams());
+
+    expect(res.status).toBe(403);
+    expect(isOpsAdminUser).toHaveBeenCalledWith({ userId: "admin_user", email: null });
   });
 
   it("returns 200, suspends a Proxmox-backed instance, and writes an ops_events row", async () => {

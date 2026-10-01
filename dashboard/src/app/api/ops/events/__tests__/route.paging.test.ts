@@ -20,6 +20,8 @@ jest.mock('@clerk/nextjs/server', () => ({
 }));
 
 jest.mock('@/lib/ops-access', () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual('@/lib/ops-access'),
   isOpsAdminUser: jest.fn(),
 }));
 
@@ -57,7 +59,7 @@ describe('POST /api/ops/events never pages the admin', () => {
     mockInsertedRows.length = 0;
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: 'user_attacker' });
-    (currentUser as jest.Mock).mockResolvedValue({ primaryEmailAddress: { emailAddress: 'user@example.com' } });
+    (currentUser as jest.Mock).mockResolvedValue({ primaryEmailAddress: { emailAddress: 'user@example.com', verification: { status: "verified" } } });
     (isOpsAdminUser as jest.Mock).mockReturnValue(false);
   });
 

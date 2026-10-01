@@ -6,6 +6,7 @@ import { sendReservationConfirmation } from "@/lib/email/reservation-confirmatio
 import { syncReservationToAnnouncementAudience } from "@/lib/email/resend-announcement-sync";
 import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
+import { findReservationByEmail } from "@/lib/reservations/email-lookup";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -105,11 +106,11 @@ export async function POST(req: NextRequest) {
   const clerkUserId = await getOptionalClerkUserId();
 
   try {
-    const { data: existing, error: lookupError } = await supabaseAdmin
-      .from("reservations")
-      .select("id, email, tier_intent, position, status, clerk_user_id")
-      .ilike("email", email)
-      .maybeSingle<ReservationRow>();
+    const { data: existing, error: lookupError } = await findReservationByEmail<ReservationRow>(
+      supabaseAdmin,
+      email,
+      "id, email, tier_intent, position, status, clerk_user_id",
+    );
 
     if (lookupError) {
       return apiError("Failed to record reservation", 500, {
@@ -151,11 +152,9 @@ export async function POST(req: NextRequest) {
       // Race: another request inserted the same email between our lookup
       // and insert. Fall back to a fresh lookup so the caller still gets
       // the canonical position.
-      const { data: raceRow } = await supabaseAdmin
-        .from("reservations")
-        .select("position, tier_intent, status")
-        .ilike("email", email)
-        .maybeSingle<Pick<ReservationRow, "position" | "tier_intent" | "status">>();
+      const { data: raceRow } = await findReservationByEmail<
+        Pick<ReservationRow, "position" | "tier_intent" | "status">
+      >(supabaseAdmin, email, "position, tier_intent, status");
 
       if (raceRow) {
         return apiSuccess({

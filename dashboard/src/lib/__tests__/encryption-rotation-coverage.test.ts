@@ -29,6 +29,24 @@ describe("encryption rotation coverage", () => {
     expect(formatRotationCoverage(coverage)).not.toContain("synthetic-ciphertext");
   });
 
+  // Buzz identities are encrypted with the primary key, and this script cannot
+  // rewrap them. If the gate did not list them, a rotation could finish cleanly
+  // and the old key could be retired while these rows still needed it.
+  it("lists every Buzz binding ciphertext column and blocks apply while one is set", async () => {
+    const buzzColumns = ["encrypted_private_key", "encrypted_invite_code", "encrypted_runtime_api_key"];
+    const listed = UNHANDLED_ROTATION_DEPENDENCIES
+      .filter((dependency) => dependency.table === "hivra_buzz_agent_bindings")
+      .map((dependency) => dependency.column);
+    expect(listed.sort()).toEqual([...buzzColumns].sort());
+
+    for (const column of buzzColumns) {
+      const coverage = await inspectRotationCoverage(async (dependency) =>
+        dependency.table === "hivra_buzz_agent_bindings" && dependency.column === column ? 1 : 0);
+      expect(coverage.blocksApply).toBe(true);
+      expect(formatRotationCoverage(coverage)).toContain(`hivra_buzz_agent_bindings.${column}: 1`);
+    }
+  });
+
   it("blocks apply when one unhandled record exists", async () => {
     const coverage = await inspectRotationCoverage(async ({ column }) => column === "encrypted_token" ? 1 : 0);
     expect(coverage.blocksApply).toBe(true);

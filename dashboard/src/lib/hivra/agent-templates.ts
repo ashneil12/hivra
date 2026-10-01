@@ -231,7 +231,12 @@ export async function listUserTemplates(userId: string): Promise<OwnerTemplate[]
 
 // Load a template's identity for LAUNCH (fork). Resolves by id OR slug.
 //   - Owner: full identity, including private `context`.
-//   - Non-owner: only if visibility is public|link, and `context` is STRIPPED.
+//   - Non-owner, public: by id or slug, with `context` STRIPPED.
+//   - Non-owner, link: by id only, with `context` STRIPPED. A link template is
+//     reachable only through its share link, which hands the viewer the id.
+//     A slug is just the template's name, so anyone can guess it and it is no
+//     capability; resolving it would expose a link-only template to anyone
+//     who guessed the name.
 //   - Private + not owner: returns null (treated as a 404 by the caller).
 // Never throws — returns null on any miss/error.
 export async function getTemplateForLaunch(
@@ -260,6 +265,9 @@ export async function getTemplateForLaunch(
 
   // Private templates are launchable only by their owner.
   if (!isOwner && visibility === "private") return null;
+  // Link-only templates are launchable by a non-owner only through the id that
+  // the share link gave them, never through a guessable slug.
+  if (!isOwner && visibility === "link" && !isUuid) return null;
 
   return {
     type: typeof row.type === "string" ? row.type : "",
@@ -269,8 +277,9 @@ export async function getTemplateForLaunch(
     context: isOwner && typeof row.context === "string" ? row.context : null,
     personality: typeof row.personality === "string" ? row.personality : null,
     emoji: typeof row.emoji === "string" ? row.emoji : null,
-    // jsonb metadata is already key-free.
-    llm_config: row.llm_config ?? null,
+    // jsonb metadata is already key-free. A non-owner gets the same key-free
+    // summary the share page shows, not the raw stored object.
+    llm_config: isOwner ? row.llm_config ?? null : publicLlmConfig(readStoredLlmConfig(row.llm_config)),
     // Skill ids are non-sensitive — carried for owner AND non-owner so a fork
     // from a shared template reproduces the skills (the network-effect lever).
     skills: coerceSkillIds(row.skills),

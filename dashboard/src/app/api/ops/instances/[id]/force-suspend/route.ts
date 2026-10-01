@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isOpsAdminUser } from "@/lib/ops-access";
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -43,10 +43,7 @@ export async function POST(
     if (!userId) return apiError("Unauthorized", 401);
 
     const user = await currentUser();
-    const adminEmail =
-      user?.primaryEmailAddress?.emailAddress ||
-      user?.emailAddresses?.[0]?.emailAddress ||
-      null;
+    const adminEmail = verifiedPrimaryEmailOf(user);
 
     if (!isOpsAdminUser({ userId, email: adminEmail })) {
       return apiError("Forbidden", 403);

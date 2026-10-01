@@ -290,6 +290,52 @@ describe("getTemplateForLaunch", () => {
     expect(identity?.type).toBe("claude-code");
     expect(identity?.context).toBe("owner private context");
   });
+
+  it("does not launch a link-only template for a stranger who guessed its slug", async () => {
+    tables.agent_templates.rows.push({ ...base, visibility: "link", share_token: "tok-link" });
+    expect(await getTemplateForLaunch("shared-one", "stranger")).toBeNull();
+    expect(await getTemplateForLaunch("shared-one", null)).toBeNull();
+    expect(await getTemplateForLaunch(" shared-one ", "stranger")).toBeNull();
+  });
+
+  it("still launches a link-only template for a stranger who holds its id from the share link", async () => {
+    tables.agent_templates.rows.push({ ...base, visibility: "link", share_token: "tok-link" });
+    const identity = await getTemplateForLaunch(base.id, "stranger");
+    expect(identity?.name).toBe("Shared");
+    expect(identity?.context).toBeNull();
+  });
+
+  it("still launches a public template for a stranger by slug", async () => {
+    tables.agent_templates.rows.push({ ...base, visibility: "public" });
+    const identity = await getTemplateForLaunch("shared-one", "stranger");
+    expect(identity?.name).toBe("Shared");
+    expect(identity?.context).toBeNull();
+  });
+
+  it("gives a stranger only the key-free model summary, never the raw stored object", async () => {
+    tables.agent_templates.rows.push({
+      ...base,
+      visibility: "public",
+      llm_config: {
+        provider: "venice",
+        mode: "managed",
+        model: "venice-uncensored",
+        proxyKeyId: "proxy-key-internal-id",
+        keyPrefix: "hven_live_ab",
+        enabledAt: "2026-09-01T00:00:00.000Z",
+        somethingInternal: "do-not-show",
+      },
+    });
+
+    const stranger = await getTemplateForLaunch(base.id, "stranger");
+    const owner = await getTemplateForLaunch(base.id, "owner");
+
+    expect(JSON.stringify(stranger?.llm_config)).not.toContain("proxy-key-internal-id");
+    expect(JSON.stringify(stranger?.llm_config)).not.toContain("do-not-show");
+    expect(stranger?.llm_config).toMatchObject({ provider: "venice", mode: "managed", model: "venice-uncensored" });
+    // The owner still gets the stored object, unchanged.
+    expect(JSON.stringify(owner?.llm_config)).toContain("proxy-key-internal-id");
+  });
 });
 
 describe("getPublicTemplateByShareToken", () => {
