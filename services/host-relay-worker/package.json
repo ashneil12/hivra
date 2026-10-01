@@ -20,5 +20,8 @@
     "miniflare": "5.20260918.0-alpha",
     "typescript": "5.9.3",
     "wrangler": "4.135.0"
+  },
+  "overrides": {
+    "undici": "7.30.0"
   }
 }

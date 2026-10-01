@@ -5,7 +5,7 @@ import { auth, currentUser } from '@clerk/nextjs/server';
 import { apiError, apiSuccess, handleApiError } from '@/lib/api-response';
 import { enforceAuthenticatedRouteRateLimit } from '@/lib/authenticated-rate-limit';
 import { log } from '@/lib/logger';
-import { isOpsAdminUser } from '@/lib/ops-access';
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from '@/lib/ops-access';
 import { archiveOpsEvents, deleteOpsEvents, reportOpsEvent, type OpsEventSeverity } from '@/lib/ops-events';
 import { getRequestContext, type RequestContext } from '@/lib/request-context';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -240,7 +240,7 @@ export async function GET(request: NextRequest) {
     const { limit, severity } = parsed.data;
     const isOpsAdmin = isOpsAdminUser({
       userId,
-      email: user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null,
+      email: verifiedPrimaryEmailOf(user),
     });
 
     if (!isOpsAdmin) {
@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
     const user = await currentUser();
     const isOpsAdmin = isOpsAdminUser({
       userId,
-      email: user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null,
+      email: verifiedPrimaryEmailOf(user),
     });
     if (!isOpsAdmin && !USER_TELEMETRY_SOURCE_ALLOW_LIST.has(parsed.data.source)) {
       return apiError('Source not allowed', 403, {
@@ -345,7 +345,7 @@ export async function PATCH(request: NextRequest) {
     const user = await currentUser();
     const isOpsAdmin = isOpsAdminUser({
       userId,
-      email: user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null,
+      email: verifiedPrimaryEmailOf(user),
     });
 
     if (!isOpsAdmin) {
@@ -392,7 +392,7 @@ export async function DELETE(request: NextRequest) {
     const user = await currentUser();
     const isOpsAdmin = isOpsAdminUser({
       userId,
-      email: user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null,
+      email: verifiedPrimaryEmailOf(user),
     });
 
     if (!isOpsAdmin) {

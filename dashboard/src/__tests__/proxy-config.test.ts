@@ -80,7 +80,28 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$"]);
+  });
+
+  // The exclusion used to end at "aeon-gate" with no `$`, unlike every other
+  // one. A lookahead without an end anchor also skips Clerk for any longer path
+  // that starts with the same text, so a later route named `aeon-gate-foo`, or
+  // anything nested under `aeon-gate/`, would have shipped without a session
+  // check and nobody would have noticed.
+  it("exempts only the exact aeon-gate path from Clerk, not paths that merely start with it", async () => {
+    const { config } = await import("@/proxy");
+    const id = "11111111-1111-4111-8111-111111111111";
+
+    expect(unstable_doesMiddlewareMatch({ config, url: `/api/instances/${id}/aeon-gate` })).toBe(false);
+    for (const url of [
+      `/api/instances/${id}/aeon-gate/extra`,
+      `/api/instances/${id}/aeon-gate-foo`,
+      `/api/instances/${id}/aeon-gates`,
+      `/api/instances/${id}/aeon-gate.json`,
+      `/api/instances/${id}`,
+    ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
   });
 
   it("routes only the exact server setup report and script paths around Clerk", async () => {
@@ -118,6 +139,42 @@ describe("proxy config", () => {
     expect(unstable_doesMiddlewareMatch({ config, url: "/api/activity/collector/renew" })).toBe(false);
     for (const url of ["/api/activity/collector", "/api/activity/collector/renew/extra", "/api/activity/collector/renew-other", "/api/activity/collector/other"]) {
       expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  // A path with a percent-encoded character runs the proxy even when it ends in
+  // a static extension or names an excluded route, so the proxy can redirect it
+  // to the plain spelling. Build assets and paths with no encoded character keep
+  // the exclusions they had.
+  it("runs the proxy for percent-encoded paths, including static documents", async () => {
+    const { config } = await import("@/proxy");
+    const id = "11111111-1111-4111-8111-111111111111";
+
+    for (const url of [
+      "/%70ricing",
+      "/docs/litepaper/%69ndex.html",
+      "/docs/litepaper/index%2ehtml",
+      "/%54OKENOMICS.md",
+      "/%72obots.txt",
+      "/api/%68ealth",
+      `/api/instances/${id}/%61eon-gate`,
+      "/enroll%2Fscript",
+    ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("keeps build assets and plain static files out of the proxy", async () => {
+    const { config } = await import("@/proxy");
+
+    for (const url of [
+      "/_next/static/chunks/%5Bturbopack%5D_runtime.js",
+      "/_next/static/chunks/%61bc.js",
+      "/docs/litepaper/index.html",
+      "/favicon.ico",
+      "/pwa-icon-192.png",
+    ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
     }
   });
 

@@ -18,6 +18,8 @@ jest.mock('@/lib/supabase', () => ({
 }));
 
 jest.mock('@/lib/ops-access', () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual('@/lib/ops-access'),
   isOpsAdminUser: jest.fn(),
 }));
 
@@ -56,7 +58,7 @@ describe('/api/ops/events', () => {
     (supabaseAdmin!.from as jest.Mock).mockReturnValue(mockQuery);
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: 'user_123' });
     (currentUser as jest.Mock).mockResolvedValue({
-      primaryEmailAddress: { emailAddress: 'admin@example.com' },
+      primaryEmailAddress: { emailAddress: 'admin@example.com', verification: { status: "verified" } },
     });
     (isOpsAdminUser as jest.Mock).mockReturnValue(false);
     (archiveOpsEvents as jest.Mock).mockResolvedValue({ archivedCount: 2 });
@@ -88,6 +90,18 @@ describe('/api/ops/events', () => {
       email: 'admin@example.com',
     });
     expect(supabaseAdmin!.from).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an unverified primary email', { primaryEmailAddress: { emailAddress: 'admin@example.com', verification: { status: 'unverified' } } }],
+    ['only a non-primary email', { emailAddresses: [{ emailAddress: 'admin@example.com' }] }],
+  ])('never offers %s to the admin check', async (_label, clerkUser) => {
+    (currentUser as jest.Mock).mockResolvedValue(clerkUser);
+
+    const res = await GET(new NextRequest('http://localhost/api/ops/events?limit=25'));
+
+    expect(res.status).toBe(403);
+    expect(isOpsAdminUser).toHaveBeenCalledWith({ userId: 'user_123', email: null });
   });
 
   it('returns the global feed for ops admins', async () => {

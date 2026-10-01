@@ -43,6 +43,7 @@ import {
   removeInstanceDnsBestEffort,
 } from "@/lib/services/cloudflare-dns";
 import { isProTierUser } from "@/lib/billing/pro-tier";
+import { removeBackupAddonBilling } from "@/lib/billing/backup-addon-billing";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
 import { makeJsonRequest } from "@/test-utils";
@@ -191,6 +192,10 @@ jest.mock("@/lib/webui/instance", () => ({
 
 jest.mock("@/lib/billing/pro-tier", () => ({
   isProTierUser: jest.fn(),
+}));
+
+jest.mock("@/lib/billing/backup-addon-billing", () => ({
+  removeBackupAddonBilling: jest.fn(),
 }));
 
 // Post-ready SOUL.md seed hook: the route schedules it when a webfree box is
@@ -3334,6 +3339,143 @@ describe("PATCH /api/instances/[id]", () => {
       })
     );
     expect(JSON.stringify((apiError as jest.Mock).mock.calls.at(-1)?.[2])).not.toContain("hetzner-backup-secret");
+  });
+
+  describe("turning backups off on an instance that bought the backup add-on", () => {
+    // Turning backups off used to stop the Hetzner backups only. It left
+    // backups_enabled true (so the add-on could not be bought again) and left
+    // the Stripe line item billing. It now undoes all three, billing first.
+    let order: string[];
+    let flagUpdate: jest.Mock;
+    let flagServerEq: jest.Mock;
+    let flagUserEq: jest.Mock;
+    let flagResult: { error: { message: string } | null };
+
+    beforeEach(() => {
+      order = [];
+      flagResult = { error: null };
+      instanceRow = { ...instanceRow, backups_enabled: true, hetzner_server_id: 42 };
+      (removeBackupAddonBilling as jest.Mock).mockReset().mockImplementation(async () => {
+        order.push("stripe");
+        return { removed: 1 };
+      });
+      (disableServerBackup as jest.Mock).mockReset().mockImplementation(async () => {
+        order.push("hetzner");
+      });
+
+      flagUserEq = jest.fn(async () => {
+        order.push("flag");
+        return flagResult;
+      });
+      flagServerEq = jest.fn().mockReturnValue({ eq: flagUserEq });
+      flagUpdate = jest.fn().mockReturnValue({ eq: flagServerEq });
+
+      instanceUpdateMock = jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnValue({
+              // Read instanceRow when called, so a test can change it.
+              single: jest.fn(async () => ({ data: { ...instanceRow, config: {} }, error: null })),
+            }),
+          }),
+        }),
+      });
+
+      const peersQuery = {
+        eq: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ data: [{ id: "inst-123" }, { id: "inst-peer" }], error: null }),
+        }),
+      };
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+        return {
+          select: jest.fn((columns: string) =>
+            columns === "id"
+              ? peersQuery
+              : {
+                  eq: jest.fn().mockReturnValue({
+                    eq: jest.fn().mockReturnValue({
+                      neq: jest.fn().mockReturnValue({
+                        single: jest.fn().mockResolvedValue({ data: instanceRow, error: null }),
+                      }),
+                    }),
+                  }),
+                },
+          ),
+          update: jest.fn((patch: Record<string, unknown>) =>
+            "backups_enabled" in patch && Object.keys(patch).length === 1 ? flagUpdate(patch) : instanceUpdateMock(patch),
+          ),
+        };
+      });
+    });
+
+    function patchBackupsOff() {
+      return PATCH(
+        new NextRequest("http://localhost/api/instances/inst-123", {
+          method: "PATCH",
+          body: JSON.stringify({ backupsEnabled: false }),
+        }),
+        { params: Promise.resolve({ id: "inst-123" }) },
+      );
+    }
+
+    it("removes the add-on line, turns off Hetzner backups, then clears backups_enabled, in that order", async () => {
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(200);
+      expect(order).toEqual(["stripe", "hetzner", "flag"]);
+      expect(removeBackupAddonBilling).toHaveBeenCalledWith({
+        userId: "user_123",
+        instanceIds: ["inst-123", "inst-peer"],
+      });
+      expect(disableServerBackup).toHaveBeenCalledWith(42);
+      expect(flagUpdate).toHaveBeenCalledWith({ backups_enabled: false });
+      expect(flagServerEq).toHaveBeenCalledWith("hetzner_server_id", 42);
+      expect(flagUserEq).toHaveBeenCalledWith("user_id", "user_123");
+    });
+
+    it("keeps backups on, and leaves the flag set, when the add-on line cannot be removed", async () => {
+      (removeBackupAddonBilling as jest.Mock).mockRejectedValueOnce(new Error("stripe down sk_live_secret"));
+
+      const response = await patchBackupsOff();
+      const json = await response.json();
+
+      expect(response.status).toBe(502);
+      expect(json.error).toContain("Backups are still on");
+      expect(JSON.stringify(json)).not.toContain("sk_live_secret");
+      expect(disableServerBackup).not.toHaveBeenCalled();
+      expect(flagUpdate).not.toHaveBeenCalled();
+    });
+
+    it("does not clear the flag when Hetzner refuses, so a retry finishes the job", async () => {
+      (disableServerBackup as jest.Mock).mockRejectedValueOnce(new Error("hetzner down"));
+
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(500);
+      expect(order).toEqual(["stripe"]);
+      expect(flagUpdate).not.toHaveBeenCalled();
+    });
+
+    it("reports a failed flag clear instead of claiming success", async () => {
+      flagResult = { error: { message: "db down" } };
+
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(500);
+      expect(order).toEqual(["stripe", "hetzner", "flag"]);
+    });
+
+    it("does not touch billing when the instance never bought the add-on", async () => {
+      instanceRow = { ...instanceRow, backups_enabled: false };
+
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(200);
+      expect(removeBackupAddonBilling).not.toHaveBeenCalled();
+      expect(flagUpdate).not.toHaveBeenCalled();
+      expect(disableServerBackup).toHaveBeenCalledWith(42);
+    });
   });
 });
 

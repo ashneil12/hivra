@@ -209,9 +209,12 @@ async function phaseOne() {
 }
 
 async function phaseTwo() {
-  // 20260926090000 closes the same write path on every public table; skip it
-  // too so the pre-fix state this phase reproduces is still reachable.
-  const db = await openMigratedDatabase({ skip: [MIGRATION, "20260926090000_public_tables_api_role_writes.sql"] });
+  // 20260926090000 closes the same write path on every public table and
+  // 20260930140000 removes the same privileges again; skip both so the pre-fix
+  // state this phase reproduces is still reachable.
+  const db = await openMigratedDatabase({
+    skip: [MIGRATION, "20260926090000_public_tables_api_role_writes.sql", "20260930140000_lock_down_api_role_grants.sql"],
+  });
   try {
     // Hosted Supabase's default privileges grant EXECUTE on new public
     // functions to authenticated by name, so 20260402150000's revoke from

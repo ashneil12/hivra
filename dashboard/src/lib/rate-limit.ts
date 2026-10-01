@@ -13,7 +13,17 @@ type RateLimitRecord = {
   failureWindowStart?: number;
 };
 
-// In-memory store (works well enough for basic DoS protection per-container)
+// In-memory store. Every serverless instance, and every cold start, has its own
+// copy, so a limit here is a brake on a burst that lands on one instance and
+// not a cap on the whole app: the real ceiling is the limit times the number of
+// live instances, and it resets when an instance restarts. Do not make it the
+// only control in front of money, a credential check or a data-changing action;
+// put a database constraint or a provider-side rule behind it. Self-host runs as
+// one long-lived process, where the same code is an effective limit.
+//
+// There is no shared store in this repo (no Redis or KV dependency, and no
+// counter table or function in the migrations), so a global limit would need a
+// new migration and a new dependency on the hot path of every limited route.
 const store = new Map<string, RateLimitRecord>();
 
 export interface RateLimitConfig {
