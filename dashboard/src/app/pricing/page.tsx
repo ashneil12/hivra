@@ -102,7 +102,7 @@ export default function PricingPage() {
                 <p className={cardStyles.description}>
                   Run Hivra on your own server from the open source code.
                 </p>
-                <p className={cardStyles.freeCosts}>You provide and maintain the server. Server and model usage are paid separately.</p>
+                <p className={cardStyles.freeCosts}>You provide and maintain the server. Server and AI usage are paid separately.</p>
                 <a className={cardStyles.action} href={SELF_HOST_SOURCE_URL} target="_blank" rel="noopener noreferrer">
                   See the source on GitHub
                   <ArrowRight size={18} aria-hidden="true" />
@@ -169,7 +169,7 @@ export default function PricingPage() {
             </div>
             <div className={cardStyles.notes}>
               <p>
-                {MONEY_BACK_GUARANTEE}. Bring your own model key or login; that usage is billed by your model provider.
+                {MONEY_BACK_GUARANTEE}. Bring your own AI key or login. Your AI company bills you for that usage.
               </p>
               <p>
                 OpenClaw and Agent Zero need a paid size. Hermes runs on Hivra Cloud only.

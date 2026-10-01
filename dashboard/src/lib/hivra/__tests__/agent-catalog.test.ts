@@ -15,6 +15,24 @@ describe("Hivra agent catalog", () => {
     expect(copy).not.toContain("Hivra administrators retain infrastructure access");
   });
 
+  // F-19: these lines are shown in the launch picker and the welcome cards, and
+  // the owner's copy rule is no em or en dashes.
+  it("writes every tagline and welcome card without em or en dashes", () => {
+    const launchPicker = [...AGENTS.map((agent) => agent.tagline), getAgent("aeon")!.tagline, getAgent("agent-zero")!.tagline];
+    const welcomeCards = WELCOME_AGENT_TYPES.flatMap((agent) => [
+      agent.tagline,
+      agent.description,
+      ...agent.features,
+      agent.deployCard.summary,
+      ...agent.deployCard.included,
+      ...agent.deployCard.starterTasks,
+      ...agent.deployCard.guardrails,
+    ]);
+    expect(launchPicker.length).toBeGreaterThan(3);
+    expect(welcomeCards.length).toBeGreaterThan(20);
+    expect([...launchPicker, ...welcomeCards].filter((text) => /[\u2013\u2014]/.test(text))).toEqual([]);
+  });
+
   it("makes the native Codex API-key option visible before launch", () => {
     const codex = WELCOME_AGENT_TYPES.find(agent => agent.key === "codex")!;
     expect(codex.tagline).toContain("API key");

@@ -56,7 +56,7 @@ const comparisons = [
     title: "Hivra vs Self-Hosted VPS",
     tagline: "Control vs. time. The honest tradeoff.",
     description:
-      "Running Hermes yourself on a server you rent from Hetzner or DigitalOcean costs less each month. But the hours of setup, the upkeep and the midnight debugging add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
+      "Running Hermes yourself on a server you rent from Hetzner or DigitalOcean costs less each month. But the setup, the upkeep and the midnight debugging add up. Hivra hosting starts at $9.99/mo for 2 vCPU and 4 GB.",
   },
   {
     slug: "vs-railway",
@@ -82,9 +82,9 @@ const comparisons = [
   {
     slug: "ai-agent-hosting-alternatives",
     title: "Best AI Agent Hosting Platforms in 2026",
-    tagline: "The honest landscape for hosting persistent AI agents.",
+    tagline: "The main ways to host a persistent AI agent.",
     description:
-      "From a bare rented server to fully managed platforms, here is every option for hosting an AI agent that keeps running in 2026, with honest tradeoffs on cost, setup time and upkeep.",
+      "From a bare rented server to fully managed platforms, here are the main options for hosting an AI agent that keeps running in 2026, with honest tradeoffs on cost, setup work and upkeep.",
   },
 ];
 

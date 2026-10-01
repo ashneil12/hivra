@@ -113,7 +113,7 @@ function Diagram({ p, copy }: { p: MotionValue<number>; copy: ReachCopy }) {
   const laptopDim = useTransform(p, [T.wallStart, T.wallEnd], [1, 0.72]);
   const personal = copy.items;
   return (
-    <svg className={styles.reachSvg} viewBox="0 0 640 470" role="img" aria-label="Illustration: an agent on your laptop can reach your photos, passwords, bank session, client work and keys. On a separate computer it only reaches the project folder you share.">
+    <svg className={styles.reachSvg} viewBox="0 0 640 470" role="img" aria-label="Illustration: an agent on your laptop can reach your photos, passwords, bank login, work files and secret keys. On a separate computer it only reaches the project folder you share.">
       <defs>
         <linearGradient id="reach-pc" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#23262b" />
