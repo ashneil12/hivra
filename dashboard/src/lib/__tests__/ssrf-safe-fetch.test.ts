@@ -3,7 +3,7 @@ jest.mock("node:dns", () => ({
 }));
 
 import { lookup } from "node:dns";
-import { directSslipSafeLookup, ssrfSafeLookup } from "@/lib/ssrf-safe-fetch";
+import { directSslipSafeFetch, directSslipSafeLookup, ssrfSafeFetch, ssrfSafeLookup } from "@/lib/ssrf-safe-fetch";
 import { reservedAddressReason } from "@/lib/url-safety";
 
 const mockLookup = lookup as unknown as jest.Mock;
@@ -63,6 +63,14 @@ describe("reservedAddressReason", () => {
     "::ffff:7f00:1",
     "0:0:0:0:0:ffff:7f00:1",
     "0:0:0:0:0:ffff:a00:1",
+    "192.0.0.8",
+    "198.18.0.1",
+    "224.0.0.1",
+    "240.0.0.1",
+    "255.255.255.255",
+    "64:ff9b::a9fe:a9fe",
+    "64:ff9b::7f00:1",
+    "ff02::1",
   ])("flags %s as reserved", (ip) => {
     expect(reservedAddressReason(ip)).not.toBeNull();
   });
@@ -74,6 +82,8 @@ describe("reservedAddressReason", () => {
     "172.32.0.1",
     "100.63.0.1",
     "100.128.0.1",
+    "198.20.0.1",
+    "64:ff9b::5db8:d822",
     "2001:db8::1",
   ])("treats %s as public", (ip) => {
     expect(reservedAddressReason(ip)).toBeNull();
@@ -144,5 +154,30 @@ describe("ssrfSafeLookup", () => {
     resolveTo([]);
     const result = await run("empty.example", {});
     expect(result.err).toBeTruthy();
+  });
+});
+
+describe("redirect handling", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  // A followed redirect would send the request to a host that never went
+  // through checkOutboundUrlSafety, so the helpers do not follow one unless the
+  // caller says so.
+  it("does not follow redirects by default", async () => {
+    const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue({ status: 204 } as Response);
+
+    await ssrfSafeFetch("https://example.com/probe");
+    await directSslipSafeFetch("https://93-184-216-34.sslip.io/probe");
+
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({ redirect: "manual" });
+    expect(fetchSpy.mock.calls[1][1]).toMatchObject({ redirect: "manual" });
+  });
+
+  it("lets a caller choose the redirect mode explicitly", async () => {
+    const fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue({ status: 204 } as Response);
+
+    await ssrfSafeFetch("https://example.com/probe", { redirect: "follow" });
+
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({ redirect: "follow" });
   });
 });
