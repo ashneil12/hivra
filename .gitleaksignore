@@ -9,7 +9,7 @@
 # 2026-09-30: re-pinned the discord-client-id line in the Telegram and Discord blog post after the short answer moved it down
 # 3 lines; the flagged text is the prose step "Go to discord.com/developers/applications", not a credential.
 dashboard/auth.ts:generic-api-key:40
-dashboard/src/app/api/billing/crypto/top-up/__tests__/route.test.ts:generic-api-key:63
+dashboard/src/app/api/billing/crypto/top-up/__tests__/route.test.ts:generic-api-key:68
 dashboard/src/app/api/billing/token-holding/__tests__/route.test.ts:generic-api-key:22
 dashboard/src/app/api/billing/wallet/eligibility/__tests__/route.test.ts:generic-api-key:131
 dashboard/src/app/api/billing/wallet/eligibility/__tests__/route.test.ts:generic-api-key:133

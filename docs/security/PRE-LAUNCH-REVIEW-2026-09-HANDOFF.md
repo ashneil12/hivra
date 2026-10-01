@@ -127,9 +127,12 @@ Ranked by risk. Each needs a regression test and a PR into canary.
     or app code. The same encoding served files in `public/` around the UK static-document
     rewrites. *The proxy now redirects encoded unreserved characters to the plain path
     (308, method and query kept). Checked on a real Next 16.3.3 server; not yet checked on
-    Vercel. After it reaches Canary, confirm `/%70ricing` answers 308 to `/pricing` and
-    `/docs/litepaper/%69ndex.html` answers 308 to `/docs/litepaper/index.html` from a UK
-    connection.*
+    Vercel. After it reaches Canary, confirm `/%70ricing` answers 308 to `/pricing`.
+    This does NOT close the files-in-`public/` problem: `%2F` and `%5C` spellings
+    (for example `/%2FTOKENOMICS.md`, `/docs%2Flitepaper%2Findex.html`) still reach files in
+    `public/` from a UK connection. The UK documents are closed a different way, by taking
+    them out of `public/` and serving them from route handlers (the geo-static-docs change).
+    Do not treat this proxy redirect as the document gate.*
 
 ## Rules that still apply
 

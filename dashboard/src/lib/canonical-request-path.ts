@@ -13,12 +13,18 @@
  *     `/%54OKENOMICS.md` serves the file while a rule written against the
  *     literal path `/TOKENOMICS.md` (a rewrite in next.config.ts) never sees it.
  *
- * Redirecting to the plain spelling makes every route and every rule see the
- * one form they were written for.
+ * Redirecting to the plain spelling makes every route and every path rule see
+ * the one form they were written for, for unreserved characters only.
  *
- * Only unreserved characters are decoded. `%2F`, `%25`, `%3F`, `%23` and the
- * other reserved characters change what a path means, and bytes of 0x80 and up
- * are the pieces of a multi-byte character, so all of those stay as they are.
+ * Only unreserved characters are decoded. `%2F`, `%5C`, `%25`, `%3F`, `%23` and
+ * the other reserved characters change what a path means, and bytes of 0x80 and
+ * up are the pieces of a multi-byte character, so all of those stay as they are.
+ *
+ * This is NOT a security boundary for files in `public/`: `%2F` and `%5C`
+ * spellings still reach them, so nothing that must stay private may rely on a
+ * path rule here. The UK token documents do not: they are not in `public/` at all
+ * and are served by route handlers that decide by country
+ * (see docs/token/TOKEN-GEO-POLICY.md).
  */
 
 const UNRESERVED_ESCAPE = /%([0-9A-Fa-f]{2})/g;

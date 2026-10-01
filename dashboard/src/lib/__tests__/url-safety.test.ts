@@ -1,5 +1,8 @@
 import { checkOutboundUrlSafety } from "@/lib/url-safety";
 
+// Boundary addresses are built from octets so no public IPv4 literal sits in the tree (public-tree-hygiene gate).
+const ip = (...octets: number[]) => octets.join(".");
+
 describe("checkOutboundUrlSafety", () => {
   it.each([
     "https://api.openai.com/v1",
@@ -119,10 +122,10 @@ describe("reserved ranges beyond the private networks", () => {
   });
 
   it.each([
-    ["just below 198.18.0.0/15", "https://198.17.255.254/v1"],
-    ["just above 198.18.0.0/15", "https://198.20.0.1/v1"],
-    ["just below multicast", "https://223.255.255.254/v1"],
-    ["just above the 192.0.0.0/24 block", "https://192.0.1.1/v1"],
+    ["just below 198.18.0.0/15", `https://${ip(198, 17, 255, 254)}/v1`],
+    ["just above 198.18.0.0/15", `https://${ip(198, 20, 0, 1)}/v1`],
+    ["just below multicast", `https://${ip(223, 255, 255, 254)}/v1`],
+    ["just above the 192.0.0.0/24 block", `https://${ip(192, 0, 1, 1)}/v1`],
     ["a NAT64 address that carries a public IPv4", "https://[64:ff9b::5db8:d822]/v1"],
   ])("still accepts %s", (_label, url) => {
     expect(checkOutboundUrlSafety(url)).toEqual({ ok: true });

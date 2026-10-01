@@ -14,7 +14,7 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 
-const INSTANCE_ID = "5c1d0f7e-7a0b-4f2e-9d57-0d8a8f9a1b2c";
+const INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
 
 async function call(id: string) {
   const response = await GET(new NextRequest(`https://hivra.cloud/api/instances/${encodeURIComponent(id)}/aeon-gate`), {

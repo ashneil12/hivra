@@ -141,7 +141,7 @@ describe("POST /api/csp/report", () => {
       buildRequest(
         legacyReport({
           "blocked-uri": "https://cdn.example/a.js?token=one",
-          "document-uri": `https://${HOST}/dashboard/agents/0b9f7a52-4f3c-4c0e-9a51-1c2f3a4b5c6d?tab=chat#x`,
+          "document-uri": `https://${HOST}/dashboard/agents/11111111-1111-4111-8111-111111111111?tab=chat#x`,
         }),
         "203.0.113.30",
       ),
@@ -150,7 +150,7 @@ describe("POST /api/csp/report", () => {
       buildRequest(
         legacyReport({
           "blocked-uri": "https://cdn.example/b.js?token=two",
-          "document-uri": `https://${HOST}/dashboard/agents/7c1d2e3f-0000-4000-8000-00000000abcd?tab=files`,
+          "document-uri": `https://${HOST}/dashboard/agents/22222222-2222-4222-8222-222222222222?tab=files`,
         }),
         "203.0.113.31",
       ),
