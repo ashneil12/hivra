@@ -265,7 +265,9 @@ class DirectoryScanKeepsAllowlistedFilesScanned(unittest.TestCase):
         self.assertTrue(findings, "a Stripe live key pasted into an allowlisted file must still be found")
 
     def test_a_private_key_block_in_an_allowlisted_production_file_is_still_found(self):
-        pem = "-----BEGIN RSA PRIVATE KEY-----\n" + "\n".join(alnum(64) for _ in range(6)) + "\n-----END RSA PRIVATE KEY-----\n"
+        # Assembled from pieces so this file holds no private-key marker itself.
+        begin, end = "-----BEGIN " + "RSA PRIVATE" + " KEY-----", "-----END " + "RSA PRIVATE" + " KEY-----"
+        pem = begin + "\n" + "\n".join(alnum(64) for _ in range(6)) + "\n" + end + "\n"
         findings = self.scan("dashboard/src/lib/encryption-rotation.ts", pem)
         self.assertIn("private-key", {finding["RuleID"] for finding in findings})
 
