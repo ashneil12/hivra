@@ -302,6 +302,57 @@ describe("i18n public copy truth", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("gives the wallet page a headline and intro with no token wording, in every language", () => {
+    // The wallet page shows these to a user the token geo-policy blocks who holds no
+    // token access (UKG-05), in place of "Your $HermesOS wallet" and the hold-to-verify intro.
+    const tokenWord = /\$HermesOS|\$HIVRA|\$HERMESOS|\btokens?\b|token\b|代币|トークン|토큰|jeton|Token/i;
+    for (const locale of SUPPORTED_LOCALES) {
+      const restricted = (MARKETING_COPY[locale] as { dashboard: { wallet: { restricted?: Record<string, string> } } })
+        .dashboard.wallet.restricted;
+      expect({ locale, keys: Object.keys(restricted ?? {}).sort() }).toEqual({
+        locale,
+        keys: ["eyebrow", "intro", "title"],
+      });
+      for (const [key, value] of Object.entries(restricted ?? {})) {
+        expect({ locale, key, value, hasTokenWord: tokenWord.test(value), hasDash: /[\u2013\u2014]/.test(value) }).toEqual({
+          locale,
+          key,
+          value,
+          hasTokenWord: false,
+          hasDash: false,
+        });
+        expect(value.trim()).not.toBe("");
+      }
+    }
+    expect(
+      (MARKETING_COPY.en as { dashboard: { wallet: { restricted: { title: string } } } }).dashboard.wallet.restricted.title,
+    ).toBe("Your wallets.");
+  });
+
+  it("describes the Wallets row in settings without the token, in every language", () => {
+    // The row is shown to every viewer, and the token geo-policy only gates the
+    // wallet page behind it. It says what the page holds for everyone: agent wallets.
+    const rows: Array<{ locale: string; title: string; description: string }> = [];
+    const find = (locale: string, value: unknown, key: string) => {
+      if (!value || typeof value !== "object") return;
+      const record = value as Record<string, unknown>;
+      if (key === "wallets" && typeof record.title === "string" && typeof record.description === "string") {
+        rows.push({ locale, title: record.title, description: record.description });
+      }
+      for (const [childKey, child] of Object.entries(record)) find(locale, child, childKey);
+    };
+    for (const locale of SUPPORTED_LOCALES) find(locale, MARKETING_COPY[locale], "");
+
+    expect(rows.map((row) => row.locale).sort()).toEqual([...SUPPORTED_LOCALES].sort());
+    for (const row of rows) {
+      expect({ locale: row.locale, token: /\$HermesOS|\$HIVRA|\btokens?\b/i.test(row.description) }).toEqual({
+        locale: row.locale,
+        token: false,
+      });
+    }
+    expect(rows.find((row) => row.locale === "en")?.description).toBe("Agent wallets");
+  });
+
   it("describes the /stats call to action as open source on Hivra Cloud or your own server", () => {
     expect(MARKETING_COPY.en.stats.page.cta.subtitle).toBe(
       "Open source, on Hivra Cloud or your own server",

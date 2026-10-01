@@ -6,6 +6,12 @@
  */
 import { NextRequest } from "next/server";
 
+// Run the blocked-country cases against the COMMITTED country list, not the empty
+// one jest.setup.tsx gives other suites, and never replace the policy for them:
+// if the list stopped reaching the routes, these would fail. The dormant cases
+// below still empty the policy on purpose.
+jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
+
 const mockFrom = jest.fn();
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
@@ -343,9 +349,9 @@ describe("dormant policy (no country listed)", () => {
   });
 });
 
-describe("policy of ['GB']", () => {
-  beforeEach(() => {
-    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+describe("the committed country list (GB)", () => {
+  it("is what the routes read: GB is listed and the policy is active", () => {
+    expect(TOKEN_GEO_POLICY.blockedCountries).toContain("GB");
   });
 
   it.each(TOKEN_ACTIONS)("$name is refused for a GB IP: 403 token_geo_blocked, nothing created", async ({ call, created }) => {

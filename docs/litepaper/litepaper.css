@@ -598,7 +598,8 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .hero-caption-mark {
   font:22px var(--mono);
   color:var(--accent);
-  margin-right:auto
+  margin-right:auto;
+  white-space:nowrap
 }
 .hero-scroll {
   display:flex;
@@ -3753,7 +3754,7 @@ picture {
 html:has(body.motion-paused),html:has(body.reading-mode) {
   scroll-behavior:auto!important
 }
-html:not(.js-enhanced) .reader-tools,html:not(.js-enhanced) .boundary-actions,html:not(.js-enhanced) .interaction-invitation,html:not(.js-enhanced) .atlas-header,html:not(.js-enhanced) .atlas-map,html:not(.js-enhanced) .product-pagination,html:not(.js-enhanced) .back-to-atlas,html:not(.js-enhanced) .related,html:not(.js-enhanced) .related-invitation,html:not(.js-enhanced) .reading-toggle {
+html:not(.js-enhanced) .reader-tools,html:not(.js-enhanced) .boundary-actions,html:not(.js-enhanced) .lab-replay,html:not(.js-enhanced) .interaction-invitation,html:not(.js-enhanced) .atlas-header,html:not(.js-enhanced) .atlas-map,html:not(.js-enhanced) .product-pagination,html:not(.js-enhanced) .back-to-atlas,html:not(.js-enhanced) .related,html:not(.js-enhanced) .related-invitation,html:not(.js-enhanced) .reading-toggle {
   display:none!important
 }
 html:not(.js-enhanced) .atlas-layout {
@@ -4149,9 +4150,9 @@ html:not(.js-enhanced) .atlas-layout {
   }
 }
 
-/* Plain-English tooltips. The definition is in data-tip; build.py adds the span. */
+/* Plain-English tooltips. The definition is in data-tip; build.py adds the span
+   and litepaper.js draws one shared bubble on <body>, so no card can clip it. */
 .gloss {
-  position:relative;
   cursor:help;
   border-bottom:1px dotted var(--faint);
   outline-offset:2px
@@ -4160,14 +4161,11 @@ html:not(.js-enhanced) .atlas-layout {
 .gloss:focus {
   border-bottom-color:var(--accent)
 }
-.gloss:hover::after,
-.gloss:focus::after {
-  content:attr(data-tip);
-  position:absolute;
+.gloss-tip {
+  position:fixed;
+  top:0;
+  left:0;
   z-index:40;
-  left:var(--gloss-x,0px);
-  bottom:calc(100% + 10px);
-  width:var(--gloss-w,280px);
   padding:10px 12px;
   background:var(--surface-raised);
   color:var(--text);
@@ -4178,13 +4176,54 @@ html:not(.js-enhanced) .atlas-layout {
   letter-spacing:0;
   text-align:left;
   text-transform:none;
+  white-space:normal
+}
+.gloss-tip[hidden] {
+  display:none
+}
+/* A strip across the gap to the word, so the pointer can cross onto the bubble. */
+.gloss-tip:before {
+  content:'';
+  position:absolute;
+  left:0;
+  right:0;
+  height:10px
+}
+.gloss-tip[data-side=above]:before {
+  top:100%
+}
+.gloss-tip[data-side=below]:before {
+  bottom:100%
+}
+@media print {
+  .gloss-tip {
+    display:none
+  }
+}
+/* Without JavaScript there is no bubble to draw, so the word keeps a plain hover and focus tooltip. */
+html:not(.js-enhanced) .gloss {
+  position:relative
+}
+html:not(.js-enhanced) .gloss:hover::after,
+html:not(.js-enhanced) .gloss:focus::after {
+  content:attr(data-tip);
+  position:absolute;
+  z-index:40;
+  left:0;
+  bottom:calc(100% + 10px);
+  width:280px;
+  max-width:calc(100vw - 32px);
+  padding:10px 12px;
+  background:var(--surface-raised);
+  color:var(--text);
+  border:1px solid var(--line);
+  border-radius:4px;
+  font:400 14px/1.45 Manrope,'Helvetica Neue',Arial,sans-serif;
+  letter-spacing:0;
+  text-align:left;
+  text-transform:none;
   white-space:normal;
   pointer-events:none
-}
-.gloss[data-below]:hover::after,
-.gloss[data-below]:focus::after {
-  bottom:auto;
-  top:calc(100% + 10px)
 }
 
 /* The boundary lab, dramatised: a hidden order arrives, probes fire at everything
@@ -4307,13 +4346,13 @@ html:not(.js-enhanced) .atlas-layout {
   letter-spacing:.05em;
   transition:color .2s,border-color .2s
 }
-.lab-replay:hover,.lab-replay:focus-visible {
+.lab-replay:not([aria-disabled=true]):hover,.lab-replay:focus-visible {
   color:var(--text);
   border-color:var(--accent)
 }
-.lab-replay[disabled] {
+.lab-replay[aria-disabled=true] {
   opacity:.4;
-  pointer-events:none
+  cursor:default
 }
 .reach-map .probe {
   fill:var(--accent);

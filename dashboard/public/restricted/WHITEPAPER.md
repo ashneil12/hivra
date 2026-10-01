@@ -15,8 +15,8 @@
 4. The system beneath the experience
 5. Control outside the agent
 6. The Hivra umbrella
-9. Build order
-10. Evidence, limits and open decisions
+7. Build order
+8. Evidence, limits and open decisions
 - Appendix A: claims register
 - Appendix B: paper boundaries
 - Appendix C: sources
@@ -111,7 +111,7 @@ Resilience is therefore the design standard, not prevention. The question Hivra 
 
 **Launch an agent.** Claude Code, Codex, Hermes and Agent Zero, with DeepSeek in preview. The operator selects an agent, connects the account or key it uses, and it runs on a machine of its own. Terminal agents remain terminal. Agents shipping their own interface retain it.
 
-**Launch a computer.** Ubuntu, with Omarchy and Windows in private preview (Windows currently runs on capacity you own, with your own licensed image). A full desktop, usable without any agent attached. Install software, browse, write code, run services. macOS and custom images come later (section 9), gated on Apple hardware and licensing.
+**Launch a computer.** Ubuntu, with Omarchy and Windows in private preview (Windows currently runs on capacity you own, with your own licensed image). A full desktop, usable without any agent attached. Install software, browse, write code, run services. macOS and custom images come later (section 7), gated on Apple hardware and licensing.
 
 Both paths follow the same steps: choose the workload, choose where it runs, see the cost and the boundary, then open the result. Codex and every computer already launch through one flow. Bringing every agent onto it is Next.
 
@@ -250,7 +250,7 @@ Agent Computers give the work a place to happen. The products below address what
 
 ---
 
-## 9. Build order
+## 7. Build order
 
 **Available now.** Managed agent paths (Claude Code, Codex, Hermes, Agent Zero), persistent workspaces, lifecycle controls, one virtual machine per agent on Hivra-operated servers, live billing. Ubuntu computer launch. Apache 2.0 source and a self-host preview.
 
@@ -266,24 +266,24 @@ No dates. Availability is announced after shipping, never before. If a capabilit
 
 ---
 
-## 10. Evidence, limits and open decisions
+## 8. Evidence, limits and open decisions
 
 This section exists because a security paper without one is marketing.
 
-Capability status for every component is given in section 9 and Appendix A. Where this paper says something is available, it is available. Where it says preview, building, Next, Then, Research or proposed, that is what it means.
+Capability status for every component is given in section 7 and Appendix A. Where this paper says something is available, it is available. Where it says preview, building, Next, Then, Research or proposed, that is what it means.
 
-### 10.1 What Hivra cannot do
+### 8.1 What Hivra cannot do
 
 It cannot make a model infallible. It cannot inspect a model's internal reasoning. It cannot observe activity occurring entirely inside an external application. It cannot guarantee that a boundary holds against an attacker with sufficient resources. It cannot prevent an operator from deliberately granting an agent access to something dangerous.
 
 What it changes is blast radius.
 
-### 10.2 Open parameters
+### 8.2 Open parameters
 
 
 None are stated publicly until decided. None are estimated to make a document feel complete.
 
-### 10.3 What would falsify parts of this paper
+### 8.3 What would falsify parts of this paper
 
 If containment bounties attract no serious researchers, the security-through-adversarial-attention thesis is wrong.
 
@@ -311,7 +311,6 @@ If operators keep the local default even when a separate computer is as easy to 
 | Apache 2.0 open source | Available | github.com/ashneil12/hivra, published 21 September 2026 |
 | Observability chain at stated depth | Building | Foundations shipped, full depth in progress |
 | Every umbrella product beyond Agent Computers | Proposed | Design stage or research |
-| Migration route | Proposed | Parameters open |
 
 ## Appendix B: paper boundaries
 

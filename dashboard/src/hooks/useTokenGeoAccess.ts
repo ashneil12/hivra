@@ -11,7 +11,9 @@ import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
  * - Otherwise the server decides (GET /api/token-geo). Until it answers, or if
  *   it cannot, token promotions stay hidden ("checking" / "unavailable"): the
  *   card path is always there, and the server refuses a blocked token action
- *   whatever the UI shows. Only "blocked" carries the notice.
+ *   whatever the UI shows. Only "blocked" carries the notice, and with it
+ *   `existingAccess`: whether this user already holds token access (a blocked
+ *   holder keeps the screens that manage what they hold; see the wallet page).
  *
  * The answer is shared for ANSWER_TTL_MS so several components on one page ask
  * once. Failures are not kept.
@@ -19,7 +21,7 @@ import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 export type TokenGeoAccess =
   | { status: "allowed"; notice: null }
   | { status: "checking"; notice: null }
-  | { status: "blocked"; notice: string }
+  | { status: "blocked"; notice: string; existingAccess: boolean }
   | { status: "unavailable"; notice: null };
 
 const ALLOWED: TokenGeoAccess = { status: "allowed", notice: null };
@@ -33,11 +35,11 @@ function fetchTokenGeoAccess(): Promise<TokenGeoAccess> {
   if (cached && Date.now() - cached.at < ANSWER_TTL_MS) return cached.answer;
   const answer: Promise<TokenGeoAccess> = fetch("/api/token-geo", { cache: "no-store" })
     .then((response) => (response.ok ? response.json() : null))
-    .then((body: { blocked?: unknown; notice?: unknown } | null): TokenGeoAccess => {
+    .then((body: { blocked?: unknown; notice?: unknown; existingAccess?: unknown } | null): TokenGeoAccess => {
       if (!body || typeof body.blocked !== "boolean") return UNAVAILABLE;
       if (!body.blocked) return ALLOWED;
       return typeof body.notice === "string" && body.notice
-        ? { status: "blocked", notice: body.notice }
+        ? { status: "blocked", notice: body.notice, existingAccess: body.existingAccess === true }
         : UNAVAILABLE;
     })
     .catch((): TokenGeoAccess => UNAVAILABLE)

@@ -1040,6 +1040,35 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
+  it("refuses a launch with no entitlement and names only the plans, never the token", async () => {
+    // A user with no subscription, no Apple plan, no yearly year and no tier
+    // qualification: every lookup comes back empty.
+    const emptyQuery: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "in", "order", "limit", "not", "is"]) {
+      emptyQuery[method] = jest.fn().mockReturnThis();
+    }
+    emptyQuery.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    emptyQuery.then = (resolve: (value: unknown) => unknown) => resolve({ data: [], error: null });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation(() => emptyQuery);
+
+    const result = await InstanceService.createInstance(
+      "user_no_entitlement",
+      CreateInstanceSchema.parse({
+        name: "No Plan Agent",
+        provider: "openrouter",
+        apiKey: "sk-or-test",
+      })
+    );
+
+    expect(result).toEqual({
+      success: false,
+      status: 403,
+      message: "Active subscription required. Choose a plan to start deploying agents.",
+    });
+    if (!result.success) expect(result.message).not.toMatch(/token|hermesos|hold/i);
+    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+  });
+
   it("blocks a NEW provision while a paid sub is past_due (dunning), before any backend call", async () => {
     const subscriptionQuery = {
       select: jest.fn().mockReturnThis(),

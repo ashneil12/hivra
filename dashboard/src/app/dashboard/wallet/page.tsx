@@ -7,7 +7,7 @@ import { CheckCircle2, Copy, AlertTriangle, ArrowDownToLine, ExternalLink } from
 import touch from '@/components/tools/touch.module.css';
 import { useLocale } from '@/components/i18n/LocaleProvider';
 import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
-import { useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
+import { tokenFeaturesShown, useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
@@ -763,6 +763,13 @@ export default function WalletPage() {
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
   const isLegacyCustody = Boolean(data?.custodyMode === 'legacy_custody' || data?.tokenLockWallet);
   const isSelfCustody = Boolean(data?.custodyMode === 'self_custody' || (status === 'ready' && !isLegacyCustody));
+  // Token geo-policy: the panels that invite a NEW token action (verify a wallet to
+  // qualify, lock a price, tier thresholds, the hold-to-unlock prompt, deposit) are
+  // for a viewer the server allows and for a blocked user who already holds token
+  // access, who keeps verifying, unlocking and withdrawing. A blocked user with no
+  // holding, or a viewer the server has not answered for, sees the notice and the
+  // agent wallets only. The server refuses every new token action whatever shows here.
+  const tokenPanels = tokenFeaturesShown(tokenGeo) || (tokenGeo.status === 'blocked' && tokenGeo.existingAccess);
   const snapshotWalletAddress = walletAddressFromEligibility(eligibility);
   const connectedSelfCustodyAddress = verifiedWalletAddress ?? snapshotWalletAddress;
   const eligibleTier = highestEligibleTier(eligibility);
@@ -893,7 +900,7 @@ export default function WalletPage() {
               boxShadow: '0 0 10px var(--gold-leaf)',
             }}
           />
-          {isLegacyCustody ? walletCopy.eyebrowLegacy : walletCopy.eyebrowSelfCustody}
+          {!tokenPanels ? walletCopy.restricted.eyebrow : isLegacyCustody ? walletCopy.eyebrowLegacy : walletCopy.eyebrowSelfCustody}
         </span>
         <h1
           className="serif"
@@ -905,10 +912,18 @@ export default function WalletPage() {
             letterSpacing: '-0.01em',
           }}
         >
-          {walletCopy.titlePrefix}{walletCopy.titleSeparator}<em>{walletCopy.titleEmphasis}</em>{walletCopy.titleSuffix}
+          {tokenPanels ? (
+            <>
+              {walletCopy.titlePrefix}{walletCopy.titleSeparator}<em>{walletCopy.titleEmphasis}</em>{walletCopy.titleSuffix}
+            </>
+          ) : (
+            walletCopy.restricted.title
+          )}
         </h1>
         <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6, maxWidth: 580 }}>
-          {isLegacyCustody ? (
+          {!tokenPanels ? (
+            walletCopy.restricted.intro
+          ) : isLegacyCustody ? (
             <>
               <strong>{walletCopy.legacyIntroStrong}</strong> — {walletCopy.legacyIntroBody}
             </>
@@ -920,7 +935,7 @@ export default function WalletPage() {
         </p>
       </header>
 
-      {isLegacyCustody && (
+      {tokenPanels && isLegacyCustody && (
         <div
           style={{
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
@@ -947,7 +962,7 @@ export default function WalletPage() {
       {tokenGeo.status === 'allowed' ? <BuyTokenCard /> : null}
       {tokenGeo.notice ? <TokenGeoNotice notice={tokenGeo.notice} /> : null}
 
-      {walletEnv && (
+      {walletEnv && tokenPanels && (
         <WalletEnvironmentNotice
           inApp={walletEnv.inApp}
           hasProvider={walletEnv.hasProvider}
@@ -962,7 +977,7 @@ export default function WalletPage() {
         />
       )}
 
-      {isSelfCustody && (
+      {tokenPanels && isSelfCustody && (
         <SelfCustodyVerificationPanel
           connecting={walletConnecting}
           locking={walletLockingPrice}
@@ -982,7 +997,7 @@ export default function WalletPage() {
         />
       )}
 
-      {isReady && isLegacyCustody && (
+      {tokenPanels && isReady && isLegacyCustody && (
         <QuotePanel
           proQuote={quotes.pro}
           powerQuote={quotes.power}
@@ -995,13 +1010,13 @@ export default function WalletPage() {
         />
       )}
 
-      {quoteError && (
+      {tokenPanels && quoteError && (
         <p style={{ fontSize: 12, color: '#dc2626', marginTop: '-0.5rem', marginBottom: '1rem' }}>
           {quoteError}
         </p>
       )}
 
-      {!eligibility && priceUnavailable && (
+      {tokenPanels && !eligibility && priceUnavailable && (
         <div
           role="status"
           aria-live="polite"
@@ -1022,7 +1037,7 @@ export default function WalletPage() {
         </div>
       )}
 
-      {unlockPromptMode && (
+      {tokenPanels && unlockPromptMode && (
         <UnlockPromptCard
           mode={unlockPromptMode}
           unlocking={unlocking}
@@ -1031,7 +1046,7 @@ export default function WalletPage() {
         />
       )}
 
-      {unlockMsg && (
+      {tokenPanels && unlockMsg && (
         <p
           role="status"
           aria-live="polite"
@@ -1041,7 +1056,7 @@ export default function WalletPage() {
         </p>
       )}
 
-      {eligibility && (
+      {tokenPanels && eligibility && (
         <EligibilityPanel
           eligibility={eligibility}
           selfCustody={!isLegacyCustody}
@@ -1072,11 +1087,13 @@ export default function WalletPage() {
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
-          <ActionRow
-            icon={<ArrowDownToLine size={14} />}
-            label="Deposit"
-            description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
-          />
+          {tokenPanels && (
+            <ActionRow
+              icon={<ArrowDownToLine size={14} />}
+              label="Deposit"
+              description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
+            />
+          )}
           <WithdrawSection
             tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
             balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}

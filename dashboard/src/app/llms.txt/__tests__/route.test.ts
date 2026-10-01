@@ -8,14 +8,14 @@ import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 
 // Exercises the live /llms.txt route end-to-end against the shipped link map.
 describe("GET /llms.txt", () => {
-  it("returns 200 with a text/plain content-type", () => {
-    const res = GET();
+  it("returns 200 with a text/plain content-type", async () => {
+    const res = await GET();
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 
   it("is a well-formed llms.txt: H1 product line, blurb, and Markdown link sections", async () => {
-    const body = await GET().text();
+    const body = await (await GET()).text();
 
     // H1 product line first.
     expect(body.startsWith("# Hivra\n")).toBe(true);
@@ -31,7 +31,7 @@ describe("GET /llms.txt", () => {
   });
 
   it("links every curated public page as an absolute SITE_URL-based URL — no auth/api/404 links", async () => {
-    const body = await GET().text();
+    const body = await (await GET()).text();
 
     const expectedUrls = [
       SITE_URL, // home
@@ -72,13 +72,13 @@ describe("GET /llms.txt", () => {
 
   it("only links site paths that the app, the staged papers or public/ actually serve", async () => {
     // Every same-site link must answer 200 on the build that ships it. The app
-    // routes and public files are checked on disk; the three papers are staged
-    // into public/ from the repository root by scripts/stage-litepaper.mjs.
+    // routes and public files are checked on disk. The three papers are route
+    // handlers (src/app/LITEPAPER.md/route.ts and its two siblings), so a
+    // missing handler shows up here.
     const dashboardRoot = path.join(__dirname, "..", "..", "..", "..");
-    const repoRoot = path.join(dashboardRoot, "..");
     const appRoot = path.join(dashboardRoot, "src", "app");
     const exists = (file: string) => fs.existsSync(file);
-    const body = await GET().text();
+    const body = await (await GET()).text();
     const sitePaths = [...body.matchAll(/\]\(([^)\s]+)\)/g)]
       .map(match => match[1])
       .filter(url => url === SITE_URL || url.startsWith(`${SITE_URL}/`))
@@ -93,13 +93,13 @@ describe("GET /llms.txt", () => {
       const relative = pathname.slice(1);
       const routeDir = path.join(appRoot, relative);
       if (exists(path.join(routeDir, "page.tsx")) || exists(path.join(routeDir, "route.ts"))) return false;
-      if (/^\/(LITEPAPER|WHITEPAPER|TOKENOMICS)\.md$/.test(pathname)) return !exists(path.join(repoRoot, relative));
       return !exists(path.join(dashboardRoot, "public", relative));
     });
     expect(missing).toEqual([]);
   });
 
-  it("advertises a public, cacheable response", () => {
-    expect(GET().headers.get("cache-control")).toContain("s-maxage=3600");
+  it("advertises a public, cacheable response while no country is listed", async () => {
+    // jest.setup.tsx gives this suite the empty country list, so the body is the same for everyone.
+    expect((await GET()).headers.get("cache-control")).toContain("s-maxage=3600");
   });
 });

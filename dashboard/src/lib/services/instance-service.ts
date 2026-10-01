@@ -2337,8 +2337,10 @@ export class InstanceService {
       return {
         success: false,
         status: 403,
+        // No token wording: a user with no entitlement reads this in every
+        // country, so it names only the plans every viewer can buy.
         message:
-          "Active subscription required. Choose a plan or hold $HERMESOS to qualify for Pro / Power tier.",
+          "Active subscription required. Choose a plan to start deploying agents.",
       };
     }
 

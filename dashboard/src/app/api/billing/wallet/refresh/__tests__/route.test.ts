@@ -81,13 +81,14 @@ describe("POST /api/billing/wallet/refresh", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.snapshotId).toBe("snap_x");
-    // With the geo-policy on, the route also passes the viewer's country verdict.
-    expect(mockEvaluate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user_a",
-        balances: { hermesos: 39022814000000000000000000n },
-      }),
-    );
+    // This suite runs with the empty country list (jest.setup.tsx), so the route
+    // passes exactly these arguments and no country verdict. Extra or missing
+    // arguments fail here. With a listed country the route adds `tokenGeo`:
+    // api/billing/__tests__/token-geo-routes.test.ts pins that with the real list.
+    expect(mockEvaluate).toHaveBeenCalledWith({
+      userId: "user_a",
+      balances: { hermesos: 39022814000000000000000000n },
+    });
   });
 
   it("still returns 200 if eligibility re-eval throws (snapshot is the source of truth)", async () => {

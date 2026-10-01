@@ -2,14 +2,17 @@
  * Token geo-policy: the ONE place that decides which countries may not use
  * Hivra's token features.
  *
- * It ships DORMANT. While `blockedCountries` is empty nothing reads a country,
- * no request or query is made for it, and every page and route behaves exactly
- * as it did before the gate existed.
+ * It is ON for GB since the owner directed it on 2026-09-30 (commit 5d1f7fca):
+ * the list in token-geo-list.ts is `["GB"]`. Only an EMPTY list makes it
+ * dormant: then nothing reads a country, no request or query is made for it,
+ * and every page and route behaves exactly as it did before the gate existed.
  *
- * Enabling it is one reviewed PR that adds ISO-3166 alpha-2 codes, for example
- * `blockedCountries: ["GB"]`. Read docs/token/TOKEN-GEO-POLICY.md first: it
- * lists what gets blocked, what never changes for existing users, the legal
- * review this needs, and how to verify it after the merge.
+ * Changing the list is one reviewed PR of ISO-3166 alpha-2 codes. Read
+ * docs/token/TOKEN-GEO-POLICY.md first: it lists what gets blocked, what never
+ * changes for existing users, the legal review this needs, and how to verify
+ * it after the merge. token-geo-real-list.test.ts runs the committed list
+ * through this module, the routes and the pages, so a change that stops it
+ * reaching them fails there.
  *
  * Client-safe: its only import is the plain country list. The server decides (lib/compliance/token-geo-gate.ts);
  * the client only uses `isTokenGeoPolicyActive()` to skip asking when the list

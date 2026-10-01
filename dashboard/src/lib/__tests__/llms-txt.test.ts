@@ -124,3 +124,45 @@ describe("buildLlmsTxt", () => {
     expect(txt.endsWith("\n\n")).toBe(false);
   });
 });
+
+describe("buildLlmsTxt for a viewer the token geo-policy blocks", () => {
+  // The project's own token words (docs/litepaper/restrict.py).
+  const TOKEN_WORDS = /\$HIVRA|\$HermesOS|tokenomics|\btokens?\b|\bBankr\b/i;
+  const PHASES = ["dormant", "scheduled", "active"] as const;
+
+  it.each(PHASES)("has no token word, sentence or link in the %s phase", (phase) => {
+    const txt = buildLlmsTxt({ siteUrl: SITE, phase, restricted: true });
+    expect(txt).not.toMatch(TOKEN_WORDS);
+    expect(txt).not.toContain("/TOKENOMICS.md");
+    expect(txt).not.toContain(`(${SITE}/token)`);
+    // The unrestricted copy has them, so the check is not empty.
+    expect(buildLlmsTxt({ siteUrl: SITE, phase })).toMatch(TOKEN_WORDS);
+  });
+
+  it("is the same map with only the token lines gone", () => {
+    const full = buildLlmsTxt({ siteUrl: SITE }).split("\n");
+    const restricted = buildLlmsTxt({ siteUrl: SITE, restricted: true }).split("\n");
+    const removed = full.filter((line) => !restricted.includes(line));
+    // The two paragraphs that end on a token aside, and the two token links.
+    expect(removed).toHaveLength(4);
+    expect(removed.filter((line) => line.startsWith("- [")).map((line) => line.split("]")[0])).toEqual(["- [Tokenomics", "- [Token"]);
+    // Nothing is added: every restricted line but the two reworded paragraphs is in the full map.
+    const added = restricted.filter((line) => !full.includes(line));
+    expect(added).toHaveLength(2);
+    for (const line of added) expect(line).not.toMatch(TOKEN_WORDS);
+  });
+
+  it("keeps the papers that are rewritten to token-free copies for this viewer, and every other section", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE, restricted: true });
+    for (const path of ["/LITEPAPER.md", "/WHITEPAPER.md", "/agents", "/pricing", "/roadmap", "/privacy"]) {
+      expect(txt).toContain(`(${SITE}${path})`);
+    }
+    for (const section of llmsTxtSections("dormant", { restricted: true })) {
+      expect(txt).toContain(`## ${section.heading}`);
+    }
+    expect(txt).toContain("self-host the platform on your own server, with no Hivra account.");
+    expect(txt).not.toMatch(/[–—]/);
+    expect(txt.endsWith("\n")).toBe(true);
+    expect(txt.endsWith("\n\n")).toBe(false);
+  });
+});

@@ -357,6 +357,11 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Free tier always works without token verification.",
         priceUnavailable: "Token price unavailable — please try again later.",
+        restricted: {
+          eyebrow: "Wallet",
+          title: "Your wallets.",
+          intro: "Your agents' wallets are listed here.",
+        },
         buyToken: {
           ariaLabel: "Buy $HermesOS",
           eyebrow: "Get $HermesOS",
@@ -606,7 +611,7 @@ const BASE_MARKETING_COPY = {
           },
           rows: {
             billing: { description: "Plan, payment methods, credits and invoices" },
-            wallets: { title: "Wallets", description: "Agent wallets and $HermesOS access" },
+            wallets: { title: "Wallets", description: "Agent wallets" },
             apiKeys: { title: "API keys", description: "Provider keys and which agents use them" },
             infrastructure: { description: "The machines and cloud accounts your agents run on" },
             memory: { title: "Shared agent memory", description: "What every new agent starts out knowing" },
@@ -908,6 +913,11 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "自行持有 $HermesOS 和 VVV，然后签名验证所有权。免费层级始终无需代币验证即可使用。",
         priceUnavailable: "代币价格暂不可用，请稍后重试。",
+        restricted: {
+          eyebrow: "钱包",
+          title: "你的钱包。",
+          intro: "你的 Agent 的钱包都列在这里。",
+        },
         buyToken: {
           ariaLabel: "购买 $HermesOS",
           eyebrow: "获取 $HermesOS",
@@ -1147,7 +1157,7 @@ const BASE_MARKETING_COPY = {
           },
           rows: {
             billing: { description: "计划、付款方式、额度和发票" },
-            wallets: { title: "钱包", description: "Agent 钱包和 $HermesOS 访问权限" },
+            wallets: { title: "钱包", description: "Agent 钱包" },
             apiKeys: { title: "API 密钥", description: "服务商密钥，以及使用它们的 Agent" },
             infrastructure: { description: "运行你的 Agent 的机器和云账户" },
             memory: { title: "共享 Agent 记忆", description: "每个新 Agent 一开始就知道的内容" },
@@ -1488,6 +1498,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecta tu propia billetera",
         "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. El plan gratuito siempre funciona sin verificación de token.",
         "priceUnavailable": "El precio del token no está disponible. Inténtalo de nuevo más tarde.",
+        "restricted": {
+          "eyebrow": "Billetera",
+          "title": "Tus billeteras.",
+          "intro": "Aquí se muestran las billeteras de tus agentes.",
+        },
         "buyToken": {
           "ariaLabel": "Comprar $HermesOS",
           "eyebrow": "Obtener $HermesOS",
@@ -1727,7 +1742,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Plan, métodos de pago, créditos y facturas" },
-            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes y acceso con $HermesOS" },
+            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes" },
             "apiKeys": { "title": "Claves de API", "description": "Claves de proveedores y qué agentes las usan" },
             "infrastructure": { "description": "Las máquinas y cuentas en la nube donde se ejecutan tus agentes" },
             "memory": { "title": "Memoria compartida de agentes", "description": "Lo que cada agente nuevo sabe desde el principio" },
@@ -2021,6 +2036,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecte sua própria carteira",
         "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. O plano gratuito sempre funciona sem verificação de token.",
         "priceUnavailable": "Preço do token indisponível — tente novamente mais tarde.",
+        "restricted": {
+          "eyebrow": "Carteira",
+          "title": "Suas carteiras.",
+          "intro": "As carteiras dos seus agentes aparecem aqui.",
+        },
         "buyToken": {
           "ariaLabel": "Comprar $HermesOS",
           "eyebrow": "Obter $HermesOS",
@@ -2260,7 +2280,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Plano, formas de pagamento, créditos e faturas" },
-            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes e acesso com $HermesOS" },
+            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes" },
             "apiKeys": { "title": "Chaves de API", "description": "Chaves de provedores e quais agentes as usam" },
             "infrastructure": { "description": "As máquinas e contas de nuvem onde seus agentes rodam" },
             "memory": { "title": "Memória compartilhada dos agentes", "description": "O que todo agente novo já sabe desde o início" },
@@ -2554,6 +2574,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Connectez votre propre portefeuille",
         "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Le tier Free fonctionne toujours sans vérification de token.",
         "priceUnavailable": "Prix du token indisponible — veuillez réessayer plus tard.",
+        "restricted": {
+          "eyebrow": "Portefeuille",
+          "title": "Vos portefeuilles.",
+          "intro": "Les portefeuilles de vos agents sont listés ici.",
+        },
         "buyToken": {
           "ariaLabel": "Acheter $HermesOS",
           "eyebrow": "Obtenir $HermesOS",
@@ -2793,7 +2818,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Offre, moyens de paiement, crédits et factures" },
-            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents et accès $HermesOS" },
+            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents" },
             "apiKeys": { "title": "Clés API", "description": "Clés des fournisseurs et agents qui les utilisent" },
             "infrastructure": { "description": "Les machines et comptes cloud sur lesquels tournent vos agents" },
             "memory": { "title": "Mémoire partagée des agents", "description": "Ce que chaque nouvel agent sait dès le départ" },
@@ -3087,6 +3112,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Verbinde deine eigene Wallet",
         "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Der Free-Tier funktioniert immer ohne Token-Verifizierung.",
         "priceUnavailable": "Token-Preis nicht verfügbar — bitte später erneut versuchen.",
+        "restricted": {
+          "eyebrow": "Krypto-Wallet",
+          "title": "Deine Wallets.",
+          "intro": "Hier siehst du die Wallets deiner Agents.",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS kaufen",
           "eyebrow": "$HermesOS erwerben",
@@ -3326,7 +3356,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Tarif, Zahlungsmethoden, Guthaben und Rechnungen" },
-            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets und $HermesOS-Zugang" },
+            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets" },
             "apiKeys": { "title": "API-Schlüssel", "description": "Anbieter-Schlüssel und welche Agents sie nutzen" },
             "infrastructure": { "description": "Die Maschinen und Cloud-Konten, auf denen deine Agents laufen" },
             "memory": { "title": "Gemeinsames Agent-Gedächtnis", "description": "Was jeder neue Agent von Anfang an weiß" },
@@ -3620,6 +3650,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "自分のウォレットを接続",
         "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。Free プランはトークン認証なしで常時利用可能です。",
         "priceUnavailable": "トークン価格を取得できません —— しばらくしてから再試行してください。",
+        "restricted": {
+          "eyebrow": "ウォレット",
+          "title": "あなたのウォレット。",
+          "intro": "エージェントのウォレットをここに表示します。",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS を購入",
           "eyebrow": "$HermesOS を手に入れる",
@@ -3859,7 +3894,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "プラン、支払い方法、クレジット、請求書" },
-            "wallets": { "title": "ウォレット", "description": "エージェントのウォレットと $HermesOS アクセス" },
+            "wallets": { "title": "ウォレット", "description": "エージェントのウォレット" },
             "apiKeys": { "title": "API キー", "description": "プロバイダーのキーと、それを使うエージェント" },
             "infrastructure": { "description": "エージェントが動くマシンとクラウドアカウント" },
             "memory": { "title": "共有エージェントメモリー", "description": "新しいエージェントが最初から知っていること" },
@@ -4153,6 +4188,11 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "내 지갑 연결",
         "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. Free 티어는 토큰 인증 없이 항상 이용 가능합니다.",
         "priceUnavailable": "토큰 가격을 불러올 수 없습니다 — 나중에 다시 시도하세요.",
+        "restricted": {
+          "eyebrow": "지갑",
+          "title": "내 지갑.",
+          "intro": "에이전트의 지갑이 여기에 표시됩니다.",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS 구매",
           "eyebrow": "$HermesOS 구하기",
@@ -4392,7 +4432,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "요금제, 결제 수단, 크레딧, 청구서" },
-            "wallets": { "title": "지갑", "description": "에이전트 지갑과 $HermesOS 이용 권한" },
+            "wallets": { "title": "지갑", "description": "에이전트 지갑" },
             "apiKeys": { "title": "API 키", "description": "제공업체 키와 이를 쓰는 에이전트" },
             "infrastructure": { "description": "에이전트가 실행되는 머신과 클라우드 계정" },
             "memory": { "title": "공유 에이전트 메모리", "description": "새 에이전트가 처음부터 알고 있는 내용" },
