@@ -11,6 +11,7 @@ import {
   type ToolComponentKey,
 } from "../tool-catalog";
 import { findBannedClaims } from "../copy-rules";
+import { CLAUDE_PLAN_FACTS, usd } from "../claude-plan-facts";
 import { agentDeployHref, getAgentSeoEntry, unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
@@ -30,8 +31,18 @@ const COMPONENTS_DIR = path.join(__dirname, "..", "..", "..", "components", "too
 
 // Destinations a tools page may link to. /pricing and the two /agents pages
 // are ported from the retired site alongside /tools; nothing else is linked
-// because several older blog posts still carry stale prices.
-const ALLOWED_RELATED = new Set(["/pricing", "/agents/claude-code", "/agents/codex", ...TOOL_ENTRIES.map((entry) => toolPath(entry.slug))]);
+// because several older blog posts still carry stale prices. The one blog post
+// allowed is the plan hub the plan calculator backs: it was written on
+// 2026-09-30 from the same facts module (lib/tools/claude-plan-facts.ts), so it
+// cannot carry a stale Anthropic figure.
+const PLAN_HUB_POST = "/blog/claude-max-vs-pro-for-claude-code";
+const ALLOWED_RELATED = new Set([
+  "/pricing",
+  "/agents/claude-code",
+  "/agents/codex",
+  PLAN_HUB_POST,
+  ...TOOL_ENTRIES.map((entry) => toolPath(entry.slug)),
+]);
 
 // Every user-facing string in an entry, walked recursively.
 function collectStrings(value: unknown, out: string[] = []): string[] {
@@ -65,6 +76,21 @@ describe("tools catalog", () => {
   it.each(TOOL_ENTRIES)("$slug: metaDescription is 120-155 characters", (entry) => {
     expect(entry.metaDescription.length).toBeGreaterThanOrEqual(120);
     expect(entry.metaDescription.length).toBeLessThanOrEqual(155);
+  });
+
+  it("does not call the second look at the Anthropic figures a second reader", () => {
+    // A visitor reads "a second reader" as a human editor. It was a second pass over the same pages.
+    const plan = JSON.stringify(getToolEntry("claude-code-plan-calculator"));
+    expect(plan).not.toMatch(/second reader|independent readers/i);
+    expect(plan).toContain("checked against them a second time the same day");
+  });
+
+  it("builds the plan calculator's meta description from the plan facts, so a price change cannot leave it stale", () => {
+    const description = getToolEntry("claude-code-plan-calculator")!.metaDescription;
+    for (const plan of Object.values(CLAUDE_PLAN_FACTS.plans)) expect(description).toContain(`${plan.label} at ${usd(plan.priceUsd)}`);
+    expect(description).toBe(
+      "Estimate your Claude Code usage and see which Anthropic plan fits: Pro at $20, Max 5x at $100, or Max 20x at $200 a month. With an API cost comparison.",
+    );
   });
 
   it("gives the hub a short title and a description within limits", () => {
@@ -197,13 +223,14 @@ describe("tools catalog", () => {
     expect(getToolEntry("claude-code-plan-calculator")?.slug).toBe("claude-code-plan-calculator");
     expect(getToolEntry("not-a-tool")).toBeUndefined();
   });
-  // The optional page-level method section and worked examples. The two newer
-  // tools carry both; the four older ones are upgraded in a later slice.
+  // The optional page-level method section and worked examples. The plan
+  // calculator and the two newer tools carry both; the other three are upgraded
+  // in a later slice.
   describe("method section and worked examples", () => {
     const WITH_METHOD = TOOL_ENTRIES.filter((entry) => entry.method);
 
-    it("is carried by the keep-awake builder and the tmux cheat sheet", () => {
-      expect(WITH_METHOD.map((entry) => entry.slug)).toEqual(["keep-mac-awake", "tmux-cheat-sheet"]);
+    it("is carried by the plan calculator, the keep-awake builder and the tmux cheat sheet", () => {
+      expect(WITH_METHOD.map((entry) => entry.slug)).toEqual(["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]);
     });
 
     it.each(WITH_METHOD)("$slug: method has a heading, an ISO verified date and linked https sources", (entry) => {
@@ -246,11 +273,16 @@ describe("tools catalog", () => {
     });
 
     it("never names the operating system the public copy rules ban, in any catalog string", () => {
-      for (const slug of ["keep-mac-awake", "tmux-cheat-sheet"]) {
+      for (const slug of ["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]) {
         for (const text of collectStrings(getToolEntry(slug))) {
           expect(text).not.toMatch(/\bWindows\b/);
         }
       }
+    });
+
+    it("links the plan calculator to the plan hub post it backs, once", () => {
+      const links = getToolEntry("claude-code-plan-calculator")!.relatedLinks.map((link) => link.href);
+      expect(links.filter((href) => href === PLAN_HUB_POST)).toHaveLength(1);
     });
 
     it("links the two new tools to each other and to the survival check", () => {

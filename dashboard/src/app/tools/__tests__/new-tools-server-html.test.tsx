@@ -1,7 +1,7 @@
 /** @jest-environment node */
-// What a crawler that does not run JavaScript receives for the two newer tools:
-// the H1, the default result, the method section with its verified date, the
-// worked examples, the FAQ and the structured data. Rendered without a window,
+// What a crawler that does not run JavaScript receives for the plan calculator
+// and the two newer tools: the H1, the default result, the method section with
+// its verified date, the worked examples, the FAQ and the structured data. Rendered without a window,
 // exactly as the server renders the static page.
 import React from "react";
 import { renderToString } from "react-dom/server";
@@ -42,6 +42,69 @@ const textOf = (markup: string) => markup.replace(/<script[\s\S]*?<\/script>/g, 
 
 /** React escapes quotes and apostrophes in text; compare against the escaped form. */
 const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+
+describe("server HTML of /tools/claude-code-plan-calculator", () => {
+  let html: string;
+  beforeAll(async () => {
+    html = await serverHtml("claude-code-plan-calculator");
+  });
+
+  it("carries the H1, the default verdict and the estimate without any script running", () => {
+    const entry = getToolEntry("claude-code-plan-calculator")!;
+    expect(html).toMatch(new RegExp(`<h1[^>]*>${escaped(entry.h1)}</h1>`));
+    // No Pro reading is preselected: the page a crawler reads rates nothing and says why.
+    expect(textOf(html)).toContain(
+      escaped("Anthropic does not publish Pro's cap, so tell the calculator where Pro stops you to rate each plan. At API list price this schedule is an estimated $376/month."),
+    );
+    // The verdict paragraph itself rates no plan (the worked examples below it still name one).
+    const verdict = /data-testid="pc-verdict"[^>]*>([^<]*)</.exec(html)?.[1] ?? "";
+    expect(verdict).toMatch(/^Anthropic does not publish Pro/);
+    expect(verdict).not.toMatch(/cheapest plan that fits/);
+    expect(textOf(html)).toContain("API list price, estimated");
+    expect(textOf(html)).toContain("Every number here is an estimate, not a quote");
+    // Opus 5.5 is the default model, so the mix starts there.
+    expect(textOf(html)).toContain("100% Opus 5.5");
+  });
+
+  it("prints the verified date as plain contiguous text, so a grep for it matches the raw HTML", () => {
+    const dates = html.match(/[Ll]ast verified [0-9]{4}-[0-9]{2}-[0-9]{2}/g) ?? [];
+    expect(dates.length).toBeGreaterThanOrEqual(2);
+    for (const date of dates) expect(date).toMatch(/2026-09-30$/);
+  });
+
+  it("carries the method heading, every dated source link, the worked examples, the FAQ and the cite block", () => {
+    const entry = getToolEntry("claude-code-plan-calculator")!;
+    expect(html).toContain(`<h2 id="method-heading">${entry.method!.heading}</h2>`);
+    const sources = entry.method!.paragraphs.flatMap((paragraph) => paragraph.sources ?? []);
+    expect(sources.length).toBeGreaterThanOrEqual(8);
+    for (const source of sources) expect(html).toContain(`href="${source.url}"`);
+    expect(html).toContain("<h2>Worked examples</h2>");
+    for (const example of entry.examples!) expect(html).toContain(escaped(example.command).split("\n")[0]);
+    for (const faq of entry.faqs) expect(html).toContain(escaped(faq.q));
+    expect(html).toContain("Cite this page");
+    expect(html).toContain('data-testid="cite-block"');
+  });
+
+  it("names what Anthropic does not publish instead of inventing it", () => {
+    const text = textOf(html);
+    expect(text).toContain(escaped("No Anthropic page states a weekly multiple, a token or message count, or the size of Pro"));
+    expect(text).toContain(escaped("Hivra's assumptions. Anthropic publishes neither."));
+  });
+
+  it("links to the plan hub post it backs, and to no other blog post", () => {
+    expect(html).toContain('href="/blog/claude-max-vs-pro-for-claude-code"');
+    const blogLinks = [...html.matchAll(/href="(\/blog\/[^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(blogLinks)).toEqual(new Set(["/blog/claude-max-vs-pro-for-claude-code"]));
+  });
+
+  it("has the structured data, the vendor line and no placeholder leakage or banned name", () => {
+    expect(html).toContain('"@type":"WebApplication"');
+    expect(html).toContain('"@type":"FAQPage"');
+    expect(textOf(html)).toContain("Hivra is independent and is not affiliated with Anthropic.");
+    expect(html).not.toMatch(/undefined|\[object Object\]|NaN/);
+    expect(html.replace(/<script[\s\S]*?<\/script>/g, "")).not.toMatch(/\bWindows\b/);
+  });
+});
 
 describe("server HTML of /tools/keep-mac-awake", () => {
   let html: string;
