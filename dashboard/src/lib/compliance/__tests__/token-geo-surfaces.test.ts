@@ -73,7 +73,7 @@ const NEVER_GATED = [
 const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
   "billing/bankr/wallet":
     "Provisions a deposit address and reports wallet status. No payment starts here, and every payment that uses the address is gated. TOKEN-GEO-POLICY.md lists it under Not covered.",
-  "billing/entitlements": "Reads the compute entitlement a user already has. It starts no token action.",
+  "billing/entitlements": "Reads the compute entitlement a user already has. It starts no payment.",
   "billing/withdrawals": "Read-only withdrawal history. Exits are never gated.",
   "cron/reconcile-crypto-topups": "Settles crypto top-ups that were already started. Settlement never consults the policy.",
   "internal/billing/crypto/top-up/settle":
@@ -82,7 +82,7 @@ const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
     "Applies tiers from existing entitlements and holdings. A new qualification row is created only inside the evaluator, and the 1-token base tier is listed as not gated in TOKEN-GEO-POLICY.md.",
   "cron/yearly-token-expiry":
     "Moves existing yearly years to grace and expired, and emails the holder. It starts no payment. The emails send a holder in a listed country to card renewal.",
-  "ops/managed-venice/readiness": "Ops-only readiness read, called by the ops job. It starts no token action.",
+  "ops/managed-venice/readiness": "Ops-only readiness read, called by the ops job. It starts no payment.",
   "hivra/agents/[id]/bankr-wallet": "An agent's wallet is the user's own Bankr account. TOKEN-GEO-POLICY.md lists agent wallets under Not covered.",
   "hivra/agents/[id]/bankr-wallet/connect": "Connects the user's own Bankr account to an agent. Agent wallets are listed under Not covered.",
   "hivra/agents/[id]/bankr-wallet/set-destination": "Sets where an agent wallet withdraws to. Agent wallets are listed under Not covered, and exits are never gated.",
@@ -93,7 +93,7 @@ const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
   "instances/[id]/bankr-wallet/withdraw-destination": "Sets where an agent wallet withdraws to. Agent wallets are listed under Not covered, and exits are never gated.",
   "hivra/agents": "Creates and lists agents. It names Bankr only to seed the Bankr skill suite onto the agent's computer.",
   "hivra/agents/[id]": "Reads and manages one agent. It names Bankr only to seed skills and to reconcile the agent's wallet settings.",
-  "hivra/agents/[id]/skills/install": "Installs a skill on an agent's computer. It starts no token action.",
+  "hivra/agents/[id]/skills/install": "Installs a skill on an agent's computer. It starts no payment.",
   "hivra/templates/shared/[token]": "The [token] in the path is a share link, not a crypto token.",
   "infrastructure/connections/[id]/digitalocean/token": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
   "infrastructure/connections/[id]/digitalocean/token-expiry": "A cloud provider API token for the user's own infrastructure account, not a crypto token.",
