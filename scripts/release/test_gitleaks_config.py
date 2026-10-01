@@ -21,9 +21,12 @@ from __future__ import annotations
 import base64
 import math
 import re
+import json
 import secrets
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -125,11 +128,18 @@ class RuleSet(unittest.TestCase):
                 "supabase-secret-key": "sb_secret_" + b64url(30),
             }
             samples_ptr = "bk_ptr_" + alnum(40)
+            # The shapes the repo's own fixtures use: prefix, short id, underscore, secret.
+            bankr_shapes = ["bk_usr_" + alnum(8) + "_" + alnum(32), "bk_ptr_" + alnum(8) + "_" + alnum(32),
+                            "bk_agent_" + alnum(8) + "_" + alnum(32), "bk_usr_" + alnum(40)]
             for rule_id, token in samples.items():
                 for template in ("{t}", "see {t} here", 'const a = "{t}";', '["{t}"]', "`{t}`"):
                     with self.subTest(rule=rule_id, template=template):
                         self.assertTrue(detects(rule_id, template.format(t=token)))
             self.assertTrue(detects("bankr-api-key", f"key {samples_ptr}"))
+            for shape in bankr_shapes:
+                with self.subTest(rule="bankr-api-key", shape=shape[:12]):
+                    self.assertTrue(detects("bankr-api-key", f'const key = "{shape}";'))
+                    self.assertTrue(detects("bankr-api-key", f"see {shape} here"))
 
     def test_custom_rules_ignore_the_short_fixtures_and_low_entropy_placeholders(self):
         negatives = {
@@ -186,7 +196,7 @@ class Allowlists(unittest.TestCase):
             description = entry.get("description", "")
             self.assertGreaterEqual(len(description), 20, "every entry says why it is safe")
             self.assertEqual(entry.get("regexTarget"), "secret", description)
-            for forbidden in ("commits", "stopwords", "targetRules"):
+            for forbidden in ("commits", "stopwords"):
                 self.assertNotIn(forbidden, entry, f"{description}: {forbidden} widens the entry")
             regexes = entry.get("regexes", [])
             self.assertTrue(regexes, f"{description}: a value regex is required")
@@ -199,6 +209,11 @@ class Allowlists(unittest.TestCase):
                 self.assertEqual(entry.get("condition"), "AND", f"{description}: path entries need condition AND")
                 for path in paths:
                     self.assertTrue(path.startswith("^") and path.endswith("$"), f"{description}: anchor {path}")
+                # In `gitleaks dir` a global allowlist with `paths` skips the whole file for every rule,
+                # ignoring condition and regexes. Only a rule-scoped entry keeps the file scanned.
+                targets = entry.get("targetRules")
+                self.assertTrue(targets and all(re.fullmatch(r"[a-z0-9-]+", str(rule)) for rule in targets),
+                                f"{description}: a path entry must name the rule(s) it applies to (targetRules)")
 
     def test_unbound_entries_are_only_published_contract_addresses(self):
         for entry in self.entries:
@@ -222,6 +237,37 @@ class Allowlists(unittest.TestCase):
                 unanchored = re.compile(body[1:-1], flags)
                 hits = [name for name, text in candidates.items() if unanchored.search(text)]
                 self.assertTrue(hits, f"stale allowlist value ({entry['description']}): {regex}")
+
+
+@unittest.skipUnless(shutil.which("gitleaks"), "gitleaks is not installed")
+class DirectoryScanKeepsAllowlistedFilesScanned(unittest.TestCase):
+    """The CI tree scans use `gitleaks dir`. A reviewed file must stay scanned for everything else."""
+
+    def scan(self, relative: str, content: str) -> list[dict]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            report = root / "report.json"
+            subprocess.run(
+                ["gitleaks", "dir", str(root / "dashboard"), "--config", str(ROOT / ".gitleaks.toml"),
+                 "--no-banner", "--redact=100", "--report-format", "json", "--report-path", str(report)],
+                check=False, capture_output=True, text=True,
+            )
+            return json.loads(report.read_text(encoding="utf-8")) if report.exists() else []
+
+    def test_the_reviewed_value_passes_and_a_real_looking_secret_in_the_same_file_does_not(self):
+        reviewed = 'const QWEN_CLIENT_ID = "f0304373b74a44d2b584a3fb70ca9e56";\n'
+        self.assertEqual(self.scan("dashboard/auth.ts", reviewed), [], "the reviewed public client id stays allowed")
+        stripe = "sk_live_" + alnum(24)
+        findings = self.scan("dashboard/auth.ts", reviewed + f'const stripeLive = "{stripe}";\n')
+        self.assertTrue(findings, "a Stripe live key pasted into an allowlisted file must still be found")
+
+    def test_a_private_key_block_in_an_allowlisted_production_file_is_still_found(self):
+        pem = "-----BEGIN RSA PRIVATE KEY-----\n" + "\n".join(alnum(64) for _ in range(6)) + "\n-----END RSA PRIVATE KEY-----\n"
+        findings = self.scan("dashboard/src/lib/encryption-rotation.ts", pem)
+        self.assertIn("private-key", {finding["RuleID"] for finding in findings})
 
 
 if __name__ == "__main__":
