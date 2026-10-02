@@ -60,7 +60,7 @@ describe("keep-awake builder: macOS", () => {
   it("does not promise a closed lid: plugged in is a caveat, on battery is not a documented setup", () => {
     const plugged = buildKeepAwake(input({ lid: "closed" }));
     expect(plugged.verdict.level).toBe("caveat");
-    expect(plugged.verdict.title).toMatch(/will not cover a closed lid/);
+    expect(plugged.verdict.title).toMatch(/won't cover a closed lid/);
     expect(plugged.verdict.detail).toMatch(/external display, power connected and an external keyboard and mouse or trackpad/);
 
     const battery = buildKeepAwake(input({ lid: "closed", power: "battery" }));
@@ -73,7 +73,7 @@ describe("keep-awake builder: macOS", () => {
     expect(plugged.verify.command).toBe("pmset -g assertions");
     expect(plugged.verify.hint).toMatch(/caffeinate command-line tool/);
     expect(plugged.pmset?.lines).toEqual(["pmset -g custom", "sudo pmset -c sleep 0"]);
-    expect(plugged.pmset?.note).toMatch(/sleep timer of 0 does not stop a closed lid from sleeping the Mac/);
+    expect(plugged.pmset?.note).toMatch(/sleep timer of 0 doesn't stop a closed lid from sleeping the Mac/);
 
     const battery = buildKeepAwake(input({ power: "battery" }));
     expect(battery.pmset?.lines).toEqual(["pmset -g custom", "sudo pmset -b sleep 0"]);
@@ -114,7 +114,7 @@ describe("keep-awake builder: Linux", () => {
     const battery = buildKeepAwake(input({ os: "linux", power: "battery" })).notCovered.join("\n");
     expect(battery).toMatch(/Nothing here checks the power source/);
     expect(battery).toMatch(/Machines without systemd/);
-    expect(buildKeepAwake(input({ os: "linux" })).notCovered.join("\n")).toMatch(/does not look at the power source/);
+    expect(buildKeepAwake(input({ os: "linux" })).notCovered.join("\n")).toMatch(/doesn't look at the power source/);
   });
 });
 
@@ -132,10 +132,10 @@ describe("keep-awake builder: the command", () => {
   it("puts the same command, check and limits into the prompt for an agent", () => {
     const wrapped = buildKeepAwake(input({ command: "codex" }));
     expect(wrapped.agentPrompt).toContain("caffeinate -is codex");
-    expect(wrapped.agentPrompt).toContain("do not change any other power or sleep setting");
+    expect(wrapped.agentPrompt).toContain("don't change any other power or sleep setting");
     expect(wrapped.agentPrompt).toContain("pmset -g assertions");
     expect(wrapped.agentPrompt).toContain("- A closed lid.");
-    expect(wrapped.agentPrompt).toContain("Tell me plainly what this does not cover");
+    expect(wrapped.agentPrompt).toContain("Tell me what this doesn't cover");
 
     const timed = buildKeepAwake(input({ duration: "hours", hours: 6 }));
     expect(timed.agentPrompt).toContain("caffeinate -is -t 21600");

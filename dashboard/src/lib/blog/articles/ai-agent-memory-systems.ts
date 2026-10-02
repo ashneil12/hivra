@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "AI agent memory systems in 2026: Zep, Mem0, Letta, and dual-layer architectures",
   metaTitle: "AI agent memory systems: Zep, Mem0 and Letta compared",
   metaDescription:
-    "How AI agent memory works in production: Zep, Mem0, Letta and LangGraph checkpointers compared, plus the hot path and cold path pattern.",
+    "How AI agent memory works in production. Zep, Mem0, Letta and LangGraph checkpointers compared, plus the hot path and cold path pattern.",
   publishedDate: "2026-04-03",
   lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
-  tagline: "Context windows are not memory. Here's what is.",
+  tagline: "What production agents use for memory once the context window runs out.",
   intro:
-    "Every production AI agent eventually hits the same wall: the context window is not storage. A 200K token window sounds large until you are running a real agent for weeks of daily operation. Here is how memory actually works in 2026, and which systems developers are actually using.",
+    "A 200K token context window sounds big until you've run a real agent for weeks of daily work. Every production AI agent hits the same wall eventually: the window isn't storage. Memory has to live somewhere else. In 2026, a handful of systems do that job.",
   shortAnswer:
-    "AI agent memory systems keep facts outside the context window and retrieve only the most relevant ones before each step. Zep uses a temporal knowledge graph, Mem0 focuses on user preferences, and Letta lets the agent manage its own paging. Production setups pair recent messages (hot path) with external stores (cold path).",
+    "AI agent memory systems keep facts outside the context window and retrieve only the most relevant ones before each step. Zep uses a temporal knowledge graph. Mem0 focuses on user preferences, and Letta lets the agent manage its own paging. Production setups pair recent messages (the hot path) with external stores (the cold path).",
   sections: [
     {
       heading: "Why context windows fail as memory",

@@ -90,7 +90,7 @@ describe("tmux cheat sheet data", () => {
 
   it("explains logging honestly: from now on, raw output, secrets included, -o toggles, no command closes the pipe", () => {
     const logging = TMUX_SECTIONS.find((section) => section.id === "logging")!;
-    expect(logging.intro).toMatch(/does not include earlier output/);
+    expect(logging.intro).toMatch(/doesn't include earlier output/);
     expect(logging.intro).toMatch(/secrets included/);
     expect(logging.rows[0].does).toMatch(/running it again turns logging off/);
     expect(logging.rows[1].command).toBe("tmux pipe-pane -t NAME:");
@@ -99,7 +99,7 @@ describe("tmux cheat sheet data", () => {
 
   it("says plainly that tmux survives disconnects and not a sleeping laptop", () => {
     expect(TMUX_SLEEP_NOTE).toMatch(/through disconnects/);
-    expect(TMUX_SLEEP_NOTE).toMatch(/does not keep anything going through a sleeping laptop/);
+    expect(TMUX_SLEEP_NOTE).toMatch(/doesn't keep anything going through a sleeping laptop/);
   });
 
   it("makes no banned claim, never capitalises windows, and uses no em or en dash", () => {

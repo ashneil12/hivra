@@ -70,7 +70,7 @@ describe("/pricing page", () => {
     expect(text).not.toMatch(/\bmodel (?:key|usage|provider|API key)\b/i);
     expect(text).toContain("Can I use my own AI key or login?");
     expect(text).toContain("Your AI company bills you for that usage.");
-    expect(text).toContain("pay for it and for your AI usage");
+    expect(text).toContain("pay for it, and you cover your own AI usage");
   });
 
   it("marks up the pricing questions it shows", () => {

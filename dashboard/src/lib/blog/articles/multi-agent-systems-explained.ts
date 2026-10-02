@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "Multi-agent AI systems in 2026: how they're built, what they cost, and when they're worth it",
   metaTitle: "Multi-agent AI systems explained: patterns and costs",
   metaDescription:
-    "How multi-agent AI systems work: four orchestration patterns, LangGraph vs CrewAI vs AutoGen, what they cost (3-15x a single agent) and when to skip them.",
+    "Multi-agent AI systems: four orchestration patterns, LangGraph vs CrewAI vs AutoGen, what they cost (3-15x a single agent) and when to skip them.",
   publishedDate: "2026-04-03",
   lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
-  tagline: "One agent thinking. Three agents working. The architecture behind both.",
+  tagline: "One agent thinking. Three agents working.",
   intro:
-    "Multi-agent systems went from research demos to production deployments in 2025. Gartner forecasts 40% of enterprise AI deployments will use multi-agent architectures by 2028. Here is what that actually means in practice, which framework to use for which job, and what it costs.",
+    "Multi-agent systems went from research demos to production deployments in 2025. Gartner forecasts 40% of enterprise AI deployments will use multi-agent architectures by 2028. Which framework fits which job, and what does it cost?",
   shortAnswer:
-    "A multi-agent system is several specialized AI agents, each with a defined role, coordinated by an orchestrator that routes work and combines results. The main patterns are sequential, parallel, hierarchical and event-driven. Costs run roughly 3x to 15x a single agent, so use it when one agent's context window cannot hold the task or parallel work saves real time.",
+    "A multi-agent system is several specialized AI agents, each with its own role, plus an orchestrator that routes work and combines results. The main patterns are sequential, parallel, hierarchical and event-driven. Costs run roughly 3x to 15x a single agent. Use a multi-agent system when one agent's context window can't hold the task, or when parallel work saves real time.",
   sections: [
     {
       heading: "What a multi-agent system actually is",

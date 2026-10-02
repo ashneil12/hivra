@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "BYO API key: what it means and why it matters",
   metaTitle: "What a BYO API key means for cost and privacy",
   metaDescription:
-    "A BYO API key means you connect your own Anthropic, OpenAI or OpenRouter account, so the provider bills you directly and your tokens carry no markup.",
+    "With a BYO API key you use your own Anthropic, OpenAI or OpenRouter account, so the provider bills you directly and your tokens carry no markup.",
   publishedDate: "2026-03-21",
   lastModified: "2026-09-30",
   readingTimeMin: 6,
   author: "Hivra team",
-  tagline: "No markup. No routing through a middleman. Your key.",
+  tagline: "Bring your own key and the provider bills you directly: no markup, and no Hivra proxy in between.",
   intro:
-    "BYO API key means you supply your own AI provider credentials. Your requests go directly from your agent to the model provider, and your provider bills you for that usage, not Hivra.",
+    "BYO means bring your own: you supply the AI provider credentials your agent uses. Requests go straight from the agent to the model provider, and the provider sends you the bill. Hivra isn't in that loop.",
   shortAnswer:
-    "A BYO API key means you bring your own AI provider credentials. Your agent's requests go directly to the provider, which bills you for that usage, so there is no markup on tokens. You pay Hivra for managed hosting and the dashboard, and your prompts do not pass through a Hivra proxy.",
+    "A BYO API key means you bring your own AI provider credentials. Your agent's requests go straight to the provider, which bills you for that usage, so there's no markup on tokens. You pay Hivra for managed hosting and the dashboard, and your prompts don't pass through a Hivra proxy.",
   sections: [
     {
       heading: "How the two billing models compare",

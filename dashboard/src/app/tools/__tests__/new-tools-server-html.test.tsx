@@ -88,7 +88,8 @@ describe("server HTML of /tools/claude-code-plan-calculator", () => {
   it("names what Anthropic does not publish instead of inventing it", () => {
     const text = textOf(html);
     expect(text).toContain(escaped("No Anthropic page states a weekly multiple, a token or message count, or the size of Pro"));
-    expect(text).toContain(escaped("Hivra's assumptions. Anthropic publishes neither."));
+    expect(text).toContain(escaped("That split is Hivra's assumption, and so are the "));
+    expect(text).toContain(escaped("Anthropic publishes none of them."));
   });
 
   it("links to the plan hub post it backs, and to no other blog post", () => {

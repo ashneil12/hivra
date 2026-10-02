@@ -12,11 +12,11 @@ export const article: BlogArticle = {
   lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
-  tagline: "Not what the marketing says. What people actually use it for every day.",
+  tagline: "What people use Hermes for, day to day.",
   intro:
-    "Hermes Agent runs 24/7 on a server. It's not a chatbot you open when you need it. Before setting one up, the obvious question is: what would I actually use this for? Here's what people in the community use it for, with enough real detail to figure out if any of it applies to you.",
+    "Hermes Agent runs 24/7 on a server, so it keeps working after you close the chat. Before you set one up, you'll want to know what you'd use it for. These are the jobs people in the community give it, with enough detail to tell whether any of them fit you.",
   shortAnswer:
-    "Hermes Agent is an assistant that runs 24/7 on a server and does tasks rather than only chatting. People use it for scheduled briefings, monitoring and alerts, coding help, browser automation, file processing, email drafts, research, finance summaries, home automation and API workflows, all by messaging it on Telegram or another connected app.",
+    "Hermes Agent is an assistant that runs 24/7 on a server and does tasks as well as chatting. People use it for scheduled briefings, monitoring and alerts, coding help, browser automation, file processing, email drafts, research, finance summaries, home automation and API workflows. You do all of it by messaging the agent on Telegram or another connected app.",
   sections: [
     {
       heading: "Why these use cases are possible at all",

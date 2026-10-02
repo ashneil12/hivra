@@ -14,9 +14,9 @@ export const article: BlogArticle = {
   author: "Hivra team",
   tagline: "The 20-minute benchmark tells you nothing about hour 9.",
   intro:
-    "Plenty of articles compare Claude Code and Codex as coding assistants you babysit in a terminal. Almost none compare them the way people increasingly run them: on a server, around the clock, working while you sleep. That comparison has different winners.",
+    "Plenty of articles compare Claude Code and Codex as coding assistants you babysit in a terminal. Almost none look at how people increasingly run them: on a server, around the clock, with nobody watching. Judged that way, the winners change.",
   shortAnswer:
-    "Neither wins everywhere. Claude Code suits long multi-hour work on one big codebase, because compaction and session resume keep a run going. Codex suits a steady stream of small scoped tasks, because codex exec is a clean headless lane. Both sign in with a subscription, so spend is capped, and neither needs a big server.",
+    "Neither wins everywhere. Claude Code suits long multi-hour work on one big codebase, because compaction and session resume keep a run going. Codex suits a steady stream of small, scoped tasks: codex exec is a clean headless lane. Both sign in with a subscription, so spend is capped. Neither needs a big server.",
   sections: [
     {
       heading: "The comparison everyone writes vs the one that matters",

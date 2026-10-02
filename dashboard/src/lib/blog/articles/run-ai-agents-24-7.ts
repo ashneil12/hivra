@@ -7,16 +7,16 @@ export const article: BlogArticle = {
   title: "How to run AI agents 24/7: infrastructure, recovery, and real cost (2026)",
   metaTitle: "How to run AI agents 24/7: infrastructure and cost",
   metaDescription:
-    "Running an AI agent 24/7 takes always-on compute, crash recovery, persistent memory, and a channel to reach you. A DIY server costs $5-15 a month.",
+    "A 24/7 AI agent needs always-on compute, crash recovery, persistent memory and a channel to reach you. Doing it yourself on a server costs $5-15 a month.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "An agent that stops when you close your laptop is a chatbot with extra steps.",
   intro:
-    "24/7 is not a setting you turn on. It is an infrastructure decision: where the process lives, what restarts it when it crashes, what it remembers, and how it reaches you at 3am. This guide covers all four, plus what the whole thing costs per month.",
+    "Running an agent 24/7 comes down to four decisions. Where the process lives, what restarts it when it crashes, what it remembers, and how it reaches you at 3am.",
   shortAnswer:
-    "To run an AI agent 24/7, put it on an always-on machine such as a VPS, restart it automatically after crashes, keep its state on disk, and give it a channel such as Telegram to reach you. A DIY server costs $5-15 a month, and model usage is billed only while the agent works.",
+    "To run an AI agent 24/7, put it on an always-on machine (a VPS works) and restart it automatically after crashes. Keep its state on disk. Give it a channel like Telegram to reach you. A DIY server runs $5-15 a month, and you pay for model usage only while the agent works.",
   sections: [
     {
       heading: "What 24/7 actually requires",

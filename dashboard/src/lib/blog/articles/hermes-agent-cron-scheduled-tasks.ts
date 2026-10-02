@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "Hermes Agent scheduled tasks: automate anything on a timer",
   metaTitle: "Hermes Agent scheduled tasks and cron jobs",
   metaDescription:
-    "Hermes Agent has a built-in scheduler. Set up a morning briefing, monitoring alerts and weekly reports, and manage tasks with hermes cron commands.",
+    "Hermes Agent has a built-in scheduler. Set up a morning briefing, monitoring alerts and weekly reports, then manage them all with hermes cron commands.",
   publishedDate: "2026-04-20",
   lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
-  tagline: "Your agent runs tasks while you sleep. Here is how to set that up.",
+  tagline: "Your agent runs tasks while you sleep.",
   intro:
-    "One of the more useful things about a persistent agent: it doesn't wait for you to ask it something. Hermes has a built-in scheduler that fires tasks at whatever interval you define: every morning, weekly, every hour. No separate cron knowledge required, though cron syntax works if you know it.",
+    "A persistent agent doesn't wait for you to ask. Hermes fires tasks at whatever interval you define: every morning, every hour, once a week. You don't need to know cron, though the syntax works if you do.",
   shortAnswer:
-    "Hermes Agent has a built-in scheduler inside the gateway. You describe the task in plain English, tell the agent when to run it or write standard cron syntax, and choose where the result goes, such as Telegram, Discord or Email. The gateway checks for due jobs every 60 seconds, so one minute is the shortest interval.",
+    "Hermes Agent has a scheduler built into the gateway. Describe the task in plain English, say when it should run (or write standard cron syntax), and pick where the result goes: Telegram, Discord or Email, for example. The gateway checks for due jobs every 60 seconds, so one minute is the shortest interval you can set.",
   sections: [
     {
       heading: "How the scheduler works",

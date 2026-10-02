@@ -6,15 +6,15 @@ export const article: BlogArticle = {
   title: "The real cost of running a persistent AI agent in 2026",
   metaTitle: "The real cost of running an AI agent in 2026",
   metaDescription:
-    "What it costs to run an AI agent around the clock: server, API tokens and maintenance time, with real monthly figures for self-hosted and managed setups.",
+    "What it costs to keep an AI agent running around the clock: server, API tokens and your time, with real monthly figures for self-hosted and managed setups.",
   publishedDate: "2026-04-01",
   lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
-  tagline: "Actual numbers, not a pricing page.",
+  tagline: "What the monthly bill adds up to.",
   intro:
-    "The full cost of a persistent AI agent is not just the subscription price. Here is every component (server, tokens, time, and the less-obvious costs) with real figures for early 2026.",
-  shortAnswer: `A persistent AI agent costs a server, AI tokens and your time. A minimal self-hosted setup is about $10-17 a month in cash, or $60-117 once maintenance is counted at $50 an hour. Hivra is ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, plus about $4-20 in tokens.`,
+    "A persistent AI agent costs more than its subscription price. The server, the tokens, your time and the costs that don't show up in a pricing table each get a figure for early 2026.",
+  shortAnswer: `Running a persistent AI agent costs you a server, AI tokens and your time. A minimal self-hosted setup is about $10-17 a month in cash, or $60-117 once you count maintenance at $50 an hour. Hivra is ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, plus about $4-20 in tokens.`,
   sections: [
     {
       heading: "Server infrastructure",

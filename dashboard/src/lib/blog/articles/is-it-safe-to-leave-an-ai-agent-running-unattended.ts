@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "Is it safe to leave an AI agent running unattended? The four risks that matter",
   metaTitle: "Is It Safe to Leave an AI Agent Running Unattended?",
   metaDescription:
-    "Mostly yes, if you control four things: what the agent can touch, what it can spend, where it runs, and what happens when it crashes. The risk rundown.",
+    "Mostly yes, if you control what the agent can touch, what it can spend, where it runs and what happens when it crashes. How to handle each risk.",
   publishedDate: "2026-08-04",
   lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The scary failure is rare. The boring failure happens weekly.",
   intro:
-    "Leaving an AI agent running while you sleep is safe for most workloads, but only if you have deliberately controlled four things: what the agent is allowed to touch, what it can spend, where it runs, and what happens when it dies. This article walks each risk honestly, with the mitigations that actually work.",
+    "Leaving an AI agent running while you sleep is safe for most workloads, as long as four things are under your control first: permissions, spend, isolation and recovery. Each one has a mitigation that works.",
   shortAnswer:
-    "Yes, for most workloads, if you control four things before you walk away: what the agent can touch, what it can spend, where it runs, and what happens when it crashes. Scope its permissions, cap spending on the AI account, run it on its own machine, and use a process supervisor to restart it.",
+    "Yes, for most workloads, as long as you control four things before you walk away: what the agent can touch, what it can spend, where it runs, and what happens when it crashes. Scope its permissions, cap spending on the AI account, run it on its own machine, and have a process supervisor restart it.",
   sections: [
     {
       heading: "The short answer",

@@ -17,7 +17,7 @@ import { SECURITY_EMAIL } from "@/lib/security-contact";
 
 export const ABOUT_TITLE = "About Hivra, formerly HermesOS";
 export const ABOUT_DESCRIPTION =
-  "Hivra (formerly HermesOS) is an open-source computer for you and your AI agents. What it is, what it is not, what it costs and how to reach us.";
+  "Hivra (formerly HermesOS) is an open-source computer for you and your AI agents. What it costs, what it isn't, and how to get in touch.";
 
 export const REPOSITORY_LABEL = "github.com/ashneil12/hivra";
 
@@ -29,36 +29,36 @@ export const ABOUT_SECTIONS = {
   is: {
     heading: "What Hivra is",
     paragraphs: [
-      "Hivra gives an AI agent a computer of its own, or gives you one. Launch Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon, each on a computer of its own, or start an Ubuntu computer and use it yourself.",
-      "It runs on Hivra Cloud, where Hivra runs the computer for you, or on your own server, because the platform is open source and you can self-host it. Hermes runs on Hivra Cloud only, and OpenClaw and Agent Zero need a paid plan there.",
+      "Hivra gives an AI agent a computer of its own. It can give you one too. Launch Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon, each on its own computer, or start an Ubuntu computer and use it yourself.",
+      "On Hivra Cloud, Hivra runs the computer for you. You can also self-host Hivra on your own server, since the platform is open source. Hermes runs on Hivra Cloud only, and OpenClaw and Agent Zero need a paid plan there.",
       "Hivra was called HermesOS before. Existing users, deployments and accounts carried over.",
     ],
   },
   isNot: {
-    heading: "What Hivra is not",
+    heading: "What Hivra isn't",
     items: [
-      "It is not an AI model. You bring your own AI key, or sign in with your own Claude or ChatGPT account, and your AI company bills you for what you use.",
-      NON_AFFILIATION_LINE + " Hermes Agent is a Nous Research project, Claude Code is Anthropic's and Codex is OpenAI's. Hivra runs them on a computer of their own.",
-      "It does not need a token. Running Hivra yourself needs neither a token nor a Hivra account.",
+      "It is not an AI model. Bring your own AI key, or sign in with your own Claude or ChatGPT account. Your AI company bills you for what you use.",
+      NON_AFFILIATION_LINE + " Hermes Agent is a Nous Research project, Claude Code is Anthropic's and Codex is OpenAI's. Hivra runs each one on its own computer.",
+      "It does not need a token. Run Hivra yourself and you don't need a Hivra account either.",
     ],
   },
   built: {
-    heading: "How it is built and what it costs",
+    heading: "How it's built and what it costs",
     paragraphs: [
-      `Hivra is built in the open. The source code is public at ${REPOSITORY_LABEL}, and you can read it and run it yourself.`,
-      `Hivra Cloud costs ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Self-hosting is free: you pay for your own server and your own AI usage. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
+      `Hivra is built in the open. The source code is public at ${REPOSITORY_LABEL}, so you can read it and run it yourself.`,
+      `Hivra Cloud costs ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Self-hosting is free, though you pay for your own server and your own AI usage. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
       "Hivra is built by Ash, the founder, who explains why in the founder's note.",
     ],
   },
   contact: {
     heading: "Contact and things you can check",
-    lead: `Questions and support: ${SECURITY_EMAIL}. You can check the rest yourself:`,
+    lead: `Questions and support go to ${SECURITY_EMAIL}. The rest you can check yourself:`,
   },
   others: {
     heading: "Not the other Hivras",
     paragraphs: [
       DISAMBIGUATION,
-      "If you are not sure you are on the right site, check the address: this one is hivra.cloud.",
+      "Not sure you're on the right site? Check the address. This one is hivra.cloud.",
     ],
   },
 } as const;
@@ -67,7 +67,7 @@ export const ABOUT_SECTIONS = {
 export const ABOUT_LINKS: Array<{ label: string; href: string; note: string }> = [
   { label: "Source code", href: "https://github.com/ashneil12/hivra", note: "the open source repository" },
   { label: "Pricing", href: "/pricing", note: "plans, sizes and the money-back guarantee" },
-  { label: "Status", href: "/status", note: "live health of the public surfaces" },
+  { label: "Status", href: "/status", note: "live health of Hivra's public pages" },
   { label: "Security", href: "/security", note: "how to report a vulnerability" },
   { label: "Terms", href: "/terms", note: "the terms of service" },
   { label: "Privacy", href: "/privacy", note: "how your data is handled" },
@@ -79,7 +79,7 @@ export const ABOUT_FAQ: { q: string; a: string }[] = [
   { q: "What is Hivra?", a: SITE_DESCRIPTION },
   {
     q: "Is Hivra the same as HermesOS?",
-    a: "Yes. HermesOS is the former name of Hivra. Existing users, deployments and accounts carried over.",
+    a: "Yes. HermesOS is Hivra's former name, and existing users, deployments and accounts carried over.",
   },
   {
     q: "Is Hivra open source?",
@@ -87,15 +87,15 @@ export const ABOUT_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Is Hivra affiliated with Nous Research, Anthropic or OpenAI?",
-    a: `No. ${NON_AFFILIATION_LINE} Hermes Agent is a Nous Research project, Claude Code is Anthropic's and Codex is OpenAI's. Hivra runs them on a computer of their own, with your own account or key.`,
+    a: `No. ${NON_AFFILIATION_LINE} Hermes Agent is a Nous Research project, Claude Code is Anthropic's and Codex is OpenAI's. Hivra runs each one on its own computer, using your own account or key.`,
   },
   { q: "Is Hivra the same as hivra.ai or hivra.app?", a: `No. ${DISAMBIGUATION}` },
   {
     q: "Is Hivra legit?",
-    a: `Judge it from what you can check. The source code is public at ${REPOSITORY_LABEL}, the terms, privacy policy, status page and pricing are linked on this page, paid plans come with a ${MONEY_BACK_GUARANTEE}, and you can reach Hivra at ${SECURITY_EMAIL}.`,
+    a: `Judge it from what you can check. The source code is public at ${REPOSITORY_LABEL}. The terms, privacy policy, status page and pricing are linked on this page. Paid plans come with a ${MONEY_BACK_GUARANTEE}, and you can reach Hivra at ${SECURITY_EMAIL}.`,
   },
   {
     q: "How do I contact Hivra or report a security problem?",
-    a: `Email ${SECURITY_EMAIL} for questions and support. To report a vulnerability privately, follow the steps at hivra.cloud/security.`,
+    a: `Email ${SECURITY_EMAIL} for questions and support. To report a vulnerability privately, use the steps at hivra.cloud/security.`,
   },
 ];

@@ -96,7 +96,7 @@ export const TMUX_SECTIONS: CheatSection[] = [
     intro: "Detaching leaves the session running. Attaching brings it back, from the same terminal or another device.",
     rows: [
       { id: "detach", keys: "Ctrl-b d", command: "tmux detach", does: "Detach. Everything in the session keeps running." },
-      { id: "attach", command: "tmux attach -t NAME", does: "Attach to a session that is already running." },
+      { id: "attach", command: "tmux attach -t NAME", does: "Attach to a session that's already running." },
       { id: "attach-last", command: "tmux attach", does: "Attach to the most recently used session." },
       { id: "take-over", command: "tmux attach -d -t NAME", does: "Attach and detach any other client still attached, for example your laptop." },
     ],
@@ -123,7 +123,7 @@ export const TMUX_SECTIONS: CheatSection[] = [
     id: "logging",
     title: "Log a pane to a file",
     intro:
-      "pipe-pane sends everything a pane prints to a command. It starts from the moment you run it and does not include earlier output. The file holds raw terminal output, so it includes anything the pane showed, secrets included. Keep it private.",
+      "pipe-pane sends everything a pane prints to a command. It starts from the moment you run it and doesn't include earlier output. The file holds raw terminal output, so it includes anything the pane showed, secrets included. Keep it private.",
     rows: [
       {
         id: "log-start",
@@ -151,9 +151,9 @@ export const TMUX_AGENT_SECTION: { id: string; title: string; intro: string; row
   id: "ai-agents",
   title: "tmux for AI coding agents",
   intro:
-    "A coding agent is a long-running process, so it should live in a session you can leave and come back to. The pattern: one named session per agent, re-attach from any device, and keep a log.",
+    "A coding agent is a long-running process, so give it a session you can leave and come back to. Use one named session per agent, re-attach from any device, and keep a log.",
   rows: [
-    { id: "agent-new", command: "tmux new -d -s claude", does: "One named session per agent, started in the background, so tmux ls tells you what is running." },
+    { id: "agent-new", command: "tmux new -d -s claude", does: "One named session per agent, started in the background, so tmux ls tells you what's running." },
     {
       id: "agent-start",
       command: "tmux send-keys -t claude: 'claude' Enter",
@@ -174,7 +174,7 @@ export const TMUX_AGENT_SECTION: { id: string; title: string; intro: string; row
 
 /** The plain statement the page must make about what tmux does and does not keep alive. */
 export const TMUX_SLEEP_NOTE =
-  "tmux keeps a session alive through disconnects: a closed terminal, a dropped SSH connection, a different device. It does not keep anything going through a sleeping laptop, because the whole machine suspends, tmux included.";
+  "tmux keeps a session alive through disconnects: a closed terminal, a dropped SSH connection, a different device. It doesn't keep anything going through a sleeping laptop, because the whole machine suspends, tmux included.";
 
 export const TMUX_HIERARCHY_ALT =
   "Diagram of how tmux nests its parts. One tmux server holds sessions, each session holds windows, and each window is split into panes. Your terminal is a client that attaches to a session and can detach from it without stopping it.";

@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "AI agent VPS guide: specs, providers, and setup that actually works (2026)",
   metaTitle: "AI agent VPS guide: specs, providers and setup",
   metaDescription:
-    "Most AI agents run comfortably on 2 vCPU and 4GB of RAM. See specs by agent type, prices at Hetzner, DigitalOcean, Vultr and Linode, and how to secure it.",
+    "Most AI agents run comfortably on 2 vCPU and 4GB of RAM. Specs by agent type, prices at Hetzner, DigitalOcean, Vultr and Linode, and how to lock it down.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Most agents need a smaller server and a bigger firewall than the listicles tell you.",
   intro:
-    "Most AI agents are API orchestrators that idle on 1 vCPU and 2GB of RAM. The hard part of running one on a VPS is not the specs. It is keeping a machine with your API keys and logins on it safe on the public internet. This guide covers both.",
+    "Most AI agents are API orchestrators that idle on 1 vCPU and 2GB of RAM. Sizing the server is the easy bit. Keeping a machine that holds your API keys and logins safe on the public internet is the hard part.",
   shortAnswer:
-    "Most AI agents only call a model over an API, so 2 vCPU, 4GB of RAM and 40GB of SSD is the comfortable spec. Hetzner costs roughly a quarter to a third of DigitalOcean, Vultr or Linode for that size. Bind the agent to localhost, reach it over Tailscale or an SSH tunnel, and harden SSH first.",
+    "Most AI agents only call a model over an API, so 2 vCPU, 4GB of RAM and 40GB of SSD is the comfortable spec. Hetzner runs roughly a quarter to a third of what DigitalOcean, Vultr or Linode charge for that size. Bind the agent to localhost, reach it over Tailscale or an SSH tunnel, and harden SSH first.",
   sections: [
     {
       heading: "What an AI agent actually needs from a server",

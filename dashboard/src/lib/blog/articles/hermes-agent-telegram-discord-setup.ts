@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "Hermes Agent gateway setup: Telegram, Discord, WhatsApp, Email and 11 more",
   metaTitle: "Hermes Agent gateway setup for Telegram and Discord",
   metaDescription:
-    "Set up Hermes Agent gateways for Telegram, Discord, WhatsApp, Email and Webhooks, then restrict access with allowlists or DM pairing codes.",
+    "Set up Hermes Agent gateways for Telegram, Discord, WhatsApp, Email and Webhooks, then limit who can use the bot with allowlists or DM pairing codes.",
   publishedDate: "2026-04-15",
   lastModified: "2026-09-30",
   readingTimeMin: 13,
   author: "Hivra team",
-  tagline: "The README says 12+ platforms. It's actually 15. Here's how to set up each one.",
+  tagline: "The README says 12+ platforms. The docs list 15.",
   intro:
-    "Hermes Agent receives messages and sends responses through 15 platforms: Telegram, Discord, Slack, WhatsApp, Signal, SMS, Email, Home Assistant, Mattermost, Matrix, DingTalk, Feishu/Lark, WeCom, Open WebUI, and Webhooks. This covers practical setup for the most commonly used gateways, the security model that applies to all of them, and the tradeoffs worth knowing before you connect anything.",
+    "Hermes Agent receives messages and replies on 15 platforms: Telegram, Discord, Slack, WhatsApp, Signal, SMS, Email, Home Assistant, Mattermost, Matrix, DingTalk, Feishu/Lark, WeCom, Open WebUI, and Webhooks. They all handle security the same way. Without an allowlist, anyone who finds your bot can message it, so set one before you expose a gateway publicly.",
   shortAnswer:
-    "To set up a Hermes Agent gateway, put your platform credentials, such as a Telegram bot token, in ~/.hermes/.env, set an ALLOWED_USERS allowlist so strangers cannot use the bot, and start hermes gateway. One process serves every platform you configure, out of 15 supported, and the same agent answers on each.",
+    "To set up a Hermes Agent gateway, put your platform credentials (a Telegram bot token, say) in ~/.hermes/.env, set an ALLOWED_USERS allowlist so strangers can't use the bot, and start hermes gateway. One process serves whichever of the 15 supported platforms you configure, and the same agent answers on each.",
   sections: [
     {
       heading: "How the gateway works",

@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "Best VPS for Hermes Agent in 2026: Hetzner, DigitalOcean, OVH compared",
   metaTitle: "Best VPS for Hermes Agent in 2026 (Specs and Prices)",
   metaDescription:
-    "Hetzner CX33 (4 vCPU, 8GB, €8.49/month ex VAT) is the recommended VPS for Hermes Agent. Compare Hetzner, OVH, DigitalOcean and Vultr specs and prices.",
+    "Hetzner CX33 (4 vCPU, 8GB, €8.49/month ex VAT) is the recommended VPS for Hermes Agent. Specs and prices for Hetzner, OVH, DigitalOcean and Vultr.",
   publishedDate: "2026-04-16",
   lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
-  tagline: "The community has been running Hermes on cheap VPS servers for months. Here is what they found.",
+  tagline: "The community has run Hermes on cheap VPS plans for months, and has opinions.",
   intro:
-    "Hermes Agent runs well on inexpensive cloud infrastructure. The question is not whether you can afford a VPS. At €5.49/month you can. The question is which tier is enough for your usage, which providers the community trusts, and what breaks when you underspec. Here are the real numbers.",
+    "Hermes Agent runs well on cheap cloud servers, and at €5.49/month you can afford one. Pick a tier that covers your usage, from a provider the community trusts. Go too small and things break.",
   shortAnswer:
-    "Hetzner is the community favourite for running Hermes Agent. The CX33 (4 vCPU, 8GB RAM, 80GB NVMe, €8.49/month excluding VAT) is the recommended tier, and the CX23 (2 vCPU, 4GB RAM, 40GB NVMe) is the minimum. OVH VPS-2 slightly undercuts the CX33. DigitalOcean and Vultr cost far more.",
+    "Hetzner is the community favourite for running Hermes Agent. The CX33 (4 vCPU, 8GB RAM, 80GB NVMe, €8.49/month excluding VAT) is the recommended tier, and the CX23 (2 vCPU, 4GB RAM, 40GB NVMe) is the minimum. OVH's VPS-2 undercuts the CX33 slightly. DigitalOcean and Vultr cost far more.",
   sections: [
     {
       heading: "Minimum specs and what happens below them",

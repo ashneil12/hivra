@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "Hermes Agent skills: how they work, how to create them, and what's on the Skills Hub",
   metaTitle: "Hermes Agent skills: how they work and how to create them",
   metaDescription:
-    "Hermes Agent skills are Markdown files with YAML frontmatter. See the file format, how the agent writes its own, the Skills Hub and hermes skills commands.",
+    "Hermes Agent skills are Markdown files with YAML frontmatter. The file format, how the agent writes its own, the Skills Hub and hermes skills commands.",
   publishedDate: "2026-04-17",
   lastModified: "2026-09-30",
   readingTimeMin: 12,
   author: "Hivra team",
-  tagline: "Skills are Hermes's extension system. The agent writes them for itself, but you can write them too.",
+  tagline: "Skills are Hermes's extension system. The agent writes its own, and you can write them too.",
   intro:
-    "Skills are Hermes Agent's equivalent of plugins: reusable capabilities the agent can call on demand. What separates them from every other plugin system is that Hermes writes skills for itself. When it solves a problem it will face again, it packages the solution into a skill and improves it over subsequent uses. This guide covers the format, the self-improvement loop, the community marketplace, and when to write your own.",
+    "Skills are Hermes Agent's version of plugins: reusable capabilities the agent can call on demand. Unlike other mainstream agent frameworks, Hermes writes skills for itself. When it solves a problem it'll face again, it packages the solution into a skill and improves it over later uses.",
   shortAnswer:
-    "A Hermes skill is a Markdown file with YAML frontmatter, stored in ~/.hermes/skills/, holding plain-language instructions the agent loads when its description matches your request. Hermes can write skills for itself after solving a repeatable task, and most people can write a basic one without code.",
+    "A Hermes skill is a Markdown file with YAML frontmatter, stored in ~/.hermes/skills/. It holds plain-language instructions that the agent loads when the skill's description matches your request. Hermes can write skills for itself after it solves a repeatable task, and most people can write a basic one without code.",
   sections: [
     {
       heading: "What a skill actually is",

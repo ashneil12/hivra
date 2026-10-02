@@ -73,7 +73,7 @@ describe("Claude Code Remote Control article", () => {
     expect(article.intro).toContain("\"Claude Code on the computer running this session is offline\"");
     // The transcript is stored on Anthropic's servers while connected, so the session does not "never leave" the machine.
     expect(fullCopy).not.toMatch(/never leaves your machine/i);
-    expect(article.intro).toContain("while Claude keeps running on your machine, with code execution and file access staying there");
+    expect(article.intro).toContain("Claude keeps running on your machine, and code execution and file access stay there");
   });
 
   it("quotes the first offline message exactly, as code", () => {
@@ -229,10 +229,10 @@ describe("Claude Code Remote Control article", () => {
 
   it("labels what is our own suggestion and does not claim the whole page is Anthropic's documentation", () => {
     expect(sectionCopy).toContain("The facts below come from Anthropic's Claude Code documentation and changelog as read on 30 September 2026.");
-    expect(sectionCopy).toContain("the user-filed reports about them, and anything that is our own suggestion are labelled where they appear");
+    expect(sectionCopy).toContain("Where we lean on user reports (the two offline messages Anthropic doesn't publish) or give our own suggestion, we say so.");
     expect(sectionCopy).toContain("Server mode is our pick for a machine you leave running, because one process serves several sessions");
-    expect(sectionCopy).toContain("That is our reading of one report, not documented advice:");
-    expect(sectionCopy).toContain("That is our suggestion, not Anthropic's: its docs name only tmux and screen.");
+    expect(sectionCopy).toContain("That's our reading of one report, and it isn't documented advice:");
+    expect(sectionCopy).toContain("That's our suggestion. Anthropic's docs name only tmux and screen.");
     expect(sectionCopy).toContain("Anthropic's mobile docs say the same about a computer that will be off");
     expect(sectionCopy).toContain("Its own table lists Remote Control for steering in-progress work from another device.");
     expect(sectionCopy).toContain("no overall limit on how long a Remote Control session can run or sit idle beyond the figures above");
@@ -429,7 +429,7 @@ describe("Claude Code Remote Control article", () => {
     // transcript is stored on Anthropic's servers, and makes no absolute claim.
     const faq = article.faqs.find(({ q }) => q === "Is Claude Code Remote Control secure, and does it run my code on Anthropic's servers?")!;
     expect(faq).toBeDefined();
-    expect(faq.a).toContain("this page adds no safety promise of its own");
+    expect(faq.a).toContain("we're adding no safety promise of our own");
     expect(faq.a).toContain("store the session transcript while Remote Control is connected");
     expect(faq.a).toContain("outbound HTTPS requests only and opens no inbound ports");
     expect(faq.a).not.toMatch(/\b(?:completely|fully|100%|guaranteed|always|never) (?:secure|safe|private)\b|\bunhackable\b/i);
