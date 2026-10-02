@@ -1,3 +1,4 @@
+import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
@@ -123,8 +124,9 @@ describe("seo urls", () => {
       // host comparisons carry the date their competitor numbers were read
       // (competitor-facts.ts); the other detail pages share a template last
       // changed in the 2026-09-24 truth pass.
-      const current = isHub || factsPages.has(entry.url.slice(SITE_URL.length));
-      expect([entry.url, day(entry.lastModified)]).toEqual([entry.url, current ? "2026-09-30" : "2026-09-24"]);
+      const path = entry.url.slice(SITE_URL.length);
+      const expected = isHub ? "2026-09-30" : factsPages.has(path) ? COMPETITOR_FACTS_CHECKED : "2026-09-24";
+      expect([entry.url, day(entry.lastModified)]).toEqual([entry.url, expected]);
     }
   });
 

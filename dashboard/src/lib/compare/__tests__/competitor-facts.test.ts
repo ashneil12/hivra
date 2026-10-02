@@ -48,6 +48,20 @@ describe("competitor facts", () => {
     }
   });
 
+  it("drops Agent 37 facts its pages no longer state (re-checked 2026-10-02)", () => {
+    const text = pageText("vs-agent-37");
+    // The free tier's weekly awake cap is no longer on agent37.com, and managed plans now list Claude Code and Codex.
+    expect(text).not.toMatch(/hours a week/);
+    expect(text).not.toMatch(/not something its pages confirmed/);
+    expect(COMPETITOR_FACTS["vs-agent-37"].sources.map((s) => s.href)).toContain("https://agent37.com/personal");
+  });
+
+  it("dates every host page's meta description with the shared check date", () => {
+    for (const slug of HOST_COMPARISON_SLUGS) {
+      expect([slug, HOST_COMPARISONS[slug].metaDescription.includes(formatCheckedDate())]).toEqual([slug, true]);
+    }
+  });
+
   it("keeps every host page within search limits and free of dashes", () => {
     for (const slug of HOST_COMPARISON_SLUGS) {
       const c = HOST_COMPARISONS[slug];
