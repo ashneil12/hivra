@@ -7,6 +7,15 @@ export interface VeniceChatModelPrice {
   cacheWriteMicroUsdPerMillion?: number | null;
   contextWindow: number;
   maxOutputTokens: number;
+  /**
+   * Where `maxOutputTokens` came from. "venice_live": Venice's own
+   * `model_spec.maxCompletionTokens` from the live /v1/models refresh.
+   * "catalog": this file's snapshot, which can lag Venice (it listed
+   * zai-org-glm-5-1 at 24,000 while Venice allowed 80,000). The chat proxy
+   * treats a catalog maximum as a guess: it always writes the cap it held into
+   * the forwarded request (chat-output-budget.ts).
+   */
+  maxOutputTokensSource: "venice_live" | "catalog";
   privacy: "private" | "anonymized" | "e2ee_private";
 }
 
@@ -84,6 +93,7 @@ function model(params: {
       params.cacheWriteUsd == null ? null : usdPerMillionToMicroUsd(params.cacheWriteUsd),
     contextWindow: params.contextWindow,
     maxOutputTokens: params.maxOutputTokens ?? Math.min(8_192, params.contextWindow),
+    maxOutputTokensSource: "catalog",
     privacy: params.privacy,
   };
 }
@@ -267,14 +277,16 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     maxOutputTokens: 32_768,
     privacy: "anonymized",
   }),
+  // Refreshed from the live endpoint on 2026-09-25: the maximum output had
+  // been 24,000 here against Venice's 80,000.
   model({
     model: "zai-org-glm-5-1",
     displayName: "GLM 5.1 (Beta)",
-    inputUsd: 1.75,
-    outputUsd: 5.5,
-    cacheReadUsd: 0.325,
+    inputUsd: 1.54,
+    outputUsd: 4.84,
+    cacheReadUsd: 0.286,
     contextWindow: 200_000,
-    maxOutputTokens: 24_000,
+    maxOutputTokens: 80_000,
     privacy: "private",
   }),
   model({
@@ -335,6 +347,7 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     maxOutputTokens: 16_384,
     privacy: "private",
   }),
+  // Maximum output refreshed from the live endpoint on 2026-09-25 (was 65,536).
   model({
     model: "qwen3-5-35b-a3b",
     displayName: "Qwen 3.5 35B A3B (Beta)",
@@ -342,7 +355,7 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     outputUsd: 1.25,
     cacheReadUsd: 0.15625,
     contextWindow: 256_000,
-    maxOutputTokens: 65_536,
+    maxOutputTokens: 16_384,
     privacy: "private",
   }),
   model({
@@ -382,12 +395,15 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     maxOutputTokens: 65_536,
     privacy: "anonymized",
   }),
+  // Refreshed from the live endpoint on 2026-09-25: the output rate had been
+  // $1.50 here against Venice's $1.90, and the context window 256,000.
   model({
     model: "qwen3-vl-235b-a22b",
     displayName: "Qwen 3 VL 235B (Vision)",
-    inputUsd: 0.25,
-    outputUsd: 1.5,
-    contextWindow: 256_000,
+    inputUsd: 0.21,
+    outputUsd: 1.9,
+    cacheReadUsd: 0.1,
+    contextWindow: 128_000,
     maxOutputTokens: 16_384,
     privacy: "private",
   }),

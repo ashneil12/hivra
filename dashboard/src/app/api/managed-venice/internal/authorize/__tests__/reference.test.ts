@@ -66,6 +66,7 @@ describe("/api/managed-venice/internal/authorize: the Worker's reference", () =>
     });
     jest.spyOn(console, "warn").mockImplementation(() => {});
     jest.spyOn(console, "error").mockImplementation(() => {});
+    jest.spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -119,6 +120,38 @@ describe("/api/managed-venice/internal/authorize: the Worker's reference", () =>
   it("refuses a reference that is not a UUID", async () => {
     const res = await authorize({ plaintextKey: "hven_live_fixture", body: chatBody, referenceId: "ref_1" });
     expect(res.status).toBe(400);
+    expect(mockMemory.tables.managed_venice_reservations).toHaveLength(0);
+  });
+
+  // #166 + #167: the Worker sends its reference and says it applies bodyPatch
+  // in one authorize call. On a $1 wallet an uncapped Opus request cannot
+  // hold its 128,000-token worst case, so the cap is lowered to what the
+  // wallet covers, and the hold under the Worker's reference covers it.
+  it("holds under the Worker's reference and lowers the cap to the wallet when the Worker applies bodyPatch", async () => {
+    const opus = { model: "claude-opus-4-8", messages: [{ role: "user", content: "hello" }], stream: true };
+    const res = await authorize({ plaintextKey: "hven_live_fixture", body: opus, referenceId: REFERENCE, acceptsBodyPatch: true });
+
+    expect(res.status).toBe(200);
+    const payload = await res.json();
+    expect(payload.referenceId).toBe(REFERENCE);
+    const cap = payload.bodyPatch.max_completion_tokens;
+    expect(cap).toBeGreaterThanOrEqual(4_096);
+    expect(cap).toBeLessThan(128_000);
+    const [hold] = mockMemory.tables.managed_venice_reservations;
+    expect(hold).toMatchObject({ reference_id: REFERENCE, status: "active" });
+    // $30 per million output tokens: the hold covers every token of the cap.
+    expect(Number(hold.reserved_micro_usd)).toBeGreaterThanOrEqual(cap * 30);
+    expect(Number(hold.reserved_micro_usd)).toBeLessThanOrEqual(1_000_000);
+  });
+
+  // A Worker built from #167 alone sends its reference but not
+  // acceptsBodyPatch. It forwards its own copy of the body, so it is never
+  // given a lower cap: a wallet that cannot hold the worst case gets a 402.
+  it("gives a Worker that sends a reference but no acceptsBodyPatch a 402, not a cap it would drop", async () => {
+    const opus = { model: "claude-opus-4-8", messages: [{ role: "user", content: "hello" }], stream: true };
+    const res = await authorize({ plaintextKey: "hven_live_fixture", body: opus, referenceId: REFERENCE });
+
+    expect(res.status).toBe(402);
     expect(mockMemory.tables.managed_venice_reservations).toHaveLength(0);
   });
 

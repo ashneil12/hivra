@@ -239,13 +239,17 @@ export async function POST(req: NextRequest) {
     pricingMap,
     pricingSource,
     liveModelCount,
+    bodyPatch,
   } = auth.value;
   const verifiedKey = { id: proxyKeyId, userId };
 
+  // bodyPatch lowers the output cap to what was held (see chat-output-budget);
+  // forwarding the caller's own cap instead could spend past the hold.
+  const cappedBody = { ...body, ...bodyPatch };
   const upstreamBody =
     body.stream === true
       ? {
-          ...body,
+          ...cappedBody,
           stream_options: {
             ...((body.stream_options && typeof body.stream_options === "object"
               ? body.stream_options
@@ -253,7 +257,7 @@ export async function POST(req: NextRequest) {
             include_usage: true,
           },
         }
-      : body;
+      : cappedBody;
 
   // A refused request (or one that never reached Venice) gets its hold back.
   // If that release fails, an item is filed and the hourly sweep releases it:

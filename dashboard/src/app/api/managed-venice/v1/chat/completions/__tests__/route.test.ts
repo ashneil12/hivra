@@ -8,24 +8,31 @@ const mockRelease = jest.fn();
 const mockReconcile = jest.fn();
 const mockObserved = jest.fn();
 const mockFetch = jest.fn();
+const mockWalletSummary = jest.fn();
 
 jest.mock("@/lib/venice/proxy-keys", () => ({
   verifyManagedVeniceProxyKey: (...args: unknown[]) => mockVerifyKey(...args),
 }));
 
 jest.mock("@/lib/venice/cost-estimator", () => ({
+  ...jest.requireActual("@/lib/venice/cost-estimator"),
   estimateChatCompletionCost: (...args: unknown[]) => mockEstimate(...args),
-  MissingVeniceUsageError: class MissingVeniceUsageError extends Error {},
 }));
 
 jest.mock("@/lib/venice/pricing", () => ({
-  UnsupportedVeniceModelError: class UnsupportedVeniceModelError extends Error {},
+  ...jest.requireActual("@/lib/venice/pricing"),
   checkVeniceChatPricingCatalogStaleness: jest.fn(() => ({
     updatedAt: "2026-05-17",
     ageDays: 0,
     maxAgeDays: 30,
     stale: false,
   })),
+}));
+
+// The output-cap budget reads the wallet only after a reservation is refused.
+jest.mock("@/lib/billing/managed-venice-wallets", () => ({
+  ...jest.requireActual("@/lib/billing/managed-venice-wallets"),
+  getManagedVeniceWalletSummary: (...args: unknown[]) => mockWalletSummary(...args),
 }));
 
 jest.mock("@/lib/venice/proxy-settlement", () => ({
@@ -141,6 +148,10 @@ describe("/api/managed-venice/v1/chat/completions", () => {
     mockCapture.mockResolvedValue({ chargedMicroUsd: 8 });
     mockRelease.mockResolvedValue({ released: true });
     mockReconcile.mockResolvedValue({ status: "open" });
+    mockWalletSummary.mockResolvedValue({
+      hermesos: { availableMicroUsd: 0 },
+      card: { availableMicroUsd: 0 },
+    });
     mockFetch.mockResolvedValue(
       new Response(
         JSON.stringify({

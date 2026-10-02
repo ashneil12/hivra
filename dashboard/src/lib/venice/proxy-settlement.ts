@@ -130,6 +130,8 @@ export async function reserveManagedVeniceChatRequest(
     endpoint?: typeof VENICE_RESPONSES_ENDPOINT;
     subsidyState?: ManagedVeniceSubsidyState;
     pricingMap?: import("./cost-estimator").VenicePricingMap;
+    /** Refuse a hold above this share of the available balance (chat-output-budget.ts). */
+    maxShareOfAvailableBps?: number;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
@@ -180,6 +182,9 @@ export async function reserveManagedVeniceChatRequest(
       // the Worker never called back) is captured at its estimate once this
       // passes (reservation-sweep.ts).
       expiresAt: managedVeniceHoldExpiresAt(MANAGED_VENICE_CHAT_HOLD_TTL_MS),
+      ...(params.maxShareOfAvailableBps !== undefined
+        ? { maxShareOfAvailableBps: params.maxShareOfAvailableBps }
+        : {}),
       metadata: {
         proxyKeyId: params.proxyKeyId,
         estimatedCostMicroUsd: estimate.estimatedCostMicroUsd,

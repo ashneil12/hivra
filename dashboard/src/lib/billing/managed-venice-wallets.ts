@@ -68,10 +68,44 @@ interface ReservationRow {
   captured_micro_usd?: number | null;
 }
 
+/** One wallet's balance: everything in it, what active holds take, and the rest. */
+export interface ManagedVeniceWalletBalance {
+  totalValueMicroUsd: number;
+  reservedMicroUsd: number;
+  availableMicroUsd: number;
+}
+
 export class ManagedVeniceInsufficientBalanceError extends Error {
-  constructor(message = "Insufficient managed Venice wallet balance") {
+  /**
+   * The balance the refusal was judged against, when it came from the
+   * reservation pre-check. Null when the database balance guard refused (a
+   * concurrent hold won the race), which reports no balance.
+   */
+  readonly balance: ManagedVeniceWalletBalance | null;
+
+  constructor(
+    message = "Insufficient managed Venice wallet balance",
+    balance: ManagedVeniceWalletBalance | null = null
+  ) {
     super(message);
     this.name = "ManagedVeniceInsufficientBalanceError";
+    this.balance = balance;
+  }
+}
+
+/**
+ * The wallet holds enough for the request, but requests still running hold it.
+ * It frees up as they settle, so the caller is told to retry, not only to top
+ * up (review of #166: a "top up" 402 while the money was only held).
+ */
+export class ManagedVeniceBalanceHeldError extends ManagedVeniceInsufficientBalanceError {
+  constructor(balance: ManagedVeniceWalletBalance) {
+    super("Managed Venice wallet balance is held by requests in progress", balance);
+    this.name = "ManagedVeniceBalanceHeldError";
+  }
+
+  get heldMicroUsd() {
+    return this.balance?.reservedMicroUsd ?? 0;
   }
 }
 
@@ -279,11 +313,22 @@ export async function createManagedVeniceReservation(
     endpoint?: string | null;
     metadata?: Record<string, unknown>;
     expiresAt?: string | null;
+    /**
+     * Refuse (ManagedVeniceInsufficientBalanceError, with the balance) a hold
+     * larger than this share of the available balance, in basis points. The
+     * pre-check applies it, not the database guard, so it is a sizing rule for
+     * callers that can ask for less, not an overdraft guarantee.
+     */
+    maxShareOfAvailableBps?: number;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
   requireUserId(params.userId);
   requirePositiveMicroUsd(params.amountMicroUsd, "reservation amount");
+  const shareBps = params.maxShareOfAvailableBps;
+  if (shareBps !== undefined && (!Number.isInteger(shareBps) || shareBps <= 0 || shareBps > 10_000)) {
+    throw new Error("Managed Venice reservation share must be 1 to 10,000 basis points");
+  }
   if (!params.referenceId.trim()) {
     throw new Error("Managed Venice reservation reference ID is required");
   }
@@ -299,13 +344,18 @@ export async function createManagedVeniceReservation(
   }
 
   const summary = await getManagedVeniceWalletSummary(params.userId, client);
-  const available =
-    params.walletType === "hermesos"
-      ? summary.hermesos.availableMicroUsd
-      : summary.card.availableMicroUsd;
-
-  if (available < params.amountMicroUsd) {
-    throw new ManagedVeniceInsufficientBalanceError();
+  const wallet = params.walletType === "hermesos" ? summary.hermesos : summary.card;
+  const balance: ManagedVeniceWalletBalance = {
+    totalValueMicroUsd: wallet.totalValueMicroUsd,
+    reservedMicroUsd: wallet.reservedMicroUsd,
+    availableMicroUsd: wallet.availableMicroUsd,
+  };
+  const overShare =
+    shareBps !== undefined &&
+    BigInt(params.amountMicroUsd) * BigInt(10_000) >
+      BigInt(Math.floor(balance.availableMicroUsd)) * BigInt(shareBps);
+  if (balance.availableMicroUsd < params.amountMicroUsd || overShare) {
+    throw new ManagedVeniceInsufficientBalanceError(undefined, balance);
   }
 
   const account = await ensureManagedVeniceWalletAccount(params.userId, client);

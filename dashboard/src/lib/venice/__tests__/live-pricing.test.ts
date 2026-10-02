@@ -191,6 +191,54 @@ describe("getVenicePricingMap", () => {
     warnSpy.mockRestore();
   });
 
+  // Review of #166: the chat proxy writes the cap it held into the forwarded
+  // request unless Venice itself published the model's output maximum. It can
+  // only tell the two apart if every row says where its maximum came from.
+  it("marks an output maximum as Venice's only when the live row published one", async () => {
+    global.fetch = mockOkJson({
+      data: [
+        {
+          id: "zai-org-glm-5-1",
+          model_spec: {
+            availableContextTokens: 200_000,
+            maxCompletionTokens: 80_000,
+            pricing: { input: { usd: 1.54 }, output: { usd: 4.84 } },
+          },
+        },
+        {
+          // Listed, priced, but no maxCompletionTokens: the maximum falls back to the catalog.
+          id: "deepseek-v4-flash",
+          model_spec: { pricing: { input: { usd: 0.17 }, output: { usd: 0.35 } } },
+        },
+      ],
+    });
+
+    const result = await getVenicePricingMap();
+
+    expect(result.map.get("zai-org-glm-5-1")).toMatchObject({
+      maxOutputTokens: 80_000,
+      maxOutputTokensSource: "venice_live",
+    });
+    expect(result.map.get("deepseek-v4-flash")).toMatchObject({
+      maxOutputTokens: VENICE_CHAT_MODEL_PRICES.find((row) => row.model === "deepseek-v4-flash")
+        ?.maxOutputTokens,
+      maxOutputTokensSource: "catalog",
+    });
+    // A catalog model Venice did not list keeps the catalog's guess.
+    expect(result.map.get("claude-opus-4-8")?.maxOutputTokensSource).toBe("catalog");
+  });
+
+  it("marks every output maximum as the catalog's when the live refresh fails", async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response("down", { status: 503 }));
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await getVenicePricingMap();
+
+    expect(result.source).toBe("fallback");
+    expect([...result.map.values()].every((row) => row.maxOutputTokensSource === "catalog")).toBe(true);
+    warnSpy.mockRestore();
+  });
+
   it("drops malformed entries but keeps the rest of the live response", async () => {
     global.fetch = mockOkJson({
       data: [
