@@ -8,7 +8,7 @@
  * Refresh rule: re-read the sources below before changing a number, then bump
  * the date. The monthly SEO routine flags this file when the date is 90 days old.
  */
-export const COMPETITOR_FACTS_CHECKED = "2026-09-30";
+export const COMPETITOR_FACTS_CHECKED = "2026-10-02";
 
 /** "30 September 2026", for copy and the sources line. */
 export function formatCheckedDate(iso: string = COMPETITOR_FACTS_CHECKED): string {
@@ -39,10 +39,11 @@ export const COMPETITOR_FACTS: Record<CompetitorSlug, CompetitorFacts> = {
     name: "Agent 37",
     sources: [
       { label: "Agent 37 pricing", href: "https://agent37.com/pricing" },
+      { label: "Agent 37 managed plans", href: "https://agent37.com/personal" },
       { label: "Agent 37 terms", href: "https://agent37.com/terms" },
       { label: "Agent 37 docs", href: "https://agent37.com/docs" },
     ],
-    keyFigures: ["$4.76", "$9.34", "$3.99", "$29.99", "10 hours a week"],
+    keyFigures: ["$4.76", "$9.34", "$3.99", "$29.99", "30 days asleep"],
     notPublished: ["hosting regions or data centre locations"],
   },
   "vs-hostinger": {
@@ -101,8 +102,8 @@ export type PriceRow = {
 /**
  * One dated table for /compare. Sizes differ between providers, so every row
  * states its own; rows are ordered by monthly cost for an always-on agent.
- * Cloudways is left out on purpose: its page does not say whether the listed
- * prices already include its 50 percent launch discount.
+ * Cloudways is left out on purpose: its listed prices are a 50 percent intro
+ * discount and its page does not say when standard pricing starts (2026-10-02).
  */
 export const PRICE_TABLE: PriceRow[] = [
   {

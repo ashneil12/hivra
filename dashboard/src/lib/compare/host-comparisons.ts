@@ -32,7 +32,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs Agent 37: Price, Plans and Always-On Hosting",
     h1: "Agent 37 is cheaper on raw compute. What do you give up, and what do you get?",
     metaDescription:
-      "Hivra vs Agent 37 for hosting AI agents: a metered Cloud API from $4.76/mo, or Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices checked 30 September 2026.",
+      "Hivra vs Agent 37 for hosting AI agents: a metered Cloud API from $4.76/mo, or Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices checked 2 October 2026.",
     tagline: "Metered API or flat monthly price. Both keep an agent running.",
     intro: [
       "Agent 37 is a Y Combinator-backed host, and it sells hosting two ways. One is a metered Cloud API that gives each of your customers an isolated persistent sandbox. The other is a set of flat monthly dashboard plans, each for one managed OpenClaw or Hermes agent. Hivra sells a single thing: a monthly plan that gives you a computer for an agent, at a flat price.",
@@ -57,14 +57,14 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       {
         heading: "Which agents each one runs",
         paragraphs: [
-          "Agent 37's homepage lists Hermes, OpenClaw, Claude Code, Codex, OpenCode, Grok and Pi, and its docs let you bring a custom Docker image. That's a wider list than Hivra's. When we checked, its pages didn't confirm whether every one of them is available on the flat managed plans, as opposed to the Cloud API.",
+          "Agent 37's homepage lists Hermes, OpenClaw, Claude Code, Codex, OpenCode, Grok and Pi, and its docs let you bring a custom Docker image. Its flat managed plans list OpenClaw, Hermes, Claude Code, Codex, OpenCode and Grok. That's a wider list than Hivra's.",
           "Hivra runs Hermes from its own maintained image, plus OpenClaw, Agent Zero, Claude Code and Codex on their own logins, and Aeon on your GitHub Actions. OpenClaw and Agent Zero need a paid size. Custom images aren't supported on Hivra today.",
         ],
       },
       {
         heading: "Refunds, free tier and security",
         paragraphs: [
-          "Agent 37 refunds the first month of a subscription in full if you ask before the second billing cycle. Prepaid top-ups are non-refundable except where the law requires it. It has a real free tier too: one managed agent at $0 that's awake for at most 10 hours a week and sleeps when idle, plus a one-time $5 starter credit once a card is on file. Agent 37 also publishes SOC 2 Type I status, with Type II in progress, and uses gVisor isolation.",
+          "Agent 37 refunds the first month of a subscription in full if you ask before the second billing cycle. Prepaid top-ups are non-refundable except where the law requires it. It has a real free tier too: one managed agent at $0 that sleeps when idle and is removed after 30 days asleep (Agent 37 emails a week before), plus a one-time $5 starter credit once a card is on file. Agent 37 also publishes SOC 2 Type I status, with Type II in progress, and uses gVisor isolation.",
           "Hivra has no free plan and no trial. It offers a 7-day money-back guarantee on card payments, and nothing beyond that. It doesn't claim a SOC 2 report either, so if a SOC 2 report is a procurement requirement, Agent 37 is ahead today.",
         ],
       },
@@ -80,7 +80,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       { criterion: "Always-on 2 vCPU, 4 GB", hermesOs: "$9.99/mo flat", other: "$4.76/mo metered, prepaid balance", hermosWins: false },
       { criterion: "Always-on 4 vCPU, 8 GB", hermesOs: "$19.99/mo flat for 4 vCPU and 8 GB", other: "$9.34/mo metered, prepaid balance", hermosWins: false },
       { criterion: "Billing model", hermesOs: "Fixed monthly price", other: "Per minute from a balance; auto top-up on by default", hermosWins: true },
-      { criterion: "Free tier", hermesOs: "None", other: "One managed agent, awake up to 10 hours a week", hermosWins: false },
+      { criterion: "Free tier", hermesOs: "None", other: "One managed agent at $0; sleeps when idle", hermosWins: false },
       { criterion: "Agents hosted", hermesOs: "Hermes, OpenClaw, Agent Zero, Claude Code, Codex, Aeon", other: "Hermes, OpenClaw, Claude Code, Codex, OpenCode, Grok, Pi, custom image", hermosWins: false },
       { criterion: "Built for reselling per-customer agents", hermesOs: "No", other: "Yes, API-first with white-label dashboard", hermosWins: false },
       { criterion: "Refund", hermesOs: "7-day money-back guarantee on card payments", other: "First month of a subscription; top-ups non-refundable", hermosWins: false },
@@ -96,11 +96,11 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       },
       {
         q: "Does Agent 37 keep agents running when I close my laptop?",
-        a: "Yes. Its instances run on Agent 37's servers, not on your machine. They can stay awake around the clock, or sleep when idle and wake on the next request. The Free managed plan sleeps after a period without use and is awake at most 10 hours a week.",
+        a: "Yes. Its instances run on Agent 37's servers, not on your machine. They can stay awake around the clock, or sleep when idle and wake on the next request. A Free managed agent sleeps after a period without use and is removed after 30 days asleep.",
       },
       {
         q: "Which one is better for running Claude Code?",
-        a: "Both list it. Agent 37 lists Claude Code on its Cloud API. Hivra runs Claude Code on its own Anthropic login and keeps the computer, files and login while you're away. Runs you start inside tmux in the terminal tab keep going after the laptop closes.",
+        a: "Both list it. Agent 37 lists Claude Code on its Cloud API and on its flat managed plans. Hivra runs Claude Code on its own Anthropic login and keeps the computer, files and login while you're away. Runs you start inside tmux in the terminal tab keep going after the laptop closes.",
       },
       {
         q: "What happens if my Agent 37 balance runs out?",
@@ -120,7 +120,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs Hostinger for Hermes and OpenClaw Hosting",
     h1: "Hostinger is cheaper if you'll prepay for two years.",
     metaDescription:
-      "Hivra vs Hostinger for hosting Hermes and OpenClaw: $5.99 managed on a 24-month prepaid term, or Hivra's monthly $9.99. Checked 30 September 2026.",
+      "Hivra vs Hostinger for hosting Hermes and OpenClaw: $5.99 managed on a 24-month prepaid term, or Hivra's monthly $9.99. Checked 2 October 2026.",
     tagline: "Prepaid low price or monthly flat price.",
     intro: [
       "Hostinger is a large general web host with two routes to an agent. There's a managed plan that runs Hermes Agent, OpenClaw, n8n or Paperclip with some AI credit included, and there are ordinary VPS plans with one-click Docker templates for OpenClaw and Hermes, which you administer yourself.",
@@ -207,7 +207,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs xCloud: AI Agent Hosting Compared",
     h1: "xCloud gives you more hardware for the price. Check the renewal.",
     metaDescription:
-      "Hivra vs xCloud for OpenClaw and Hermes: $9.99 promotional for 4 vCPU and 6 GB, or Hivra's $9.99 for 2 vCPU and 4 GB. Checked 30 September 2026.",
+      "Hivra vs xCloud for OpenClaw and Hermes: $9.99 promotional for 4 vCPU and 6 GB, or Hivra's $9.99 for 2 vCPU and 4 GB. Checked 2 October 2026.",
     tagline: "More hardware on promotion, or a fixed monthly price.",
     intro: [
       "xCloud is a server control panel and managed hosting company, mostly for WordPress and other web stacks. It also sells dedicated Cloud VPS servers with OpenClaw, Hermes Agent or DeepSeek Harness pre-installed. Each agent gets its own server, which xCloud provisions, patches and monitors.",
@@ -291,7 +291,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs Nous Hermes Cloud: Cost and Differences",
     h1: "Nous Hermes Cloud is cheaper if you use it a few hours a week.",
     metaDescription:
-      "Hivra vs Nous Hermes Cloud: per-second billing at $0.56/day running against Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices checked 30 September 2026.",
+      "Hivra vs Nous Hermes Cloud: per-second billing at $0.56/day running against Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices checked 2 October 2026.",
     tagline: "The maker's own hosting, or a flat monthly price for more agents.",
     intro: [
       "Nous Hermes Cloud is run by Nous Research, the team that makes Hermes Agent. It hosts a dedicated instance of Hermes for you, billed per day from prepaid Nous credit, with model and tool usage charged on top. Hivra is a separate company and is not affiliated with Nous Research. It hosts Hermes too, from its own maintained image rather than Nous's release, alongside other agents.",
