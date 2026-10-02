@@ -21,6 +21,7 @@ public final class HivraBrowserStateObservation {
             webView.observe(\.canGoBack, options: [.new]) { _, _ in refresh() },
             webView.observe(\.canGoForward, options: [.new]) { _, _ in refresh() },
             webView.observe(\.isLoading, options: [.new]) { _, _ in refresh() },
+            webView.observe(\.title, options: [.new]) { _, _ in refresh() },
         ]
     }
 }
