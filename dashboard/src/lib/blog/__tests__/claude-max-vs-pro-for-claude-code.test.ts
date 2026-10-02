@@ -112,7 +112,7 @@ describe("the page targets the pricing queries and answers on the first screen",
   it("answers Pro vs Max in the short answer: who should move, and that Max is more usage, not a different model", () => {
     // Pricing table, read 2026-09-30: Opus and Sonnet are listed for Pro and for both Max sizes.
     expect(article.shortAnswer).toContain("Move to Max 5x ($100) when Pro's five-hour limit stops you in most sessions, and to Max 20x ($200) only if Max 5x still does.");
-    expect(article.shortAnswer).toContain("Max adds usage per session, not a different Opus or Sonnet.");
+    expect(article.shortAnswer).toContain("Max gives you more usage per session, on the same Opus and Sonnet.");
     const words = (article.shortAnswer ?? "").trim().split(/\s+/).length;
     expect(words).toBeGreaterThanOrEqual(40);
     expect(words).toBeLessThanOrEqual(60);
@@ -134,13 +134,13 @@ describe("the page targets the pricing queries and answers on the first screen",
   });
 
   it("says a Team Premium seat is not a Max plan", () => {
-    expect(sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n")).toMatch(/A Premium seat is not a Max plan: it is bought as a seat on a Team plan with at least 2 members, and its 6\.25x sits between Max 5x and Max 20x/);
+    expect(sectionByHeading("Claude Code pricing by plan").paragraphs.join("\n")).toMatch(/A Premium seat isn't a Max plan\. You buy it as a seat on a Team plan with at least 2 members, and its 6\.25x sits between Max 5x and Max 20x/);
   });
 
   it("says Max is not a faster model, from the benefits Anthropic lists", () => {
     const faq = article.faqs.find((candidate) => candidate.q === "Does Claude Max work faster than Pro?");
-    expect(faq?.a).toMatch(/^Anthropic's pricing page does not list speed as a Max benefit\. Pro and Max both run Opus and Sonnet\./);
-    expect(faq?.a).toMatch(/billed through usage credits on Pro and Max alike and does not count against plan limits/);
+    expect(faq?.a).toMatch(/^Anthropic's pricing page doesn't list speed as a Max benefit\. Pro and Max both run Opus and Sonnet\./);
+    expect(faq?.a).toMatch(/billed through usage credits on Pro and Max alike and doesn't count against plan limits/);
   });
 });
 
@@ -168,7 +168,7 @@ describe("the post reads its numbers from the calculator's constants", () => {
       "- **Pro:** $20 a month, or $17 a month on the annual plan ($200 billed up front). The baseline that the Max multiples are measured against.",
       "- **Max 5x:** $100 a month, monthly only. 5x Pro's usage per five-hour session.",
       "- **Max 20x:** $200 a month, monthly only. 20x Pro's usage per five-hour session.",
-      "- **Weekly limit:** all three have one. Anthropic does not publish the size of Pro's, or a weekly multiple for Max.",
+      "- **Weekly limit:** all three have one. Anthropic doesn't publish the size of Pro's, or a weekly multiple for Max.",
       "- **Fable 5.1:** usage credits only on Pro. Included on Max up to 50% of weekly limits.",
       "- **Claude Code:** included in all three.",
     ]);
@@ -204,7 +204,8 @@ describe("the post reads its numbers from the calculator's constants", () => {
     expect(section).toContain("as long as the plan's limits cover that usage");
     expect(bodyCopy).not.toMatch(/Anthropic's average day|\(Anthropic's average\)/);
     const faq = article.faqs.find((candidate) => candidate.q === "Is the API cheaper than a Claude subscription for Claude Code?");
-    expect(faq?.a).toContain("per developer per active day across enterprise deployments, so a plan is cheaper, if its limits cover your sessions,");
+    expect(faq?.a).toContain("per developer per active day across enterprise deployments. A plan is cheaper once you use it on more than about");
+    expect(faq?.a).toContain("as long as its limits cover your sessions.");
     // The calculator page names the $13 an enterprise average too, in its FAQ and method.
     const calculator = getToolEntry("claude-code-plan-calculator")!;
     const estimateFaq = calculator.faqs.find((candidate) => candidate.q.startsWith("Where does the dollar estimate come from"));
@@ -282,10 +283,10 @@ describe("says what Anthropic does not currently publish, not what it never publ
 
   it("makes no absolute claim about what Anthropic has or has not published", () => {
     expect(bodyCopy).not.toMatch(ABSOLUTE);
-    expect(article.intro).toMatch(/does not currently publish message or token counts/);
-    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic does not currently publish\. This is what no Anthropic page states, as of 30 September 2026/);
+    expect(article.intro).toMatch(/doesn't currently publish message or token counts/);
+    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic doesn't currently publish\. As of 30 September 2026, no Anthropic page states any of these/);
     const faq = article.faqs.find((candidate) => candidate.q === "What are Claude Max limits?");
-    expect(faq?.a).toMatch(/a weekly multiple or hour count you see elsewhere is not one Anthropic currently publishes/);
+    expect(faq?.a).toMatch(/any weekly multiple or hour count you see elsewhere isn't one Anthropic currently publishes/);
   });
 
   it("carries the same wording on the calculator page", () => {
@@ -316,12 +317,12 @@ describe("the limit-hit playbook matches the interactive-mode docs", () => {
 
   it("does not say the 24-hour case covers weekly limits outright", () => {
     expect(section).not.toMatch(/which covers weekly limits/);
-    expect(section).toContain("more than 24 hours away, which is often the case for a weekly limit, or in Remote Control sessions");
+    expect(section).toContain("in Remote Control sessions, or when the reset is more than 24 hours away (often the case for a weekly limit)");
     expect(section).toContain("continues the task after a usage limit resets");
   });
 
   it("tells the reader they can start the wait themselves, in one short step", () => {
-    expect(section).toContain("you can start a wait from `/rate-limit-options` and it keeps counting down");
+    expect(section).toContain("You can still start a wait from `/rate-limit-options`, and it keeps counting down");
     const step = section.split("\n").find((line) => line.startsWith("2. **Wait in the same session.**")) ?? "";
     expect(step.length).toBeLessThan(800);
     // The hand-off and re-arm details sit in a note, not in the step.
@@ -350,7 +351,7 @@ describe("reports Anthropic's model guide as it reads", () => {
 
   it("does not claim the guide predates the new default", () => {
     expect(bodyCopy).not.toMatch(/predates/i);
-    expect(section).toContain("The default is Opus, so switching is your lever");
+    expect(section).toContain("The default is Opus, so switching models is how you save quota");
   });
 });
 
@@ -539,15 +540,15 @@ describe("the Hivra section and the claims rules", () => {
   it("scopes the shared limits to a plan sign-in and keeps to files, sessions and login", () => {
     const cloud = sectionByHeading("When Anthropic's own cloud is enough").paragraphs.join("\n");
     expect(cloud).toContain("When you sign in with your plan, every one of these options draws on the same plan limits");
-    expect(cloud).toContain("On an API key there is no plan allowance to raise");
+    expect(cloud).toContain("On an API key there's no plan allowance to raise");
     expect(hivraText).toContain("your files, sessions and login to stay in place between tasks");
     // One Hivra computer per agent: nothing here says several agents share a computer.
     expect(hivraText).not.toMatch(/other agents/i);
   });
 
   it("says Hivra does not raise Claude's limits, and where the alternative is the better choice", () => {
-    expect(hivraText).toMatch(/does not raise them/);
-    expect(hivraText).toMatch(/Hivra is not the better choice in every case/);
+    expect(hivraText).toMatch(/doesn't raise them/);
+    expect(hivraText).toMatch(/Hivra isn't always the better choice/);
     // Anthropic's own wording is "no separate compute charge" on a plan that shares its limits.
     expect(hivraText).toMatch(/Anthropic's cloud sessions have no separate compute charge and draw on your plan's limits/);
     expect(bodyCopy).not.toMatch(/cost nothing beyond your plan/);

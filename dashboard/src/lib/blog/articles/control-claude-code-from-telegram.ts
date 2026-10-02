@@ -12,11 +12,11 @@ export const article: BlogArticle = {
   lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
-  tagline: "Send tasks from your phone while Claude Code works on the machine holding your repository.",
+  tagline: "Send tasks from your phone. Claude Code does the work on the machine that holds your repository.",
   intro:
-    "Claude Code can receive messages from Telegram through Anthropic's official Telegram channel plugin. You create a bot, install and configure the plugin, start Claude Code with channels enabled, then pair your Telegram account. The session still runs on your computer or server, so that machine and the Claude Code process must stay online.",
+    "Anthropic's official Telegram channel plugin lets Claude Code receive messages from Telegram. You pair your own account, and the session keeps running where it already runs, on your computer or server. If that machine sleeps or Claude Code exits, the bot stops receiving work.",
   shortAnswer:
-    "Install Anthropic's official Telegram channel plugin in Claude Code, configure it with a bot token from BotFather, relaunch Claude Code with the Telegram channel enabled, and pair your Telegram account. The session still runs on your own computer or server, so that machine and the Claude Code process must stay online.",
+    "Install Anthropic's official Telegram channel plugin in Claude Code and configure it with a bot token from BotFather. Relaunch Claude Code with the Telegram channel enabled, then pair your Telegram account. The session still runs on your own computer or server, so that machine and the Claude Code process must stay online.",
   sections: [
     {
       heading: "The short answer",

@@ -73,7 +73,7 @@ describe("TmuxCheatSheetTool sheet", () => {
   it("says plainly that tmux keeps a session alive through disconnects, not a sleeping laptop", () => {
     render(<TmuxCheatSheetTool />);
     expect(screen.getByText(TMUX_SLEEP_NOTE)).toHaveTextContent(
-      "It does not keep anything going through a sleeping laptop, because the whole machine suspends, tmux included.",
+      "It doesn't keep anything going through a sleeping laptop, because the whole machine suspends, tmux included.",
     );
     expect(screen.getByRole("link", { name: "keep-awake command builder" })).toHaveAttribute("href", "/tools/keep-mac-awake");
     expect(screen.getByRole("link", { name: "agent survival check" })).toHaveAttribute("href", "/tools/agent-survival-check");

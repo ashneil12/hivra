@@ -16,7 +16,7 @@ import { BLOG_TOPICS, topicAnchor } from "@/lib/blog/topics";
 export const metadata: Metadata = {
   title: "Blog: AI agent guides and deep dives",
   description:
-    "Practical guides to running AI agents: how persistent memory works, self-hosting vs managed hosting, real automation examples, and more from the Hivra team.",
+    "Guides to running AI agents: how persistent memory works, self-hosting vs managed hosting, and what agents can automate. From the team that builds Hivra.",
   ...buildWebsiteMetadata({
     path: "/blog",
     title: "Blog | Hivra",
@@ -72,7 +72,7 @@ export default function BlogIndexPage() {
         <header className={styles.masthead}>
           <span className={styles.eyebrow}>From the Hivra team</span>
           <h1>Guides for people who run AI agents.</h1>
-          <p>Persistent memory, real automation examples, cost breakdowns and honest comparisons, written by the team that builds Hivra.</p>
+          <p>How persistent memory works, what you can automate, what an agent costs to run, and how the tools and hosts compare. Written by the team that builds Hivra.</p>
         </header>
         {featured && <Link href={`/blog/${featured.slug}`} className={styles.featured}>
           <EditorialArt number="01" label={featured.tagline} />

@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "How to self-host OpenClaw: complete setup guide (2026)",
   metaTitle: "How to self-host OpenClaw on a Linux VPS (2026)",
   metaDescription:
-    "Self-host OpenClaw on a Linux VPS with Docker or the shell installer. Covers Telegram setup, the CVE-2026-25253 patch and the real monthly upgrade work.",
+    "Self-host OpenClaw on a Linux VPS with Docker or the shell installer. Covers Telegram setup, the CVE-2026-25253 patch and what monthly upgrades involve.",
   publishedDate: "2026-04-12",
   lastModified: "2026-09-30",
   readingTimeMin: 15,
   author: "Hivra team",
-  tagline: "OpenClaw is powerful. Maintaining a self-hosted instance is a second job.",
+  tagline: "Keeping a self-hosted OpenClaw running is a second job.",
   intro:
-    "OpenClaw is one of the most-used open-source AI agent frameworks, with a large community and a broad integration ecosystem. Getting it running on a VPS takes 30-90 minutes if you follow these steps. Keeping it running (stable, updated, and secure) is the harder problem, and the part this guide covers honestly.",
+    "OpenClaw is one of the most-used open-source AI agent frameworks, with a large community and plenty of integrations. Getting it running on a VPS takes 30-90 minutes if you follow these steps. Keeping it stable, updated and secure is the harder part.",
   shortAnswer:
-    "To self-host OpenClaw, use a Linux VPS with at least 2 vCPU and 4GB RAM. Install with the shell installer or Docker, add an LLM provider, connect Telegram with an allowlist, and run the gateway as a service. Update to 2026.1.29 or later for CVE-2026-25253, then plan on 2-4 upgrades a month.",
+    "To self-host OpenClaw, use a Linux VPS with at least 2 vCPU and 4GB RAM. Install it with the shell installer or Docker, add an LLM provider, connect Telegram with an allowlist and run the gateway as a service. Update to 2026.1.29 or later to patch CVE-2026-25253, then plan on 2-4 upgrades a month.",
   sections: [
     {
       heading: "Before you start: what you are actually signing up for",

@@ -224,13 +224,13 @@ function buildVerdict(input: KeepAwakeInput): KeepAwakeResult["verdict"] {
     return input.power === "plugged"
       ? {
           level: "caveat",
-          title: "caffeinate alone will not cover a closed lid",
+          title: "caffeinate alone won't cover a closed lid",
           detail:
             "Apple describes lid-closed use with an external display, power connected and an external keyboard and mouse or trackpad. Without those, plan on the lid sleeping the Mac.",
         }
       : {
           level: "wont",
-          title: "A closed lid on battery is not a setup Apple documents",
+          title: "A closed lid on battery isn't a setup Apple documents",
           detail:
             "Closed-lid use needs power connected, so expect the Mac to sleep. Open the lid or plug in, then use this command.",
         };
@@ -242,7 +242,7 @@ function buildVerdict(input: KeepAwakeInput): KeepAwakeResult["verdict"] {
       detail:
         input.power === "plugged"
           ? "systemd-inhibit holds a sleep lock until the command exits."
-          : "systemd-inhibit holds a sleep lock until the command exits. It does not look at the power source, so a flat battery still ends the run.",
+          : "systemd-inhibit holds a sleep lock until the command exits. It doesn't look at the power source, so a flat battery still ends the run.",
     };
   }
   return {
@@ -257,7 +257,7 @@ function buildVerify(input: KeepAwakeInput): KeepAwakeResult["verify"] {
   if (input.os === "macos") {
     return {
       command: "pmset -g assertions",
-      hint: 'Look for "caffeinate command-line tool" under PreventUserIdleSystemSleep, and under PreventSystemSleep when you are on power.',
+      hint: 'Look for "caffeinate command-line tool" under PreventUserIdleSystemSleep, and under PreventSystemSleep when you\'re on power.',
     };
   }
   return {
@@ -271,7 +271,7 @@ function buildPmset(input: KeepAwakeInput): KeepAwakeResult["pmset"] {
   const source = input.power === "plugged" ? "-c" : "-b";
   return {
     lines: ["pmset -g custom", `sudo pmset ${source} sleep 0`],
-    note: `Only if you want it to last. The first line shows your current settings, so note the sleep value. The second turns the ${input.power === "plugged" ? "plugged-in" : "battery"} sleep timer off until you set it back. a sleep timer of 0 does not stop a closed lid from sleeping the Mac, and a forgotten setting drains the battery, so caffeinate is usually cleaner.`,
+    note: `Only if you want it to last. The first line shows your current settings, so note the sleep value. The second turns the ${input.power === "plugged" ? "plugged-in" : "battery"} sleep timer off until you set it back. A sleep timer of 0 doesn't stop a closed lid from sleeping the Mac, and a forgotten setting drains the battery. caffeinate is usually the cleaner choice.`,
   };
 }
 
@@ -280,8 +280,8 @@ function buildNotCovered(input: KeepAwakeInput): string[] {
   if (input.os === "macos") {
     out.push(
       input.lid === "closed"
-        ? "A closed lid. caffeinate is not closed-display mode, and Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad."
-        : "A closed lid. If you shut it, expect the Mac to sleep: Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad."
+        ? "A closed lid. caffeinate isn't closed-display mode. Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad."
+        : "A closed lid. If you shut it, expect the Mac to sleep. Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad."
     );
     out.push(
       input.power === "plugged"
@@ -296,7 +296,7 @@ function buildNotCovered(input: KeepAwakeInput): string[] {
     );
     out.push(
       input.power === "plugged"
-        ? "Switching to battery. systemd-inhibit does not look at the power source."
+        ? "Switching to battery. systemd-inhibit doesn't look at the power source."
         : "A flat battery. Nothing here checks the power source, and the laptop runs until the battery is empty."
     );
     out.push("Machines without systemd. systemd-inhibit comes with systemd.");
@@ -307,7 +307,7 @@ function buildNotCovered(input: KeepAwakeInput): string[] {
   out.push("A reboot or an OS update that restarts the machine. Every run ends when it restarts.");
   out.push("A network change or drop, such as a new wifi network, a VPN reconnecting or tethering. A call in flight can fail.");
   out.push("Closing the terminal window. The agent and the keep-awake command stop with it, unless they run inside tmux.");
-  out.push("The agent crashing or hitting a usage limit. This keeps the machine awake. It does not restart anything.");
+  out.push("The agent crashing or hitting a usage limit. This keeps the machine awake. It doesn't restart anything.");
   return out;
 }
 
@@ -316,17 +316,17 @@ function buildAgentPrompt(input: KeepAwakeInput, lines: string[], verify: KeepAw
   const parts: string[] = [];
   if (input.duration === "until-exit") {
     parts.push(
-      `Keep this ${machine} awake while \`${input.command}\` runs. Start it with exactly this command, and do not change any other power or sleep setting:`
+      `Keep this ${machine} awake while \`${input.command}\` runs. Start it with exactly this command, and don't change any other power or sleep setting:`
     );
     parts.push("", ...lines);
   } else {
     parts.push(
-      `Keep this ${machine} awake for ${input.hours} hours while my agent works. Run the first command in the background and leave it running, since it ends on its own after ${input.hours} hours. Then start the agent. Do not change any other power or sleep setting:`
+      `Keep this ${machine} awake for ${input.hours} hours while my agent works. Run the first command in the background and leave it running, since it ends on its own after ${input.hours} hours. Then start the agent. Don't change any other power or sleep setting:`
     );
     parts.push("", ...lines.filter((line) => !line.startsWith("#")));
   }
   parts.push("", `After it starts, check it with \`${verify.command}\`. ${verify.hint}`);
-  parts.push("", "Tell me plainly what this does not cover:", ...notCovered.map((item) => `- ${item}`));
+  parts.push("", "Tell me what this doesn't cover:", ...notCovered.map((item) => `- ${item}`));
   return parts.join("\n");
 }
 

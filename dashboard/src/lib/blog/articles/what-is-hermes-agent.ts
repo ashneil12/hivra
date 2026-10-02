@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "What is Hermes Agent? A plain-English explanation",
   metaTitle: "What is Hermes Agent? The open-source AI agent explained",
   metaDescription:
-    "Hermes Agent is an open-source AI agent from Nous Research that runs on a server, keeps memory across sessions and takes actions, unlike a chatbot.",
+    "Hermes Agent is an open-source AI agent from Nous Research. Unlike a chatbot, it runs on a server, keeps memory across sessions and takes actions.",
   publishedDate: "2026-03-10",
   lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
-  tagline: "Not a chatbot. Not a wrapper. Something different.",
+  tagline: "An agent that keeps running after you close the chat.",
   intro:
-    "Hermes Agent is an open-source autonomous AI agent released by Nous Research in early 2026. It is not a chatbot, and the difference between the two categories matters more than it sounds.",
+    "Nous Research released Hermes Agent, an open-source autonomous AI agent, in early 2026. A chatbot answers when you ask and then stops. Hermes keeps going between your messages.",
   shortAnswer:
-    "Hermes Agent is an open-source autonomous AI agent from Nous Research, released under the MIT license in February 2026. Unlike a chatbot, it runs continuously on a server, keeps searchable memory across sessions, and takes actions such as running code, browsing websites, managing files and calling APIs without you narrating each step.",
+    "Hermes Agent is an open-source autonomous AI agent from Nous Research, released under the MIT license in February 2026. Unlike a chatbot, it runs continuously on a server and keeps searchable memory across sessions. It also takes actions, like running code, browsing websites, managing files and calling APIs, without you narrating each step.",
   sections: [
     {
       heading: "Start with what it is not",
@@ -27,7 +27,7 @@ export const article: BlogArticle = {
     {
       heading: "Where it comes from",
       paragraphs: [
-        "Nous Research is an AI research group that has been building and releasing open-weight models since 2023, known particularly for the Hermes model series: fine-tuned versions of base models (Llama, Mistral, and others) optimized for function calling, tool use, and instruction following. These models consistently score well on agentic benchmarks.",
+        "Nous Research is an AI research group that has been building and releasing open-weight models since 2023, known particularly for the Hermes model series: fine-tuned versions of base models (Llama, Mistral, and others) built for function calling, tool use, and instruction following. These models consistently score well on agentic benchmarks.",
         "Hermes Agent is the framework built on top of that work, designed for long-running tasks, real tool execution, and persistent memory. Released under the MIT license in February 2026, meaning you can run it yourself, modify it, or build on top of it. The MIT license creates two classes of users: those who run Hermes on their own hardware, and those who want the capabilities without the infrastructure overhead. That second group is what Hivra exists to serve.",
       ],
     },

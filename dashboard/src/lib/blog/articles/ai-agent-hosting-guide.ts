@@ -8,16 +8,16 @@ export const article: BlogArticle = {
     "AI agent hosting in 2026: every real option compared (VPS, serverless, managed)",
   metaTitle: "AI agent hosting in 2026: every option compared",
   metaDescription:
-    "Host an AI agent on your own hardware, a $5-10/month VPS or managed hosting. Serverless fits poorly. Real costs, security basics and upkeep compared.",
+    "Where to host an AI agent: your own hardware, a $5-10/month VPS or managed hosting. Serverless is a poor fit. Costs, security basics and upkeep compared.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
-  tagline: "An agent that lives on your laptop is not really an agent.",
+  tagline: "An agent that lives on your laptop isn't really an agent.",
   intro:
-    "Search for AI agent hosting and you get enterprise cloud docs and thin listicles. Neither answers the actual question: where should a personal or CLI agent live so it keeps working when you close your laptop? Here is every real option, with real prices.",
+    "Search for AI agent hosting and you get enterprise cloud docs and thin listicles. Neither says where a personal or CLI agent should live so it keeps working when you close your laptop. Four options, with prices.",
   shortAnswer:
-    "An AI agent needs a machine that stays awake, a persistent disk and a way back in. Your own hardware, a VPS ($5-10 a month) or managed hosting can provide all three. Serverless cannot, because it stops your process between requests and wipes local disk. Managed hosting trades root access for a setup you do not build.",
+    "An AI agent needs a machine that stays awake, a disk that persists and a way back in. Your own hardware, a VPS ($5-10 a month) or managed hosting can give it all three. Serverless can't, because it stops your process between requests and wipes local disk. Managed hosting means giving up root access and skipping the setup.",
   sections: [
     {
       heading: "What hosting an AI agent actually means",

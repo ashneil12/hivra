@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "AI agent browser automation in 2026: Browser Use, Stagehand, Playwright, and Puppeteer",
   metaTitle: "AI agent browser automation tools compared in 2026",
   metaDescription:
-    "Browser Use, Stagehand, Playwright and Puppeteer compared on success rate, speed and cost per task, and where each one breaks down.",
+    "Browser Use, Stagehand, Playwright and Puppeteer side by side: success rate, speed, cost per task, and where each one falls over.",
   publishedDate: "2026-04-03",
   lastModified: "2026-09-30",
   readingTimeMin: 12,
   author: "Hivra team",
-  tagline: "Four tools. One job. Different tradeoffs.",
+  tagline: "Four tools for one job, each with its own tradeoffs.",
   intro:
-    "Browser automation is the highest-value capability an AI agent can have, and the one most likely to be architected wrong. Here are the four main tools in 2026 with actual benchmark numbers, real cost-per-task figures, and honest assessments of where each breaks down.",
+    "Browser automation is the most valuable thing an agent can do, and the one most likely to be built wrong. The four main tools in 2026 differ a lot on benchmark numbers and cost per task. They fail differently too.",
   shortAnswer:
-    "Match the tool to how stable the site is. Playwright suits stable, high-volume pages at near-zero cost. Browser Use handles unpredictable sites but costs $0.02 to $0.30 per task. Stagehand mixes scripted and AI steps in one workflow. Puppeteer is for low-level Chrome access. Most teams combine AI for variable steps with Playwright for stable ones.",
+    "Pick by how much the site changes. Playwright suits stable, high-volume pages at near-zero cost. Browser Use handles unpredictable sites but costs $0.02 to $0.30 a task. Stagehand mixes scripted and AI steps in one workflow, and Puppeteer gives you low-level Chrome access. Most teams use AI for the variable steps and Playwright for the stable ones.",
   sections: [
     {
       heading: "The core tradeoff",

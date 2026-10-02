@@ -7,30 +7,30 @@ export const article: BlogArticle = {
   title: "Why your AI agent dies when you close the terminal (and every fix that works)",
   metaTitle: "Why your AI agent dies when the terminal closes",
   metaDescription:
-    "Your AI agent dies because closing the terminal or dropping SSH sends it SIGHUP, and sleep suspends it. Fixes: tmux, nohup, systemd, caffeinate.",
+    "Your AI agent dies when you close the terminal or drop SSH (SIGHUP), and a sleeping laptop suspends it. What fixes it: tmux, nohup, systemd, caffeinate.",
   publishedDate: "2026-07-15",
   lastModified: "2026-09-30",
   readingTimeMin: 10,
   author: "Hivra team",
-  tagline: "The agent did not crash. Your shell took it down.",
+  tagline: "Close the terminal and your shell takes the agent down with it.",
   intro:
-    `Claude Code, Codex, OpenClaw, Hermes: every terminal AI agent dies the same way when the terminal closes or the laptop sleeps. This is the full troubleshooting guide, from the 90 second tmux fix to systemd to the honest case for a ${ENTRY_PLAN_PRICE} always-on computer.`,
+    `Claude Code, Codex, OpenClaw, Hermes: every terminal AI agent dies when you close the terminal and stalls when the laptop sleeps. The fixes run from a 90 second tmux setup to systemd. Past those there's an always-on computer at ${ENTRY_PLAN_PRICE}/month.`,
   shortAnswer:
-    "Your agent is a child process of your shell. Closing the terminal or dropping SSH sends it SIGHUP, and a sleeping laptop suspends it. tmux, screen, nohup or systemd detach it from your session. Sleep needs a different fix: keep the machine awake, or move the agent to an always-on machine.",
+    "Your agent is a child process of your shell. Close the terminal or drop SSH and it gets a SIGHUP, and a sleeping laptop suspends it. tmux, screen, nohup or systemd detach it from your session, which handles the hangup. Sleep is a separate problem: keep the machine awake, or move the agent to an always-on machine.",
   sections: [
     {
       heading: "Why the process dies in the first place",
       paragraphs: [
         "Terminal AI agents are ordinary child processes of your shell. That single fact explains almost every dead session. Three killers, in order of how often they get blamed on the agent:\n\n- **You closed the terminal.** When a terminal window closes, the kernel sends SIGHUP (hangup) to every process in that session. The agent receives it and exits mid-task. This is 50 year old Unix behavior, not a bug in the agent.\n- **Your SSH connection dropped.** If the agent runs on a remote server over SSH, a dropped connection tears down the remote shell, which sends the same SIGHUP to the agent. Flaky wifi, a VPN hiccup, or your ISP renegotiating is enough.\n- **Your laptop went to sleep.** Close the lid and the OS suspends every process on the machine. Nothing is killed, but nothing runs either. A 6 hour overnight task makes zero progress, and any open network connections (including the agent's API calls) usually die during the suspend anyway.",
         "Which killer you have determines which fix you need. SIGHUP problems (closed terminal, dropped SSH) are solved by detaching the process from your session: tmux, screen, nohup, or systemd. Sleep problems are not. No multiplexer can make a suspended CPU execute instructions. For sleep, you either keep the machine awake or move the agent to a machine that stays awake.",
-        "Quick diagnosis: if you want to check whether your current setup would survive, run [the agent survival check](/tools/agent-survival-check). It walks the same failure modes this article covers and tells you which one will get you.",
+        "Want to know whether your current setup would survive? Run [the agent survival check](/tools/agent-survival-check). It walks the same failure modes this article covers and tells you which one will get you.",
       ],
     },
     {
       heading: "tmux and screen in 90 seconds",
       paragraphs: [
         "tmux is a terminal multiplexer. It runs your shell session inside a server process on the machine, so the session survives even when your terminal window or SSH connection goes away. This is the standard fix for SIGHUP:\n\n```bash\n# Start a named session and launch your agent inside it\ntmux new -s agent\nclaude          # or codex, or any CLI agent\n\n# Detach without killing anything: press Ctrl+b, then d\n\n# Reattach later, from any terminal or SSH connection\ntmux attach -t agent\n\n# List running sessions\ntmux ls\n```\n\nClose the window, lose the SSH connection, reconnect from your phone. The agent never noticed. You reattach and the full scrollback is there. The [tmux cheat sheet](/tools/tmux-cheat-sheet) lists the keys and commands, and builds the start commands for each agent.",
-        "screen is the older tool that does the same job:\n\n```bash\nscreen -S agent     # start a named session\n# Detach: Ctrl+a, then d\nscreen -r agent     # reattach\n```\n\nPick tmux if you are choosing today. It has panes, better scripting, and active development. screen's one advantage is that it ships preinstalled on more minimal distros.\n\nThe limit of both tools, stated plainly: **tmux on your laptop does not survive sleep.** It protects the session from disconnects, not the machine from suspending. tmux only earns its keep on a machine that stays awake.",
+        "screen is the older tool that does the same job:\n\n```bash\nscreen -S agent     # start a named session\n# Detach: Ctrl+a, then d\nscreen -r agent     # reattach\n```\n\nPick tmux if you are choosing today. It has panes, better scripting, and active development. screen's one advantage is that it ships preinstalled on more minimal distros.\n\nThe limit of both tools: **tmux on your laptop does not survive sleep.** It protects the session from disconnects, not the machine from suspending. tmux only earns its keep on a machine that stays awake.",
       ],
     },
     {
@@ -57,14 +57,14 @@ export const article: BlogArticle = {
       heading: "The failure modes none of this fixes",
       paragraphs: [
         "tmux, nohup, caffeinate and friends solve the shell problem. They do not solve the machine problem. Things that still end your run:\n\n- **Crashes.** If the agent process itself dies, tmux just shows you a dead pane in the morning. Only a supervisor (systemd with `Restart=always`, or a managed platform) restarts it.\n- **Reboots.** OS updates on macOS and Windows can force a restart overnight. Everything not registered as a boot service is gone.\n- **Power and network.** A power blip or your router's 2am firmware update kills the run on any home machine.\n- **The machine has another job.** Your laptop eventually has to go in a bag. Every fix above is a workaround for the fact that a personal machine is not an always-on server.",
-        "This is the honest boundary. Keeping one machine awake for one night is a solved problem. Keeping an agent alive for weeks (through crashes, reboots, updates, and your own travel) is server operations, and every fix above only postpones that fact.",
+        "Keeping one machine awake for one night is a solved problem. Keeping an agent alive for weeks (through crashes, reboots, updates, and your own travel) is server operations, and every fix above only postpones that fact.",
       ],
     },
     {
       heading: "When a $10 always-on computer beats all of it",
       paragraphs: [
         `The pattern behind every fix in this article is the same: move the agent's lifetime off your terminal, then off your laptop. The end state of that pattern is a machine whose only job is to run the agent.\n\nYou can build that yourself with a $5-10/month VPS plus tmux plus systemd plus your own patching and security. That route is legitimate and we wrote it up in detail for [Claude Code](/blog/keep-claude-code-running-24-7) and [Codex](/blog/run-codex-24-7-in-the-cloud). The full menu of places an agent can live, from home hardware to serverless, is in the [AI agent hosting guide](/blog/ai-agent-hosting-guide).\n\nOr you can rent the end state directly. [Hivra](/) provisions a private VM per agent and runs the agent on it: [Claude Code](/agents/claude-code) (the official CLI, signed in with your own Anthropic account), [Codex](/agents/codex) (the official CLI, your own ChatGPT login), and [Hermes](/agents/hermes), and hosts the dashboard for [Aeon](/agents/aeon). You get a browser view of the computer (chat, terminal, files), so checking on the 4am state does not require SSH from your phone.\n\nThe same rule from this article applies there, though. ${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING}`,
-        `Honest plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. On your own Anthropic or OpenAI login, usage bills through that provider at its rates with no Hivra markup. Hivra is independent and is not affiliated with Anthropic or OpenAI. Details on [the pricing page](/pricing).\n\nIf you enjoy running servers, run the server. If you just want the agent alive tomorrow morning, and every morning after, the ${ENTRY_PLAN_PRICE} computer is the version of this article you do not have to maintain yourself.`,
+        `Plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. On your own Anthropic or OpenAI login, usage bills through that provider at its rates with no Hivra markup. Hivra is independent and is not affiliated with Anthropic or OpenAI. Details on [the pricing page](/pricing).\n\nIf you enjoy running servers, run the server. If you just want the agent alive tomorrow morning, and every morning after, the ${ENTRY_PLAN_PRICE} computer is the version of this article you do not have to maintain yourself.`,
       ],
     },
   ],

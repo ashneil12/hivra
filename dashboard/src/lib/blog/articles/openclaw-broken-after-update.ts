@@ -11,11 +11,11 @@ export const article: BlogArticle = {
   lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
-  tagline: "The update did not eat your data. It probably moved your config.",
+  tagline: "After an update, check your config first. It probably moved.",
   intro:
-    "OpenClaw ships new releases several times a month, and breaking changes are a known part of that cadence. If your agent stopped responding, lost its permissions, or will not start after an update, this guide walks the known failure modes in the order they most often occur, with the exact commands to fix each one.",
+    "OpenClaw ships new releases several times a month, and some of them break things. Agent stopped responding, lost its permissions, or won't start after an update? Usually it's a changed config schema, and that's the first fix below.",
   shortAnswer:
-    "The most common cause of OpenClaw breaking after an update is a changed config schema. Run openclaw doctor --fix, then openclaw config validate, and restart the gateway. If the agent replies but cannot act, set tools.profile back to your previous profile. If the update is the problem, on Docker, pin your last-good image tag and restore your pre-upgrade backup.",
+    "OpenClaw most often breaks after an update because the config schema changed. Run openclaw doctor --fix, then openclaw config validate, and restart the gateway. If the agent replies but can't act, set tools.profile back to your previous profile. If the update itself is the problem and you're on Docker, pin your last-good image tag and restore your pre-upgrade backup.",
   sections: [
     {
       heading: "Triage: three commands before you change anything",
@@ -62,7 +62,7 @@ export const article: BlogArticle = {
     {
       heading: "Preventing the next one",
       paragraphs: [
-        "OpenClaw's release cadence is not going to slow down for you, so the practical defense is a repeatable upgrade routine. The full version is in our [self-hosting OpenClaw guide](/blog/how-to-self-host-openclaw), but the short list:\n\n- Back up `~/.openclaw/` before every upgrade, without exception.\n- Read the release notes before updating, not after the breakage.\n- Run `openclaw doctor --fix` and `openclaw config validate` immediately after every update.\n- Check `tools.profile` and send the bot one real task before you walk away.\n- On Docker, pin exact version tags and upgrade deliberately instead of riding `latest`.\n\nBudget roughly 20 minutes per upgrade done properly, times 2-4 upgrades per month. That number is the honest cost of self-hosting OpenClaw at production quality.",
+        "OpenClaw's release cadence is not going to slow down for you, so the practical defense is a repeatable upgrade routine. The full version is in our [self-hosting OpenClaw guide](/blog/how-to-self-host-openclaw), but the short list:\n\n- Back up `~/.openclaw/` before every upgrade, without exception.\n- Read the release notes before updating, not after the breakage.\n- Run `openclaw doctor --fix` and `openclaw config validate` immediately after every update.\n- Check `tools.profile` and send the bot one real task before you walk away.\n- On Docker, pin exact version tags and upgrade deliberately instead of riding `latest`.\n\nBudget roughly 20 minutes per upgrade done properly, times 2-4 upgrades per month. That's what self-hosting OpenClaw at production quality costs.",
       ],
     },
     {

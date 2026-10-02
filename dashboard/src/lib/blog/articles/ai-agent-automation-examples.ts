@@ -5,14 +5,14 @@ export const article: BlogArticle = {
   title: "7 things your AI agent can run for you overnight",
   metaTitle: "7 AI agent automation examples to run overnight",
   metaDescription:
-    "Seven AI agent automation examples, from competitor price monitoring to email triage and incident alerts, with the setup each one needs.",
+    "Seven jobs an AI agent can automate overnight, from competitor price monitoring to email triage and incident alerts, and the setup each one needs.",
   publishedDate: "2026-03-24",
   lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
-  tagline: "Specific examples, not vague use cases.",
+  tagline: "Seven jobs, from price checks to incident alerts.",
   intro:
-    "The best way to assess whether a persistent AI agent is useful for your work is specific examples. Here are seven tasks that run well as scheduled agent automation, with what setup each one actually needs.",
+    "Specific examples are the best way to tell whether a persistent AI agent is useful for your work. Here are seven tasks that run well on a schedule. Each one comes with the setup it needs.",
   shortAnswer:
     "A persistent AI agent can run seven kinds of work overnight: competitor price monitoring, a morning research brief, email triage, a weekly codebase review, lead enrichment, content repurposing and incident monitoring. Most need clear criteria or a connected account set up first, and most end with a summary, report or drafts for you to review.",
   sections: [
@@ -28,30 +28,30 @@ export const article: BlogArticle = {
       heading: "2. Morning research brief",
       paragraphs: [
         "Schedule an agent to run at 6am every weekday. It browses the sources you define (specific publications, subreddits, HackerNews, newsletters via RSS), extracts items relevant to your work based on criteria you set, and sends you a formatted summary before you sit down. This replaces 30-45 minutes of manual tab-opening with a curated digest.",
-        "The key to making this useful is being specific about what counts as relevant. \"AI news\" is too broad. \"New open-source agent frameworks or major model releases\" is a reasonable scope. The more precise your criteria, the better the signal-to-noise.",
+        "Be specific about what counts as relevant. \"AI news\" is too broad. \"New open-source agent frameworks or major model releases\" is a reasonable scope. The more precise your criteria, the better the signal-to-noise.",
       ],
     },
     {
       heading: "3. Email triage",
       paragraphs: [
         "Connect the agent to your email account via the Gmail API or IMAP. Set it to check every few hours, classify incoming email by urgency and category (customer inquiry, invoice, newsletter, support request, sales outreach), draft responses for the high-frequency low-complexity items, and flag ones that need your direct attention.",
-        "The draft responses are the highest-leverage part. The agent puts them in a staging folder. You review and send. A 30-second review of a well-drafted response beats writing it from scratch every time.",
-        "This requires giving the agent access to your email. Start with read-only access and draft generation. Move to send access only after you're confident in the output quality. Giving shell-adjacent tool access to anything connected to email deserves a moment of consideration.",
+        "The draft responses are the part that pays off most. The agent puts them in a staging folder. You review and send. A 30-second review of a well-drafted response beats writing it from scratch every time.",
+        "This requires giving the agent access to your email. Start with read-only access and draft generation. Move to send access only after you're confident in the output quality. Think twice before giving shell-adjacent tool access to anything connected to email.",
       ],
     },
     {
       heading: "4. Weekly codebase review",
       paragraphs: [
         "For teams: schedule the agent to pull the diff from the past week's merged PRs, look for patterns that match your known technical debt categories (raw SQL queries, missing error handling, test coverage gaps, deprecated dependencies), and generate a brief report with links to specific files and line numbers.",
-        "The agent does not replace code review. It prepares for it. Having a weekly summary of 'here are the three files that got the most churn this week, and here are the two that still have raw SQL' gives reviewers a useful starting point.",
-        "This works best if you spend an hour initially defining the categories you care about and showing the agent examples of both problems and acceptable patterns. The upfront investment makes the ongoing output useful rather than noise.",
+        "Code review stays with people. The agent just prepares for it: a weekly summary of 'here are the three files that got the most churn this week, and here are the two that still have raw SQL' gives reviewers a useful starting point.",
+        "This works best if you spend an hour initially defining the categories you care about and showing the agent examples of both problems and acceptable patterns. That upfront investment is what makes the ongoing output useful.",
       ],
     },
     {
       heading: "5. Lead enrichment",
       paragraphs: [
         "When a new lead comes in (via form submission, LinkedIn connection, cold email, whatever your source is), the agent looks up publicly available information about the person and company, pulls data from LinkedIn and the company website, and populates a structured record in your CRM or a Notion database.",
-        "The value is not replacing research. It is doing it automatically before the lead goes cold. A sales rep who opens a lead record and already has company size, recent news, and mutual connections has a better first call.",
+        "The value is doing the research automatically, before the lead goes cold. A sales rep who opens a lead record and already has company size, recent news, and mutual connections has a better first call.",
         "This is more setup-heavy than some examples here: you need to wire the lead source (Typeform, a webhook, a Google Sheet) to the agent's trigger mechanism. The time savings per lead compound quickly once it's running.",
       ],
     },
@@ -66,7 +66,7 @@ export const article: BlogArticle = {
       heading: "7. Incident monitoring",
       paragraphs: [
         "For developers: schedule the agent to check your error monitoring (Sentry, Datadog, Grafana) every hour, group recurring errors by type and frequency, and alert you on Telegram when error rates cross a threshold or a new error class appears for the first time.",
-        "This is not a replacement for proper alerting infrastructure. What it adds is a layer that generic monitoring tools miss: the agent can look at the error context, search the codebase for the relevant section, and include in the alert a brief description of what part of the system is involved. A human still responds, but with more context than a raw stack trace.",
+        "Keep your proper alerting infrastructure. The agent adds a layer that generic monitoring tools miss: it can look at the error context, search the codebase for the relevant section, and include in the alert a brief description of what part of the system is involved. A human still responds, but with more context than a raw stack trace.",
         "For higher-volume workloads: Hermes v0.5.0 supports batch processing: running the agent across hundreds or thousands of prompts in parallel, outputting structured ShareGPT-format trajectory data. The parallel subagent system (up to 3 concurrent subagents, each with isolated context and terminal) handles concurrent monitoring streams without blocking each other.",
       ],
     },

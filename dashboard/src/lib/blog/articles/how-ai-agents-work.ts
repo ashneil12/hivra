@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "How AI agents actually work: the reasoning loop, tool use, and planning",
   metaTitle: "How AI agents work: the reasoning loop and tool use",
   metaDescription:
-    "A plain explanation of how AI agents work: the reasoning loop, tool calling, memory retrieval and multi-step planning, and why agents fail.",
+    "How an AI agent goes from a task to a result: the reasoning loop, tool calling, memory retrieval, multi-step planning, and why agents fail.",
   publishedDate: "2026-04-03",
   lastModified: "2026-09-30",
   readingTimeMin: 11,
   author: "Hivra team",
-  tagline: "Not magic. A loop, some tools, and memory.",
+  tagline: "A loop, some tools and memory.",
   intro:
-    "An AI agent is not a smarter chatbot. The architecture is fundamentally different. Here is exactly what happens when an agent receives a task, from the first inference call to the completed result.",
+    "Give an AI agent a task and it starts a loop that runs until the work is done. First inference call to finished result, step by step.",
   shortAnswer:
-    "An AI agent is a language model wrapped in a loop. The model generates a step, either a thought or a tool call. The framework runs the tool and feeds the result back as an observation, and the model generates the next step. Planning keeps it on the original goal, and memory retrieval supplies relevant facts.",
+    "An AI agent is a language model wrapped in a loop. Each turn, the model produces a step: a thought or a tool call. The framework runs the tool and feeds the result back as an observation. Then the model produces the next step. Planning keeps it pointed at the original goal, and memory retrieval brings in relevant facts.",
   sections: [
     {
       heading: "The difference from a chatbot",

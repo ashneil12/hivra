@@ -83,7 +83,7 @@ describe("KeepMacAwakeTool inputs", () => {
     expect(screen.getByTestId("kma-verdict")).toHaveAttribute("data-level", "wont");
     fireEvent.click(screen.getByLabelText("Plugged in"));
     expect(screen.getByTestId("kma-verdict")).toHaveAttribute("data-level", "caveat");
-    expect(screen.getByTestId("kma-verdict")).toHaveTextContent("caffeinate alone will not cover a closed lid");
+    expect(screen.getByTestId("kma-verdict")).toHaveTextContent("caffeinate alone won't cover a closed lid");
   });
 
   it("shows the hours field only for a timed run, converts it to seconds and clamps it", () => {
@@ -164,9 +164,9 @@ describe("KeepMacAwakeTool copy buttons", () => {
     });
     const prompt = writeText.mock.calls.at(-1)![0] as string;
     expect(prompt).toContain('systemd-inhibit --what=sleep:handle-lid-switch --why="agent run" claude');
-    expect(prompt).toContain("do not change any other power or sleep setting");
+    expect(prompt).toContain("don't change any other power or sleep setting");
     expect(prompt).toContain("systemd-inhibit --list");
-    expect(prompt).toContain("Tell me plainly what this does not cover");
+    expect(prompt).toContain("Tell me what this doesn't cover");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy link to this setup" }));

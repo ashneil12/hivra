@@ -37,8 +37,8 @@ function hostedSize(planKey: HostedSize["planKey"], price: string, body: string)
 }
 
 export const HOSTED_SIZES: HostedSize[] = [
-  hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you. It stays on and is not paused for inactivity."),
-  hostedSize("fleet", LARGER_PLAN_PRICE, "The same, with twice the CPU and memory for bigger builds and heavier workloads."),
+  hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you. It stays on and isn't paused for inactivity."),
+  hostedSize("fleet", LARGER_PLAN_PRICE, "The same, with twice the CPU and memory, for bigger builds and heavier workloads."),
 ];
 
 /**
@@ -92,7 +92,7 @@ export const PRICING_ROWS: PricingRow[] = [
     price: "$0",
     priceAmount: "0",
     priceFor: "for the software, on your own server",
-    billing: "None, you pay your own server and your AI company",
+    billing: "None (you pay for your own server and your own AI usage)",
     refund: "Not applicable",
     monthly: false,
   },
@@ -122,7 +122,7 @@ export function buildPricingOffers(siteUrl: string): Array<Record<string, unknow
     priceCurrency: "USD",
     description: row.monthly
       ? `${row.price} a month ${row.priceFor}. ${row.refund}.`
-      : "Run Hivra on your own server from the open source code. You provide the server and pay for it and for your AI usage.",
+      : "Run Hivra on your own server from the open source code. You bring the server and pay for it, and you cover your own AI usage.",
     url: `${siteUrl}/pricing#pricing-table`,
     ...(row.monthly
       ? {
@@ -140,15 +140,15 @@ export function buildPricingOffers(siteUrl: string): Array<Record<string, unknow
 export const PRICING_FAQ: { q: string; a: string }[] = [
   {
     q: "How much does Hivra cost?",
-    a: `Self-hosting the platform is free. If you want Hivra to run the computer for you, paid plans are ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}.`,
+    a: `The software is free to self-host. If you'd rather have Hivra run the computer for you, paid plans are ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}.`,
   },
   {
     q: "Can I self-host Hivra for free?",
-    a: "Yes. Hivra is open source at github.com/ashneil12/hivra, and you can run it yourself. You supply the server and pay for it, and for your AI usage.",
+    a: "Yes. Hivra is open source at github.com/ashneil12/hivra, so you can run it yourself. You bring the server and pay for it, and you cover your AI usage too.",
   },
   {
-    q: "Is a hosted computer paused when I am not using it?",
-    a: "No. Paid plans stay on and are not paused for inactivity, and the computer keeps its files, sessions and login.",
+    q: "Is a hosted computer paused when I'm not using it?",
+    a: "No. A paid plan stays on and isn't paused for inactivity. The computer keeps its files, sessions and login.",
   },
   {
     q: "Can I use my own AI key or login?",

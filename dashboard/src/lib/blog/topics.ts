@@ -15,7 +15,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
   {
     slug: "keep-agents-running",
     title: "Keep an agent running",
-    blurb: "What happens to a coding agent when you close the laptop, which fixes work, and how to leave one running safely.",
+    blurb: "Closing the laptop on a coding agent: what happens to it, which fixes work, and how to leave one running safely.",
     articles: [
       "keep-claude-code-running-24-7",
       "claude-code-remote-control",
@@ -30,7 +30,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
   {
     slug: "hosting-and-costs",
     title: "Where to host agents, and what it costs",
-    blurb: "Your own server, a VPS or a managed computer: how to choose, what each needs, and what running an agent really costs.",
+    blurb: "Your own server, a VPS or a managed computer. How to pick between them, what each needs, and what an agent costs to run.",
     articles: [
       "ai-agent-hosting-guide",
       "managed-vs-self-hosted-ai-agents",
@@ -46,7 +46,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
   {
     slug: "hermes-agent",
     title: "Hermes Agent",
-    blurb: "What Hermes Agent is, how to run it yourself, and how to get the most from its memory, skills, schedules and chat apps.",
+    blurb: "What Hermes Agent is, how to run it yourself, and how to use its memory, skills, schedules and chat apps.",
     articles: [
       "what-is-hermes-agent",
       "how-to-self-host-hermes-agent",
@@ -63,7 +63,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
   {
     slug: "openclaw-and-agent-zero",
     title: "OpenClaw and Agent Zero",
-    blurb: "Running and fixing OpenClaw and Agent Zero, and how they compare with Hermes.",
+    blurb: "How to run OpenClaw and Agent Zero, what to do when one breaks, and how they compare with Hermes.",
     articles: [
       "how-to-self-host-openclaw",
       "openclaw-broken-after-update",
@@ -74,7 +74,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
   {
     slug: "how-agents-work",
     title: "How AI agents work",
-    blurb: "The basics: what an agent is, how it remembers, what it can automate, and where several agents fit.",
+    blurb: "Start here if agents are new to you. What an agent is, how it remembers, what it can automate, and where several agents fit.",
     articles: [
       "what-is-an-ai-agent",
       "how-ai-agents-work",

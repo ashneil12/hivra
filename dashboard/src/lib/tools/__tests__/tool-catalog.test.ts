@@ -205,7 +205,7 @@ describe("tools catalog", () => {
   it("does not imply the Hivra side of the cost calculator includes backups", () => {
     const intro = getToolEntry("ai-agent-hosting-cost-calculator")!.longIntro.join(" ");
     expect(intro).not.toMatch(/the server, backups, setup time/);
-    expect(intro).toMatch(/Hivra's price does not include backups/);
+    expect(intro).toMatch(/Hivra's price doesn't include backups/);
   });
 
   it("names the vendors each page discusses in its non-affiliation line", () => {

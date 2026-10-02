@@ -137,7 +137,7 @@ describe("comparison page claims", () => {
     // The index describes the page the same way: the main options, not every one.
     const index = render(<ComparePage />);
     expect(index.container.textContent).not.toMatch(/here is every option/i);
-    expect(index.container.textContent).toMatch(/here are the main options for hosting an AI agent/);
+    expect(index.container.textContent).toMatch(/the main options for hosting an AI agent/);
   });
 
   it("does not say Hivra cannot run OpenClaw, or that it imports OpenClaw itself", async () => {

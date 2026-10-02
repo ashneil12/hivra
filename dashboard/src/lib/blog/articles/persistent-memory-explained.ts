@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "How persistent memory works in AI agents",
   metaTitle: "How persistent memory works in AI agents",
   metaDescription:
-    "Persistent memory stores what an agent learns between sessions and loads it when the next one starts. What it stores, how it works and what it cannot do.",
+    "Persistent memory stores what an agent learns between sessions and loads it when the next one starts. What it holds, how it works and what it can't do.",
   publishedDate: "2026-03-19",
   lastModified: "2026-09-30",
   readingTimeMin: 8,
   author: "Hivra team",
-  tagline: "Not a longer context window. Something else.",
+  tagline: "A bigger context window won't make an agent remember last week.",
   intro:
-    "Persistent memory in AI agents is not the same as a long context window. Here is what it actually stores, how it is structured, and why it matters for any task that spans more than one session.",
+    "Start a new chat and the model has forgotten the last one. Persistent memory is what carries over. It matters for any task that spans more than one session.",
   shortAnswer:
-    "Persistent memory stores information between sessions and loads the relevant pieces when a new session starts. At its simplest it is a database of text snippets with metadata and a retrieval function, sometimes tiered into hot, warm and cold memory. A context window lasts one session, so memory lives in a separate store, ideally on a server.",
+    "Persistent memory keeps information between sessions and loads the relevant pieces when a new one starts. At its simplest, it's a database of text snippets with metadata and a retrieval function, sometimes tiered into hot, warm and cold memory. A context window lasts one session, so the memory lives in a separate store, ideally on a server.",
   sections: [
     {
       heading: "What context windows do and do not do",

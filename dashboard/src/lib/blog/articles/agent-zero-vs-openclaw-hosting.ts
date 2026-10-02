@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "Agent Zero vs OpenClaw hosting: requirements, costs, and which to run",
   metaTitle: "Agent Zero vs OpenClaw hosting: specs and costs",
   metaDescription:
-    "Agent Zero recommends 2 vCPU and 4 GB of RAM; OpenClaw's daemon needs less. Hosting requirements, security risks and monthly costs compared.",
+    "Agent Zero recommends 2 vCPU and 4 GB of RAM, and OpenClaw's daemon needs less. What each costs to host, and the security risks of exposing them.",
   publishedDate: "2026-07-16",
   lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
-  tagline: "One agent lives in a dashboard. The other lives in your messages. Both need a box.",
+  tagline: "One agent lives in a dashboard. The other lives in your messages. Both need a server.",
   intro:
-    "Agent Zero and OpenClaw are two of the most popular open-source agents you can self-host, and they are built for different jobs. This comparison focuses on the part most write-ups skip: what each one actually demands from a server, what hosting costs, and what can go wrong when you expose them to the internet.",
+    "Agent Zero and OpenClaw are two of the most popular open-source agents you can self-host. They're built for different jobs. They ask different things of a server and cost different amounts to host, and either one needs protecting once it's exposed to the internet.",
   shortAnswer:
-    "Agent Zero is heavier: its project recommends 2 vCPU and 4 GB of RAM. OpenClaw's daemon starts at 1 vCPU and 2 GB on Hivra and grows only if you switch on its browser. DIY hosting costs about $5 to $24 a month, plus model usage. Pick OpenClaw for messaging and routines, Agent Zero for goals you hand over.",
+    "Agent Zero is heavier: its project recommends 2 vCPU and 4 GB of RAM. OpenClaw's daemon starts at 1 vCPU and 2 GB on Hivra, and only grows if you switch on its browser. DIY hosting costs about $5 to $24 a month, plus model usage. Pick OpenClaw for messaging and routines, Agent Zero for goals you hand over.",
   sections: [
     {
       heading: "Two different agents, one hosting problem",

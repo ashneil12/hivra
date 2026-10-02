@@ -5,16 +5,16 @@ export const article: BlogArticle = {
   title: "Hermes Agent memory explained: SOUL.md, MEMORY.md, sessions, and Honcho",
   metaTitle: "Hermes Agent memory explained: SOUL.md, MEMORY.md, Honcho",
   metaDescription:
-    "How Hermes Agent memory works: SOUL.md for personality, MEMORY.md for facts, searchable session history, and optional Honcho recall, plus what persists.",
+    "Hermes Agent keeps memory in SOUL.md (personality), MEMORY.md (facts), searchable session history and optional Honcho recall. What persists, what doesn't.",
   publishedDate: "2026-04-14",
   lastModified: "2026-09-30",
   readingTimeMin: 12,
   author: "Hivra team",
-  tagline: "Four separate memory layers running at once. Here is what each one actually does.",
+  tagline: "Four memory layers that work together.",
   intro:
-    "Most AI tools forget everything the moment you close the window. Hermes keeps memory in four overlapping places, and each one does something the others don't. This covers how they work, what actually persists across sessions, and where memory still falls short.",
+    "Most AI tools forget everything the moment you close the window. Hermes holds memory in four overlapping places, each with its own job. What sticks across sessions depends on which layer caught it. Some things still fall through.",
   shortAnswer:
-    "Hermes Agent uses four memory layers. SOUL.md sets personality and tone. MEMORY.md holds facts the agent decides are worth writing down. Session history saves every conversation and searches it by keyword. Honcho is an optional service that adds recall by meaning. Hermes does not remember everything automatically.",
+    "Hermes Agent uses four memory layers. SOUL.md sets personality and tone, and MEMORY.md holds the facts the agent decides are worth writing down. Session history saves every conversation and searches it by keyword. Honcho, an optional service, adds recall by meaning. Hermes doesn't remember everything automatically.",
   sections: [
     {
       heading: "The four memory layers",
