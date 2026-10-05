@@ -29,7 +29,7 @@ export const article: BlogArticle = {
         "Anthropic token prices, read on 30 September 2026 from [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (check it, as these move frequently): Claude Haiku 4.5 ($1 input / $5 output per MTok); Claude Sonnet 5.5 ($2 / $10 per MTok, with the 1M-token context window at standard pricing); Claude Opus 5.5 ($4 / $20 per MTok, also with the 1M-token window at standard pricing). OpenAI, as of April 2026: GPT-5 mini ($0.25 / $2 per MTok, the cheapest capable option at the time). The Anthropic Batch API cuts Anthropic rates by 50% for async workloads, so Haiku 4.5 drops to $0.50/$2.50 per MTok. The monthly ranges below were worked out at April 2026 prices and have not been recalculated.",
         "What does this cost in practice? For a lean setup (10-15 scheduled tasks per day, browsing a few URLs each, text-only outputs on Haiku 4.5), you are typically spending $3-8/month. Mixed Haiku/Sonnet workloads with research and code generation run $20-50/month. Heavy Sonnet usage with long context tasks can push $60-120/month.",
         "Browser automation is where tokens compound. Vision inputs (screenshots, page captures) are large. A task taking 10 screenshots at ~1,000 tokens each, running daily, costs roughly 300,000 tokens per month just for screenshot processing. Use Haiku for the vision steps and Sonnet only for the reasoning steps if you are doing frequent browser-heavy work. [Which browser automation tool you pick](/blog/ai-agent-browser-automation-tools) changes that number too, because they differ in how much of the page they send to the model.",
-        "Model choice is the biggest lever on this line, but it is not the only one. Prompt caching, batching, and trimming what you send each turn routinely cut a bill by more than switching models does. [AI agent API costs and how developers cut them](/blog/ai-agent-api-cost-optimization) goes through those with real numbers.",
+        "Model choice is the biggest lever on this line, but it is not the only one. Prompt caching, batching, and trimming what you send each turn routinely cut a bill by more than switching models does. [What an AI agent costs per month in API tokens](/blog/ai-agent-api-cost-optimization) has a dated monthly table with the arithmetic shown, plus those cuts.",
       ],
     },
     {
@@ -79,7 +79,7 @@ export const article: BlogArticle = {
     { slug: "byo-api-key-explained", title: "BYO API key: what it means" },
     {
       slug: "ai-agent-api-cost-optimization",
-      title: "AI agent API costs in 2026: real numbers and how developers cut them",
+      title: "What an AI agent costs per month in API tokens (2026)",
     },
     {
       slug: "multi-agent-systems-explained",

@@ -27,7 +27,7 @@ export const article: BlogArticle = {
     {
       heading: "Browser Use: the autonomous agent approach",
       paragraphs: [
-        "Browser Use is an open-source Python library (MIT license, 50,000+ GitHub stars) that wraps a full autonomous agent loop around browser control. The LLM observes the current page via screenshots and DOM extraction, decides on the next action, executes it, and repeats. No step-by-step scripts required. You specify the goal in natural language and the agent navigates to it.",
+        "Browser Use is an open-source Python library (MIT license, 50,000+ GitHub stars) that wraps a full autonomous agent loop around browser control. The LLM observes the current page via screenshots and DOM extraction, decides on the next action, executes it, and repeats. No step-by-step scripts required. You specify the goal in natural language and the agent works toward it.",
         "Benchmark performance: 89.1% success rate on WebVoyager, the standard web navigation evaluation suite. Production task completion rate: 72-78% depending on model. Performance by task type: simple action: 2-5 seconds; form fill: 10-30 seconds; data extraction: 5-15 seconds. Cost: $0.02-$0.30 per task (5-20 LLM steps each consuming vision tokens). Script breakage rate: under 5%, because the AI adapts to UI changes without selector updates.",
         "Where it fails: it is the slowest option by a wide margin, costs the most per task, and is the hardest to debug: reading traces rather than looking at a broken line in a script. For tasks with inconsistent target sites or open-ended goals, it is the right call. For tasks that run at volume against stable sites, the cost and latency compound significantly. Hermes Agent uses Browser Use as its default autonomous browsing backend for complex research tasks where the exact navigation path is unknown.",
       ],
@@ -89,7 +89,7 @@ export const article: BlogArticle = {
   ],
   relatedArticles: [
     { slug: "how-ai-agents-work", title: "How AI agents actually work: the reasoning loop and tool use" },
-    { slug: "ai-agent-api-cost-optimization", title: "AI agent API costs in 2026: real numbers" },
+    { slug: "ai-agent-api-cost-optimization", title: "What an AI agent costs per month in API tokens (2026)" },
     { slug: "ai-agent-automation-examples", title: "7 things your agent can automate overnight" },
   ],
   relatedFeatures: [

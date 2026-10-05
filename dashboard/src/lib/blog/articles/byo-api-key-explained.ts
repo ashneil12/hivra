@@ -30,7 +30,7 @@ export const article: BlogArticle = {
         "Anthropic API pricing, read on 30 September 2026: Claude Haiku 4.5 costs $1 per million input tokens and $5 per million output tokens. The Batch API cuts this 50%, to $0.50/$2.50 per MTok, for workloads that can tolerate a few hours of async processing. For a moderately active agent running 10-30 scheduled tasks per day, total API spend typically lands at $3-12/month on Haiku.",
         "Claude Sonnet 5.5 ($2/$10 per MTok) covers most research and analysis tasks: it is the default choice for anything requiring sustained reasoning. With the 1 million token context window at standard pricing (no surcharge), long-context agent tasks cost the same per token as short ones. Agents doing heavy research or code generation at volume typically run $20-60/month at Sonnet-level, a range worked out at April 2026 prices and not recalculated. Opus 5.5 ($4/$20 per MTok) is the heavier tier, worth it for complex multi-step synthesis, not for monitoring or summarization tasks. Prices are on [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing).",
         "If you are on OpenAI, GPT-5 mini at $0.25/$2 per MTok is a low-cost capable option. The combined cost of Hivra hosting plus your API usage is almost always lower than what AI SaaS products charge for equivalent functionality, because those products layer their own margin on top of provider pricing.",
-        "Because the key is yours, the bill responds to how you use it. Caching, batching, and cutting what you resend each turn all land directly on your invoice rather than someone else's margin: [AI agent API costs and how developers cut them](/blog/ai-agent-api-cost-optimization) covers the ones worth doing.",
+        "Because the key is yours, the bill responds to how you use it. Caching, batching, and cutting what you resend each turn all land directly on your invoice rather than someone else's margin: [What an AI agent costs per month in API tokens](/blog/ai-agent-api-cost-optimization) shows a dated monthly table and the cuts worth doing.",
       ],
     },
     {
@@ -78,7 +78,7 @@ export const article: BlogArticle = {
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent in 2026" },
     {
       slug: "ai-agent-api-cost-optimization",
-      title: "AI agent API costs in 2026: real numbers and how developers cut them",
+      title: "What an AI agent costs per month in API tokens (2026)",
     },
     { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },
   ],

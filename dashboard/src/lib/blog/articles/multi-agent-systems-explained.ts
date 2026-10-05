@@ -80,7 +80,7 @@ export const article: BlogArticle = {
   ],
   relatedArticles: [
     { slug: "how-ai-agents-work", title: "How AI agents actually work: the reasoning loop and tool use" },
-    { slug: "ai-agent-api-cost-optimization", title: "AI agent API costs in 2026: real numbers" },
+    { slug: "ai-agent-api-cost-optimization", title: "What an AI agent costs per month in API tokens (2026)" },
     { slug: "ai-agent-automation-examples", title: "7 things your agent can automate overnight" },
   ],
   relatedFeatures: [
