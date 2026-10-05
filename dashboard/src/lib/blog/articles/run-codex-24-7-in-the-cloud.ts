@@ -45,7 +45,7 @@ export const article: BlogArticle = {
       heading: "When is OpenAI's Codex cloud enough?",
       paragraphs: [
         "If the job is one self-contained change to a GitHub repo and your ChatGPT plan lists Codex cloud, use it. There's no server to look after. Hivra can't beat that for that job.",
-        "OpenAI's [pricing page](https://learn.chatgpt.com/docs/pricing) lists Codex cloud for Plus ($20 a month on 5 October 2026), Pro (from $100 a month), Business and Enterprise or Edu. An API key doesn't get it: the same page says API key access has no cloud-based features. Free and Go cards on that page only mention Codex in the desktop app. OpenAI's [GitLab docs](https://learn.chatgpt.com/docs/third-party/gitlab) say something different about one feature: the GitLab beta, which runs in Codex cloud, is available on all ChatGPT plans. Check that your own plan shows Codex cloud before you count on it.",
+        "OpenAI's [pricing page](https://learn.chatgpt.com/docs/pricing) lists Codex cloud for Plus ($20 a month on 5 October 2026), Pro (from $100 a month), Business and Enterprise or Edu. An API key doesn't get it: the same page says API key access has no cloud-based features. Free and Go cards on that page only mention Codex in the desktop app. OpenAI's [GitLab docs](https://learn.chatgpt.com/docs/third-party/gitlab) say something different about one feature: the GitLab beta, which runs in Codex cloud, is available on all ChatGPT plans. Check that your own plan shows Codex cloud before you count on it. For the dated Plus and Pro cards, see [Codex pricing by ChatGPT plan](/blog/codex-pricing-by-chatgpt-plan).",
         `Hardware isn't a reason to switch. OpenAI's docs give each cloud task a VM with 2 vCPUs, 8 GiB of memory and 8 GiB of disk on Plus, and 4 vCPUs, 16 GiB and 32 GiB on Pro, Business and Enterprise (the defaults, checked 5 October 2026). A Plus task VM has more memory than Hivra's ${ENTRY_PLAN_PRICE} a month plan, which is ${ENTRY_PLAN_SIZE}.`,
       ],
     },
@@ -118,6 +118,8 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "codex-pricing-by-chatgpt-plan", title: "Codex pricing by ChatGPT plan: Plus, Pro 100/200/500 and API keys" },
+
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },
     { slug: "keep-claude-code-running-24-7", title: "How to keep Claude Code running 24/7" },
     { slug: "ai-agent-vps", title: "AI agent VPS guide: specs, providers, and setup that actually works (2026)" },
