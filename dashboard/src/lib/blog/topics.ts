@@ -40,6 +40,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "do-you-need-a-gpu-to-run-an-ai-agent",
       "cost-of-running-ai-agent",
       "claude-max-vs-pro-for-claude-code",
+      "codex-pricing-by-chatgpt-plan",
       "ai-agent-api-cost-optimization",
       "byo-api-key-explained",
     ],
