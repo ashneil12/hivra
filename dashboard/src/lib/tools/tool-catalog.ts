@@ -564,7 +564,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       },
       {
         q: "How do I keep Claude Code running in tmux?",
-        a: "Start a session with tmux new -s claude, run claude inside it, and press Ctrl-b then d to detach. Claude Code keeps running in the session until the machine sleeps, restarts or you kill the session. Reattach with tmux attach -t claude.",
+        a: "Start a session with tmux new -s claude, run claude inside it, and press Ctrl-b then d to detach. Claude Code keeps running in the session until the machine sleeps, restarts or you kill the session. Reattach with tmux attach -t claude. If the CLI itself exited and you need the chat history, see the resume guide for Codex and Claude Code.",
       },
       {
         q: "Does tmux keep a process running when my laptop sleeps?",
@@ -578,6 +578,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
     relatedLinks: [
       { href: "/tools/keep-mac-awake", label: "Keep a Mac awake with caffeinate" },
       { href: "/tools/agent-survival-check", label: "Check if your setup survives a closed laptop" },
+      { href: "/blog/codex-resume-session", label: "Resume a Codex or Claude Code session" },
       { href: "/agents/claude-code", label: "Run Claude Code on Hivra" },
       { href: "/agents/codex", label: "Run Codex on Hivra" },
     ],

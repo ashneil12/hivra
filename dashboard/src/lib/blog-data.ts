@@ -40,6 +40,7 @@ import { article as claudeCodeRemoteControl } from "./blog/articles/claude-code-
 import { article as claudeMaxVsProForClaudeCode } from "./blog/articles/claude-max-vs-pro-for-claude-code";
 import { article as claudeCodeDangerouslySkipPermissions } from "./blog/articles/claude-code-dangerously-skip-permissions";
 import { article as codexPricingByChatgptPlan } from "./blog/articles/codex-pricing-by-chatgpt-plan";
+import { article as codexResumeSession } from "./blog/articles/codex-resume-session";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -84,6 +85,7 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "claude-max-vs-pro-for-claude-code": claudeMaxVsProForClaudeCode,
   "claude-code-dangerously-skip-permissions": claudeCodeDangerouslySkipPermissions,
   "codex-pricing-by-chatgpt-plan": codexPricingByChatgptPlan,
+  "codex-resume-session": codexResumeSession,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

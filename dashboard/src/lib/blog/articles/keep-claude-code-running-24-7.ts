@@ -52,7 +52,7 @@ export const article: BlogArticle = {
     {
       heading: "Fix 1: tmux (or screen) on a machine that stays awake",
       paragraphs: [
-        "Got an always-on machine (a desktop, a home server, a VPS)? Then tmux is the classic answer. It keeps your terminal session alive on that machine even after you disconnect. Anthropic's Remote Control docs recommend the same for a session on a remote machine: start it inside tmux or screen.\n\n```bash\n# Start a named session and launch Claude Code inside it\ntmux new -s claude\nclaude\n\n# Detach without killing anything: press Ctrl+b, then d\n\n# Later, from any connection:\ntmux attach -t claude\n\n# See what is running\ntmux ls\n```\n\nThe [tmux cheat sheet](/tools/tmux-cheat-sheet) has the keys and commands on one page.\n\nYour SSH connection can drop a hundred times and the session keeps working on the server. Reattach and you're back where the agent left off. The rule from the top still holds, though: tmux on your laptop doesn't survive sleep. It covers disconnects and closed terminal windows, and it can't do anything about a sleeping machine.",
+        "Got an always-on machine (a desktop, a home server, a VPS)? Then tmux is the classic answer. It keeps your terminal session alive on that machine even after you disconnect. Anthropic's Remote Control docs recommend the same for a session on a remote machine: start it inside tmux or screen.\n\n```bash\n# Start a named session and launch Claude Code inside it\ntmux new -s claude\nclaude\n\n# Detach without killing anything: press Ctrl+b, then d\n\n# Later, from any connection:\ntmux attach -t claude\n\n# See what is running\ntmux ls\n```\n\nThe [tmux cheat sheet](/tools/tmux-cheat-sheet) has the keys and commands on one page. If the CLI process itself exited and you need the chat history back, [resume a Codex or Claude Code session](/blog/codex-resume-session) covers the resume commands.\n\nYour SSH connection can drop a hundred times and the session keeps working on the server. Reattach and you're back where the agent left off. The rule from the top still holds, though: tmux on your laptop doesn't survive sleep. It covers disconnects and closed terminal windows, and it can't do anything about a sleeping machine.",
         "Prefer `screen`? Same idea, older tool:\n\n```bash\nscreen -S claude    # start\n# Detach: Ctrl+a, then d\nscreen -r claude    # reattach\n```\n\ntmux is the better default in 2026. Panes, better scripting, active development. But screen ships preinstalled on more distros, and for this one job either works. To check your own setup for the usual ways these runs die, try the [agent survival check](/tools/agent-survival-check).",
       ],
     },
@@ -142,6 +142,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "codex-resume-session", title: "How to resume a Codex session (and Claude Code too)" },
     { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on? Where to run it 24/7" },
     { slug: "control-claude-code-from-telegram", title: "Control Claude Code from Telegram" },
     { slug: "ai-agent-dies-terminal-closes-fixes", title: "Why your AI agent dies when the terminal closes, and the fixes" },
