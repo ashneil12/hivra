@@ -390,7 +390,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
         heading: "Dated snapshot, 5 October 2026",
         paragraphs: [
           "Fly Sprites (fly.io/sprites): Linux computers billed only while running. CPU $0.03825 per CPU-hour, memory $0.021875 per GB-hour, hot storage about $0.50 per GB-month. Their worked examples: a 4-hour Claude Code session about $0.23, a light web app about $1.05 a month. New orgs can get $30 trial credit (one grant per user, one receive per org). Disk and checkpoints persist across sleep. Pick them if your agent is bursty and you want an API to spawn many machines.",
-          "Railway free VM (railway.com/free-vm): `ssh railway.new` gives 2 vCPU and 2 GB with no account while unclaimed. Claude Code, Codex, OpenCode and others come preinstalled. Limits: about 60 minutes to build, then 24 hours to claim, up to 3 per IP per day, IPv4 only. Unclaimed boxes are deleted with their files. Pick them if you want a throwaway coding box today and you will claim it if the work matters.",
+          "Railway free VM (railway.com/free-vm): `ssh railway.new` gives 2 vCPU and 2 GB with no account while unclaimed. Claude Code, Codex, OpenCode and others come preinstalled. Limits: about 60 minutes to build, then 24 hours to claim, up to 3 per IP per day, IPv4 only. Unclaimed VMs are deleted with their files. Pick them if you want a throwaway coding VM today and you will claim it if the work matters.",
           "DigitalOcean Agent Droplets (docs read 1 October 2026, blog 1 October 2026): Pro $50 a month with 15% off eligible agent usage (covers $58.82 at list rates), Team $200 a month with 20% off (covers $250). The blog offers new customers a $5 promotional credit to start. MicroVMs pause when idle. Listed harnesses include Claude Code, Codex CLI, OpenCode, Hermes, CrewAI and LangGraph. Third-party model spend is not discounted. Pick them if you already live on DigitalOcean and want one bill for harness runtime, storage and their hosted models.",
           "Cloudways Managed AI Agents (cloudways.com/en/managed-ai-agents.php): listed Scout $9.99 for 1 vCPU and 2 GB RAM, Operator at the same dollar as Hivra's larger plan for 2 vCPU and 4 GB, Squad $39.99 for 4 vCPU and 8 GB, Swarm $79.99 for 8 vCPU and 16 GB. Same dollar as Hivra's entry price buys half the vCPU and RAM on Scout. Hivra is $9.99 for 2 vCPU and 4 GB, or $19.99 for 4 vCPU and 8 GB, so Cloudways Operator matches Hivra's entry size at a higher list price. Product cards list OpenClaw and Hermes as Generally Available; the FAQ still says only OpenClaw. BYOK for OpenAI, Anthropic and Google. The FAQ still mentions a Public Preview trial and a later intro discount with no end date on the page. Refund terms were not on the product page we read, so we do not invent them. Pick them if you already run apps on Cloudways and want OpenClaw or Hermes in the same dashboard.",
           "Orgo (orgo.ai/pricing): Hacker $29, Startup $99, Scale $399 a month. Hacker is 1 computer with an 8 GB RAM pool and 40 GB storage plus $5 monthly AI credit; Startup 4 computers / 32 GB / 160 GB / $10 credit; Scale 16 computers / 128 GB / 640 GB / $50 credit. Persistent cloud desktops with click and type controls, not a per-second meter. Stopped computers still count against the plan until deleted. Pick them if the agent needs a real desktop GUI, Windows on Scale, or an API that treats desktops as first-class objects.",
@@ -402,7 +402,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
         heading: "Where Hivra is the wrong choice",
         paragraphs: [
           "Building a product that opens sandboxes per user request? E2B or Fly Sprites fit that shape. Hivra is one computer per agent for you, not a metering API for your customers.",
-          "Need a free throwaway Linux box for an afternoon of coding? Railway's free VM wins on cash. Claim it if you care about the files.",
+          "Need a free throwaway Linux VM for an afternoon of coding? Railway's free VM wins on cash. Claim it if you care about the files.",
           "Need a watched desktop that clicks through a GUI, or Windows guests? Orgo is built for that. Hivra is terminal and files first, and it has no macOS computers.",
           "Already deep in DigitalOcean and want harness, storage and their hosted models on one discounted plan? Agent Droplets Pro or Team are aimed at you.",
           "Want the lowest cash bill and you are happy running Linux yourself? A raw VPS still undercuts every managed row on money alone. Use the hosting cost calculator with your own hours.",
@@ -418,7 +418,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       {
         heading: "How to choose in one pass",
         paragraphs: [
-          "Burst API sandboxes: E2B or Fly Sprites. Free afternoon box: Railway free VM. Desktop computer-use: Orgo. One DigitalOcean bill for managed agents: Agent Droplets. Same dashboard as your Cloudways apps: Cloudways. Flat monthly computer for your own Hermes, OpenClaw, Claude Code or Codex: Hivra. Root and lowest cash: a VPS you run yourself.",
+          "Burst API sandboxes: E2B or Fly Sprites. Free VM for an afternoon: Railway free VM. Desktop computer-use: Orgo. One DigitalOcean bill for managed agents: Agent Droplets. Same dashboard as your Cloudways apps: Cloudways. Flat monthly computer for your own Hermes, OpenClaw, Claude Code or Codex: Hivra. Root and lowest cash: a VPS you run yourself.",
         ],
       },
     ],
@@ -435,7 +435,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       { criterion: "Same $9.99 hardware?", hermesOs: "$9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM", other: "Cloudways Scout $9.99 is 1 vCPU and 2 GB; Cloudways Operator matches Hivra's 2 vCPU and 4 GB entry size at a higher list price", hermosWins: true },
     ],
     verdict:
-      "Match the shape first. E2B and Fly for fleets of short sandboxes, Orgo for desktop computer-use, Railway's free VM for a throwaway box, DigitalOcean Agent Droplets when you want one DO bill, Cloudways when you already host there, a raw VPS when cash and root win, Hivra when you want a flat monthly computer for your own agents. We built Hivra; read the dated cells before you believe any of us.",
+      "Match the shape first. E2B and Fly for fleets of short sandboxes, Orgo for desktop computer-use, Railway's free VM for a throwaway session, DigitalOcean Agent Droplets when you want one DO bill, Cloudways when you already host there, a raw VPS when cash and root win, Hivra when you want a flat monthly computer for your own agents. We built Hivra; read the dated cells before you believe any of us.",
     faqs: [
       {
         q: "What is the cheapest way to host a Hermes AI agent in 2026?",
