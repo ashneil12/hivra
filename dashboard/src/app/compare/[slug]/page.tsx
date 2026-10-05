@@ -370,7 +370,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
     h1: "The main ways to host a persistent AI agent.",
     metaDescription:
       "AI agent hosting 2026: Sprites, Railway free VM, Agent Droplets, Cloudways, Orgo, E2B, VPS, Hivra. Dated prices, criteria first.",
-    tagline: "The main options. Honest tradeoffs. No fluff.",
+    tagline: "The main options. Honest tradeoffs. Dated prices.",
     intro: [
       "We built Hivra, so we have an incentive to recommend it. This page still starts with selection criteria, then a dated cell-by-cell snapshot from each vendor's own pages (checked 5 October 2026), then the older categories that still matter: raw VPS, general PaaS, self-hosted OpenClaw, and pay-per-use sandboxes. When another option is the better fit, we say so.",
       "Persistent agents need more than a place to run a container. Useful criteria: does state survive a restart, who controls the OS and files, desktop or terminal, flat monthly price versus metered compute, and whether you bring your own agent (Claude Code, Codex, Hermes, OpenClaw) or only theirs.",
