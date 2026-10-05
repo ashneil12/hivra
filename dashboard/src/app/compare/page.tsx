@@ -81,8 +81,8 @@ const comparisons = [
   },
   {
     slug: "ai-agent-hosting-alternatives",
-    title: "Best AI Agent Hosting Platforms in 2026",
-    tagline: "The main ways to host a persistent AI agent.",
+    title: "AI Agent Hosting Alternatives Compared (2026)",
+    tagline: "Criteria first. Dated prices across the main hosts.",
     description:
       "A bare rented server, a fully managed platform, or something in between: the main options for hosting an AI agent that keeps running in 2026, and what each costs in money, setup work and upkeep.",
   },
