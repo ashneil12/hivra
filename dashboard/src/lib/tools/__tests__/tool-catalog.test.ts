@@ -31,16 +31,19 @@ const COMPONENTS_DIR = path.join(__dirname, "..", "..", "..", "components", "too
 
 // Destinations a tools page may link to. /pricing and the two /agents pages
 // are ported from the retired site alongside /tools; nothing else is linked
-// because several older blog posts still carry stale prices. The one blog post
-// allowed is the plan hub the plan calculator backs: it was written on
-// 2026-09-30 from the same facts module (lib/tools/claude-plan-facts.ts), so it
-// cannot carry a stale Anthropic figure.
+// because several older blog posts still carry stale prices. Allowed blog posts:
+// the plan hub the plan calculator backs (same facts module, 2026-09-30), and
+// the Codex/Claude resume guide linked from the tmux cheat sheet (2026-10-05).
 const PLAN_HUB_POST = "/blog/claude-max-vs-pro-for-claude-code";
+// Resume guide linked from the tmux cheat sheet. Written 2026-10-05 from OpenAI
+// and Anthropic docs plus Hivra chat spawn code; no stale price claims.
+const CODEX_RESUME_POST = "/blog/codex-resume-session";
 const ALLOWED_RELATED = new Set([
   "/pricing",
   "/agents/claude-code",
   "/agents/codex",
   PLAN_HUB_POST,
+  CODEX_RESUME_POST,
   ...TOOL_ENTRIES.map((entry) => toolPath(entry.slug)),
 ]);
 
