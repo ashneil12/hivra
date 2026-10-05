@@ -20,7 +20,7 @@ const related = (slugs: string[]): ComparisonData["relatedComparisons"] => {
     "vs-xcloud": "Hivra vs xCloud",
     "vs-nous-hermes-cloud": "Hivra vs Nous Hermes Cloud",
     "vs-self-hosted": "Hivra vs Self-Hosted VPS",
-    "ai-agent-hosting-alternatives": "Best AI Agent Hosting Platforms in 2026",
+    "ai-agent-hosting-alternatives": "AI Agent Hosting Alternatives Compared (2026)",
   };
   return slugs.map((slug) => ({ slug, title: titles[slug] }));
 };
