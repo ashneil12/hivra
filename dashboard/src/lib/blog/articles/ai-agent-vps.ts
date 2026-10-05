@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Most AI agents run comfortably on 2 vCPU and 4GB of RAM. Specs by agent type, prices at Hetzner, DigitalOcean, Vultr and Linode, and how to lock it down.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Most agents need a smaller server and a bigger firewall than the listicles tell you.",
@@ -52,7 +52,7 @@ export const article: BlogArticle = {
     {
       heading: "Per-agent notes: Claude Code, Codex, Hermes, OpenClaw",
       paragraphs: [
-        "**Claude Code** installs with Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh | bash`), or with `npm install -g @anthropic-ai/claude-code` on Node.js 22 or later. It is interactive, so on a raw VPS you run it inside tmux and reattach over SSH. The headless mode (`claude -p \"...\"`) suits cron-driven jobs. Anthropic's system requirements list 4GB of RAM; add headroom if the agent will drive a browser. Details on the [Claude Code agent page](/agents/claude-code).\n\n**Codex** follows a similar shape: Node.js, `npm install -g @openai/codex`, sign in with your ChatGPT login (`codex login --device-auth` on a headless box), run in tmux. See the [Codex agent page](/agents/codex).",
+        "**Claude Code** installs with Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh | bash`), or with `npm install -g @anthropic-ai/claude-code` on Node.js 22 or later. It is interactive, so on a raw VPS you run it inside tmux and reattach over SSH. The headless mode (`claude -p \"...\"`) suits cron-driven jobs. Anthropic's system requirements list 4GB of RAM; add headroom if the agent will drive a browser. Details on the [Claude Code agent page](/agents/claude-code).\n\n**Codex** follows a similar shape: Node.js, `npm install -g @openai/codex`, sign in with your ChatGPT login (`codex login --device-auth` on a headless box), run in tmux. Before you rent a server for it, check whether OpenAI's own cloud already does the job. If your ChatGPT plan lists Codex cloud and the work is one self-contained change to a GitHub repo, try OpenAI's cloud first: OpenAI's pricing page says local messages and cloud chats share one allowance (checked 5 October 2026). [When Codex cloud is enough](/blog/run-codex-24-7-in-the-cloud) has the rest. See the [Codex agent page](/agents/codex).",
         "**Hermes** is a full agent platform rather than a coding CLI: gateway, memory system, Telegram and Discord connections, scheduled tasks. It wants the 2 vCPU / 4GB spec as a working minimum and 40GB of disk for state growth. The [self-hosting guide](/blog/how-to-self-host-hermes-agent) covers the install end to end, and the [VPS comparison for Hermes](/blog/best-vps-for-hermes-agent) goes deep on provider specifics.\n\n**OpenClaw** runs as a long-lived gateway process, and its default posture assumes a trusted network. That makes the no-public-ports rule non-negotiable: loopback binding plus Tailscale, exactly as above. The [OpenClaw self-hosting walkthrough](/blog/how-to-self-host-openclaw) covers it step by step. Browser automation is core to OpenClaw workflows, so budget 8GB RAM, not 4GB.",
         "All four, plus [Aeon](/agents/aeon) and [Agent Zero](/agents/agent-zero), are also launchable as managed agents on Hivra.",
       ],

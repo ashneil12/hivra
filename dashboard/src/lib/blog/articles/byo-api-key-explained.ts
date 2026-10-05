@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "With a BYO API key you use your own Anthropic, OpenAI or OpenRouter account, so the provider bills you directly and your tokens carry no markup.",
   publishedDate: "2026-03-21",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 6,
   author: "Hivra team",
   tagline: "Bring your own key and the provider bills you directly: no markup, and no Hivra proxy in between.",
@@ -44,7 +44,7 @@ export const article: BlogArticle = {
     {
       heading: "BYO login for Claude Code and Codex",
       paragraphs: [
-        "BYO is not only about API keys. For coding agents, Hivra runs the official CLIs, and you sign in with the account you already have. [Claude Code](/agents/claude-code) uses your Anthropic or Claude subscription login. [Codex](/agents/codex) uses your ChatGPT login. You sign in on the agent's computer after launch, the same flow as on your laptop. The login is stored on the agent's VM. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
+        "BYO covers more than API keys. For coding agents, Hivra runs the official CLIs, and you sign in with the account you already have. [Claude Code](/agents/claude-code) uses your Anthropic or Claude subscription login. [Codex](/agents/codex) uses your ChatGPT login. You sign in on the agent's computer after launch, the same flow as on your laptop. The login is stored on the agent's VM. One catch if you plan around an API key: OpenAI says Codex cloud needs a ChatGPT sign-in and won't take an API key (OpenAI's authentication page, checked 5 October 2026). The CLI on a Hivra computer takes either a ChatGPT sign-in or an API key. The [Codex cloud guide](/blog/run-codex-24-7-in-the-cloud) has the full comparison. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
         `The billing consequence is the same as BYO keys: zero markup on AI usage. If you already pay for Claude or ChatGPT, running these agents in the cloud adds no new AI cost while they stay inside the subscription's limits. For that usage, hosting is the only thing you pay Hivra for. Plans on [the pricing page](/pricing) start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. To check whether your existing Claude subscription covers the usage you plan to run, use the [Claude Code plan calculator](/tools/claude-code-plan-calculator). [Claude Code pricing: Pro vs Max](/blog/claude-max-vs-pro-for-claude-code) covers which plan fits and when paying by API key is cheaper.`,
       ],
     },
