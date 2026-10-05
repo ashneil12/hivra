@@ -96,7 +96,7 @@ export const article: BlogArticle = {
   relatedArticles: [
     { slug: "ai-agent-hosting-guide", title: "AI agent hosting: the complete guide" },
     { slug: "keep-claude-code-running-24-7", title: "How to keep Claude Code running 24/7" },
-    { slug: "run-codex-24-7-in-the-cloud", title: "How to run Codex 24/7 in the cloud" },
+    { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on? Where to run it 24/7" },
     { slug: "hermes-agent-cron-scheduled-tasks", title: "Hermes Agent scheduled tasks" },
   ],
 };

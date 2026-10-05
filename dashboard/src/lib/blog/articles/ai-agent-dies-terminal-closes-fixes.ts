@@ -97,7 +97,7 @@ export const article: BlogArticle = {
   relatedArticles: [
     { slug: "ai-agent-hosting-guide", title: "AI agent hosting in 2026: every real option compared (VPS, serverless, managed)" },
     { slug: "keep-claude-code-running-24-7", title: "How to keep Claude Code running 24/7 (even when your laptop closes)" },
-    { slug: "run-codex-24-7-in-the-cloud", title: "How to run Codex 24/7 in the cloud" },
+    { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on? Where to run it 24/7" },
     { slug: "cost-of-running-ai-agent", title: "How much does it cost to run an AI agent?" },
     { slug: "best-vps-for-hermes-agent", title: "Best VPS for Hermes Agent in 2026" },
   ],

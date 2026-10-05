@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "What it costs to keep an AI agent running around the clock: server, API tokens and your time, with real monthly figures for self-hosted and managed setups.",
   publishedDate: "2026-04-01",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "What the monthly bill adds up to.",
@@ -36,7 +36,7 @@ export const article: BlogArticle = {
       heading: "Coding agents cost differently: subscription login vs API",
       paragraphs: [
         "Claude Code and Codex are a special case. Both run on Hivra using their official CLIs, and both sign in with the subscription you already pay for. [Claude Code](/agents/claude-code) uses your Anthropic account login. [Codex](/agents/codex) uses your ChatGPT login. No API key, no per-token bill, and no Hivra markup on AI usage. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
-        `That changes the math. If you already pay for a Claude or ChatGPT subscription and sign the agents in with it, the marginal AI cost of running these agents in the cloud is $0 while they stay inside the subscription's limits. Your only new cost is hosting, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. To check whether your Claude plan covers the usage you have in mind, run the numbers in the [Claude Code plan calculator](/tools/claude-code-plan-calculator). For which Claude plan that usage needs, and when API billing is the cheaper way to pay, see [Claude Code pricing: Pro vs Max](/blog/claude-max-vs-pro-for-claude-code).`,
+        `That changes the math. If you already pay for a Claude or ChatGPT subscription and sign the agents in with it, the marginal AI cost of running these agents in the cloud is $0 while they stay inside the subscription's limits. Your only new cost is hosting, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. To check whether your Claude plan covers the usage you have in mind, run the numbers in the [Claude Code plan calculator](/tools/claude-code-plan-calculator). For which Claude plan that usage needs, and when API billing is the cheaper way to pay, see [Claude Code pricing: Pro vs Max](/blog/claude-max-vs-pro-for-claude-code). If your ChatGPT plan lists Codex cloud, OpenAI's pricing page says cloud chats and local messages share one allowance (checked 5 October 2026). A computer that stays on adds a hosting bill and no second Codex allowance. The dated side by side is in the [Codex cloud guide](/blog/run-codex-24-7-in-the-cloud).`,
       ],
     },
     {

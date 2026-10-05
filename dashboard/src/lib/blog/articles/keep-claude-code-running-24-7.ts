@@ -13,7 +13,7 @@ export const article: BlogArticle = {
   metaDescription:
     "No, not on the laptop: closing the lid sleeps it and pauses Claude Code. Here's what keeps running: Anthropic's cloud, or tmux on a machine that stays on.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Short answer: not on the laptop. Here's what does keep running.",
@@ -72,7 +72,7 @@ export const article: BlogArticle = {
     {
       heading: "Fix 4: Anthropic's own cloud (Claude Code on the web)",
       paragraphs: [
-        "If you only use Claude Code and your work lives in GitHub repositories, this may be all you need. A cloud session runs on machines Anthropic manages, and Anthropic's documentation says it keeps running after you close your laptop ([Claude Code docs](https://code.claude.com/docs/en/claude-code-on-the-web)). You start one from claude.ai/code, from the Claude app, or from the terminal with `claude --cloud`.\n\nThe same documentation, as checked on 30 September 2026, sets a few conditions. Cloud sessions are available on Pro, Max and Team plans, and to Enterprise users with eligible seats. The session clones a GitHub repository. You can send a local repository up as a bundle, but results can only be pushed back to GitHub.\n\nIdle sessions expire. A session stops after a period of inactivity and the machine is reclaimed. You can reopen it with its history, but work that was still running in the background isn't restored. Your own files, tools, logins and other agents stay behind too, since it's Anthropic's environment.\n\nA computer of your own makes sense when you want those things to stay put between tasks, or to run other agents beside Claude Code.",
+        "If you only use Claude Code and your work lives in GitHub repositories, this may be all you need. A cloud session runs on machines Anthropic manages, and Anthropic's documentation says it keeps running after you close your laptop ([Claude Code docs](https://code.claude.com/docs/en/claude-code-on-the-web)). You start one from claude.ai/code, from the Claude app, or from the terminal with `claude --cloud`.\n\nThe same documentation, as checked on 30 September 2026, sets a few conditions. Cloud sessions are available on Pro, Max and Team plans, and to Enterprise users with eligible seats. The session clones a GitHub repository. You can send a local repository up as a bundle, but results can only be pushed back to GitHub.\n\nIdle sessions expire. A session stops after a period of inactivity and the machine is reclaimed. You can reopen it with its history, but work that was still running in the background isn't restored. Your own files, tools, logins and other agents stay behind too, since it's Anthropic's environment.\n\nA computer of your own makes sense when you want those things to stay put between tasks, or to run other agents beside Claude Code.\n\nIf you use Codex too, you've got the same choice with OpenAI's cloud. [Codex cloud or your own computer](/blog/run-codex-24-7-in-the-cloud) lines the routes up with dates, and says when OpenAI's cloud is enough.",
       ],
     },
     {
@@ -142,7 +142,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
-    { slug: "run-codex-24-7-in-the-cloud", title: "How to run Codex 24/7 in the cloud" },
+    { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on? Where to run it 24/7" },
     { slug: "control-claude-code-from-telegram", title: "Control Claude Code from Telegram" },
     { slug: "ai-agent-dies-terminal-closes-fixes", title: "Why your AI agent dies when the terminal closes, and the fixes" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for running 24/7" },

@@ -10,7 +10,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Where to host an AI agent: your own hardware, a $5-10/month VPS or managed hosting. Serverless is a poor fit. Costs, security basics and upkeep compared.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "An agent that lives on your laptop isn't really an agent.",
@@ -69,7 +69,7 @@ export const article: BlogArticle = {
     {
       heading: "Which option wins for which person",
       paragraphs: [
-        `- **You have a home server and enjoy tending it:** your own hardware. Cheapest marginal cost, and you already accepted the ops work.\n- **You want full root, total control, and do not mind the sysadmin job:** a $5-10 VPS with tmux, SSH hardening, and a systemd unit. Legitimate, proven, cheap.\n- **You need a narrow event-driven automation, not a persistent agent:** serverless, honestly. Right tool for that one job.\n- **You want the agent working tonight and never want to think about the server:** managed. Pick an agent, launch it, sign in with your own account, and the computer stays up. On Hivra that is ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE}/month for ${LARGER_PLAN_SIZE}.`,
+        `- **You have a home server and enjoy tending it:** your own hardware. Cheapest marginal cost, and you already accepted the ops work.\n- **You want full root, total control, and do not mind the sysadmin job:** a $5-10 VPS with tmux, SSH hardening, and a systemd unit. Legitimate, proven, cheap.\n- **You need a narrow event-driven automation, not a persistent agent:** serverless, honestly. Right tool for that one job.\n- **You only use Codex and your work lives in GitHub repos:** try OpenAI's own cloud first. If your ChatGPT plan lists Codex cloud, there's nothing to host. [Codex cloud or your own computer](/blog/run-codex-24-7-in-the-cloud) has the dated comparison.\n- **You want the agent working tonight and never want to think about the server:** managed. Pick an agent, launch it, sign in with your own account, and the computer stays up. On Hivra that is ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE}/month for ${LARGER_PLAN_SIZE}.`,
         "The wrong answer is the default one: leaving the agent on your laptop and hoping. An agent that [dies when the terminal closes](/blog/ai-agent-dies-terminal-closes-fixes) is a chat session with extra steps. Put it on [a machine that runs 24/7](/blog/run-ai-agents-24-7), whichever of the four ways you choose, and it starts earning the name.",
       ],
     },
