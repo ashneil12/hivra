@@ -25,6 +25,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "run-ai-agents-24-7",
       "control-claude-code-from-telegram",
       "is-it-safe-to-leave-an-ai-agent-running-unattended",
+      "claude-code-dangerously-skip-permissions",
     ],
   },
   {
