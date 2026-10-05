@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hetzner CX33 (4 vCPU, 8GB, €8.49/month ex VAT) is the recommended VPS for Hermes Agent. Specs and prices for Hetzner, OVH, DigitalOcean and Vultr.",
   publishedDate: "2026-04-16",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "The community has run Hermes on cheap VPS plans for months, and has opinions.",
@@ -77,7 +77,7 @@ export const article: BlogArticle = {
     {
       heading: "The same box runs Claude Code, Codex, and OpenClaw",
       paragraphs: [
-        "Everything above applies beyond Hermes. The specs that run a Hermes agent also run [Claude Code](/agents/claude-code), [Codex](/agents/codex), and OpenClaw: 2 vCPU and 4GB covers a single CLI agent, and 8GB gives headroom for browser automation. If you are setting one of these up yourself, the [Hermes self-host guide](/blog/how-to-self-host-hermes-agent) and the [OpenClaw self-host guide](/blog/how-to-self-host-openclaw) cover the setup differences.",
+        "Everything above applies beyond Hermes. The specs that run a Hermes agent also run [Claude Code](/agents/claude-code), [Codex](/agents/codex), and OpenClaw: 2 vCPU and 4GB covers a single CLI agent, and 8GB gives headroom for browser automation. If you are setting one of these up yourself, the [Hermes self-host guide](/blog/how-to-self-host-hermes-agent) now covers the Docker-in-container versus Docker-as-terminal-backend choice, and the [OpenClaw self-host guide](/blog/how-to-self-host-openclaw) covers that stack.",
         `If you would rather skip the server entirely, Hivra runs all of these agents on managed VMs, with plans from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. Compare your VPS math against managed with the [hosting cost calculator](/tools/ai-agent-hosting-cost-calculator), and check plan sizes on [the pricing page](/pricing).`,
       ],
     },

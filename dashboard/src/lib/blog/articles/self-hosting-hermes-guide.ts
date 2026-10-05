@@ -7,14 +7,13 @@ export const article: BlogArticle = {
   metaDescription:
     "How to self-host Hermes Agent: the setup steps, what breaks, what it costs in time and money, and when managed hosting makes more sense.",
   publishedDate: "2026-03-13",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-05",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "Yes, you can. Some parts fight back.",
   intro:
     "Self-hosting Hermes Agent is technically straightforward if you know Linux. Browser automation, memory volumes and updates regularly cause problems, though, and for some setups it doesn't make sense.",
-  shortAnswer:
-    "To self-host Hermes Agent, provision a Linux VPS with at least 2 vCPU and 4 GB RAM, install Docker, run the installer, finish the setup wizard, then start the stack with Docker Compose. Budget 4-8 hours the first time. The parts that break are browser automation, memory volumes and updates.",
+  shortAnswer: "After Hermes is up, the usual break points are browser libraries in containers, memory volumes recreated empty, and updates that move defaults. Budget 4-8 hours the first time if Compose is new. Use the install guide for commands and the Docker decision.",
   sections: [
     {
       heading: "What you need before you start",
@@ -27,7 +26,7 @@ export const article: BlogArticle = {
       heading: "The actual setup process",
       paragraphs: [
         "Provision the server with a fresh Ubuntu 24.04 image. Add a non-root user with sudo privileges: the Hermes security model assumes it runs under a restricted user account, not root. SSH in as that user and install Docker following the official Docker documentation for Ubuntu.",
-        "The installer does most of the work: run the one-liner from the documentation and it installs uv, Python 3.11, Node.js v22, ripgrep, ffmpeg, and the virtual environment without requiring sudo. Then run `hermes setup` for the interactive wizard: it walks through model provider, terminal backend (local, Docker, SSH, Singularity, or Modal), and gateway platform connections.",
+        "Commands and the Docker-in-container versus terminal-backend choice live in [How to self-host Hermes Agent](/blog/how-to-self-host-hermes-agent) (checked 5 October 2026). The installer does most of the work: run the one-liner from the documentation and it installs uv, Python 3.11, Node.js v22, ripgrep, ffmpeg, and the virtual environment without requiring sudo. Then run `hermes setup` for the interactive wizard: it walks through model provider, terminal backend (local, Docker, SSH, Singularity, or Modal), and gateway platform connections.",
         "Copy `.env.example` to `.env` and fill in the essentials: AI provider key, optional Firecrawl key for browser tasks, Telegram/Discord/Slack tokens for the gateway. The Telegram side has its own bot-token and pairing steps that are easy to get wrong the first time: [connecting Hermes Agent to Telegram](/blog/how-to-set-up-hermes-agent-telegram) covers them step by step. For the terminal backend, run `hermes config set terminal.backend docker` to isolate shell commands in Docker rather than on the host. Then `docker compose up -d`.",
         "If everything is configured correctly, Caddy will provision an SSL certificate and the web interface will be accessible at your domain within a minute or two. More often, something in the networking configuration needs adjusting: DNS not propagated yet, a firewall rule blocking port 443, or a conflict between Caddy and another process on port 80.",
       ],
