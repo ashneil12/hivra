@@ -7,7 +7,7 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // prose over stacked bullets, one Hivra line where the closed-laptop problem is real.
 // Also fixes the cost section, which printed raw ${...} placeholders on canary.
 //
-// Sources read 6 October 2026:
+// Sources read 6 October 2026 (kept here, not in reader copy, per Ash's 2026-10-06 voice rule):
 // - https://cursor.com/docs/cloud-agent (Cloud Agents for laptop-closed Cursor work)
 // - https://cursor.com/help/ai-features/cloud-agents
 // - https://code.claude.com/docs/en/overview (Claude Code surfaces: terminal, IDE, desktop, web)
@@ -16,7 +16,6 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // Rules for this page: sort by job, no unbacked "better" or "faster", soft handoff to an
 // always-on terminal agent. Interlink the Cloud Agents cost page.
 
-const READ_ON = "6 October 2026";
 const CURSOR_CLOUD = "https://cursor.com/docs/cloud-agent";
 const CLAUDE_OVERVIEW = "https://code.claude.com/docs/en/overview";
 
@@ -31,14 +30,14 @@ export const article: BlogArticle = {
   readingTimeMin: 7,
   author: "Hivra team",
   tagline: "They do different jobs. Pick by where the work needs to happen once you leave your desk.",
-  intro: `Most Cursor vs Claude Code posts crown a winner on vibes. We're not doing that. The useful question is simpler. Do you want to sit and watch the agent edit, or do you need it to keep working after you leave? We checked Cursor's and Anthropic's docs on ${READ_ON}. No speed race, and no "smarter model" verdict, because we haven't timed either one on your code.`,
+  intro: `Most Cursor vs Claude Code posts crown a winner on vibes. We're not doing that. The useful question is simpler. Do you want to sit and watch the agent edit, or do you need it to keep working after you leave? We went through Cursor's and Anthropic's docs. No speed race, and no "smarter model" verdict, because we haven't timed either one on your code.`,
   shortAnswer: `Cursor is a code editor with agents inside it. You watch them work. Claude Code is a terminal agent that can live on a computer that stays on. If the work has to keep going after you walk away, use Cursor Cloud Agents, or run Claude Code or Codex in tmux on a computer that stays on.`,
   sections: [
     {
       heading: "What's the actual difference?",
       paragraphs: [
         "Cursor is a code editor built around AI agents. You sit in the editor, and the agent edits files, runs commands and opens PRs right there in front of you. Need it to keep going without your laptop? Cursor sends that work to [Cloud Agents](/blog/cursor-cloud-agents) (they used to be called Background Agents), which run on Cursor's own servers.",
-        `Claude Code is Anthropic's coding agent. According to Anthropic's [overview](${CLAUDE_OVERVIEW}), read ${READ_ON}, it runs in the terminal, in IDE extensions, in a desktop app and in the browser. The terminal version is the one that suits a computer that stays on. Install it, sign in, start it inside tmux, walk off.`,
+        `Claude Code is Anthropic's coding agent. According to Anthropic's [overview](${CLAUDE_OVERVIEW}), it runs in the terminal, in IDE extensions, in a desktop app and in the browser. The terminal version is the one that suits a computer that stays on. Install it, sign in, start it inside tmux, walk off.`,
         "Same kind of work. Different homes. Cursor wants you in the editor, and Claude Code is perfectly happy in a terminal window.",
       ],
     },
@@ -65,7 +64,7 @@ export const article: BlogArticle = {
         "The first is an agent running on your laptop. Close the lid and it pauses, because the laptop is asleep. That goes for local Cursor agents and for Claude Code started on your laptop.",
         "Then there's the vendor's cloud. Cursor Cloud Agents run on Cursor's machines, and Claude Code on the web runs on Anthropic's. Your laptop can sleep all it likes. In return, you live with their environment, their limits and their billing.",
         "Last is a terminal agent on a computer that stays on: Claude Code or Codex inside tmux on a desktop at home, a VPS, or a managed computer. You reattach whenever you want. Your files and logins stay put on that machine.",
-        `Cursor's [Cloud Agents docs](${CURSOR_CLOUD}), read ${READ_ON}, cover the vendor-cloud route for Cursor users. Anthropic's cloud sessions do the same for Claude Code, as long as your work lives on GitHub. The third setup is the one we can vouch for: start the official CLI in tmux, keep the computer on, come back when you like.`,
+        `Cursor's [Cloud Agents docs](${CURSOR_CLOUD}) cover the vendor-cloud route for Cursor users. Anthropic's cloud sessions do the same for Claude Code, as long as your work lives on GitHub. The third setup is the one we can vouch for: start the official CLI in tmux, keep the computer on, come back when you like.`,
         "Quick note on Claude Code Remote Control. It's a window into a session that's still running on some machine, and that machine still has to stay awake. More in [Claude Code Remote Control](/blog/claude-code-remote-control).",
       ],
     },

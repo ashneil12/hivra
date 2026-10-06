@@ -32,7 +32,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs Agent 37: Price, Plans and Always-On Hosting",
     h1: "Agent 37 is cheaper on raw compute. What do you give up, and what do you get?",
     metaDescription:
-      "Hivra vs Agent 37 for hosting AI agents: a metered Cloud API from $4.76/mo, or Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices checked 2 October 2026.",
+      "Hivra vs Agent 37 for hosting AI agents: a metered Cloud API from $4.76/mo, or Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices as of October 2026.",
     tagline: "Metered API or flat monthly price. Both keep an agent running.",
     intro: [
       "Agent 37 is a Y Combinator-backed host, and it sells hosting two ways. One is a metered Cloud API that gives each of your customers an isolated persistent sandbox. The other is a set of flat monthly dashboard plans, each for one managed OpenClaw or Hermes agent. Hivra sells a single thing: a monthly plan that gives you a computer for an agent, at a flat price.",
@@ -120,7 +120,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs Hostinger for Hermes and OpenClaw Hosting",
     h1: "Hostinger is cheaper if you'll prepay for two years.",
     metaDescription:
-      "Hivra vs Hostinger for hosting Hermes and OpenClaw: $5.99 managed on a 24-month prepaid term, or Hivra's monthly $9.99. Checked 2 October 2026.",
+      "Hivra vs Hostinger for hosting Hermes and OpenClaw: $5.99 managed on a 24-month prepaid term, or Hivra's monthly $9.99. Prices as of October 2026.",
     tagline: "Prepaid low price or monthly flat price.",
     intro: [
       "Hostinger is a large general web host with two routes to an agent. There's a managed plan that runs Hermes Agent, OpenClaw, n8n or Paperclip with some AI credit included, and there are ordinary VPS plans with one-click Docker templates for OpenClaw and Hermes, which you administer yourself.",
@@ -207,7 +207,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs xCloud: AI Agent Hosting Compared",
     h1: "xCloud gives you more hardware for the price. Check the renewal.",
     metaDescription:
-      "Hivra vs xCloud for OpenClaw and Hermes: $9.99 promotional for 4 vCPU and 6 GB, or Hivra's $9.99 for 2 vCPU and 4 GB. Checked 2 October 2026.",
+      "Hivra vs xCloud for OpenClaw and Hermes: $9.99 promotional for 4 vCPU and 6 GB, or Hivra's $9.99 for 2 vCPU and 4 GB. Prices as of October 2026.",
     tagline: "More hardware on promotion, or a fixed monthly price.",
     intro: [
       "xCloud is a server control panel and managed hosting company, mostly for WordPress and other web stacks. It also sells dedicated Cloud VPS servers with OpenClaw, Hermes Agent or DeepSeek Harness pre-installed. Each agent gets its own server, which xCloud provisions, patches and monitors.",
@@ -291,7 +291,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
     title: "Hivra vs Nous Hermes Cloud: Cost and Differences",
     h1: "Nous Hermes Cloud is cheaper if you use it a few hours a week.",
     metaDescription:
-      "Hivra vs Nous Hermes Cloud: per-second billing at $0.56/day running against Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices checked 2 October 2026.",
+      "Hivra vs Nous Hermes Cloud: per-second billing at $0.56/day running against Hivra's flat $9.99 for 2 vCPU and 4 GB. Prices as of October 2026.",
     tagline: "The maker's own hosting, or a flat monthly price for more agents.",
     intro: [
       "Nous Hermes Cloud is run by Nous Research, the team that makes Hermes Agent. It hosts a dedicated instance of Hermes for you, billed per day from prepaid Nous credit, with model and tool usage charged on top. Hivra is a separate company and is not affiliated with Nous Research. It hosts Hermes too, from its own maintained image rather than Nous's release, alongside other agents.",

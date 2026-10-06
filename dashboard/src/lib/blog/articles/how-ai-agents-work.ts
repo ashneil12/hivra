@@ -12,72 +12,72 @@ export const article: BlogArticle = {
   author: "Hivra team",
   tagline: "A loop, some tools and memory.",
   intro:
-    "Give an AI agent a task and it starts a loop that runs until the work is done. First inference call to finished result, step by step.",
+    "Give an AI agent a task and it starts a loop. It keeps going until the work is done. Here's what happens at each step, from the first model call to the finished result.",
   shortAnswer:
     "An AI agent is a language model wrapped in a loop. Each turn, the model produces a step: a thought or a tool call. The framework runs the tool and feeds the result back as an observation. Then the model produces the next step. Planning keeps it pointed at the original goal, and memory retrieval brings in relevant facts.",
   sections: [
     {
-      heading: "The difference from a chatbot",
+      heading: "How is an agent different from a chatbot?",
       paragraphs: [
-        "A standard LLM used as a chatbot runs a single inference pass: it takes your message plus conversation history, generates a response, and stops. The model cannot call external services, take actions in the world, or run for more than the duration of that single generation.",
-        "An agent wraps that same LLM in a loop. Rather than generating a final answer directly, the LLM generates an intermediate step: either a thought about what to do next, or an action to take (calling a tool). The result of that action comes back as an observation. The LLM then generates the next step. This continues until the task is complete. IBM's technical documentation for AI agents frames it: 'AI agents use tool calling on the backend to obtain up-to-date information, optimize workflows and create subtasks autonomously.'",
-        "This loop (Thought → Action → Observation → repeat) is called the ReAct pattern (Reasoning + Acting), introduced in a 2022 paper from Princeton and Google Research and now widely used across agent frameworks such as LangGraph, CrewAI, AutoGen, and Hermes Agent. It is the architecture that turns a language model from an answer generator into a task executor.",
+        "A chatbot answers once and stops. It takes your message and the chat so far, writes a reply, and that's it. It can't call other services, can't do anything in the world, and can't keep working after that one reply.",
+        "An agent puts the same model in a loop. Instead of writing a final answer straight away, the model writes one step. Either a thought about what to do next, or an action, which means calling a tool. The tool's result comes back as an observation. The model writes the next step. Round and round until the task is done. IBM's agent docs put it this way: 'AI agents use tool calling on the backend to obtain up-to-date information, optimize workflows and create subtasks autonomously.'",
+        "That loop (think, act, observe, repeat) is called ReAct, short for Reasoning and Acting. It came from a 2022 paper by Princeton and Google Research, and LangGraph, CrewAI, AutoGen and Hermes Agent all use some version of it. It's the step that turns a model that answers questions into one that gets work done.",
       ],
     },
     {
-      heading: "What tool calling actually is",
+      heading: "What is tool calling, really?",
       paragraphs: [
-        "When the LLM generates an 'action' step, it generates a structured function call: a JSON payload specifying a tool name and arguments. The agent framework intercepts this output, runs the actual function, and feeds the result back to the LLM. The LLM does not directly execute code. It generates the call specification and the framework executes it.",
-        "Typical tools: web search (returns search results as text), browser control (navigates to URLs, clicks, fills forms), terminal execution (runs shell commands, returns stdout/stderr), file read/write, API calls to external services, memory retrieval (vector similarity search over stored facts), and code execution in a sandbox.",
-        "Claude Sonnet 4.6 and GPT-5.4 both support native tool calling: the models are specifically trained to generate valid function call outputs reliably. Older models like GPT-3.5 required extensive prompt engineering to produce consistent tool-call JSON. That underlying model improvement is a large part of why production agent reliability is substantially better in 2025-2026 than in 2023.",
+        "The model writes a request. The framework does the work. When the model decides to act, it outputs a small JSON payload naming a tool and its arguments. The agent framework catches that, runs the real function, and hands the result back. The model itself never runs any code.",
+        "Common tools: web search, a browser (open pages, click, fill forms), a terminal (run shell commands, read the output), reading and writing files, calls to outside APIs, memory lookup, and code running in a sandbox.",
+        "Claude Sonnet 4.6 and GPT-5.4 are both trained to produce valid tool calls reliably. GPT-3.5 needed heavy prompt work just to output consistent JSON. That one change in the models explains a lot of why agents were so much more dependable in 2025 and 2026 than in 2023.",
       ],
     },
     {
-      heading: "How planning works",
+      heading: "How does an agent plan a multi-step task?",
       paragraphs: [
-        "For simple tasks (look up a fact, summarize a page, run a script), a single agent loop handles it directly. The LLM plans within the context window, calls tools in sequence, and produces an output. No explicit planning step required.",
-        "For complex multi-step tasks, frameworks use explicit planning phases. The agent first generates a full plan (a list of subtasks) before executing any of them. This matters because once execution starts, the model's context fills with action/observation pairs. Having a written plan to reference prevents the model from losing the thread of the original goal as context fills.",
-        "Multi-agent architectures split the task across specialized agents. An orchestrator breaks a research task into subtasks and assigns them to a researcher agent, a coder agent, and a writer agent, each running their own action loops in parallel. The orchestrator collects and synthesizes the outputs. Hermes Agent supports this via subagent delegation: the primary agent can spawn up to 3 concurrent subagents and aggregate results. LangGraph, CrewAI, and AutoGen implement similar patterns with different tradeoffs in flexibility versus setup complexity.",
+        "Simple jobs need no plan. Look up a fact, summarise a page, run a script: the agent just calls tools in order and hands back the result.",
+        "Bigger jobs get a plan first. The agent writes out the list of subtasks before it starts any of them. Why bother? Because once work begins, the context fills up with actions and results, and a model with no written plan to look back at starts to forget what it was asked to do.",
+        "Some setups split the work across several agents. An orchestrator breaks a research job into pieces and hands them to, say, a researcher, a coder and a writer, each running its own loop at the same time. Then it pulls their work together. Hermes Agent does this with subagents: the main agent can run up to 3 at once and combine what they return. LangGraph, CrewAI and AutoGen do something similar, trading flexibility against how much setup they need.",
       ],
     },
     {
-      heading: "Memory: what the agent knows and when",
+      heading: "How does an agent remember things?",
       paragraphs: [
-        "Agent memory operates at multiple layers. In-context memory is whatever fits in the current context window: conversation history, task instruction, action/observation pairs from the current session. Limited and temporary. Claude Sonnet 4.6's 1M token context sounds vast, but a heavily tool-using agent can consume hundreds of thousands of tokens in a long session, and inference cost rises with context length.",
-        "External memory (vector stores, knowledge bases, conversation archives) is retrieved selectively. Before each inference step, the agent runs a similarity search over stored memory and retrieves the most relevant facts, skill documents, or past observations injected into the context window. This allows the agent to reference experiences from months ago without keeping them all in context simultaneously.",
-        "The 2026 standard for production agent memory is a dual-layer architecture: a Hot Path (recent messages plus summarized state) paired with a Cold Path (external retrieval from Zep, Mem0, Pinecone, or similar). Digital Applied's January 2026 technical guide notes that even 200K-400K token windows are impractical for full history due to cost and latency: external episodic memory remains mandatory for production agents regardless of context window size.",
+        "In two places. The first is the context window: the chat so far, the task, and every action and result from this session. It's small and it doesn't last. Claude Sonnet 4.6's 1M token window sounds endless, but an agent that uses lots of tools can burn hundreds of thousands of tokens in one long session, and every extra token costs money.",
+        "The second is outside storage: vector stores, knowledge bases, old conversations. Before each step the agent searches that store and pulls the most relevant facts, skill documents or past results into context. That's how it can use something it learned months ago without carrying it around the whole time.",
+        "Most production agents now combine the two. Recent messages and a summary of the current state sit on the hot path. Older knowledge sits on the cold path, fetched from Zep, Mem0, Pinecone or similar. Digital Applied's January 2026 guide makes the point that even 200K to 400K token windows are too slow and too costly to hold a full history, so outside memory stays necessary however big windows get.",
       ],
     },
     {
-      heading: "What makes agents fail",
+      heading: "Why do AI agents fail?",
       paragraphs: [
-        "The three most common failure modes in production agent deployments:\n\n- **Tool call errors accumulating.** When a call fails and the agent doesn't handle the error correctly, it can spiral into retry loops or incorrect reasoning.\n- **Context fill.** For long-running tasks, the action/observation history fills the window and the model starts losing the thread of the original goal.\n- **Hallucinated tool calls.** Models occasionally generate calls with invalid arguments, or fabricate results rather than actually calling the tool. This is the most dangerous failure mode in high-stakes tasks.",
-        "Real defenses:\n\n- Structured output enforcement (requiring tool calls to pass schema validation before execution)\n- Step limits (terminating a loop that has exceeded a maximum count)\n- Human-in-the-loop checkpoints for irreversible actions\n- Explicit error handling instructions in the system prompt",
-        "Hermes v0.5.0 adds checkpoint/rollback: the `/rollback` command reverts file changes if the agent takes incorrect actions during code or file editing tasks.",
-        "These failure modes are why 'the autonomous agent does everything' framing is premature for many production use cases. The practical approach in 2026: identify tasks that are verifiable (the agent can confirm its output is correct), reversible (mistakes can be undone), and low consequence per error. Start there, and automate outward as reliability is confirmed.",
+        "Three reasons come up again and again. Tool errors pile up: one call fails, the agent mishandles it, and it spirals into retries or bad reasoning. Long tasks fill the context until the model loses track of the original goal. And sometimes the model invents a tool call with bad arguments, or makes up a result instead of calling the tool at all. That last one is the most dangerous when the stakes are high.",
+        "The fixes are unglamorous. Check every tool call against a schema before it runs. Cap the number of steps so a stuck loop ends. Put a human in front of anything you can't undo. And tell the agent in its instructions exactly what to do when a call fails.",
+        "Hermes v0.5.0 added a safety net for file work: the `/rollback` command reverts file changes if the agent gets an edit wrong.",
+        "This is why 'the agent does everything' is still too early for a lot of real work. Start with tasks where the agent can check its own output, where mistakes can be undone, and where any single error is cheap. Then widen the scope as it proves itself.",
       ],
     },
   ],
   faqs: [
     {
       q: "What is the ReAct pattern in AI agents?",
-      a: "ReAct (Reasoning + Acting) is the standard agent loop: the model alternates between Thoughts (reasoning about the next step) and Actions (tool calls). After each action, the tool result feeds back as an Observation, and the model reasons about the next step. This continues until the task is complete or a stop condition is reached.",
+      a: "ReAct (Reasoning and Acting) is the standard agent loop. The model thinks about the next step, takes an action by calling a tool, and reads the result as an observation. Then it thinks again. That repeats until the task is done or a stop condition kicks in.",
     },
     {
       q: "How is an AI agent different from an AI chatbot?",
-      a: "A chatbot runs a single inference pass and returns an answer. An agent runs a loop: it calls tools, receives results, reasons about the next step, and repeats for potentially dozens of steps until a complex task is fully executed. The agent can take real actions in external systems; a chatbot cannot.",
+      a: "A chatbot writes one reply and stops. An agent runs a loop: it calls tools, reads the results, works out the next step, and keeps going, sometimes for dozens of steps, until the job is finished. An agent can act in other systems. A chatbot can't.",
     },
     {
       q: "What tools does a typical AI agent have access to?",
-      a: "Web search, browser control (clicking, form filling, page navigation), terminal/shell execution, file system access, API calls to external services, code execution sandboxes, image/vision analysis, and memory retrieval from external stores. The exact tool set depends on the framework and its configuration.",
+      a: "Web search, a browser (clicking, filling forms, moving between pages), a terminal, the file system, outside APIs, a sandbox for running code, image analysis, and memory lookup. Which ones you get depends on the framework and how it's set up.",
     },
     {
       q: "Do AI agents actually understand what they're doing?",
-      a: "The model generates plausible next steps based on patterns in training. No subjective understanding, but it can reason about tasks, decompose them into steps, handle errors, and adjust based on tool feedback. Whether that constitutes 'understanding' is a philosophical question that does not change the practical outcome: well-designed agents complete complex multi-step tasks reliably when the task is within scope.",
+      a: "The model predicts likely next steps from patterns it learned in training. There's no inner experience. It can still break a task into steps, handle errors and change course when a tool says something went wrong. Call that understanding or not, the result is the same: a well-built agent finishes complex tasks reliably when the task is within its reach.",
     },
     {
       q: "How do agents handle tasks that take hours to complete?",
-      a: "Long-running agents checkpoint their state periodically, storing the current task plan, completed steps, and relevant memory to a database. If the process is interrupted, it resumes from the last checkpoint rather than starting over.",
+      a: "They save their progress as they go: the plan, the steps done so far and the relevant memory, written to a database. If the process stops, it picks up from the last save instead of starting over.",
     },
   ],
   relatedArticles: [

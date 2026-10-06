@@ -119,6 +119,14 @@ describe("blog registry", () => {
 
   // cursor-vs-claude-code shipped "${ENTRY_PLAN_PRICE}" as literal text from a plain-quoted string.
   // Shell expansions with an operator inside code blocks (for example "${ANTHROPIC_API_KEY:+set}") are fine.
+  it("never stamps a read-on or checked-on date into article copy (Ash voice rule, 2026-10-06)", () => {
+    // Default is no date. Where freshness matters (prices), say "as of October 2026" in plain words.
+    const MONTH = "(?:January|February|March|April|May|June|July|August|September|October|November|December)";
+    const stamp = new RegExp(`\\((?:read|checked)\\b|\\b(?:read|re-read|checked|last checked)(?: \\w+){0,3} (?:on )?\\d{1,2} ${MONTH} 20\\d\\d|(?<!when we )\\blast checked\\b`, "i");
+    const stamped = BLOG_ARTICLES_LIST.filter((article) => stamp.test(JSON.stringify(article))).map((article) => article.slug);
+    expect(stamped).toEqual([]);
+  });
+
   it("never prints a raw template placeholder in article copy", () => {
     const leaky = BLOG_ARTICLES_LIST.filter((article) => /\$\{[A-Za-z_][\w.]*\}/.test(JSON.stringify(article))).map((article) => article.slug);
     expect(leaky).toEqual([]);

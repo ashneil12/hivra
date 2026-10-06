@@ -23,7 +23,7 @@ import { CLI_RUN_LIFETIME } from "../runtime-facts";
 // Never say Hivra keeps or backs up sessions. Export JSON / shared account memory are
 // Claude Code and Codex only.
 
-const READ_ON = "5 October 2026";
+// Checked 5 October 2026. Reader copy names the CLI version, not the date (Ash voice rule, 2026-10-06).
 const CODEX_VER = "0.159.0";
 const CLAUDE_VER = "2.1.265";
 const CODEX_REF = "https://developers.openai.com/codex/cli/reference";
@@ -33,7 +33,7 @@ const IAN_TIP = "https://ian.is/post/codex-session-resume";
 export const article: BlogArticle = {
   slug: "codex-resume-session",
   title: "How to resume a Codex session (and Claude Code too)",
-  metaTitle: "Resume a Codex CLI session: commands (5 Oct 2026)",
+  metaTitle: "Resume a Codex CLI session: the commands that work",
   metaDescription:
     "Resume a Codex CLI session with codex resume, --last, session ID, or exec resume. Where history lives, tmux reattach, and Claude Code resume too.",
   publishedDate: "2026-10-05",
@@ -41,13 +41,13 @@ export const article: BlogArticle = {
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "codex resume brings the chat back. tmux brings the live process back.",
-  intro: `Codex stores each chat on disk, so you can leave and come back. The commands below were checked against Codex CLI ${CODEX_VER} on ${READ_ON}. Claude Code's resume flags sit in a later section, because Anthropic already owns that search.`,
-  shortAnswer: `To resume a Codex CLI session, run codex resume --last for the newest chat in this folder, codex resume for the picker, or codex resume <id>. Sessions are saved under ~/.codex/sessions/. Checked against Codex CLI ${CODEX_VER} on ${READ_ON}. Claude Code uses claude --continue or claude --resume instead.`,
+  intro: `Codex stores each chat on disk, so you can leave and come back. We tested every command below on Codex CLI ${CODEX_VER}. Claude Code's resume flags are further down, since that's a different tool.`,
+  shortAnswer: `To resume a Codex CLI session, run codex resume --last for the newest chat in this folder, codex resume for the picker, or codex resume <id>. Sessions are saved under ~/.codex/sessions/. Tested on Codex CLI ${CODEX_VER}. Claude Code uses claude --continue or claude --resume instead.`,
   sections: [
     {
-      heading: `Codex resume commands (CLI ${CODEX_VER}, ${READ_ON})`,
+      heading: "How do I resume a Codex session?",
       paragraphs: [
-        `OpenAI's [CLI reference](${CODEX_REF}) lists \`codex resume\` as the way to continue an interactive session. We also ran \`codex resume --help\` and \`codex exec resume --help\` on Codex CLI ${CODEX_VER} on ${READ_ON}. Use these:`,
+        `OpenAI's [CLI reference](${CODEX_REF}) lists \`codex resume\` as the way to continue an interactive session. We also ran \`codex resume --help\` and \`codex exec resume --help\` on Codex CLI ${CODEX_VER} to be sure. Use these:`,
         [
           "| Command | What it does |",
           "|---|---|",
@@ -67,7 +67,7 @@ export const article: BlogArticle = {
     {
       heading: "Where Codex stores session history",
       paragraphs: [
-        `On this machine, Codex CLI ${CODEX_VER} writes one JSONL rollout file per session under \`~/.codex/sessions/YYYY/MM/DD/\`, named like \`rollout-….jsonl\`. If you set \`CODEX_HOME\`, look under that directory instead of \`~/.codex\`. OpenAI's public CLI reference page doesn't spell the path out; the layout above is what we see on disk on ${READ_ON}.`,
+        `On this machine, Codex CLI ${CODEX_VER} writes one JSONL rollout file per session under \`~/.codex/sessions/YYYY/MM/DD/\`, named like \`rollout-….jsonl\`. If you set \`CODEX_HOME\`, look under that directory instead of \`~/.codex\`. OpenAI's public CLI reference doesn't spell the path out. That layout is just what we found on disk.`,
         "That file is the chat: your prompts, the model's replies, tool calls and outputs. Resume reloads it. Delete the file (or run `codex delete` on the session) and you lose that transcript.",
         "Archiving is different from deleting. `codex archive <SESSION>` hides a session from the active list and keeps the transcript. `codex unarchive <SESSION>` brings it back. `codex delete <SESSION>` removes the transcript for good.",
       ],
@@ -101,9 +101,9 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: `Claude Code resume (CLI ${CLAUDE_VER}, docs read ${READ_ON})`,
+      heading: "How do I resume a Claude Code session?",
       paragraphs: [
-        `Anthropic's [sessions docs](${CLAUDE_SESSIONS}) (read ${READ_ON}) are the source for Claude Code. Local \`claude --version\` on this machine reported ${CLAUDE_VER}. The flags:`,
+        `Claude Code uses its own flags. Anthropic's [sessions docs](${CLAUDE_SESSIONS}) are the source, and we checked them on Claude Code ${CLAUDE_VER}:`,
         [
           "| Command | What it does |",
           "|---|---|",
@@ -132,11 +132,11 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "How do I resume the most recent Codex session?",
-      a: `Run codex resume --last in the same working directory. That skips the picker. Add --all if the newest session you want might live in another folder. Checked against Codex CLI ${CODEX_VER} on ${READ_ON}.`,
+      a: `Run codex resume --last in the same working directory. That skips the picker. Add --all if the session you want might live in another folder. Tested on Codex CLI ${CODEX_VER}.`,
     },
     {
       q: "Where does Codex store sessions?",
-      a: `On this machine with Codex CLI ${CODEX_VER}, under ~/.codex/sessions/YYYY/MM/DD/ as rollout-*.jsonl files (or under $CODEX_HOME/sessions/ if CODEX_HOME is set). OpenAI's public CLI reference doesn't print that path; we confirmed it on disk on ${READ_ON}.`,
+      a: `On this machine with Codex CLI ${CODEX_VER}, under ~/.codex/sessions/YYYY/MM/DD/ as rollout-*.jsonl files (or under $CODEX_HOME/sessions/ if CODEX_HOME is set). OpenAI's public CLI reference doesn't print that path. We found it on disk.`,
     },
     {
       q: "What is the difference between tmux attach and codex resume?",
@@ -148,7 +148,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How do I resume a Claude Code session?",
-      a: `claude --continue reopens the most recent chat in this directory. claude --resume opens the picker, and claude --resume <name-or-id> jumps straight to one session. Anthropic's sessions docs, read ${READ_ON}, are the full reference. Local claude --version reported ${CLAUDE_VER}.`,
+      a: `claude --continue reopens the most recent chat in this directory. claude --resume opens the picker, and claude --resume <name-or-id> jumps straight to one session. Anthropic's sessions docs are the full reference. We checked on Claude Code ${CLAUDE_VER}.`,
     },
     {
       q: "How long does Claude Code keep session history?",

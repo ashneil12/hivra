@@ -104,7 +104,7 @@ describe("the page targets the pricing queries and answers on the first screen",
     expect(article.title).toBe("Claude Code pricing: Pro vs Max, and when API billing is cheaper");
     expect(article.metaTitle).toBe("Claude Code Pricing: Pro vs Max and API costs");
     expect(article.metaDescription).toMatch(/^Claude Code pricing: Pro \$20, Max 5x \$100, Max 20x \$200 a month\./);
-    expect(article.sections[0].heading).toBe("Claude Code pricing by plan, read 30 September 2026");
+    expect(article.sections[0].heading).toBe("Claude Code pricing by plan, as of September 2026");
     expect(bodyCopy).toMatch(/Claude Max plan/);
     expect(article.slug).toBe("claude-max-vs-pro-for-claude-code");
   });
@@ -122,7 +122,7 @@ describe("the page targets the pricing queries and answers on the first screen",
     const { pro, max5x, max20x } = F.plans;
     expect(article.tagline).toBe(`Start on Pro at ${usd(pro.priceUsd)}. Move to Max only when Pro's limit stops you.`);
     expect(article.intro).toContain(`Pro (${usd(pro.priceUsd)} a month), Max 5x (${usd(max5x.priceUsd)}) and Max 20x (${usd(max20x.priceUsd)})`);
-    expect(article.intro).toContain("prices read 30 September 2026");
+    expect(article.intro).toContain("prices as of September 2026");
     expect(article.intro).not.toMatch(/^This page gives/);
   });
 
@@ -227,7 +227,7 @@ describe("the post reads its numbers from the calculator's constants", () => {
     expect(section).toContain("| Opus 5.5 | $4 | $20 | $0.20 | $5 |");
     expect(section).toContain("| Sonnet 5.5 | $2 | $10 | $0.20 | $2.50 |");
     expect(section).toContain("| Haiku 4.5 | $1 | $5 | $0.10 | $1.25 |");
-    expect(section).toContain("read on 30 September 2026");
+    expect(section).toContain("as of September 2026");
     expect(section).toMatch(/Haiku 5\.5 will join the Claude 5\.5 family in the coming weeks/);
     expect(section).toContain(`${F.anthropicCost.inputToOutputRatio} input tokens for every output token, up from ${F.anthropicCost.inputToOutputRatioBefore}`);
   });
@@ -284,7 +284,7 @@ describe("says what Anthropic does not currently publish, not what it never publ
   it("makes no absolute claim about what Anthropic has or has not published", () => {
     expect(bodyCopy).not.toMatch(ABSOLUTE);
     expect(article.intro).toMatch(/doesn't currently publish message or token counts/);
-    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic doesn't currently publish\. As of 30 September 2026, no Anthropic page states any of these/);
+    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic doesn't currently publish\. When we last checked, no Anthropic page stated any of these/);
     const faq = article.faqs.find((candidate) => candidate.q === "What are Claude Max limits?");
     expect(faq?.a).toMatch(/any weekly multiple or hour count you see elsewhere isn't one Anthropic currently publishes/);
   });
@@ -453,8 +453,8 @@ describe("the plan changelog section", () => {
     });
   });
 
-  it("says when it was last checked and that Anthropic changes plans often", () => {
-    expect(text).toContain("Last checked 30 September 2026.");
+  it("drops the \"Last checked\" stamp and says Anthropic changes plans often", () => {
+    expect(text).not.toContain("Last checked");
     expect(text).toContain("Anthropic changes plans often");
     expect(text).toMatch(/news sites or posts on X reported are left out/);
   });
@@ -594,18 +594,19 @@ describe("the sibling posts it links to state the same Anthropic API prices and 
     const pair = (input: number, output: number) => new RegExp(`\\$${input}(?:\\.00)?\\s?/\\s?\\$${output}(?:\\.00)?`);
     expect(copy).toMatch(pair(sonnet.input, sonnet.output));
     expect(copy).toMatch(pair(opus.input, opus.output));
-    // cost-optimization was re-fetched on 5 October 2026; the other siblings still cite 30 September 2026.
-    const dated = slug === "ai-agent-api-cost-optimization" ? "5 October 2026" : "30 September 2026";
-    expect(copy).toContain(dated);
+    // Prices were re-read 30 September and 5 October 2026. Reader copy says it like a person (Ash, 2026-10-06):
+    // a plain "as of October 2026" freshness stamp, never a "read on <date>" parenthetical.
+    expect(copy).toMatch(/as of October 2026/i);
+    expect(copy).not.toMatch(/\bread(?: on)? \d{1,2} \w+ 20\d\d/);
   });
 
   it("keeps April 2026 OpenAI caveats on siblings that did not re-fetch, and dates OpenAI on the cost-optimization post", () => {
     expect(copyOf("cost-of-running-ai-agent")).toContain("OpenAI, as of April 2026: GPT-5 mini");
     expect(copyOf("cost-of-running-ai-agent")).toContain("The monthly ranges below were worked out at April 2026 prices and have not been recalculated.");
-    expect(copyOf("ai-agent-api-cost-optimization")).toContain("OpenAI Standard short-context prices, read the same day");
+    expect(copyOf("ai-agent-api-cost-optimization")).toContain("(Standard, short context)");
     expect(copyOf("ai-agent-api-cost-optimization")).toContain("gpt-6-luna");
-    expect(copyOf("ai-agent-api-cost-optimization")).toContain("5 October 2026");
-    expect(copyOf("byo-api-key-explained")).toContain("a range worked out at April 2026 prices and not recalculated");
+    expect(copyOf("ai-agent-api-cost-optimization")).toMatch(/as of October 2026/i);
+    expect(copyOf("byo-api-key-explained")).toContain("worked that range out at April 2026 prices");
   });
 
   it("qualify the no-surprise-bill and zero-AI-cost lines the post contradicts", () => {

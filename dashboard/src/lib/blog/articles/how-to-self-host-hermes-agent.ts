@@ -14,21 +14,21 @@ export const article: BlogArticle = {
   title: "How to self-host Hermes Agent: VPS setup, Docker, or its own computer",
   metaTitle: "Self-host Hermes Agent: VPS, Docker, or a computer",
   metaDescription:
-    "Self-host Hermes Agent on Ubuntu: install script, Docker image, Telegram gateway, systemd. Or run it on a Hivra computer. Docs checked 5 Oct 2026.",
+    "Self-host Hermes Agent on Ubuntu: install script, Docker image, Telegram gateway, systemd. Or skip all that and run it on a Hivra computer.",
   publishedDate: "2026-04-11",
   lastModified: "2026-10-05",
   readingTimeMin: 16,
   author: "Hivra team",
   tagline: "Docker can mean two different things here. Pick the one that matches the isolation you want.",
   intro:
-    "Hermes Agent runs on a VPS, keeps its memory and talks over Telegram while you sleep. Getting there from a blank Ubuntu server still takes a few hours when things go right. Docker shows up in two different ways in Nous's docs, and mixing them up is how people lose a weekend. We re-read those docs on 5 October 2026. Hivra is one managed path. It is not Nous, and it does not run Hermes on My cloud or My server.",
+    "Hermes Agent runs on a VPS, keeps its memory and talks over Telegram while you sleep. Getting there from a blank Ubuntu server still takes a few hours when things go right. Docker shows up in two different ways in Nous's docs, and mixing them up is how people lose a weekend. Hivra is one managed path. It is not Nous, and it does not run Hermes on My cloud or My server.",
   shortAnswer:
     "Rent Ubuntu 24.04 with at least 2 vCPU and 4 GB RAM, install Docker, run Nous's install script, finish hermes setup, then run the gateway under systemd. Or run Hermes in nousresearch/hermes-agent with ~/.hermes at /opt/data. A Hivra computer uses Hivra's maintained image on its own private computer, with no compose file for you to keep current.",
   sections: [
     {
       heading: "Docker container, or Hermes on its own computer?",
       paragraphs: [
-        "Nous's [Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker), read on 5 October 2026, splits Docker into two jobs. Running Hermes in Docker puts the whole agent inside `nousresearch/hermes-agent`, with your config and keys on a host folder mounted at `/opt/data`. Docker as a terminal backend leaves Hermes on the host and only sandboxes the shell commands the agent runs. Same word, different blast radius.",
+        "Nous's [Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker) splits Docker into two jobs. Running Hermes in Docker puts the whole agent inside `nousresearch/hermes-agent`, with your config and keys on a host folder mounted at `/opt/data`. Docker as a terminal backend leaves Hermes on the host and only sandboxes the shell commands the agent runs. Same word, different blast radius.",
         [
           "| Route | What stays isolated | What you maintain | Pick it when |",
           "|---|---|---|---|",
@@ -70,7 +70,7 @@ export const article: BlogArticle = {
     {
       heading: "Phase 3: install Hermes on the VPS",
       paragraphs: [
-        "Nous's [installation page](https://hermes-agent.nousresearch.com/docs/getting-started/installation), read on 5 October 2026, gives a one-line source install for Linux, macOS and WSL2:\n\n```\ncurl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash\n```\n\nReload your shell, then check the binary:\n\n```\nsource ~/.bashrc\nhermes --version\nhermes doctor\n```\n\n`hermes doctor` checks Docker, Python, dependencies and write access under `~/.hermes/`. Fix what it flags before you go on.",
+        "Nous's [installation page](https://hermes-agent.nousresearch.com/docs/getting-started/installation) gives a one-line source install for Linux, macOS and WSL2:\n\n```\ncurl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash\n```\n\nReload your shell, then check the binary:\n\n```\nsource ~/.bashrc\nhermes --version\nhermes doctor\n```\n\n`hermes doctor` checks Docker, Python, dependencies and write access under `~/.hermes/`. Fix what it flags before you go on.",
         "Run the setup wizard:\n\n```\nhermes setup\n```\n\nIt asks for the LLM provider and writes the first files under `~/.hermes/` (`.env`, config, memory). Keep those. If you already use Nous Portal, `hermes setup --portal` is the short path Nous documents for provider plus Tool Gateway in one go.",
       ],
     },
@@ -120,7 +120,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Should I run Hermes in Docker or only use Docker as the terminal backend?",
-      a: "In Docker means the whole agent lives in nousresearch/hermes-agent with data under ~/.hermes mounted at /opt/data. Docker as the terminal backend leaves Hermes on the host and sandboxes shell commands only. Nous documents both on 5 October 2026. Pick the first when you want pull-to-upgrade. Pick the second when Hermes is a normal host service.",
+      a: "In Docker means the whole agent lives in nousresearch/hermes-agent with data under ~/.hermes mounted at /opt/data. Docker as the terminal backend leaves Hermes on the host and sandboxes shell commands only. Nous documents both. Pick the first when you want pull-to-upgrade. Pick the second when Hermes is a normal host service.",
     },
     {
       q: "What Docker image does Hermes Agent use?",

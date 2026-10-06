@@ -19,102 +19,102 @@ export const article: BlogArticle = {
     "Hermes Agent is an assistant that runs 24/7 on a server and does tasks as well as chatting. People use it for scheduled briefings, monitoring and alerts, coding help, browser automation, file processing, email drafts, research, finance summaries, home automation and API workflows. You do all of it by messaging the agent on Telegram or another connected app.",
   sections: [
     {
-      heading: "Why these use cases are possible at all",
+      heading: "Why can Hermes do things a chatbot can't?",
       paragraphs: [
-        "Hermes runs in the background continuously, can reach out to *you* rather than waiting to be asked, has memory of past conversations, and can execute code and interact with websites. Not just generate text.\n\nThink of it as a capable colleague who's available at 3am, remembers what you worked on last month, and actually does tasks rather than describing how you could do them. The [full comparison with standard chatbots](/blog/ai-agent-vs-chatbot) is worth reading if you want the deeper breakdown.",
+        "Because it never closes. Hermes runs in the background all the time, messages *you* first when something needs you, remembers past conversations, and can run code and use websites.\n\nPicture a colleague who's up at 3am, remembers what you worked on last month, and does the task instead of telling you how. Want the longer version? Here's [how an agent differs from a chatbot](/blog/ai-agent-vs-chatbot).",
         "Everything below works through whatever messaging app you connect it to. Telegram is the most popular. [Discord, WhatsApp, Email, and 11 others](/blog/hermes-agent-telegram-discord-setup) also work. You text it. It does the thing. It replies when done.",
       ],
     },
     {
-      heading: "Morning briefings",
+      heading: "Can it send me a morning briefing?",
       paragraphs: [
-        "Hermes has a built-in scheduler. You set it up once and it runs without you asking.\n\nPeople send themselves: a daily weather + calendar summary, a portfolio snapshot pulled from a finance API, GitHub issues opened overnight, or just headlines filtered to topics they care about. The agent fetches everything, writes a summary, and sends it to Telegram before you're out of bed.",
+        "Yes, and this is where most people start. Hermes has a built-in scheduler, so you set it up once and it just runs.\n\nPeople send themselves a daily weather and calendar summary, a portfolio snapshot pulled from a finance API, GitHub issues opened overnight, or just headlines filtered to topics they care about. The agent fetches everything, writes a summary, and sends it to Telegram before you're out of bed.",
         "Setup is a one-time thing. Tell the agent what you want in conversation and ask it to schedule itself. It writes the cron entry and handles the rest. Or use a [skill file](/blog/hermes-agent-skills-guide) if you want something more structured.",
       ],
     },
     {
-      heading: "Monitoring and alerts",
+      heading: "Can it watch things and only ping me when something changes?",
       paragraphs: [
-        "Because it runs 24/7, it can watch things and only message you when something changes. Worth setting up:\n\n- **Server uptime:** ping your services every 5 minutes, alert on Telegram if one goes down\n- **Price tracking:** check a product page and alert when the price drops below your target\n- **GitHub activity:** watch a repo and summarise new issues or PRs when they land\n- **Job postings:** check a careers page daily, alert only when new relevant roles appear\n\nThis is where running on a server rather than your laptop actually matters. Laptops sleep. The agent doesn't.",
+        "That's exactly what running 24/7 is for. Have it ping your services every 5 minutes and message you on Telegram the moment one goes down. Watch a product page and tell you when the price drops under your target. Summarise new issues and PRs on a repo as they land. Check a careers page every morning and stay quiet unless a relevant role shows up.\n\nThis is where a server beats your laptop. Laptops sleep. The agent doesn't.",
       ],
     },
     {
-      heading: "Coding assistant that knows your codebase",
+      heading: "Can it help with code?",
       paragraphs: [
-        "Hermes can read files, write files, run commands, and execute code. Point it at a source directory and ask it to find all usages of a deprecated function, write tests for something you just described, explain what a complex file does in plain English, or run the test suite and summarise what failed.\n\nThe part that gets genuinely useful over time: it [remembers your project context across sessions](/blog/hermes-agent-memory-system-explained). After a few weeks, you don't re-explain your tech stack or code style every time. It already knows.",
+        "Yes. Hermes reads and writes files, runs commands and executes code. Point it at a source folder and ask it to find all usages of a deprecated function, write tests for something you just described, explain what a complex file does in plain English, or run the test suite and summarise what failed.\n\nThe part that pays off over time: it [remembers your project across sessions](/blog/hermes-agent-memory-system-explained). After a few weeks, you don't re-explain your tech stack or code style every time. It already knows.",
         "For developers who want to understand the security model (how shell access is sandboxed, why non-root matters), [the self-hosting guide](/blog/how-to-self-host-hermes-agent) covers it.",
       ],
     },
     {
-      heading: "Browser automation",
+      heading: "Can it use websites for me?",
       paragraphs: [
-        "Full browser, not just URL fetching. Hermes can log into dashboards, fill in forms, extract data from pages that need JavaScript to work, take screenshots, and interact with things that a basic HTTP request can't touch.\n\nReal setups people run: pulling weekly reports from a SaaS dashboard, filling timesheet fields across multiple days, downloading invoices from vendor portals, checking competitor pricing pages on a schedule.",
-        "Browser automation needs RAM: budget at least 2GB headroom above the agent's baseline. The [VPS comparison](/blog/best-vps-for-hermes-agent) has the hardware breakdown. Hetzner CX33 (8GB) handles it without issues.",
+        "Yes, with a real browser. Hermes can log into dashboards, fill in forms, extract data from pages that need JavaScript to work, take screenshots, and interact with things that a basic HTTP request can't touch.\n\nReal setups people run: pulling weekly reports from a SaaS dashboard, filling timesheet fields across multiple days, downloading invoices from vendor portals, checking competitor pricing pages on a schedule.",
+        "The browser is hungry, so leave at least 2 GB of RAM spare above what the agent normally uses. A Hetzner CX33 (8 GB) handles it fine, and the [VPS comparison](/blog/best-vps-for-hermes-agent) has the rest of the hardware detail.",
       ],
     },
     {
-      heading: "File management and document processing",
+      heading: "Can it sort files and documents?",
       paragraphs: [
-        "Hermes has full access to the server's filesystem, and if you mount cloud storage it can reach that too. Rename and organise files based on their contents. Convert a folder of PDFs to text. Extract data from spreadsheets. Archive old project folders on a schedule.\n\nIt reads PDFs, images (with vision), CSVs, most text formats. Output goes to a new file or back to you as a message, depending on what you ask for.",
+        "Yes. It has full access to the server's files, plus any cloud storage you mount. Have it rename and organise files based on their contents. Convert a folder of PDFs to text. Extract data from spreadsheets. Archive old project folders on a schedule.\n\nIt reads PDFs, images (with vision), CSVs, most text formats. Output goes to a new file or back to you as a message, depending on what you ask for.",
       ],
     },
     {
-      heading: "Email drafts",
+      heading: "Can it handle email?",
       paragraphs: [
-        "Connect it to an email account via IMAP/SMTP and it can draft replies, flag urgent messages, or monitor for specific types of incoming mail. Most common workflow: forward a thread to the agent on Telegram, ask for a draft reply, review it, send.\n\nNot a replacement for a proper email client. Good for specific recurring things: drafting responses to job applications, writing newsletter updates, processing customer support emails into a structured format.",
+        "Drafts, yes. Connect an email account over IMAP/SMTP and it can draft replies, flag urgent messages or watch for certain kinds of mail. The usual flow: forward a thread to the agent on Telegram, ask for a reply, read it, send it.\n\nIt won't replace your email client. It's good at the same chore every week: drafting responses to job applications, writing newsletter updates, processing customer support emails into a structured format.",
       ],
     },
     {
-      heading: "Research",
+      heading: "Can it research a topic for me?",
       paragraphs: [
-        "Ask Hermes to research something and it browses actual sources, extracts the key points, and returns a summary with citations. It visits real pages. It doesn't describe what might be there.\n\nPeople use it for competitor research, digging into a technical topic before a meeting, summarising a long PDF, or generating a company briefing before a call. Output goes to a file you can keep and edit.",
+        "Yes, from real sources. Ask it to research something and it opens actual pages, pulls out the key points and hands back a summary with citations. It reads the pages. It doesn't guess what's on them.\n\nPeople use it for competitor research, digging into a technical topic before a meeting, summarising a long PDF, or generating a company briefing before a call. Output goes to a file you can keep and edit.",
       ],
     },
     {
-      heading: "Personal finance tracking",
+      heading: "Can it track my money?",
       paragraphs: [
-        "With API access to a bank, portfolio tracker, or expense tool, Hermes pulls financial data and sends weekly summaries to Telegram. Friday afternoon spending breakdown. Monthly P&L for freelancers. Morning portfolio snapshot.\n\n[Skills](/blog/hermes-agent-skills-guide) are the standard way to package up an API integration here: write it once, the agent calls it on schedule without re-explanation.",
+        "If your bank, portfolio tracker or expense tool has an API, yes. Hermes pulls the numbers and sends summaries to Telegram. Friday afternoon spending breakdown. Monthly P&L for freelancers. Morning portfolio snapshot.\n\nWrap the API connection in a [skill](/blog/hermes-agent-skills-guide) once, and the agent calls it on schedule without you explaining it again.",
       ],
     },
     {
-      heading: "Home automation",
+      heading: "Can it run my smart home?",
       paragraphs: [
-        "Hermes supports [Home Assistant](https://www.home-assistant.io/) as a native gateway. The same way it connects to Telegram, it can connect to your smart home. Control lights, heating, security, any connected device from anywhere.\n\nBeyond direct control: it responds to sensor events.\n\n- Alert if the front door opens between 10pm and 7am\n- Turn on the bedroom light at sunset\n- Message me if the temperature drops below 18°C",
+        "Through [Home Assistant](https://www.home-assistant.io/), yes. Hermes connects to it the same way it connects to Telegram, so you can control lights, heating, security and any other connected device from anywhere.\n\nIt reacts to sensors too. Tell it to warn you if the front door opens between 10pm and 7am, switch the bedroom light on at sunset, or message you when the temperature falls below 18°C.",
       ],
     },
     {
-      heading: "Self-improving workflows",
+      heading: "Does it get better at my tasks over time?",
       paragraphs: [
-        "When Hermes solves a problem it expects to face again, it can [write a skill](/blog/hermes-agent-skills-guide) (a reusable procedure) and use that skill next time. First time you ask it to run your deployment flow might take 5 minutes. After it documents the process, same task is faster and more predictable.\n\nAfter six months of use, a Hermes instance has a skill library specific to your workflows. It knows your deployment process, your document formats, your code style, not because you trained it, but because it documented what worked.",
+        "Yes. When Hermes solves something it expects to see again, it can [write a skill](/blog/hermes-agent-skills-guide), a reusable how-to, and follow it next time. Your deployment flow might take 5 minutes the first time. Once it's written down, the same job runs faster and more predictably.\n\nSix months in, your agent has a library of skills built around how you work. Your deploy steps. Your document formats. Your code style. You never trained it. It wrote down what worked.",
       ],
     },
     {
-      heading: "Daily Telegram commands",
+      heading: "What does using it day to day look like?",
       paragraphs: [
-        "This is what most people describe as their actual daily experience. They have Hermes on Telegram and just text it during the day. 'Remind me at 3pm to follow up with Alex.' 'Is my staging server up?' 'What was I researching last Thursday?' 'Draft an invoice for 12 hours at £150/hr.'\n\nThe agent handles individual requests, uses tools as needed, remembers past sessions, and replies when done. For people in this pattern, it replaces a lot of small tasks that used to pile up in a to-do list.",
+        "Mostly, people just text it. Hermes sits in Telegram and gets messages all day. 'Remind me at 3pm to follow up with Alex.' 'Is my staging server up?' 'What was I researching last Thursday?' 'Draft an invoice for 12 hours at £150/hr.'\n\nIt does each one, uses whatever tools it needs, remembers what came before, and replies when it's done. For a lot of people that's the real win: dozens of little jobs that used to rot on a to-do list just get done.",
       ],
     },
     {
-      heading: "API and business automation",
+      heading: "Can it connect my business tools together?",
       paragraphs: [
-        "Hermes makes HTTP requests, handles authentication, parses responses, and chains API calls. Webhook support means external services trigger the agent directly: Stripe, GitHub, JIRA, anything that can send a POST request.\n\nFlows people actually run:\n\n- New Stripe payment arrives → agent pulls customer info → sends a personalised welcome\n- GitHub PR opened → agent runs a code review and posts a comment\n- Support ticket created → agent categorises and drafts an initial response\n\n[The gateway guide](/blog/hermes-agent-telegram-discord-setup) covers webhook setup.",
+        "Yes. Hermes makes HTTP requests, handles sign-in, reads the responses and chains calls together. With webhooks, outside services can wake it directly: Stripe, GitHub, JIRA, anything that can send a POST request.\n\nA few flows people run. A new Stripe payment comes in, the agent looks up the customer and sends a personal welcome. Someone opens a GitHub PR, the agent reviews it and leaves a comment. A support ticket lands, the agent tags it and drafts a first reply. [The gateway guide](/blog/hermes-agent-telegram-discord-setup) covers the webhook setup.",
       ],
     },
     {
-      heading: "How to get started",
+      heading: "How do I get started?",
       paragraphs: [
-        `Two options: self-host it on a server ([full guide here](/blog/how-to-self-host-hermes-agent)) or use [Hivra](/), which handles the server, setup, and maintenance so there is nothing to install.\n\nSelf-hosting costs around $10-25/month total. Hivra starts at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, with no server to manage. [Full cost breakdown here](/blog/cost-of-running-ai-agent).`,
+        `Run it on your own server ([here's the guide](/blog/how-to-self-host-hermes-agent)), or use [Hivra](/), which handles the server, setup and upkeep so there's nothing to install.\n\nSelf-hosting runs about $10 to $25 a month all in. Hivra starts at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, with no server to look after. The [full cost breakdown](/blog/cost-of-running-ai-agent) has the details.`,
       ],
     },
   ],
   faqs: [
     {
       q: "Is Hermes Agent the same as ChatGPT?",
-      a: "No. ChatGPT is a chat interface you open when you need it. Hermes runs 24/7 on a server, remembers past conversations, executes code and tasks, and can message you on a schedule without being asked. You can use GPT-4o as the underlying model for both, but they work completely differently. Full comparison: /blog/ai-agent-vs-chatbot",
+      a: "No. ChatGPT is a chat interface you open when you need it. Hermes runs 24/7 on a server, remembers past conversations, executes code and tasks, and can message you on a schedule without being asked. You can run GPT-4o under both, and they still work completely differently.",
     },
     {
       q: "Do I need to be technical to use Hermes Agent?",
-      a: "Self-hosting requires Linux server familiarity. Hivra managed hosting requires none: connect your API key, set up a Telegram bot, done. Day-to-day use either way is just messaging it.",
+      a: "To self-host, you need to be comfortable on a Linux server. On Hivra you don't: connect your key, set up a Telegram bot, done. Day to day, either way, you just message it.",
     },
     {
       q: "Does Hermes Agent work on mobile?",
@@ -126,7 +126,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it work when my computer is off?",
-      a: "It runs on a server, not your computer. Scheduled tasks fire, monitoring runs, it responds to messages, all regardless of what you're doing or whether your laptop is on.",
+      a: "Yes. It runs on a server, not your computer. Scheduled tasks fire, monitoring keeps going and it answers messages whether your laptop is open, shut or in a drawer.",
     },
   ],
   relatedArticles: [

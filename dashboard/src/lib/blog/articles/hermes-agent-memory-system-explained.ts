@@ -17,7 +17,7 @@ export const article: BlogArticle = {
     "Hermes Agent uses four memory layers. SOUL.md sets personality and tone, and MEMORY.md holds the facts the agent decides are worth writing down. Session history saves every conversation and searches it by keyword. Honcho, an optional service, adds recall by meaning. Hermes doesn't remember everything automatically.",
   sections: [
     {
-      heading: "The four memory layers",
+      heading: "What are the four memory layers?",
       paragraphs: [
         "- **SOUL.md**: personality and communication style.\n- **MEMORY.md**: facts you've shared.\n- **Session history database**: every conversation, searchable.\n- **Honcho**: optional external service for smarter cross-session recall.\n\nEach does something different. They work together.",
         "This matters because 'I told my agent something last week. Why did it forget?' is almost always a question about which layer that information was supposed to land in. Hermes doesn't automatically remember everything: it decides what's worth writing down. Same way a person takes notes on some things and lets others go.",
@@ -45,27 +45,27 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Honcho: memory that understands context",
+      heading: "What does Honcho add?",
       paragraphs: [
         "[Honcho](https://github.com/plastic-labs/honcho) (built by [Plastic Labs](https://plasticlabs.ai)) adds meaning-based memory on top of keyword search. It understands what you were talking about and surfaces relevant context even when you phrase things differently.\n\nPractical example: you spent Tuesday working through a complex database migration. Three weeks later you start a new session. Keyword search won't connect the two unless you use the same words. Honcho does.\n\nOnce connected, it gives Hermes four additional memory tools: fast fact lookup, semantic search over your full history, question-answering from past sessions, and the ability to write important facts down for later.",
         "Setting Honcho up is more involved: it runs as a separate background service and requires [Docker](https://docs.docker.com/get-started/). For most people, the built-in keyword search is good enough. Honcho pays off when you have months of history you want the agent to draw on intelligently.\n\nFor a simpler alternative: [Mem0](https://mem0.ai/) is another memory provider, easier to get running. Configure either with:\n\n```bash\nhermes memory setup\n```",
       ],
     },
     {
-      heading: "What actually persists",
+      heading: "What actually survives a restart?",
       paragraphs: [
         "**Reliably remembered:** your name; preferences you stated explicitly; standing instructions; anything the agent wrote to MEMORY.md.\n\n**Unreliable:** things mentioned once in passing that it didn't judge important; things said late in a long conversation when the AI's working memory was full.\n\n**Gone at session end:** anything not explicitly saved to MEMORY.md or Honcho. Think of it like a phone call: the conversation is over, but notes you took during it survive.",
         "Habit worth building: at the end of a productive session, ask 'What should you save to your memory from this conversation?' It identifies the important facts and writes them down. Faster than editing the file yourself.",
       ],
     },
     {
-      heading: "Backing up memory",
+      heading: "How do you back up its memory?",
       paragraphs: [
         "All memory files live in `~/.hermes/`. Back up the whole directory:\n\n```bash\ntar czf hermes-backup-$(date +%Y%m%d).tgz ~/.hermes/\n```\n\nThis captures personality files, facts, conversation history, skills, and config. API keys are usually in there too, so encrypt the archive before storing it anywhere:\n\n```bash\ngpg --symmetric --cipher-algo AES256 hermes-backup-*.tgz\n```\n\nRestoring on a new server: unpack the archive and Hermes picks everything up on next start.",
       ],
     },
     {
-      heading: "Memory on Hivra",
+      heading: "How does memory work on Hivra?",
       paragraphs: [
         "Using [Hivra](/): SOUL.md, MEMORY.md, conversation history, and installed skills are on by default and live on the agent's own disk, so they persist across restarts. Honcho is optional. Backups are not guaranteed, so keep your own export of anything you would hate to lose.\n\nSelf-hosting: [the self-hosting guide](/blog/how-to-self-host-hermes-agent) covers backup setup. Worth doing before you accumulate months of conversation history you'd be sad to lose.",
       ],

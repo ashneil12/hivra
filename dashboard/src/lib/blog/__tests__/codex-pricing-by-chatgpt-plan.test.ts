@@ -4,8 +4,9 @@ import { BLOG_TOPICS, topicForArticle } from "../topics";
 import { article } from "../articles/codex-pricing-by-chatgpt-plan";
 
 // Pins OpenAI plan prices and the October 2026 dates read on 5 October 2026 from OpenAI's own pages.
+// Reader copy says "as of October 2026" (a plain freshness stamp on prices), never "read on <date>".
 const SLUG = "codex-pricing-by-chatgpt-plan";
-const DATED = "5 October 2026";
+const DATED = "as of October 2026";
 
 const fullCopy = [
   article.title,
@@ -42,6 +43,7 @@ describe("Codex pricing by ChatGPT plan article", () => {
     expect(words).toBeGreaterThanOrEqual(40);
     expect(words).toBeLessThanOrEqual(60);
     expect(answer).toContain(DATED);
+    expect(fullCopy).not.toMatch(/\bread(?: on)? \d{1,2} \w+ 20\d\d/);
     expect(answer).toMatch(/does not change .*Codex limits|does not change Codex limits/);
     expect(answer).toContain("Pro 500");
     expect(answer).toContain("Astra Ultrafast");
@@ -56,7 +58,7 @@ describe("Codex pricing by ChatGPT plan article", () => {
   });
 
   it("pins the OpenAI plan prices from the pricing page and Pro tiers help article", () => {
-    const planSection = article.sections.find((section) => section.heading.includes("Codex pricing by ChatGPT plan"))!;
+    const planSection = article.sections.find((section) => section.heading.includes("What does Codex cost on each ChatGPT plan"))!;
     const rows = tableRows(planSection.paragraphs.join("\n"));
     const byPlan = Object.fromEntries(rows.map((row) => [row[0], row]));
     expect(byPlan.Free[1]).toBe("$0");

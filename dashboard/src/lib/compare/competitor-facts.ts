@@ -20,6 +20,15 @@ export function formatCheckedDate(iso: string = COMPETITOR_FACTS_CHECKED): strin
   return `${day} ${months[month - 1]} ${year}`;
 }
 
+/**
+ * "October 2026", for reader-facing freshness stamps ("Prices as of October 2026").
+ * Ash's voice rule (2026-10-06): say it like a person, no "read on <date>" parentheticals.
+ * The exact day stays in COMPETITOR_FACTS_CHECKED, the sitemap lastmod and <time dateTime>.
+ */
+export function formatCheckedMonth(iso: string = COMPETITOR_FACTS_CHECKED): string {
+  return formatCheckedDate(iso).replace(/^\d+ /, "");
+}
+
 export type CompetitorSlug = "vs-agent-37" | "vs-hostinger" | "vs-xcloud" | "vs-nous-hermes-cloud";
 
 export type CompetitorFacts = {

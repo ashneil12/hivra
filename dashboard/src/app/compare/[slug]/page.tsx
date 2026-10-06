@@ -10,7 +10,7 @@ import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import type { ComparisonData } from "@/lib/compare/types";
 import { HOST_COMPARISONS } from "@/lib/compare/host-comparisons";
-import { COMPETITOR_FACTS_CHECKED, formatCheckedDate } from "@/lib/compare/competitor-facts";
+import { COMPETITOR_FACTS_CHECKED, formatCheckedMonth } from "@/lib/compare/competitor-facts";
 
 // Competitor prices below were re-checked on the vendors' own pages on
 // 2026-09-24: hetzner.com price adjustment (15 June 2026), digitalocean.com
@@ -369,37 +369,36 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
     title: "AI Agent Hosting Alternatives Compared (2026)",
     h1: "Cloud computers for AI agents, compared by criteria.",
     metaDescription:
-      "Fly Sprites, Railway, DO Agent Droplets, Cloudways, Orgo, E2B and Hivra compared. Prices checked 5 October 2026.",
-    tagline: "Criteria first. Dated prices. Pick them if.",
+      "Fly Sprites, Railway, DO Agent Droplets, Cloudways, Orgo, E2B and Hivra compared on what matters for an agent. Prices as of October 2026.",
+    tagline: "Five questions pick your host. Then the prices.",
     intro: [
-      "If you need a computer that stays on for an AI agent, start with five checks: does state survive sleep, what you control, desktop or terminal, flat price or meter, and whether you bring your own agent. We wrote this page. Hivra is one of the options, and we say where it loses.",
-      "Figures below were read from each vendor's own pages on 5 October 2026. Vendors change prices and plan names often, so open the source before you pay. Named host pages (Agent 37, Hostinger, xCloud, Nous Hermes Cloud) stay on their own compare URLs.",
+      "Need a computer that stays on for an AI agent? Five questions do most of the sorting. Does your stuff survive when it sleeps? How much do you control? Desktop or just a terminal? Flat price or a meter? And can you bring your own agent? Fair warning: we make Hivra, it's one of the options here, and we'll tell you where it loses.",
+      "Every figure comes from the vendor's own pages, as of October 2026. Prices and plan names move a lot, so open the source before you pay. Agent 37, Hostinger, xCloud and Nous Hermes Cloud each have their own comparison page.",
     ],
     sections: [
       {
-        heading: "The five criteria",
+        heading: "What should I check before picking a host for my agent?",
         paragraphs: [
-          "Persistent state: files, installs and login survive a pause or a closed laptop. Pay-per-second sandboxes that wipe the disk when the session ends fail this for a long-running agent.",
-          "What you control: root or terminal on the machine, your own model key, and whether you can pick the agent binary. Some hosts only run the agents they ship.",
-          "Desktop or terminal: a full GUI desktop matters for computer-use agents that click. A terminal and files are enough for Claude Code, Codex, Hermes and OpenClaw for most people.",
-          "Price model: flat monthly, prepaid allowance, or meter by the second. Same headline dollar can mean half the hardware once you read the size.",
-          "Bring-your-own agent: can you run Hermes, OpenClaw, Claude Code, Codex or your own loop, or are you locked to one harness?",
+          "Start with whether your work survives. Files, installs and logins should still be there after a pause or a closed laptop. Pay-per-second sandboxes that wipe the disk when the session ends fail that test for an agent you want running for weeks.",
+          "Then control. Do you get root or a terminal, can you use your own model key, and can you pick which agent runs? Some hosts only run the agents they ship.",
+          "Desktop or terminal matters less than people think. A full GUI desktop counts if your agent clicks around a screen. For Claude Code, Codex, Hermes and OpenClaw, a terminal and files are plenty for most people.",
+          "Read the price model, not just the price. Flat monthly, prepaid allowance and per-second meters all look alike on a headline, and the same dollar can buy half the hardware once you check the size. Last, can you bring your own agent (Hermes, OpenClaw, Claude Code, Codex, your own loop), or are you locked to one?",
         ],
       },
       {
-        heading: "Dated snapshot, 5 October 2026",
+        heading: "What does each option cost, and who is it for?",
         paragraphs: [
-          "Fly Sprites (fly.io/sprites): Linux computers billed only while running. CPU $0.03825 per CPU-hour, memory $0.021875 per GB-hour, hot storage about $0.50 per GB-month. Their worked examples: a 4-hour Claude Code session about $0.23, a light web app about $1.05 a month. New orgs can get $30 trial credit (one grant per user, one receive per org). Disk and checkpoints persist across sleep. Pick them if your agent is bursty and you want an API to spawn many machines.",
-          "Railway free VM (railway.com/free-vm): `ssh railway.new` gives 2 vCPU and 2 GB with no account while unclaimed. Claude Code, Codex, OpenCode and others come preinstalled. Limits: about 60 minutes to build, then 24 hours to claim, up to 3 per IP per day, IPv4 only. Unclaimed VMs are deleted with their files. Pick them if you want a throwaway coding VM today and you will claim it if the work matters.",
-          "DigitalOcean Agent Droplets (docs read 1 October 2026, blog 1 October 2026): Pro $50 a month with 15% off eligible agent usage (covers $58.82 at list rates), Team $200 a month with 20% off (covers $250). The blog offers new customers a $5 promotional credit to start. MicroVMs pause when idle. Listed harnesses include Claude Code, Codex CLI, OpenCode, Hermes, CrewAI and LangGraph. Third-party model spend is not discounted. Pick them if you already live on DigitalOcean and want one bill for harness runtime, storage and their hosted models.",
-          "Cloudways Managed AI Agents (cloudways.com/en/managed-ai-agents.php): listed Scout $9.99 for 1 vCPU and 2 GB RAM, Operator at the same dollar as Hivra's larger plan for 2 vCPU and 4 GB, Squad $39.99 for 4 vCPU and 8 GB, Swarm $79.99 for 8 vCPU and 16 GB. Same dollar as Hivra's entry price buys half the vCPU and RAM on Scout. Hivra is $9.99 for 2 vCPU and 4 GB, or $19.99 for 4 vCPU and 8 GB, so Cloudways Operator matches Hivra's entry size at a higher list price. Product cards list OpenClaw and Hermes as Generally Available; the FAQ still says only OpenClaw. BYOK for OpenAI, Anthropic and Google. The FAQ still mentions a Public Preview trial and a later intro discount with no end date on the page. Refund terms were not on the product page we read, so we do not invent them. Pick them if you already run apps on Cloudways and want OpenClaw or Hermes in the same dashboard.",
-          "Orgo (orgo.ai/pricing): Hacker $29, Startup $99, Scale $399 a month. Hacker is 1 computer with an 8 GB RAM pool and 40 GB storage plus $5 monthly AI credit; Startup 4 computers / 32 GB / 160 GB / $10 credit; Scale 16 computers / 128 GB / 640 GB / $50 credit. Persistent cloud desktops with click and type controls, not a per-second meter. Stopped computers still count against the plan until deleted. Pick them if the agent needs a real desktop GUI, Windows on Scale, or an API that treats desktops as first-class objects.",
-          "E2B (e2b.dev/pricing): Hobby at $0 with a one-time $100 usage credit (20 concurrent, 1-hour sessions). Pro $150 a month plus usage (100 concurrent, 24-hour sessions). Usage $0.000014 per vCPU-second and $0.0000045 per GiB-second; storage included. Default sandbox 2 vCPU and 4 GiB. Built for short code-execution sandboxes you spawn from an app, not a month-long personal computer. Pick them if you are shipping a product that opens thousands of short sandboxes.",
-          "Hivra: $9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM, billed monthly. Hermes from Hivra's maintained image, plus OpenClaw and Agent Zero on a paid size, Claude Code and Codex on your own logins, and Aeon on your GitHub Actions. Flat price for the computer. Model spend stays on your key unless you buy managed credits. 7-day money-back on card payments only. No free plan and no trial. Open source if you want to read the code or self-host. Pick Hivra if you want one always-on computer for your own agents at a fixed monthly price and you do not need a fleet API or a GUI desktop farm.",
+          "Fly Sprites (fly.io/sprites): Linux computers billed only while running. CPU $0.03825 per CPU-hour, memory $0.021875 per GB-hour, hot storage about $0.50 per GB-month. Their worked examples: a 4-hour Claude Code session about $0.23, a light web app about $1.05 a month. New orgs can get $30 trial credit (one grant per user, one receive per org). Disk and checkpoints persist across sleep. Good fit if your agent works in bursts and you want an API that spins up lots of machines.",
+          "Railway free VM (railway.com/free-vm): `ssh railway.new` gives 2 vCPU and 2 GB with no account while unclaimed. Claude Code, Codex, OpenCode and others come preinstalled. Limits: about 60 minutes to build, then 24 hours to claim, up to 3 per IP per day, IPv4 only. Unclaimed VMs are deleted with their files. Great for a throwaway coding VM today. Claim it if the work matters.",
+          "DigitalOcean Agent Droplets (from DigitalOcean's docs and launch blog): Pro $50 a month with 15% off eligible agent usage (covers $58.82 at list rates), Team $200 a month with 20% off (covers $250). The blog offers new customers a $5 promotional credit to start. MicroVMs pause when idle. Listed harnesses include Claude Code, Codex CLI, OpenCode, Hermes, CrewAI and LangGraph. Third-party model spend is not discounted. Makes sense if you already live on DigitalOcean and want one bill for the agent runtime, storage and their hosted models.",
+          "Cloudways Managed AI Agents (cloudways.com/en/managed-ai-agents.php): listed Scout $9.99 for 1 vCPU and 2 GB RAM, Operator at the same dollar as Hivra's larger plan for 2 vCPU and 4 GB, Squad $39.99 for 4 vCPU and 8 GB, Swarm $79.99 for 8 vCPU and 16 GB. Same dollar as Hivra's entry price buys half the vCPU and RAM on Scout. Hivra is $9.99 for 2 vCPU and 4 GB, or $19.99 for 4 vCPU and 8 GB, so Cloudways Operator matches Hivra's entry size at a higher list price. Product cards list OpenClaw and Hermes as Generally Available; the FAQ still says only OpenClaw. BYOK for OpenAI, Anthropic and Google. The FAQ still mentions a Public Preview trial and a later intro discount with no end date on the page. Refund terms weren't on the product page, so we won't guess at them. Worth a look if you already run apps on Cloudways and want OpenClaw or Hermes in the same dashboard.",
+          "Orgo (orgo.ai/pricing): Hacker $29, Startup $99, Scale $399 a month. Hacker is 1 computer with an 8 GB RAM pool and 40 GB storage plus $5 monthly AI credit; Startup 4 computers / 32 GB / 160 GB / $10 credit; Scale 16 computers / 128 GB / 640 GB / $50 credit. Persistent cloud desktops with click and type controls, not a per-second meter. Stopped computers still count against the plan until you delete them. The pick when your agent needs a real desktop GUI, Windows on Scale, or an API built around desktops.",
+          "E2B (e2b.dev/pricing): Hobby at $0 with a one-time $100 usage credit (20 concurrent, 1-hour sessions). Pro $150 a month plus usage (100 concurrent, 24-hour sessions). Usage $0.000014 per vCPU-second and $0.0000045 per GiB-second; storage included. Default sandbox 2 vCPU and 4 GiB. Built for short code sandboxes your app spins up, not a personal computer you keep for a month. The pick if you're shipping a product that opens thousands of them.",
+          "Hivra: $9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM, billed monthly. Hermes from Hivra's maintained image, plus OpenClaw and Agent Zero on a paid size, Claude Code and Codex on your own logins, and Aeon on your GitHub Actions. Flat price for the computer. Model spend stays on your key unless you buy managed credits. 7-day money-back on card payments only. No free plan and no trial. Open source if you want to read the code or self-host. Hivra fits when you want one always-on computer for your own agents at a fixed monthly price, and you don't need a fleet API or a farm of GUI desktops.",
         ],
       },
       {
-        heading: "Where Hivra is the wrong choice",
+        heading: "When is Hivra the wrong choice?",
         paragraphs: [
           "Building a product that opens sandboxes per user request? E2B or Fly Sprites fit that shape. Hivra is one computer per agent for you, not a metering API for your customers.",
           "Need a free throwaway Linux VM for an afternoon of coding? Railway's free VM wins on cash. Claim it if you care about the files.",
@@ -409,16 +408,16 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
         ],
       },
       {
-        heading: "Still on the table: raw VPS and self-hosted OpenClaw",
+        heading: "What about a plain VPS or self-hosted OpenClaw?",
         paragraphs: [
-          "A Hetzner, DigitalOcean Droplet or Vultr VPS still works. You get root and the lowest cash floor. You also own updates, restarts and backups. OpenClaw as a self-hosted app on your laptop or that VPS is free software; the cost is keeping the machine awake. OpenClaw has its own memory and scheduler while that machine is up. Hivra can host OpenClaw for you on a paid size if you want the same agent without the upkeep.",
+          "Still a solid option. A Hetzner, DigitalOcean or Vultr VPS gives you root and the lowest cash bill. You also own every update, restart and backup. OpenClaw as a self-hosted app on your laptop or that VPS is free software; the cost is keeping the machine awake. OpenClaw has its own memory and scheduler while that machine is up. Hivra can host OpenClaw for you on a paid size if you want the same agent without the upkeep.",
           "Railway and Render as general PaaS hosts can run a container, but they are built for web apps. Pair them with the free VM above only when you already live there.",
         ],
       },
       {
-        heading: "How to choose in one pass",
+        heading: "So which one should I pick?",
         paragraphs: [
-          "Burst API sandboxes: E2B or Fly Sprites. Free VM for an afternoon: Railway free VM. Desktop computer-use: Orgo. One DigitalOcean bill for managed agents: Agent Droplets. Same dashboard as your Cloudways apps: Cloudways. Flat monthly computer for your own Hermes, OpenClaw, Claude Code or Codex: Hivra. Root and lowest cash: a VPS you run yourself.",
+          "Lots of short sandboxes from an API? E2B or Fly Sprites. A free VM for an afternoon? Railway. A desktop your agent can click around? Orgo. One DigitalOcean bill for managed agents? Agent Droplets. Already on Cloudways? Stay in that dashboard. A flat monthly computer for your own Hermes, OpenClaw, Claude Code or Codex? That's Hivra. Root access and the lowest cash bill? Run a VPS yourself.",
         ],
       },
     ],
@@ -435,7 +434,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       { criterion: "Same $9.99 hardware?", hermesOs: "$9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM", other: "Cloudways Scout $9.99 is 1 vCPU and 2 GB; Cloudways Operator matches Hivra's 2 vCPU and 4 GB entry size at a higher list price", hermosWins: true },
     ],
     verdict:
-      "Match the shape first. E2B and Fly for fleets of short sandboxes, Orgo for desktop computer-use, Railway's free VM for a throwaway session, DigitalOcean Agent Droplets when you want one DO bill, Cloudways when you already host there, a raw VPS when cash and root win, Hivra when you want a flat monthly computer for your own agents. We built Hivra; read the dated cells before you believe any of us.",
+      "Match the shape first. E2B and Fly for fleets of short sandboxes, Orgo for desktop computer-use, Railway's free VM for a throwaway session, DigitalOcean Agent Droplets when you want one DO bill, Cloudways when you already host there, a raw VPS when cash and root win, Hivra when you want a flat monthly computer for your own agents. We built Hivra, so check the prices against each vendor's page before you believe any of us.",
     faqs: [
       {
         q: "What is the cheapest way to host a Hermes AI agent in 2026?",
@@ -459,7 +458,7 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
       },
       {
         q: "Cloudways $9.99 or Hivra $9.99?",
-        a: "Different hardware. On 5 October 2026 Cloudways Scout lists 1 vCPU and 2 GB RAM at $9.99. Hivra is $9.99 for 2 vCPU and 4 GB RAM, or $19.99 for 4 vCPU and 8 GB RAM. Cloudways Operator lists 2 vCPU and 4 GB at a higher list price than Hivra's entry size. Compare agents and refund terms on each vendor's page before you treat the dollar as equal.",
+        a: "Different hardware. As of October 2026, Cloudways Scout lists 1 vCPU and 2 GB RAM at $9.99. Hivra is $9.99 for 2 vCPU and 4 GB RAM, or $19.99 for 4 vCPU and 8 GB RAM. Cloudways Operator lists 2 vCPU and 4 GB at a higher list price than Hivra's entry size. Compare agents and refund terms on each vendor's page before you treat the dollar as equal.",
       },
       {
         q: "When should I pick Orgo or E2B instead of Hivra?",
@@ -553,5 +552,5 @@ export default async function ComparisonPage({ params }: ComparePageParams) {
     <header className={styles.masthead}><span className={styles.eyebrow}>{comparison.tagline}</span><h1>{comparison.h1}</h1></header>
     <div className={styles.articleLayout}><ArticleNavigation items={contents} /><div className={styles.articleBody}><div className={styles.detailIntro}>{comparison.intro.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
     {comparison.sections.map((section, index) => <section key={section.heading} id={contents[index].id}><h2>{section.heading}</h2>{section.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>)}
-    <section><h2>Feature comparison</h2><div className={styles.tableScroll} role="region" aria-label="Feature comparison" tabIndex={0}><table><thead><tr><th scope="col">Criterion</th><th scope="col">Hivra</th><th scope="col">Alternative</th></tr></thead><tbody>{comparison.vsTable.map(({ criterion, hermesOs, other, hermosWins }) => <tr key={criterion}><th scope="row">{criterion}</th><td>{hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{hermesOs}</td><td>{!hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{other}</td></tr>)}</tbody></table></div></section><section className={styles.verdict}><h2>Verdict</h2><p>{comparison.verdict}</p></section>{comparison.factSources ? <section aria-labelledby="fact-sources"><h2 id="fact-sources">Where these numbers come from</h2><p>Prices and terms for the other provider were read from its own pages on <time dateTime={COMPETITOR_FACTS_CHECKED}>{formatCheckedDate()}</time>. Vendors change prices, so check the source before you pay.</p><ul>{comparison.factSources.map(({ label, href }) => <li key={href}><a href={href} rel="noopener noreferrer">{label}</a></li>)}</ul></section> : null}<EditorialQuestions questions={comparison.faqs} /></div></div><EditorialCTA title={<>Ready to <strong>stop managing infra?</strong></>} label="Deploy My Agent" /><EditorialRelated links={[...comparison.relatedComparisons.map(({ slug, title }) => ({ label: title, href: `/compare/${slug}` })), ...(comparison.relatedBlog ?? []).map(({ slug, title }) => ({ label: `Blog: ${title}`, href: `/blog/${slug}` })), ...(comparison.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })), ...(comparison.externalRelated ?? []), { label: "Pricing", href: "/pricing" }, { label: "All Features", href: "/features" }]} /></main></PublicSite>);
+    <section><h2>Feature comparison</h2><div className={styles.tableScroll} role="region" aria-label="Feature comparison" tabIndex={0}><table><thead><tr><th scope="col">Criterion</th><th scope="col">Hivra</th><th scope="col">Alternative</th></tr></thead><tbody>{comparison.vsTable.map(({ criterion, hermesOs, other, hermosWins }) => <tr key={criterion}><th scope="row">{criterion}</th><td>{hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{hermesOs}</td><td>{!hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{other}</td></tr>)}</tbody></table></div></section><section className={styles.verdict}><h2>Verdict</h2><p>{comparison.verdict}</p></section>{comparison.factSources ? <section aria-labelledby="fact-sources"><h2 id="fact-sources">Where these numbers come from</h2><p>Prices and terms for the other provider come from its own pages, as of <time dateTime={COMPETITOR_FACTS_CHECKED}>{formatCheckedMonth()}</time>. Vendors change prices, so check the source before you pay.</p><ul>{comparison.factSources.map(({ label, href }) => <li key={href}><a href={href} rel="noopener noreferrer">{label}</a></li>)}</ul></section> : null}<EditorialQuestions questions={comparison.faqs} /></div></div><EditorialCTA title={<>Ready to <strong>stop managing infra?</strong></>} label="Deploy My Agent" /><EditorialRelated links={[...comparison.relatedComparisons.map(({ slug, title }) => ({ label: title, href: `/compare/${slug}` })), ...(comparison.relatedBlog ?? []).map(({ slug, title }) => ({ label: `Blog: ${title}`, href: `/blog/${slug}` })), ...(comparison.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })), ...(comparison.externalRelated ?? []), { label: "Pricing", href: "/pricing" }, { label: "All Features", href: "/features" }]} /></main></PublicSite>);
 }

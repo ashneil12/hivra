@@ -8,7 +8,7 @@ import { BLOG_TOPICS, topicForArticle } from "../topics";
 import { article } from "../articles/codex-resume-session";
 
 const SLUG = "codex-resume-session";
-const DATED = "5 October 2026";
+const DATED = "Tested on Codex CLI"; // the short answer names the version it was tested on, not a read date
 const CODEX_VER = "0.159.0";
 
 const fullCopy = [

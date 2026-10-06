@@ -6,7 +6,8 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // Voice rewrite 2026-10-06 after Ash's "reads like a robot made the page": plain words,
 // fewer bullets, one Hivra line where the closed-laptop problem is real. Facts unchanged.
 //
-// Vendor facts read 6 October 2026 from Cursor's own pages:
+// Vendor facts read 6 October 2026 from Cursor's own pages (date kept here, not in reader copy: Ash 2026-10-06
+// voice rule says cite plainly, add a freshness stamp only where a price would mislead without one):
 // - https://cursor.com/docs/cloud-agent (Cloud Agents overview, billing, naming history)
 // - https://cursor.com/help/ai-features/cloud-agents (paid plan requirement, usage priced at API rates)
 // - https://cursor.com/docs/cloud-agent/my-machines (My Machines: agent loop in Cursor cloud, tools on your machine)
@@ -17,7 +18,6 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // that has not been run. Soft handoff is Claude Code or Codex on a computer that stays
 // on, with your own subscription or key.
 
-const READ_ON = "6 October 2026";
 const CLOUD_DOCS = "https://cursor.com/docs/cloud-agent";
 const CLOUD_HELP = "https://cursor.com/help/ai-features/cloud-agents";
 const MY_MACHINES = "https://cursor.com/docs/cloud-agent/my-machines";
@@ -28,28 +28,28 @@ export const article: BlogArticle = {
   title: "Cursor Cloud Agents: what they cost, and what happens when you close your laptop",
   metaTitle: "Cursor Cloud Agents: cost, and closing your laptop",
   metaDescription:
-    "What Cursor Cloud Agents cost, whether they keep working with your laptop shut, and when Claude Code or Codex is simpler. Checked 6 Oct 2026.",
+    "What Cursor Cloud Agents cost, whether they keep working with your laptop shut, and when Claude Code or Codex is the simpler pick.",
   publishedDate: "2026-10-06",
   lastModified: "2026-10-06",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "Shut the lid and they keep working. Here's what that costs.",
-  intro: `Cursor renamed Background Agents to Cloud Agents, and people keep asking the same two things. What does it cost? And does it keep going when I shut my laptop? We read Cursor's own docs on ${READ_ON}. Here's what they actually say.`,
+  intro: `Cursor renamed Background Agents to Cloud Agents, and people keep asking the same two things. What does it cost? And does it keep going when I shut my laptop? We went through Cursor's own docs. Here's what they actually say.`,
   shortAnswer: `Cloud Agents run on Cursor's own cloud machines, so yes, they keep working after you shut your laptop. You need a paid Cursor plan, and you pay the model's API rates up to a spend limit you set. If you'd rather use your Claude or ChatGPT subscription, run Claude Code or Codex on a computer that stays on.`,
   sections: [
     {
       heading: "What are Cursor Cloud Agents?",
       paragraphs: [
-        `They're Cursor's coding agents, moved off your laptop and onto Cursor's servers. Each one gets its own isolated virtual machine with your repo cloned, dependencies installed, secrets loaded and internet access ([Cursor's docs](${CLOUD_DOCS}), read ${READ_ON}).`,
+        `They're Cursor's coding agents, moved off your laptop and onto Cursor's servers. Each one gets its own isolated virtual machine with your repo cloned, dependencies installed, secrets loaded and internet access, according to [Cursor's docs](${CLOUD_DOCS}).`,
         "Until recently they were called Background Agents. Same product. New name.",
         `You can start one from pretty much anywhere: the Cloud option in Cursor's agent dropdown, [cursor.com/agents](https://cursor.com/agents), the Cursor iPhone app, Slack, a GitHub or Bitbucket comment, Linear, or the API. Cursor's [help page](${CLOUD_HELP}) has the list.`,
         "Why bother? You can run several at once, and your laptop doesn't have to be online for any of them. When one finishes you get a PR, often with screenshots or a video of what it did. You can also take over the agent's desktop remotely, plug in MCP servers, or point a single agent at more than one repo.",
       ],
     },
     {
-      heading: `What do Cursor Cloud Agents cost? (read ${READ_ON})`,
+      heading: "What do Cursor Cloud Agents cost?",
       paragraphs: [
-        `There's no flat monthly price. You need a paid Cursor plan, and every run is billed at the API price of the model you picked. That's the whole model. Here's what the [docs](${CLOUD_DOCS}) and [help page](${CLOUD_HELP}) say, both read ${READ_ON}:`,
+        `There's no flat monthly price. You need a paid Cursor plan, and every run is billed at the API price of the model you picked. That's the whole model. Here's what the [docs](${CLOUD_DOCS}) and [help page](${CLOUD_HELP}) say:`,
         [
           "| Question | What Cursor's docs say |",
           "|---|---|",
@@ -68,7 +68,7 @@ export const article: BlogArticle = {
       heading: "Do Cloud Agents keep working after I close my laptop?",
       paragraphs: [
         "Yes. They run on Cursor's machines, not yours. Shut the lid, go to bed, and the work carries on. That's the whole reason the product exists.",
-        `One catch. Hitting "Move to Cloud" doesn't bring your uncommitted changes with it. The cloud agent starts from a clean copy of your remote repo, so commit or stash first if you want it to see what you were just working on ([help page](${CLOUD_HELP}), read ${READ_ON}).`,
+        `One catch. Hitting "Move to Cloud" doesn't bring your uncommitted changes with it. The cloud agent starts from a clean copy of your remote repo, so commit or stash first if you want it to see what you were just working on. Cursor's [help page](${CLOUD_HELP}) spells this out.`,
         "Local Cursor agents are a different story. They run on your laptop, so when the laptop sleeps, they pause right along with it.",
       ],
     },
@@ -111,15 +111,15 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "What are Cursor Cloud Agents?",
-      a: `Cursor's coding agents, running on Cursor's servers instead of your laptop. Each one gets an isolated virtual machine with your repo, dependencies and secrets ready to go. They used to be called Background Agents (Cursor docs, read ${READ_ON}).`,
+      a: `Cursor's coding agents, running on Cursor's servers instead of your laptop. Each one gets an isolated virtual machine with your repo, dependencies and secrets ready to go. They used to be called Background Agents.`,
     },
     {
       q: "How much do Cursor Cloud Agents cost?",
-      a: `There's no flat price. You need a paid Cursor plan, then usage is billed at the API price of the model you pick, up to a spend limit you set. Bigger context windows can push token use up. Cursor's public docs don't list a separate VM fee (read ${READ_ON}).`,
+      a: `There's no flat price. You need a paid Cursor plan, then usage is billed at the API price of the model you pick, up to a spend limit you set. Bigger context windows can push token use up. Cursor's public docs don't list a separate VM fee.`,
     },
     {
       q: "Do I need a paid Cursor plan for Cloud Agents?",
-      a: `Yes. Cursor's help page, read ${READ_ON}, says Cloud Agents are only on paid plans.`,
+      a: "Yes. Cursor's help page says Cloud Agents are only on paid plans.",
     },
     {
       q: "Do Cursor Cloud Agents keep working when I close my laptop?",
@@ -127,7 +127,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What is Cursor My Machines?",
-      a: `It lets a Cloud Agent run its commands and file edits on a machine you connect. The agent itself still runs in Cursor's cloud ([My Machines docs](${MY_MACHINES}), read ${READ_ON}).`,
+      a: `It lets a Cloud Agent run its commands and file edits on a machine you connect. The agent itself still runs in Cursor's cloud, according to the [My Machines docs](${MY_MACHINES}).`,
     },
     {
       q: "Can I use a Hivra computer as a Cursor My Machine?",
@@ -139,7 +139,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Were Cloud Agents called Background Agents?",
-      a: `Yes. Cursor's docs, read ${READ_ON}, say Cloud Agents were formerly called Background Agents.`,
+      a: "Yes. Cursor's docs say Cloud Agents were formerly called Background Agents. Same product, new name.",
     },
   ],
   relatedArticles: [

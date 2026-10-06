@@ -221,14 +221,14 @@ describe("Claude Code Remote Control article", () => {
     expect(sectionCopy).toContain("about 30 minutes");
     expect(sectionCopy).toContain("Claude Code 2.1.267 (9 September 2026)");
     expect(sectionCopy).toContain("Claude Code 2.1.284 (28 September 2026)");
-    expect(sectionCopy).toContain("as read on 30 September 2026");
+    expect(sectionCopy).not.toMatch(/as read on \d{1,2} \w+ 20\d\d/); // Ash 2026-10-06: no read-date stamps
     expect(sectionCopy).toContain("(2.1.232, 13 August 2026)");
     // Where the docs and the changelog disagree, both are stated and neither is reconciled.
     expect(sectionCopy).toMatch(/The docs say it retries for as long as the outage lasts\. The changelog \(2\.1\.232, 13 August 2026\) says it keeps reconnecting for about 30 minutes/);
   });
 
   it("labels what is our own suggestion and does not claim the whole page is Anthropic's documentation", () => {
-    expect(sectionCopy).toContain("The facts below come from Anthropic's Claude Code documentation and changelog as read on 30 September 2026.");
+    expect(sectionCopy).toContain("The facts below come from Anthropic's own Claude Code docs and changelog.");
     expect(sectionCopy).toContain("Where we lean on user reports (the two offline messages Anthropic doesn't publish) or give our own suggestion, we say so.");
     expect(sectionCopy).toContain("Server mode is our pick for a machine you leave running, because one process serves several sessions");
     expect(sectionCopy).toContain("That's our reading of one report, and it isn't documented advice:");
