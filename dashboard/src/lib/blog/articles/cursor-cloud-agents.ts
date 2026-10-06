@@ -1,8 +1,10 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 
 // Written 2026-10-06 for "cursor cloud agents" (US Aug 2,900, avg 1,900, rising; UK 260)
 // plus "cursor background agents" (590, old name). Niche finder score 22/25.
+// Voice rewrite 2026-10-06 after Ash's "reads like a robot made the page": plain words,
+// fewer bullets, one Hivra line where the closed-laptop problem is real. Facts unchanged.
 //
 // Vendor facts read 6 October 2026 from Cursor's own pages:
 // - https://cursor.com/docs/cloud-agent (Cloud Agents overview, billing, naming history)
@@ -23,97 +25,85 @@ const SELF_HOSTED = "https://cursor.com/docs/cloud-agent/self-hosted";
 
 export const article: BlogArticle = {
   slug: "cursor-cloud-agents",
-  title: "Cursor Cloud Agents: cost, laptop-closed runs, and a simpler path",
-  metaTitle: "Cursor Cloud Agents: cost and laptop-closed",
+  title: "Cursor Cloud Agents: what they cost, and what happens when you close your laptop",
+  metaTitle: "Cursor Cloud Agents: cost, and closing your laptop",
   metaDescription:
-    "Cursor Cloud Agents cost, laptop-closed runs, and when Claude Code or Codex on your own computer is simpler. Dated 6 Oct 2026.",
+    "What Cursor Cloud Agents cost, whether they keep working with your laptop shut, and when Claude Code or Codex is simpler. Checked 6 Oct 2026.",
   publishedDate: "2026-10-06",
   lastModified: "2026-10-06",
-  readingTimeMin: 11,
+  readingTimeMin: 8,
   author: "Hivra team",
-  tagline: "Cloud Agents keep going after the laptop closes. So can a terminal agent on a computer that stays on.",
-  intro: `Cursor renamed Background Agents to Cloud Agents. People searching the new name want two things: what it costs, and whether the agent keeps working after they shut the lid. We re-read Cursor's docs on ${READ_ON} and put the dated answers below, then the path that uses Claude Code or Codex on a computer you control.`,
-  shortAnswer: `Cursor Cloud Agents run in Cursor's cloud VMs on a paid Cursor plan. Usage bills at the selected model's API rates, with a spend limit you set. They keep working after you close your laptop. Another option is Claude Code or Codex in tmux on a computer that stays on. We have not tested Hivra as a Cursor My Machine.`,
+  tagline: "Shut the lid and they keep working. Here's what that costs.",
+  intro: `Cursor renamed Background Agents to Cloud Agents, and people keep asking the same two things. What does it cost? And does it keep going when I shut my laptop? We read Cursor's own docs on ${READ_ON}. Here's what they actually say.`,
+  shortAnswer: `Cloud Agents run on Cursor's own cloud machines, so yes, they keep working after you shut your laptop. You need a paid Cursor plan, and you pay the model's API rates up to a spend limit you set. If you'd rather use your Claude or ChatGPT subscription, run Claude Code or Codex on a computer that stays on.`,
   sections: [
     {
-      heading: "What Cursor Cloud Agents are",
+      heading: "What are Cursor Cloud Agents?",
       paragraphs: [
-        `Cursor's [Cloud Agents docs](${CLOUD_DOCS}), read ${READ_ON}, say Cloud Agents use the same agent fundamentals as local agents, but run in isolated VMs in Cursor's cloud with a full development environment: cloned repos, dependencies, secrets, startup commands and network access.`,
-        "They were formerly called Background Agents. Same product, new name.",
-        `You can start them from Cursor desktop (Cloud in the agent dropdown), [cursor.com/agents](https://cursor.com/agents), the Cursor iOS app, Slack, GitHub or Bitbucket comments, Linear, or the API. Cursor's [help page](${CLOUD_HELP}) lists those entry points.`,
-        "What you get in practice: parallel agents that do not need your laptop online, PRs with screenshots or videos, remote desktop control of the agent's VM, and optional MCP servers. Multi-repo work is supported when the task spans more than one repository.",
+        `They're Cursor's coding agents, moved off your laptop and onto Cursor's servers. Each one gets its own isolated virtual machine with your repo cloned, dependencies installed, secrets loaded and internet access ([Cursor's docs](${CLOUD_DOCS}), read ${READ_ON}).`,
+        "Until recently they were called Background Agents. Same product. New name.",
+        `You can start one from pretty much anywhere: the Cloud option in Cursor's agent dropdown, [cursor.com/agents](https://cursor.com/agents), the Cursor iPhone app, Slack, a GitHub or Bitbucket comment, Linear, or the API. Cursor's [help page](${CLOUD_HELP}) has the list.`,
+        "Why bother? You can run several at once, and your laptop doesn't have to be online for any of them. When one finishes you get a PR, often with screenshots or a video of what it did. You can also take over the agent's desktop remotely, plug in MCP servers, or point a single agent at more than one repo.",
       ],
     },
     {
-      heading: `What Cursor Cloud Agents cost (read ${READ_ON})`,
+      heading: `What do Cursor Cloud Agents cost? (read ${READ_ON})`,
       paragraphs: [
-        `Cursor's own billing line is short and clear. From the [Cloud Agents docs](${CLOUD_DOCS}) and [help page](${CLOUD_HELP}), both read ${READ_ON}:`,
+        `There's no flat monthly price. You need a paid Cursor plan, and every run is billed at the API price of the model you picked. That's the whole model. Here's what the [docs](${CLOUD_DOCS}) and [help page](${CLOUD_HELP}) say, both read ${READ_ON}:`,
         [
-          "| Fact | What Cursor states |",
+          "| Question | What Cursor's docs say |",
           "|---|---|",
-          "| Plan gate | Cloud Agents need a paid Cursor plan |",
-          "| How usage is billed | At API pricing for the selected model |",
-          "| Context window | You can pick a larger window on supported models; that can raise token use and cost |",
-          "| Spend limit | You set one the first time you use Cloud Agents |",
-          "| Separate VM fee | Cursor's public docs do not list a separate VM or compute charge for managed Cloud Agents |",
+          "| Do I need a paid plan? | Yes. Cloud Agents need a paid Cursor plan |",
+          "| How is usage billed? | At API pricing for the model you select |",
+          "| Can a bigger context window cost more? | Yes. Supported models let you pick a larger window, which can mean more tokens and a bigger bill |",
+          "| Is there a spend limit? | You set one the first time you use Cloud Agents |",
+          "| Is there a separate fee for the VM? | Cursor's public docs don't list a separate VM or compute charge for managed Cloud Agents |",
         ].join("\n"),
-        "There is no fixed \"Cloud Agents cost $X a month\" number on those pages. Your bill moves with the model, the context window, and how long each run thinks and tools. Check Cursor's models and pricing page for the per-token rates that apply to the model you pick.",
-        "Forum replies sometimes add detail about included plan usage versus on-demand. Prefer the product docs above when the two disagree, and re-check before you buy.",
-        "If the job is a tidy change to a GitHub repo and you already live in Cursor, Cloud Agents can be the whole answer. You pay Cursor's usage, not a second host.",
+        "So your bill moves with the model, the size of the context window, and how long the agent spends thinking and running tools. A long run on a big model costs more than a quick one on a small model. Cursor's models and pricing page has the per-token rates.",
+        "You'll find forum threads arguing about included usage versus on-demand. If a forum post and the docs disagree, go with the docs. And check again before you buy, because pricing pages change.",
+        "Already living in Cursor, and the job is a clean change to a GitHub repo? Then Cloud Agents are all you need. One bill. No extra computer to rent.",
       ],
     },
     {
       heading: "Do Cloud Agents keep working after I close my laptop?",
       paragraphs: [
-        "Yes for managed Cloud Agents. The work runs in Cursor's cloud VMs, so your laptop does not have to stay awake or online. That is the point of the product.",
-        `Cursor's help page also notes that \"Move to Cloud\" does not snapshot local uncommitted changes. The cloud agent starts from a clean git state on the remote repository. Commit or stash first if you want it to see your latest dirty work ([help page](${CLOUD_HELP}), read ${READ_ON}).`,
-        "Local Cursor agents on the laptop are a different story. Close the lid, sleep the machine, and those local runs pause with everything else on the laptop. Cloud Agents are the Cursor-side fix for that.",
+        "Yes. They run on Cursor's machines, not yours. Shut the lid, go to bed, and the work carries on. That's the whole reason the product exists.",
+        `One catch. Hitting "Move to Cloud" doesn't bring your uncommitted changes with it. The cloud agent starts from a clean copy of your remote repo, so commit or stash first if you want it to see what you were just working on ([help page](${CLOUD_HELP}), read ${READ_ON}).`,
+        "Local Cursor agents are a different story. They run on your laptop, so when the laptop sleeps, they pause right along with it.",
       ],
     },
     {
-      heading: "My Machines: bring your own hardware (with a hard caveat)",
+      heading: "Can Cloud Agents use my own computer? (My Machines)",
       paragraphs: [
-        `Cursor also ships [My Machines](${MY_MACHINES}) under [Self-Hosted Machines](${SELF_HOSTED}). A worker on your laptop, devbox or remote VM opens an outbound connection to Cursor. The agent loop, inference and planning stay in Cursor's cloud. Terminal commands, file edits, browser actions and other tool calls run on your machine.`,
-        "That matters for privacy, private networks and machine-local state you do not want to rebuild in a Cursor-managed VM. It also means My Machines is still a Cursor Cloud Agent product. You are not leaving Cursor's agent loop.",
-        "**We have not tested a Hivra computer as a Cursor My Machine.** Nobody here has run `agent worker start` on a canary computer and proven the picker, hooks and long runs. Until that test is recorded, do not treat Hivra as a drop-in My Machine host. If you try it yourself, you are on uncharted ground for this site.",
-        "Cursor's docs recommend managed Cloud Agents for most teams, including teams that need private network access through allowlists or Tailscale-style clients, without running your own worker.",
+        `Kind of. Cursor has a feature called [My Machines](${MY_MACHINES}), part of [Self-Hosted Machines](${SELF_HOSTED}). You run a small worker on your laptop, a spare desktop or a remote server, and it connects out to Cursor. The planning and the model calls stay in Cursor's cloud. The hands-on work happens on your machine: terminal commands, file edits, browser actions.`,
+        "That's useful when your code sits on a private network, or your machine has setup you don't want to rebuild somewhere else. But Cursor's agent is still the one in charge. You're lending it your hardware.",
+        "**We haven't tested a Hivra computer as a Cursor My Machine.** Nobody here has run `agent worker start` on one and watched it pick up jobs, run hooks and get through a long run. So don't treat Hivra as a ready-made My Machine host. If you try it, you're ahead of us.",
+        "For most teams, Cursor's own docs point you back to the managed Cloud Agents anyway, even if you need access to a private network. They cover that with allowlists and Tailscale-style clients, no worker of your own required.",
       ],
     },
     {
-      heading: "When Claude Code or Codex on your own computer is simpler",
+      heading: "When is Claude Code or Codex simpler?",
       paragraphs: [
-        "Cloud Agents are the right pick when you want Cursor's editor workflow, parallel cloud VMs and PR artifacts, and you are fine paying Cursor's model API rates.",
-        "A terminal agent on a computer that stays on is the simpler pick when:",
-        [
-          "- You already pay for Claude or ChatGPT and want the CLI to bill through that subscription.",
-          "- You need files, logins and tools that live outside a single GitHub checkout.",
-          "- You want a shell you can reattach to with tmux after you walk away.",
-          "- You do not want a second vendor's cloud agent loop in the middle.",
-        ].join("\n"),
-        `On that path you install [Claude Code](/agents/claude-code) or [Codex](/agents/codex), sign in with your own Anthropic or ChatGPT account (or use your own API key), and start the CLI inside tmux. The computer bill and the model bill stay separate. Hivra's computer plans are ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. Paid plans are not paused for inactivity. Hivra adds no markup on BYO keys or subscription logins.`,
-        "The laptop-closed rules for Claude Code are spelled out in [Will Claude Code keep running if you close your laptop?](/blog/keep-claude-code-running-24-7). The job sort between Cursor and Claude Code is on [Cursor vs Claude Code](/blog/cursor-vs-claude-code).",
+        "Stick with Cloud Agents if you like working in Cursor, want a handful of agents running side by side, and are fine paying API rates for the model.",
+        "A terminal agent on a computer that stays on is simpler when you already pay for Claude or ChatGPT and want that subscription to cover the work. Or when the job needs files, logins or tools that don't live in one GitHub repo. Some people just want to walk away, come back six hours later and pick up the exact same terminal session with tmux. Others would rather not have a second company's agent sitting in the middle at all.",
+        `The setup is short. Install [Claude Code](/agents/claude-code) or [Codex](/agents/codex), sign in with your own Anthropic or ChatGPT account (or an API key), and start it inside tmux. You end up with two separate bills, one for the computer and one for the model.`,
+        `Don't have a computer that stays on? That's what Hivra is: Claude Code or Codex on a computer that keeps running after you close your laptop, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, signed in with your own account.`,
+        "Want the full story on Claude Code and a closed laptop? Read [Will Claude Code keep running if you close your laptop?](/blog/keep-claude-code-running-24-7). Still torn between the two tools in general? That's [Cursor vs Claude Code](/blog/cursor-vs-claude-code).",
       ],
     },
     {
-      heading: "Honest chooser",
+      heading: "Which one should you pick?",
       paragraphs: [
         [
-          "| Your job | Prefer | Why |",
+          "| Your job | Pick | Why |",
           "|---|---|---|",
-          "| Parallel PRs from Cursor, laptop closed | Cursor Cloud Agents | Built for that workflow; bills at model API rates on a paid Cursor plan |",
-          "| Deep work inside the Cursor editor while you stay at the desk | Local Cursor agent | No cloud hop; laptop must stay awake |",
-          "| Long unattended CLI run on your Claude or ChatGPT plan | Claude Code or Codex in tmux on a computer that stays on | Your subscription caps the model bill; the computer keeps the shell up |",
-          "| Tool execution on hardware you already run, still inside Cursor | Cursor My Machines | Agent loop stays in Cursor's cloud; we have not tested this on Hivra |",
-          "| Tidy GitHub-only Claude tasks | Claude Code on the web | Anthropic's cloud; no second host |",
+          "| Parallel PRs from Cursor, laptop closed | Cursor Cloud Agents | Made for exactly this. Paid Cursor plan, model API rates |",
+          "| Deep work in the Cursor editor while you're at your desk | Local Cursor agent | Nothing goes to the cloud. Laptop has to stay awake |",
+          "| A long, unattended terminal run on your Claude or ChatGPT plan | Claude Code or Codex in tmux on a computer that stays on | Your subscription covers the model. The computer keeps the session alive |",
+          "| Tool runs on hardware you already have, still inside Cursor | Cursor My Machines | Cursor's agent still runs in Cursor's cloud. Not tested on Hivra |",
+          "| Small Claude jobs that only touch GitHub | Claude Code on the web | Runs on Anthropic's cloud. No second computer needed |",
         ].join("\n"),
-        "Pick the product that matches the job. A second host only pays for itself when you need a shell, files or agents that outlive one vendor's cloud session.",
-      ],
-    },
-    {
-      heading: "Running Claude Code or Codex on a Hivra computer",
-      paragraphs: [
-        `Launch [Claude Code](/agents/claude-code) or [Codex](/agents/codex), sign in with the subscription you already have, and start long runs inside tmux in the Terminal tab. On Claude Code you can also send work through the Telegram tab. Those runs execute on your Hivra computer, so they keep going after you close the laptop.`,
-        "That is a terminal-agent path. It is not Cursor Cloud Agents, and it is not a proven Cursor My Machine setup.",
+        "Match the tool to the job. Paying for a second computer only makes sense when you need a terminal, files or agents that outlast one company's cloud session.",
         "Hivra is independent and is not affiliated with Cursor, Anthropic or OpenAI.",
       ],
     },
@@ -121,35 +111,35 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "What are Cursor Cloud Agents?",
-      a: `Cloud Agents are Cursor's cloud-hosted coding agents. They run in isolated VMs in Cursor's cloud with repos, dependencies and secrets prepared for the task. Formerly called Background Agents (Cursor docs, read ${READ_ON}).`,
+      a: `Cursor's coding agents, running on Cursor's servers instead of your laptop. Each one gets an isolated virtual machine with your repo, dependencies and secrets ready to go. They used to be called Background Agents (Cursor docs, read ${READ_ON}).`,
     },
     {
       q: "How much do Cursor Cloud Agents cost?",
-      a: `Cursor bills Cloud Agents at API pricing for the selected model, on a paid Cursor plan, with a spend limit you set. Larger context windows can raise token use. Cursor's public docs do not list a separate VM fee for managed Cloud Agents (read ${READ_ON}).`,
+      a: `There's no flat price. You need a paid Cursor plan, then usage is billed at the API price of the model you pick, up to a spend limit you set. Bigger context windows can push token use up. Cursor's public docs don't list a separate VM fee (read ${READ_ON}).`,
     },
     {
       q: "Do I need a paid Cursor plan for Cloud Agents?",
-      a: `Yes. Cursor's help page, read ${READ_ON}, says Cloud Agents are available on paid Cursor plans.`,
+      a: `Yes. Cursor's help page, read ${READ_ON}, says Cloud Agents are only on paid plans.`,
     },
     {
       q: "Do Cursor Cloud Agents keep working when I close my laptop?",
-      a: "Yes for managed Cloud Agents. They run in Cursor's cloud, so your laptop does not need to stay awake. Local Cursor agents on the laptop pause when the laptop sleeps.",
+      a: "Yes. They run on Cursor's machines, so your laptop can sleep. Local Cursor agents are different. They run on the laptop and pause when it sleeps.",
     },
     {
       q: "What is Cursor My Machines?",
-      a: `My Machines runs Cloud Agent tool calls on a machine you connect. The agent loop stays in Cursor's cloud; shells and file edits run on your worker ([My Machines docs](${MY_MACHINES}), read ${READ_ON}).`,
+      a: `It lets a Cloud Agent run its commands and file edits on a machine you connect. The agent itself still runs in Cursor's cloud ([My Machines docs](${MY_MACHINES}), read ${READ_ON}).`,
     },
     {
       q: "Can I use a Hivra computer as a Cursor My Machine?",
-      a: "Not proven here. We have not run Cursor's worker on a Hivra computer. Do not assume it works until that test is recorded. For unattended runs on Hivra today, use Claude Code or Codex in tmux instead.",
+      a: "We don't know yet. We haven't run Cursor's worker on a Hivra computer, so don't count on it. If you want unattended runs on Hivra today, use Claude Code or Codex in tmux.",
     },
     {
       q: "Is there a cheaper alternative to Cursor Cloud Agents?",
-      a: `Cheaper depends on your bill. If you already pay for Claude or ChatGPT, running that CLI in tmux on a computer that stays on can avoid a second cloud-agent meter. Hivra's computer is ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} on top of your own model plan. Cursor Cloud Agents may still win when you want Cursor's editor workflow and PR artifacts.`,
+      a: "Depends what you already pay for. If you have a Claude or ChatGPT subscription, running that CLI in tmux on a computer that stays on avoids a second per-token meter. You'll pay for the computer instead. Cloud Agents still make sense if you want Cursor's editor and PRs with screenshots.",
     },
     {
       q: "Were Cloud Agents called Background Agents?",
-      a: `Yes. Cursor's Cloud Agents docs, read ${READ_ON}, say Cloud Agents were formerly called Background Agents.`,
+      a: `Yes. Cursor's docs, read ${READ_ON}, say Cloud Agents were formerly called Background Agents.`,
     },
   ],
   relatedArticles: [
