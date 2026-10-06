@@ -104,7 +104,7 @@ describe("the page targets the pricing queries and answers on the first screen",
     expect(article.title).toBe("Claude Code pricing: Pro vs Max, and when API billing is cheaper");
     expect(article.metaTitle).toBe("Claude Code Pricing: Pro vs Max and API costs");
     expect(article.metaDescription).toMatch(/^Claude Code pricing: Pro \$20, Max 5x \$100, Max 20x \$200 a month\./);
-    expect(article.sections[0].heading).toBe("Claude Code pricing by plan, read 30 September 2026");
+    expect(article.sections[0].heading).toBe("Claude Code pricing by plan, as of September 2026");
     expect(bodyCopy).toMatch(/Claude Max plan/);
     expect(article.slug).toBe("claude-max-vs-pro-for-claude-code");
   });
@@ -122,7 +122,7 @@ describe("the page targets the pricing queries and answers on the first screen",
     const { pro, max5x, max20x } = F.plans;
     expect(article.tagline).toBe(`Start on Pro at ${usd(pro.priceUsd)}. Move to Max only when Pro's limit stops you.`);
     expect(article.intro).toContain(`Pro (${usd(pro.priceUsd)} a month), Max 5x (${usd(max5x.priceUsd)}) and Max 20x (${usd(max20x.priceUsd)})`);
-    expect(article.intro).toContain("prices read 30 September 2026");
+    expect(article.intro).toContain("prices as of September 2026");
     expect(article.intro).not.toMatch(/^This page gives/);
   });
 
@@ -227,7 +227,7 @@ describe("the post reads its numbers from the calculator's constants", () => {
     expect(section).toContain("| Opus 5.5 | $4 | $20 | $0.20 | $5 |");
     expect(section).toContain("| Sonnet 5.5 | $2 | $10 | $0.20 | $2.50 |");
     expect(section).toContain("| Haiku 4.5 | $1 | $5 | $0.10 | $1.25 |");
-    expect(section).toContain("read on 30 September 2026");
+    expect(section).toContain("as of September 2026");
     expect(section).toMatch(/Haiku 5\.5 will join the Claude 5\.5 family in the coming weeks/);
     expect(section).toContain(`${F.anthropicCost.inputToOutputRatio} input tokens for every output token, up from ${F.anthropicCost.inputToOutputRatioBefore}`);
   });
@@ -284,7 +284,7 @@ describe("says what Anthropic does not currently publish, not what it never publ
   it("makes no absolute claim about what Anthropic has or has not published", () => {
     expect(bodyCopy).not.toMatch(ABSOLUTE);
     expect(article.intro).toMatch(/doesn't currently publish message or token counts/);
-    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic doesn't currently publish\. As of 30 September 2026, no Anthropic page states any of these/);
+    expect(sectionByHeading("What Anthropic does not publish").paragraphs.join("\n")).toMatch(/numbers Anthropic doesn't currently publish\. When we last checked, no Anthropic page stated any of these/);
     const faq = article.faqs.find((candidate) => candidate.q === "What are Claude Max limits?");
     expect(faq?.a).toMatch(/any weekly multiple or hour count you see elsewhere isn't one Anthropic currently publishes/);
   });
@@ -453,8 +453,8 @@ describe("the plan changelog section", () => {
     });
   });
 
-  it("says when it was last checked and that Anthropic changes plans often", () => {
-    expect(text).toContain("Last checked 30 September 2026.");
+  it("drops the \"Last checked\" stamp and says Anthropic changes plans often", () => {
+    expect(text).not.toContain("Last checked");
     expect(text).toContain("Anthropic changes plans often");
     expect(text).toMatch(/news sites or posts on X reported are left out/);
   });

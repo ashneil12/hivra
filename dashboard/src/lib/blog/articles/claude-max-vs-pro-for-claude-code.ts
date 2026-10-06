@@ -36,7 +36,9 @@ function longDate(iso: string): string {
   return `${day} ${MONTHS[month - 1]} ${year}`;
 }
 
-const READ_ON = longDate(F.lastVerified);
+// Reader copy carries one plain freshness stamp on prices ("as of September 2026"), never "read on <date>"
+// (Ash's voice rule, 2026-10-06). The exact check date stays in F.lastVerified and lastModified.
+const AS_OF = longDate(F.lastVerified).replace(/^\d+ /, "");
 const DAY = usd(COST.perActiveDayUsd);
 const P90_DAY = usd(COST.p90PerActiveDayUsd);
 
@@ -71,11 +73,11 @@ export const article: BlogArticle = {
   readingTimeMin: 17,
   author: "Hivra team",
   tagline: `Start on Pro at ${usd(PRO.priceUsd)}. Move to Max only when Pro's limit stops you.`,
-  intro: `Claude Code is included in Pro (${usd(PRO.priceUsd)} a month), Max 5x (${usd(MAX5.priceUsd)}) and Max 20x (${usd(MAX20.priceUsd)}), prices read ${READ_ON}. Anthropic gives Max's extra usage only as a multiple of Pro's per five-hour session. It doesn't currently publish message or token counts. So you pick by where Pro stops you. The rule for that is below, along with the break-even against API billing, what to do at a limit, and when Anthropic's cloud is enough.`,
+  intro: `Claude Code is included in Pro (${usd(PRO.priceUsd)} a month), Max 5x (${usd(MAX5.priceUsd)}) and Max 20x (${usd(MAX20.priceUsd)}), prices as of ${AS_OF}. Anthropic gives Max's extra usage only as a multiple of Pro's per five-hour session. It doesn't currently publish message or token counts. So you pick by where Pro stops you. The rule for that is below, along with the break-even against API billing, what to do at a limit, and when Anthropic's cloud is enough.`,
   shortAnswer: `Start on Pro (${usd(PRO.priceUsd)}). Move to Max 5x (${usd(MAX5.priceUsd)}) when Pro's five-hour limit stops you in most sessions, and to Max 20x (${usd(MAX20.priceUsd)}) only if Max 5x still does. Max gives you more usage per session, on the same Opus and Sonnet. At Anthropic's ${DAY} enterprise average day, API billing beats Pro only below ${proDays} active days a month.`,
   sections: [
     {
-      heading: `Claude Code pricing by plan, read ${READ_ON}`,
+      heading: `Claude Code pricing by plan, as of ${AS_OF}`,
       paragraphs: [
         `Claude Code is included in every paid Claude plan: Pro, Max, Team and Enterprise. Here's what ${link(S.pricing, "Anthropic's pricing page")}, ${link(S.maxPlan, "the Max article")} and ${link(S.proPlan, "the Pro article")} say today.`,
         [
@@ -108,7 +110,7 @@ export const article: BlogArticle = {
     {
       heading: "What Anthropic does not publish",
       paragraphs: [
-        `A lot of Claude plan advice online quotes numbers Anthropic doesn't currently publish. As of ${READ_ON}, no Anthropic page states any of these:`,
+        `A lot of Claude plan advice online quotes numbers Anthropic doesn't currently publish. When we last checked, no Anthropic page stated any of these:`,
         [
           "- How many messages or tokens a five-hour window or a week holds on any plan. The pricing FAQ says there's no fixed message count.",
           `- Pro's own allowance. Only multiples of Pro are published: ${MAX5.multiplier}x and ${MAX20.multiplier}x for Max, and ${F.team.standardMultiplier}x and ${F.team.premiumMultiplier}x for Team seats.`,
@@ -138,7 +140,7 @@ export const article: BlogArticle = {
         `If you use Claude Code on more active days a month than the number in the table, the plan costs less than the same tokens at API list price, as long as the plan's limits cover that usage. At Anthropic's enterprise average day, API billing beats Pro only below about ${proDays} active days a month. It beats Max 5x below about ${max5Days}.`,
         `A worked example: ${EXAMPLE_DAYS} active days a month at ${DAY} a day is ${exampleMonth} on the API. That's more than Max 5x's ${usd(MAX5.priceUsd)} and far more than Pro's ${usd(PRO.priceUsd)}, so a plan that covers your sessions costs less than the API. It's less than Max 20x's ${usd(MAX20.priceUsd)}, so Max 20x would cost more than the API for the same ${EXAMPLE_DAYS} days.`,
         `Your own day may cost more or less than the average. The cost figure in \`/usage\` estimates what a session would cost at API list price. Anthropic says it isn't relevant to billing on Pro and Max, but it's a fair number to use as your API cost per active day. For your own hours and model mix, the [Claude Code plan calculator](/tools/claude-code-plan-calculator) prints an estimate, labelled as one, with its assumptions.`,
-        `API list prices per million tokens, read on ${READ_ON} (${link(S.apiPricing, "Claude API pricing")}):`,
+        `API list prices per million tokens, as of ${AS_OF} (${link(S.apiPricing, "Claude API pricing")}):`,
         [
           "| Model | Input | Output | Cache read | Cache write (5 minutes) |",
           "|---|---|---|---|---|",
@@ -168,7 +170,7 @@ export const article: BlogArticle = {
           `6. **Use a limit reset if you have one.** Anthropic occasionally offers a reset that puts the five-hour or weekly limit back to full. It gave subscribers a saveable one when Opus 5.5 launched on ${longDate(CHANGES.fiveHourRaised)}. Open Settings, then Usage, and use "Reset for free" on Claude on the web or desktop. The button isn't in Claude Code or on mobile, but the reset applies everywhere because limits are shared, and weekly limits still reset on their usual day (${link(S.limitReset, "Anthropic's article")}).`,
         ].join("\n"),
         "The wait ends if you exit Claude Code or hand the session to another surface, and it re-arms at most twice in a row.",
-        `Agent SDK and \`claude -p\` usage: Anthropic announced a separate monthly credit for it, then paused that on ${longDate("2026-06-15")}. Its help article, dated 16 June 2026, says usage from the Agent SDK, \`claude -p\` and third-party apps still draws from your plan's limits. It also says Anthropic will announce any change before it takes effect (${link(S.agentSdk, "Anthropic's article")}). We found nothing newer on ${READ_ON}, so recheck before you build on it.`,
+        `Agent SDK and \`claude -p\` usage: Anthropic announced a separate monthly credit for it, then paused that on ${longDate("2026-06-15")}. Its help article, dated 16 June 2026, says usage from the Agent SDK, \`claude -p\` and third-party apps still draws from your plan's limits. It also says Anthropic will announce any change before it takes effect (${link(S.agentSdk, "Anthropic's article")}). We haven't found anything newer, so recheck before you build on it.`,
       ],
     },
     {
@@ -203,7 +205,7 @@ export const article: BlogArticle = {
     {
       heading: "What changed and when: the Claude plan changelog",
       paragraphs: [
-        `Dated changes to Claude plans and Claude Code limits, each with the Anthropic page that states it. Last checked ${READ_ON}. Anthropic changes plans often, so open the linked page before you rely on a row. Changes that only news sites or posts on X reported are left out.`,
+        `Dated changes to Claude plans and Claude Code limits, each with the Anthropic page that states it. Anthropic changes plans often, so open the linked page before you rely on a row. Changes that only news sites or posts on X reported are left out.`,
         changelogList,
       ],
     },
@@ -211,11 +213,11 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Is Claude Code included in Pro?",
-      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and can also be billed to an API key instead of a plan. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro doesn't include API usage through the Claude Console. Prices read on ${READ_ON} from Anthropic's pricing page.`,
+      a: `Yes. Claude Code is included in Pro, Max, Team and Enterprise, and can also be billed to an API key instead of a plan. Pro is ${usd(PRO.priceUsd)} a month billed monthly, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). Pro doesn't include API usage through the Claude Console. Prices from Anthropic's pricing page, as of ${AS_OF}.`,
     },
     {
       q: "What is the Claude Max plan?",
-      a: `Max is Anthropic's higher-usage individual plan, in two sizes: Max 5x at ${usd(MAX5.priceUsd)} a month and Max 20x at ${usd(MAX20.priceUsd)} a month, billed monthly only. You get five or twenty times Pro's usage per five-hour session, plus Claude Code and the Fable models up to 50% of Max's weekly limits. Anthropic also lists higher output limits, early access to advanced features and priority access at high traffic times. Prices read on ${READ_ON}, before tax.`,
+      a: `Max is Anthropic's higher-usage individual plan, in two sizes: Max 5x at ${usd(MAX5.priceUsd)} a month and Max 20x at ${usd(MAX20.priceUsd)} a month, billed monthly only. You get five or twenty times Pro's usage per five-hour session, plus Claude Code and the Fable models up to 50% of Max's weekly limits. Anthropic also lists higher output limits, early access to advanced features and priority access at high traffic times. Prices as of ${AS_OF}, before tax.`,
     },
     {
       q: "What are Claude Max limits?",
