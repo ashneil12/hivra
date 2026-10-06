@@ -8,8 +8,8 @@ import { LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, PLAN_SUMMARY } from "../plan-facts
 // Vendor facts were read on 2026-10-02 from the vendor's own pages: Anthropic's permission-modes, sandbox-environments,
 // devcontainer, security, cli-reference, headless and tools-reference docs at code.claude.com, Anthropic's engineering
 // post on auto mode (25 March 2026), and OpenAI's agent-approvals-security and developer-commands pages. Several of them
-// are version-gated, so the page tells readers to run claude --version. Re-read the pages before changing a number, and
-// keep the 2 October 2026 date beside every claim until you have.
+// are version-gated, so the page tells readers to run claude --version. Re-read the pages before changing a number.
+// Voice rule (Ash, 2026-10-06): no "read on DATE" stamps in copy. Cite the source plainly; the check date lives here.
 //
 // Hivra facts come from code: dashboard/provisioner/hivra-chat/server.js (Codex flags by restrict value, Claude flags by
 // restrict value), HivraManage.tsx (the Permissions setting), provisioner/hivra-agent-shell (the session tabs start the
@@ -29,28 +29,28 @@ export const article: BlogArticle = {
   title: "Claude Code's --dangerously-skip-permissions flag: what it skips and where to run it",
   metaTitle: "Claude --dangerously-skip-permissions: what it skips",
   metaDescription:
-    "What Claude's --dangerously-skip-permissions flag skips, how it differs from auto mode, and where to run it. Checked against Anthropic's docs, 2 Oct 2026.",
+    "What Claude's --dangerously-skip-permissions flag skips, how it differs from auto mode, and where to run it so a mistake stays off your laptop.",
   publishedDate: "2026-10-02",
   lastModified: "2026-10-02",
   readingTimeMin: 15,
   author: "Hivra team",
   tagline: "With the prompts off, the thing around Claude Code is your protection.",
   intro:
-    "One flag turns off Claude Code's permission prompts, and Anthropic says to use it only inside a container or VM. We read the vendors' docs on 2 October 2026 and checked Hivra's defaults against our own code. Some checks still run with the flag on. A separate computer keeps a mistake off your laptop, and anything you sign in to on it stays in reach.",
+    "One flag turns off Claude Code's permission prompts, and Anthropic says to use it only inside a container or VM. We went through Anthropic's and OpenAI's docs and checked Hivra's defaults against our own code. Short version: a few checks survive the flag. A separate computer keeps a mistake off your laptop. Anything you sign in to on it is still fair game.",
   shortAnswer:
-    "Claude Code's --dangerously-skip-permissions flag turns off its permission prompts, so commands and edits run without asking. Anthropic's docs, read 2 October 2026, say to run it only in a container or VM as a non-root user. Auto mode is the safer hands-off pick. A separate computer protects your laptop. It doesn't protect what you sign in to on it.",
+    "Claude Code's --dangerously-skip-permissions flag turns off its permission prompts, so commands and edits run without asking. Anthropic says to run it only in a container or VM as a non-root user. Auto mode is the safer hands-off pick. A separate computer protects your laptop. It doesn't protect what you sign in to on it.",
   sections: [
     {
       heading: "What does --dangerously-skip-permissions do?",
       paragraphs: [
-        "It starts Claude Code in `bypassPermissions` mode, which turns the permission prompts off. Tool calls run at once, and that includes writes to protected paths such as `.git` and `.claude`. The flag and `--permission-mode bypassPermissions` do the same thing ([CLI reference](https://code.claude.com/docs/en/cli-reference), [permission modes](https://code.claude.com/docs/en/permission-modes)).\n\nThe Anthropic facts in this guide are from its docs as read on 2 October 2026. Some of them depend on your Claude Code version, so run `claude --version` before you trust a line.",
+        "It starts Claude Code in `bypassPermissions` mode, which turns the permission prompts off. Tool calls run at once, and that includes writes to protected paths such as `.git` and `.claude`. The flag and `--permission-mode bypassPermissions` do the same thing ([CLI reference](https://code.claude.com/docs/en/cli-reference), [permission modes](https://code.claude.com/docs/en/permission-modes)).\n\nThe Anthropic facts here come from its own docs. Some depend on your Claude Code version, so run `claude --version` before you trust a line.",
         "Not everything switches off. Deny rules still block in every mode, bypass included, and ask rules still prompt. Allow rules do nothing here: with the flag on, an allowlist that leaves out `rm` doesn't stop `rm`.\n\nThen there are the protected paths. With the flag on, Claude Code writes to `.git`, `.claude`, `.vscode`, `.idea`, `.husky` and a few more folders without asking. It does the same for files such as `.gitconfig`, `.bashrc`, `.zshrc`, `.npmrc` and `.mcp.json`. Manual and accept-edits modes prompt for those writes. Anthropic guards them in those other modes to protect your repository state and Claude's own configuration.",
       ],
     },
     {
       heading: "Is --dangerously-skip-permissions safe?",
       paragraphs: [
-        "Not by itself. Anthropic's docs, read on 2 October 2026, say bypass mode offers no protection against prompt injection or unintended actions, so whatever surrounds Claude Code is the protection you have. Anthropic says to use the mode only in isolated environments such as containers, VMs or dev containers, and its warning adds \"without internet access\". On its [sandbox page](https://code.claude.com/docs/en/sandbox-environments) it says to always run the flag inside a container, a VM or the sandbox runtime, so file tools, MCP servers and hooks sit inside the boundary too.",
+        "Not by itself. Anthropic's docs say bypass mode offers no protection against prompt injection or unintended actions, so whatever surrounds Claude Code is the protection you have. Anthropic says to use the mode only in isolated environments such as containers, VMs or dev containers, and its warning adds \"without internet access\". On its [sandbox page](https://code.claude.com/docs/en/sandbox-environments) it says to always run the flag inside a container, a VM or the sandbox runtime, so file tools, MCP servers and hooks sit inside the boundary too.",
         "It goes wrong in ordinary ways. The model points a delete at the wrong path, or reads a file or web page whose text steers it somewhere you never wanted it to go. Or it ends up holding a login, a key or a tool server you didn't mean to hand over. We don't know how often any of that happens, and we won't guess.",
         "Isolation helps, with a limit Anthropic states itself. It cuts the impact of a breach and doesn't remove the risk: an agent with network access can still leak what it can read, and a writable project mount can still be changed.\n\nPeople reach for the flag because prompts wear them out. Anthropic's [engineering post on auto mode](https://www.anthropic.com/engineering/claude-code-auto-mode), dated 25 March 2026, says users approve 93% of permission prompts. A prompt you click through that often was never much of a guard.",
       ],
@@ -58,7 +58,7 @@ export const article: BlogArticle = {
     {
       heading: "What are Claude Code's permission modes?",
       paragraphs: [
-        "Six: Manual, `acceptEdits`, `plan`, `auto`, `dontAsk` and `bypassPermissions`. This table is from Anthropic's [permission modes page](https://code.claude.com/docs/en/permission-modes), read on 2 October 2026. Manual is the label for the config value `default`.",
+        "Six: Manual, `acceptEdits`, `plan`, `auto`, `dontAsk` and `bypassPermissions`. This table is from Anthropic's [permission modes page](https://code.claude.com/docs/en/permission-modes). Manual is the label for the config value `default`.",
         [
           "| Mode | Runs without asking | Start it with |",
           "|---|---|---|",
@@ -75,7 +75,7 @@ export const article: BlogArticle = {
     {
       heading: "Should I use Claude Code's auto mode instead of --dangerously-skip-permissions?",
       paragraphs: [
-        "On your own laptop, yes. Auto mode puts a second model, a classifier, in front of risky actions, which is a check the flag doesn't have. It blocks actions that go beyond what you asked, aim at infrastructure it doesn't recognise, or look driven by hostile content Claude read. After 3 blocks in a row or 20 in total it pauses and prompts you again. As of 2 October 2026, Anthropic's docs still warn that auto mode reduces prompts without guaranteeing safety.",
+        "On your own laptop, yes. Auto mode puts a second model, a classifier, in front of risky actions, which is a check the flag doesn't have. It blocks actions that go beyond what you asked, aim at infrastructure it doesn't recognise, or look driven by hostile content Claude read. After 3 blocks in a row or 20 in total it pauses and prompts you again. Anthropic's docs still warn that auto mode reduces prompts without guaranteeing safety.",
         "Anthropic published error rates for the classifier in the engineering post dated 25 March 2026. On 10,000 real tool calls from Anthropic's own staff, it wrongly blocked 0.4% of them. It let through 17% of 52 real cases where the agent went past what the user had authorised, and 5.7% of 1,000 synthetic data-exfiltration attempts. That 52 is a small set, and Anthropic calls the 17% the honest number. The same post calls auto mode a substantial improvement for people running the flag, then adds that it won't replace careful review on high-stakes infrastructure. Sonnet 5 is the default classifier model in the docs now, and we found no newer figures, so read those rates as March's, not today's.",
         "Anthropic calls the classifier a per-action control and says a container still adds a layer for unattended runs. For the flag, its docs say to use a container or VM. Auto mode doesn't come with that rule.\n\nOn a Hivra computer, Chat passes the skip flag by default. It doesn't pass auto mode.",
       ],
@@ -83,7 +83,7 @@ export const article: BlogArticle = {
     {
       heading: "What is the Codex equivalent of --dangerously-skip-permissions?",
       paragraphs: [
-        "It's `--dangerously-bypass-approvals-and-sandbox`, which OpenAI also lets you type as `--yolo`. It turns off approvals and the sandbox together. OpenAI's [CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli) says to use it only inside an externally hardened environment, and its [approvals page](https://learn.chatgpt.com/docs/agent-approvals-security) lists it as no sandbox, no approvals, not recommended. Both pages were read on 2 October 2026.",
+        "It's `--dangerously-bypass-approvals-and-sandbox`, which OpenAI also lets you type as `--yolo`. It turns off approvals and the sandbox together. OpenAI's [CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli) says to use it only inside an externally hardened environment, and its [approvals page](https://learn.chatgpt.com/docs/agent-approvals-security) lists it as no sandbox, no approvals, not recommended.",
         [
           "Codex splits the dial in two:",
           "",
@@ -99,7 +99,7 @@ export const article: BlogArticle = {
     {
       heading: "Where should I run --dangerously-skip-permissions so a mistake can't touch my laptop?",
       paragraphs: [
-        "Inside a container, a VM or Anthropic's sandbox runtime. Anthropic puts the whole Claude Code process inside that boundary, because the sandboxed Bash tool alone leaves file tools, MCP servers and hooks outside it. The options below are from Anthropic's [sandbox environments page](https://code.claude.com/docs/en/sandbox-environments), read on 2 October 2026, plus one row of ours.",
+        "Inside a container, a VM or Anthropic's sandbox runtime. Anthropic puts the whole Claude Code process inside that boundary, because the sandboxed Bash tool alone leaves file tools, MCP servers and hooks outside it. The options below are from Anthropic's [sandbox environments page](https://code.claude.com/docs/en/sandbox-environments), plus one row of ours.",
         [
           "| Option | What it isolates | Worth knowing |",
           "|---|---|---|",
@@ -134,7 +134,7 @@ export const article: BlogArticle = {
       heading: "What does a separate computer not protect?",
       paragraphs: [
         "Anything you sign in to on it. A computer of its own keeps a mistake off your laptop. An agent with full access can still reach every login, key and repository you put there.",
-        "Anthropic warns about the same thing with containers, in docs read on 2 October 2026. With the skip flag on, a dev container doesn't stop a malicious project from exfiltrating anything accessible inside it, including the Claude Code credentials in `~/.claude` ([Anthropic, dev containers](https://code.claude.com/docs/en/devcontainer)). OpenAI says the same about Codex credentials. Both tell you to use trusted repositories only.\n\nOn Hivra, the Claude or ChatGPT login you use sits on the computer, and Hivra's admins can reach the host machines these computers run on. We're saying nothing, one way or the other, about outbound traffic limits or credential isolation on a Hivra computer. Assume the agent can reach whatever you put on it.",
+        "Anthropic says the same about containers. With the skip flag on, a dev container doesn't stop a malicious project from exfiltrating anything accessible inside it, including the Claude Code credentials in `~/.claude` ([Anthropic, dev containers](https://code.claude.com/docs/en/devcontainer)). OpenAI says the same about Codex credentials. Both tell you to use trusted repositories only.\n\nOn Hivra, the Claude or ChatGPT login you use sits on the computer, and Hivra's admins can reach the host machines these computers run on. We're saying nothing, one way or the other, about outbound traffic limits or credential isolation on a Hivra computer. Assume the agent can reach whatever you put on it.",
         "So sign in with only what the job needs. Anthropic advises repository-scoped or short-lived tokens. Deploy keys, cloud credentials and production access shouldn't be on that computer at all. Try it on a throwaway repository first.",
       ],
     },
@@ -142,13 +142,16 @@ export const article: BlogArticle = {
       heading: "How do I limit the damage when Claude Code runs with the prompts off?",
       paragraphs: [
         "Give it less to break. Work on a branch, keep secrets off the machine, and add deny rules, because deny rules still block in bypass mode and allow rules do nothing there.",
-        "`--disallowedTools` takes deny rules on the command line. A bare tool name such as `Edit` removes that tool from Claude's context, and a scoped rule such as `Bash(rm *)` leaves the tool and denies only matching calls. Anthropic's CLI reference, read on 2 October 2026, notes that Bash rules match a command as written, so a deny rule narrows what the agent does and doesn't make it safe. In `claude -p` runs, `--max-turns` and `--max-budget-usd` cap a run too, and they work in print mode only ([CLI reference](https://code.claude.com/docs/en/cli-reference)).\n\nOn Hivra, the Permissions setting on the agent's Manage tab (Limited or Read-only) cuts what a Claude Code or Codex agent can do. For Codex, `--sandbox workspace-write` suits unattended work that can stay inside the workspace. Plain habits help too: commit before a long run and read the diff after it.",
+        "`--disallowedTools` takes deny rules on the command line. A bare tool name such as `Edit` removes that tool from Claude's context, and a scoped rule such as `Bash(rm *)` leaves the tool and denies only matching calls. Anthropic's CLI reference notes that Bash rules match a command as written, so a deny rule narrows what the agent does and doesn't make it safe. In `claude -p` runs, `--max-turns` and `--max-budget-usd` cap a run too, and they work in print mode only ([CLI reference](https://code.claude.com/docs/en/cli-reference)).\n\nOn Hivra, the Permissions setting on the agent's Manage tab (Limited or Read-only) cuts what a Claude Code or Codex agent can do. For Codex, `--sandbox workspace-write` suits unattended work that can stay inside the workspace. Plain habits help too: commit before a long run and read the diff after it.",
       ],
     },
     {
       heading: "Why does Claude Code still ask for permission with the flag on?",
       paragraphs: [
-        "A few checks still run with the flag on. Ask rules prompt, deletes aimed at critical paths ask first, and an administrator can block the mode outright. Here are the details, plus the places where the mode isn't offered at all (from Anthropic's docs, as read on 2 October 2026):\n\n- Ask rules still prompt, and so do `rm` and `rmdir` aimed at a critical path: the filesystem root, top-level folders, your home directory, your working directory and its parents. In a terminal that prompt has a two-minute countdown, and Claude Code denies the command when it runs out (v2.1.281 or later).\n- With `permissions.blockReadsOutsideWorkingDirectories` on, some reads outside the working directory prompt even in bypass mode (v2.1.257 or later).\n- Administrators can block the mode with `permissions.disableBypassPermissionsMode`. On Linux and macOS, Claude Code refuses to start with the flag as root or under sudo, unless it detects a recognized sandbox.\n- You can't switch bypass on from a session that started without it. `--allow-dangerously-skip-permissions` puts it in the Shift+Tab cycle without turning it on. A `bypassPermissions` value in a project or local settings file has no effect on v2.1.257 or later, and the session starts in Manual mode. Before v2.1.257, a project file could turn it on.\n- VS Code and the desktop app need their own toggles. A session you steer from the Claude app through Remote Control can't pick Bypass or Auto. Cloud sessions don't offer it.\n- In a `claude -p` run with the flag, the few calls that would still prompt are denied instead. The first interactive start shows a warning dialog, and accepting it stores `skipDangerousModePermissionPrompt` in `~/.claude/settings.json`. `claude -p` shows no dialog.",
+        "Because a few checks survive it. Ask rules still prompt. So do `rm` and `rmdir` aimed at a critical path: the filesystem root, top-level folders, your home directory, your working directory and its parents. In a terminal that prompt has a two-minute countdown, then Claude Code denies the command (v2.1.281 or later). And if `permissions.blockReadsOutsideWorkingDirectories` is on, some reads outside the working directory prompt even in bypass mode (v2.1.257 or later).",
+        "Sometimes the mode just isn't there. Administrators can block it with `permissions.disableBypassPermissionsMode`. On Linux and macOS, Claude Code refuses to start with the flag as root or under sudo unless it spots a recognised sandbox. VS Code and the desktop app each need their own toggle, a session you steer from the Claude app through Remote Control can't pick Bypass or Auto, and cloud sessions don't offer it at all.",
+        "You also can't switch it on halfway. A session that started without bypass can't enter it. `--allow-dangerously-skip-permissions` adds it to the Shift+Tab cycle without turning it on. A `bypassPermissions` value in a project or local settings file has no effect on v2.1.257 or later, and the session starts in Manual mode. Before that, a project file could turn it on.",
+        "One last quirk. In a `claude -p` run with the flag, the few calls that would still prompt get denied instead. The first interactive start shows a warning dialog, and accepting it stores `skipDangerousModePermissionPrompt` in `~/.claude/settings.json`. `claude -p` never shows that dialog.",
       ],
     },
     {
@@ -172,7 +175,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "What does --dangerously-skip-permissions do?",
-      a: "It starts Claude Code in bypassPermissions mode and turns off the permission prompts, so commands and file edits run without asking, including writes to protected paths such as .git and .claude. Deny rules still block, ask rules still prompt, and allow rules do nothing. Anthropic's docs, read 2 October 2026, say to use it only in isolated environments such as containers and VMs.",
+      a: "It starts Claude Code in bypassPermissions mode and turns off the permission prompts, so commands and file edits run without asking, including writes to protected paths such as .git and .claude. Deny rules still block, ask rules still prompt, and allow rules do nothing. Anthropic says to use it only in isolated environments such as containers and VMs.",
     },
     {
       q: "Is --dangerously-skip-permissions safe?",

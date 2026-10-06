@@ -8,13 +8,14 @@ import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 import { BLOG_TOPICS, topicForArticle } from "../topics";
 import { article } from "../articles/claude-code-dangerously-skip-permissions";
 
-// The page quotes flags from Anthropic's and OpenAI's docs, as read on 2 October 2026, and flags from Hivra's own code.
+// The page quotes flags from Anthropic's and OpenAI's docs (checked 2 October 2026; the date lives in the article's source
+// comment, not in reader copy, per Ash's voice rule of 2026-10-06), and flags from Hivra's own code.
 // Both kinds drift. These tests pin the numbers and wording that must not be "tidied", tie the Hivra table to the source
 // files it was read from, and keep out the claims the brief ruled out (nothing about egress or credential isolation,
 // no blanket "safe", no "Limited stops every command", no "Read-only can't run commands").
 
 const SLUG = "claude-code-dangerously-skip-permissions";
-const DATED = "2 October 2026";
+const READ_STAMP = /\b(?:read|checked)(?: on)? \d{1,2} \w+ 20\d\d|\b\d{1,2} Oct 2026\b/i;
 
 const sectionCopy = article.sections.flatMap((section) => section.paragraphs).join("\n\n");
 const fullCopy = [
@@ -60,12 +61,12 @@ describe("Claude Code --dangerously-skip-permissions article", () => {
     expect(topic.articles.indexOf(SLUG)).toBe(topic.articles.indexOf("is-it-safe-to-leave-an-ai-agent-running-unattended") + 1);
   });
 
-  it("opens with a 40 to 60 word short answer that is dated, names the container advice and the credentials limit", () => {
+  it("opens with a 40 to 60 word short answer that names the container advice and the credentials limit", () => {
     const answer = article.shortAnswer ?? "";
     const words = answer.trim().split(/\s+/).length;
     expect(words).toBeGreaterThanOrEqual(40);
     expect(words).toBeLessThanOrEqual(60);
-    expect(answer).toContain(DATED);
+    expect(answer).not.toMatch(READ_STAMP);
     expect(answer).toContain("container or VM");
     expect(answer).toContain("non-root user");
     expect(answer).toContain("It doesn't protect what you sign in to on it.");
@@ -76,12 +77,12 @@ describe("Claude Code --dangerously-skip-permissions article", () => {
     expect(article.metaTitle).toContain("--dangerously-skip-permissions");
     expect(article.metaDescription.length).toBeGreaterThanOrEqual(70);
     expect(article.metaDescription.length).toBeLessThanOrEqual(155);
-    expect(article.metaDescription).toContain("2 Oct 2026");
+    expect(article.metaDescription).not.toMatch(READ_STAMP);
     expect(article.faqs.length).toBeLessThanOrEqual(11);
   });
 
-  it("dates every group of vendor facts and tells the reader to run claude --version", () => {
-    expect(sectionCopy.split(DATED).length - 1).toBeGreaterThanOrEqual(8);
+  it("carries no read-on-date stamps and tells the reader to run claude --version", () => {
+    expect(sectionCopy).not.toMatch(READ_STAMP);
     expect(sectionCopy).toContain("run `claude --version` before you trust a line");
     expect(sectionCopy).toContain("25 March 2026");
   });

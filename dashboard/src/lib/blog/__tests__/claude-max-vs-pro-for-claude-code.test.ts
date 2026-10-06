@@ -594,18 +594,19 @@ describe("the sibling posts it links to state the same Anthropic API prices and 
     const pair = (input: number, output: number) => new RegExp(`\\$${input}(?:\\.00)?\\s?/\\s?\\$${output}(?:\\.00)?`);
     expect(copy).toMatch(pair(sonnet.input, sonnet.output));
     expect(copy).toMatch(pair(opus.input, opus.output));
-    // cost-optimization was re-fetched on 5 October 2026; the other siblings still cite 30 September 2026.
-    const dated = slug === "ai-agent-api-cost-optimization" ? "5 October 2026" : "30 September 2026";
-    expect(copy).toContain(dated);
+    // Prices were re-read 30 September and 5 October 2026. Reader copy says it like a person (Ash, 2026-10-06):
+    // a plain "as of October 2026" freshness stamp, never a "read on <date>" parenthetical.
+    expect(copy).toMatch(/as of October 2026/i);
+    expect(copy).not.toMatch(/\bread(?: on)? \d{1,2} \w+ 20\d\d/);
   });
 
   it("keeps April 2026 OpenAI caveats on siblings that did not re-fetch, and dates OpenAI on the cost-optimization post", () => {
     expect(copyOf("cost-of-running-ai-agent")).toContain("OpenAI, as of April 2026: GPT-5 mini");
     expect(copyOf("cost-of-running-ai-agent")).toContain("The monthly ranges below were worked out at April 2026 prices and have not been recalculated.");
-    expect(copyOf("ai-agent-api-cost-optimization")).toContain("OpenAI Standard short-context prices, read the same day");
+    expect(copyOf("ai-agent-api-cost-optimization")).toContain("(Standard, short context)");
     expect(copyOf("ai-agent-api-cost-optimization")).toContain("gpt-6-luna");
-    expect(copyOf("ai-agent-api-cost-optimization")).toContain("5 October 2026");
-    expect(copyOf("byo-api-key-explained")).toContain("a range worked out at April 2026 prices and not recalculated");
+    expect(copyOf("ai-agent-api-cost-optimization")).toMatch(/as of October 2026/i);
+    expect(copyOf("byo-api-key-explained")).toContain("worked that range out at April 2026 prices");
   });
 
   it("qualify the no-surprise-bill and zero-AI-cost lines the post contradicts", () => {
