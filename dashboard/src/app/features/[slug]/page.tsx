@@ -79,7 +79,7 @@ const FEATURES: Record<string, FeatureData> = {
       {
         heading: "Memory review and correction",
         paragraphs: [
-          "Hermes keeps its memory in plain files (USER.md and MEMORY.md) rather than a hidden store. If the agent learned an incorrect assumption, such as a wrong belief about how a system works or a mistaken preference, you can ask it to correct or remove that memory directly rather than waiting for it to get overwritten through repeated correction in conversation.",
+          "Hermes keeps its memory in plain files (USER.md and MEMORY.md) rather than a hidden store. If the agent learned an incorrect assumption, such as a wrong belief about how a system works or a mistaken preference, you can ask it to correct or remove that memory directly. No need to wait for it to get overwritten through repeated correction in conversation.",
           "You can also download those memory files from the agent's file explorer. Claude Code and Codex agents add an Export data link on the agent's page that downloads their chats and memory as one JSON file. If you ever want to move to a self-hosted setup or a different hosting provider, you are not locked in by accumulated state.",
         ],
       },
@@ -164,7 +164,7 @@ const FEATURES: Record<string, FeatureData> = {
         heading: "IP address and anti-bot considerations",
         paragraphs: [
           "The agent runs from a stable cloud IP in a data center. For most standard websites, such as news sites, corporate pages, SaaS pricing pages and public databases, this works without any special configuration. The browser sends standard Chromium headers and behaves like a real user session.",
-          "Some sites use aggressive anti-bot systems (Cloudflare's higher-level bot protection, PerimeterX, Akamai Bot Manager) that can detect cloud IP ranges and headless browsers regardless of header spoofing. For these sites, results vary. The agent will tell you when it hits a challenge page rather than silently scraping wrong data.",
+          "Some sites use aggressive anti-bot systems (Cloudflare's higher-level bot protection, PerimeterX, Akamai Bot Manager) that can detect cloud IP ranges and headless browsers regardless of header spoofing. For these sites, results vary. The agent will tell you when it hits a challenge page. It won't quietly scrape the wrong data.",
           "If you are targeting sites with known bot detection, point Hermes at a cloud browser service such as Browserbase with your own key. It brings its own residential IPs and fingerprinting, which a data-center browser cannot match.",
         ],
       },
@@ -242,7 +242,7 @@ const FEATURES: Record<string, FeatureData> = {
         heading: "Why multiple agents outperform one generalist",
         paragraphs: [
           "A single agent that handles everything, from research and coding to customer support and content writing, has to context-switch constantly. Its system prompt grows bloated trying to cover every role. The memory store accumulates unrelated history that competes for context space on every task.",
-          "Specialized agents are more focused. A research agent configured for competitive intelligence has a system prompt, tool set, and memory structure optimized for that job. A coding agent has different tool access and different working memory. Each one is sharper at its task than a generalist would be.",
+          "Specialized agents are more focused. A research agent configured for competitive intelligence has a system prompt, tool set, and memory structure tuned for that job. A coding agent has different tool access and different working memory. Each one is sharper at its task than a generalist would be.",
           "Many larger AI teams are being built this way in 2026, as a portfolio of focused agents with defined handoff points between them.",
         ],
       },
@@ -250,7 +250,7 @@ const FEATURES: Record<string, FeatureData> = {
         heading: "Isolated memory, one compute pool",
         paragraphs: [
           "Each agent profile on Hivra has a completely separate memory store. The research agent does not see the coding agent's task history and vice versa. This prevents the interference that happens when a generalist agent tries to apply patterns from one domain to an unrelated task.",
-          "Each agent still runs on its own computer. At the plan level, those computers draw from one compute pool: you split your plan's vCPU and RAM across them rather than paying for each one separately.",
+          "Each agent still runs on its own computer. At the plan level, those computers draw from one compute pool: you split your plan's vCPU and RAM across them instead of paying for each one separately.",
           "The agents run side by side, not as a team. Hivra does not coordinate work between them today; built-in orchestration is planned, not shipped. When one agent's output should feed another, you set up that handoff yourself.",
         ],
       },
@@ -412,7 +412,7 @@ const FEATURES: Record<string, FeatureData> = {
       {
         heading: "The core trade OpenClaw users are making",
         paragraphs: [
-          "OpenClaw users typically know the trade they are making: they get maximum control and zero subscription fees beyond API costs, in exchange for handling all operations themselves. That trade makes sense for developers who genuinely value the control and have the time.",
+          "OpenClaw users usually know the trade they are making: they get maximum control and zero subscription fees beyond API costs, in exchange for handling all operations themselves. That trade makes sense for developers who genuinely value the control and have the time.",
           "The trade breaks down in a few common situations: when the setup time starts competing with the work the agent is supposed to be enabling, when the developer wants the agent available 24/7 without keeping their machine on, or when they want to run multiple agent profiles without managing separate instances.",
           "Hivra is built for exactly these situations. You bring your API key, the same one you were using with OpenClaw, and get a managed cloud environment that runs the agent for you, whether that agent is OpenClaw or Hermes.",
         ],
@@ -558,7 +558,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Is there a limit on how many scheduled tasks I can run?",
-        a: "Paid plans have no set limit on the number of tasks. Concurrent execution depends on your plan size, because tasks that run simultaneously share the agent's vCPU and RAM. On the 2 vCPU, 4 GB size, stagger heavy tasks rather than running many at once.",
+        a: "Paid plans have no set limit on the number of tasks. Concurrent execution depends on your plan size, because tasks that run simultaneously share the agent's vCPU and RAM. On the 2 vCPU, 4 GB size, stagger heavy tasks. Don't run many at once.",
       },
     ],
   },

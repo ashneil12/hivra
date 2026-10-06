@@ -3,6 +3,7 @@ import {
   COMPETITOR_FACTS_CHECKED,
   PRICE_TABLE,
   formatCheckedDate,
+  formatCheckedMonth,
 } from "../competitor-facts";
 import { HOST_COMPARISONS, HOST_COMPARISON_SLUGS } from "../host-comparisons";
 import { MAX_META_DESCRIPTION_LENGTH } from "@/app/features/__tests__/public-claims";
@@ -56,9 +57,12 @@ describe("competitor facts", () => {
     expect(COMPETITOR_FACTS["vs-agent-37"].sources.map((s) => s.href)).toContain("https://agent37.com/personal");
   });
 
-  it("dates every host page's meta description with the shared check date", () => {
+  it("stamps every host page's meta description with a plain \"as of\" month, never a read-on date", () => {
+    expect(formatCheckedMonth("2026-10-02")).toBe("October 2026");
     for (const slug of HOST_COMPARISON_SLUGS) {
-      expect([slug, HOST_COMPARISONS[slug].metaDescription.includes(formatCheckedDate())]).toEqual([slug, true]);
+      const meta = HOST_COMPARISONS[slug].metaDescription;
+      expect([slug, meta.includes(`Prices as of ${formatCheckedMonth()}.`)]).toEqual([slug, true]);
+      expect([slug, /\b(?:read|checked)(?: on)? \d{1,2} \w+ 20\d\d/i.test(meta)]).toEqual([slug, false]);
     }
   });
 
