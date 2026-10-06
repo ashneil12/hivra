@@ -9,7 +9,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Claude Code suits long multi-hour sessions and Codex suits many small headless tasks. Compared on compaction, resume, subscription cost and server needs.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-06",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "The 20-minute benchmark tells you nothing about hour 9.",
@@ -55,7 +55,7 @@ export const article: BlogArticle = {
     {
       heading: "Verdict by workload type",
       paragraphs: [
-        "No single winner. A winner per workload:\n\n- **Long multi-hour tasks on one big codebase** (deep refactors, migrations, \"work through this 40-item checklist\"): **Claude Code.** Compaction plus session resume is the difference between finishing and starting over.\n- **High volume of small scoped tasks** (nightly test-fix runs, dependency bumps, triage): **Codex.** `codex exec` plus a scheduler is a clean, boring pipeline, and boring is what you want at 3 a.m.\n- **You already pay for Claude Pro or Max:** Claude Code. Your marginal AI cost is zero.\n- **You already pay for ChatGPT Plus or Pro:** Codex. Same logic, other direction.\n- **One self-contained change to a GitHub repo, and Codex was your pick:** OpenAI's own Codex cloud, if your ChatGPT plan lists it. The [Codex cloud guide](/blog/run-codex-24-7-in-the-cloud) covers when a computer that stays on wins instead.\n- **Web-heavy tasks that need a real browser:** either CLI works; the deciding factor is a machine with browser automation, which is a hosting feature (included with paid plans on Hivra), not a CLI feature.\n- **You genuinely cannot decide:** run both for a month on one plan and let your own backlog pick the winner.",
+        "No single winner. A winner per workload:\n\n- **Long multi-hour tasks on one big codebase** (deep refactors, migrations, \"work through this 40-item checklist\"): **Claude Code.** Compaction plus session resume is the difference between finishing and starting over.\n- **High volume of small scoped tasks** (nightly test-fix runs, dependency bumps, triage): **Codex.** `codex exec` plus a scheduler is a clean, boring pipeline, and boring is what you want at 3 a.m.\n- **You already pay for Claude Pro or Max:** Claude Code. Your marginal AI cost is zero.\n- **You already pay for ChatGPT Plus or Pro:** Codex. Same logic, other direction.\n- **One self-contained change to a GitHub repo, and Codex was your pick:** OpenAI's own Codex cloud, if your ChatGPT plan lists it. The [Codex cloud guide](/blog/run-codex-24-7-in-the-cloud) covers when a computer that stays on wins instead.\n- **Web-heavy tasks that need a real browser:** either CLI works; the deciding factor is a machine with browser automation, which is a hosting feature (included with paid plans on Hivra), not a CLI feature.\n- **You genuinely cannot decide:** run both for a month on one plan and let your own backlog pick the winner.\n- **You want Cursor's IDE loop, not a terminal CLI:** that is a different comparison. [Cursor vs Claude Code](/blog/cursor-vs-claude-code) sorts by job, and [Cursor Cloud Agents](/blog/cursor-cloud-agents) covers Cursor's laptop-closed path.",
       ],
     },
     {
@@ -93,6 +93,8 @@ export const article: BlogArticle = {
   ],
   relatedArticles: [
     { slug: "codex-pricing-by-chatgpt-plan", title: "Codex pricing by ChatGPT plan: Plus, Pro 100/200/500 and API keys" },
+    { slug: "cursor-vs-claude-code", title: "Cursor vs Claude Code: which keeps going when you walk away?" },
+    { slug: "cursor-cloud-agents", title: "Cursor Cloud Agents: cost, laptop-closed runs, and a simpler path" },
 
     {
       slug: "ai-agent-browser-automation-tools",
