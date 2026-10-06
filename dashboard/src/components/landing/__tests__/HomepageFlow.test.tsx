@@ -17,7 +17,7 @@ async function renderHome() {
 test("the first screen says what it is, who it is for, what it costs, and asks once", async () => {
   await renderHome();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your agent needs a computer. It doesn't need yours.");
-  expect(screen.getByText((_, element) => element?.tagName === "P" && /AI agents like Claude Code and Codex can do real work for you\..*private computer in the cloud\./.test(element.textContent ?? ""))).toBeInTheDocument();
+  expect(screen.getByText((_, element) => element?.tagName === "P" && /Claude Code, Codex and the other agents you already use get a private computer in the cloud\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   // The hero makes no price or guarantee claim, and no longer carries the rename link.
   expect(screen.queryByRole("link", { name: /Hermes OS is now Hivra/ })).not.toBeInTheDocument();

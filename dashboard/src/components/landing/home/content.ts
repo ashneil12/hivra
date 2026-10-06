@@ -37,7 +37,7 @@ export const HERO = {
   titleLead: "Your agent needs a",
   titleWord: "computer.",
   titleTail: "It doesn't need yours.",
-  subhead: `AI agents like Claude Code and Codex can do real work for you. Hivra gives each one a private computer in the cloud. On a paid plan it stays on when you close your laptop, and you decide what it can reach.`,
+  subhead: `Claude Code, Codex and the other agents you already use get a private computer in the cloud. On a paid plan it stays on when you close your laptop, and you decide what it can reach.`,
   primary: "Launch an agent",
   secondary: "Or start with a computer",
   proof: [
@@ -113,7 +113,7 @@ export const FIT = {
 export const AGENTS_SECTION = {
   eyebrow: "Agents",
   title: "Pick your agent.",
-  titleTail: "It gets its own computer.",
+  titleTail: "Each one gets a computer of its own.",
   subhead: "Sign in with your own Claude or ChatGPT account, or use your own AI key. Run a few side by side, each on a computer of its own.",
   compare: "Compare every agent",
   screensNote: "Card screens are illustrations of each agent at work.",
@@ -140,7 +140,7 @@ export const HOME_AGENTS: HomeAgent[] = [
     id: "hermes",
     name: "Hermes",
     role: "Research and automation",
-    line: "Browses the web, does research and handles repeat jobs, with its tools and memory in one place.",
+    line: "Researches on the web and handles repeat jobs, with its tools and memory kept on its own computer.",
     href: buildLaunchHref({ start: true, profile: "hermes" }),
     screen: ["hermes › compare these pricing pages", "reading the sources", "writing notes/pricing.md", "✓ Saved"],
   },
@@ -182,8 +182,8 @@ export const COMPUTERS = {
 
 export const HOW = {
   eyebrow: "How it works",
-  title: "Hand it the work.",
-  titleTail: "Keep the control.",
+  title: "Hand it the work and",
+  titleTail: "keep the control.",
   steps: [
     {
       n: "01",
@@ -211,7 +211,7 @@ export const OPEN_SOURCE = {
   title: "Read every line.",
   titleTail: "Run it yourself.",
   body: [
-    "Every line of Hivra is open source. Read the code. Change it. Run it yourself.",
+    "Every line of Hivra is open source, and you can run the whole platform on your own server.",
     "This software sits between an agent and the things you care about. You should be able to check how it decides what the agent can touch, and keep going without us if we change direction.",
   ],
   repoOwner: "ashneil12",
@@ -228,7 +228,7 @@ export const PRICING = {
   eyebrow: "Pricing",
   title: "Free to self-host.",
   titleTail: `From ${ENTRY_PLAN_PRICE} a month on Hivra Cloud.`,
-  subhead: "Pick where it runs. Your own AI key or login stays yours wherever it runs, and your AI company bills you for what you use.",
+  subhead: "Pick where it runs. Your AI key or login stays yours either way, and your AI company bills you for what you use.",
   cloud: {
     name: "Hivra Cloud",
     marker: "Start here",
