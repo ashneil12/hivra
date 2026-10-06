@@ -117,6 +117,13 @@ describe("blog registry", () => {
     expect(withDashes).toEqual([]);
   });
 
+  // cursor-vs-claude-code shipped "${ENTRY_PLAN_PRICE}" as literal text from a plain-quoted string.
+  // Shell expansions with an operator inside code blocks (for example "${ANTHROPIC_API_KEY:+set}") are fine.
+  it("never prints a raw template placeholder in article copy", () => {
+    const leaky = BLOG_ARTICLES_LIST.filter((article) => /\$\{[A-Za-z_][\w.]*\}/.test(JSON.stringify(article))).map((article) => article.slug);
+    expect(leaky).toEqual([]);
+  });
+
   it("writes the cutover posts without em or en dashes", () => {
     for (const slug of CUTOVER_BLOG_SLUGS) {
       expect(JSON.stringify(BLOG_ARTICLES[slug])).not.toMatch(/[\u2013\u2014]/);
