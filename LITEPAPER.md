@@ -156,7 +156,7 @@ Sometimes you know which agent you want. Sometimes you just need another compute
 
 ### Launch an agent
 
-Claude Code, Codex, Hermes, OpenClaw or Agent Zero, with DeepSeek in preview. Pick one, sign in the way it normally does, and it gets a machine of its own.
+Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon, with DeepSeek in preview. Pick one, sign in the way it normally does, and it gets a machine of its own.
 
 Chat with it in its chat window, work in its terminal, or switch between the two. Close the laptop and pick it up from your phone.
 
@@ -243,7 +243,7 @@ Agent Computers give the work somewhere to happen. Everything below is what an a
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes, OpenClaw or Agent Zero on a computer of its own, with DeepSeek in preview. Or launch Ubuntu, Windows or Omarchy and use it yourself. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
+Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon on a computer of its own, with DeepSeek in preview. Or launch Ubuntu, Windows or Omarchy and use it yourself. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
 
 Coming: Hivra Orchestrator, macOS, custom images.
 

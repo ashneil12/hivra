@@ -2,7 +2,7 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`2d79112c5bd88818a2b3e6a4f23f4ec337fbaccdbdfef9886335dbcf079b488a`
+`6c4b5015fcdc7e529e285e53015262be7a4606258f21291e097f6ccd04cdc2b9`
 (v2.6, plain-English pass with a rewritten token section and a Tokenomics button in the hero, 30 September 2026; the token wording still needs UK financial-promotion and legal review before it is published). v2.5 rewrites the hard words outside the founder letter for a 12-year-old reader: it defines "AI agent", "model", the cloud, open source, snapshots, virtual machines and containers where they first appear, and swaps jargon (terminals, repositories, SSH keys, credentials, tenants, MCP servers) for plain words. v2.4 (28 September 2026) opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
 language, treats every surface it names as live (no preview labels, at Ash's
 direction), adds Windows desktops to the positioning, simplifies "Keeping a
