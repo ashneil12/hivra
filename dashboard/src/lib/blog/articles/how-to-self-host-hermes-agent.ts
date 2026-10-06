@@ -21,7 +21,7 @@ export const article: BlogArticle = {
   author: "Hivra team",
   tagline: "Docker can mean two different things here. Pick the one that matches the isolation you want.",
   intro:
-    "Hermes Agent runs on a VPS, keeps its memory and talks over Telegram while you sleep. Getting there from a blank Ubuntu server still takes a few hours when things go right. Docker shows up in two different ways in Nous's docs, and mixing them up is how people lose a weekend. We re-read those docs on 5 October 2026. Hivra is one managed path. It is not Nous, and it does not run Hermes on My cloud or My server.",
+    "Hermes Agent runs on a VPS, keeps its memory and talks over Telegram while you sleep. Getting there from a blank Ubuntu server still takes a few hours when things go right. Docker shows up in two different ways in Nous's docs, and mixing them up is how people lose a weekend. Hivra is one managed path. It is not Nous, and it does not run Hermes on My cloud or My server.",
   shortAnswer:
     "Rent Ubuntu 24.04 with at least 2 vCPU and 4 GB RAM, install Docker, run Nous's install script, finish hermes setup, then run the gateway under systemd. Or run Hermes in nousresearch/hermes-agent with ~/.hermes at /opt/data. A Hivra computer uses Hivra's maintained image on its own private computer, with no compose file for you to keep current.",
   sections: [
@@ -120,7 +120,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Should I run Hermes in Docker or only use Docker as the terminal backend?",
-      a: "In Docker means the whole agent lives in nousresearch/hermes-agent with data under ~/.hermes mounted at /opt/data. Docker as the terminal backend leaves Hermes on the host and sandboxes shell commands only. Nous documents both on 5 October 2026. Pick the first when you want pull-to-upgrade. Pick the second when Hermes is a normal host service.",
+      a: "In Docker means the whole agent lives in nousresearch/hermes-agent with data under ~/.hermes mounted at /opt/data. Docker as the terminal backend leaves Hermes on the host and sandboxes shell commands only. Nous documents both. Pick the first when you want pull-to-upgrade. Pick the second when Hermes is a normal host service.",
     },
     {
       q: "What Docker image does Hermes Agent use?",
