@@ -59,6 +59,15 @@ existing computer stays Canary-only even then (see Next, item 5).
 - **Hivra Orchestrator:** one chat to talk to all your agents, switch between
   them, see who is working or stuck, and pass work between them, over the same
   agents and computers (Phases 6 and 7). Needs: design, then engineering.
+- **Shared brain and agent network:** one memory service per organization that
+  its agents share within limits an admin sets, and agent-to-agent messages
+  between separate computers through Hivra, with an admin deciding what each
+  agent can see and whom it can talk to. Design only, proposed 2026-10-07; none
+  of it is built. Order: B1 identity and policy, B2 brain service, B3 attach
+  per runtime, B4 memory quality, B5 broker and link (after the Slice 8 gate),
+  B6 admin console; an optional terminal hub (herdr) is independent and a web
+  hub is last. See [the design](docs/superpowers/specs/2026-10-07-shared-brain-and-agent-network.md).
+  Needs: owner decisions on hosting and spend (D2, D3), then engineering.
 - Adding an agent you already have to another computer, or letting an added
   agent use the desktop or browser. Needs: an owner decision and a threat model.
 - Windows and Omarchy out of private preview; macOS computers; custom images.
@@ -84,7 +93,7 @@ current merely because related implementation is pulled forward.
 | Slice 5 — Linux Computer | Carries Phase 8 desktop performance acceptance. **Status:** Ubuntu Desktop is available in the catalog, and a fix that lets Ubuntu Desktops made by older releases Start again is merged to Canary (#148); Omarchy is in private preview as a prepared Canary computer. Measured desktop performance acceptance is still open. |
 | Slice 6 — Windows guest | Carries the Windows-guest part of Phase 9. **Status:** Windows is in private preview: it runs on the owner's own Proxmox host, from their own licensed Windows ISO. |
 | Slice 7 — Native clients | Later separately authorized release track; excluded from current execution scope. |
-| Slice 8 — Orchestration | Carries Phase 7 after real single-agent execution, authority, recovery, and bounded stops; Phase 6 workspace is not a prerequisite. |
+| Slice 8 — Orchestration | Carries Phase 7 after real single-agent execution, authority, recovery, and bounded stops; Phase 6 workspace is not a prerequisite. Its identity, memory and messaging substrate is designed (not built) in [the shared brain and agent network spec](docs/superpowers/specs/2026-10-07-shared-brain-and-agent-network.md), whose agent-to-agent package waits for these same gates. |
 
 ### Slice 2B status
 
