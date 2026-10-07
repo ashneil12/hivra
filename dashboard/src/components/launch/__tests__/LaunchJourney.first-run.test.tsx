@@ -7,8 +7,9 @@ import { HivraLaunchRejectedError } from "@/lib/hivra/agent-api";
 
 import { LaunchJourney } from "../LaunchJourney";
 
-// Launch is where a new account lands after sign-up: it turns the Free plan on
-// with its own button, and it is where "Start from a template" begins.
+// Launch is where a new account lands after sign-up. The free account works
+// with the owner's own computer; Hivra-hosted compute is bought. It is also
+// where "Start from a template" begins.
 
 const routerPushMock = jest.fn();
 const fetchPlanStrictMock = jest.fn();
@@ -116,74 +117,44 @@ beforeEach(() => {
 const reviewButton = () => screen.getByTestId("launch-primary-action");
 
 describe("a new account in Launch", () => {
-  it("shows what fits Free before a plan exists, instead of a plan check that failed", async () => {
+  it("tells a new account the free account works with its own computer, instead of offering a free hosted one", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
-    expect(await screen.findByText(/The Free plan runs one agent or computer with 0\.5 CPU \/ 1 GB/)).toBeInTheDocument();
-    // FTUE-16: "You turn it on before you launch" read as a step every launch
-    // needs; Free is only for Hivra Cloud.
-    expect(screen.getByText(/You turn it on when you launch there; your own cloud or server doesn't need it\./)).toBeInTheDocument();
-    expect(screen.queryByText(/before you launch/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Hivra is free to use with your own computer. Connect a computer or server to launch on it, or choose a plan to run on Hivra Cloud.")).toBeInTheDocument();
+    expect(screen.queryByText(/The Free plan runs one agent/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/turn it on/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn.t check your plan/i)).not.toBeInTheDocument();
     const codex = screen.getByRole("button", { name: /^Codex/ });
-    await waitFor(() => expect(codex).toHaveTextContent("Fits Free without a browser"));
-    expect(screen.getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
-    // Not "your" plan: nothing is active yet.
-    expect(screen.queryByText(/Fits your Free plan/)).not.toBeInTheDocument();
+    await waitFor(() => expect(codex).toHaveTextContent("Needs Pro or your own server"));
+    expect(screen.getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(screen.queryByText(/Fits Free/)).not.toBeInTheDocument();
   });
 
-  it("turns the Free plan on only with its own button, then lets the launch go ahead", async () => {
+  it("blocks a Hivra Cloud launch for a free account, offers a plan or its own capacity, and activates nothing", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
 
-    const blocker = await screen.findByText(/Turn on the Free plan to run Claude Code on Hivra Cloud/);
-    expect(blocker).toHaveTextContent("Free includes 0.5 CPU / 1 GB for one agent and costs nothing.");
+    expect(await screen.findByText("Claude Code on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.")).toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
-    expect(screen.getByText("Free plan · not turned on yet")).toBeInTheDocument();
-    expect(screen.getByText("No charge. It runs on the Free plan, which you turn on before launching.")).toBeInTheDocument();
-    // Nothing is activated by getting here.
-    expect(checkoutMock).not.toHaveBeenCalled();
-
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    fireEvent.click(screen.getByRole("button", { name: "Turn on Free" }));
-
-    await waitFor(() => expect(checkoutMock).toHaveBeenCalledWith("free"));
-    expect(await screen.findByText("Free is active.")).toBeInTheDocument();
-    expect(screen.getByText("Free plan")).toBeInTheDocument();
-    await waitFor(() => expect(reviewButton()).toBeEnabled());
+    expect(screen.getByText("Free account · needs a paid plan")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Upgrade to/ })).toHaveAttribute("href", expect.stringContaining("/dashboard/billing?from=launch&returnTo="));
+    expect(screen.getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Turn on Free/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Turn on the Free plan/)).not.toBeInTheDocument();
-
-    fireEvent.click(reviewButton());
-    fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
-    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
-    expect(createAgentMock.mock.calls[0][0]).toMatchObject({ type: "claude-code", deployment: { mode: "hivra-managed" } });
+    // Nothing is activated, bought or launched by getting here.
+    expect(checkoutMock).not.toHaveBeenCalled();
+    expect(createAgentMock).not.toHaveBeenCalled();
   });
 
-  it("keeps the launch blocked and says why when the Free plan couldn't be turned on", async () => {
-    // The billing client's words are about checkout; this step takes no payment.
-    checkoutMock.mockResolvedValue({ ok: false, reason: null, status: 500, message: "Failed to start checkout. Please try again." });
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Free" }));
-
-    expect(await screen.findByText("Couldn't turn on the Free plan. Nothing was charged. Try again in a moment.")).toBeInTheDocument();
-    expect(screen.queryByText(/checkout/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("Free is active.")).not.toBeInTheDocument();
-    expect(reviewButton()).toBeDisabled();
-    // The plan is never re-read as if it had changed.
-    expect(fetchPlanStrictMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("offers a paid plan, not Free, for a launch Free can't hold", async () => {
+  it("offers a paid plan for a launch Free can't hold either, never Free", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Ubuntu Desktop/ }));
 
-    expect(await screen.findByText(/Ubuntu Desktop needs a paid plan on Hivra Cloud/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Ubuntu Desktop on Hivra Cloud needs a paid plan/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Turn on Free/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Upgrade to/ })).toHaveAttribute("href", expect.stringContaining("/dashboard/billing?from=launch&returnTo="));
   });
 
@@ -195,6 +166,7 @@ describe("a new account in Launch", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Hivra is free to use with your own computer/)).not.toBeInTheDocument();
   });
 });
 
@@ -224,49 +196,6 @@ describe("a paying customer whose plan is on hold", () => {
     expect(checkoutMock).not.toHaveBeenCalled();
   });
 
-  it("says a paid plan needs attention when turning Free on finds one billing didn't report", async () => {
-    // The reported dead end: billing shows no plan, Free is refused because a
-    // lapsed paid subscription holds the account, and the plan reads the same.
-    checkoutMock.mockResolvedValue({ ok: false, reason: "ACTIVE_SUBSCRIPTION", message: "You already have an active subscription.", status: 400 });
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Free" }));
-
-    expect(await screen.findByText("Your account has a paid plan that isn't active right now, so Free can't be turned on. Check your plan in Billing to run Claude Code on Hivra Cloud.")).toBeInTheDocument();
-    expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2);
-    expect(billingLink("Open Billing")).toHaveAttribute("href", expect.stringMatching(/^\/dashboard\/billing\?tab=overview&/));
-    expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/is active\./)).not.toBeInTheDocument();
-    expect(screen.getByText("Paid plan · not active")).toBeInTheDocument();
-    expect(reviewButton()).toBeDisabled();
-  });
-
-  it("shows the plan on hold, and how to settle it, once the plan is read again", async () => {
-    checkoutMock.mockResolvedValue({ ok: false, reason: "ACTIVE_SUBSCRIPTION", message: "You already have an active subscription.", status: 400 });
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    fetchPlanStrictMock.mockResolvedValue(PRO_ON_HOLD);
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Free" }));
-
-    expect(await screen.findByText(/Your Pro plan is on hold because a payment didn't go through/)).toBeInTheDocument();
-    expect(billingLink("Update payment")).toBeInTheDocument();
-    expect(reviewButton()).toBeDisabled();
-  });
-
-  it("goes ahead when turning Free on finds a paid plan that is active after all", async () => {
-    checkoutMock.mockResolvedValue({ ok: false, reason: "ACTIVE_SUBSCRIPTION", message: "You already have an active subscription.", status: 400 });
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Free" }));
-
-    expect(await screen.findByText("Operator is active.")).toBeInTheDocument();
-    await waitFor(() => expect(reviewButton()).toBeEnabled());
-    expect(screen.queryByText(/Free can't be turned on/)).not.toBeInTheDocument();
-  });
 });
 
 describe("an account without a plan that already runs something", () => {
@@ -283,14 +212,14 @@ describe("an account without a plan that already runs something", () => {
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
   });
 
-  it("says Free would have no room for it, from what billing observed", async () => {
+  it("still says a hosted launch needs a plan, from what billing observed", async () => {
     fetchPlanStrictMock.mockResolvedValue({ ...NO_PLAN, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     expect(screen.getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Needs Pro");
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
 
-    expect(await screen.findByText("The Free plan runs one agent or computer on Hivra Cloud, and your account already has 1 there.")).toBeInTheDocument();
+    expect(await screen.findByText("Claude Code on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
   });
@@ -298,38 +227,6 @@ describe("an account without a plan that already runs something", () => {
 
 describe("the first-run funnel", () => {
   const events = (name: string) => captureMock.mock.calls.filter(([event]) => event === name).map(([, properties]) => properties);
-
-  it("records the activation page, and Free turned on with its own button", async () => {
-    fetchPlanStrictMock.mockResolvedValue(NO_PLAN);
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    await waitFor(() => expect(events("activation_page_viewed")).toHaveLength(1));
-    expect(events("activation_page_viewed")[0]).toMatchObject({ source: "launch-journey", route: "/dashboard/launch", plan: "free" });
-
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Free" }));
-    await screen.findByText("Free is active.");
-
-    expect(events("activation_started")).toEqual([expect.objectContaining({ plan: "free" })]);
-    expect(events("activation_dashboard_reached")).toEqual([expect.objectContaining({ plan: "free", outcome: "free_plan_activated" })]);
-    // Seen once per visit, however often the plan is read.
-    expect(events("activation_page_viewed")).toHaveLength(1);
-  });
-
-  it("records a Free activation that failed, in the fields the first-run audit reads", async () => {
-    checkoutMock.mockResolvedValue({ ok: false, reason: null, status: 500, message: "Failed to start checkout. Please try again." });
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Turn on Free" }));
-    await screen.findByText(/Couldn't turn on the Free plan/);
-
-    expect(events("activation_failed")).toEqual([expect.objectContaining({
-      stage: "free_plan_activation", failureType: "subscribe_request_failed", errorCategory: "server", recoverable: true,
-    })]);
-    expect(events("activation_dashboard_reached")).toHaveLength(0);
-  });
 
   it("records a launch request and its acceptance, without the launch's name", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
@@ -375,7 +272,7 @@ describe("the first-run funnel", () => {
   });
 
   it("records Hermes' card check and its readiness step the way the welcome flow did", async () => {
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
     let hermesResponse: unknown = { success: false, reason: "card_required", error: "A quick card check first." };
     const baseFetch = global.fetch as jest.Mock;
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -408,7 +305,7 @@ describe("the first-run funnel", () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Ubuntu Desktop/ }));
-    await screen.findByText(/Ubuntu Desktop needs a paid plan on Hivra Cloud/);
+    await screen.findByText(/Ubuntu Desktop on Hivra Cloud needs a paid plan/);
     // Editing the launch re-renders the blocker; the moment is still one.
     fireEvent.change(screen.getByRole("textbox", { name: /name/i }), { target: { value: "Desk" } });
     await waitFor(() => expect(events("paywall_viewed")).toHaveLength(1));
@@ -421,17 +318,6 @@ describe("the first-run funnel", () => {
     expect(events("upgrade_clicked")).toEqual([expect.objectContaining({ via: "plan_blocker", paywall: "paid_profile", from_plan: "free" })]);
   });
 
-  it("records a Free account out of agent slots as the free-limit moment", async () => {
-    fetchPlanStrictMock.mockResolvedValue({ ...FREE_PLAN, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
-    render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "What do you want to launch?" });
-    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    await screen.findByText("Your current plan has no open agent slots.");
-
-    await waitFor(() => expect(events("free_limit_hit")).toHaveLength(1));
-    expect(events("free_limit_hit")[0]).toMatchObject({ limit_type: "agents", from_plan: "free" });
-    expect(events("paywall_viewed")).toEqual([expect.objectContaining({ paywall: "agent_limit" })]);
-  });
 });
 
 describe("starting from a template", () => {

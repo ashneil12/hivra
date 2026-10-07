@@ -4,13 +4,9 @@ import { ArrowLeft, ArrowRight, Bot, Cloud, ExternalLink, Server, ShieldCheck } 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { HivraCloudCapacityDto } from "@/lib/infrastructure/hivra-cloud-client";
-import { PLANS } from "@/lib/subscription/plans";
 import styles from "./Infrastructure.module.css";
 
 type Path = "choose" | "cloud" | "machine" | "remote" | "local";
-
-/** The Free plan's Hivra Cloud allowance, from the plan definition. */
-const FREE_CAPACITY = `${PLANS.free.totalCpu} CPU and ${PLANS.free.totalRam >= 1024 ? `${PLANS.free.totalRam / 1024} GB` : `${PLANS.free.totalRam} MB`}`;
 
 export function InfrastructureEntryChooser({
   firstConnection, hivraCloud, selfHosted, onChooseHivraCloud, onConnectHetzner, onConnectDigitalOcean, onConnectExisting,
@@ -56,11 +52,11 @@ export function InfrastructureEntryChooser({
               ? "Use the separate hosted Hivra service. Your self-hosted installation stays independent."
               : hivraCloud?.paid
                 ? "Hivra runs and maintains the servers your plan uses."
-                : `Start free: ${FREE_CAPACITY} of Hivra Cloud, enough for one small agent. Hivra runs and maintains the servers.`}</p>
+                : "Choose a plan and Hivra runs and maintains the servers. Your free account works with the machines you connect yourself."}</p>
             {selfHosted ? <a className={styles.primaryButton} href="https://hivra.cloud/dashboard/infrastructure" target="_blank" rel="noreferrer">Open Hivra Cloud <ExternalLink size={14} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span></a>
               : hivraCloud?.paid ? <Link className={styles.primaryButton} href="/dashboard/billing">Manage Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></Link>
-                : <button type="button" className={styles.primaryButton} onClick={onChooseHivraCloud}>Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></button>}
-            <small>{hivraCloud?.paid ? `${hivraCloud.plan?.name ?? "Your plan"} is active. Review plan options in Billing.` : "Free needs no card. Paid plans show their price before payment."}</small>
+                : <button type="button" className={styles.secondaryButton} onClick={onChooseHivraCloud}>Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></button>}
+            <small>{hivraCloud?.paid ? `${hivraCloud.plan?.name ?? "Your plan"} is active. Review plan options in Billing.` : "Paid plans show their price before payment. Connecting your own machine costs nothing here."}</small>
           </article>
           <article className={styles.guidedChoice}>
             <Cloud size={22} aria-hidden="true" />
