@@ -79,7 +79,7 @@ export const article: BlogArticle = {
     {
       heading: `Claude Code pricing by plan, as of ${AS_OF}`,
       paragraphs: [
-        `Claude Code is included in every paid Claude plan: Pro, Max, Team and Enterprise. Here's what ${link(S.pricing, "Anthropic's pricing page")}, ${link(S.maxPlan, "the Max article")} and ${link(S.proPlan, "the Pro article")} say today.`,
+        `Claude Code is included in every paid Claude plan: Pro, Max, Team and Enterprise. Here's what ${link(S.pricing, "Anthropic's pricing page")}, ${link(S.maxPlan, "the Max article")} and ${link(S.proPlan, "the Pro article")} say.`,
         [
           `- **Pro:** ${usd(PRO.priceUsd)} a month, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). The baseline that the Max multiples are measured against.`,
           `- **Max 5x:** ${usd(MAX5.priceUsd)} a month, monthly only. ${MAX5.multiplier}x Pro's usage per five-hour session.`,

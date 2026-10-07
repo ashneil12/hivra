@@ -13,7 +13,7 @@ export interface BannedClaim {
 }
 
 export const BANNED_CLAIMS: BannedClaim[] = [
-  { pattern: /free trial|trial period|7-day trial|\btrial\b/i, why: "No plan has a trial (plans.ts trialDays 0)." },
+  { pattern: /free trial|trial period|7-day trial|\btrial\b/i, why: "No plan has a trial." },
   { pattern: /card required|no card|credit card required|no credit card/i, why: "No card or no-card trial claims." },
   { pattern: /never sleeps|never log(?:s)? off|never paused(?! for inactivity)/i, why: "Only paid plans stay on; say 'not paused for inactivity'." },
   { pattern: /free tier|free plan|starts at \$0|\$0 for one agent/i, why: "Do not advertise a hosted Free plan." },

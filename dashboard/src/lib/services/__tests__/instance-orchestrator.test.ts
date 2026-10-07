@@ -31,6 +31,8 @@ import {
 } from "@/lib/services/inflight-update-gate";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 import { spawnSync } from "child_process";
+import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
+import { resolveInstanceAgentImageRepo } from "@/lib/services/webui-instance-builder";
 
 jest.mock("@/lib/hetzner/ssh", () => ({
   sshExec: jest.fn(),
@@ -93,6 +95,11 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 jest.mock("@/lib/services/webui-instance-builder", () => ({
   buildWebUIBootstrapScript: jest.fn(),
   buildWebUIProvisioningArtifacts: jest.fn(),
+  resolveInstanceAgentImageRepo: jest.fn(() => null),
+}));
+// The release registry does not govern these test boxes: updates follow the floating tag as before.
+jest.mock("@/lib/hermes-releases/live-update", () => ({
+  resolveUpdateImagePolicy: jest.fn(async () => ({ policy: undefined, state: null })),
 }));
 
 jest.mock("@/lib/services/provider-config", () => ({
@@ -608,9 +615,10 @@ describe("applyLiveUpdate", () => {
     expect(wrapperScript).toContain("/api/u/inst-789");
     expect(wrapperScript).toContain('--data-urlencode "r=$2"');
     expect(wrapperScript).toContain("?s=$1&t=manual");
-    expect(wrapperScript).toContain('ru "succeeded" "completed" || true');
+    // The outcome the update script left behind (kind, digests, reason) rides on the report.
+    expect(wrapperScript).toContain('ru "succeeded" "completed" "" "$(hermes_result_extras)" || true');
     expect(wrapperScript).toContain(
-      'ru "failed" "exit_status_${status}" "/tmp/hermes-update-inst-789.log" || true'
+      'ru "failed" "${reason:-exit_status_${status}}" "/tmp/hermes-update-inst-789.log" "$(hermes_result_extras)" || true'
     );
     expect(wrapperScript).toContain("echo W >&2");
   });
@@ -1584,6 +1592,104 @@ function walletRow(
     ...overrides,
   };
 }
+
+describe("applyLiveUpdate release registry", () => {
+  const instance = {
+    id: "inst-rel",
+    user_id: "user-123",
+    provider: "openai",
+    hetzner_server_id: 1,
+    api_key_encrypted: "enc-api-key",
+    api_server_key_encrypted: "enc-gateway",
+    config: {},
+  };
+  const supabase = {
+    from: jest.fn().mockReturnValue({
+      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
+    }),
+  } as unknown as SupabaseClient;
+  const digest = `sha256:${"d".repeat(64)}`;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (decryptApiKey as jest.Mock).mockReturnValue("plain-api-key");
+    (resolveCodexDeploymentSecret as jest.Mock).mockReturnValue({ apiKey: "", authBundle: undefined });
+    (resolveNousDeploymentSecret as jest.Mock).mockReturnValue({ apiKey: "plain-api-key", authBundle: undefined });
+    (getAutoUpdateConfig as jest.Mock).mockReturnValue({ enabled: false, time: "06:00" });
+    (getRuntimeAgentSettings as jest.Mock).mockReturnValue({});
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValue(null);
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(null);
+    (isProTierUser as jest.Mock).mockResolvedValue({ ok: true, tier: "operator" });
+    (decryptMemorySystemSecrets as jest.Mock).mockReturnValue(undefined);
+    (validateProviderApiKey as jest.Mock).mockResolvedValue({ valid: true });
+    (getProfileDeploymentState as jest.Mock).mockResolvedValue({ profileRoutes: [], profilesToRestore: [] });
+    (resolveGatewayConfiguration as jest.Mock).mockReturnValue({ fqdn: "agent.example.com", gatewayUrl: "https://agent.example.com" });
+    (buildWebUIProvisioningArtifacts as jest.Mock).mockReturnValue({ composeYaml: "c", caddyfile: "c", envFile: "e", configYaml: "c", hermesEnvFile: "h" });
+    (buildWebUIBootstrapScript as jest.Mock).mockReturnValue("#!/bin/bash\necho webui ok\n");
+    (resolveProviderBaseUrl as jest.Mock).mockReturnValue(undefined);
+    (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({ policy: undefined, state: null });
+    (resolveInstanceAgentImageRepo as jest.Mock).mockReturnValue(null);
+  });
+
+  const lastBootstrapOptions = () => (buildWebUIBootstrapScript as jest.Mock).mock.calls.at(-1)?.[2];
+
+  it("asks the registry with the caller's intent and hands the chosen image to the update script", async () => {
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValueOnce({
+      policy: { kind: "pinned", ref: `ghcr.io/o/n@${digest}`, digest },
+      state: null,
+    });
+
+    const result = await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, {
+      initiator: USER_LIVE_UPDATE,
+      imageIntent: "release",
+    });
+
+    expect(result.applied).toBe(true);
+    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(supabase, "inst-rel", "release");
+    expect(lastBootstrapOptions()).toMatchObject({
+      mode: "update",
+      imagePolicy: { kind: "pinned", ref: `ghcr.io/o/n@${digest}`, digest },
+    });
+  });
+
+  it("leaves the image alone for updates that are not release updates (config redeploys, resizes, recovery)", async () => {
+    await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(supabase, "inst-rel", "current");
+  });
+
+  it("passes no policy for a box the registry does not govern, so it follows its floating tag as before", async () => {
+    await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE, imageIntent: "release" });
+    expect(lastBootstrapOptions()).not.toHaveProperty("imagePolicy");
+  });
+
+  it("does not launch an update it cannot place on a release", async () => {
+    (resolveUpdateImagePolicy as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, {
+      initiator: USER_LIVE_UPDATE,
+      imageIntent: "release",
+    });
+
+    expect(result).toEqual({ applied: false, error: "Could not look up the release for this update", initiator: USER_LIVE_UPDATE });
+    expect(sshExec).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("points the box's roller at the image repository its compose actually runs", async () => {
+    (resolveInstanceAgentImageRepo as jest.Mock).mockReturnValueOnce("ghcr.io/example/agent-canary");
+    await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+    const additional = lastBootstrapOptions().additionalProvisioningScript as string;
+    const roller = Buffer.from(
+      /printf '%s' '([^']+)' \| base64 -d(?: \| gunzip)? > \/usr\/local\/bin\/hermes-roll-inst-rel\.hermes-new/.exec(additional)![1],
+      "base64"
+    );
+    const text = require("zlib").gunzipSync(roller).toString("utf8");
+    expect(text).toContain('REPO="ghcr.io/example/agent-canary"');
+  });
+});
 
 describe("applyLiveUpdate in-flight turn gate", () => {
   const FLEET_SYNC = systemLiveUpdate("fleet_sync");
