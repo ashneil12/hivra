@@ -13,9 +13,9 @@ export type ManagedVeniceFinancialEventType =
   | "refund_exception"
   | "reconciliation_adjustment"
   | "reconciliation_refund"
-  // One-time managed-Venice starter credit granted on a user's first managed
-  // deploy (see grantManagedVeniceStarterCredit). The DB CHECK is widened to
-  // accept this in 20260613150000_managed_venice_financial_events_starter_grant.
+  // Legacy: one-time managed-Venice starter credit grants (retired; no code
+  // writes this any more). Kept so existing rows still type-check; the DB
+  // CHECK accepts it via 20260613150000_managed_venice_financial_events_starter_grant.
   | "starter_grant";
 
 type QueryError = { code?: string; message?: string } | null;
