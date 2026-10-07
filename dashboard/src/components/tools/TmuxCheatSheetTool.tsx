@@ -29,6 +29,7 @@ import {
   type CheatRow,
 } from "@/lib/tools/tmux-sheet";
 import { toolPath } from "@/lib/tools/tool-catalog";
+import { monthYear } from "@/lib/tools/month-year";
 
 function Row({ row }: { row: CheatRow | AgentRow }) {
   const keys = "keys" in row ? row.keys : undefined;
@@ -120,7 +121,7 @@ export default function TmuxCheatSheetTool() {
       </section>
 
       <p className={styles.note}>
-        {`${TMUX_TARGET_NOTE} Keys and commands last verified ${TMUX_FACTS.lastVerified} against the tmux manual. The method section below links it.`}
+        {`${TMUX_TARGET_NOTE} Keys and commands last checked ${monthYear(TMUX_FACTS.lastVerified)} against the tmux manual. The method section below links it.`}
       </p>
 
       <TmuxAgentBuilder />

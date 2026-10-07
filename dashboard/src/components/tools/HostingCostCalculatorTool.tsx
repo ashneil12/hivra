@@ -22,6 +22,7 @@ import { ArrowUpRight } from "lucide-react";
 
 import styles from "@/app/tools/tools.module.css";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { monthYear } from "@/lib/tools/month-year";
 
 // External facts, checked on 2026-09-24 against each provider's own source:
 // docs.hetzner.com (price adjustment of 15 June 2026, IP pricing, billing FAQ),
@@ -281,7 +282,7 @@ export default function HostingCostCalculatorTool() {
         default time estimates (3h setup, 2h monthly maintenance, 1h monthly incident recovery) are our starting
         guesses, not measurements; edit them to match your experience. VPS prices are the providers&apos; list
         prices with a public IPv4 address, before tax. The Hetzner figure is its Germany and Finland price of $6.49
-        plus $0.60 for the IPv4 address. Prices last verified {RATES.lastVerified} on each provider&apos;s own
+        plus $0.60 for the IPv4 address. Prices as of {monthYear(RATES.lastVerified)}, from each provider&apos;s own
         pages.
       </p>
 

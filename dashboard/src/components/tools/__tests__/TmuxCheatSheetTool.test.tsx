@@ -124,7 +124,7 @@ describe("TmuxCheatSheetTool sheet", () => {
     const blocks = [...container.querySelectorAll("p, li, h2, h3, pre")].map((el) => el.textContent ?? "").join("\n");
     expect(unqualifiedKeepRunningClaims(blocks, /Hivra|managed|always-on/i)).toEqual([]);
     expect(unknownDashboardNames(blocks)).toEqual([]);
-    expect(text).toContain("last verified 2026-09-30");
+    expect(text).toContain("last checked September 2026");
   });
 });
 

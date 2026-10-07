@@ -4,6 +4,7 @@ import { buildCite } from "@/lib/tools/cite";
 import { SITE_URL } from "@/lib/seo-urls";
 import { toolPath, type ToolEntry } from "@/lib/tools/tool-catalog";
 import styles from "./tools.module.css";
+import { monthYear } from "@/lib/tools/month-year";
 
 // Server-rendered method section under a tool: what the answer rests on, every
 // source linked, the date the facts were last checked, worked examples with the
@@ -38,7 +39,7 @@ export default function ToolMethodSection({ entry }: { entry: ToolEntry }) {
           )}
         </p>
       ))}
-      <p className={styles.verified}>{`Last verified ${method.lastVerified}.`}</p>
+      <p className={styles.verified}>{`Last checked ${monthYear(method.lastVerified)}.`}</p>
 
       {examples && examples.length > 0 && (
         <>
