@@ -1170,106 +1170,38 @@ describe("POST /api/billing/subscribe", () => {
     expect(upsertCall![0].signup_attribution).toEqual({ utm_source: "twitter" });
   });
 
-  // ── 7-day Pro trial experiment (default-off A/B) ─────────────────────────
-  describe("trial experiment wiring", () => {
+  // ── No trials: Checkout is direct payment (owner decision 2026-10-07) ─────
+  describe("checkout never offers a trial", () => {
     const ORIGINAL_ENV = process.env;
 
     beforeEach(() => {
       process.env = { ...ORIGINAL_ENV };
-      delete process.env.TRIAL_EXPERIMENT_ENABLED;
-      delete process.env.TRIAL_EXPERIMENT_PERCENT;
-      posthogFlushMock.mockResolvedValue(undefined);
     });
 
     afterAll(() => {
       process.env = ORIGINAL_ENV;
     });
 
-    function sessionCreateParams() {
-      expect(mockStripeSessionsCreate).toHaveBeenCalledTimes(1);
-      return mockStripeSessionsCreate.mock.calls[0][0];
-    }
+    it.each(["operator", "fleet", "command"] as const)(
+      "%s checkout never sends trial_period_days, trial_end or trial metadata, even with the retired trial env set",
+      async (plan) => {
+        // The retired experiment env must have no effect any more.
+        process.env.TRIAL_EXPERIMENT_ENABLED = "true";
+        process.env.TRIAL_EXPERIMENT_PERCENT = "100";
+        mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
-    it("default-off: paid checkout has NO trial_period_days and no assignment event", async () => {
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+        const res = await POST(createRequest({ plan }));
+        expect(res.status).toBe(200);
 
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
-
-      const params = sessionCreateParams();
-      expect(params.subscription_data.trial_period_days).toBeUndefined();
-      expect(params.metadata.trial_days).toBeUndefined();
-      expect(posthogCaptureMock).not.toHaveBeenCalled();
-    });
-
-    it("enabled + 100% (trial bucket): checkout carries trial_period_days=7 and captures the assignment", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
-
-      const params = sessionCreateParams();
-      expect(params.subscription_data.trial_period_days).toBe(7);
-      expect(params.subscription_data.metadata.trial_days).toBe("7");
-      expect(params.metadata.trial_days).toBe("7");
-
-      expect(posthogCaptureMock).toHaveBeenCalledWith({
-        distinctId: mockUserId,
-        event: "trial_experiment_assigned",
-        properties: expect.objectContaining({
-          bucket: "trial",
-          plan: "fleet",
-          trial_days: 7,
-          $insert_id: `trial_experiment_assigned_${mockUserId}`,
-        }),
-      });
-      expect(posthogFlushMock).toHaveBeenCalled();
-    });
-
-    it("enabled + 0% (control bucket): no trial days, but the assignment event still fires with bucket=control", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "0";
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
-
-      const params = sessionCreateParams();
-      expect(params.subscription_data.trial_period_days).toBeUndefined();
-
-      expect(posthogCaptureMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          event: "trial_experiment_assigned",
-          properties: expect.objectContaining({ bucket: "control", trial_days: 0 }),
-        })
-      );
-    });
-
-    it("enabled: free-plan activation never assigns or trials (no checkout reached)", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-      mockSupabaseQuery.upsert.mockResolvedValueOnce({ error: null });
-
-      const res = await POST(createRequest({ plan: "free" }));
-      expect(res.status).toBe(200);
-
-      expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
-      expect(posthogCaptureMock).not.toHaveBeenCalled();
-    });
-
-    it("a PostHog flush failure never breaks checkout", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-      posthogFlushMock.mockRejectedValueOnce(new Error("posthog down"));
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.data.url).toBe("https://stripe.test/checkout/123");
-    });
+        expect(mockStripeSessionsCreate).toHaveBeenCalledTimes(1);
+        const params = mockStripeSessionsCreate.mock.calls[0][0];
+        expect(params.subscription_data).not.toHaveProperty("trial_period_days");
+        expect(params.subscription_data).not.toHaveProperty("trial_end");
+        expect(params.subscription_data).not.toHaveProperty("trial_settings");
+        expect(params.subscription_data.metadata).not.toHaveProperty("trial_days");
+        expect(params.metadata).not.toHaveProperty("trial_days");
+        expect(posthogCaptureMock).not.toHaveBeenCalled();
+      }
+    );
   });
 });
