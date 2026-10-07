@@ -15,6 +15,7 @@ import { fetchPlan, type PlanInfo } from '@/lib/hivra/agent-api';
 import { ConnectDesktopButton } from '@/components/instances/ConnectDesktopButton';
 import { ConnectDesktopModal } from '@/components/instances/ConnectDesktopModal';
 import { AutoUpdateModal } from '@/components/instances/AutoUpdateModal';
+import { UpdateAvailableBanner } from '@/components/instances/UpdateAvailableBanner';
 import { SafePortal } from '@/components/ui/SafePortal';
 import {
   DEFAULT_AUTO_UPDATE_ENABLED,
@@ -188,6 +189,8 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [pendingAction, setPendingAction] = useState<ConsoleAction | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  // Bumped after an action succeeds so the update notice reads the status again.
+  const [actionRefreshKey, setActionRefreshKey] = useState(0);
   const [actionFeedback, setActionFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [autoUpdateModalOpen, setAutoUpdateModalOpen] = useState(false);
   const [autoUpdateLoading, setAutoUpdateLoading] = useState(false);
@@ -418,6 +421,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
           message: actionConfig.successMessage,
         });
         setPendingAction(null);
+        setActionRefreshKey((key) => key + 1);
         if (pendingAction === 'restart_gateway') {
           router.push(`/dashboard/instances/${id}?surface=chat`);
         }
@@ -687,6 +691,13 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
           </div>
         </div>
       )}
+
+      <UpdateAvailableBanner
+        instanceId={id}
+        onUpdate={() => handleAction('update')}
+        busy={actionLoading && pendingAction === 'update'}
+        refreshKey={actionRefreshKey}
+      />
 
       {/* Top Tab Bar */}
       <div ref={tabStripRef} className={styles.tabs}>

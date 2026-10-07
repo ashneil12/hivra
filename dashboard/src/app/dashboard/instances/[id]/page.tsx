@@ -50,6 +50,7 @@ import { SleepWakeUpgradePrompt } from "@/components/billing/SleepWakeUpgradePro
 import { ArchiveUpgradeWall } from "@/components/billing/ArchiveUpgradeWall";
 import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hivra/archive-countdown";
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
+import { UpdateAvailableBanner } from "@/components/instances/UpdateAvailableBanner";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { hermesRuntimeUid } from "@/lib/workspace/runtime-selection";
 import { resourceInventory } from "@/lib/workspace/resource-inventory";
@@ -1652,6 +1653,9 @@ export default function InstanceDetailPage() {
             </div>
           </div>
         ) : null}
+        <div style={{ padding: "0 16px" }}>
+          <UpdateAvailableBanner instanceId={instance.id} selfConfirm />
+        </div>
         {instance.updateAlert ? (
           <div
             data-testid="instance-update-alert"

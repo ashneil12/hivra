@@ -298,6 +298,13 @@ export default async function OpsPage(props: {
             >
               Refresh Feed
             </Link>
+            <Link
+              href="/dashboard/ops/releases"
+              className="action-button"
+              style={{ padding: '10px 20px', fontSize: 10, letterSpacing: '0.1em', textDecoration: 'none' }}
+            >
+              Releases
+            </Link>
           </div>
         </div>
 

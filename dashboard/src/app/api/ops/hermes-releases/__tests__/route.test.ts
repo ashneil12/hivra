@@ -4,6 +4,7 @@ import { createSupabaseMemoryDb } from "@/test-utils/supabase-memory-db";
 
 import { GET, POST } from "../route";
 import { POST as POST_ID } from "../[id]/route";
+import { POST as POST_BOX } from "../boxes/[id]/route";
 
 const mockDb: { current: unknown } = { current: null };
 const mockAdmin = { current: { userId: "user_admin", email: "admin@example.com" } as { userId: string | null; email: string } };
@@ -104,5 +105,43 @@ describe("ops hermes-releases API", () => {
   it("requires a tag, or a digest with its version", async () => {
     expect((await POST(json("/api/ops/hermes-releases", { imageRepo: REPO }))).status).toBe(400);
     expect((await POST(json("/api/ops/hermes-releases", { imageRepo: REPO, digest: `sha256:${"d".repeat(64)}` }))).status).toBe(400);
+  });
+});
+
+describe("ops hermes-releases boxes", () => {
+  const BOX = "55555555-5555-4555-8555-555555555555";
+
+  it("enrols a box in the canary channel, and only for ops admins", async () => {
+    const memory = createSupabaseMemoryDb({
+      tables: ["hermes_instances", "hermes_releases", "hermes_release_events"],
+      seed: { hermes_instances: [{ id: BOX, name: "box", deleted_at: null, status: "running", release_channel: "stable" }] },
+    });
+    mockDb.current = memory.db;
+    const call = (body: unknown) => POST_BOX(json(`/api/ops/hermes-releases/boxes/${BOX}`, body), { params: Promise.resolve({ id: BOX }) });
+
+    mockAdmin.current = { userId: "user_other", email: "other@example.com" };
+    expect((await call({ channel: "canary" })).status).toBe(403);
+    expect(memory.tables.hermes_instances[0].release_channel).toBe("stable");
+
+    mockAdmin.current = { userId: "user_admin", email: "admin@example.com" };
+    expect((await call({ channel: "beta" })).status).toBe(400);
+    expect((await call({ channel: "canary" })).status).toBe(200);
+    expect(memory.tables.hermes_instances[0].release_channel).toBe("canary");
+  });
+
+  it("lists running boxes with their channel and version so the console can pick a pilot", async () => {
+    const memory = createSupabaseMemoryDb({
+      tables: ["hermes_instances", "hermes_releases", "hermes_release_events"],
+      seed: {
+        hermes_instances: [
+          { id: BOX, name: "box", deleted_at: null, status: "running", release_channel: "canary", agent_image_digest: null, update_health: "paused", update_health_detail: "x", update_health_at: "2026-10-07T00:00:00Z" },
+          { id: PILOT, name: "stopped", deleted_at: null, status: "stopped", release_channel: "stable", agent_image_digest: null, update_health: null },
+        ],
+      },
+    });
+    mockDb.current = memory.db;
+    const { data } = await (await GET()).json();
+    expect(data.boxes).toEqual([{ id: BOX, name: "box", channel: "canary", digest: null, version: null, updateHealth: "paused" }]);
+    expect(data.attention).toEqual([expect.objectContaining({ instanceId: BOX, updateHealth: "paused" })]);
   });
 });
