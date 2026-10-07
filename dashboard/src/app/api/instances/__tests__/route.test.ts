@@ -42,6 +42,15 @@ jest.mock("@/lib/abuse/gate", () => ({
   checkProvisioningGate: jest.fn(),
 }));
 
+// The deploy route refuses a Free account before the abuse gate. Default every
+// test to a paid entitlement; the Free-account tests override it.
+const mockResolveEffectiveSubscription = jest.fn();
+jest.mock("@/lib/billing/instance-entitlement", () => ({
+  resolveEffectiveSubscription: (...args: unknown[]) => mockResolveEffectiveSubscription(...args),
+}));
+const PAID_ENTITLEMENT = { plan: "operator", source: "stripe", status: "active" };
+const FREE_ENTITLEMENT = { plan: "free", source: "free", status: "active" };
+
 jest.mock("@/lib/crypto", () => ({
   decryptApiKey: jest.fn((value: string) => value),
 }));
@@ -82,6 +91,7 @@ describe("GET /api/instances", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockResolveEffectiveSubscription.mockResolvedValue(PAID_ENTITLEMENT);
     (recoverProxmoxInstanceAcrossFleet as jest.Mock).mockResolvedValue({
       status: "inconclusive",
     });
@@ -847,6 +857,26 @@ describe("GET /api/instances", () => {
     expect(json.error).toBe("Internal Server Error");
     expect(json.error).not.toContain("instances-post-secret");
     expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("instances-post-secret");
+  });
+
+  it("refuses a Free account before the abuse gate: no card walk, no hosted computer", async () => {
+    mockResolveEffectiveSubscription.mockResolvedValue(FREE_ENTITLEMENT);
+    const createInstanceSpy = jest.spyOn(InstanceService, "createInstance");
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.43" },
+        body: JSON.stringify({ name: "Free Box", provider: "openai", apiKey: "sk-test", model: "gpt-test" }),
+      })
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(json.message ?? json.error).toMatch(/paid plan/i);
+    expect(json.failureType).toBe("hosted_compute_requires_plan");
+    expect(checkProvisioningGate).not.toHaveBeenCalled();
+    expect(createInstanceSpy).not.toHaveBeenCalled();
   });
 
   it("returns card_required and skips provisioning when the free-tier abuse gate requires a card", async () => {
