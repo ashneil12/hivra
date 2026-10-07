@@ -2832,9 +2832,8 @@ export class InstanceService {
           name: `${name} managed Venice`,
           defaultWalletType: managedVeniceDeploy.walletType,
           // The deploy card submits 'hermesos' unless the card wallet was ALREADY
-          // funded at page load — which it never is on a free user's FIRST deploy,
-          // because the starter credit is granted during this very call. Let the
-          // mint re-resolve the binding against post-grant balances.
+          // funded at page load. Let the mint re-resolve the binding against
+          // real balances so a funded card wallet is never left unbound.
           autoSelectFundedWallet: true,
         });
         finalApiKey = proxyKey.plaintextKey;

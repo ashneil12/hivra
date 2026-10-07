@@ -9,7 +9,6 @@ import { log } from "@/lib/logger";
 import { ensureManagedVeniceWalletAccount } from "@/lib/billing/managed-venice-wallets";
 import { generateManagedVenicePlaintextKey, hashManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
-import { grantManagedVeniceStarterCredit, isManagedVeniceStarterCreditEnabled } from "@/lib/venice/managed-venice-starter-credit";
 import { publicLlmConfig, readStoredLlmConfig, VENICE_DIRECT_BASE_URL } from "./agent-llm";
 import { validateHivraChatOrigin } from "./agent-host-result";
 import { applyGuestLlmApplication, expectedGuestLlmReceipt, inspectGuestLlmApplication,
@@ -65,18 +64,6 @@ async function prepareManaged(userId: string, encrypt: typeof encryptSecret) {
   const hash = hashManagedVeniceProxyKey(plaintext); // Fail before credit/account side effects if custody is unconfigured.
   const encryptedKey = encrypt(plaintext);
   const account = await ensureManagedVeniceWalletAccount(userId);
-  // Keep the existing flag-gated, one-per-owner starter policy. This is not a
-  // wallet fallback: the exact selected wallet is always stored and used.
-  if (isManagedVeniceStarterCreditEnabled()) {
-    try { await grantManagedVeniceStarterCredit({ userId }); }
-    catch {
-      // Match the existing best-effort starter policy, without logging raw
-      // database errors that can contain credential or wallet details.
-      log.warn("Model-key starter credit could not be granted", {
-        source: "hivra/model-key-coordinator", failureType: "starter_credit_unavailable", userId,
-      });
-    }
-  }
   return { plaintext, encryptedKey, record: { id: randomUUID(), accountId: account.id, hash, prefix: plaintext.slice(0, 14) } };
 }
 type ManagedCandidate = Awaited<ReturnType<typeof prepareManaged>>;
