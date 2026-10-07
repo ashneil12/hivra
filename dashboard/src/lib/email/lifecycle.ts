@@ -1,9 +1,9 @@
 /**
  * Lifecycle emails — Resend integration.
  *
- * Six emails driven by the lifecycle-emails cron (day 1 idle / day 1
- * active / day 3 use-case / day 7 offer / stalled after 5 days / trial
- * day 5), selected by key. Send-at-most-once bookkeeping lives in lifecycle_email_sends
+ * Lifecycle emails driven by the lifecycle-emails cron (day 1 idle / day 1
+ * active / day 3 use-case / day 7 offer / stalled after 5 days / weekly
+ * activity digest), selected by key. Send-at-most-once bookkeeping lives in lifecycle_email_sends
  * (see the lifecycle-email-sweep module); this module only knows how to
  * build and send each email.
  *
@@ -29,7 +29,6 @@ export const LIFECYCLE_EMAIL_KEYS = [
   "day3_usecase",
   "day7_offer",
   "stalled_5d",
-  "trial_day5",
   "activity_digest",
 ] as const;
 
@@ -518,63 +517,6 @@ function buildStalled5d(params: LifecycleEmailContentParams): LifecycleEmailCont
   return { subject, text, html, ctaUrl };
 }
 
-function buildTrialDay5(params: LifecycleEmailContentParams): LifecycleEmailContent {
-  const agent = agentDisplayName(params.agentName);
-  const subject = "your Pro trial ends in two days";
-  const ctaUrl = BILLING_URL;
-  const keeps = [
-    `<strong>Web browsing</strong> — ${agent} keeps reading live pages.`,
-    `<strong>Persistent memory</strong> — context keeps carrying across conversations.`,
-    `<strong>Scheduled tasks</strong> — standing jobs keep running on their timer.`,
-  ];
-  const keepsText = [
-    `Web browsing — ${agent} keeps reading live pages.`,
-    "Persistent memory — context keeps carrying across conversations.",
-    "Scheduled tasks — standing jobs keep running on their timer.",
-  ];
-  const text = [
-    greeting(params.firstName),
-    "",
-    "You're five days into the seven-day Pro trial. Two days left, so here's the honest version of what happens next.",
-    "",
-    "If you do nothing and your card is on file, Pro continues at $9.99/mo and everything keeps working:",
-    "",
-    ...keepsText.map((k) => `  • ${k}`),
-    "",
-    "If it hasn't been useful, cancel from the billing page before the trial ends and you won't be charged. No hard feelings.",
-    "",
-    `Billing page (keep it or cancel, same place): ${ctaUrl}`,
-    "",
-    "Reply if something didn't work the way you expected. I read every reply.",
-    "",
-    "— Ash",
-    "Founder, Hivra",
-  ].join("\n");
-  const html = shellHtml({
-    preheader: "Two days left. Keep it or cancel — same page, no tricks.",
-    eyebrow: "Trial — day five",
-    title: "Your Pro trial ends in two days.",
-    body: [
-      htmlParagraph(greeting(params.firstName)),
-      htmlParagraph(
-        "You're five days into the seven-day Pro trial. Two days left, so here's the honest version of what happens next."
-      ),
-      htmlParagraph(
-        "If you do nothing and your card is on file, Pro continues at <strong>$9.99/mo</strong> and everything keeps working:"
-      ),
-      htmlList(keeps),
-      htmlParagraph(
-        "If it hasn't been useful, cancel from the billing page before the trial ends and you won't be charged. No hard feelings."
-      ),
-    ].join("\n"),
-    ctaText: "Open billing",
-    ctaUrl,
-    footerNote:
-      "Reply if something didn't work the way you expected. I read every reply. — Ash, Founder, Hivra",
-  });
-  return { subject, text, html, ctaUrl };
-}
-
 function formatCostUsd(value: number | null | undefined): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
   // Sub-cent spend reads better with more precision; otherwise two decimals.
@@ -667,7 +609,6 @@ const BUILDERS: Record<
   day3_usecase: buildDay3Usecase,
   day7_offer: buildDay7Offer,
   stalled_5d: buildStalled5d,
-  trial_day5: buildTrialDay5,
   activity_digest: buildActivityDigest,
 };
 
