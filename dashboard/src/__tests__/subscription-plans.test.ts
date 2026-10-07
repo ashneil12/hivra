@@ -60,13 +60,19 @@ describe('Subscription Plans', () => {
           expect(copy).not.toMatch(pattern);
         }
 
-        expect(plan.specs.agents).toContain(String(plan.maxAgents));
+        // The free account holds no Hivra-run computer, so its specs name none.
+        if (plan.name !== "Free") expect(plan.specs.agents).toContain(String(plan.maxAgents));
       }
     });
 
     it('names active-agent counts in sellable plan descriptions', () => {
       for (const key of ACTIVE_PLAN_KEYS) {
         const plan = PLANS[key];
+        if (key === "free") {
+          expect(plan.description).toMatch(/own computer/i);
+          expect(plan.description).toMatch(/paid plan/i);
+          continue;
+        }
         expect(plan.description).toMatch(new RegExp(`\\b${plan.maxAgents}\\b`));
         expect(plan.description).toMatch(/active agent/i);
       }

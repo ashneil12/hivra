@@ -1,7 +1,7 @@
 export const CARD_REQUIRED_REASON = "card_required";
 
 export const DEFAULT_CARD_REQUIRED_MESSAGE =
-  "For this free-tier deploy, we need a quick card-on-file check before provisioning. You will not be charged.";
+  "We need a quick card-on-file check before provisioning. You will not be charged.";
 
 type ApiErrorShape = {
   success?: boolean;

@@ -101,7 +101,7 @@ export async function checkProvisioningGate(
         allow: false,
         status: 402,
         message:
-          "Card on file required to deploy on the free tier. No charge will be made.",
+          "A card on file is required to deploy. No charge will be made.",
         reason: "card_required",
       };
     }
@@ -157,7 +157,7 @@ function evaluateExistingAssessment(
       allow: false,
       status: 402,
       message:
-        "Card on file required to deploy on the free tier. No charge will be made.",
+        "A card on file is required to deploy. No charge will be made.",
       reason: "card_required",
       assessment: row,
     };
@@ -196,7 +196,7 @@ function blockMessageForRow(row: RiskAssessmentRow): string {
       : null;
 
   if (reason === "prepaid_card") {
-    return "Prepaid and virtual cards aren't accepted on the free tier. Please use a credit or debit card.";
+    return "Prepaid and virtual cards aren't accepted for this check. Please use a credit or debit card.";
   }
   if (reason === "card_collision") {
     return "This card is already on file for another account. Please use a different card or contact support.";
