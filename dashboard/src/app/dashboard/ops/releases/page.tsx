@@ -62,7 +62,7 @@ export default async function OpsReleasesPage() {
             Roll out an update.
           </h1>
           <p style={{ color: 'var(--text-secondary)', maxWidth: 980, lineHeight: 1.8, fontSize: '1.05rem', marginTop: '1rem' }}>
-            Register an image, then promote it one stage at a time: canary, one box, 10%, then everyone. Halt it at any point.
+            Register an image, then promote it one stage at a time: early access, one computer, 10%, then everyone. Halt it at any point.
           </p>
         </div>
         <Link
