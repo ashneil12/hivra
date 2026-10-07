@@ -604,7 +604,7 @@ describe("web-chat session retention in the bootstrap script", () => {
       mode: "update",
     });
     expect(script).toContain(
-      `for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX}; do`,
+      `for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX} /state/config.yaml.bak.*; do`,
     );
   });
 
