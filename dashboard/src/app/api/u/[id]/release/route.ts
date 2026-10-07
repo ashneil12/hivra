@@ -26,6 +26,7 @@ function text(body: string, status = 200): Response {
  * the box authenticates with its own api_server_key bearer. The reply is plain
  * key=value lines the roll script reads with sed:
  *
+ *   action=legacy the registry has no release of this repository yet: follow the floating tag as before
  *   action=roll   run `image` (repo@sha256:...), then report the outcome
  *   action=none   the box is already on its target, or this sweep must not move it
  *   action=hold   no release is offered (nothing registered, or all halted)
@@ -57,6 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       imageRepo: REPO_PATTERN.test(repoParam) ? repoParam : null,
       reportedDigest: DIGEST_PATTERN.test(curParam) ? curParam : null,
     });
+    if (state && !state.governed) return text("action=legacy\n");
     const target = state?.decision.target;
     if (!state || !target) return text("action=hold\nreason=no_release\n");
     if (!state.decision.autoMove) return text(`action=none\ndigest=${target.digest}\nversion=${target.version}\n`);

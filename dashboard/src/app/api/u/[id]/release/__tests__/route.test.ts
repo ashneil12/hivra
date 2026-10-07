@@ -77,11 +77,18 @@ describe("GET /api/u/[id]/release", () => {
     expect(await (await ask(`repo=${REPO}&cur=${D2}`)).text()).toContain("action=none");
   });
 
-  it("holds when nothing is offered, so a roller never falls back to a floating tag", async () => {
+  it("holds when releases exist but none is offered, so a roller never falls back to a floating tag", async () => {
     setup([release(1, { halted: true })]);
     expect(await (await ask()).text()).toBe("action=hold\nreason=no_release\n");
-    setup([]);
+    setup([release(1, { channel: "canary", rollout_percent: 0, promoted_at: null })]);
     expect(await (await ask()).text()).toBe("action=hold\nreason=no_release\n");
+  });
+
+  it("tells a box to keep following its floating tag while the registry has no release of its repository", async () => {
+    setup([]);
+    expect(await (await ask()).text()).toBe("action=legacy\n");
+    setup([release(1, { image_repo: "ghcr.io/other/agent" })]);
+    expect(await (await ask()).text()).toBe("action=legacy\n");
   });
 
   it("does not offer a pilot-stage release to a box outside the pilot", async () => {
