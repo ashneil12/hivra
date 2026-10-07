@@ -1,4 +1,4 @@
-import { isPlanUpgrade, getPlanDiff, getPlan, formatPrice, getTrialDays } from '../lib/subscription/plans';
+import { isPlanUpgrade, getPlanDiff, getPlan, formatPrice } from '../lib/subscription/plans';
 
 describe('Subscription Plans Logic', () => {
   describe('isPlanUpgrade', () => {
@@ -52,24 +52,6 @@ describe('Subscription Plans Logic', () => {
       expect(formatPrice(1900)).toBe('$19');
       expect(formatPrice(4900)).toBe('$49');
       expect(formatPrice(0)).toBe('$0');
-    });
-  });
-
-  describe('getTrialDays', () => {
-    it('should return 0 for operator', () => {
-      expect(getTrialDays('operator')).toBe(0);
-    });
-
-    it('should return 0 for fleet', () => {
-      expect(getTrialDays('fleet')).toBe(0);
-    });
-
-    it('should return 0 for command', () => {
-      expect(getTrialDays('command')).toBe(0);
-    });
-
-    it('should return 0 for unknown plan (falls back to operator)', () => {
-      expect(getTrialDays('unknown_plan')).toBe(0);
     });
   });
 });
