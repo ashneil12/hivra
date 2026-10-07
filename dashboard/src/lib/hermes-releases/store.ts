@@ -32,7 +32,9 @@ const OUTCOME_KINDS: readonly ReleaseEventKind[] = ["updated", ...FAILURE_KINDS]
 export class ReleaseStoreError extends Error {
   constructor(
     message: string,
-    readonly status: number = 400
+    readonly status: number = 400,
+    /** Database error code behind a 5xx, when there was one. */
+    readonly code?: string
   ) {
     super(message);
   }
@@ -42,7 +44,7 @@ export async function loadReleases(db: SupabaseClient, imageRepo?: string): Prom
   let query = db.from("hermes_releases").select(RELEASE_COLUMNS);
   if (imageRepo) query = query.eq("image_repo", imageRepo);
   const { data, error } = await query.order("created_at", { ascending: false }).limit(200);
-  if (error) throw new ReleaseStoreError("Failed to load releases", 500);
+  if (error) throw new ReleaseStoreError("Failed to load releases", 500, (error as { code?: string }).code);
   return (data ?? []) as unknown as HermesRelease[];
 }
 

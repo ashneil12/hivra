@@ -20,6 +20,12 @@ export interface BoxReleaseState {
   currentVersion: string | null;
   updateHealth: string | null;
   decision: UpdateDecision;
+  /**
+   * The registry has at least one release of this box's image repository, so
+   * it decides what the box runs. False while the repository has none: boxes
+   * then keep following their floating tag exactly as before the registry.
+   */
+  governed: boolean;
   /** repo@sha256:... of the target, or null when none is offered. */
   targetImage: string | null;
 }
@@ -67,6 +73,7 @@ export function evaluateBoxRelease(
     : NO_DECISION;
   return {
     instanceId: row.id,
+    governed: Boolean(imageRepo) && releases.some((release) => release.image_repo === imageRepo),
     channel,
     imageRepo,
     currentDigest,
@@ -87,7 +94,12 @@ export async function loadBoxRelease(
     .select(BOX_RELEASE_COLUMNS)
     .eq("id", instanceId)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) {
+    // Missing columns (the migration has not reached this database) read as "not governed".
+    if ((error as { code?: string }).code) throw Object.assign(new Error("Failed to load instance"), { code: (error as { code?: string }).code });
+    return null;
+  }
+  if (!data) return null;
   const row = data as unknown as BoxReleaseRow;
   const imageRepo = options.imageRepo ?? resolveInstanceAgentImageRepo(row.config);
   const releases = imageRepo ? await loadReleases(db, imageRepo) : [];
