@@ -691,7 +691,7 @@ const BASE_MARKETING_COPY = {
     getStarted: {
       loadingCheckout: "正在跳转到结账...",
       badges: {
-        free: "始终免费",
+        free: "免费账户",
         paid: "7 天退款保证",
       },
       yourPlan: "你的计划",
@@ -705,7 +705,7 @@ const BASE_MARKETING_COPY = {
       },
       marketAnchor: "同类智能体平台起价约 $19/月",
       mostPopular: "最受欢迎",
-      freeGap: "无网页浏览 · 无持久记忆 · 无定时任务 · 0.5 vCPU",
+      freeGap: "不含由 Hivra 运行的计算机 · 连接你自己的电脑或服务器",
       specs: {
         agents: "Agent",
         cpu: "CPU",
@@ -719,7 +719,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "最佳适合",
       planGuidance: {
         free:
-          "Free 适合先在 Hivra Cloud 上试用一个小型 Agent。大多数用户无需银行卡即可启动；部分免费启动需要先完成银行卡验证。",
+          "如果你有自己的电脑或服务器可以连接，免费账户最合适。它不包含由 Hivra 运行的计算机；想让 Hivra 来运行时，请选择一个套餐。",
         operator:
           "Pro 适合独立开发者、黑客松项目，以及想快速上线一个 Agent 的用户。",
         fleet:
@@ -729,7 +729,7 @@ const BASE_MARKETING_COPY = {
       },
       createAccountTitle: "创建你的账户。",
       createAccountIntroFree:
-        "账户信息将成为你的登录凭据。注册后，我们会激活 Free 计划并直接带你进入部署。大多数用户无需银行卡即可启动；风险较高的免费部署可能需要先完成银行卡验证。",
+        "账户信息将成为你的登录凭据。注册后，我们会为你设置免费账户并带你进入启动页，你可以在那里连接自己的电脑或选择套餐。",
       createAccountIntroPaid:
         "账户信息将成为你的登录凭据。注册后，你会继续进入安全结账流程，并受到 7 天退款保证保护。",
       legalPrefix: "继续即表示你同意我们的",
@@ -908,10 +908,10 @@ const BASE_MARKETING_COPY = {
         titleSuffix: " 钱包。",
         legacyIntroStrong: "原托管钱包",
         legacyIntroBody:
-          "现有的存入和提现流程会继续可用。先锁定目标层级今天的 $HERMESOS 价格，再把报价金额发送到你的存入地址。免费层级始终无需存入即可使用。",
+          "现有的存入和提现流程会继续可用。先锁定目标层级今天的 $HERMESOS 价格，再把报价金额发送到你的存入地址。你的免费账户始终无需存入即可使用。",
         selfCustodyIntroStrong: "连接你自己的钱包",
         selfCustodyIntroBody:
-          "自行持有 $HermesOS 和 VVV，然后签名验证所有权。免费层级始终无需代币验证即可使用。",
+          "自行持有 $HermesOS 和 VVV，然后签名验证所有权。你的免费账户始终无需代币验证即可使用。",
         priceUnavailable: "代币价格暂不可用，请稍后重试。",
         restricted: {
           eyebrow: "钱包",
@@ -1284,7 +1284,7 @@ const LOCALE_COPY_OVERRIDES = {
     "getStarted": {
       "loadingCheckout": "Redirigiendo al pago...",
       "badges": {
-        "free": "Siempre gratis",
+        "free": "Cuenta gratuita",
         "paid": "Garantía de devolución de 7 días"
       },
       "yourPlan": "Tu plan",
@@ -1298,7 +1298,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Plataformas de agentes comparables cuestan desde unos $19/mes",
       "mostPopular": "Más popular",
-      "freeGap": "Sin navegación web · sin memoria persistente · sin tareas programadas · 0.5 vCPU",
+      "freeGap": "Sin computadora gestionada por Hivra · conecta tu propia computadora o servidor",
       "specs": {
         "agents": "Agentes",
         "cpu": "CPU",
@@ -1311,13 +1311,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Cambiar plan",
       "bestFit": "Mejor opción",
       "planGuidance": {
-        "free": "Free es ideal para probar Hermes con un agente protegido. La mayoría puede lanzarse sin tarjeta; los despliegues del tier gratuito con mayor riesgo pueden requerir verificación con tarjeta primero.",
+        "free": "Una cuenta gratuita es ideal si tienes tu propia computadora o servidor para conectar. No incluye ninguna computadora gestionada por Hivra; elige un plan cuando quieras que Hivra gestione una.",
         "operator": "Pro es ideal para builders en solitario, proyectos de hackathon y poner en marcha un agente rápidamente.",
         "fleet": "Power es ideal para flujos multi-agente, navegación más intensa y equipos que quieren más capacidad de cómputo de inmediato.",
         "command": "Command es ideal para las cargas de trabajo más grandes, el camino de escalado más rápido y el máximo cómputo por despliegue."
       },
       "createAccountTitle": "Crea tu cuenta.",
-      "createAccountIntroFree": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, activaremos tu plan Free y te llevaremos directo al despliegue. La mayoría puede lanzarse sin tarjeta; los despliegues del tier gratuito con mayor riesgo pueden requerir verificación con tarjeta primero.",
+      "createAccountIntroFree": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, configuraremos tu cuenta gratuita y te llevaremos a Launch, donde puedes conectar tu propia computadora o elegir un plan.",
       "createAccountIntroPaid": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, continuarás al checkout seguro. Protegido por nuestra garantía de devolución de 7 días.",
       "legalPrefix": "Al continuar, aceptas nuestros",
       "terms": "Términos de servicio",
@@ -1494,9 +1494,9 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": ".",
         "legacyIntroStrong": "Wallet de custodia heredada",
-        "legacyIntroBody": "tu flujo actual de depósito y retiro sigue activo. Fija el precio de hoy de $HERMESOS para el tier que quieres, luego envía el monto cotizado a tu dirección de depósito. El tier gratuito siempre funciona sin depósito.",
+        "legacyIntroBody": "tu flujo actual de depósito y retiro sigue activo. Fija el precio de hoy de $HERMESOS para el tier que quieres, luego envía el monto cotizado a tu dirección de depósito. Tu cuenta gratuita siempre funciona sin depósito.",
         "selfCustodyIntroStrong": "Conecta tu propia billetera",
-        "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. El plan gratuito siempre funciona sin verificación de token.",
+        "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. Tu cuenta gratuita siempre funciona sin verificación de token.",
         "priceUnavailable": "El precio del token no está disponible. Inténtalo de nuevo más tarde.",
         "restricted": {
           "eyebrow": "Billetera",
@@ -1822,7 +1822,7 @@ const LOCALE_COPY_OVERRIDES = {
     "getStarted": {
       "loadingCheckout": "Redirecionando para o checkout...",
       "badges": {
-        "free": "Sempre Gratuito",
+        "free": "Conta gratuita",
         "paid": "Garantia de 7 Dias"
       },
       "yourPlan": "Seu Plano",
@@ -1836,7 +1836,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Plataformas de agentes comparáveis começam em torno de $19/mês",
       "mostPopular": "Mais popular",
-      "freeGap": "Sem navegação web · sem memória persistente · sem tarefas agendadas · 0.5 vCPU",
+      "freeGap": "Sem computador gerenciado pela Hivra · conecte seu próprio computador ou servidor",
       "specs": {
         "agents": "Agentes",
         "cpu": "CPU",
@@ -1849,13 +1849,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Trocar Plano",
       "bestFit": "Melhor Opção",
       "planGuidance": {
-        "free": "O Free é ideal para experimentar o Hermes com um agente monitorado. A maioria dos usuários pode começar sem cartão; deploys de maior risco podem exigir verificação de cartão primeiro.",
+        "free": "Uma conta gratuita é ideal se você tem um computador ou servidor próprio para conectar. Ela não inclui computador gerenciado pela Hivra; escolha um plano quando quiser que a Hivra rode um.",
         "operator": "O Pro é ideal para desenvolvedores solo, projetos de hackathon e para colocar um agente no ar rapidamente.",
         "fleet": "O Power é ideal para workflows multi-agente, navegação mais intensa e equipes que querem mais margem de compute imediatamente.",
         "command": "O Command é ideal para as maiores cargas de trabalho, o caminho de escalonamento mais rápido e o máximo de compute por deploy."
       },
       "createAccountTitle": "Crie sua conta.",
-      "createAccountIntroFree": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, ativaremos seu plano Free e te levaremos direto para o deploy. A maioria dos usuários pode começar sem cartão; deploys de maior risco podem exigir verificação de cartão primeiro.",
+      "createAccountIntroFree": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, vamos configurar sua conta gratuita e levar você ao Launch, onde você pode conectar seu próprio computador ou escolher um plano.",
       "createAccountIntroPaid": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, você prosseguirá para o checkout seguro. Protegido pela nossa garantia de reembolso em 7 dias.",
       "legalPrefix": "Ao continuar, você concorda com nossos",
       "terms": "Termos de Serviço",
@@ -2032,9 +2032,9 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": ".",
         "legacyIntroStrong": "Carteira custody grandfathered",
-        "legacyIntroBody": "seu fluxo existente de depósito e retirada continua ativo. Trave o preço atual do $HERMESOS para o plano desejado e envie o valor cotado para seu endereço de depósito. O plano gratuito sempre funciona sem depósito.",
+        "legacyIntroBody": "seu fluxo existente de depósito e retirada continua ativo. Trave o preço atual do $HERMESOS para o plano desejado e envie o valor cotado para seu endereço de depósito. Sua conta gratuita sempre funciona sem depósito.",
         "selfCustodyIntroStrong": "Conecte sua própria carteira",
-        "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. O plano gratuito sempre funciona sem verificação de token.",
+        "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. Sua conta gratuita sempre funciona sem verificação de token.",
         "priceUnavailable": "Preço do token indisponível — tente novamente mais tarde.",
         "restricted": {
           "eyebrow": "Carteira",
@@ -2360,7 +2360,7 @@ const LOCALE_COPY_OVERRIDES = {
     "getStarted": {
       "loadingCheckout": "Redirection vers le paiement...",
       "badges": {
-        "free": "Toujours gratuit",
+        "free": "Compte gratuit",
         "paid": "Garantie satisfait ou remboursé 7 jours"
       },
       "yourPlan": "Votre plan",
@@ -2374,7 +2374,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Les plateformes d'agents comparables démarrent autour de 19 $/mois",
       "mostPopular": "Le plus populaire",
-      "freeGap": "Pas de navigation web · pas de mémoire persistante · pas de tâches planifiées · 0,5 vCPU",
+      "freeGap": "Aucun ordinateur géré par Hivra · connectez votre propre ordinateur ou serveur",
       "specs": {
         "agents": "Agents",
         "cpu": "CPU",
@@ -2387,13 +2387,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Changer de plan",
       "bestFit": "Meilleur choix",
       "planGuidance": {
-        "free": "Free est idéal pour essayer Hermes avec un agent sécurisé. La plupart des utilisateurs peuvent démarrer sans carte ; les déploiements Free à risque élevé peuvent nécessiter une vérification par carte au préalable.",
+        "free": "Un compte gratuit convient si vous avez votre propre ordinateur ou serveur à connecter. Il n'inclut aucun ordinateur géré par Hivra ; choisissez un plan quand vous voulez que Hivra en fasse tourner un.",
         "operator": "Pro est idéal pour les développeurs solos, les projets de hackathon et la mise en ligne rapide d'un agent.",
         "fleet": "Power est idéal pour les workflows multi-agents, la navigation intensive et les équipes qui veulent plus de marge de compute immédiatement.",
         "command": "Command est idéal pour les charges les plus importantes, la voie de montée en charge la plus rapide et le maximum de compute par déploiement."
       },
       "createAccountTitle": "Créez votre compte.",
-      "createAccountIntroFree": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, nous activerons votre plan Free et vous emmènerons directement au déploiement. La plupart des utilisateurs peuvent démarrer sans carte ; les déploiements Free à risque élevé peuvent nécessiter une vérification par carte au préalable.",
+      "createAccountIntroFree": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, nous configurerons votre compte gratuit et vous emmènerons vers Launch, où vous pourrez connecter votre propre ordinateur ou choisir un plan.",
       "createAccountIntroPaid": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, vous continuerez vers le paiement sécurisé. Protégé par notre garantie satisfait ou remboursé 7 jours.",
       "legalPrefix": "En continuant, vous acceptez nos",
       "terms": "Conditions d'utilisation",
@@ -2570,9 +2570,9 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": ".",
         "legacyIntroStrong": "Portefeuille de garde grandfathered",
-        "legacyIntroBody": "votre flux de dépôt et de retrait existant reste actif. Verrouillez le prix $HERMESOS d'aujourd'hui pour le tier souhaité, puis envoyez le montant indiqué à votre adresse de dépôt. Le tier Free fonctionne toujours sans dépôt.",
+        "legacyIntroBody": "votre flux de dépôt et de retrait existant reste actif. Verrouillez le prix $HERMESOS d'aujourd'hui pour le tier souhaité, puis envoyez le montant indiqué à votre adresse de dépôt. Votre compte gratuit fonctionne toujours sans dépôt.",
         "selfCustodyIntroStrong": "Connectez votre propre portefeuille",
-        "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Le tier Free fonctionne toujours sans vérification de token.",
+        "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Votre compte gratuit fonctionne toujours sans vérification de token.",
         "priceUnavailable": "Prix du token indisponible — veuillez réessayer plus tard.",
         "restricted": {
           "eyebrow": "Portefeuille",
@@ -2898,7 +2898,7 @@ const LOCALE_COPY_OVERRIDES = {
     "getStarted": {
       "loadingCheckout": "Weiterleitung zum Checkout...",
       "badges": {
-        "free": "Immer kostenlos",
+        "free": "Kostenloses Konto",
         "paid": "7-Tage-Geld-zurück-Garantie"
       },
       "yourPlan": "Dein Plan",
@@ -2912,7 +2912,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Vergleichbare Agent-Plattformen beginnen bei rund 19 $/Monat",
       "mostPopular": "Am beliebtesten",
-      "freeGap": "Kein Web-Browsing · kein persistentes Gedächtnis · keine geplanten Aufgaben · 0,5 vCPU",
+      "freeGap": "Kein von Hivra betriebener Computer · verbinde deinen eigenen Computer oder Server",
       "specs": {
         "agents": "Agenten",
         "cpu": "CPU",
@@ -2925,13 +2925,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Plan wechseln",
       "bestFit": "Beste Wahl",
       "planGuidance": {
-        "free": "Free eignet sich am besten, um Hermes mit einem gesicherten Agenten auszuprobieren. Die meisten Nutzer können ohne Karte starten; bei höherem Risiko im Free-Tier kann eine Kartenverifizierung nötig sein.",
+        "free": "Ein kostenloses Konto passt, wenn du einen eigenen Computer oder Server zum Verbinden hast. Es enthält keinen von Hivra betriebenen Computer; wähle einen Plan, wenn Hivra einen für dich betreiben soll.",
         "operator": "Pro ist ideal für Solo-Entwickler, Hackathon-Projekte und den schnellen Start mit einem Agenten.",
         "fleet": "Power ist optimal für Multi-Agent-Workflows, intensiveres Browsen und Teams, die sofort mehr Compute-Headroom benötigen.",
         "command": "Command eignet sich am besten für die größten Workloads, den schnellsten Skalierungspfad und maximales Compute pro Deployment."
       },
       "createAccountTitle": "Konto erstellen.",
-      "createAccountIntroFree": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung aktivieren wir deinen Free-Plan und leiten dich direkt zum Deployment weiter. Die meisten Nutzer können ohne Karte starten; bei höherem Risiko im Free-Tier kann eine Kartenverifizierung nötig sein.",
+      "createAccountIntroFree": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung richten wir dein kostenloses Konto ein und leiten dich zu Launch weiter, wo du deinen eigenen Computer verbinden oder einen Plan wählen kannst.",
       "createAccountIntroPaid": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung geht es zum sicheren Checkout. Geschützt durch unsere 7-Tage-Geld-zurück-Garantie.",
       "legalPrefix": "Mit dem Fortfahren stimmst du unseren",
       "terms": "Nutzungsbedingungen",
@@ -3108,9 +3108,9 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": " Wallet.",
         "legacyIntroStrong": "Bestandskunden-Custody-Wallet",
-        "legacyIntroBody": "dein bestehender Einzahlungs- und Auszahlungsflow bleibt aktiv. Den heutigen $HERMESOS-Preis für das gewünschte Tier sperren, dann den genannten Betrag an deine Einzahlungsadresse senden. Der Free-Tier funktioniert immer ohne Einzahlung.",
+        "legacyIntroBody": "dein bestehender Einzahlungs- und Auszahlungsflow bleibt aktiv. Den heutigen $HERMESOS-Preis für das gewünschte Tier sperren, dann den genannten Betrag an deine Einzahlungsadresse senden. Dein kostenloses Konto funktioniert immer ohne Einzahlung.",
         "selfCustodyIntroStrong": "Verbinde deine eigene Wallet",
-        "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Der Free-Tier funktioniert immer ohne Token-Verifizierung.",
+        "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Dein kostenloses Konto funktioniert immer ohne Token-Verifizierung.",
         "priceUnavailable": "Token-Preis nicht verfügbar — bitte später erneut versuchen.",
         "restricted": {
           "eyebrow": "Krypto-Wallet",
@@ -3436,7 +3436,7 @@ const LOCALE_COPY_OVERRIDES = {
     "getStarted": {
       "loadingCheckout": "チェックアウトへ移動中...",
       "badges": {
-        "free": "常時無料",
+        "free": "無料アカウント",
         "paid": "7 日間返金保証"
       },
       "yourPlan": "あなたのプラン",
@@ -3450,7 +3450,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "同等のエージェントプラットフォームは月額 $19 程度から",
       "mostPopular": "一番人気",
-      "freeGap": "ウェブブラウジングなし · 永続メモリなし · 定期タスクなし · 0.5 vCPU",
+      "freeGap": "Hivra が運用するコンピューターは含まれません · ご自身のコンピューターまたはサーバーを接続",
       "specs": {
         "agents": "エージェント",
         "cpu": "CPU",
@@ -3463,13 +3463,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "プランを変更",
       "bestFit": "おすすめ",
       "planGuidance": {
-        "free": "Free は 1 つのエージェントで Hermes を試したい方に最適です。ほとんどのユーザーはカードなしで起動できますが、リスクの高い Free プランのデプロイでは先にカード認証が必要な場合があります。",
+        "free": "接続できる自分のコンピューターやサーバーがあるなら、無料アカウントが最適です。Hivra が運用するコンピューターは含まれません。Hivra に運用してほしいときは、プランを選んでください。",
         "operator": "Pro は個人ビルダー、ハッカソンプロジェクト、1 つのエージェントを素早く立ち上げたい方に最適です。",
         "fleet": "Power はマルチエージェントのワークフロー、ヘビーなブラウジング、すぐに多くのコンピュートが必要なチームに最適です。",
         "command": "Command は最大規模のワークロード、最速のスケーリング、デプロイあたりの最大コンピュートが必要な方に最適です。"
       },
       "createAccountTitle": "アカウントを作成してください。",
-      "createAccountIntroFree": "入力したアカウント情報がログイン認証情報になります。サインアップ後、Free プランを有効化してデプロイ画面に直接進みます。ほとんどのユーザーはカードなしで起動できますが、リスクの高い Free プランのデプロイでは先にカード認証が必要な場合があります。",
+      "createAccountIntroFree": "入力したアカウント情報がログイン認証情報になります。サインアップ後、無料アカウントを設定して Launch に進みます。そこでご自身のコンピューターを接続するか、プランを選べます。",
       "createAccountIntroPaid": "入力したアカウント情報がログイン認証情報になります。サインアップ後、安全なチェックアウトへ進みます。7 日間返金保証付き。",
       "legalPrefix": "続行することで、以下に同意したものとみなされます：",
       "terms": "利用規約",
@@ -3646,9 +3646,9 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": " ウォレット。",
         "legacyIntroStrong": "移行前のカストディウォレット",
-        "legacyIntroBody": "既存の入金・出金フローはそのまま有効です。希望するティアの $HERMESOS 価格を今日ロックし、入金アドレスに見積もり額を送金してください。Free プランはデポジットなしで常時利用可能です。",
+        "legacyIntroBody": "既存の入金・出金フローはそのまま有効です。希望するティアの $HERMESOS 価格を今日ロックし、入金アドレスに見積もり額を送金してください。無料アカウントはデポジットなしで常時利用可能です。",
         "selfCustodyIntroStrong": "自分のウォレットを接続",
-        "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。Free プランはトークン認証なしで常時利用可能です。",
+        "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。無料アカウントはトークン認証なしで常時利用可能です。",
         "priceUnavailable": "トークン価格を取得できません —— しばらくしてから再試行してください。",
         "restricted": {
           "eyebrow": "ウォレット",
@@ -3974,7 +3974,7 @@ const LOCALE_COPY_OVERRIDES = {
     "getStarted": {
       "loadingCheckout": "결제 페이지로 이동 중...",
       "badges": {
-        "free": "항상 무료",
+        "free": "무료 계정",
         "paid": "7일 환불 보장"
       },
       "yourPlan": "내 플랜",
@@ -3988,7 +3988,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "비슷한 에이전트 플랫폼은 월 $19 정도부터 시작합니다",
       "mostPopular": "가장 인기",
-      "freeGap": "웹 브라우징 없음 · 영구 메모리 없음 · 예약 작업 없음 · 0.5 vCPU",
+      "freeGap": "Hivra가 운영하는 컴퓨터 없음 · 내 컴퓨터나 서버를 연결",
       "specs": {
         "agents": "에이전트",
         "cpu": "CPU",
@@ -4001,13 +4001,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "플랜 변경",
       "bestFit": "최적 선택",
       "planGuidance": {
-        "free": "Free는 하나의 보호된 에이전트로 Hermes를 체험하기에 가장 적합합니다. 대부분의 사용자는 카드 없이 시작할 수 있으며, 위험도가 높은 Free 티어 배포는 카드 인증이 필요할 수 있습니다.",
+        "free": "연결할 내 컴퓨터나 서버가 있다면 무료 계정이 가장 잘 맞습니다. Hivra가 운영하는 컴퓨터는 포함되지 않으며, Hivra가 운영해 주기를 원하면 플랜을 선택하세요.",
         "operator": "Pro는 개인 빌더, 해커톤 프로젝트, 에이전트를 빠르게 가동하는 데 가장 적합합니다.",
         "fleet": "Power는 멀티 에이전트 워크플로, 무거운 브라우징, 즉각적으로 더 많은 컴퓨팅 여유를 원하는 팀에 가장 적합합니다.",
         "command": "Command는 최대 규모의 워크로드, 가장 빠른 확장 경로, 배포당 최대 컴퓨팅에 가장 적합합니다."
       },
       "createAccountTitle": "계정을 만드세요.",
-      "createAccountIntroFree": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 Free 플랜을 활성화하고 배포로 바로 이동합니다. 대부분의 사용자는 카드 없이 시작할 수 있으며, 위험도가 높은 Free 티어 배포는 카드 인증이 필요할 수 있습니다.",
+      "createAccountIntroFree": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 무료 계정을 설정하고 Launch로 이동합니다. 거기서 내 컴퓨터를 연결하거나 플랜을 선택할 수 있습니다.",
       "createAccountIntroPaid": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 안전한 결제 단계로 진행됩니다. 7일 환불 보장이 적용됩니다.",
       "legalPrefix": "계속 진행하면 다음에 동의하는 것입니다:",
       "terms": "이용약관",
@@ -4184,9 +4184,9 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": " 지갑.",
         "legacyIntroStrong": "레거시 수탁 지갑",
-        "legacyIntroBody": "기존 입출금 플로우가 계속 활성 상태입니다. 원하는 티어의 $HERMESOS 가격을 오늘 잠그고, 입금 주소로 견적 금액을 보내세요. Free 티어는 입금 없이 항상 이용 가능합니다.",
+        "legacyIntroBody": "기존 입출금 플로우가 계속 활성 상태입니다. 원하는 티어의 $HERMESOS 가격을 오늘 잠그고, 입금 주소로 견적 금액을 보내세요. 무료 계정은 입금 없이 항상 이용 가능합니다.",
         "selfCustodyIntroStrong": "내 지갑 연결",
-        "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. Free 티어는 토큰 인증 없이 항상 이용 가능합니다.",
+        "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. 무료 계정은 토큰 인증 없이 항상 이용 가능합니다.",
         "priceUnavailable": "토큰 가격을 불러올 수 없습니다 — 나중에 다시 시도하세요.",
         "restricted": {
           "eyebrow": "지갑",
