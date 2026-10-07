@@ -2,7 +2,6 @@ import {
   COMPETITOR_FACTS,
   COMPETITOR_FACTS_CHECKED,
   PRICE_TABLE,
-  formatCheckedDate,
   formatCheckedMonth,
 } from "../competitor-facts";
 import { HOST_COMPARISONS, HOST_COMPARISON_SLUGS } from "../host-comparisons";
@@ -32,9 +31,9 @@ function pageText(slug: (typeof HOST_COMPARISON_SLUGS)[number]): string {
 }
 
 describe("competitor facts", () => {
-  it("carries an ISO check date that formats for readers", () => {
+  it("carries an ISO check date that formats for readers as month and year only", () => {
     expect(COMPETITOR_FACTS_CHECKED).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(formatCheckedDate("2026-09-30")).toBe("30 September 2026");
+    expect(formatCheckedMonth("2026-09-30")).toBe("September 2026");
   });
 
   it("gives every host comparison a fact record, sources over https and a page that quotes the key figures", () => {

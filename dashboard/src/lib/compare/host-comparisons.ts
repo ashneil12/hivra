@@ -224,7 +224,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       {
         heading: "What xCloud's own docs say about OpenClaw hosting",
         paragraphs: [
-          "xCloud's OpenClaw documentation, last updated on 27 April 2026, calls OpenClaw hosting a beta feature with limited support. It's available only on xCloud managed servers, not on servers you already own. The same page says the server needs more than 4 GB of RAM, though one step on it says a minimum of 4 GB. The newer pricing page sells 6 GB and up. We couldn't confirm which wording is current.",
+          "xCloud's OpenClaw documentation, last updated in April 2026, calls OpenClaw hosting a beta feature with limited support. It's available only on xCloud managed servers, not on servers you already own. The same page says the server needs more than 4 GB of RAM, though one step on it says a minimum of 4 GB. The newer pricing page sells 6 GB and up. We couldn't confirm which wording is current.",
           "OpenClaw hosting there is bring-your-own-model only, with no AI credit included. Anthropic (by API key or Claude Code token), OpenAI, OpenRouter, Moonshot and Gemini are listed. The docs list Telegram as the supported chat channel, while marketing also names WhatsApp, Slack and Discord.",
         ],
       },
@@ -267,7 +267,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       },
       {
         q: "Is OpenClaw hosting on xCloud stable?",
-        a: "Its documentation, last updated on 27 April 2026, calls it a beta feature with limited support. The pricing page sells it as a standard plan. Check the current status with xCloud before you rely on it.",
+        a: "Its documentation, last updated in April 2026, calls it a beta feature with limited support. The pricing page sells it as a standard plan. Check the current status with xCloud before you rely on it.",
       },
       {
         q: "How does xCloud's refund compare?",
