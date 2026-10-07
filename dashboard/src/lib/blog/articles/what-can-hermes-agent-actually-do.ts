@@ -5,24 +5,24 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 export const article: BlogArticle = {
   slug: "what-can-hermes-agent-actually-do",
   title: "What can Hermes Agent actually do? Real things people use it for",
-  metaTitle: "What can Hermes Agent actually do? Real use cases",
+  metaTitle: "Hermes Agent use cases: what it can actually do",
   metaDescription:
-    "What Hermes Agent can do on a 24/7 server: scheduled briefings, monitoring, coding help, browser automation, email drafts and research, with examples.",
+    "What people use Hermes Agent for day to day: morning briefings, alerts when something changes, coding help, browser chores, email drafts and research.",
   publishedDate: "2026-04-18",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-07",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "What people use Hermes for, day to day.",
   intro:
     "Hermes Agent runs 24/7 on a server, so it keeps working after you close the chat. Before you set one up, you'll want to know what you'd use it for. These are the jobs people in the community give it, with enough detail to tell whether any of them fit you.",
   shortAnswer:
-    "Hermes Agent is an assistant that runs 24/7 on a server and does tasks as well as chatting. People use it for scheduled briefings, monitoring and alerts, coding help, browser automation, file processing, email drafts, research, finance summaries, home automation and API workflows. You do all of it by messaging the agent on Telegram or another connected app.",
+    "Hermes Agent is an open-source assistant that stays on around the clock and carries out the jobs you text it. The common ones are a morning briefing, an alert when a site goes down or a price drops, coding help, browser chores like pulling a weekly report, email drafts and research. Most people run it from Telegram.",
   sections: [
     {
       heading: "Why can Hermes do things a chatbot can't?",
       paragraphs: [
         "Because it never closes. Hermes runs in the background all the time, messages *you* first when something needs you, remembers past conversations, and can run code and use websites.\n\nPicture a colleague who's up at 3am, remembers what you worked on last month, and does the task instead of telling you how. Want the longer version? Here's [how an agent differs from a chatbot](/blog/ai-agent-vs-chatbot).",
-        "Everything below works through whatever messaging app you connect it to. Telegram is the most popular. [Discord, WhatsApp, Email, and 11 others](/blog/hermes-agent-telegram-discord-setup) also work. You text it. It does the thing. It replies when done.",
+        "Everything below works through whatever messaging app you connect it to. Telegram is the most popular. [Discord, Slack, WhatsApp, Email and well over a dozen others](/blog/hermes-agent-telegram-discord-setup) work too. You text it. It does the thing. It replies when done.",
       ],
     },
     {
@@ -91,7 +91,7 @@ export const article: BlogArticle = {
     {
       heading: "What does using it day to day look like?",
       paragraphs: [
-        "Mostly, people just text it. Hermes sits in Telegram and gets messages all day. 'Remind me at 3pm to follow up with Alex.' 'Is my staging server up?' 'What was I researching last Thursday?' 'Draft an invoice for 12 hours at £150/hr.'\n\nIt does each one, uses whatever tools it needs, remembers what came before, and replies when it's done. For a lot of people that's the real win: dozens of little jobs that used to rot on a to-do list just get done.",
+        "Mostly, people just text it. Hermes sits in Telegram and gets messages all day. 'Remind me at 3pm to follow up with Alex.' 'Is my staging server up?' 'What was I researching last Thursday?' 'Draft an invoice for 12 hours at £150/hr.'\n\nIt does each one, uses whatever tools it needs, remembers what came before, and replies when it's done. The little jobs that used to rot on a to-do list for weeks get done once you text them in.",
       ],
     },
     {
@@ -121,7 +121,7 @@ export const article: BlogArticle = {
       a: "Yes. Connect it to Telegram (or Discord, WhatsApp, etc.) and it's accessible from any device those apps run on. No separate mobile app needed.",
     },
     {
-      q: "Can multiple people use the same instance?",
+      q: "Can several people share one Hermes agent?",
       a: "Yes. Add multiple User IDs to the allowlist. They all interact with the same agent and share memory and skills. For separate agents per person, each person needs their own agent, and on Hivra you can launch several agents in one account.",
     },
     {
