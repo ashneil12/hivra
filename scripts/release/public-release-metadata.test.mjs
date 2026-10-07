@@ -244,7 +244,7 @@ test('the source candidate builder remains a private fail-closed review artifact
   assert.equal(runtimeBoundary.artifactClass, 'source-only-current-tree');
   assert.equal(runtimeBoundary.sourceOnlyBoundaryApproved, true);
   assert.equal(runtimeBoundary.releaseApproved, false);
-  assert.equal(runtimeBoundary.externalInputs.length, 12);
+  assert.equal(runtimeBoundary.externalInputs.length, 13);
   assert.ok(runtimeBoundary.externalInputs.every((entry) => entry.identity && entry.evidencePath));
   assert.equal(credentialReconciliation.format, 'hivra-credential-reconciliation-v1');
   assert.equal(credentialReconciliation.status, 'current-authorization-boundary-reconciled');

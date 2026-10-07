@@ -37,12 +37,10 @@ export type InstanceLifecycleState = (typeof INSTANCE_LIFECYCLE_STATES)[number];
 // compute budget, /api/billing/usage and /api/billing/entitlements alike.
 // The rest of the codebase already treats the two as one class (see the
 // `cold_archived || pending_deletion` pairs in the dashboard pages, restore-batch,
-// and cold-storage-service, and NON_SLOT_LIFECYCLE in reservations/promote-next);
-// this list was the odd one out.
+// and cold-storage-service); this list was the odd one out.
 //
-// `failed` deliberately stays OUT, even though promote-next's NON_SLOT_LIFECYCLE
-// includes it: a failed row can still own a live VM (prod has failed rows carrying
-// real vmids), so freeing its slot would oversubscribe the host.
+// `failed` deliberately stays OUT: a failed row can still own a live VM (prod has
+// failed rows carrying real vmids), so freeing its slot would oversubscribe the host.
 export const SLOT_FREEING_LIFECYCLE_STATES = [
   "deleted",
   "cold_archived",

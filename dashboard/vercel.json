@@ -237,10 +237,6 @@
       "schedule": "*/15 * * * *"
     },
     {
-      "path": "/api/cron/reservation-claim-expiry",
-      "schedule": "23 */2 * * *"
-    },
-    {
       "path": "/api/cron/park-idle-hivra-agents",
       "schedule": "15 5 * * *"
     },

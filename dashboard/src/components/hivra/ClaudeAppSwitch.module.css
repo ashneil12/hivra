@@ -1,0 +1,139 @@
+/* The Claude app switch sits inside the Desktop strip, so it is sized like the
+   strip's other controls and uses the same tokens. */
+.root {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.segment {
+  display: inline-flex;
+  border: 1px solid var(--etched-border);
+}
+
+.option {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.option + .option {
+  border-left: 1px solid var(--etched-border);
+}
+
+.option[data-selected="true"] {
+  background: var(--hivra-red);
+  color: #fff;
+}
+
+.option:disabled {
+  cursor: progress;
+}
+
+.action,
+.primary,
+.danger,
+.more {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.more {
+  padding: 2px 6px;
+  letter-spacing: 0;
+}
+
+.primary {
+  background: var(--hivra-red);
+  border-color: var(--hivra-red);
+  color: #fff;
+}
+
+.danger {
+  border-color: var(--hivra-red-line);
+  color: var(--hivra-red);
+}
+
+.action:hover,
+.more:hover {
+  color: var(--ink-black);
+  border-color: var(--hivra-red-line);
+}
+
+.option:focus-visible,
+.action:focus-visible,
+.primary:focus-visible,
+.danger:focus-visible,
+.more:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 1px;
+}
+
+.progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.error {
+  font-size: 11px;
+  color: var(--hivra-red);
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(360px, 90vw);
+  padding: 12px;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  white-space: normal;
+}
+
+.panel p {
+  margin: 0 0 8px;
+}
+
+.panelTitle {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.panelActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}

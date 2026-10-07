@@ -419,7 +419,8 @@ copyright, source-offer and exact image-layer review remain open.
 | Input | Observed installation behavior | Default identity |
 | --- | --- | --- |
 | Browser Use bux | Fetch a Git checkout; run its installer after pinning two CLI downloads | `f17c1b31d6688dd92e745ade650e00d46b4dc4da` |
-| Claude Code | Download npm package into the guest | `@anthropic-ai/claude-code@2.1.246` |
+| Claude Code | Download npm package into the guest | `@anthropic-ai/claude-code@2.1.292` |
+| Claude desktop app | Download Debian package from Anthropic's repository into the VM cache, verify size and SHA-256, unpack inside the desktop container as its unprivileged user, only on the owner's request | `claude-desktop_2.26454.0_amd64.deb` (`6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`) |
 | Codex | Download npm package into the guest | `@openai/codex@0.149.1` |
 | Aeon | Fetch Git checkout, modify dashboard configuration, install dependencies and build | `8b8d719715ec9bb68fb858a1e334d23209047d82` |
 | OpenClaw | Download npm package into the guest | `openclaw@2026.6.10` |
