@@ -222,22 +222,15 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(instanceBodies[0]).toMatchObject({ honchoVaultKeyId: HONCHO_KEY.id });
   });
 
-  it("launches Claude Code on Free without a browser and opens its terminal", async () => {
+  it("does not launch Claude Code on Hivra Cloud for a Free account, and points to its own computer or a plan", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     await chooseAgent("Claude Code");
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Browser for Claude Code/ })).not.toBeChecked());
-    expect(modelChoice(/^Sign in inside Claude Code after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(modelChoice(/^Use my API key/)).toBeDisabled();
 
-    const review = await reviewLaunch();
-    expect(review.getByText("Sign in with your Anthropic account inside Claude Code after it opens.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
-
-    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
-    expect(createAgentMock).toHaveBeenCalledWith({
-      type: "claude-code", name: "Claude Code 1", cpu: 0.5, ram: 1, browser: false, deployment: { mode: "hivra-managed" },
-    });
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`));
+    expect(await screen.findByText(/Claude Code on Hivra Cloud needs a paid plan\. Your free account works with your own computer: connect one, or choose a plan\./)).toBeInTheDocument();
+    expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+    expect(screen.getByRole("link", { name: /Upgrade to|Review plans/ })).toHaveAttribute("href", expect.stringContaining("/dashboard/billing"));
+    expect(screen.getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
+    expect(createAgentMock).not.toHaveBeenCalled();
   });
 
   it("sends Codex a saved Vault key only after the per-launch consent, then opens its model settings", async () => {

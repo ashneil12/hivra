@@ -95,6 +95,19 @@ describe("update last-known-good and rollback", () => {
     expect(run.stdout).toContain("last-known-good saved");
   });
 
+  it("says why it failed in the script's own words when nothing named a reason", () => {
+    const box = make();
+    const log = `/tmp/hermes-update-${INST}.log`;
+    writeFileSync(log, "[webui-update] pulled\n[agent-image] WARN: docker pull failed for old, continuing\n[webui-update] FATAL: containers did not converge to :stable after recreate retries\n");
+    try {
+      const run = box.runScript(updateScript(box, `${touchAndRecreate}exit 1`));
+      expect(run.status).toBe(1);
+      expect(result()).toContain("reason=[webui-update] FATAL: containers did not converge to :stable after recreate retries");
+    } finally {
+      rmSync(log, { force: true });
+    }
+  });
+
   it("clears a paused hourly roll when the update succeeds, and leaves it when the update fails", () => {
     const pause = `/var/lib/hermes-roll-paused-${INST}`;
     const box = make();
