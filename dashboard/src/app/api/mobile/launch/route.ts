@@ -164,14 +164,14 @@ export async function POST(request: NextRequest) {
     // ── Entitlement (paid-only lane) ────────────────────────────────────────
     // resolveEffectiveSubscription is the same resolver createInstance runs;
     // rejecting here gives the app a clean 402 paywall signal instead of the
-    // web lane's 403 copy. The stripe-trialing rejection mirrors
-    // createInstance's own rule (trialing budgets are often $0).
+    // web lane's 403 copy. The trialing rejection (any source: Stripe or an
+    // App Store intro offer) mirrors createInstance's own rule.
     const sub = await resolveEffectiveSubscription(userId);
     const entitled =
       !!sub &&
       sub.plan !== "free" &&
       sub.instance_limit > 0 &&
-      !(sub.source === "stripe" && sub.status === "trialing");
+      sub.status !== "trialing";
     if (!entitled) {
       return apiError(
         "A subscription is required to launch your agent.",
