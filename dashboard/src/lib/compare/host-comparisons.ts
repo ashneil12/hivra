@@ -62,10 +62,10 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
         ],
       },
       {
-        heading: "Refunds, free tier and security",
+        heading: "Refunds, free hosting and security",
         paragraphs: [
           "Agent 37 refunds the first month of a subscription in full if you ask before the second billing cycle. Prepaid top-ups are non-refundable except where the law requires it. It has a real free tier too: one managed agent at $0 that sleeps when idle and is removed after 30 days asleep (Agent 37 emails a week before), plus a one-time $5 starter credit once a card is on file. Agent 37 also publishes SOC 2 Type I status, with Type II in progress, and uses gVisor isolation.",
-          "Hivra has no free plan and no trial. It offers a 7-day money-back guarantee on card payments, and nothing beyond that. It doesn't claim a SOC 2 report either, so if a SOC 2 report is a procurement requirement, Agent 37 is ahead today.",
+          "Hivra has no free hosting and no trial. The platform is free to use with your own computer, but a computer run by Hivra needs a paid plan. It offers a 7-day money-back guarantee on card payments, and nothing beyond that. It doesn't claim a SOC 2 report either, so if a SOC 2 report is a procurement requirement, Agent 37 is ahead today.",
         ],
       },
       {
@@ -80,7 +80,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       { criterion: "Always-on 2 vCPU, 4 GB", hermesOs: "$9.99/mo flat", other: "$4.76/mo metered, prepaid balance", hermosWins: false },
       { criterion: "Always-on 4 vCPU, 8 GB", hermesOs: "$19.99/mo flat for 4 vCPU and 8 GB", other: "$9.34/mo metered, prepaid balance", hermosWins: false },
       { criterion: "Billing model", hermesOs: "Fixed monthly price", other: "Per minute from a balance; auto top-up on by default", hermosWins: true },
-      { criterion: "Free tier", hermesOs: "None", other: "One managed agent at $0; sleeps when idle", hermosWins: false },
+      { criterion: "Free hosting", hermesOs: "None. A free account works with your own computer", other: "One managed agent at $0; sleeps when idle", hermosWins: false },
       { criterion: "Agents hosted", hermesOs: "Hermes, OpenClaw, Agent Zero, Claude Code, Codex, Aeon", other: "Hermes, OpenClaw, Claude Code, Codex, OpenCode, Grok, Pi, custom image", hermosWins: false },
       { criterion: "Built for reselling per-customer agents", hermesOs: "No", other: "Yes, API-first with white-label dashboard", hermosWins: false },
       { criterion: "Refund", hermesOs: "7-day money-back guarantee on card payments", other: "First month of a subscription; top-ups non-refundable", hermosWins: false },
@@ -88,7 +88,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparisonData> = {
       { criterion: "Security attestation", hermesOs: "None claimed", other: "SOC 2 Type I, Type II in progress", hermosWins: false },
     ],
     verdict:
-      "Agent 37 if you resell agents to your own customers, want the cheapest raw compute, or need a free tier or a SOC 2 report. Hivra if you run your own agents and want a fixed monthly price, an open-source platform and a dashboard built around them.",
+      "Agent 37 if you resell agents to your own customers, want the cheapest raw compute, or need free hosting or a SOC 2 report. Hivra if you run your own agents and want a fixed monthly price, an open-source platform and a dashboard built around them.",
     faqs: [
       {
         q: "Is Agent 37 cheaper than Hivra?",
