@@ -6,21 +6,32 @@ import { CLI_RUN_LIFETIME } from "../runtime-facts";
 // close / lock my laptop" questions at position 7 to 10 with almost no clicks, because the old page never answered them.
 // Facts checked 2026-09-30: Claude Code docs (Remote Control; Claude Code on the web), the macOS caffeinate man page,
 // Apple Support (closed-display use, sleep settings). Re-check the Anthropic pages before editing the table.
+// Extended 2026-10-07: most top queries say plain "Claude" and ask about locking or sleep, and many mean the Claude
+// desktop app (Cowork, scheduled tasks). Lock/sleep/lid section facts, fetched 2026-10-07:
+// support.claude.com articles 13345190 (get started with Cowork), 15520349 (Cowork on web, desktop and mobile;
+// Pro and Max moved to the cloud on 6 Oct 2026), 13854387 (Cowork scheduled tasks), 13947068 (Dispatch),
+// 14128542 (computer use), 16761823 (Cowork and chat are one Claude); code.claude.com/docs/en/desktop-scheduled-tasks
+// and /desktop; Apple mh10330 (closing the display sleeps a Mac laptop); Microsoft "Shut down, sleep, or hibernate
+// your PC" and the lid switch close action page; Apple's MacBook Pro external display guide for lid-closed use.
+// Only the Remote Control docs touch locking (screen-lock listener for phone notifications); the Cowork and desktop
+// pages don't, and nothing says what happens to a plain chat reply mid-answer or to computer use behind a lock:
+// keep those as stated gaps, not guesses. The lock column of the table is our reading, and the copy says so.
+// Hivra runs Claude Code (CLI) only. Never claim it runs the Claude desktop app or Cowork.
 export const article: BlogArticle = {
   slug: "keep-claude-code-running-24-7",
-  title: "Will Claude Code keep running if you close your laptop? (And how to run it 24/7)",
-  metaTitle: "Will Claude Code keep running if I close my laptop?",
+  title: "Will Claude keep running if you close your laptop or lock it? (And how to run Claude Code 24/7)",
+  metaTitle: "Will Claude keep running if I close or lock my laptop?",
   metaDescription:
-    "No, not on the laptop: closing the lid sleeps it and pauses Claude Code. Here's what keeps running: Anthropic's cloud, or tmux on a machine that stays on.",
+    "Locking your screen doesn't put your computer to sleep. Closing the lid usually does. Here's what that means for the Claude app, Cowork and Claude Code.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-10-06",
-  readingTimeMin: 10,
+  lastModified: "2026-10-07",
+  readingTimeMin: 12,
   author: "Hivra team",
-  tagline: "Short answer: not on the laptop. Here's what does keep running.",
+  tagline: "Locking won't sleep your computer. A closed lid usually will. Here's what keeps running.",
   intro:
-    "Closing the lid is the most common way a long Claude Code task stops. Five fixes keep a run going while you're away, from a one-line command to a computer of its own.",
+    "Closing the lid stops a long Claude Code run, and some tasks in the Claude app too. Below: what locking, sleep and a closed lid each do to Claude, then five fixes that keep Claude Code going while you're away, from a one-line command to a computer of its own.",
   shortAnswer:
-    "Not if Claude Code is running on the laptop. Closing the lid puts a laptop to sleep, and sleep pauses every program on it, Claude Code included, until you wake it. To work with the lid shut, run it on a machine that stays on. That means Anthropic's cloud sessions, or your own always-on computer with Claude Code inside tmux.",
+    "Locking the screen doesn't put the computer to sleep, so local Claude work keeps running. Sleep stops it, and closing a laptop's lid normally sleeps it. New Cowork tasks on Pro and Max plans run in Anthropic's cloud and keep going. So does Claude Code on a computer that stays on, such as a server running it in tmux.",
   sections: [
     {
       heading: "What keeps running when you close the lid",
@@ -30,17 +41,19 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Does locking my screen stop Claude Code?",
+      heading: "Lock, sleep or close the lid: what happens to Claude?",
       paragraphs: [
-        "No. Locking and sleeping are different things. A locked Mac is awake with the screen protected, and its programs keep running. The catch: an idle laptop goes to sleep by itself after a while, and a closed lid sleeps it straight away. Sleep is what pauses Claude Code, so what matters is whether the laptop will sleep.",
-        "You set the idle timers yourself. On a Mac they're in System Settings, under Battery, then Options, where you can also stop automatic sleeping while the display is off ([Apple Support](https://support.apple.com/guide/mac-help/mchle41a6ccd/mac)). Screen lock, display sleep and system sleep are three separate settings, so check the system sleep timer.",
+        "Locking puts a password in front of the screen. It doesn't put the computer to sleep, so its programs keep running. Sleep is what stops work. A sleeping computer doesn't run your programs until you wake it, and it drops into sleep by itself once its idle timer runs out.\n\nClosing the lid is the fast way to sleep a laptop. Apple says closing the display puts a Mac laptop to sleep ([Apple Support](https://support.apple.com/guide/mac-help/put-your-mac-to-sleep-or-wake-it-mh10330/mac)). Microsoft says a lot of Windows PCs, especially laptops, do the same when you close the lid ([Microsoft Support](https://support.microsoft.com/en-us/windows/experience/power-battery/shut-down-sleep-or-hibernate-your-pc)). So for anything running on your own computer, one question decides it: will the computer sleep?",
+        "The Claude app is where people get caught out. Some of its work runs on Anthropic's servers and some runs on your computer, and the two behave differently. The sleep column is what Anthropic's help center and docs say, as of October 2026. The lock column is our reading of them, and the paragraph after the table explains why.\n\n| What you're running | Screen locked | Asleep, or lid closed |\n|---|---|---|\n| Claude Code in a terminal, or a Local session in Claude Code Desktop | Keeps running | Pauses until the computer wakes |\n| A new Cowork task on a Pro or Max plan | Keeps running | Keeps running in Anthropic's cloud |\n| A Cowork task you started on your computer before the move to the cloud | Keeps running while the app is open | May end. Anthropic says to keep the app open the whole time |\n| A new Cowork scheduled task that doesn't need local files or apps | Runs on time | Runs on time in the cloud |\n| A Cowork task that reads your local files or uses the app's browser | Keeps running while the app is open | The task carries on in the cloud, but it can't reach your files while the computer sleeps |\n| Dispatch, sending tasks from your phone to your desktop (closed to new users) | Keeps running | Doesn't run. Anthropic says the computer must be awake with the app open |\n| A local scheduled task in Claude Code Desktop | Runs on time | Skipped, with one catch-up run when the computer wakes |\n| A Cloud session in Claude Code Desktop, or Claude Code on the web | Keeps running | Keeps running on Anthropic's machines |\n\nAnthropic moved new Cowork tasks on Pro and Max plans to its cloud. They keep going when you close your laptop, and their scheduled tasks run with no device online ([Claude Help Center](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)). Tasks you'd already started on your computer before that move stay there, and Anthropic says those may end if the app closes or the computer sleeps ([Claude Help Center](https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork)). A scheduled task that needs local files or apps only runs locally ([Claude Help Center](https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork)). On Team and Enterprise plans, Cowork in the cloud is still in beta.\n\nClaude Code Desktop is stricter. Its local scheduled tasks only fire while the app is open and the computer is awake. If the computer sleeps through a run, it's skipped, and on wake the app starts one catch-up run for the most recent miss in the last seven days ([Claude Code docs](https://code.claude.com/docs/en/desktop-scheduled-tasks)). Cloud sessions keep going even if you close the app or shut the computer down ([Claude Code docs](https://code.claude.com/docs/en/desktop)).",
+        "Why the lock column says what it does: Anthropic's Cowork and desktop pages don't mention locking. For Dispatch and computer use they say your computer needs to be awake with the Claude Desktop app open, and a locked computer is still awake. The Claude Code Remote Control docs go a step further and suggest switching phone notifications on when your screen locks, which only makes sense if Claude Code is still working behind the lock ([Claude Code docs](https://code.claude.com/docs/en/remote-control)). What Anthropic doesn't say is whether computer use, browser use or Dispatch can do their clicking and typing while the screen is locked. If a task depends on those, test it before you walk away.\n\nAnd a plain chat? Anthropic's new combined Claude experience, rolling out gradually to Pro and Max plans first, keeps more involved tasks running in the cloud if you close your laptop or leave the page ([Claude Help Center](https://support.claude.com/en/articles/16761823-claude-cowork-and-chat-are-one-claude)). For an ordinary chat reply that's halfway written when the laptop sleeps, Anthropic's docs don't say.",
+        "Mac or Windows? Anthropic's rules are the same on both. What differs is the lid. On Windows, closing the lid is a setting. In Control Panel, under Power Options, the \"When I close the lid\" list sets what happens, and Windows supports Do nothing, Sleep, Hibernate and Shut down there, though Hibernate isn't offered on every PC ([Microsoft Support](https://support.microsoft.com/en-us/windows/experience/power-battery/shut-down-sleep-or-hibernate-your-pc), [Microsoft Learn](https://learn.microsoft.com/en-us/windows-hardware/customize/power-settings/power-button-and-lid-settings-lid-switch-close-action)). Pick Do nothing and the laptop stays awake with the lid shut. On a MacBook, Apple documents lid-closed use with an external display and accessories connected, covered further down.\n\nThe Claude app also has a **Keep computer awake** switch, in Settings, then This computer, then System. It stops idle sleep. Anthropic's own docs spell out the limit: closing the laptop lid still puts it to sleep ([Claude Code docs](https://code.claude.com/docs/en/desktop-scheduled-tasks)).\n\nYou set the idle timers yourself. On a Mac, the inactivity timers are in System Settings, under Lock Screen. On a Mac laptop, Battery, then Options, has a switch that stops automatic sleeping on the power adapter while the display is off ([Apple Support](https://support.apple.com/guide/mac-help/mchle41a6ccd/mac)).\n\nOne thing Hivra can't help with here: it doesn't run the Claude app or Cowork. What it runs is Claude Code, the terminal version, on a computer that stays on while you're on a paid plan. That's Fix 5 below.",
       ],
     },
     {
       heading: "Can I just keep the laptop awake?",
       paragraphs: [
         "For a short task at your desk, yes. Each command below holds the laptop awake only while Claude Code is running.\n\n```bash\n# macOS: prevent idle sleep for as long as claude runs\ncaffeinate -i claude\n\n# macOS, on power only: prevent system sleep (per the man page, -s works only on AC power)\ncaffeinate -s claude\n\n# Linux with systemd: hold off sleep and lid-switch handling while claude runs\nsystemd-inhibit --what=sleep:handle-lid-switch claude\n```\n\nOn Windows, set what closing the lid does in Control Panel, under Power Options, to \"Do nothing\".",
-        "`caffeinate` doesn't keep a MacBook awake with the lid closed. Apple describes lid-closed use in closed-display mode, with power connected, an external display and a keyboard or mouse attached ([Apple Support](https://support.apple.com/en-in/117373)). A laptop left running inside a bag can also get hot, and a reboot, a dropped network or a move to a different Wi-Fi network still ends the run. Keeping a laptop awake is a patch. If the run matters, put it on a machine that's meant to stay on. If you do go the laptop route, the [keep-awake command builder](/tools/keep-mac-awake) writes the command for your setup and tells you what it won't cover.",
+        "`caffeinate` doesn't keep a MacBook awake with the lid closed. Apple documents closing the lid with an external display connected ([Apple Support](https://support.apple.com/guide/macbook-pro/connect-an-external-display-apd8cdd74f57/mac)), and its dual-display guide lists an external keyboard and mouse or trackpad and power among the requirements ([Apple Support](https://support.apple.com/en-in/117373)). A laptop left running inside a bag can also get hot, and a reboot, a dropped network or a move to a different Wi-Fi network still ends the run. Keeping a laptop awake is a patch. If the run matters, put it on a machine that's meant to stay on. If you do go the laptop route, the [keep-awake command builder](/tools/keep-mac-awake) writes the command for your setup and tells you what it won't cover.",
       ],
     },
     {
@@ -53,7 +66,7 @@ export const article: BlogArticle = {
       heading: "Fix 1: tmux (or screen) on a machine that stays awake",
       paragraphs: [
         "Got an always-on machine (a desktop, a home server, a VPS)? Then tmux is the classic answer. It keeps your terminal session alive on that machine even after you disconnect. Anthropic's Remote Control docs recommend the same for a session on a remote machine: start it inside tmux or screen.\n\n```bash\n# Start a named session and launch Claude Code inside it\ntmux new -s claude\nclaude\n\n# Detach without killing anything: press Ctrl+b, then d\n\n# Later, from any connection:\ntmux attach -t claude\n\n# See what is running\ntmux ls\n```\n\nThe [tmux cheat sheet](/tools/tmux-cheat-sheet) has the keys and commands on one page. If the CLI process itself exited and you need the chat history back, [resume a Codex or Claude Code session](/blog/codex-resume-session) covers the resume commands.\n\nYour SSH connection can drop a hundred times and the session keeps working on the server. Reattach and you're back where the agent left off. The rule from the top still holds, though: tmux on your laptop doesn't survive sleep. It covers disconnects and closed terminal windows, and it can't do anything about a sleeping machine.",
-        "Prefer `screen`? Same idea, older tool:\n\n```bash\nscreen -S claude    # start\n# Detach: Ctrl+a, then d\nscreen -r claude    # reattach\n```\n\ntmux is the better default in 2026. Panes, better scripting, active development. But screen ships preinstalled on more distros, and for this one job either works. To check your own setup for the usual ways these runs die, try the [agent survival check](/tools/agent-survival-check).",
+        "Prefer `screen`? Same idea, older tool:\n\n```bash\nscreen -S claude    # start\n# Detach: Ctrl+a, then d\nscreen -r claude    # reattach\n```\n\ntmux is the better default today. Panes, better scripting, active development. But screen ships preinstalled on more distros, and for this one job either works. To check your own setup for the usual ways these runs die, try the [agent survival check](/tools/agent-survival-check).",
       ],
     },
     {
@@ -91,22 +104,26 @@ export const article: BlogArticle = {
     {
       heading: "Which fix should you pick?",
       paragraphs: [
-        "- **Short task, you're at your desk:** `caffeinate -i claude` and leave the lid open.\n- **You already have an always-on machine:** tmux. Done. Costs nothing.\n- **One long task has to finish overnight:** `nohup claude -p` on any machine that stays awake.\n- **You only use Claude Code on GitHub repositories:** try Claude Code on the web first.\n- **You want a permanent 24/7 setup and you like sysadmin work:** a small VPS plus tmux, roughly $5-10/month.\n- **You want a permanent 24/7 setup without the sysadmin work:** [run Claude Code on Hivra](/agents/claude-code). Sign in with your own Anthropic account and the computer stays up. Start long runs inside tmux in its Terminal tab, or send them through Telegram, so they keep going after you close the laptop.",
+        "- **You use the Claude app, not the terminal:** on Pro and Max plans, new Cowork tasks already run in Anthropic's cloud. Keep the app open on an awake computer only when a task needs your files, browser or apps.\n- **Short task, you're at your desk:** `caffeinate -i claude` and leave the lid open.\n- **You already have an always-on machine:** tmux. Done. Costs nothing.\n- **One long task has to finish overnight:** `nohup claude -p` on any machine that stays awake.\n- **You only use Claude Code on GitHub repositories:** try Claude Code on the web first.\n- **You want a permanent 24/7 setup and you like sysadmin work:** a small VPS plus tmux, roughly $5-10/month.\n- **You want a permanent 24/7 setup without the sysadmin work:** [run Claude Code on Hivra](/agents/claude-code). Sign in with your own Anthropic account and the computer stays up. Start long runs inside tmux in its Terminal tab, or send them through Telegram, so they keep going after you close the laptop.",
       ],
     },
   ],
   faqs: [
     {
-      q: "Will Claude Code keep running if I close my laptop?",
-      a: "Not if it's running on the laptop. Closing the lid puts the laptop to sleep, which pauses every program on it, Claude Code included, until you wake it. For a run that keeps going with the lid shut, use Anthropic's cloud (Claude Code on the web) or a machine that stays on, with Claude Code inside tmux.",
+      q: "Will Claude keep running if I close my laptop?",
+      a: "Only what runs somewhere else: Anthropic's cloud, or another computer that stays on. Closing the lid normally puts a laptop to sleep. Claude Code on the laptop pauses until it wakes, local tasks in the Claude app may end, and local scheduled tasks are skipped. New Cowork tasks on Pro and Max plans keep going in Anthropic's cloud, and so does Claude Code in tmux on a server.",
     },
     {
-      q: "Does locking my screen stop Claude Code?",
-      a: "No. A locked screen isn't sleep, so programs keep running. What pauses Claude Code is the laptop going to sleep, which happens when its idle timer runs out or the lid closes. On a Mac, check the sleep settings in System Settings, under Battery, then Options.",
+      q: "Will Claude keep running if I lock my computer?",
+      a: "Usually, yes. Locking doesn't put the computer to sleep, so Claude Code keeps running, and local work in the Claude app keeps going while the app is open. Cloud tasks don't need the app at all. The catch is the idle timer: if the computer falls asleep on its own later, local work stops. Anthropic's docs don't say whether computer use works behind a locked screen.",
     },
     {
-      q: "Does Claude Code keep running if my Mac goes to sleep?",
-      a: "No. Sleep pauses every process. A Remote Control session reconnects when the machine wakes and a local session carries on, but nothing runs while the Mac sleeps. A request to Anthropic that was in flight when the Mac went to sleep may fail on wake.",
+      q: "Does Claude keep working if my computer goes to sleep?",
+      a: "Only what runs somewhere else. New Cowork tasks on Pro and Max plans, Cowork's cloud scheduled tasks and Claude Code cloud sessions carry on, and so does Claude Code on a server that stays on. On the sleeping computer, Claude Code pauses until it wakes. A Remote Control session reconnects once the machine is back online.",
+    },
+    {
+      q: "Do Claude's scheduled tasks run while my computer is asleep?",
+      a: "Cowork's do. Anthropic says they run remotely, so they fire on time with the computer asleep or the desktop app closed. Older ones that already ran on your computer stay there, and so does any task that needs local files or apps. Local scheduled tasks in Claude Code Desktop only run while the app is open and the computer is awake, and a missed run gets one catch-up when it wakes.",
     },
     {
       q: "Can I close my laptop and use Claude Code from my phone?",
@@ -125,12 +142,8 @@ export const article: BlogArticle = {
       a: `DIY runs roughly $5-10/month for a 4 GB VPS from a budget host, plus your setup and maintenance time. On Hivra, plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and paid plans aren't paused for inactivity. Either way, your Claude usage bills through your own Anthropic account.`,
     },
     {
-      q: "Do I need an API key to run Claude Code in the cloud?",
-      a: "On Hivra, you don't need to set up a separate key for Claude Code. After launch you sign in with your own Anthropic account on the computer, the same login flow as on your laptop. The login is stored on the agent's VM.",
-    },
-    {
-      q: "Does Hivra modify Claude Code?",
-      a: "No. It's the official Claude Code CLI from Anthropic on a private VM. Hivra's chat runs it with permission prompts bypassed by default, and the agent's Manage tab can narrow that to Limited or Read-only. The chat, terminal, files, skills and browser tabs are a convenience layer around the standard CLI. Hivra is independent and is not affiliated with Anthropic.",
+      q: "Does Hivra modify Claude Code, and do I need an API key?",
+      a: "No to both. It's the official Claude Code CLI from Anthropic on a private VM, and after launch you sign in with your own Anthropic account, the same login flow as on your laptop. The login is stored on that VM. Hivra's chat runs it with permission prompts bypassed by default, and the agent's Manage tab can narrow that to Limited or Read-only. The chat, terminal, files, skills and browser tabs are a convenience layer around the standard CLI. Hivra is independent and is not affiliated with Anthropic.",
     },
     {
       q: "Does a Claude Code task on Hivra keep running when I close my laptop?",
