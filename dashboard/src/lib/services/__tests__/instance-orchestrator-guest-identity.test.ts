@@ -46,6 +46,11 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 jest.mock("@/lib/services/webui-instance-builder", () => ({
   buildWebUIBootstrapScript: jest.fn(),
   buildWebUIProvisioningArtifacts: jest.fn(),
+  resolveInstanceAgentImageRepo: jest.fn(() => null),
+}));
+// The release registry does not govern these test boxes: updates follow the floating tag as before.
+jest.mock("@/lib/hermes-releases/live-update", () => ({
+  resolveUpdateImagePolicy: jest.fn(async () => ({ policy: undefined, state: null })),
 }));
 jest.mock("@/lib/services/provider-config", () => ({
   PROVIDER_ID_MAP: { openai: "openai" },

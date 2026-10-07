@@ -10,23 +10,18 @@
  */
 export const COMPETITOR_FACTS_CHECKED = "2026-10-02";
 
-/** "30 September 2026", for copy and the sources line. */
-export function formatCheckedDate(iso: string = COMPETITOR_FACTS_CHECKED): string {
-  const [year, month, day] = iso.split("-").map(Number);
+/**
+ * "October 2026", for reader-facing freshness stamps ("Prices as of October 2026").
+ * Ash's voice rule (2026-10-06): say it like a person, no "read on <date>" parentheticals and no day in reader copy.
+ * The exact day stays in COMPETITOR_FACTS_CHECKED, the sitemap lastmod and <time dateTime>.
+ */
+export function formatCheckedMonth(iso: string = COMPETITOR_FACTS_CHECKED): string {
+  const [year, month] = iso.split("-").map(Number);
   const months = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
   ];
-  return `${day} ${months[month - 1]} ${year}`;
-}
-
-/**
- * "October 2026", for reader-facing freshness stamps ("Prices as of October 2026").
- * Ash's voice rule (2026-10-06): say it like a person, no "read on <date>" parentheticals.
- * The exact day stays in COMPETITOR_FACTS_CHECKED, the sitemap lastmod and <time dateTime>.
- */
-export function formatCheckedMonth(iso: string = COMPETITOR_FACTS_CHECKED): string {
-  return formatCheckedDate(iso).replace(/^\d+ /, "");
+  return `${months[month - 1]} ${year}`;
 }
 
 export type CompetitorSlug = "vs-agent-37" | "vs-hostinger" | "vs-xcloud" | "vs-nous-hermes-cloud";
