@@ -3296,6 +3296,8 @@ export async function POST(
         hostIpForOps = ipv4;
         const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!, {
           initiator: USER_LIVE_UPDATE,
+          // UPDATE NOW brings the box onto the release the registry offers it.
+          imageIntent: "release",
         });
         if (!result.applied) {
           const retryableSshMessage = normalizeRetryableInstanceActionError(result.error);
