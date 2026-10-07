@@ -1069,6 +1069,47 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
+  it("refuses a NEW provision on an App Store trialing sub, exactly like a Stripe trialing one", async () => {
+    const emptyQuery: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "in", "order", "limit", "not", "is"]) {
+      emptyQuery[method] = jest.fn().mockReturnThis();
+    }
+    emptyQuery.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    emptyQuery.then = (resolve: (value: unknown) => unknown) => resolve({ data: [], error: null });
+    const appleQuery = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: {
+          plan: "operator",
+          status: "trialing",
+          current_period_end: "2999-01-01T00:00:00.000Z",
+        },
+        error: null,
+      }),
+    };
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((tableName: string) =>
+      tableName === "apple_iap_subscriptions" ? appleQuery : emptyQuery
+    );
+
+    const result = await InstanceService.createInstance(
+      "user_apple_trial",
+      CreateInstanceSchema.parse({
+        name: "Apple Trial Agent",
+        provider: "openrouter",
+        apiKey: "sk-or-test",
+      })
+    );
+
+    expect(result).toEqual({
+      success: false,
+      status: 403,
+      message: "Active subscription required. Choose a plan to start deploying agents.",
+    });
+    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+  });
+
   it("blocks a NEW provision while a paid sub is past_due (dunning), before any backend call", async () => {
     const subscriptionQuery = {
       select: jest.fn().mockReturnThis(),

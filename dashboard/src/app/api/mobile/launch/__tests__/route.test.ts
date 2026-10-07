@@ -149,6 +149,15 @@ describe("POST /api/mobile/launch — gates", () => {
     expect(response.status).toBe(402);
   });
 
+  it("402s for an App Store trialing sub the same way (no trial reaches createInstance)", async () => {
+    mockedResolveSub.mockResolvedValue(
+      operatorSub({ status: "trialing", source: "apple_iap", canChangePlanInPlace: false })
+    );
+    const response = await POST(launchRequest({ personaId: "atlas", agentName: "Bea" }));
+    expect(response.status).toBe(402);
+    expect(createInstanceSpy).not.toHaveBeenCalled();
+  });
+
   it("400s on an unknown personaId", async () => {
     const response = await POST(launchRequest({ personaId: "nope", agentName: "Bea" }));
     expect(response.status).toBe(400);
