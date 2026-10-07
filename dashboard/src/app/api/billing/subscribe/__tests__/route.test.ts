@@ -494,7 +494,7 @@ describe("POST /api/billing/subscribe", () => {
       expect(params.metadata).toEqual(expect.objectContaining({ plan: "operator", return_to: LAUNCH_RETURN }));
       // Subscription metadata stays about the subscription.
       expect(params.subscription_data.metadata).not.toHaveProperty("return_to");
-      expect(options.idempotencyKey).toMatch(/^checkout_user_123_operator_monthly_r[0-9a-f]{16}_\d+$/);
+      expect(options.idempotencyKey).toMatch(/^checkout_np_user_123_operator_monthly_r[0-9a-f]{16}_\d+$/);
     });
 
     it.each([
@@ -512,7 +512,7 @@ describe("POST /api/billing/subscribe", () => {
       expect(params.success_url).toMatch(/session_id=\{CHECKOUT_SESSION_ID\}$/);
       expect(params.cancel_url).toMatch(/\/checkout\/canceled\?plan=operator$/);
       expect(params.metadata).not.toHaveProperty("return_to");
-      expect(options.idempotencyKey).toMatch(/^checkout_user_123_operator_monthly_\d+$/);
+      expect(options.idempotencyKey).toMatch(/^checkout_np_user_123_operator_monthly_\d+$/);
     });
 
     it("resumes an open session only when it returns to the same place", async () => {
@@ -546,7 +546,7 @@ describe("POST /api/billing/subscribe", () => {
       expect(mockStripeSessionsExpire).toHaveBeenCalledWith("cs_launch");
       const [params, options] = mockStripeSessionsCreate.mock.calls[0];
       expect(params.metadata).not.toHaveProperty("return_to");
-      expect(options.idempotencyKey).toMatch(/^checkout_user_123_operator_monthly_x[0-9a-f]{16}_\d+$/);
+      expect(options.idempotencyKey).toMatch(/^checkout_np_user_123_operator_monthly_x[0-9a-f]{16}_\d+$/);
     });
   });
 
@@ -1180,6 +1180,17 @@ describe("POST /api/billing/subscribe", () => {
 
     afterAll(() => {
       process.env = ORIGINAL_ENV;
+    });
+
+    it("checkout never lets the buyer enter a promotion code", async () => {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator" }));
+      expect(res.status).toBe(200);
+
+      const params = mockStripeSessionsCreate.mock.calls[0][0];
+      expect(params.allow_promotion_codes).not.toBe(true);
+      expect(params).not.toHaveProperty("discounts");
     });
 
     it.each(["operator", "fleet", "command"] as const)(
