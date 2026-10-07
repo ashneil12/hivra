@@ -24,6 +24,11 @@ SPEC = importlib.util.spec_from_file_location("hivra_claude_app", ROOT / "provis
 app = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(app)
 
+class Real:
+    """The helper's real streaming functions, captured before any test patches them."""
+    stream_to_file = staticmethod(app.stream_to_file)
+
+
 GOOD_PIN = json.loads((ROOT / "provisioner" / "claude-desktop-pin.json").read_text(encoding="utf-8"))
 
 
@@ -56,7 +61,12 @@ class Fixture:
             mock.patch.object(app, "container_running", lambda: self.container_up),
             mock.patch.object(app, "in_container", self.in_container),
             mock.patch.object(app, "run", self.run),
+            mock.patch.object(app, "stream_from_file", self.stream_from_file),
+            mock.patch.object(app, "stream_to_file", self.stream_to_file),
         ]
+        self.units_active: set[str] = set()
+        self.snapshot_result: tuple[int, bytes, bool] = (0, b"", False)
+        self.streams_in: list[tuple[list[str], str]] = []
         for patch in patches:
             patch.start()
             test.addCleanup(patch.stop)
@@ -74,7 +84,22 @@ class Fixture:
 
     def run(self, argv, **kwargs):
         self.calls.append(list(argv))
+        if argv[:2] == ["/usr/bin/systemctl", "is-active"]:
+            return Completed(returncode=0 if argv[-1] in self.units_active else 3)
         return Completed()
+
+    def stream_from_file(self, argv, path, timeout=600):
+        self.calls.append(list(argv))
+        self.streams_in.append((list(argv), Path(path).read_text(errors="replace")))
+
+    def stream_to_file(self, argv, path, limit, timeout=300):
+        self.calls.append(list(argv))
+        code, data, exceeded = self.snapshot_result
+        if data and not exceeded:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+        return code, len(data), exceeded
 
     def commands(self) -> list[str]:
         return [" ".join(call) for call in self.calls]
@@ -149,40 +174,65 @@ class WindowModeTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
-    def test_snapshot_excludes_caches_and_runs_as_the_desktop_user(self):
+    def test_snapshot_excludes_caches_runs_as_the_desktop_user_and_keeps_one_root_only_copy(self):
         fixture = Fixture(self)
         fixture.respond("test -d", Completed())
-        fixture.respond("tar -C", Completed(b"archive-bytes", returncode=1))  # tar exit 1: a file changed while read
+        fixture.snapshot_result = (1, b"archive-bytes", False)  # tar exit 1: a file changed while read
         self.assertTrue(app.snapshot_profile())
         self.assertEqual(app.SNAPSHOT.read_bytes(), b"archive-bytes")
         self.assertEqual(oct(app.SNAPSHOT.stat().st_mode & 0o777), "0o600")
-        tar = next(call for call in fixture.calls if call[:1] == ["tar"])
+        tar = next(call for call in fixture.calls if "tar" in call and "-czf" in call)
+        self.assertEqual(tar[:5], [app.DOCKER, "exec", "-u", app.DESKTOP_USER, app.CONTAINER])
         self.assertIn("--exclude=.config/Claude/Cache", tar)
+        self.assertIn("--exclude=.config/Claude/claude-code", tar)
         self.assertEqual(tar[-1], ".config/Claude")
+        self.assertEqual(sorted(path.name for path in app.SNAPSHOT.parent.iterdir()), ["profile.tar.gz"], "no second copy is left behind")
 
     def test_a_failed_snapshot_never_replaces_the_previous_one(self):
         fixture = Fixture(self)
         app.write_state(app.SNAPSHOT, "old")
         fixture.respond("test -d", Completed())
-        fixture.respond("tar -C", Completed(b"", returncode=2))
+        fixture.snapshot_result = (2, b"x", False)
         self.assertFalse(app.snapshot_profile())
         self.assertEqual(app.SNAPSHOT.read_text(), "old")
+
+    def test_a_profile_over_the_cap_is_not_backed_up_and_the_previous_backup_stays(self):
+        fixture = Fixture(self)
+        app.write_state(app.SNAPSHOT, "old")
+        fixture.respond("test -d", Completed())
+        fixture.snapshot_result = (0, b"z" * 10, True)
+        self.assertFalse(app.snapshot_profile())
+        self.assertEqual(app.SNAPSHOT.read_text(), "old")
+        self.assertFalse(any(path.name.endswith(".tmp") for path in app.SNAPSHOT.parent.iterdir()))
+
+    def test_the_cap_stops_a_runaway_archive_without_holding_it_in_memory(self):
+        # The real streaming helper, with a child that emits more than the limit.
+        target = Path(tempfile.mkdtemp()) / "out"
+        self.addCleanup(lambda: target.unlink(missing_ok=True))
+        code, written, exceeded = Real.stream_to_file([sys.executable, "-c", "import sys\nwhile True: sys.stdout.buffer.write(b'x'*65536)"], target, 3 * (1 << 20))
+        self.assertTrue(exceeded)
+        self.assertLessEqual(written, 5 * (1 << 20))
+        code, written, exceeded = Real.stream_to_file([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'abc')"], target, 1 << 20)
+        self.assertEqual((code, written, exceeded, target.read_bytes()), (0, 3, False, b"abc"))
+        self.assertEqual(oct(target.stat().st_mode & 0o777), "0o600")
 
     def test_restore_never_overwrites_a_populated_profile(self):
         fixture = Fixture(self)
         app.write_state(app.SNAPSHOT, "snapshot")
         fixture.respond("Local\\ Storage", Completed(returncode=0))  # the profile already exists
         self.assertFalse(app.restore_profile())
-        self.assertFalse(any(call[:1] == ["/bin/tar"] for call in fixture.calls))
+        self.assertEqual(fixture.streams_in, [])
 
     def test_restore_unpacks_as_the_desktop_user_without_ownership_or_modes(self):
         fixture = Fixture(self)
         app.write_state(app.SNAPSHOT, "snapshot")
         fixture.respond("Local\\ Storage", Completed(returncode=1))
         self.assertTrue(app.restore_profile())
-        tar = next(call for call in fixture.calls if call[:1] == ["/bin/tar"])
-        self.assertIn("--no-same-owner", tar)
-        self.assertIn("--no-same-permissions", tar)
+        argv, sent = fixture.streams_in[0]
+        self.assertEqual(argv[:6], [app.DOCKER, "exec", "-i", "-u", app.DESKTOP_USER, app.CONTAINER])
+        self.assertIn("--no-same-owner", argv)
+        self.assertIn("--no-same-permissions", argv)
+        self.assertEqual(sent, "snapshot")
 
 
 class InstallTests(unittest.TestCase):
@@ -190,21 +240,45 @@ class InstallTests(unittest.TestCase):
         self.fixture = Fixture(self)
         self.systemctl = lambda: [call for call in self.fixture.calls if call[:1] == ["/usr/bin/systemctl"]]
 
-    def install(self):
-        with mock.patch.object(app, "unpack"), mock.patch("builtins.print") as printed:
+    def start(self):
+        with mock.patch("builtins.print") as printed:
             code = app.verb_install()
         return code, printed
 
-    def test_install_needs_a_running_desktop(self):
+    def job(self):
+        with mock.patch.object(app, "unpack"):
+            return app.verb_install_run()
+
+    # -- the verb the gateway reaches: it only starts a systemd job --------------------
+
+    def test_install_needs_a_running_desktop_and_says_so_on_the_owners_screen(self):
         self.fixture.container_up = False
-        code, printed = self.install()
+        code, printed = self.start()
         self.assertEqual(code, 3)
         self.assertIn("desktop_not_running", printed.call_args[0][0])
+        self.assertIn("desktop is not running", app.LAST_ERROR.read_text())
+
+    def test_install_runs_the_work_as_its_own_transient_unit_that_outlives_the_gateway(self):
+        code, printed = self.start()
+        self.assertEqual(code, 0)
+        self.assertIn('"installing": true', printed.call_args[0][0])
+        started = next(call for call in self.fixture.calls if call[:1] == ["/usr/bin/systemd-run"])
+        self.assertIn("--unit=hivra-claude-app-install", started)
+        self.assertIn("KillMode=process", started)
+        self.assertEqual(started[-5:], ["/usr/bin/python3", "-I", "-B", "/usr/local/bin/hivra-claude-app", "install-run"])
+
+    def test_asking_again_while_a_job_runs_does_not_start_another(self):
+        self.fixture.units_active.add("hivra-claude-app-install.service")
+        code, printed = self.start()
+        self.assertEqual(code, 0)
+        self.assertFalse(any(call[:1] == ["/usr/bin/systemd-run"] for call in self.fixture.calls))
+        self.assertIn('"installing": true', printed.call_args[0][0])
+
+    # -- the job itself ------------------------------------------------------------------
 
     def test_first_install_enables_and_restarts_the_supervisor(self):
         with mock.patch.object(app, "installed_version", return_value=None), mock.patch.object(app, "app_running", return_value=False):
-            code, _ = self.install()
-        self.assertEqual(code, 0)
+            self.assertEqual(self.job(), 0)
         self.assertTrue(app.ENABLED.exists())
         self.assertEqual(app.read_mode(), "app")
         self.assertIn(["/usr/bin/systemctl", "restart", "hivra-claude-app.service"], self.systemctl())
@@ -212,37 +286,49 @@ class InstallTests(unittest.TestCase):
     def test_asking_again_while_current_and_running_does_not_restart_the_app(self):
         app.write_state(app.ENABLED, "x\n")
         with mock.patch.object(app, "installed_version", return_value=GOOD_PIN["version"]), mock.patch.object(app, "app_running", return_value=True):
-            code, _ = self.install()
-        self.assertEqual(code, 0)
+            self.assertEqual(self.job(), 0)
         self.assertNotIn(["/usr/bin/systemctl", "restart", "hivra-claude-app.service"], self.systemctl())
 
     def test_a_new_pinned_version_restarts_the_app_once(self):
         app.write_state(app.ENABLED, "x\n")
         with mock.patch.object(app, "installed_version", return_value="1.0.0"), mock.patch.object(app, "app_running", return_value=True):
-            self.install()
+            self.job()
         self.assertIn(["/usr/bin/systemctl", "restart", "hivra-claude-app.service"], self.systemctl())
 
-    def test_a_failure_is_recorded_for_the_owners_screen_and_reported(self):
+    def test_a_failure_is_recorded_for_the_owners_screen(self):
         with mock.patch.object(app, "installed_version", return_value=None), \
-             mock.patch.object(app, "unpack", side_effect=RuntimeError("downloaded package does not match the pinned size and SHA-256")), \
-             mock.patch("builtins.print") as printed:
-            code = app.verb_install()
-        self.assertEqual(code, 1)
-        self.assertIn("install_failed", printed.call_args[0][0])
+             mock.patch.object(app, "unpack", side_effect=RuntimeError("downloaded package does not match the pinned size and SHA-256")):
+            self.assertEqual(app.verb_install_run(), 1)
         self.assertIn("does not match the pinned", app.LAST_ERROR.read_text())
         self.assertFalse(app.ENABLED.exists())
 
-    def test_a_second_concurrent_install_returns_without_working(self):
-        import fcntl
-        app.STATE.mkdir(parents=True, exist_ok=True)
-        holder = os.open(app.INSTALL_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
-        self.addCleanup(os.close, holder)
-        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        self.assertTrue(app.install_in_progress())
-        with mock.patch.object(app, "unpack") as unpack, mock.patch("builtins.print") as printed:
-            self.assertEqual(app.verb_install(), 0)
-        unpack.assert_not_called()
-        self.assertIn('"installing": true', printed.call_args[0][0])
+    def test_the_job_yields_to_a_writer_that_holds_the_lock(self):
+        with app.install_lock(blocking=False) as first:
+            self.assertTrue(first)
+            with mock.patch.object(app, "unpack") as unpack:
+                self.assertEqual(app.verb_install_run(), 0)
+            unpack.assert_not_called()
+            with app.install_lock(blocking=False) as second:
+                self.assertFalse(second)
+
+    def test_remove_stops_a_running_job_and_waits_for_the_lock(self):
+        app.write_state(app.ENABLED, "x\n")
+        with mock.patch("builtins.print"):
+            self.assertEqual(app.verb_remove(), 0)
+        commands = self.systemctl()
+        self.assertEqual(commands[0], ["/usr/bin/systemctl", "stop", "hivra-claude-app-install.service"])
+        self.assertIn(["/usr/bin/systemctl", "disable", "--now", "hivra-claude-app.service"], commands)
+        self.assertFalse(app.ENABLED.exists())
+        self.assertTrue(any("rm -rf" in command and ".config/Claude" in command for command in self.fixture.commands()))
+
+    def test_status_reports_a_running_job_and_the_last_error(self):
+        self.fixture.units_active.add("hivra-claude-app-install.service")
+        app.write_state(app.LAST_ERROR, "boom\n")
+        status = app.status()
+        self.assertTrue(status["installing"])
+        self.assertEqual(status["lastError"], "boom")
+
+    # -- files -----------------------------------------------------------------------------
 
     def test_a_running_app_is_never_left_without_its_files(self):
         """Older version folders are removed only while no app is running."""
@@ -256,6 +342,33 @@ class InstallTests(unittest.TestCase):
         with mock.patch.object(app, "download", return_value=package), mock.patch.object(app, "app_running", return_value=False):
             app.unpack(GOOD_PIN)
         self.assertTrue(any("rm -rf {}/$old".format(app.APP_ROOT) in command for command in fixture.commands()))
+
+    def test_the_package_is_streamed_in_as_the_desktop_user_never_copied_by_root(self):
+        fixture = self.fixture
+        package = Path(fixture.dir.name) / "pkg.deb"
+        package.write_bytes(b"deb-bytes")
+        fixture.respond("test -x", Completed(returncode=1))  # not unpacked yet
+        with mock.patch.object(app, "download", return_value=package), mock.patch.object(app, "app_running", return_value=True):
+            app.unpack(GOOD_PIN)
+        self.assertFalse(any(call[:2] == [app.DOCKER, "cp"] for call in fixture.calls))
+        argv, sent = fixture.streams_in[0]
+        self.assertEqual(argv[:6], [app.DOCKER, "exec", "-i", "-u", app.DESKTOP_USER, app.CONTAINER])
+        self.assertEqual(sent, "deb-bytes")
+        self.assertIn(".cache/hivra-claude-app/claude-desktop.deb", " ".join(argv))
+
+    def test_the_download_never_exceeds_the_pinned_size(self):
+        fixture = self.fixture
+
+        class Endless:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"x" * size
+
+        with mock.patch.object(app.urllib.request, "urlopen", return_value=Endless()):
+            with self.assertRaises(RuntimeError) as raised:
+                app.download({**GOOD_PIN, "bytes": 3 * (1 << 20), "version": "2.26454.0"})
+        self.assertIn("larger than the pinned size", str(raised.exception))
+        self.assertFalse(any(path.suffix == ".part" for path in app.CACHE.iterdir()))
 
 
 class SudoersContractTests(unittest.TestCase):
@@ -284,8 +397,13 @@ class SudoersContractTests(unittest.TestCase):
              mock.patch("builtins.print"):
             for args in (["status"], ["install"], ["mode", "app"], ["mode", "desktop"], ["remove"]):
                 self.assertEqual(app.main(["x"] + args), 0, args)
-            for args in ([], ["status", "extra"], ["install", "--force"], ["mode"], ["mode", "app", "x"], ["restore"], ["snapshot"]):
+            for args in ([], ["status", "extra"], ["install", "--force"], ["mode"], ["mode", "app", "x"], ["restore"], ["snapshot"], ["install-run", "x"]):
                 self.assertEqual(app.main(["x"] + args), 2, args)
+            # The job's own verb exists, but only root's transient unit runs it.
+            with mock.patch.object(app, "verb_install_run", return_value=0):
+                self.assertEqual(app.main(["x", "install-run"]), 0)
+        for script in ("provision-claude-code-box.sh", "hivra-update-guest-runtime.sh"):
+            self.assertNotIn("install-run", [part for command in self.sudoers_commands(script) for part in command])
 
     def test_the_helper_refuses_to_run_without_root(self):
         with mock.patch.object(os, "geteuid", return_value=1000), mock.patch("builtins.print"):

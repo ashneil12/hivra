@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 43119,
-      "sha256": "1166cf12fdf7ce25db829078875c1aa4d768263cf029eee36f8b142f2293033e"
+      "bytes": 43237,
+      "sha256": "281b2a6f3c4b3c252e2cf5bbb1455fc059d44f68b567b2323c3bfe4d7fbbb0c9"
     },
     {
       "path": "README.md",
-      "bytes": 29031,
-      "sha256": "8405d179f945cb82fee59acb02d78fbb1bae43fe8d2fc0adaa7757658c0512cd"
+      "bytes": 29318,
+      "sha256": "637442249dc4784be38942b9bdd746b2fa971b71e08962ff69607c82e08d9bdf"
     },
     {
       "path": "VERSION",
@@ -154,8 +154,8 @@
     },
     {
       "path": "hivra-claude-app.py",
-      "bytes": 21946,
-      "sha256": "96fc8814bc7201d3652d64265bd56f9a8a888855f0f3ce555c59f2008b4dd576"
+      "bytes": 26565,
+      "sha256": "43cf8064f489c1b9414760ef23b47b58ebebb56a0188735255669783335ac9d8"
     },
     {
       "path": "hivra-claude-app.service",

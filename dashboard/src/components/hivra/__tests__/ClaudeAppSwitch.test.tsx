@@ -41,6 +41,19 @@ it("renders nothing on a computer that does not offer the Claude app", async () 
   expect(container.textContent).toBe("");
 });
 
+it("stops asking a computer that does not offer the Claude app", async () => {
+  jest.useFakeTimers();
+  try {
+    jest.mocked(claudeAppStatus).mockResolvedValue({ available: false, status: null, error: null });
+    mount();
+    await waitFor(() => expect(claudeAppStatus).toHaveBeenCalledTimes(1));
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(claudeAppStatus).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 it("renders nothing while the status cannot be read, rather than guessing", async () => {
   jest.mocked(claudeAppStatus).mockResolvedValue({ available: true, status: null, error: "HTTP 502" });
   const { container } = mount();
@@ -63,7 +76,8 @@ describe("before the app is added", () => {
     expect(dialog.textContent).toContain("from Anthropic");
     expect(dialog.textContent).toContain("about 180 MB");
     expect(dialog.textContent).toContain("with your own Claude account");
-    expect(dialog.textContent).toContain("Hivra never sees or stores that sign-in");
+    expect(dialog.textContent).toContain("Hivra’s own systems never receive or read that sign-in");
+    expect(dialog.textContent).toContain("backed up here on the computer");
     expect(claudeAppInstall).not.toHaveBeenCalled();
   });
 
@@ -135,6 +149,23 @@ describe("with the app added", () => {
     expect(claudeAppInstall).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Update and restart" }));
     await waitFor(() => expect(claudeAppInstall).toHaveBeenCalledTimes(1));
+  });
+
+  it("says why an update failed", async () => {
+    showing({ updateAvailable: true, lastError: "downloaded package is larger than the pinned size" });
+    mount();
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn’t update it: downloaded package is larger");
+  });
+
+  it("looks again at once after an update is requested instead of waiting for the slow poll", async () => {
+    showing({ updateAvailable: true });
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Update" }));
+    const before = jest.mocked(claudeAppStatus).mock.calls.length;
+    showing({ updateAvailable: true, installing: true });
+    fireEvent.click(screen.getByRole("button", { name: "Update and restart" }));
+    await waitFor(() => expect(jest.mocked(claudeAppStatus).mock.calls.length).toBeGreaterThan(before));
+    expect(await screen.findByText("Updating the Claude app…")).not.toBeNull();
   });
 
   it("shows no update button when current", async () => {

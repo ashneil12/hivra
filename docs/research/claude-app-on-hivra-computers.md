@@ -28,8 +28,10 @@ its own, full screen and fast, and the regular desktop with the app visibly runn
   desktop already uses about 0.8 GB.
 - **The container's home is thrown away on every desktop restart** (`docker run --rm`,
   one mount). A plain install loses the app, its settings and its sign-in each time.
-  Hivra keeps the app's profile in a root-only snapshot on the VM and restores it
-  before the app starts. Verified by restarting the desktop service: the app
+  Hivra keeps the app's data (size-capped, one copy) in a root-only backup on the
+  same VM and restores it before the app starts. That data includes whatever the app
+  keeps, a sign-in session among it. No Hivra service reads it and removing the app
+  deletes it. Verified by restarting the desktop service: the app
   came back full screen, with a marker file from the profile intact.
 - **The first launch hits a KDE Wallet wizard** that blocks the app window. Its default
   option fails ("no keys suitable for encryption"). Starting the app with no D-Bus
@@ -76,7 +78,9 @@ Re-checked on 2026-10-07 against Anthropic's documents and the npm registry.
 
 Anthropic's legal page allows a user to sign in to the unmodified app on a platform that
 hosts it, and bars a platform from collecting, storing or proxying that sign-in. This
-build never touches the sign-in and does not modify the binary. The page also treats
+build never handles the sign-in and does not modify the binary, but the app's own data,
+a sign-in session included, sits on the Hivra-hosted VM, with a root-only backup copy on
+that same VM. Whether that counts as the platform "storing" it is for Anthropic to say. The page also treats
 "automated means" as off limits on consumer plans. Nothing here automates the sign-in or
 drives the app, but the page does not name a hosted, streamed desktop app. Ask Anthropic
 before describing this publicly.

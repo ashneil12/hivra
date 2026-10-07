@@ -556,12 +556,13 @@ downloads Anthropic's own Linux package from `downloads.claude.ai`, checks its
 size and SHA-256 against the pin, and unpacks it without root inside the existing
 contained desktop; Hivra never bundles or redistributes it. The desktop
 container is unchanged: no mount, port or privilege is added, so the isolation
-proof and the remote-desktop bundle revision are preserved, and the app's own
-profile is kept across desktop restarts as a root-only snapshot on the VM that no
-Hivra service reads. The gateway gains four owner-authenticated routes under
-`/api/claude-app/` and advertises `claudeApp` in `/api/meta`. The owner signs in
-to the unmodified app themselves; Hivra does not collect, store or proxy that
-sign-in. Remote-desktop assets are unchanged. This source release does not
+proof and the remote-desktop bundle revision are preserved. The app's own data is
+kept across desktop restarts as a size-capped, root-only backup on the same VM that
+no Hivra service reads; because that data includes whatever the app keeps there, a
+sign-in session among it, `remove` deletes it. The gateway gains four
+owner-authenticated routes under `/api/claude-app/` and advertises `claudeApp` in
+`/api/meta`. The owner signs in to the unmodified app themselves; Hivra's own
+systems never receive or read that sign-in. Remote-desktop assets are unchanged. This source release does not
 deploy, install, or establish Canary acceptance.
 
 Release `2026.09.24.4` builds on `2026.09.24.3` and fixes two terminal

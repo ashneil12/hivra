@@ -400,7 +400,11 @@ update them yet.
   window on the desktop. The gateway reaches the helper through an exact-argument
   sudoers rule for `status`, `install`, `mode app`, `mode desktop` and `remove`
   (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
-  helper never handles a Claude credential. Managed Proxmox computers only.
+  helper never handles a Claude credential. The container's home is discarded on every
+  desktop restart, so the app's own data is backed up (size-capped, root-only, one
+  copy) on the same VM and restored before the app starts; that data includes the
+  app's sign-in session, no Hivra service reads it, and `remove` deletes it. Managed
+  Proxmox computers only.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops

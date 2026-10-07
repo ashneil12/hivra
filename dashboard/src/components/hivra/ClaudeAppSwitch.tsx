@@ -40,9 +40,16 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
   const choiceAtRef = useRef(0);
 
   const settledRef = useRef(false);
+  const stoppedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const aliveRef = useRef(false);
+
   const refresh = useCallback(async () => {
     const result = await claudeAppStatus(boxUrl, token);
     setAvailable(result.available);
+    // A computer that does not offer the Claude app never will until it is
+    // updated, so stop asking it for as long as this screen stays open.
+    stoppedRef.current = !result.available;
     if (result.status) {
       setStatus(result.status);
       if (clockMs() - choiceAtRef.current > 4_000) setView(result.status.mode);
@@ -53,16 +60,38 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
     }
   }, [boxUrl, token]);
 
+  // The loop reaches itself through a ref set in an effect, so a timer callback
+  // always runs the latest `refresh` without referring to its own declaration.
+  const scheduleRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    scheduleRef.current = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = undefined;
+      if (!aliveRef.current || stoppedRef.current) return;
+      timerRef.current = setTimeout(async () => {
+        await refresh();
+        scheduleRef.current();
+      }, settledRef.current ? SLOW_POLL_MS : FAST_POLL_MS);
+    };
+  }, [refresh]);
+
+  // After the owner acts, look again at once and keep looking quickly until it settles.
+  const kick = useCallback(async () => {
+    settledRef.current = false;
+    await refresh();
+    scheduleRef.current();
+  }, [refresh]);
+
   useEffect(() => {
     if (!active) return undefined;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = async () => {
+    aliveRef.current = true;
+    stoppedRef.current = false;
+    const first = async () => {
       await refresh();
-      if (!stopped) timer = setTimeout(tick, settledRef.current ? SLOW_POLL_MS : FAST_POLL_MS);
+      scheduleRef.current();
     };
-    void tick();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
+    void first();
+    return () => { aliveRef.current = false; if (timerRef.current) clearTimeout(timerRef.current); };
   }, [active, refresh]);
 
   if (!available || !status) return null;
@@ -73,7 +102,7 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
     setBusy(kind); setError(null); setPanel(null);
     const result = await claudeAppInstall(boxUrl, token);
     if (!result.ok) setError(result.error || "The Claude app could not be added.");
-    await refresh();
+    await kick();
     setBusy(null);
   }
   async function choose(next: ClaudeAppView) {
@@ -89,7 +118,7 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
     setBusy("remove"); setError(null); setPanel(null);
     const result = await claudeAppRemove(boxUrl, token);
     if (!result.ok) setError(result.error || "The Claude app could not be removed.");
-    await refresh();
+    await kick();
     setBusy(null);
   }
 
@@ -135,7 +164,11 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
           </button>
         </>
       ) : null}
-      {status.lastError && !status.enabled && !installing ? <span className={styles.error} role="alert" title={status.lastError}>Couldn’t add it: {status.lastError}</span> : null}
+      {status.lastError && !installing ? (
+        <span className={styles.error} role="alert" title={status.lastError}>
+          {status.enabled ? "Couldn’t update it" : "Couldn’t add it"}: {status.lastError}
+        </span>
+      ) : null}
       {error ? <span className={styles.error} role="alert">{error}</span> : null}
       {panel ? (
         <div className={styles.panel} role="dialog" aria-label={panel === "add" ? "Add the Claude app" : panel === "update" ? "Update the Claude app" : "Claude app options"}>
@@ -146,7 +179,10 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
                 This downloads Anthropic’s Claude app for Linux from Anthropic (about 180 MB) and opens it full screen here,
                 with the regular desktop one click away. It uses roughly 0.6 GB of this computer’s memory.
               </p>
-              <p>You sign in inside the app with your own Claude account. Hivra never sees or stores that sign-in. The app and its settings stay on this computer.</p>
+              <p>
+                You sign in inside the app with your own Claude account. Hivra’s own systems never receive or read that sign-in.
+                It stays on this computer, in the app’s saved data, which is backed up here on the computer so it survives restarts.
+              </p>
               <div className={styles.panelActions}>
                 <button type="button" className={styles.primary} onClick={() => void add("add")}>Add Claude app</button>
                 <button type="button" className={styles.action} onClick={() => setPanel(null)}>Not now</button>
