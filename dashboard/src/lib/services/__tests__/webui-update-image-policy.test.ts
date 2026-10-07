@@ -44,6 +44,12 @@ describe("update script image policy", () => {
     expect(bashSyntax(pinned).status).toBe(0);
   });
 
+  it("names the release before it pulls, so a release whose image cannot be pulled is the one blamed", () => {
+    const named = pinned.indexOf(`HERMES_PINNED_DIGEST="${DIGEST}"`);
+    expect(named).toBeGreaterThan(-1);
+    expect(named).toBeLessThan(pinned.indexOf(`if ! docker pull ${REF}; then`));
+  });
+
   it("fails the update when the release image cannot be pulled instead of keeping the old image", () => {
     const pull = pinned.indexOf(`if ! docker pull ${REF}; then`);
     expect(pull).toBeGreaterThan(-1);
