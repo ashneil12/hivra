@@ -149,7 +149,7 @@ describe("update last-known-good and rollback", () => {
     const run = box.runScript(
       updateScript(
         box,
-        `printf 'new compose\\n' > docker-compose.yml\nHERMES_FAIL_REASON="cannot pull the release image"\ndocker pull ${REPO}@${D_NEW}\n`
+        `printf 'new compose\\n' > docker-compose.yml\nHERMES_PINNED_DIGEST="${D_NEW}"\nHERMES_FAIL_REASON="cannot pull the release image"\ndocker pull ${REPO}@${D_NEW}\n`
       )
     );
     expect(run.status).toBe(1);
@@ -158,7 +158,8 @@ describe("update last-known-good and rollback", () => {
     expect(readFileSync(join(box.instanceDir, "docker-compose.yml"), "utf8")).toBe("old compose\n");
     expect(result()).toContain("kind=failed");
     expect(result()).toContain("cannot pull the release image");
-    expect(result()).not.toContain("target=");
+    // The release whose image could not be pulled is the one to blame.
+    expect(result()).toContain(`target=${D_NEW}`);
   });
 
   it("rolls back when the sessions did not survive, and says why", () => {
