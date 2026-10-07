@@ -62,6 +62,9 @@ HERMES_LKG_READY=0
 HERMES_LKG_DIGEST=""
 HERMES_SESS_BEFORE="unknown"
 HERMES_FAIL_REASON=""
+# Set by a pinned update just before it pulls the release image, so a release
+# whose image cannot be pulled is the one that gets blamed.
+HERMES_PINNED_DIGEST=""
 rm -f "$HERMES_RESULT_FILE"
 ${buildReleaseClientShell({ instanceId: p.instanceId })}
 ${buildSessionSurvivalShell()}
@@ -102,18 +105,20 @@ hermes_update_snapshot_lkg() {
 hermes_update_rollback() {
   set +e
   reason="$1"
-  [ "$HERMES_LKG_READY" = 1 ] || { hermes_write_result failed "" "" "$reason"; return 1; }
+  [ "$HERMES_LKG_READY" = 1 ] || { hermes_write_result failed "" "$HERMES_PINNED_DIGEST" "$reason"; return 1; }
   target_iid="$(docker image inspect ${p.agentImage} --format '{{.Id}}' 2>/dev/null || true)"
   target_digest=""
   [ -z "$target_iid" ] || target_digest="$(hermes_image_digest "$target_iid" ${shq(p.repo)})"
   blame=""
   if [ -n "$target_digest" ] && [ "$target_digest" != "$HERMES_LKG_DIGEST" ]; then blame="$target_digest"; fi
+  # A pinned pull that failed leaves the alias on the old image: blame the release it named.
+  if [ -z "$blame" ] && [ -n "$HERMES_PINNED_DIGEST" ] && [ "$HERMES_PINNED_DIGEST" != "$HERMES_LKG_DIGEST" ]; then blame="$HERMES_PINNED_DIGEST"; fi
   echo "[webui-update] ROLLBACK to last-known-good: $reason" >&2
   docker tag "$HERMES_LKG_TAG" ${p.agentImage} || { hermes_write_result failed "" "$blame" "$reason (rollback could not restore the image)"; return 1; }
   if [ -f "$HERMES_LKG_COMPOSE" ]; then cp -p "$HERMES_LKG_COMPOSE" docker-compose.yml; fi
   if [ "$HERMES_STACK_TOUCHED" != 1 ]; then
     echo "[webui-update] the running stack was not touched; image alias and compose file restored" >&2
-    hermes_write_result failed "$HERMES_LKG_DIGEST" "" "$reason"
+    hermes_write_result failed "$HERMES_LKG_DIGEST" "$blame" "$reason"
     return 0
   fi
   ${p.agentSourceSeedCommand}
@@ -148,7 +153,7 @@ hermes_update_exit_trap() {
     if [ "$HERMES_UPDATE_ARMED" = 1 ]; then
       hermes_update_rollback "$reason"
     elif [ ! -f "$HERMES_RESULT_FILE" ]; then
-      hermes_write_result failed "" "" "$reason"
+      hermes_write_result failed "" "$HERMES_PINNED_DIGEST" "$reason"
     fi
   fi
   exit "$rc"

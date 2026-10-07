@@ -102,11 +102,13 @@ const PRO_ON_HOLD: PlanInfo = {
 };
 
 describe("launchFit", () => {
-  it("says what fits Free before the Free plan is turned on, without calling it the owner's plan", () => {
+  it("says Hivra Cloud needs a plan for an account without one, never that Free fits", () => {
     const noPlan = evidence(NO_PLAN);
-    expect(launchFit(launchProfileFitSubject("hermes"), noPlan)).toEqual({ label: "Fits Free", tone: "fits" });
-    expect(launchFit(launchProfileFitSubject("codex"), noPlan)).toEqual({ label: "Fits Free without a browser", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("hermes"), noPlan)).toEqual({ label: "Needs Pro", tone: "needs" });
+    expect(launchFit(launchProfileFitSubject("codex"), noPlan)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), noPlan)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
+    // Their own computer is the free path.
+    expect(launchFit(launchProfileFitSubject("codex"), evidence(NO_PLAN, [PROXMOX]))).toEqual({ label: "Ready on your server", tone: "fits" });
   });
 
   it("counts what an account without a plan already runs, and never assumes nothing", () => {
@@ -127,12 +129,12 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("hermes"), onHold)?.label).not.toMatch(/Free/);
   });
 
-  it("labels each tile on Free from the same floors the launch gates use", () => {
+  it("labels each tile on a Free account: hosted compute is bought, never 'fits Free'", () => {
     const free = evidence(FREE);
-    expect(launchFit(launchProfileFitSubject("codex"), free)).toEqual({ label: "Fits Free without a browser", tone: "fits" });
-    expect(launchFit(launchProfileFitSubject("claude-code"), free)).toEqual({ label: "Fits Free without a browser", tone: "fits" });
-    expect(launchFit(launchProfileFitSubject("hermes"), free)).toEqual({ label: "Fits your Free plan", tone: "fits" });
-    expect(launchFit(launchProfileFitSubject("aeon"), free)).toEqual({ label: "Fits your Free plan", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("codex"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
+    expect(launchFit(launchProfileFitSubject("claude-code"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
+    expect(launchFit(launchProfileFitSubject("hermes"), free)).toEqual({ label: "Needs Pro", tone: "needs" });
+    expect(launchFit(launchProfileFitSubject("aeon"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("openclaw"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("agent-zero"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
@@ -184,7 +186,7 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("windows"), evidence(FREE, [], failed))).toEqual(serversUnchecked);
     expect(launchFit(launchProfileFitSubject("codex"), evidence(null, [], { ...failed, selfHosted: true }))).toEqual(serversUnchecked);
     // What the plan itself says is still observed.
-    expect(launchFit(launchProfileFitSubject("codex"), evidence(FREE, [], failed))).toEqual({ label: "Fits Free without a browser", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("codex"), evidence(FREE, [], failed))).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), evidence(FREE, [], failed))).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
   });
 
@@ -331,11 +333,8 @@ describe("plan holds", () => {
       .toBe("Your Pro plan is on hold because a payment didn't go through. Update your payment in Billing to run Claude Code on Hivra Cloud.");
     expect(planHoldMessage({ reason: "no_slots", planName: "Power" }))
       .toBe("Your Power plan has no agent slots right now. Check it in Billing to launch on Hivra Cloud.");
-    expect(planHoldMessage({ reason: "unconfirmed" }, "Codex"))
-      .toBe("Your account has a paid plan that isn't active right now, so Free can't be turned on. Check your plan in Billing to run Codex on Hivra Cloud.");
     expect(planHoldAction({ reason: "payment_overdue", planName: "Pro" })).toBe("Update payment");
     expect(planHoldAction({ reason: "no_slots", planName: "Pro" })).toBe("Open Billing");
-    expect(planHoldAction({ reason: "unconfirmed" })).toBe("Open Billing");
   });
 });
 
@@ -348,10 +347,6 @@ describe("plan rows", () => {
 
   it("states cost and changes without claiming a purchase", () => {
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free" })).toBe("No extra charge. Uses your Free plan allowance.");
-    // Before the Free plan is turned on it isn't "your" plan yet.
-    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", planPending: true }))
-      .toBe("No charge. It runs on the Free plan, which you turn on before launching.");
-    expect(costSummary({ profileId: "codex", substrate: "proxmox", planName: "Free", planPending: true })).toMatch(/your server's own capacity/);
     // A plan on hold is never presented as Free or as costing nothing.
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", planOnHold: "Pro" }))
       .toBe("Uses your Pro plan allowance once the plan is active again.");

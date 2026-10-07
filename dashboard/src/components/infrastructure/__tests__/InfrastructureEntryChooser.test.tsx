@@ -10,10 +10,12 @@ function setup(selfHosted = false) {
 }
 
 describe("guided infrastructure paths", () => {
-  it("tells a new user what Free includes before any plan is chosen", () => {
+  it("tells a new user hosting needs a plan while their own machines are free to connect", () => {
     setup();
-    expect(screen.getByText(/Start free: 0.5 CPU and 1 GB of Hivra Cloud, enough for one small agent/)).toBeInTheDocument();
-    expect(screen.getByText("Free needs no card. Paid plans show their price before payment.")).toBeInTheDocument();
+    expect(screen.getByText(/Choose a plan and Hivra runs and maintains the servers\. Your free account works with the machines you connect yourself\./)).toBeInTheDocument();
+    expect(screen.getByText("Paid plans show their price before payment. Connecting your own machine costs nothing here.")).toBeInTheDocument();
+    expect(screen.queryByText(/Start free/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Choose Hivra Cloud/ })).toBeInTheDocument();
   });
 
   it("explains generic provider SSH support without invoking connection actions on navigation", () => {

@@ -3485,6 +3485,7 @@ seed_onboarding_soul() {
       ? `# Pinned release: pull this exact digest. A failed pull fails the update; it
 # must never quietly keep the old image and report a successful update.
 echo "[agent-image] pulling pinned release ${imagePolicy.ref}"
+HERMES_PINNED_DIGEST="${imagePolicy.digest}"
 if ! docker pull ${imagePolicy.ref}; then
   echo "[agent-image] FATAL: cannot pull the release image ${imagePolicy.ref}" >&2
   HERMES_FAIL_REASON="cannot pull the release image"
