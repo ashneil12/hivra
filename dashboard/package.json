@@ -26,7 +26,6 @@
     "ops:audit:apiserverkey-drift": "node scripts/audit-apiserverkey-drift.cjs",
     "migrate:webui:canary": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ./scripts/register-server-only-noop.cjs -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/canary-webui-migration.ts",
     "instance:update": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ./scripts/register-server-only-noop.cjs -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/trigger-instance-update.ts",
-    "email:trial-extension": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/send-trial-extension-email.ts",
     "email:audience:setup": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/resend-announcement-audience.ts",
     "email:broadcast:create": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/create-announcement-broadcast.ts",
     "reserve:invite": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/send-reservation-invites.ts",

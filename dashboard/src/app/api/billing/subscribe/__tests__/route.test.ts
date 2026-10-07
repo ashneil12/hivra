@@ -853,7 +853,7 @@ describe("POST /api/billing/subscribe", () => {
     ]);
   });
 
-  it("does not grant hackathon trials; paid checkout is direct payment", async () => {
+  it("does not grant promo trials in any window; paid checkout is direct payment", async () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-04-18T12:00:00.000Z"));
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
