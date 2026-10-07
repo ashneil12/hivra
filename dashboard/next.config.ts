@@ -86,6 +86,24 @@ const posthogProxyOrigin = (() => {
 })();
 const posthogProxyCsp = posthogProxyOrigin ? ` ${posthogProxyOrigin}` : "";
 
+// Guessed URLs for /blog/keep-claude-code-running-24-7 that Search Console
+// reported with impressions (90 days to 2026-10-04). All returned 404.
+export const LAPTOP_POST_SLUG_VARIANTS = [
+  "/blog/claude-code-running-24-7",
+  "/blog/how-to-keep-claude-code-running-24-7",
+  "/blog/how-to-keep-claude-code-running-24-7-even-when-your",
+  "/blog/keep-claode-code-running-24-7",
+  "/blog/keep-claude-agent-running-24-7",
+  "/blog/keep-claude-code-24-7",
+  "/blog/keep-claude-code-agent-running-24-7",
+  "/blog/keep-claude-code-running-24-7-even-when-your",
+  "/blog/keep-claude-code-running-24-7-even-when-your-",
+  "/blog/keep-claude-code-running-24/7",
+  "/blog/keep-claude-code-running-247-and",
+  "/blog/keep-claude-code-running-even-when-your-laptop-closes",
+  "/blog/keep-claude-running-24-7",
+] as const;
+
 const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_BUILD_GENERATED_AT: buildGeneratedAt,
@@ -225,6 +243,16 @@ const nextConfig: NextConfig = {
       { source: "/faq", destination: "/#faq", permanent: true },
       // Social cards cached from the retired site point at this static file.
       { source: "/og-image.png", destination: "/opengraph-image", permanent: true },
+      // Search Console shows impressions for guessed slugs of the laptop-close
+      // post (AI answers link them); every one 404s today. Send them to the
+      // real post. Exact paths only, so no wildcard can shadow a real slug.
+      ...LAPTOP_POST_SLUG_VARIANTS.map(source => ({
+        source,
+        destination: "/blog/keep-claude-code-running-24-7",
+        permanent: true as const,
+      })),
+      // The retired site served the roadmap as a PDF that still ranks.
+      { source: "/roadmap/HermesOS_Roadmap_2026.pdf", destination: "/roadmap", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
