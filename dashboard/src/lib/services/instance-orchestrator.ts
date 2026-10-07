@@ -17,6 +17,7 @@ import {
 import {
   buildWebUIBootstrapScript,
   buildWebUIProvisioningArtifacts,
+  resolveInstanceAgentImageRepo,
   type WebUIDeployParams,
 } from "@/lib/services/webui-instance-builder";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
@@ -75,6 +76,8 @@ import {
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { log } from "@/lib/logger";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
+import { buildUpdateResultExtrasShell } from "@/lib/services/box-update-safety";
+import { resolveUpdateImagePolicy, type UpdateImageIntent } from "@/lib/hermes-releases/live-update";
 import {
   INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
   buildClearUpdateDeferralsCommand,
@@ -324,6 +327,13 @@ export interface LiveUpdateOptions {
    */
   initiator: LiveUpdateInitiator;
   applyTerminalBackend?: boolean;
+  /**
+   * Whether this update should move the box onto its release ("release": the
+   * UPDATE NOW button and the fleet-sync sweep) or leave the image it runs
+   * alone ("current", the default: config redeploys, resizes, recovery). Only
+   * matters for a box the release registry governs.
+   */
+  imageIntent?: UpdateImageIntent;
 }
 
 /**
@@ -647,6 +657,24 @@ export async function applyLiveUpdate(
       defaultModel: model,
       mode: "update",
     });
+    // The release registry decides which agent image this update runs. A box it
+    // does not govern (no release registered for its image repository) follows
+    // its floating tag exactly as before.
+    let imageResolution: Awaited<ReturnType<typeof resolveUpdateImagePolicy>>;
+    try {
+      imageResolution = isOperatorosFlavor
+        ? { policy: undefined, state: null }
+        : await resolveUpdateImagePolicy(supabaseAdmin, instance.id, options.imageIntent ?? "current");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error("release lookup failed before update", err instanceof Error ? err : new Error(message), {
+        source: LOG_SOURCE,
+        failureType: "update_release_lookup_failed",
+        instanceId: instance.id,
+        userId: instance.user_id,
+      });
+      return { applied: false as const, error: "Could not look up the release for this update", initiator };
+    }
     const artifacts = isOperatorosFlavor
       ? buildWebUIProvisioningArtifacts(webUIParams, "update")
       : buildWebUIProvisioningArtifacts(webUIParams);
@@ -657,16 +685,19 @@ export async function applyLiveUpdate(
     // builder call as the Proxmox provision path, plus the row's pinned image so
     // the roll follows the image this compose runs.
     const rollExecutable = `/usr/local/bin/hermes-roll-${instance.id}`;
+    const rollerImageRepo = resolveInstanceAgentImageRepo(instance.config);
     const idleGatedStackRefresh = `# Refresh the idle-gated update stack only where it is already installed.
 if [ -x ${shQuote(rollExecutable)} ]; then
 ${buildIdleGatedUpdateProvisioningScript({
   instanceId: instance.id,
   backend: "gateway",
-  ...(resolvedAgentImage ? { agentImage: resolvedAgentImage } : {}),
+  // The roll follows the image repository this compose actually runs.
+  ...(rollerImageRepo ?? resolvedAgentImage ? { agentImage: (rollerImageRepo ?? resolvedAgentImage) as string } : {}),
 })}fi
 `;
     agentScript = buildWebUIBootstrapScript(artifacts, webUIParams, {
       mode: "update",
+      ...(imageResolution.policy ? { imagePolicy: imageResolution.policy } : {}),
       // Normal updates/recovery must retain backend changes made in the native
       // Hermes config; only the terminal/access Save & Apply flow overrides it.
       ...(options.applyTerminalBackend === true ? { applyTerminalBackend: true } : {}),
@@ -738,14 +769,16 @@ ${buildInstanceUpdateReporterShell({
   runType: "manual",
 })}
 ${singleTenantGuard}
+${buildUpdateResultExtrasShell(instance.id)}
 mkdir -p /opt/hermes/instances/${instance.id}
 cd /opt/hermes/instances/${instance.id}
 
 if bash ${scriptPath} > ${logPath} 2>&1; then
-  ru "succeeded" "completed" || true
+  ru "succeeded" "completed" "" "$(hermes_result_extras)" || true
 else
   status=$?
-  ru "failed" "exit_status_\${status}" "${logPath}" || true
+  reason="$(hermes_result_reason)"
+  ru "failed" "\${reason:-exit_status_\${status}}" "${logPath}" "$(hermes_result_extras)" || true
   exit "$status"
 fi
 `;

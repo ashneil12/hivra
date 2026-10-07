@@ -12,6 +12,7 @@ import {
 import { FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
+import { loadBoxRelease } from "@/lib/hermes-releases/box";
 
 // The DB CHECK vocabulary for hermes_instances.lifecycle_state
 // (supabase/migrations/20260516123000_cold_storage_lifecycle.sql). Filtering on
@@ -26,6 +27,10 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supaba
 
 jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn(),
+}));
+
+jest.mock("@/lib/hermes-releases/box", () => ({
+  loadBoxRelease: jest.fn(),
 }));
 
 jest.mock("@/lib/services/instance-orchestrator", () => ({
@@ -111,6 +116,8 @@ describe("POST /api/cron/redeploy-webui-instances", () => {
     } as never);
     mockedResolveInstanceIpv4.mockResolvedValue("10.250.20.98");
     mockedApplyLiveUpdate.mockResolvedValue(launched());
+    // By default the registry does not govern the box: the sweep behaves as before it existed.
+    (loadBoxRelease as jest.Mock).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -188,14 +195,14 @@ describe("POST /api/cron/redeploy-webui-instances", () => {
       "10.250.20.98",
       expect.any(Object),
       supabaseAdmin,
-      { initiator: OPERATOR_LIVE_UPDATE },
+      { initiator: OPERATOR_LIVE_UPDATE, imageIntent: "release" },
     );
     expect(mockedApplyLiveUpdate).toHaveBeenCalledWith(
       gatewayRow,
       "10.250.20.98",
       expect.any(Object),
       supabaseAdmin,
-      { initiator: OPERATOR_LIVE_UPDATE },
+      { initiator: OPERATOR_LIVE_UPDATE, imageIntent: "release" },
     );
     expect(body.data).toMatchObject({
       requested: 2,
@@ -362,7 +369,9 @@ function fleetSelectQuery(data: unknown[], error: Error | null = null, stampErro
   // `.from()` is shared by the batch select, the eligible-count, AND the
   // fairness-cursor stamp (`update({last_sync_attempt_at}).in("id", ids)`).
   const stampInMock = jest.fn().mockResolvedValue({ error: stampError });
-  const updateMock = jest.fn().mockReturnValue({ in: stampInMock });
+  // A skipped (already-current) box also marks itself synced: update({last_synced_at}).eq("id", id).
+  const syncEqMock = jest.fn().mockResolvedValue({ error: null });
+  const updateMock = jest.fn().mockReturnValue({ in: stampInMock, eq: syncEqMock });
   return {
     select: selectMock,
     update: updateMock,
@@ -401,6 +410,7 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     } as never);
     mockedResolveInstanceIpv4.mockResolvedValue("10.250.21.55");
     mockedApplyLiveUpdate.mockResolvedValue(launched(FLEET_SYNC));
+    (loadBoxRelease as jest.Mock).mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -503,8 +513,92 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     // The scheduled sweep is system-initiated, so every update passes the
     // in-flight turn gate instead of recreating mid-turn.
     for (const call of mockedApplyLiveUpdate.mock.calls) {
-      expect(call[4]).toEqual({ initiator: FLEET_SYNC });
+      expect(call[4]).toEqual({ initiator: FLEET_SYNC, imageIntent: "release" });
     }
+  });
+
+  describe("release registry", () => {
+    const D = (n: number) => `sha256:${String(n).repeat(64)}`;
+    const release = (n: number) => ({ id: `rel-${n}`, version: `1.0.${n}`, digest: D(n) });
+    const state = (decision: Record<string, unknown>, governed = true) => ({ governed, decision });
+
+    function sweep(rows: Array<{ id: string; name: string }>) {
+      const query = fleetSelectQuery(rows.map((row) => ({ ...row, user_id: "u", backend: "gateway", gateway_url: "https://x.example" })));
+      mockedSupabaseAdmin.from.mockReturnValue(query);
+      return query;
+    }
+
+    it("leaves boxes alone that already run their target, and counts them as synced", async () => {
+      const query = sweep([
+        { id: "on-target", name: "a" },
+        { id: "behind", name: "b" },
+      ]);
+      (loadBoxRelease as jest.Mock).mockImplementation(async (_db: unknown, id: string) =>
+        id === "on-target"
+          ? state({ target: release(2), direction: "none", autoMove: false, updateAvailable: false })
+          : state({ target: release(2), direction: "upgrade", autoMove: true, updateAvailable: true })
+      );
+
+      const body = await (await GET(getRequest())).json();
+
+      expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(1);
+      expect(mockedApplyLiveUpdate.mock.calls[0][0]).toMatchObject({ id: "behind" });
+      expect(body.data).toMatchObject({ requested: 2, launched: 1, skipped: 1, failed: 0 });
+      expect(body.data.results).toEqual(
+        expect.arrayContaining([
+          { id: "on-target", name: "a", success: false, skipped: true, error: "Already on its target release" },
+        ])
+      );
+      // The skipped box is current: its synced-at moves, so the ops staleness signal stays honest.
+      expect(query.updateMock).toHaveBeenCalledWith(expect.objectContaining({ last_synced_at: expect.any(String) }));
+    });
+
+    it("does not move a box the registry offers nothing, or will not move automatically", async () => {
+      sweep([
+        { id: "offered-nothing", name: "a" },
+        { id: "newer-than-target", name: "b" },
+      ]);
+      (loadBoxRelease as jest.Mock).mockImplementation(async (_db: unknown, id: string) =>
+        id === "offered-nothing"
+          ? state({ target: null, direction: "none", autoMove: false, updateAvailable: false })
+          : state({ target: release(1), direction: "rollback", autoMove: false, updateAvailable: true })
+      );
+
+      const body = await (await GET(getRequest())).json();
+
+      expect(mockedApplyLiveUpdate).not.toHaveBeenCalled();
+      expect(body.data).toMatchObject({ launched: 0, skipped: 2, failed: 0 });
+    });
+
+    it("still sweeps a box the registry does not govern, exactly as before", async () => {
+      sweep([{ id: "legacy", name: "a" }]);
+      (loadBoxRelease as jest.Mock).mockResolvedValue(state({ target: null, direction: "none", autoMove: false, updateAvailable: false }, false));
+
+      const body = await (await GET(getRequest())).json();
+
+      expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(1);
+      expect(body.data).toMatchObject({ launched: 1, skipped: 0 });
+    });
+
+    it("proceeds when the release lookup fails, so applyLiveUpdate decides", async () => {
+      sweep([{ id: "lookup-fails", name: "a" }]);
+      (loadBoxRelease as jest.Mock).mockRejectedValue(new Error("boom"));
+
+      const body = await (await GET(getRequest())).json();
+
+      expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(1);
+      expect(body.data).toMatchObject({ launched: 1 });
+    });
+
+    it("never applies the skip to an operator's targeted redeploy", async () => {
+      (loadBoxRelease as jest.Mock).mockResolvedValue(
+        state({ target: release(2), direction: "none", autoMove: false, updateAvailable: false })
+      );
+      // The POST path never consults the registry for a skip.
+      const response = await POST(request({ instanceIds: ["inst-1"] }));
+      expect(response.status).toBeLessThan(500);
+      expect(loadBoxRelease).not.toHaveBeenCalled();
+    });
   });
 
   it("defers a box with an agent turn in flight: not launched, not failed, requeued first for the next tick", async () => {
