@@ -60,7 +60,7 @@ function buildText(params: SendParams): string {
     "",
     "What you can do once you're in:",
     "  • Codex, Claude Code, Hermes, and Aeon, all live now. Pick one and it's running in five minutes (no Docker, no VPS)",
-    "  • Free tier access is included; anti-abuse checks may apply for provisioning",
+    "  • Hivra is free to use with your own computer; a computer run by Hivra comes with a plan",
     "  • Pro and Power available if you want more compute headroom",
     "",
     "Reply if you hit any snags during setup.",
@@ -112,7 +112,7 @@ function buildHtml(params: SendParams): string {
                 <p style="margin:0 0 12px;font-family:${monoStack};font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#888;font-weight:700;">What you can do once you're in</p>
                 <ul style="margin:0 0 24px;padding:0 0 0 18px;font-size:15px;line-height:1.65;color:#333;">
                   <li>Codex, Claude Code, Hermes, and Aeon, all live now. Pick one and it's running in five minutes (no Docker, no VPS)</li>
-                  <li>Free tier access is included; anti-abuse checks may apply for provisioning</li>
+                  <li>Hivra is free to use with your own computer; a computer run by Hivra comes with a plan</li>
                   <li>Pro and Power available if you want more compute headroom</li>
                 </ul>
               </td>

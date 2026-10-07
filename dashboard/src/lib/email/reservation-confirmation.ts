@@ -41,7 +41,7 @@ function buildText(): string {
     "",
     "Hey,",
     "",
-    "You're in. We'll send you an invite when Free plan access opens up. We're rolling out in waves to keep the platform fast as we scale.",
+    "You're in. We'll email you when there's news. Your free account already works with your own computer.",
     "",
     "In the meantime, one thing to know.",
     "",
@@ -84,7 +84,7 @@ function buildHtml(): string {
                 <p style="margin:0 0 18px;font-family:${monoStack};font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#b3261e;font-weight:700;">Waitlist</p>
                 <h1 style="margin:0 0 20px;font-family:${serifStack};font-size:30px;line-height:1.15;font-weight:700;color:#1a1a1a;">You're in.</h1>
                 <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">Hey,</p>
-                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">We'll send you an invite when Free plan access opens up. We're rolling out in waves to keep the platform fast as we scale.</p>
+                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">We'll email you when there's news. Your free account already works with your own computer.</p>
                 <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#1a1a1a;">In the meantime, one thing to know.</p>
               </td>
             </tr>

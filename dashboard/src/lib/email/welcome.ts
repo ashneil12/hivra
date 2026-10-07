@@ -52,14 +52,14 @@ function buildText(params: SendParams): string {
     "",
     greeting(params.firstName),
     "",
-    "Your account is live. Two minutes from now you can have a persistent agent running with no Docker, no VPS, no babysitting.",
+    "Your account is live. Connect a computer of yours, or pick a plan and Hivra runs one for you, and your agent stays up with no Docker and no babysitting.",
     "",
     `Open the dashboard → ${DASHBOARD_URL}`,
     "",
     "What's worth doing first:",
     "  • Pick a profile and deploy your first agent",
     "  • Add the integrations your agent needs (chat, browser, etc.)",
-    "  • Free tier access is included; anti-abuse checks may apply for provisioning",
+    "  • Hivra is free to use with your own computer; a computer run by Hivra comes with a plan",
     "",
     `Curious where we're headed: ${ROADMAP_URL}`,
     "",
@@ -84,7 +84,7 @@ function buildHtml(params: SendParams): string {
     <title>${SUBJECT}</title>
   </head>
   <body style="margin:0;padding:0;background:#f5f1e8;font-family:${sansStack};color:#1a1a1a;-webkit-font-smoothing:antialiased;">
-    <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">Your account is live. Deploy your first agent in two minutes.</span>
+    <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">Your account is live. Connect your own computer, or pick a plan.</span>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f1e8;">
       <tr>
         <td align="center" style="padding:40px 16px;">
@@ -94,7 +94,7 @@ function buildHtml(params: SendParams): string {
                 <p style="margin:0 0 18px;font-family:${monoStack};font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#b3261e;font-weight:700;">Welcome</p>
                 <h1 style="margin:0 0 20px;font-family:${serifStack};font-size:30px;line-height:1.15;font-weight:700;color:#1a1a1a;">You're set up.</h1>
                 <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
-                <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Your account is live. Two minutes from now you can have a persistent agent running with no Docker, no VPS, no babysitting.</p>
+                <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Your account is live. Connect a computer of yours, or pick a plan and Hivra runs one for you, and your agent stays up with no Docker and no babysitting.</p>
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 24px;">
                   <tr>
                     <td style="background:#1a1a1a;border-radius:4px;">
@@ -112,7 +112,7 @@ function buildHtml(params: SendParams): string {
                 <ul style="margin:0 0 24px;padding:0 0 0 18px;font-size:15px;line-height:1.65;color:#333;">
                   <li>Pick a profile and deploy your first agent</li>
                   <li>Add the integrations your agent needs (chat, browser, and more)</li>
-                  <li>Free tier access is included; anti-abuse checks may apply for provisioning</li>
+                  <li>Hivra is free to use with your own computer; a computer run by Hivra comes with a plan</li>
                 </ul>
                 <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#666;">
                   Curious where we're headed:

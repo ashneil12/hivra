@@ -240,8 +240,8 @@ function buildDay1Idle(params: LifecycleEmailContentParams): LifecycleEmailConte
   // exception path — the generic intro is the default.
   const goalPhrase = goalEmailPhrase(params.goal);
   const introText = goalPhrase
-    ? `You signed up yesterday to ${goalPhrase}, but never deployed an agent to do it. Fair — most tools ask a lot before showing anything. This one takes about two minutes and the free plan covers it.`
-    : "You signed up yesterday but never deployed an agent. Fair — most tools ask a lot before showing anything. This one takes about two minutes and the free plan covers it.";
+    ? `You signed up yesterday to ${goalPhrase}, but never deployed an agent to do it. Fair — most tools ask a lot before showing anything. This one takes about two minutes: connect a computer of yours, or pick a plan and we run one for you.`
+    : "You signed up yesterday but never deployed an agent. Fair — most tools ask a lot before showing anything. This one takes about two minutes: connect a computer of yours, or pick a plan and we run one for you.";
 
   const text = [
     greeting(params.firstName),
@@ -295,11 +295,11 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
     "",
     `${agent} has been up for a day now. Good start.`,
     "",
-    "Three things it can't do yet on the free plan:",
+    "Three things it can't do yet on a free account:",
     "",
     ...capabilitiesText.map((c) => `  • ${c}`),
     "",
-    "All three come with Pro. No rush — the free plan is yours as long as you want it.",
+    "All three come with Pro. No rush — a free account stays free for as long as you want it.",
     "",
     `Keep going: ${ctaUrl}`,
     "",
@@ -313,10 +313,10 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
     body: [
       htmlParagraph(greeting(params.firstName)),
       htmlParagraph(`${agent} has been up for a day now. Good start.`),
-      htmlParagraph("Three things it can't do yet on the free plan:"),
+      htmlParagraph("Three things it can't do yet on a free account:"),
       htmlList(capabilities),
       htmlParagraph(
-        "All three come with Pro. No rush — the free plan is yours as long as you want it."
+        "All three come with Pro. No rush — a free account stays free for as long as you want it."
       ),
     ].join("\n"),
     ctaText: "Open your agent",
@@ -415,14 +415,14 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
   const subject = "the honest pitch for Pro";
   const ctaUrl = BILLING_URL;
   const changes = [
-    `<strong>Always-on</strong> — your agent is never paused for inactivity (free agents sleep after 4 idle days).`,
+    `<strong>Always-on</strong> — your agent is never paused for inactivity (a free agent sleeps after 4 idle days).`,
     `<strong>2 vCPU / 4 GB RAM</strong> — double the headroom, noticeably faster under load.`,
     `<strong>Web browsing</strong> — your agent can read live pages, not just what it already knows.`,
     `<strong>Persistent memory</strong> — context carries across conversations instead of resetting.`,
     `<strong>Scheduled tasks</strong> — standing jobs that run on a timer, no prompt needed.`,
   ];
   const changesText = [
-    "Always-on — your agent is never paused for inactivity (free agents sleep after 4 idle days).",
+    "Always-on — your agent is never paused for inactivity (a free agent sleeps after 4 idle days).",
     "2 vCPU / 4 GB RAM — double the headroom, noticeably faster under load.",
     "Web browsing — your agent can read live pages, not just what it already knows.",
     "Persistent memory — context carries across conversations instead of resetting.",
@@ -431,7 +431,7 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
   const text = [
     greeting(params.firstName),
     "",
-    "You've had a week on the free plan. Here's the honest pitch for Pro — and if the agent hasn't been useful, skip this email.",
+    "You've had a week with a free account. If you'd like Hivra to run the computer, here's the honest pitch for Pro — and if you're happy on your own computer, skip this email.",
     "",
     "$9.99/mo, or $79/yr.",
     "",
@@ -453,7 +453,7 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
     body: [
       htmlParagraph(greeting(params.firstName)),
       htmlParagraph(
-        "You've had a week on the free plan. Here's the honest pitch for Pro — and if the agent hasn't been useful, skip this email."
+        "You've had a week with a free account. If you'd like Hivra to run the computer, here's the honest pitch for Pro — and if you're happy on your own computer, skip this email."
       ),
       htmlParagraph("<strong>$9.99/mo, or $79/yr.</strong> What actually changes:"),
       htmlList(changes),
