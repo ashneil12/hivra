@@ -1,0 +1,16 @@
+[Unit]
+Description=Hivra Claude app supervisor (optional Claude app on the contained desktop)
+After=hivra-selkies-desktop.service
+PartOf=hivra-selkies-desktop.service
+ConditionPathExists=/var/lib/hivra/claude-app/enabled
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I -B /usr/local/bin/hivra-claude-app supervise
+KillMode=process
+TimeoutStopSec=60
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

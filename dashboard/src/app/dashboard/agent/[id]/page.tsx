@@ -126,6 +126,11 @@ const HivraRemoteDesktop = dynamic(
   () => import("@/components/hivra/HivraRemoteDesktop").then((mod) => mod.HivraRemoteDesktop, surfaceCodeUnavailable),
   { ssr: false, loading: DesktopLoading },
 );
+// The Claude app switch belongs to the desktop's own toolbar and loads with it.
+const ClaudeAppSwitch = dynamic(
+  () => import("@/components/hivra/ClaudeAppSwitch").then((mod) => mod.ClaudeAppSwitch, surfaceCodeUnavailable),
+  { ssr: false, loading: () => null },
+);
 const HivraConsoleDesktop = dynamic(
   () => import("@/components/hivra/HivraConsoleDesktop").then((mod) => mod.HivraConsoleDesktop, surfaceCodeUnavailable),
   { ssr: false, loading: DesktopLoading },
@@ -1197,6 +1202,10 @@ export default function AgentPage() {
               // cross-path proof. Only auto-prepare computers that cannot attach yet.
               autoPrepare={isComputer && !agent.chat_url}
               handoffWarmOrigin={(() => { try { return agent.chat_url ? new URL(agent.chat_url).origin : null; } catch { return null; } })()}
+              // The optional Claude app: full screen by default, the regular
+              // desktop one switch away. It renders nothing on a computer that
+              // does not offer it.
+              toolbarSlot={agent.chat_url && agent.api_token ? <ClaudeAppSwitch boxUrl={agent.chat_url} token={agent.api_token} active={effectiveTab === "desktop"} /> : null}
             />
           )
         ) : null}

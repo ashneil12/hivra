@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.09.24.4.json";
+import release from "../../../provisioner-releases/2026.10.07.1.json";
+import terminalFollowupsRelease from "../../../provisioner-releases/2026.09.24.4.json";
 import terminalSocketsRelease from "../../../provisioner-releases/2026.09.24.3.json";
 import persistentSessionsRelease from "../../../provisioner-releases/2026.09.24.2.json";
 import detachedRunsRelease from "../../../provisioner-releases/2026.09.24.1.json";
@@ -34,7 +35,7 @@ import { parseProviderDesktopLaunch, type ProviderDesktopLaunch, type ProviderDe
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.09.24.4";
+const VERSION = "2026.10.07.1";
 const PROFILE = "desktop-owned-services-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -46,13 +47,14 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   desktopCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
 }).strict(); }
 const CurrentIdentity = identity(VERSION, bundleSha256);
 const Identity = z.union([CurrentIdentity,
+  identity("2026.09.24.4", "3bc4df89f60582b8f9505e3ab9ee6b5a4a751a2633b2d709a1f4b12549fd3b49"),
   identity("2026.09.24.3", "bd19950142f7c8e76f615b2ed1de075f76372a3b49bedd5291fa2242c540ce73"),
   identity("2026.09.24.2", "54898f145b981d4933bb32f09cdfa06e2e75a5c4916fe9a204f86fce6d8d5624"),
   identity("2026.09.24.1", "23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04"),
@@ -111,7 +113,7 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
       ? { version: 3, agentId: input.agentId, operationId: input.operationId,
         bundle: providerGuestBundleReceipt(input.scope, input.assets), desktopCleanup: { profile: PROFILE, closureSha256 } }
       : input.identity);
-    const maxRunMs = [VERSION, "2026.09.24.3", "2026.09.24.2", "2026.09.24.1", "2026.09.22.2", "2026.09.22.1", "2026.09.21.1", "2026.09.15.2", "2026.09.06.3", "2026.09.06.2", "2026.09.06.1", "2026.09.05.10", "2026.09.05.9", "2026.09.05.8"].includes(identity.bundle.provisionerVersion) ? 1_200_000 : 480_000;
+    const maxRunMs = [VERSION, "2026.09.24.4", "2026.09.24.3", "2026.09.24.2", "2026.09.24.1", "2026.09.22.2", "2026.09.22.1", "2026.09.21.1", "2026.09.15.2", "2026.09.06.3", "2026.09.06.2", "2026.09.06.1", "2026.09.05.10", "2026.09.05.9", "2026.09.05.8"].includes(identity.bundle.provisionerVersion) ? 1_200_000 : 480_000;
     if (checkedClock.boottimeMs > Number.MAX_SAFE_INTEGER - maxRunMs) throw new Error();
     if (identity.agentId !== input.agentId || identity.operationId !== input.operationId
       || identity.bundle.scopeSha256 !== providerGuestBundleScopeSha256(input.scope)) throw new Error();
@@ -122,6 +124,7 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
     if (Buffer.byteLength(raw) > 128 * 1024) throw new Error();
     const recipe = providerGuestWorkerRecipe(identity.bundle.provisionerVersion);
     const boundRelease = identity.bundle.provisionerVersion === VERSION ? release
+      : identity.bundle.provisionerVersion === "2026.09.24.4" ? terminalFollowupsRelease
       : identity.bundle.provisionerVersion === "2026.09.24.3" ? terminalSocketsRelease
       : identity.bundle.provisionerVersion === "2026.09.24.2" ? persistentSessionsRelease
       : identity.bundle.provisionerVersion === "2026.09.24.1" ? detachedRunsRelease

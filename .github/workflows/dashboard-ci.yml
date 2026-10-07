@@ -255,6 +255,9 @@ jobs:
       - name: Prepared desktop lab DHCP unit
         run: python3 -I -B scripts/test-prepared-desktop-lab-service.py
 
+      - name: Claude app helper for Ubuntu Desktop computers (no Docker, systemd or network)
+        run: python3 -I -B scripts/test-hivra-claude-app.py
+
       # Written for a disposable network-none Linux image: they depend on its
       # OpenSSL and UID layout, and fail on the runner's own Python.
       - name: Omarchy guardian, install, ownership and layout contracts

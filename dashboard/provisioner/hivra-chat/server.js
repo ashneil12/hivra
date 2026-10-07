@@ -827,6 +827,64 @@ function handleBrowserToggle(res, body) {
   child.on("error", (e) => jsonRes(res, 500, { error: "spawn failed: " + e.message }));
 }
 
+// ---- Claude app on Ubuntu Desktop computers (optional, owner-initiated) ----
+// The app itself runs inside the contained desktop; this gateway only asks a
+// narrow root helper to report, install or update it, or to switch the window
+// between a full-screen app view and a windowed view on the desktop. The helper
+// is reached through an exact-argument sudoers rule and never receives anything
+// from the request except a fixed verb. No Claude credential passes through here.
+const CLAUDE_APP_HELPER = "/usr/local/bin/hivra-claude-app";
+const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
+function claudeAppAvailable() {
+  if (!COMPUTER_PROFILE || ATTACHED) return false;
+  try { return fs.statSync(CLAUDE_APP_HELPER).isFile(); } catch { return false; }
+}
+function claudeAppHelper(args, timeoutMs, cb) {
+  execFile("sudo", ["-n", CLAUDE_APP_HELPER, ...args], { env: AGENT_ENV, timeout: timeoutMs, maxBuffer: 64 * 1024 }, (error, stdout) => {
+    let parsed = null;
+    try { parsed = JSON.parse(String(stdout || "").trim().split("\n").pop() || "null"); } catch {}
+    cb(error, parsed);
+  });
+}
+function handleClaudeAppStatus(res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  res.setHeader("Cache-Control", "no-store");
+  claudeAppHelper(["status"], 20000, (error, status) => {
+    if (error || !status || status.protocol !== CLAUDE_APP_PROTOCOL) return jsonRes(res, 502, { error: "The Claude app status could not be read." });
+    jsonRes(res, 200, status);
+  });
+}
+function handleClaudeAppInstall(res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  // Download and unpack take a while. Start the helper detached and answer at
+  // once; the owner's screen polls status for progress and for any failure.
+  const child = spawn("sudo", ["-n", CLAUDE_APP_HELPER, "install"], { env: AGENT_ENV, detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+  jsonRes(res, 202, { ok: true, installing: true });
+}
+function handleClaudeAppMode(res, body) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  let mode = "";
+  try { const requested = JSON.parse(body || "{}").mode; mode = typeof requested === "string" ? requested : ""; } catch {}
+  if (mode !== "app" && mode !== "desktop") return jsonRes(res, 400, { error: "mode must be app or desktop" });
+  claudeAppHelper(["mode", mode], 30000, (error, result) => {
+    if (result && result.ok === false && result.error === "not_installed") return jsonRes(res, 409, { error: "The Claude app is not added to this computer yet." });
+    if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The view could not be switched." });
+    jsonRes(res, 200, { ok: true, mode: result.mode, applied: result.applied === true });
+  });
+}
+function handleClaudeAppRemove(res, body) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  let confirmed = false;
+  try { confirmed = JSON.parse(body || "{}").confirm === true; } catch {}
+  if (!confirmed) return jsonRes(res, 400, { error: "confirm is required to remove the Claude app and its saved sign-in" });
+  claudeAppHelper(["remove"], 60000, (error, result) => {
+    if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The Claude app could not be removed." });
+    jsonRes(res, 200, { ok: true });
+  });
+}
+
 function jsonRes(res, status, obj) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(obj));
@@ -3456,7 +3514,7 @@ const server = http.createServer((req, res) => {
     // no-store: bootId (the sign-in epoch) and nativeReady describe the live
     // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
-    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
@@ -3520,6 +3578,11 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/cookies/import") return authed(req) ? readBodyLarge(req, (b) => handleCookieImport(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "GET" && u === "/api/browser/status") return authed(req) ? handleBrowserStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/browser/toggle") return authed(req) ? readBody(req, (b) => handleBrowserToggle(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  // Optional Claude app on Ubuntu Desktop computers.
+  if (u === "/api/claude-app/status" && req.method === "GET") return authed(req) ? handleClaudeAppStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/install" && req.method === "POST") return authed(req) ? handleClaudeAppInstall(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/mode" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppMode(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/remove" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppRemove(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Proxied surfaces — token-gated (was: open to anyone with the URL = a free shell).
   // The dedicated remote-desktop broker performs its own one-time PKCE exchange,
   // continuous session introspection and input lifecycle fencing. Preserve the
