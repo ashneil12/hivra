@@ -66,10 +66,10 @@ describe("server HTML of /tools/claude-code-plan-calculator", () => {
     expect(textOf(html)).toContain("100% Opus 5.5");
   });
 
-  it("prints the verified date as plain contiguous text, so a grep for it matches the raw HTML", () => {
-    const dates = html.match(/[Ll]ast verified [0-9]{4}-[0-9]{2}-[0-9]{2}/g) ?? [];
+  it("prints the checked month as plain contiguous text, so a grep for it matches the raw HTML", () => {
+    const dates = html.match(/[Ll]ast checked (?:January|February|March|April|May|June|July|August|September|October|November|December) 20[0-9]{2}/g) ?? [];
     expect(dates.length).toBeGreaterThanOrEqual(2);
-    for (const date of dates) expect(date).toMatch(/2026-09-30$/);
+    for (const date of dates) expect(date).toMatch(/September 2026$/);
   });
 
   it("carries the method heading, every dated source link, the worked examples, the FAQ and the cite block", () => {
@@ -123,10 +123,10 @@ describe("server HTML of /tools/keep-mac-awake", () => {
     expect(html).toContain("is enough for a run you can keep an eye on");
   });
 
-  it("prints the verified date as plain contiguous text, so a grep for it matches the raw HTML", () => {
-    const dates = html.match(/[Ll]ast verified [0-9]{4}-[0-9]{2}-[0-9]{2}/g) ?? [];
+  it("prints the checked month as plain contiguous text, so a grep for it matches the raw HTML", () => {
+    const dates = html.match(/[Ll]ast checked (?:January|February|March|April|May|June|July|August|September|October|November|December) 20[0-9]{2}/g) ?? [];
     expect(dates.length).toBeGreaterThanOrEqual(2);
-    for (const date of dates) expect(date).toMatch(/2026-09-30$/);
+    for (const date of dates) expect(date).toMatch(/September 2026$/);
   });
 
   it("carries the method heading, every source link, the worked examples, the FAQ and the cite block", () => {
@@ -178,8 +178,8 @@ describe("server HTML of /tools/tmux-cheat-sheet", () => {
     expect(html).toMatch(/alt="Diagram of how tmux nests its parts\./);
   });
 
-  it("prints the verified date as plain contiguous text and carries the method and cite block", () => {
-    const dates = html.match(/[Ll]ast verified [0-9]{4}-[0-9]{2}-[0-9]{2}/g) ?? [];
+  it("prints the checked month as plain contiguous text and carries the method and cite block", () => {
+    const dates = html.match(/[Ll]ast checked (?:January|February|March|April|May|June|July|August|September|October|November|December) 20[0-9]{2}/g) ?? [];
     expect(dates.length).toBeGreaterThanOrEqual(2);
     expect(html).toContain("How this cheat sheet was checked");
     expect(html).toContain('href="https://man7.org/linux/man-pages/man1/tmux.1.html"');

@@ -49,7 +49,7 @@ describe("KeepMacAwakeTool default result", () => {
     expect(within(notCovered).getAllByRole("listitem").length).toBeGreaterThanOrEqual(6);
     expect(notCovered).toHaveTextContent("A closed lid.");
     expect(notCovered).toHaveTextContent("A reboot or an OS update that restarts the machine.");
-    expect(container).toHaveTextContent("Commands last verified 2026-09-30");
+    expect(container).toHaveTextContent("Commands last checked September 2026");
     expect(screen.getByRole("link", { name: "tmux cheat sheet" })).toHaveAttribute("href", "/tools/tmux-cheat-sheet");
   });
 

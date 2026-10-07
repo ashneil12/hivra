@@ -61,7 +61,7 @@ describe.each(NEW_SLUGS)("/tools/%s", (slug) => {
 
     const method = container.querySelector("#method") as HTMLElement;
     expect(within(method).getByRole("heading", { level: 2, name: entry.method!.heading })).toBeInTheDocument();
-    expect(method).toHaveTextContent("Last verified 2026-09-30.");
+    expect(method).toHaveTextContent("Last checked September 2026.");
     for (const paragraph of entry.method!.paragraphs) expect(method).toHaveTextContent(paragraph.text.slice(0, 60));
     for (const source of entry.method!.paragraphs.flatMap((paragraph) => paragraph.sources ?? [])) {
       const links = Array.from(method.querySelectorAll(`a[href="${source.url}"]`));
@@ -73,7 +73,7 @@ describe.each(NEW_SLUGS)("/tools/%s", (slug) => {
     for (const example of entry.examples!) expect(method).toHaveTextContent(example.title);
 
     const cite = within(method).getByTestId("cite-block");
-    expect(cite).toHaveTextContent(`Hivra, "${entry.name}", https://hivra.cloud/tools/${slug}, facts last verified 2026-09-30.`);
+    expect(cite).toHaveTextContent(`Hivra, "${entry.name}", https://hivra.cloud/tools/${slug}, facts last checked September 2026.`);
     expect(cite).toHaveTextContent(`<a href="https://hivra.cloud/tools/${slug}">Hivra</a>`);
     // Brand anchor only: the snippet's link text never carries the topic.
     expect(cite.textContent).toMatch(/>Hivra<\/a>/);

@@ -27,6 +27,7 @@ import { apiCostPerActiveHour, formatUsd } from "./claude-plan-calc";
 import { CLAUDE_PLAN_FACTS, usd } from "./claude-plan-facts";
 import { KEEP_AWAKE_FACTS } from "./keep-awake";
 import { TMUX_FACTS } from "./tmux-sheet";
+import { monthYear } from "@/lib/tools/month-year";
 
 export type ToolComponentKey =
   | "plan-calculator"
@@ -159,7 +160,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
   metaDescription: `Estimate your Claude Code usage and see which Anthropic plan fits: Pro at ${usd(PRO.priceUsd)}, Max 5x at ${usd(MAX5.priceUsd)}, or Max 20x at ${usd(MAX20.priceUsd)} a month. With an API cost comparison.`,
   longIntro: [
     `Claude Code comes with Anthropic's Pro plan at ${usd(PRO.priceUsd)} a month, and with its Max plans at ${usd(MAX5.priceUsd)} (5x) and ${usd(MAX20.priceUsd)} (20x). Max gives you five or twenty times Pro's usage per five-hour session. Anthropic publishes no fixed caps and no weekly multiple for Max, so most people guess.`,
-    `The calculator works from what you already know. Set your days, hours and model mix, then say how far into a five-hour window Pro's limit stops you. You get a fit rating for each plan and an estimate of what the same work costs at API list price. Everything Anthropic publishes is dated ${PLAN_FACTS.lastVerified} and linked below. Whatever Anthropic doesn't publish is labelled an estimate.`,
+    `The calculator works from what you already know. Set your days, hours and model mix, then say how far into a five-hour window Pro's limit stops you. You get a fit rating for each plan and an estimate of what the same work costs at API list price. Everything Anthropic publishes is linked below, checked in ${monthYear(PLAN_FACTS.lastVerified)}. Whatever Anthropic doesn't publish is labelled an estimate.`,
   ],
   // Tool questions only. Plan and price questions (what Max is, whether Pro is
   // enough, what API billing costs, what to do at a limit) belong to the post this
@@ -171,7 +172,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
     {
       q: "Why does the calculator never rate the weekly limit?",
-      a: `As of ${PLAN_FACTS.lastVerified}, no Anthropic page states a weekly multiple for Max 5x or Max 20x, so any weekly rating would be made up. If Pro's weekly limit is what stops you, tell the calculator. It adds a note that the ratings cover your five-hour windows only, and sends you to /usage after your first full week on a Max plan.`,
+      a: `As of ${monthYear(PLAN_FACTS.lastVerified)}, no Anthropic page states a weekly multiple for Max 5x or Max 20x, so any weekly rating would be made up. If Pro's weekly limit is what stops you, tell the calculator. It adds a note that the ratings cover your five-hour windows only, and sends you to /usage after your first full week on a Max plan.`,
     },
     {
       q: "Why does it ask where Pro stops me?",
@@ -231,7 +232,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         sources: [PLAN_SOURCES.modelConfig, PLAN_SOURCES.fable, PLAN_SOURCES.fastMode],
       },
       {
-        text: `How this was checked: every value on this page was read on ${PLAN_FACTS.lastVerified} from the Anthropic pages linked above, then checked against them a second time the same day. Anthropic changes plans often, so the date matters. Your inputs stay in your browser.`,
+        text: `How this was checked: every value on this page was read from the Anthropic pages linked above in ${monthYear(PLAN_FACTS.lastVerified)}, then checked against them a second time. Anthropic changes plans often, so the month matters. Your inputs stay in your browser.`,
       },
     ],
   },
@@ -543,7 +544,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       "A tmux cheat sheet with copy buttons: sessions, windows, panes, detach and attach, copy mode and logging, plus commands for AI coding agents.",
     longIntro: [
       "tmux is a terminal multiplexer. It runs your shells inside sessions that keep going when your terminal closes or your SSH connection drops. You attach to a session to look at it and detach to leave it running.",
-      "Each command below has a copy button and was checked against the tmux manual on 2026-09-30. The last section is for AI coding agents: one named session per agent, re-attaching from another device, and keeping a log. tmux survives disconnects. It doesn't survive a sleeping laptop.",
+      "Each command below has a copy button and was checked against the tmux manual. The last section is for AI coding agents: one named session per agent, re-attaching from another device, and keeping a log. tmux survives disconnects. It doesn't survive a sleeping laptop.",
     ],
     faqs: [
       {

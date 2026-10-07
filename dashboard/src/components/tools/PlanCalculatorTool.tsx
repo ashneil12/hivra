@@ -34,6 +34,7 @@ import {
   type ProWeekly,
 } from "@/lib/tools/claude-plan-calc";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { monthYear } from "@/lib/tools/month-year";
 
 const F = CLAUDE_PLAN_FACTS;
 
@@ -156,8 +157,8 @@ export default function PlanCalculatorTool() {
         ratings scale your own Pro reading by those multiples and never rate the weekly limit. The API figure is list price
         for your schedule, built from Anthropic&apos;s published rates and two assumptions of ours: about {normalOutputK}K
         output tokens in a normal hour ({heavyOutputK}K in a heavy one), and {Math.round(F.estimate.cacheReadShare * 100)}%
-        of input read from the prompt cache. Method, sources and worked examples are below. Prices and plan facts last
-        verified {F.lastVerified} on Anthropic&apos;s own pages.
+        of input read from the prompt cache. Method, sources and worked examples are below. Prices and plan facts
+        as of {monthYear(F.lastVerified)}, from Anthropic&apos;s own pages.
       </p>
 
       <div className={styles.bridge}>

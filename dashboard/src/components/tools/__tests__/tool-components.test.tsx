@@ -121,7 +121,7 @@ describe("PlanCalculatorTool", () => {
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "7" } });
     expect(screen.getByText("7h")).toBeInTheDocument();
 
-    expect(screen.getByText(/last verified 2026-09-30/)).toBeInTheDocument();
+    expect(container).toHaveTextContent(/Prices and plan facts as of September 2026, from Anthropic/);
     // The button promises Claude Code, so it preselects the runtime.
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
@@ -189,7 +189,7 @@ describe("AgentSurvivalCheckTool", () => {
     const updatedScore = Number((updated.getAttribute("aria-label") ?? "").match(/\d+/)?.[0]);
     expect(updatedScore).toBeGreaterThan(initialScore);
 
-    expect(screen.getByText(/last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/last checked September 2026/)).toBeInTheDocument();
     expect(screen.getByText(/The \$9\.99 a month plan gives it 2 vCPU and 4 GB/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /skip the server upkeep/i })).toHaveAttribute("href", TOOLS_CTA.primaryHref);
     expectKeepRunningClaimsQualified(container);
@@ -260,7 +260,7 @@ describe("HostingCostCalculatorTool", () => {
     fireEvent.change(container.querySelector("#hc-vps") as HTMLSelectElement, { target: { value: "vultr1gb" } });
     expect(screen.getByText(/Smaller than Hivra's 2 vCPU, 4 GB computer/)).toBeInTheDocument();
 
-    expect(screen.getByText(/Prices last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/Prices as of September 2026/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /start on the \$9\.99 plan/i })).toHaveAttribute("href", "/get-started?plan=operator");
     // The two sizes checkout sells are stated here, not left to another page.
     expect(screen.getByText(/\$9\.99 a month for 2 vCPU and 4 GB, or \$19\.99 a month for 4 vCPU and 8 GB/)).toBeInTheDocument();
@@ -291,7 +291,7 @@ describe("LimitResetCalculatorTool", () => {
 
     // The first-message anchor is labelled as an assumption, not a documented fact.
     expect(screen.getByText(/does\s+not document what opens it/)).toBeInTheDocument();
-    expect(screen.getByText(/Facts\s+last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/Facts\s+as of September 2026/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
       "/sign-up?agentType=claude-code",

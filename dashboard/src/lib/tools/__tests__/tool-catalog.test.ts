@@ -85,7 +85,7 @@ describe("tools catalog", () => {
     // A visitor reads "a second reader" as a human editor. It was a second pass over the same pages.
     const plan = JSON.stringify(getToolEntry("claude-code-plan-calculator"));
     expect(plan).not.toMatch(/second reader|independent readers/i);
-    expect(plan).toContain("checked against them a second time the same day");
+    expect(plan).toContain("then checked against them a second time");
   });
 
   it("builds the plan calculator's meta description from the plan facts, so a price change cannot leave it stale", () => {

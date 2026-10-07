@@ -44,6 +44,7 @@ import {
   serializeKeepAwakeParams,
 } from "@/lib/tools/tool-params";
 import { toolPath } from "@/lib/tools/tool-catalog";
+import { monthYear } from "@/lib/tools/month-year";
 
 /** "A closed lid. caffeinate is not..." becomes a bold lead and the rest. */
 function splitLead(item: string): { lead: string; rest: string } {
@@ -249,7 +250,7 @@ export default function KeepMacAwakeTool() {
       </div>
 
       <p className={styles.note}>
-        {`Commands last verified ${KEEP_AWAKE_FACTS.lastVerified} against the caffeinate, pmset, systemd-inhibit and logind.conf manuals and Apple Support. The method section below links each source.`}
+        {`Commands last checked ${monthYear(KEEP_AWAKE_FACTS.lastVerified)} against the caffeinate, pmset, systemd-inhibit and logind.conf manuals and Apple Support. The method section below links each source.`}
       </p>
 
       <div className={styles.bridge} data-testid="kma-cta" data-state={cta.state}>
