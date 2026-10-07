@@ -45,7 +45,6 @@ export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   { name: "fleet-status-reconcile", periodMinutes: 30 },
   { name: "reconcile-soul-seeds", periodMinutes: 20 },
   { name: "daily-config-snapshot", periodMinutes: 1440 },
-  { name: "reservation-claim-expiry", periodMinutes: 120 },
   // Both backup crons stamped a heartbeat but were never registered, so the
   // watchdog could not page on their silence — the exact failure mode they
   // guard against (a fleet-wide backup stop) was the one nothing would notice.
