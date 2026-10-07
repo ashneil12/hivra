@@ -2344,13 +2344,15 @@ export class InstanceService {
       };
     }
 
-    // Stripe trialing subs reach this point because the abuse-gate
-    // bypass treats them as entitled, but provisioning was historically
-    // gated on active / past_due only — the trial budget rows are often
-    // $0 and would fail the budget check below anyway. Reject explicitly
-    // so the user sees a clear message instead of a confusing budget
-    // error. Token-holding entries are always synthesised as 'active'.
-    if (sub.source === "stripe" && !["active", "past_due"].includes(sub.status)) {
+    // Trials do not exist in Hivra: you purchase and you get what you want.
+    // A 'trialing' entitlement (a Stripe sub from before trials were removed,
+    // or an App Store intro offer, which resolves as source 'apple_iap')
+    // reaches this point because the abuse-gate bypass treats it as entitled,
+    // but trial budget rows are often $0 and we never provision on one.
+    // Reject for EVERY source so the user sees a clear message instead of a
+    // confusing budget error. Token-holding entries are always synthesised as
+    // 'active'.
+    if (!["active", "past_due"].includes(sub.status)) {
       return {
         success: false,
         status: 403,
@@ -2832,9 +2834,8 @@ export class InstanceService {
           name: `${name} managed Venice`,
           defaultWalletType: managedVeniceDeploy.walletType,
           // The deploy card submits 'hermesos' unless the card wallet was ALREADY
-          // funded at page load — which it never is on a free user's FIRST deploy,
-          // because the starter credit is granted during this very call. Let the
-          // mint re-resolve the binding against post-grant balances.
+          // funded at page load. Let the mint re-resolve the binding against
+          // real balances so a funded card wallet is never left unbound.
           autoSelectFundedWallet: true,
         });
         finalApiKey = proxyKey.plaintextKey;

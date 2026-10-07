@@ -447,7 +447,9 @@ export async function POST(req: NextRequest) {
     const appUrl = getDashboardOrigin();
 
     // Idempotency key scoped to the hour — prevents duplicate sessions
-    // from double-clicks within the same checkout window
+    // from double-clicks within the same checkout window. The "np" (no promo)
+    // segment retired every key minted while promotion codes were enabled:
+    // Stripe rejects a reused key whose parameters changed.
     // Cadence is part of the idempotency key so a user who first started
     // a monthly checkout and then switched to yearly within the same
     // hour gets a fresh session for the yearly price (vs. silently
@@ -459,7 +461,7 @@ export async function POST(req: NextRequest) {
     const expiredKey = expiredSessionIds.length
       ? `_x${keyDigest([...expiredSessionIds].sort().join(","))}`
       : "";
-    const idempotencyKey = `checkout_${clerkUserId}_${planKey}_${cadence}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
+    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
     const returnQuery = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : "";
 
     const sessionMetadata = {
@@ -486,7 +488,9 @@ export async function POST(req: NextRequest) {
         // to instantly activate the account without waiting for webhook delivery
         success_url: `${appUrl}/dashboard/billing?subscription=success&session_id={CHECKOUT_SESSION_ID}${returnQuery}`,
         cancel_url: `${appUrl}/checkout/canceled?plan=${planKey}${returnQuery}`,
-        allow_promotion_codes: true,
+        // No promotion codes: you purchase and you get what you want. Explicit
+        // false so the intent is visible; Stripe's default is also off.
+        allow_promotion_codes: false,
       },
       { idempotencyKey }
     );

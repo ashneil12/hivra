@@ -150,7 +150,8 @@ export async function POST(request: NextRequest) {
       subscription_data: { metadata },
       success_url: `${appUrl}/workspace-cloud/connect?sub=success`,
       cancel_url: `${appUrl}/workspace-cloud/connect?sub=canceled`,
-      allow_promotion_codes: true,
+      // No promotion codes: you purchase and you get what you want.
+      allow_promotion_codes: false,
     });
 
     return apiSuccess({ url: session.url });
