@@ -138,7 +138,10 @@ async function recordReleaseReport(
         instanceId: instance.id,
         userId: instance.user_id,
         kind,
-        targetDigest: release.targetDigest ?? release.digest ?? null,
+        // The release to judge. After a success the digest the box runs is the
+        // target. After a failure it is NOT: the box is back on the old image,
+        // so only an explicit target may be blamed.
+        targetDigest: kind === "updated" ? (release.targetDigest ?? release.digest ?? null) : (release.targetDigest ?? null),
         detail: report.reason ?? report.detail ?? null,
       });
     } catch (err) {
