@@ -183,6 +183,20 @@ export function MachineCard({
       </p>
       <p className={styles.machineSub}>{price.subline ?? " "}</p>
 
+      {planKey === "free" ? (
+        // The free account holds no Hivra-run computer, so the compute rows
+        // would only show numbers it never gets.
+        <dl className={styles.machineSpecs}>
+          <div>
+            <dt>Computer</dt>
+            <dd>Your own</dd>
+          </div>
+          <div>
+            <dt>Run by Hivra</dt>
+            <dd>No</dd>
+          </div>
+        </dl>
+      ) : (
       <dl className={styles.machineSpecs}>
         <div>
           <dt>vCPU</dt>
@@ -210,6 +224,7 @@ export function MachineCard({
           <dd>{planIdlePolicy(planKey)}</dd>
         </div>
       </dl>
+      )}
 
       <ul className={styles.features}>
         {planCardFeatures(planKey).map((feature) => (
