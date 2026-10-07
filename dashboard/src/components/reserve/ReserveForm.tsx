@@ -179,17 +179,17 @@ export default function ReserveForm() {
         </p>
         <div style={{ display: "grid", gap: "0.4rem" }}>
           <p className="serif" style={{ fontSize: "1.6rem", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
-            Free setup is ready
+            Your free account is ready
           </p>
           <p style={{ margin: 0, fontSize: 14, color: "var(--text-secondary)" }}>
-            Continue with <strong>{success.email}</strong> to finish account setup and launch Free.
+            Continue with <strong>{success.email}</strong> to finish account setup.
           </p>
         </div>
         <div style={{ display: "grid", gap: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid var(--etched-border)" }}>
           <p className="mono" style={labelStyle}>What happens next</p>
           <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "grid", gap: "0.4rem", color: "var(--text-secondary)", fontSize: 14 }}>
-            <li>Create your account and start Free.</li>
-            <li>Anti-abuse checks may apply during provisioning.</li>
+            <li>Create your account.</li>
+            <li>Connect your own computer, or choose a plan to have Hivra run one.</li>
             <li>Upgrade to Pro or Power any time from billing.</li>
           </ul>
         </div>

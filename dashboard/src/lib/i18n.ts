@@ -125,7 +125,7 @@ const BASE_MARKETING_COPY = {
     getStarted: {
       loadingCheckout: "Redirecting to checkout...",
       badges: {
-        free: "Always Free",
+        free: "Free account",
         paid: "7-Day Money-Back Guarantee",
       },
       yourPlan: "Your Plan",
@@ -142,7 +142,7 @@ const BASE_MARKETING_COPY = {
       // honest. Edit this single string to change the anchor everywhere.
       marketAnchor: "Comparable agent platforms start around $19/mo",
       mostPopular: "Most popular",
-      freeGap: "Sleeps after 4 idle days · no web browsing · no persistent memory · no scheduled tasks · 0.5 vCPU",
+      freeGap: "No computer run by Hivra · connect your own computer or server",
       specs: {
         agents: "Agents",
         cpu: "CPU",
@@ -156,7 +156,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "Best Fit",
       planGuidance: {
         free:
-          "Free is best for trying one small agent on Hivra Cloud. It sleeps after 4 idle days to keep costs down — a tap brings it back. Most users can launch without a card; some free launches need a card check first.",
+          "A free account is best if you have your own computer or server to connect. It includes no computer run by Hivra; choose a plan when you want Hivra to run one.",
         operator:
           "Pro is best for solo builders and daily drivers — your agent stays always-on (never paused for inactivity) with room for three running at once.",
         fleet:
@@ -166,7 +166,7 @@ const BASE_MARKETING_COPY = {
       },
       createAccountTitle: "Create your account.",
       createAccountIntroFree:
-        "Your account details become your login credentials. After signup, we'll activate your Free plan and take you straight to deployment. Most users can launch without a card; higher-risk free-tier deploys may need card verification first.",
+        "Your account details become your login credentials. After signup, we'll set up your free account and take you to Launch, where you can connect your own computer or choose a plan.",
       createAccountIntroPaid:
         "Your account details become your login credentials. After signup, you'll continue to secure checkout. Protected by our 7-day money-back guarantee.",
       legalPrefix: "By continuing, you agree to our",
@@ -352,10 +352,10 @@ const BASE_MARKETING_COPY = {
         titleSuffix: " wallet.",
         legacyIntroStrong: "Grandfathered custody wallet",
         legacyIntroBody:
-          "your existing deposit and withdraw flow stays active. Lock today's $HERMESOS price for the tier you want, then send the quoted amount to your deposit address. Free tier always works without a deposit.",
+          "your existing deposit and withdraw flow stays active. Lock today's $HERMESOS price for the tier you want, then send the quoted amount to your deposit address. Your free account always works without a deposit.",
         selfCustodyIntroStrong: "Connect your own wallet",
         selfCustodyIntroBody:
-          "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Free tier always works without token verification.",
+          "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Your free account always works without token verification.",
         priceUnavailable: "Token price unavailable — please try again later.",
         restricted: {
           eyebrow: "Wallet",
