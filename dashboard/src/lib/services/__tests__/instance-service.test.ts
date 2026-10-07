@@ -1595,9 +1595,9 @@ describe("InstanceService.createInstance free-tier guard", () => {
   });
 
   it("persists the wallet the minted key ACTUALLY bills, not the one the deploy card requested", async () => {
-    // A brand-new free user: the deploy card submits 'hermesos' (their card
-    // wallet was empty at page load), but the mint grants the starter credit and
-    // binds the key to 'card'. If the instance config recorded the REQUESTED
+    // The deploy card submits 'hermesos' (the card wallet was empty at page
+    // load), but the mint finds the card wallet funded and binds the key to
+    // 'card'. If the instance config recorded the REQUESTED
     // wallet, config would claim hermesos while every request bills card — and
     // managed-webui-enable would re-mint a fresh key on every enable click.
     (createManagedVeniceProxyKey as jest.Mock).mockResolvedValue({
