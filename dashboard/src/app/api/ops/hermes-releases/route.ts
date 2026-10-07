@@ -54,7 +54,7 @@ export async function GET() {
     const releases = await loadReleases(supabaseAdmin);
     const { data: boxes, error } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, name, agent_image_digest, agent_version, update_health, update_health_detail, update_health_at, update_stack_version")
+      .select("id, name, status, release_channel, agent_image_digest, agent_version, update_health, update_health_detail, update_health_at, update_stack_version")
       .is("deleted_at", null)
       .neq("status", "deleted")
       .limit(5000);
@@ -63,6 +63,8 @@ export async function GET() {
     const rows = (boxes ?? []) as unknown as Array<{
       id: string;
       name: string | null;
+      status: string | null;
+      release_channel: string | null;
       agent_image_digest: string | null;
       agent_version: string | null;
       update_health: string | null;
@@ -103,9 +105,23 @@ export async function GET() {
       }))
       .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
 
+    // The boxes an operator can enrol in the canary channel or pick as the pilot.
+    const boxList = rows
+      .filter((row) => row.status === "running")
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        channel: row.release_channel === "canary" ? "canary" : "stable",
+        digest: row.agent_image_digest,
+        version: row.agent_image_digest ? versionByDigest.get(row.agent_image_digest) ?? row.agent_version : null,
+        updateHealth: row.update_health,
+      }))
+      .slice(0, 500);
+
     return apiSuccess({
       releases: withHealth,
       attention,
+      boxes: boxList,
       fleet: { total: rows.length, reporting, onNewUpdateStack: onNewStack },
     });
   } catch (err) {
