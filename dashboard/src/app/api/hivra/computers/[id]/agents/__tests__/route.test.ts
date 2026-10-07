@@ -68,7 +68,7 @@ beforeEach(() => {
   store.readTarget.mockResolvedValue(target);
   store.readAttachments.mockResolvedValue([]);
   jest.mocked(validateAgentResources).mockResolvedValue({ ok: true });
-  jest.mocked(resolvePlanAgentSlots).mockResolvedValue({ agentLimit: 3, planName: "Pro" });
+  jest.mocked(resolvePlanAgentSlots).mockResolvedValue({ agentLimit: 3, planName: "Pro", freeAccount: false });
   jest.mocked(readAttachedGatewayProtocol).mockResolvedValue("current");
 });
 

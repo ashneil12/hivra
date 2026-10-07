@@ -11,6 +11,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 import { claimPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 
 const Body = z.object({ profile: z.literal("omarchy"), name: z.string().trim().min(1).max(80) }).strict();
@@ -42,6 +43,9 @@ export async function POST(request: NextRequest) {
         return apiError(code === "plan_agent_limit"
           ? "Your plan's agent limit is reached. Upgrade for more slots, or remove an agent first."
           : "Plan access is required before claiming a computer.", 403, undefined, { code });
+      }
+      if (code === "hosted_compute_requires_plan") {
+        return apiError(HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, 403, undefined, { code });
       }
       if (code === "prepared_profile_unavailable") {
         return apiError("This prepared computer is not configured on Canary.", 503, undefined, { code });

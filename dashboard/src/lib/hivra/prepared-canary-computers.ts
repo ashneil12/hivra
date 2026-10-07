@@ -173,6 +173,7 @@ const defaults: Dependencies = {
     // only after counting the owner's plan slots under the slot lock (T35).
     const slots = await resolvePlanAgentSlots(String(row.user_id));
     if (!slots) throw new Error("plan_access_required");
+    if (slots.freeAccount) throw new Error("hosted_compute_requires_plan");
     const { data, error } = await supabaseAdmin.rpc("insert_hivra_managed_agent", { p_row: row, p_agent_limit: slots.agentLimit });
     if (error) throw error;
     const result = data as { status?: unknown; row?: unknown } | null;

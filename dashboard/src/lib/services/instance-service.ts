@@ -1,3 +1,8 @@
+import {
+  HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
+  HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+  isFreeAccountEntitlement,
+} from "@/lib/billing/hosted-compute";
 import { clerkClient } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { createHmac, randomBytes } from "crypto";
@@ -2358,6 +2363,20 @@ export class InstanceService {
         status: 403,
         message:
           "Active subscription required. Choose a plan to start deploying agents.",
+      };
+    }
+
+    // A Free account never gets a Hivra-hosted computer, not even the small
+    // base tier: compute is paid, from Hivra or from someone else (bring your
+    // own computer). createInstance is the Hivra-provisioned path, so this is
+    // the server-side authority; the Launch UI only mirrors it. Owner
+    // decision 2026-10-07. The Workspace Cloud lane has its own entitlement.
+    if (productSurface !== "workspace_cloud" && isFreeAccountEntitlement(sub)) {
+      return {
+        success: false,
+        status: 403,
+        message: HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+        failureType: HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
       };
     }
 

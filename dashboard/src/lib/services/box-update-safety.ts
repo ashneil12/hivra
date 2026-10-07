@@ -40,6 +40,11 @@ export interface UpdateSafetyParams {
   agentSourceSeedCommand: string;
 }
 
+/** Where the wrapper sends the update script's own output. */
+export function updateLogPath(instanceId: string): string {
+  return `/tmp/hermes-update-${instanceId}.log`;
+}
+
 export function updateResultFilePath(instanceId: string): string {
   return `/tmp/hermes-update-${instanceId}.result`;
 }
@@ -127,12 +132,19 @@ hermes_update_rollback() {
   fi
   return 0
 }
+# Why the script failed, in the script's own words: its last error-looking line.
+hermes_last_log_error() {
+  grep -E 'FATAL|ERROR|CRITICAL|did not become|did not converge|no space left|unhealthy|failed' "${updateLogPath(p.instanceId)}" 2>/dev/null \\
+    | tail -n 1 | tr -d '[:cntrl:]' | cut -c1-200
+}
 hermes_update_exit_trap() {
   rc=$?
   trap - EXIT
   set +e
   if [ "$rc" != 0 ]; then
-    reason="\${HERMES_FAIL_REASON:-update script exited with status $rc}"
+    reason="\${HERMES_FAIL_REASON:-}"
+    [ -n "$reason" ] || reason="$(hermes_last_log_error)"
+    [ -n "$reason" ] || reason="update script exited with status $rc"
     if [ "$HERMES_UPDATE_ARMED" = 1 ]; then
       hermes_update_rollback "$reason"
     elif [ ! -f "$HERMES_RESULT_FILE" ]; then

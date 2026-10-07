@@ -104,6 +104,22 @@ describe("update-report release fields", () => {
     );
   });
 
+  it("never blames the release the box rolled back TO when the report names no target", async () => {
+    // Seen on a real box: the rollback report carried the digest now running but no
+    // target, and the release the box was safely back on was the one that got halted.
+    const memory = setup();
+    await report(`s=failed&t=manual&r=update+script+exited&i=${D1}&k=rolled_back`);
+    expect(memory.tables.hermes_instances[0]).toMatchObject({ update_health: "rolled_back", agent_image_digest: D1 });
+    expect(memory.tables.hermes_releases.every((r) => r.halted === false)).toBe(true);
+    expect(memory.tables.hermes_release_events[0]).toMatchObject({ kind: "rolled_back", release_id: null });
+  });
+
+  it("still blames the digest a successful update moved the box to", async () => {
+    const memory = setup();
+    await report(`s=succeeded&t=manual&r=completed&i=${D1}&k=updated`);
+    expect(memory.tables.hermes_release_events[0]).toMatchObject({ kind: "updated", release_id: "rel-1" });
+  });
+
   it("surfaces a paused roller on the box without judging any release", async () => {
     const memory = setup();
     await report(`s=failed&t=scheduled&r=auto_roll_paused&k=paused&sv=2`);

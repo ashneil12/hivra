@@ -99,6 +99,19 @@ let mockAgentInsertThrows: unknown;
 const mockHivraAgentEqCalls: Array<[string, unknown]> = [];
 const mockAgentUpdates: Array<Record<string, unknown>> = [];
 let mockSubscriptionRow: Record<string, unknown> | null;
+// The Free-account refusal (hosted compute is paid) has its own tests below and
+// in resource-gate.test.ts. Everything else in this file exercises pool, slot,
+// placement and idempotency behaviour through the small Free-sized fixture, so
+// the refusal is off unless a test turns it on.
+let mockEnforceFreeAccountRefusal = false;
+jest.mock("@/lib/billing/hosted-compute", () => {
+  const actual = jest.requireActual("@/lib/billing/hosted-compute");
+  return {
+    ...actual,
+    isFreeAccountEntitlement: (sub: unknown) =>
+      mockEnforceFreeAccountRefusal && actual.isFreeAccountEntitlement(sub),
+  };
+});
 let mockExistingAgents: Array<Record<string, unknown>>;
 let mockVmIdentityUpdateError: unknown;
 let mockInsertedAgentId = "agent-1";
@@ -422,6 +435,7 @@ describe("POST /api/hivra/agents", () => {
     delete process.env.HIVRA_CLAUDE_CODE_PROXMOX_HOST;
     delete process.env.NEXT_PUBLIC_APP_URL;
     delete process.env.VERCEL_TARGET_ENV;
+    mockEnforceFreeAccountRefusal = false;
     mockSubscriptionRow = {
       plan: "free",
       status: "active",
@@ -2728,6 +2742,24 @@ describe("POST /api/hivra/agents", () => {
     expect(jest.requireActual<typeof import("node:child_process")>("node:child_process")
       .spawnSync("bash", ["-n"], { input: kickoffScript, encoding: "utf8" }).status).toBe(0);
     expect(kickoffScript).toContain('claimed_vmids="$(printf \'%s\\n%s\\n\' "$claimed_vmids" "$HIVRA_FOREIGN_VMIDS"');
+  });
+
+  it("refuses a Hivra-hosted launch for a Free account before any allocation", async () => {
+    mockEnforceFreeAccountRefusal = true;
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      browser: false,
+    }) as never);
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(/paid plan/i);
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
   it("rejects browser automation on the free pool before provisioning", async () => {

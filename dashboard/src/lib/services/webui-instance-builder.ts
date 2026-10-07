@@ -82,6 +82,11 @@ import {
   WEBUI_SESSION_RETENTION_RECORD_ENV,
   WEBUI_SESSION_RETENTION_RECORD_SEED_SH,
 } from "@/lib/services/webui-session-retention";
+import {
+  buildWebUITerminalCwdConfigYaml,
+  buildWebUITerminalCwdRepairCommand,
+  WEBUI_TERMINAL_CWD_BACKUP_INFIX,
+} from "@/lib/services/webui-terminal-cwd";
 
 // Username for the official-dashboard's bundled "basic" password provider. The
 // June-2026 agent-image hardening gates every non-loopback dashboard bind and
@@ -2999,7 +3004,12 @@ ${slidingTuning}`
     : "";
   // Upstream terminal_tool bridges this key over TERMINAL_ENV. Fresh configs
   // and preserved configs on settings apply must agree with the env choice.
-  const terminalBlock = `terminal:\n  backend: "${resolveWebUITerminalBackend(p)}"\n`;
+  // terminal.cwd points the dashboard file tree and terminal at the workspace
+  // volume: upstream reads it before TERMINAL_CWD and its "." default opens the
+  // agent's install directory. Existing boxes get it from the update-mode repair
+  // (buildWebUITerminalCwdRepairCommand). See webui-terminal-cwd.ts.
+  const terminalBackend = resolveWebUITerminalBackend(p);
+  const terminalBlock = `terminal:\n  backend: "${terminalBackend}"\n${buildWebUITerminalCwdConfigYaml(terminalBackend)}`;
   // Keep a web-chat turn running after its tab closes instead of letting the
   // agent's 20 s WS-orphan reap interrupt it, and cap how many parked sessions
   // stay in memory for this computer's RAM tier. Orthogonal to provider config,
@@ -3758,7 +3768,7 @@ ${bankrOwnershipDecision}
 # paths only, never values. The temp file starts as a mode-preserving copy so the
 # rewrite never widens the file's permissions (it also holds the model API key).
 if [ "$bankr_strip_config" = 1 ]; then
-  for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX}; do
+  for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX} /state/config.yaml${WEBUI_TERMINAL_CWD_BACKUP_INFIX}*; do
     [ -f "$bankr_cfg" ] || continue
     grep -q '^bankr:' "$bankr_cfg" || continue
     bankr_cfg_tmp="$bankr_cfg.bankr-strip.$$"
@@ -4134,6 +4144,12 @@ HERMES_TERMINAL_CONFIG_PY
   // cap) are repaired in here. Runs after the agent image pull (it uses that
   // image's Python) and before compose recreates official-dashboard, which reads
   // the reap grace once at start.
+  const terminalCwdRepairCommand = isUpdate
+    ? buildWebUITerminalCwdRepairCommand({
+        containerName: p.containerName,
+        agentImage,
+      })
+    : "";
   const sessionRetentionRepairCommand = isUpdate
     ? buildWebUISessionRetentionRepairCommand({
         containerName: p.containerName,
@@ -4191,7 +4207,7 @@ ${buildWebUIPersistentStatePermissionRepairCommand(p.containerName)}
 
 ${dockerCleanupFunctions}${taggedImageCleanupFunctions}${volumeSafeUpdateCleanupFunctions}${prePullCleanup}${agentPullCmd}
 ${runtimePasswdCommand}
-${terminalConfigSyncCommand}${sessionRetentionRepairCommand}${UPDATE_STACK_TOUCHED_LINE}${agentSourceSeedCommand}
+${terminalConfigSyncCommand}${terminalCwdRepairCommand}${sessionRetentionRepairCommand}${UPDATE_STACK_TOUCHED_LINE}${agentSourceSeedCommand}
 
 # HermesOS rich chat (webui-free surface): the baked bundle's web-shim reads
 # #iframe_token natively (no injection). The Caddyfile webfreeBlock points / and
