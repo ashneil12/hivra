@@ -20,8 +20,12 @@ import {
  *      volume was touched, reseeds it and recreates the stack, then waits for
  *      health. A failure before the live stack was touched only restores the
  *      alias and compose file: it never restarts a stack that was still running.
- *   3. Before the script reports healthy it checks the sessions came through. A
- *      failed check is a failed update and rolls back like any other.
+ *   3. Before the script reports healthy it checks the sessions came through and
+ *      that the chat lane the dashboard itself probes (GET /api/sessions with the
+ *      box's bearer) still answers if it answered before. A container can pass
+ *      its own health check and still not serve chat, which is exactly how the
+ *      dashboard's recovery sweep later flags a box. A failed check is a failed
+ *      update and rolls back like any other.
  *   4. The outcome (kind, running digest, target digest, reason) goes to a
  *      result file the wrapper turns into the report to the dashboard. Only a
  *      change of image counts against a release: a config-only redeploy that
@@ -38,6 +42,8 @@ export interface UpdateSafetyParams {
   repo: string;
   /** The shell command that reseeds the persistent agent source from agentImage. */
   agentSourceSeedCommand: string;
+  /** Host the in-VM edge Caddy answers on (the update script's own FQDN). */
+  fqdn: string;
 }
 
 /** Where the wrapper sends the update script's own output. */
@@ -61,6 +67,7 @@ HERMES_STACK_TOUCHED=0
 HERMES_LKG_READY=0
 HERMES_LKG_DIGEST=""
 HERMES_SESS_BEFORE="unknown"
+HERMES_CHAT_BEFORE=""
 HERMES_FAIL_REASON=""
 # Set by a pinned update just before it pulls the release image, so a release
 # whose image cannot be pulled is the one that gets blamed.
@@ -80,6 +87,15 @@ hermes_write_result() {
     [ -z "$4" ] || printf 'reason=%s\\n' "$(printf '%s' "$4" | tr -d '\\n' | head -c 300)"
   } > "$HERMES_RESULT_FILE" 2>/dev/null || true
 }
+# HTTP status of the chat lane the dashboard probes, through the in-VM edge Caddy.
+# 000 when it cannot be reached or the box has no key.
+hermes_chat_lane_status() {
+  chat_key="$(hermes_env_value API_SERVER_KEY)"
+  [ -n "$chat_key" ] && command -v curl >/dev/null 2>&1 || { echo 000; return 0; }
+  curl -s -k -L -o /dev/null -w '%{http_code}' --max-time 8 \\
+    --resolve ${shq(p.fqdn)}:80:127.0.0.1 --resolve ${shq(p.fqdn)}:443:127.0.0.1 \\
+    -H "Authorization: Bearer $chat_key" http://${p.fqdn}/api/sessions 2>/dev/null || echo 000
+}
 hermes_gateway_is_healthy() {
   [ "$(docker inspect --format='{{if .State.Running}}{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}{{end}}' ${gateway} 2>/dev/null || true)" = "healthy" ]
 }
@@ -98,9 +114,10 @@ hermes_update_snapshot_lkg() {
   if [ -f docker-compose.yml ]; then cp -p docker-compose.yml "$HERMES_LKG_COMPOSE" || return 0; fi
   HERMES_LKG_DIGEST="$(hermes_image_digest "$lkg_iid" ${shq(p.repo)})"
   HERMES_SESS_BEFORE="$(hermes_sessions_snapshot ${gateway})"
+  HERMES_CHAT_BEFORE="$(hermes_chat_lane_status)"
   HERMES_LKG_READY=1
   HERMES_UPDATE_ARMED=1
-  echo "[webui-update] last-known-good saved: $lkg_iid (sessions before: $HERMES_SESS_BEFORE)"
+  echo "[webui-update] last-known-good saved: $lkg_iid (sessions before: $HERMES_SESS_BEFORE, chat lane: $HERMES_CHAT_BEFORE)"
 }
 hermes_update_rollback() {
   set +e
@@ -168,6 +185,25 @@ hermes_update_verify() {
     echo "[webui-update] FATAL: $HERMES_FAIL_REASON" >&2
     return 1
   fi
+  # Only a lane that answered before can be blamed on this update.
+  case "$HERMES_CHAT_BEFORE" in
+    2??)
+      chat_after=000
+      for _ in 1 2 3 4 5 6; do
+        chat_after="$(hermes_chat_lane_status)"
+        case "$chat_after" in 2??) break ;; esac
+        sleep 5
+      done
+      case "$chat_after" in
+        2??) echo "[webui-update] chat lane answers ($chat_after)" ;;
+        *)
+          HERMES_FAIL_REASON="chat lane stopped answering after the update (HTTP $chat_after, was $HERMES_CHAT_BEFORE)"
+          echo "[webui-update] FATAL: $HERMES_FAIL_REASON" >&2
+          return 1
+          ;;
+      esac
+      ;;
+  esac
   return 0
 }
 hermes_update_commit() {

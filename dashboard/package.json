@@ -28,7 +28,6 @@
     "instance:update": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ./scripts/register-server-only-noop.cjs -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/trigger-instance-update.ts",
     "email:audience:setup": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/resend-announcement-audience.ts",
     "email:broadcast:create": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/create-announcement-broadcast.ts",
-    "reserve:invite": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/send-reservation-invites.ts",
     "build": "node scripts/next-build-with-stale-lock-recovery.cjs",
     "prebuild": "node scripts/stage-litepaper.mjs && node scripts/generate-migrations-manifest.cjs && node scripts/fetch-apple-root-certificates.mjs",
     "predev": "node scripts/stage-litepaper.mjs && node scripts/generate-migrations-manifest.cjs && node scripts/fetch-apple-root-certificates.mjs",

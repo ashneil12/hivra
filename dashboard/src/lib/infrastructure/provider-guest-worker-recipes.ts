@@ -335,6 +335,11 @@ const recipes = Object.freeze({
     workerSha256: "24ce646e64b79de0e7b54971f9c3127628d9ec7755919036e6ff11c11db65042",
     workerSize: 45185,
   }),
+  "2026.10.07.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the optional Claude app helper for Ubuntu Desktop computers and moves the Claude Code CLI pin.
+    workerSha256: "b56564d16fcf745ad9ef992f6bef7d5dca2c44a8b91a460789643e5f713b9abc",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

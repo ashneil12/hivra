@@ -393,7 +393,7 @@ export function planCardCta(params: {
   }
 
   if (!current) {
-    if (planKey === "free") return { kind: "start_free", label: "Start free" };
+    if (planKey === "free") return { kind: "start_free", label: "Use the free account" };
     const price = planPriceDisplay(planKey, { path: "card", cadence: params.cadence });
     return { kind: "subscribe", label: `Subscribe · ${price.amount}${price.unit}` };
   }

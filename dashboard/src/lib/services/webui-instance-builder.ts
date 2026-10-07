@@ -3475,6 +3475,7 @@ seed_onboarding_soul() {
         agentImage,
         repo: imageRepoOf(agentImage),
         agentSourceSeedCommand,
+        fqdn: p.fqdn,
       })
     : "";
   const updateVerifyCall = isUpdate ? `${UPDATE_VERIFY_CALL}\n` : "";

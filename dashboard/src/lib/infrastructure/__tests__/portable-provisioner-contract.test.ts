@@ -104,7 +104,7 @@ describe("portable provisioner source contract", () => {
   it("keeps the immediately prior releases compatible after a version bump", () => {
     // Regression: the lists end with the current-version constant, so bumping it
     // to 2026.09.21.1 silently dropped installed 2026.09.15.2 computers.
-    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3"]) {
+    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4"]) {
       expect(isCompatibleProviderVmProvisionerVersion(prior)).toBe(true);
       expect(supportsModelSettingsProvisionerVersion(prior)).toBe(true);
     }
@@ -443,7 +443,7 @@ describe("portable provisioner source contract", () => {
     const installer = source("provision-claude-code-box.sh");
     // New guests and updated guests end up with the same root-owned helper.
     expect(installer).toContain('install -o root -g root -m 0755 "$SRC_DIR/hivra-tg-apply" /usr/local/bin/hivra-tg-apply');
-    expect(updater).toMatch(/TERMINAL_ASSETS=\([^)]*\bhivra-tg-apply\)/);
+    expect(updater).toMatch(/TERMINAL_ASSETS=\([^)]*\bhivra-tg-apply\b[^)]*\)/);
     expect(updater).toContain('tar -czf "$ARCHIVE" -C "$PROVISIONER_DIR/hivra-chat" "${ASSETS[@]}" -C "$PROVISIONER_DIR" "${TERMINAL_ASSETS[@]}"');
     expect(updater).toContain("TG_APPLY=/usr/local/bin/hivra-tg-apply");
     expect(updater).toContain('install -o root -g root -m 0600 "$TG_APPLY" "$BACKUP/hivra-tg-apply"');
@@ -461,6 +461,37 @@ describe("portable provisioner source contract", () => {
     expect(updater).toContain('mv -f -- "$TG_APPLY.next" "$TG_APPLY"');
     // It never rewrites the bot token or the sudoers grant.
     expect(updater).not.toMatch(/tg\.env|>\s*\/etc\/sudoers/);
+  });
+
+  it("installs the optional Claude app helper on Ubuntu Desktop computers only, through both lanes, with rollback and no restart of a running app", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    for (const file of ["hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json"]) {
+      expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
+      expect(updater).toMatch(new RegExp(`TERMINAL_ASSETS=\\([^)]*\\b${file.replace(".", "\\.")}\\b[^)]*\\)`));
+    }
+    // New computers: Ubuntu Desktop on the managed Proxmox lane only, nothing started.
+    expect(installer).toContain('if [ "$AGENT_KIND" = "linux-desktop" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then\n  install -o root -g root -m 0755 "$SRC_DIR/hivra-claude-app.py" /usr/local/bin/hivra-claude-app');
+    expect(installer).toContain('install -o root -g root -m 0644 "$SRC_DIR/claude-desktop-pin.json" /usr/local/share/hivra/claude-desktop-pin.json');
+    expect(installer).not.toMatch(/systemctl (enable|start|restart)[^\n]*hivra-claude-app/);
+    // Running computers: only for the linux-desktop kind, checked before install,
+    // backed up, restored on rollback, and the sudoers rule validated first.
+    expect(updater).toContain('if [ "$KIND_BEFORE" = linux-desktop ]; then\n  install -d -o root -g root -m 0755 "$CLAUDE_APP_PIN_DIR"');
+    expect(updater).toContain("ast.parse(open(sys.argv[1], encoding=\"utf-8\").read())' \"$WORK/hivra-claude-app.py\"");
+    expect(updater).toContain('visudo -cf "$CLAUDE_APP_SUDOERS.next"');
+    const rollback = shellFunction(updater, "rollback", "\n}\n");
+    expect(rollback).toContain('"$CLAUDE_APP_SUDOERS:hivra-claude-app.sudoers:0440"');
+    expect(rollback).toContain('elif [ -f "$BACKUP/$name.absent" ]; then rm -f -- "$target"; fi');
+    const install = updater.indexOf('install -o root -g root -m 0755 "$WORK/hivra-claude-app.py" "$CLAUDE_APP.next"');
+    expect(install).toBeGreaterThan(updater.indexOf('ast.parse(open(sys.argv[1]'));
+    expect(install).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    // An update never restarts or stops the supervisor, so an open Claude session
+    // is never interrupted by Update & restart.
+    expect(updater).not.toMatch(/systemctl [^\n]*(restart|stop|start|enable|disable)[^\n]*hivra-claude-app/);
+    // The grant is exact and identical in both lanes.
+    const grant = "NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove";
+    expect(updater).toContain(grant);
+    expect(installer).toContain(grant);
   });
 
   it("gives Agent Zero a stop grace that fits inside every host shutdown budget", () => {
@@ -845,7 +876,7 @@ wait_for_browser_ready '${envFile}' 9333
       "4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7",
       "2.98.0",
       "f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6",
-      "@anthropic-ai/claude-code@2.1.246",
+      "@anthropic-ai/claude-code@2.1.292",
       "@openai/codex@0.149.1",
       "openclaw@2026.6.10",
       "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",
