@@ -46,7 +46,7 @@ describe("buildLifecycleEmail", () => {
   });
 
   it("signs the founder emails '— Ash / Founder, Hivra'", () => {
-    for (const key of ["day1_idle", "day1_active", "day3_usecase", "day7_offer", "trial_day5"] as const) {
+    for (const key of ["day1_idle", "day1_active", "day3_usecase", "day7_offer"] as const) {
       const { text } = buildLifecycleEmail(key, PARAMS);
       expect(text).toContain("— Ash");
       expect(text).toContain("Founder, Hivra");
@@ -86,22 +86,14 @@ describe("buildLifecycleEmail", () => {
     expect(buildLifecycleEmail("stalled_5d", PARAMS).ctaUrl).toBe(
       "https://hivra.cloud/dashboard/instances/inst-123"
     );
-    expect(buildLifecycleEmail("trial_day5", PARAMS).ctaUrl).toBe(
-      "https://hivra.cloud/dashboard/billing"
-    );
     // No instance to link to → plain dashboard.
     expect(buildLifecycleEmail("day3_usecase", { instanceId: null }).ctaUrl).toBe(
       "https://hivra.cloud/dashboard"
     );
   });
 
-  it("trial day-5 says what happens next, states the price, and offers the cancel path", () => {
-    const { subject, text } = buildLifecycleEmail("trial_day5", PARAMS);
-    expect(subject).toBe("your Pro trial ends in two days");
-    expect(text).toContain("five days into the seven-day Pro trial");
-    expect(text).toContain("$9.99/mo");
-    expect(text).toMatch(/cancel from the billing page/i);
-    expect(text).toMatch(/won't be charged/i);
+  it("has no trial email: trials do not exist", () => {
+    expect(LIFECYCLE_EMAIL_KEYS).not.toContain("trial_day5");
   });
 
   it("day-7 offer states the real prices and what changes", () => {

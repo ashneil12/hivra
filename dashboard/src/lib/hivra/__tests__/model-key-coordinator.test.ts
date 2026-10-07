@@ -4,7 +4,6 @@ import { modelKeyBinding, type ModelKeyAgent, type ModelKeyOperation, type Model
 import { expectedGuestLlmReceipt, type GuestLlmApplication, type GuestLlmDelivery } from "../guest-llm-transport";
 import { ensureManagedVeniceWalletAccount } from "@/lib/billing/managed-venice-wallets";
 import { generateManagedVenicePlaintextKey, hashManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
-import { grantManagedVeniceStarterCredit, isManagedVeniceStarterCreditEnabled } from "@/lib/venice/managed-venice-starter-credit";
 import { log } from "@/lib/logger";
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 
@@ -12,7 +11,6 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 jest.mock("@/lib/crypto", () => ({ encryptSecret: jest.fn(), decryptSecret: jest.fn() }));
 jest.mock("@/lib/billing/managed-venice-wallets", () => ({ ensureManagedVeniceWalletAccount: jest.fn() }));
 jest.mock("@/lib/venice/proxy-keys", () => ({ generateManagedVenicePlaintextKey: jest.fn(), hashManagedVeniceProxyKey: jest.fn() }));
-jest.mock("@/lib/venice/managed-venice-starter-credit", () => ({ grantManagedVeniceStarterCredit: jest.fn(), isManagedVeniceStarterCreditEnabled: jest.fn() }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: jest.fn() }));
 
@@ -281,17 +279,5 @@ it.each(["pepper", "encryption"])("fails before wallet/credit effects when %s is
   f.encrypt.mockImplementation(() => { throw new Error("private configuration"); });
   await expect(c.start(owner, f.a.id, f.op, managed)).rejects.toMatchObject({ code: "configuration_unavailable" });
   expect(ensureManagedVeniceWalletAccount).not.toHaveBeenCalled();
-  expect(grantManagedVeniceStarterCredit).not.toHaveBeenCalled(); expect(f.store.admit).not.toHaveBeenCalled();
-});
-
-it("preserves the existing best-effort starter policy without leaking raw errors", async () => {
-  const f = fixture(), c = createModelKeyCoordinator({ ...f.deps, prepareManaged: undefined });
-  jest.mocked(generateManagedVenicePlaintextKey).mockReturnValue(secret);
-  jest.mocked(hashManagedVeniceProxyKey).mockReturnValue("b".repeat(64));
-  jest.mocked(ensureManagedVeniceWalletAccount).mockResolvedValue({ id: randomUUID() } as never);
-  jest.mocked(isManagedVeniceStarterCreditEnabled).mockReturnValue(true);
-  jest.mocked(grantManagedVeniceStarterCredit).mockRejectedValue(new Error("PRIVATE " + secret));
-  await expect(c.start(owner, f.a.id, f.op, managed)).resolves.toMatchObject({ status: "applied" });
-  expect(grantManagedVeniceStarterCredit).toHaveBeenCalledWith({ userId: owner });
-  expect(JSON.stringify(jest.mocked(log.warn).mock.calls)).not.toContain(secret);
+  expect(f.store.admit).not.toHaveBeenCalled();
 });

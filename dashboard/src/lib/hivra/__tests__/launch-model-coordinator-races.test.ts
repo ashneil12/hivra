@@ -8,7 +8,6 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 jest.mock("@/lib/crypto", () => ({ encryptSecret: jest.fn(), decryptSecret: jest.fn() }));
 jest.mock("@/lib/billing/managed-venice-wallets", () => ({ ensureManagedVeniceWalletAccount: jest.fn() }));
 jest.mock("@/lib/venice/proxy-keys", () => ({ generateManagedVenicePlaintextKey: jest.fn(), hashManagedVeniceProxyKey: jest.fn() }));
-jest.mock("@/lib/venice/managed-venice-starter-credit", () => ({ grantManagedVeniceStarterCredit: jest.fn(), isManagedVeniceStarterCreditEnabled: jest.fn() }));
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: jest.fn() }));
 
 /** Both coordinators and receipt validation are real. Fake stores and clocks
