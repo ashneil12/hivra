@@ -88,7 +88,7 @@ describe('ReleasesConsole', () => {
     expect(within(newest).getByText(/2 boxes run this release/)).toBeInTheDocument();
     expect(within(newest).getByText(/1 succeeded, 0 failed/)).toBeInTheDocument();
     const current = within(newest).getByRole('listitem', { current: 'step' });
-    expect(current).toHaveTextContent('Canary');
+    expect(current).toHaveTextContent('Early access');
     expect(within(newest).getByRole('button', { name: 'Promote to 1 box' })).toBeInTheDocument();
 
     const old = screen.getByRole('article', { name: 'Release 2026.10.01.1' });
@@ -259,7 +259,7 @@ describe('ReleasesConsole', () => {
     render(<ReleasesConsole />);
     await screen.findByRole('article', { name: 'Release 2026.10.07.1' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move to canary: alpha (11111111)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move to early access: alpha (11111111)' }));
     await waitFor(() => expect(postCalls()).toHaveLength(1));
     expect(postCalls()[0][0]).toBe(`/api/ops/hermes-releases/boxes/${BOX_1}`);
     expect(JSON.parse(postCalls()[0][1].body)).toEqual({ channel: 'canary' });

@@ -46,7 +46,7 @@ interface ReleasesData {
 /** The ladder in the order a release climbs it, with the label shown for each rung. */
 const LADDER: Array<{ stage: ReleaseStage; label: string }> = [
   { stage: 'registered', label: 'Registered' },
-  { stage: 'canary', label: 'Canary' },
+  { stage: 'canary', label: 'Early access' },
   { stage: 'pilot', label: '1 box' },
   { stage: 'ten_percent', label: '10%' },
   { stage: 'full', label: '100%' },
@@ -270,7 +270,7 @@ function ReleaseCard({
               disabled={anyBusy}
               style={control}
             >
-              <option value="">Choose the box to try it on</option>
+              <option value="">Choose the computer to try it on</option>
               {boxes.map((box) => (
                 <option key={box.id} value={box.id}>
                   {boxLabel(box)}
@@ -613,12 +613,12 @@ export function ReleasesConsole() {
             )}
           </section>
 
-          <section aria-label="Canary channel" style={{ display: 'grid', gap: 12 }}>
+          <section aria-label="Early access channel" style={{ display: 'grid', gap: 12 }}>
             <h2 className="serif" style={{ margin: 0, fontSize: 24, fontWeight: 400, color: 'var(--ink-black)' }}>
-              Canary channel
+              Early access channel
             </h2>
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 14 }}>
-              Boxes on the canary channel receive each release at the canary stage, before it is offered to anyone else.
+              Computers on the early access channel receive each release at the early access stage, before it is offered to anyone else.
             </p>
             {data.boxes.length === 0 ? (
               <p style={{ ...card, margin: 0, color: 'var(--text-secondary)' }}>No running boxes.</p>
@@ -632,7 +632,7 @@ export function ReleasesConsole() {
                           {box.name || 'Unnamed box'} ({shortId(box.id)})
                         </strong>
                         <p className="mono" style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-                          {box.version ?? 'version unknown'} · {box.channel === 'canary' ? 'Canary channel' : 'Stable channel'}
+                          {box.version ?? 'version unknown'} · {box.channel === 'canary' ? 'Early access channel' : 'Stable channel'}
                         </p>
                       </div>
                       <button
@@ -640,10 +640,10 @@ export function ReleasesConsole() {
                         className="action-button"
                         style={buttonStyle(anyBusy)}
                         disabled={anyBusy}
-                        aria-label={`${box.channel === 'canary' ? 'Move to stable' : 'Move to canary'}: ${box.name || 'Unnamed box'} (${shortId(box.id)})`}
+                        aria-label={`${box.channel === 'canary' ? 'Move to stable' : 'Move to early access'}: ${box.name || 'Unnamed box'} (${shortId(box.id)})`}
                         onClick={() => void toggleChannel(box)}
                       >
-                        {busy === `box:${box.id}` ? 'Moving…' : box.channel === 'canary' ? 'Move to stable' : 'Move to canary'}
+                        {busy === `box:${box.id}` ? 'Moving…' : box.channel === 'canary' ? 'Move to stable' : 'Move to early access'}
                       </button>
                     </div>
                     {errors[box.id] && <p role="alert" style={errorStyle}>{errors[box.id]}</p>}
