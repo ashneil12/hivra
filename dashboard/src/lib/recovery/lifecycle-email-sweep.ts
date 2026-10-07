@@ -9,22 +9,11 @@
  *   day1_active  first instance created 24–48h ago
  *   day3_usecase signup 72–96h ago
  *   day7_offer   signup 168–192h ago (day 7–8), free plan only
- *   trial_day5   paid plan, upgraded_at 120–144h ago, trial-experiment
- *                'trial' bucket (only while TRIAL_EXPERIMENT_ENABLED)
  *   stalled_5d   a live instance whose last_activity_at is 5–21 days old
  *   activity_digest  weekly "what your agent did" recap for users with a
  *                webui-backed instance active in the last 7 days (lowest
  *                priority; ledger key stamped with the ISO year-week so it
  *                fires at most once per user per ISO week)
- *
- * trial_day5 honesty note: Stripe's 'trialing' status is NOT queryable from
- * hermes_subscriptions — the webhook maps trialing → 'active' on purpose.
- * The cohort is therefore a proxy: upgraded_at (stamped at trial start,
- * since trialing counts as a paid activation) + the deterministic
- * bucketForUser recompute. It cannot see users who cancelled mid-trial,
- * and a trial-bucket user who paid WITHOUT a trial (checkout before the
- * experiment was enabled, day-5 window after) would be mailed incorrectly
- * — acceptable for a default-off experiment, revisit if trials launch.
  *
  * Guarantees:
  *   - At most one lifecycle email per user per run (priority = the order
@@ -46,10 +35,6 @@
 import "server-only";
 import { chunk } from "@/lib/array-utils";
 
-import {
-  bucketForUser,
-  isTrialExperimentEnabled,
-} from "@/lib/billing/trial-experiment";
 import { type InstanceActivityDigest } from "@/lib/command-center/activity";
 import { isPaidPlan } from "@/lib/conversion-funnel";
 import {
@@ -84,7 +69,7 @@ export interface LifecycleSubscriptionRow {
   user_id: string;
   plan: string | null;
   created_at: string;
-  /** First free->paid transition; trial starts stamp this too. */
+  /** First free->paid transition. */
   upgraded_at?: string | null;
 }
 
@@ -119,7 +104,6 @@ export interface LifecycleSweepSummary {
   day3_usecase: number;
   day7_offer: number;
   stalled_5d: number;
-  trial_day5: number;
   activity_digest: number;
   /** Digest candidates skipped because the box was empty/unreachable. */
   activity_digest_skipped: number;
@@ -135,7 +119,7 @@ export interface LifecycleSweepSummary {
 /**
  * The lifecycle cohorts that ALSO fan out a mobile push beside the email
  * (iOS Phase 2 — the "task-finished / needs-attention" lane). Deliberately
- * NOT every cohort: day1/day3/day7/trial are marketing re-engagement mails and
+ * NOT every cohort: day1/day3/day7 are marketing re-engagement mails and
  * pushing them would burn the notification channel's trust; the two below are
  * the agent-status moments a phone user actually wants interrupted for.
  * The push shares the email's send-once guards (lifecycle_email_sends ledger +
@@ -311,14 +295,8 @@ export function selectDueLifecycleEmails(input: {
   subscription: LifecycleSubscriptionRow | null;
   instances: LifecycleInstanceRow[];
   now: Date;
-  /**
-   * Whether the 7-day Pro trial experiment is on (callers pass
-   * isTrialExperimentEnabled()). Default false so the trial_day5 cohort is
-   * inert everywhere until the experiment launches.
-   */
-  trialExperimentEnabled?: boolean;
 }): DueLifecycleEmail[] {
-  const { subscription, instances, now, trialExperimentEnabled = false } = input;
+  const { subscription, instances, now } = input;
   const due: DueLifecycleEmail[] = [];
 
   const first = earliestInstance(instances);
@@ -345,19 +323,6 @@ export function selectDueLifecycleEmails(input: {
     !isPaidPlan(subscription.plan)
   ) {
     due.push({ key: "day7_offer", instance: null });
-  }
-
-  // trial_day5: day 5–6 of the 7-day trial, proxied by upgraded_at (see the
-  // honesty note in the module docstring). Placed ahead of stalled_5d so a
-  // trialing user gets the trial email over the generic revival nudge.
-  if (
-    trialExperimentEnabled &&
-    subscription?.upgraded_at &&
-    isPaidPlan(subscription.plan) &&
-    withinHoursAgo(subscription.upgraded_at, now, 120, 144) &&
-    bucketForUser(subscription.user_id) === "trial"
-  ) {
-    due.push({ key: "trial_day5", instance: first });
   }
 
   const stalled = stalledInstance(instances, now);
@@ -500,7 +465,6 @@ export async function runLifecycleEmailSweep(opts?: {
     day3_usecase: 0,
     day7_offer: 0,
     stalled_5d: 0,
-    trial_day5: 0,
     activity_digest: 0,
     activity_digest_skipped: 0,
     skipped_already_sent: 0,
@@ -530,25 +494,6 @@ export async function runLifecycleEmailSweep(opts?: {
     .limit(QUERY_LIMIT);
   throwOnError("subscription window query failed", subErr);
   const subs = (subRows ?? []) as LifecycleSubscriptionRow[];
-
-  // 1b. Trial day-5 cohort (only while the trial experiment is on): paid
-  //     rows whose upgraded_at — the trial-start proxy, see the module
-  //     docstring — landed 120–144h ago. Queried separately because these
-  //     users may have signed up long before the created_at window above.
-  const trialExperimentEnabled = isTrialExperimentEnabled();
-  if (trialExperimentEnabled) {
-    const { data: trialRows, error: trialErr } = await db
-      .from("hermes_subscriptions")
-      .select("user_id, plan, created_at, upgraded_at")
-      .gte("upgraded_at", iso(144 * HOUR_MS))
-      .lte("upgraded_at", iso(120 * HOUR_MS))
-      .neq("plan", "free")
-      .limit(QUERY_LIMIT);
-    throwOnError("trial-day5 window query failed", trialErr);
-    for (const row of (trialRows ?? []) as LifecycleSubscriptionRow[]) {
-      if (!subs.some((s) => s.user_id === row.user_id)) subs.push(row);
-    }
-  }
 
   // 2. Instances created 24–48h ago (day1_active candidates — verified as
   //    the user's FIRST instance later, against the full instance fetch).
@@ -645,7 +590,6 @@ export async function runLifecycleEmailSweep(opts?: {
       subscription: subByUser.get(userId) ?? null,
       instances: instancesByUser.get(userId) ?? [],
       now,
-      trialExperimentEnabled,
     });
     const unsent = due.filter((d) => !alreadySent.has(`${userId}:${d.key}`));
     if (due.length > 0 && unsent.length === 0) {
