@@ -60,7 +60,9 @@ import { ONBOARDING_RITUAL } from "@/lib/onboarding-ritual";
 import {
   isOperatorosAgentImage,
   OPERATOROS_AUTONOMY_SOUL_IMAGE_PATH,
+  resolveAgentImageForStoredConfig,
 } from "@/lib/operatoros-flavor";
+import { imageRepoOf } from "@/lib/hermes-releases/policy";
 import { FACTORY_OR_RITUAL_SOUL_HEAD_PATTERN } from "@/lib/webui/soul-guard";
 import { createHash } from "crypto";
 import {
@@ -426,6 +428,26 @@ function resolveWebUIAgentImage(
   }
 
   return resolved;
+}
+
+/**
+ * The image repository (no tag or digest) an UPDATE of this stored instance
+ * config runs: the stored pinned image, else the deployment's update image.
+ * Null when the row names a runtime that has no resolvable image (a legacy
+ * Operator OS row without its pinned image), which no release applies to.
+ * The release registry matches releases to boxes by this repository.
+ */
+export function resolveInstanceAgentImageRepo(
+  config: Record<string, unknown> | null | undefined
+): string | null {
+  let stored: string | undefined;
+  try {
+    stored = resolveAgentImageForStoredConfig(config);
+  } catch {
+    return null;
+  }
+  const image = resolveWebUIAgentImage({ agentImage: stored } as WebUIDeployParams, "update");
+  return imageRepoOf(image);
 }
 
 function shellSingleQuote(value: string): string {
