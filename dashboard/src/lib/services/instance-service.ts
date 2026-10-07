@@ -10,13 +10,6 @@ import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 
 // SCRIPTURE_ANCHOR: instance-builder | Psalm 127:1 | Verse: Unless Yahweh builds the house, they labor in vain who build it.
 import { supabaseAdmin } from "@/lib/supabase";
-import {
-  countActiveFreeInstances,
-  enqueueWaitlist,
-  isAutoInviteEnabled,
-  markReservationOnboardedByEmail,
-  maxFreeInstances,
-} from "@/lib/reservations/promote-next";
 import { encryptApiKey, decryptApiKey } from "@/lib/crypto";
 import {
   CODEX_DEFAULT_MODEL,
@@ -165,44 +158,6 @@ function captureBoxCreatedOnce(args: {
     },
   });
   return true;
-}
-
-function readClerkStringField(value: unknown, key: string): string | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  const candidate = record[key];
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
-}
-
-function resolveClerkUserEmail(user: unknown): string | null {
-  if (!user || typeof user !== "object") return null;
-  const record = user as Record<string, unknown>;
-  const primaryEmailAddress = record.primaryEmailAddress;
-  const directPrimary = readClerkStringField(primaryEmailAddress, "emailAddress");
-  if (directPrimary) return directPrimary;
-
-  const primaryEmailAddressId = readClerkStringField(record, "primaryEmailAddressId");
-  const emailAddresses = Array.isArray(record.emailAddresses)
-    ? record.emailAddresses
-    : [];
-
-  if (primaryEmailAddressId) {
-    for (const emailAddress of emailAddresses) {
-      if (
-        readClerkStringField(emailAddress, "id") === primaryEmailAddressId &&
-        readClerkStringField(emailAddress, "emailAddress")
-      ) {
-        return readClerkStringField(emailAddress, "emailAddress");
-      }
-    }
-  }
-
-  for (const emailAddress of emailAddresses) {
-    const email = readClerkStringField(emailAddress, "emailAddress");
-    if (email) return email;
-  }
-
-  return null;
 }
 
 function buildSignedAgentHeaders(params: {
@@ -2403,67 +2358,6 @@ export class InstanceService {
     // before any backend call below) so the rejection is the cheapest
     // possible failure path. Paid tiers fall through unchanged.
     if (isSingleInstanceBaseTierKey(sub.plan)) {
-      // ── Global free-tier cap ──────────────────────────────────────────────
-      // Bound total active free instances fleet-wide. When full, turn the
-      // signup away to the waitlist (the existing /api/reserve flow) instead of
-      // provisioning, so free demand is capped at MAX_FREE_INSTANCES instead of
-      // unbounded. Unset/0 disables the cap (default — dark-shippable).
-      const maxFree = maxFreeInstances();
-      if (maxFree > 0 && supabaseAdmin) {
-        let activeFree: number;
-        try {
-          activeFree = await countActiveFreeInstances();
-        } catch (err) {
-          log.error("free-capacity check failed", err instanceof Error ? err : new Error(String(err)), {
-            source: LOG_SOURCE,
-            userId,
-            failureType: "free_capacity_check_failed",
-          });
-          return {
-            success: false,
-            status: 503,
-            message: "Couldn't verify free capacity right now — please try again in a moment.",
-            error: { code: "FREE_CAPACITY_CHECK_FAILED" },
-          };
-        }
-        if (activeFree >= maxFree) {
-          // Capture the lead: enqueue them on the waitlist (by email) so a
-          // capped signup is never lost. Fetch the email on this rare capped
-          // path only; failure still turns them away (just without the row).
-          let waitlistPosition: number | null = null;
-          try {
-            const clerk = await clerkClient();
-            const cappedUser = await clerk.users.getUser(userId);
-            const cappedEmail = resolveClerkUserEmail(cappedUser);
-            if (cappedEmail) {
-              const queued = await enqueueWaitlist(cappedEmail, userId);
-              waitlistPosition = queued.position;
-            }
-          } catch (capErr) {
-            log.warn("waitlist auto-capture failed (still turning signup away)", {
-              source: LOG_SOURCE,
-              userId,
-              error: capErr instanceof Error ? capErr.message : String(capErr),
-            });
-          }
-          log.info("free capacity full — captured signup to waitlist", {
-            source: LOG_SOURCE,
-            userId,
-            activeFree,
-            maxFree,
-            waitlistPosition,
-          });
-          return {
-            success: false,
-            status: 202,
-            message:
-              waitlistPosition != null
-                ? `Free capacity is full right now — you're #${waitlistPosition} on the waitlist. We'll email you the moment a spot opens.`
-                : "Free capacity is full right now — join the waitlist and we'll email you the moment a spot opens.",
-            error: { code: "FREE_CAPACITY_FULL", waitlistPosition },
-          };
-        }
-      }
       try {
         await assertFreeInstanceCreatable(userId, { supabase: supabaseAdmin });
       } catch (err) {
@@ -3882,22 +3776,6 @@ export class InstanceService {
         error: err instanceof Error ? err.message : String(err),
       });
     });
-
-    // Best-effort: if this free deploy claims a waitlist invite, mark the
-    // matching reservation onboarded so its held slot stops counting as an
-    // outstanding invite. Reuses the clerkUser fetched above; floats so it never
-    // blocks the deploy response. No-op when the waitlist feature is off.
-    if (isAutoInviteEnabled() && isSingleInstanceBaseTierKey(sub.plan)) {
-      const claimedEmail = resolveClerkUserEmail(clerkUser);
-      if (claimedEmail) {
-        void markReservationOnboardedByEmail(claimedEmail).catch((err) => {
-          log.warn("waitlist onboard mark failed (non-fatal)", {
-            source: LOG_SOURCE,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }
-    }
 
     return {
       success: true,

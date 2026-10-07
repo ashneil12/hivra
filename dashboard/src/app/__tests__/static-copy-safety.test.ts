@@ -24,7 +24,6 @@ describe("Static copy safety", () => {
       path.join(__dirname, "..", "..", "components", "landing", "home", "Hero.tsx"),
       path.join(__dirname, "..", "..", "components", "landing", "home", "Closing.tsx"),
       path.join(__dirname, "..", "..", "components", "layout", "LandingHeader.tsx"),
-      path.join(__dirname, "..", "..", "components", "reserve", "ReserveForm.tsx"),
     ];
 
     for (const file of files) {
