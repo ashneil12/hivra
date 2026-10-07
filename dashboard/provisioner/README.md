@@ -388,6 +388,19 @@ update them yet.
 - **Telegram connect.** `hivra-tg-apply apply` writes `/etc/bux/tg.env` and then
   enables and restarts `bux-tg`, so a new bot token or pairing link takes
   effect even when the bot is already running.
+- **Claude app on Ubuntu Desktop computers (optional).** `hivra-claude-app`
+  (root, `/usr/local/bin`) adds, updates, switches and removes Anthropic's own
+  Linux desktop app inside the contained desktop, only when the owner asks. It
+  downloads the single package named in `claude-desktop-pin.json` from
+  `downloads.claude.ai`, verifies its size and SHA-256, and unpacks it as the
+  desktop's unprivileged user; the desktop container gains no mount, port or
+  privilege. `hivra-claude-app.service` (inert until the app is added) restores the
+  app's profile from a root-only snapshot, launches it, keeps it running and
+  applies the saved view: `app` is the app full screen, `desktop` is the app in a
+  window on the desktop. The gateway reaches the helper through an exact-argument
+  sudoers rule for `status`, `install`, `mode app`, `mode desktop` and `remove`
+  (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
+  helper never handles a Claude credential. Managed Proxmox computers only.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops
