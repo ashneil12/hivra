@@ -144,7 +144,7 @@ async function main() {
     assert.deepEqual(await admissionDefinitions(), admittedNext, "re-applying the 2026.09.24.4 admission changes nothing");
     // 2026.10.07.1 anchors on the 2026.09.24.4 entry, which appears exactly once
     // in each function after the releases above; idempotent too.
-    const LATEST_ADMISSION = migration("20261007120000_provider_release_admission_2026_10_07_1.sql");
+    const LATEST_ADMISSION = migration("20261007130000_provider_release_admission_2026_10_07_1.sql");
     await db.exec(LATEST_ADMISSION);
     const admittedLatest = await admissionDefinitions();
     admittedLatest.forEach((definition, index) => {

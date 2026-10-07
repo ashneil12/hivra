@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """Root helper for the optional Claude app on a Hivra Ubuntu Desktop computer.
 
 The Claude desktop app for Linux is Anthropic's proprietary software. Hivra does

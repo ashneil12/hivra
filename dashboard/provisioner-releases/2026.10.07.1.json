@@ -154,8 +154,8 @@
     },
     {
       "path": "hivra-claude-app.py",
-      "bytes": 21947,
-      "sha256": "16bd43aa29780324eba2a3e8e7a1b1efd283bb7095ba089f8ef51ab501f82d20"
+      "bytes": 21946,
+      "sha256": "96fc8814bc7201d3652d64265bd56f9a8a888855f0f3ce555c59f2008b4dd576"
     },
     {
       "path": "hivra-claude-app.service",
