@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   LEGACY_STRIPE_PRICE_IDS,
   PLANS,
-  TRIAL_GRACE_HOURS,
+  PAYMENT_GRACE_HOURS,
   type PlanKey,
 } from "@/lib/subscription";
 import { getStripe } from "@/lib/stripe";
@@ -1376,7 +1376,7 @@ export class StripeWebhookService {
     const { shutdownServer } = await import("@/lib/hetzner/client");
 
     const scheduledDeletionAt = new Date(
-      Date.now() + TRIAL_GRACE_HOURS * 60 * 60 * 1000
+      Date.now() + PAYMENT_GRACE_HOURS * 60 * 60 * 1000
     ).toISOString();
     const updatedAt = new Date().toISOString();
 
@@ -1908,7 +1908,7 @@ export class StripeWebhookService {
 
     const gracePeriodEnd = alreadyAnchored
       ? existingSub.grace_period_ends_at!
-      : new Date(Date.now() + TRIAL_GRACE_HOURS * 60 * 60 * 1000).toISOString();
+      : new Date(Date.now() + PAYMENT_GRACE_HOURS * 60 * 60 * 1000).toISOString();
 
     await supabaseAdmin
       .from("hermes_subscriptions")

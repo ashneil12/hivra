@@ -7,10 +7,6 @@ import {
   getManagedVeniceWalletSummary,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
-import {
-  grantManagedVeniceStarterCredit,
-  isManagedVeniceStarterCreditEnabled,
-} from "@/lib/venice/managed-venice-starter-credit";
 
 export type ManagedVeniceProxyKeyStatus = "active" | "revoked" | "paused";
 
@@ -164,7 +160,7 @@ export function generateManagedVenicePlaintextKey(
  * `WelcomeFlow` already applies exactly this one-directional rule client-side
  * (it flips the picker hermesos → card when hermesos is empty and card is
  * funded); this is the same rule, evaluated server-side at mint time where it
- * can actually see a starter credit granted moments earlier in this same call.
+ * can see balances funded by another surface (card top-up) after the page loaded.
  *
  * WHY "PROVABLY EMPTY" AND NOT "INSUFFICIENT". We switch only when the
  * requested wallet has zero available balance — never on a merely-small one.
@@ -225,8 +221,8 @@ export async function createManagedVeniceProxyKey(
      * Deploy paths only. When the caller's `defaultWalletType` is an implicit
      * default (the deploy card ships 'hermesos' unless the user's card wallet
      * was ALREADY funded at page load) rather than a deliberate pick, let the
-     * mint re-resolve it against real balances — including a starter credit
-     * granted microseconds ago, below. See `resolveFundedWalletType`.
+     * mint re-resolve it against real balances.
+     * See `resolveFundedWalletType`.
      *
      * Defaults to false: explicit key-minting surfaces (the billing UI's key
      * form, managed-WebUI enable, the per-agent LLM re-enable) carry a real
@@ -245,35 +241,6 @@ export async function createManagedVeniceProxyKey(
   const keyHash = hashManagedVeniceProxyKey(plaintextKey, params.env);
   const keyPrefix = plaintextKey.slice(0, 14);
   const requestedWalletType = params.defaultWalletType === "card" ? "card" : "hermesos";
-
-  // First managed deploy ⇒ try the one-time abuse-gated starter credit. The
-  // grant is flag-gated OFF by default, deduped one-per-user, and best-effort:
-  // it must never block (or fail) a deploy, so a granted result is informative
-  // only and any error is swallowed by the grant itself. Skip the call entirely
-  // when the flag is off to avoid a needless DB round-trip on the hot path.
-  //
-  // ORDERING IS LOAD-BEARING (2026-07-08): the grant lands in the CARD wallet
-  // and MUST settle before `resolveFundedWalletType` reads balances below —
-  // otherwise a brand-new free user's key binds to the empty hermesos wallet
-  // and their first message 402s against a credit they were just given. It also
-  // means a later mint failure can leave a granted-but-unused credit; that is
-  // fine and deliberate (the grant is the user's, is deduped per-user, and a
-  // retried deploy will mint against it rather than double-grant).
-  if (isManagedVeniceStarterCreditEnabled()) {
-    try {
-      await grantManagedVeniceStarterCredit({ userId: params.userId }, client);
-    } catch (starterError) {
-      // grantManagedVeniceStarterCredit is already no-throw, but belt-and-braces:
-      // a starter-credit failure can never break a managed deploy.
-      log.warn("managed Venice starter credit threw during proxy-key create", {
-        source: "managed-venice-proxy-keys",
-        failureType: "managed_venice_starter_credit_threw",
-        userId: params.userId,
-        errorMessage:
-          starterError instanceof Error ? starterError.message : String(starterError),
-      });
-    }
-  }
 
   // The wallet this key bills, for its whole life, across every managed-Venice
   // endpoint (chat, embeddings, images, audio, video, augment, anthropic). It
