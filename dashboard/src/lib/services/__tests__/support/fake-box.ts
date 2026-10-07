@@ -305,6 +305,8 @@ export class FakeBox {
       [
         `printf '%s\\n' "$*" >> "${this.curlLog}"`,
         `case "$*" in`,
+        // The chat-lane probe asks for the HTTP status; tests set it by writing chat.code.
+        `  *http_code*) cat "${this.root}/chat.code" 2>/dev/null || printf 200 ;;`,
         `  */release*) ${opts.releaseDown ? "exit 22" : `printf '%s' '${(opts.releaseReply ?? "action=hold\\nreason=no_release\\n").replace(/'/g, "'\\''")}'`} ;;`,
         `esac`,
         `exit 0`,

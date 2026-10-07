@@ -71,6 +71,7 @@ ${buildUpdateSafetyPrelude({
   agentImage: ALIAS,
   repo: REPO,
   agentSourceSeedCommand: seed,
+  fqdn: "localhost",
 })}
 ${steps}
 `;
@@ -174,6 +175,37 @@ describe("update last-known-good and rollback", () => {
     expect(result()).toContain("kind=rolled_back");
     expect(result()).toContain("sessions did not survive");
     expect(result()).toContain(`target=${D_NEW}`);
+  });
+
+  it("rolls back an update after which the chat lane stopped answering, when it answered before", () => {
+    const box = make();
+    const run = box.runScript(
+      updateScript(
+        box,
+        `${pinned(`${REPO}@${D_NEW}`)}${touchAndRecreate}echo 404 > "${join(box.root, "chat.code")}"\n${UPDATE_VERIFY_CALL}\necho done`
+      )
+    );
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("chat lane stopped answering after the update (HTTP 404, was 200)");
+    expect(box.state.containers[`agent-${INST}-gateway`].image).toBe(ID_OLD);
+    expect(result()).toContain("kind=rolled_back");
+    expect(result()).toContain(`target=${D_NEW}`);
+    expect(result()).toContain("chat lane stopped answering");
+  });
+
+  it("does not blame an update for a chat lane that was not answering before it", () => {
+    const box = make();
+    writeFileSync(join(box.root, "chat.code"), "404");
+    const run = box.runScript(updateScript(box, `${pinned(`${REPO}@${D_NEW}`)}${touchAndRecreate}${UPDATE_VERIFY_CALL}\necho done`));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("chat lane: 404");
+  });
+
+  it("keeps an update whose chat lane still answers", () => {
+    const box = make();
+    const run = box.runScript(updateScript(box, `${pinned(`${REPO}@${D_NEW}`)}${touchAndRecreate}${UPDATE_VERIFY_CALL}\necho done`));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("chat lane answers (200)");
   });
 
   it("keeps an update whose sessions all came through", () => {
