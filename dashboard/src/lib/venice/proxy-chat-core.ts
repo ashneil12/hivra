@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { responsesEstimateRequest, VENICE_RESPONSES_ENDPOINT, VENICE_RESPONSES_URL } from "./responses-protocol";
+import { VENICE_RESPONSES_ENDPOINT, VENICE_RESPONSES_URL } from "./responses-protocol";
 
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import {
+  ManagedVeniceBalanceHeldError,
   ManagedVeniceInsufficientBalanceError,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
@@ -13,9 +14,17 @@ import {
   checkVeniceChatPricingCatalogStaleness,
 } from "@/lib/venice/pricing";
 import {
+  InvalidVeniceChatRequestError,
   estimateChatCompletionCost,
   type VenicePricingMap,
 } from "@/lib/venice/cost-estimator";
+import {
+  managedVeniceBalanceHeldMessage,
+  managedVeniceChatEstimateBody,
+  reserveManagedVeniceChatWithinBalance,
+  unbilledVeniceChatOption,
+  type ManagedVeniceOutputCapPatch,
+} from "@/lib/venice/chat-output-budget";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
@@ -26,7 +35,6 @@ import {
   loadManagedVeniceReservationOwner,
   managedVeniceUsageCostMicroUsd,
   markManagedVeniceReconciliationRequired,
-  reserveManagedVeniceChatRequest,
 } from "@/lib/venice/proxy-settlement";
 
 // SCRIPTURE_ANCHOR: venice-stream | Proverbs 18:4 | Verse: The words of a man's mouth are like deep waters. The fountain of wisdom is like a flowing brook.
@@ -82,6 +90,13 @@ interface AuthorizedManagedVeniceChat {
   pricingMap: VenicePricingMap;
   pricingSource: string;
   liveModelCount: number;
+  /**
+   * Output-cap fields to overwrite in the caller's body before it is sent to
+   * Venice, so the forwarded request cannot generate more than was held. Empty
+   * when the body goes out as sent. Always empty when `allowBodyRewrite` was
+   * false. Every forwarder MUST apply it.
+   */
+  bodyPatch: ManagedVeniceOutputCapPatch;
 }
 
 export type AuthorizeManagedVeniceChatResult =
@@ -110,6 +125,12 @@ export async function authorizeManagedVeniceChat(params: {
   body: Record<string, unknown>;
   protocol?: "responses";
   /**
+   * Whether the caller forwards `{...body, ...bodyPatch}`. Default true. The
+   * off-Vercel Worker sets it only once it applies the patch; until then its
+   * requests hold their full worst case and are never given a lower cap.
+   */
+  allowBodyRewrite?: boolean;
+  /**
    * The Cloudflare Worker chooses the hold's reference (a fresh UUID) before
    * it calls authorize, so it can release the hold even when the authorize
    * response never reaches it. Omitted, a reference is generated here.
@@ -125,6 +146,7 @@ export async function authorizeManagedVeniceChat(params: {
     };
   }
   const { plaintextKey, body } = params;
+  const protocol = params.protocol === "responses" ? "responses" : "chat";
 
   if (!plaintextKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
@@ -151,8 +173,25 @@ export async function authorizeManagedVeniceChat(params: {
       ),
     };
   }
-  const endpoint = params.protocol === "responses" ? VENICE_RESPONSES_ENDPOINT : "/api/v1/chat/completions";
-  const estimateBody = params.protocol === "responses" ? responsesEstimateRequest(body) : body as { model: string; [key: string]: unknown };
+  const endpoint = protocol === "responses" ? VENICE_RESPONSES_ENDPOINT : "/api/v1/chat/completions";
+
+  // Options Venice bills outside token usage cannot be covered by a token
+  // hold. (The Responses allowlist already refuses every one of them.)
+  const unbilled = protocol === "chat" ? unbilledVeniceChatOption(body) : null;
+  if (unbilled) {
+    return {
+      ok: false,
+      response: openAiCompatibleError({
+        status: 400,
+        code: "managed_venice_unsupported_option",
+        type: "invalid_request_error",
+        param: unbilled,
+        message:
+          `${unbilled} is not available on managed Venice: Venice bills it separately ` +
+          `from tokens. Remove it or use your own Venice key.`,
+      }),
+    };
+  }
 
   // Live Venice pricing — fetched + cached at module level for 5 minutes.
   // Cache hits cost ~6× less than full input on most models; without this
@@ -161,17 +200,26 @@ export async function authorizeManagedVeniceChat(params: {
   const livePricing = await getVenicePricingMap();
   const pricingMap = livePricing.map;
 
+  let unsizedInputParts = 0;
   try {
-    estimateChatCompletionCost(
-      estimateBody,
-      pricingMap
-    );
+    ({ unsizedInputParts } = estimateChatCompletionCost(managedVeniceChatEstimateBody(protocol, body), pricingMap));
   } catch (error) {
     if (error instanceof UnsupportedVeniceModelError) {
       return {
         ok: false,
         response: apiError("Unsupported Venice model.", 400, {
           failureType: "managed_venice_unsupported_model",
+        }),
+      };
+    }
+    if (error instanceof InvalidVeniceChatRequestError) {
+      return {
+        ok: false,
+        response: openAiCompatibleError({
+          status: 400,
+          code: "invalid_request",
+          type: "invalid_request_error",
+          message: error.message,
         }),
       };
     }
@@ -230,16 +278,18 @@ export async function authorizeManagedVeniceChat(params: {
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
 
-  let reservation: Awaited<ReturnType<typeof reserveManagedVeniceChatRequest>>;
+  let budgeted: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>;
   try {
-    reservation = await reserveManagedVeniceChatRequest({
+    budgeted = await reserveManagedVeniceChatWithinBalance({
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
       walletType,
       referenceId,
-      requestBody: estimateBody,
-      ...(params.protocol === "responses" ? { endpoint: VENICE_RESPONSES_ENDPOINT } : {}),
+      protocol,
+      body,
       pricingMap,
+      allowBodyRewrite: params.allowBodyRewrite !== false,
+      route: protocol === "responses" ? "/api/managed-venice/v1/responses" : "/api/managed-venice/v1/chat/completions",
     });
   } catch (error) {
     if (error instanceof ManagedVeniceSpendCapError) {
@@ -268,6 +318,29 @@ export async function authorizeManagedVeniceChat(params: {
         }),
       };
     }
+    if (error instanceof ManagedVeniceBalanceHeldError) {
+      const topUpUrl = managedVeniceTopUpUrl(walletType);
+      log.warn("Managed Venice request refused: the wallet balance is held by requests still running", {
+        source: "managed-venice-chat",
+        route: "/api/managed-venice/v1/chat/completions",
+        method: "POST",
+        failureType: "managed_venice_balance_held",
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        walletType,
+        heldMicroUsd: error.heldMicroUsd,
+        availableMicroUsd: error.balance?.availableMicroUsd ?? null,
+      });
+      return {
+        ok: false,
+        response: openAiCompatibleError({
+          status: 402,
+          code: "managed_venice_insufficient_balance",
+          type: "billing_error",
+          message: managedVeniceBalanceHeldMessage(error, topUpUrl),
+        }),
+      };
+    }
     if (error instanceof ManagedVeniceInsufficientBalanceError) {
       const topUpUrl = managedVeniceTopUpUrl(walletType);
       log.warn("Managed Venice proxy key blocked by insufficient wallet balance", {
@@ -278,7 +351,14 @@ export async function authorizeManagedVeniceChat(params: {
         userId: verifiedKey.userId,
         proxyKeyId: verifiedKey.id,
         walletType,
+        unsizedInputParts,
       });
+      // A video or file part holds the model's whole context window
+      // (cost-estimator.ts), which can be far more than the text around it.
+      const unsizedNote = unsizedInputParts
+        ? ` This request includes a video, file or other part whose size Hivra cannot see, ` +
+          `so it needs credits for the model's whole context window.`
+        : "";
       return {
         ok: false,
         response: openAiCompatibleError({
@@ -286,7 +366,7 @@ export async function authorizeManagedVeniceChat(params: {
           code: "managed_venice_insufficient_balance",
           type: "billing_error",
           message:
-            `Insufficient managed Venice LLM credits. Top up LLM credits in Hivra ` +
+            `Insufficient managed Venice LLM credits.${unsizedNote} Top up LLM credits in Hivra ` +
             `to keep this proxy key active: ${topUpUrl}`,
         }),
       };
@@ -298,9 +378,9 @@ export async function authorizeManagedVeniceChat(params: {
     ok: true,
     value: {
       referenceId,
-      reservationId: reservation.reservationId,
+      reservationId: budgeted.reservation.reservationId,
       upstreamKey: serverKey,
-      upstreamUrl: params.protocol === "responses" ? VENICE_RESPONSES_URL : VENICE_CHAT_COMPLETIONS_URL,
+      upstreamUrl: protocol === "responses" ? VENICE_RESPONSES_URL : VENICE_CHAT_COMPLETIONS_URL,
       walletType,
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
@@ -308,6 +388,7 @@ export async function authorizeManagedVeniceChat(params: {
       pricingMap,
       pricingSource: livePricing.source,
       liveModelCount: livePricing.liveModelCount,
+      bodyPatch: budgeted.bodyPatch,
     },
   };
 }

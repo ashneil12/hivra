@@ -9,15 +9,20 @@ export const runtime = "nodejs";
 /**
  * Internal authorize endpoint for the off-Vercel chat proxy (Cloudflare Worker).
  *
- * The Worker POSTs `{ plaintextKey, body, referenceId }` here (`referenceId`, a
- * fresh UUID the Worker chose, is optional); this verifies the proxy key,
+ * The Worker POSTs `{ plaintextKey, body, referenceId, acceptsBodyPatch }` here
+ * (`referenceId`, a fresh UUID the Worker chose, is optional); this verifies the proxy key,
  * reserves wallet funds, and resolves the upstream Venice key — then returns the
  * authorized context so the Worker can hold the long-lived stream itself. All
  * wallet/billing logic stays on Vercel; only the byte-pump moves to the edge.
  * See docs/PRODUCT-ARCHITECTURE.md.
  *
  * Responses:
- *  - 200 `{ ok:true, referenceId, upstreamKey, upstreamUrl, walletType, ... }`
+ *  - 200 `{ ok:true, referenceId, upstreamKey, upstreamUrl, walletType, ..., bodyPatch }`
+ *    The Worker must forward `{ ...body, ...bodyPatch }`: the patch sets the
+ *    output cap to what was held (lower when the wallet cannot cover the
+ *    model maximum, or written out when that maximum is only the static
+ *    catalog's). It is always `{}` unless the Worker sent
+ *    `acceptsBodyPatch: true`.
  *  - 401/400/402/503 — relay-able errors (bad key, bad model, no balance, not
  *    configured). The Worker forwards these to the box verbatim.
  *  - 403 — wrong/missing internal secret (Worker config error; not relay-able).
@@ -26,9 +31,15 @@ export async function POST(req: NextRequest) {
   const denied = assertManagedVeniceInternalSecret(req);
   if (denied) return denied;
 
-  let payload: { plaintextKey?: unknown; body?: unknown; referenceId?: unknown };
+  type AuthorizePayload = {
+    plaintextKey?: unknown;
+    body?: unknown;
+    referenceId?: unknown;
+    acceptsBodyPatch?: unknown;
+  };
+  let payload: AuthorizePayload;
   try {
-    payload = (await req.json()) as { plaintextKey?: unknown; body?: unknown; referenceId?: unknown };
+    payload = (await req.json()) as AuthorizePayload;
   } catch {
     return apiError("Invalid JSON body.", 400);
   }
@@ -48,7 +59,16 @@ export async function POST(req: NextRequest) {
   // The Worker chooses the hold's reference so it can release the hold even if
   // this response never reaches it. An older Worker sends none.
   const referenceId = typeof payload.referenceId === "string" ? payload.referenceId : undefined;
-  const auth = await authorizeManagedVeniceChat({ plaintextKey, body, referenceId });
+  // A Worker that applies `bodyPatch` before forwarding says so. One that
+  // does not (an older deploy) forwards its own copy of the body, so it must
+  // never be given a lower output cap it would drop: its requests hold their
+  // full worst case instead (chat-output-budget.ts).
+  const auth = await authorizeManagedVeniceChat({
+    plaintextKey,
+    body,
+    referenceId,
+    allowBodyRewrite: payload.acceptsBodyPatch === true,
+  });
   if (!auth.ok) return auth.response;
 
   return Response.json({
@@ -60,5 +80,6 @@ export async function POST(req: NextRequest) {
     userId: auth.value.userId,
     proxyKeyId: auth.value.proxyKeyId,
     model: auth.value.model,
+    bodyPatch: auth.value.bodyPatch,
   });
 }
