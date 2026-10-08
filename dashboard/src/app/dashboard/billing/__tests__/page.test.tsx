@@ -2177,6 +2177,23 @@ describe("BillingPage", () => {
     expect(screen.getByRole("article", { name: "Power" })).toHaveTextContent("Most popular");
   });
 
+  it("shows an account-only Free plate with no hardware or idle-sleep rule when it holds no computer", async () => {
+    usageData = {
+      subscribed: true,
+      plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
+      usage: { agentCount: 0, maxAgents: 1, usedCpu: 0, totalCpu: 0.5, usedRam: 0, totalRam: 1024, instances: [] },
+      credits: { balance: 0, monthlyGrant: 0, unit: "100 credits = $1" },
+    };
+
+    render(<BillingPage />);
+
+    const plate = await screen.findByRole("region", { name: "Free" });
+    expect(within(plate).getByText("Your own")).toBeInTheDocument();
+    expect(within(plate).getByText("Run by Hivra")).toBeInTheDocument();
+    expect(plate).not.toHaveTextContent(/vCPU|Memory|Sleeps after|idle|0\.5/i);
+    expect(within(plate).queryByRole("meter")).not.toBeInTheDocument();
+  });
+
   it("switches card prices to yearly with computed savings and checks out yearly", async () => {
     const location = stubLocation("http://localhost/dashboard/billing");
     const defaultFetch = fetchMock.getMockImplementation();
