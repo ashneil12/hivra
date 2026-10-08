@@ -315,6 +315,14 @@ describe("account deletion safeguards", () => {
     ).toBeUndefined();
   });
 
+  // Regression: the usage cache kept per-computer usage keyed to the account
+  // after the account was deleted.
+  it("deletes the user's Hivra computer usage reads by user id", () => {
+    expect(ACCOUNT_DELETION_TABLES.find((entry) => entry.table === "hivra_computer_usage")).toEqual(
+      expect.objectContaining({ filterColumn: "user_id", source: "userId", optionalIfMissing: true })
+    );
+  });
+
   // Agent network (package B1): the organization of one, its policy history and its
   // append-only audit log can only be erased by a database function.
   it("erases the agent-network organization of one through its function, and tolerates a database without it", () => {

@@ -168,6 +168,72 @@ describe("manageCapabilitiesFor", () => {
     });
   });
 
+  describe("force off and force restart", () => {
+    it("are offered wherever Stop and Restart are, on Proxmox computers and prepared ones", () => {
+      for (const name of ["ubuntu", "ubuntuMyServer", "codex", "codexUnbound", "claude", "deepseek", "aeon", "preparedWindows", "preparedOmarchy"] as const) {
+        const power = map(name).power;
+        expect(power.forceStop).toEqual(power.stop);
+        expect(power.forceRestart).toEqual(power.restart);
+      }
+      const stopped = manageCapabilitiesFor({ ...rows.ubuntu, status: "stopped", desired_state: "stopped" }, { preparedMatch: true }).power;
+      expect(stopped.forceStop).toMatchObject({ state: "blocked", code: "already_stopped" });
+      expect(stopped.forceRestart).toMatchObject({ state: "blocked", reason: "Start this computer first." });
+    });
+
+    it("wait for another operation instead of breaking its lease", () => {
+      const busy = manageCapabilitiesFor({ ...rows.ubuntu, status: "running", operation_id: "op", operation_kind: "restart" }, { preparedMatch: true });
+      expect(busy.power.forceStop).toEqual({ state: "blocked", code: "operation_in_progress", reason: "Wait for the current operation to finish." });
+    });
+
+    it("send a My cloud computer to its provider's console", () => {
+      for (const name of ["hetznerUbuntu", "codexMyCloud"] as const) {
+        expect(map(name).power.forceStop).toEqual({ state: "unavailable", code: "my_cloud",
+          reason: "Hivra can't force a My cloud computer off. Use your provider's console to force it off." });
+        expect(map(name).notAvailable).toContainEqual({ capability: "Force off",
+          reason: "Hivra can't force a My cloud computer off. Use your provider's console to force it off." });
+      }
+    });
+
+    it("have no control on a Linux Sandbox or a DigitalOcean session", () => {
+      expect(map("gvisor").power).toMatchObject({ forceStop: null, forceRestart: null });
+      expect(map("digitalocean").power).toMatchObject({ forceStop: null, forceRestart: null });
+    });
+
+    it("are off, without repeating the reason, where no power control works", () => {
+      expect(map("windowsMyServer", false).power.forceStop).toMatchObject({ state: "unavailable", code: "windows_my_server" });
+      expect(map("preparedWindows", false).power.forceStop).toMatchObject({ state: "unavailable", code: "prepared_mismatch" });
+      expect(map("windowsMyServer", false).notAvailable.map((item) => item.capability)).not.toContain("Force off");
+    });
+  });
+
+  describe("live usage", () => {
+    it("is read from the host for Proxmox computers, prepared ones and Windows on My server", () => {
+      for (const name of ["ubuntu", "ubuntuMyServer", "codex", "codexUnbound", "preparedWindows", "windowsMyServer"] as const) {
+        expect(map(name).usage).toEqual({ state: "available" });
+      }
+    });
+
+    it("waits for a computer that isn't set up yet", () => {
+      expect(manageCapabilitiesFor({ ...rows.ubuntu, status: "provisioning", vmid: null }, { preparedMatch: true }).usage)
+        .toEqual({ state: "blocked", code: "not_ready", reason: "Usage appears once this computer is set up." });
+    });
+
+    it.each([
+      ["hetznerUbuntu", "my_cloud", "Live usage isn't available for My cloud computers yet. Your provider's console shows it."],
+      ["gvisor", "linux_sandbox", "Live usage isn't available for Linux Sandboxes yet."],
+      ["digitalocean", "digitalocean", "Live usage isn't available for DigitalOcean sessions. Status and last activity come from DigitalOcean."],
+    ] as const)("says where to look instead on %s", (name, code, reason) => {
+      expect(map(name).usage).toEqual({ state: "unavailable", code, reason });
+      expect(map(name).notAvailable).toContainEqual({ capability: "Live usage", reason });
+    });
+
+    it("isn't read for a prepared computer whose slot no longer matches, or a My server computer without ownership checks", () => {
+      expect(map("preparedWindows", false).usage).toMatchObject({ state: "unavailable", code: "prepared_mismatch" });
+      expect(manageCapabilitiesFor({ ...rows.ubuntuMyServer, infrastructure_binding_token_enforced: false }, { preparedMatch: true }).usage)
+        .toMatchObject({ state: "unavailable", code: "not_bound" });
+    });
+  });
+
   describe("resources", () => {
     it("fixes a prepared computer's size and says so with its real size", () => {
       expect(map("preparedWindows").resize).toEqual({ kind: "fixed", cap: { state: "unavailable", code: "prepared_fixed",
