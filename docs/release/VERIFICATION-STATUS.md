@@ -63,6 +63,26 @@ and other environment-specific operational data.
   This does not establish acceptance for every agent, Omarchy/Windows access,
   or restoration of computer data onto a fresh computer.
 
+## Agent network (identity and policy, package B1)
+
+- The identity and policy layer of the
+  [shared brain and agent network design](../superpowers/specs/2026-10-07-shared-brain-and-agent-network.md)
+  exists on Canary behind a server flag that is off elsewhere: organizations
+  (including an organization of one per account, created on first use),
+  members, agent principals with a state machine, immutable policy revisions,
+  brain grants, agent edges, an append-only hash-chained audit log, and a
+  separate key class for signing agent cards. Details and differences from the
+  design are in [the delivery record](../superpowers/specs/2026-10-08-agent-network-b1-identity-policy.md).
+- Evidence is automated: an executable PostgreSQL check of the real migration
+  (tenancy, attenuation, audit, privileges), a decision-table test of the shared
+  evaluator, and a revoke-then-request check over the real policy tables. The
+  checks were validated by breaking the guarded behaviour and confirming a
+  failure.
+- Not claimed: any brain, memory sharing, agent-to-agent messaging, console or
+  runtime attach. Nothing is user-visible, nothing was exercised on a running
+  computer, and no live-environment acceptance has been run. Production does
+  not have the schema until a release is promoted.
+
 ## Evidence policy
 
 Reusable tests, protocols, provisioners, recovery code, and sanitized runbooks
