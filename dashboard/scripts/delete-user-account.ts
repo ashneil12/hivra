@@ -6,12 +6,14 @@ import Stripe from "stripe";
 
 import {
   ACCOUNT_DELETION_EMAIL_TABLES,
+  ACCOUNT_DELETION_FUNCTIONS,
   ACCOUNT_DELETION_TABLES,
   assertClerkDeletionPolicy,
   assertConfirmedAccountDeletion,
   assertNoLiveHivraComputers,
   buildDeletionTableSummary,
   extractStorageObjectPath,
+  isMissingOptionalAccountDeletionFunctionError,
   isMissingOptionalAccountDeletionTableError,
   requireClerkSecretKey,
   resolveOpsSecretEnvPath,
@@ -237,6 +239,21 @@ async function countRows(
     filterColumn: spec.filterColumn,
     count: count ?? 0,
   };
+}
+
+async function countPersonalOrgs(supabase: SupabaseAdmin, userId: string): Promise<number | null> {
+  const { count, error } = await supabase
+    .from("hivra_orgs")
+    .select("id", { count: "exact", head: true })
+    .eq("personal_owner_user_id", userId);
+  if (error) {
+    // A database that does not have the agent-network tables yet has none to erase.
+    if (/hivra_orgs/.test(error.message || "") && /(schema cache|does not exist|could not find)/i.test(error.message || "")) {
+      return null;
+    }
+    throw new Error(`Failed to count hivra_orgs: ${error.message}`);
+  }
+  return count ?? 0;
 }
 
 async function collectDeletionCounts(
@@ -556,6 +573,10 @@ async function main(): Promise<void> {
   console.log(`[delete-user] Stripe customers found: ${stripeCustomerIds.length ? stripeCustomerIds.join(", ") : "none"}`);
   console.log(`[delete-user] storage objects found: ${storageBatches.reduce((total, batch) => total + batch.paths.length, 0)}`);
   console.log(`[delete-user] DB row summary: ${buildDeletionTableSummary(counts)}`);
+  const personalOrgs = await countPersonalOrgs(supabase, args.userId);
+  if (personalOrgs !== null) {
+    console.log(`[delete-user] agent-network organization of one (erased with its audit log): ${personalOrgs}`);
+  }
 
   if (!args.apply) {
     console.log("[delete-user] Dry run only. Re-run with --apply --confirm-delete-user-id <same id> to delete.");
@@ -592,6 +613,24 @@ async function main(): Promise<void> {
     if (count > 0) {
       deletedCounts.push({ table: spec.table, filterColumn: spec.filterColumn, count });
       console.log(`[delete-user] deleted ${count} row(s) from ${spec.table}`);
+    }
+  }
+
+  for (const spec of ACCOUNT_DELETION_FUNCTIONS) {
+    const { data, error } = await (supabase as unknown as {
+      rpc: (fn: string, args: Record<string, string>) => Promise<{ data: unknown; error: { code?: string; message: string } | null }>;
+    }).rpc(spec.rpc, { [spec.userArgument]: args.userId });
+    if (error) {
+      if (isMissingOptionalAccountDeletionFunctionError(spec, error)) {
+        console.warn(`[delete-user] optional function ${spec.rpc} is absent; skipping`);
+        continue;
+      }
+      throw new Error(`Failed to run ${spec.rpc}: ${error.message}. Reason in deletion plan: ${spec.reason}`);
+    }
+    const removed = Number(data ?? 0);
+    if (removed > 0) {
+      deletedCounts.push({ table: spec.rpc, filterColumn: spec.userArgument, count: removed });
+      console.log(`[delete-user] ${spec.rpc} erased ${removed} row(s)`);
     }
   }
 

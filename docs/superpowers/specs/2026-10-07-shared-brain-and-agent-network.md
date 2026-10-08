@@ -2,9 +2,11 @@
 
 **Date:** 2026-10-07
 
-**Status:** Proposed design for owner review. Target behavior only. Nothing in
-this document is built, and no package in it is authorized to start. It adds no
-product claim; see [Reading rule](#reading-rule).
+**Status:** Proposed design for owner review. Target behavior only, except
+package B1, which is built on Canary behind a flag (see
+[its delivery record](2026-10-08-agent-network-b1-identity-policy.md)). Nothing
+else in this document is built, and no other package in it is authorized to
+start. It adds no product claim; see [Reading rule](#reading-rule).
 
 **Authority:** This document is docs-only. It grants no execution authority
 beyond what [`VISION.md`](../../../VISION.md) already grants. Hosting a brain
@@ -33,8 +35,9 @@ means a question this document cannot answer from the sources read; a work
 package must answer it with evidence before building on it. External facts are
 dated and listed in [Source observations](#3-source-observations).
 
-Names such as `hivra_brain_grants`, `hivra-agent-link` or `/dashboard/network`
-are proposals. None exists.
+Names such as `hivra-agent-link` or `/dashboard/network` are proposals. None
+exists. The B1 tables (`hivra_brain_grants` among them) do exist; see the
+[B1 delivery record](2026-10-08-agent-network-b1-identity-policy.md).
 
 ## 1. Summary
 
@@ -464,6 +467,8 @@ H herdr terminal hub: independent        M web hub: last, after B5 exit and the 
 ```
 
 ### B1. Identity and policy schema
+
+**Delivered** on Canary behind a flag: [delivery record](2026-10-08-agent-network-b1-identity-policy.md). The text below is the original plan.
 
 **Scope.** Org, member, principal, group, grants, edges, revisions, membership
 state machine and the audit table schema; the shared evaluator; the

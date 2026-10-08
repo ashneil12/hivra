@@ -10,7 +10,14 @@ struct HivraBrowserConfigurationTests {
     func appendsApplicationIdentity() {
         let configuration = HivraBrowserConfiguration.make()
 
-        #expect(configuration.applicationNameForUserAgent == "HivraMac/0.1")
+        // The test runner is not the Hivra bundle, so its version is the development fallback.
+        #expect(configuration.applicationNameForUserAgent == "HivraMac/\(HivraAppIdentity.developmentVersion)")
+    }
+
+    @MainActor
+    @Test("keeps WebKit's popup blocker so window requests follow a user gesture")
+    func blocksUnrequestedPopups() {
+        #expect(!HivraBrowserConfiguration.make().preferences.javaScriptCanOpenWindowsAutomatically)
     }
 
     @MainActor
@@ -152,5 +159,34 @@ struct HivraBrowserConfigurationTests {
         #expect(HivraNavigationErrorPolicy.shouldPresent(
             NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost)
         ))
+    }
+}
+
+@Suite("App identity")
+struct HivraAppIdentityTests {
+    @Test("the user agent carries the Hivra bundle's short version")
+    func bundleVersion() {
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: [
+            "CFBundleIdentifier": "cloud.hivra.mac.alpha", "CFBundleShortVersionString": "0.2.1",
+        ]) == "HivraMac/0.2.1")
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: [
+            "CFBundleIdentifier": "cloud.hivra.mac", "CFBundleShortVersionString": "1.0.0-beta.2",
+        ]) == "HivraMac/1.0.0-beta.2")
+    }
+
+    @Test("unbundled builds and foreign bundles report a development version")
+    func developmentFallback() {
+        let fallback = "HivraMac/\(HivraAppIdentity.developmentVersion)"
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: nil) == fallback)
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: [
+            "CFBundleIdentifier": "com.apple.dt.xctest.tool", "CFBundleShortVersionString": "16.0",
+        ]) == fallback)
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: [
+            "CFBundleIdentifier": "cloud.hivra.macevil", "CFBundleShortVersionString": "9.9",
+        ]) == fallback)
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: [
+            "CFBundleIdentifier": "cloud.hivra.mac.alpha", "CFBundleShortVersionString": "1.0 (Safari) x",
+        ]) == fallback)
+        #expect(HivraAppIdentity.userAgentApplicationName(infoDictionary: ["CFBundleIdentifier": "cloud.hivra.mac.alpha"]) == fallback)
     }
 }
