@@ -24,14 +24,61 @@ function resolvePrice(modelId: string, pricingMap?: VenicePricingMap): VeniceCha
   return getVeniceChatModelPrice(modelId);
 }
 
-// When the caller does not declare an output ceiling we still have to
-// reserve *something* up-front. Using the model's full maxOutputTokens
-// (up to 16,384 on GPT-5.4) holds ~$0.34 per request even if the
-// response is 50 tokens, which causes false 402s for users with
-// realistic top-ups. 4,096 is enough headroom for the vast majority of
-// chat completions while keeping reservations proportionate to a small
-// wallet balance. Over-runs are reconciled at capture time.
-export const RESERVATION_OUTPUT_TOKEN_DEFAULT = 4_096;
+/** The price row (rates, context window, max output) the estimator uses for a model. */
+export function resolveVeniceChatPrice(
+  modelId: string,
+  pricingMap?: VenicePricingMap
+): VeniceChatModelPrice {
+  return resolvePrice(modelId, pricingMap);
+}
+
+// What a chat hold covers (security review 2026-09, Medium "Managed-Venice
+// overage"): everything the request, AS FORWARDED, can make Venice bill.
+//
+// Output: Venice's contract is that a missing (or non-positive) `max_tokens`
+// means "the model's default maximum", and `max_completion_tokens` bounds
+// visible plus reasoning tokens. So a request with no cap can run to the
+// model's published maximum (`maxCompletionTokens`, e.g. 128,000 on the
+// Claude Opus models). The previous 4,096-token default held about 1/31 of
+// that, and the overage debit at capture fails on a small wallet, so Hivra
+// paid the rest. The hold is now the model maximum, or the request's own cap
+// when that is smaller. When both cap fields are sent, the larger one counts,
+// because nothing in the contract says which one Venice honours. Callers that
+// cannot afford the worst case get a lower cap written into the forwarded
+// request instead (see chat-output-budget.ts), so the hold still covers it.
+//
+// Input: text is counted at 3 ASCII characters per token (typical English,
+// code and JSON run at 3.5 to 4) plus one token per non-ASCII UTF-16 unit
+// (CJK text runs close to one token per character, so counting it at a third
+// under-held CJK prompts about threefold). Every image part counts at least
+// IMAGE_INPUT_TOKEN_FLOOR, since a short URL can stand for a large image. The
+// total is capped at the model's context window: a request cannot bill more
+// prompt than the model accepts. Adversarial token-dense ASCII (long digit or
+// symbol runs) can still reach about one token per character, three times
+// this estimate; that residual is bounded by the context window and is
+// debited as overage at capture.
+//
+// Some content parts stand for an amount of input their bytes do not bound
+// (review of #166, required fix 2): a `video_url` (Venice lists video input on
+// the Gemini, Qwen, GLM, Gemma, Seed, MiniMax and Xiaomi models) can point at
+// an hour of video; a `file` can be a public URL, an uploaded file id, or a
+// data URL whose few compressed KB hold a hundred PDF pages; audio sent by URL
+// is the same; and a part type this estimator does not know could be any of
+// these. Priced by their length, a $0.05 wallet held $0.0002 for a request
+// Venice could bill $6. Any such part holds the model's whole context window,
+// the most prompt the request can bill. Text, images (bounded per image by
+// the model's resize limits, and floored above) and inline base64 audio keep
+// their size-based estimate.
+
+/** Visual-token allowance per image part. 16,384 is Qwen-VL's default
+ * per-image maximum, the largest default we know of among the vision families
+ * Venice serves (Claude, GPT and Gemini spend a few thousand at most). It is
+ * an allowance, not a measured Venice bill. */
+export const IMAGE_INPUT_TOKEN_FLOOR = 16_384;
+
+/** The chat hold buffer on top of the estimate (10%). */
+const RESERVATION_BUFFER_NUMERATOR = 110;
+const RESERVATION_BUFFER_DENOMINATOR = 100;
 
 type ChatMessage = {
   role?: string;
@@ -39,6 +86,7 @@ type ChatMessage = {
   name?: string;
   tool_calls?: unknown;
   function_call?: unknown;
+  reasoning_content?: unknown;
 };
 
 export class MissingVeniceUsageError extends Error {
@@ -48,9 +96,23 @@ export class MissingVeniceUsageError extends Error {
   }
 }
 
-function requirePositiveInteger(value: unknown, label: string): number {
-  if (!Number.isInteger(value) || (value as number) <= 0) {
-    throw new Error(`${label} must be a positive integer`);
+/** A chat request the managed proxy will not price or forward (maps to a 400). */
+export class InvalidVeniceChatRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidVeniceChatRequestError";
+  }
+}
+
+/**
+ * Read an output-cap or `n` field: absent/null means "not sent"; anything else
+ * must be a positive safe integer. Venice treats a non-positive `max_tokens`
+ * as "use the model maximum", so it is refused rather than priced low.
+ */
+export function readVeniceChatPositiveInteger(value: unknown, label: string): number | null {
+  if (value === undefined || value === null) return null;
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new InvalidVeniceChatRequestError(`${label} must be a positive integer`);
   }
   return value as number;
 }
@@ -62,88 +124,188 @@ function requireNonNegativeInteger(value: unknown, label: string): number {
   return value as number;
 }
 
-function countTextCharacters(value: unknown): number {
-  if (typeof value === "string") return value.length;
-  if (value === null || value === undefined) return 0;
+interface InputTally {
+  characters: number;
+  asciiUnits: number;
+  otherUnits: number;
+  imageTokens: number;
+  /** Parts whose billed size the request does not show (held at the context window). */
+  unsizedParts: number;
+}
+
+function emptyTally(): InputTally {
+  return { characters: 0, asciiUnits: 0, otherUnits: 0, imageTokens: 0, unsizedParts: 0 };
+}
+
+function tallyString(text: string, tally: InputTally) {
+  tally.characters += text.length;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) < 0x80) tally.asciiUnits += 1;
+    else tally.otherUnits += 1;
+  }
+}
+
+function textTokens(tally: Pick<InputTally, "asciiUnits" | "otherUnits">) {
+  return Math.ceil(tally.asciiUnits / 3) + tally.otherUnits;
+}
+
+const IMAGE_PART_TYPES = new Set(["image_url", "input_image", "image"]);
+// Content parts priced by their size. Any other part type in a message's
+// content is unsized.
+const SIZED_CONTENT_PART_TYPES = new Set(["text", "refusal", "input_audio", ...IMAGE_PART_TYPES]);
+// Unsized wherever they appear.
+const UNSIZED_PART_TYPES = new Set(["video_url", "file"]);
+
+// A remote reference (https://, gs://, ...) rather than inline data.
+const REMOTE_REFERENCE = /^\s*[a-z][a-z0-9+.-]*:\/\//i;
+
+/** Audio is sized by its inline base64 data; audio by reference is not. */
+function isInlineAudioPart(record: Record<string, unknown>) {
+  const audio = record.input_audio;
+  if (!audio || typeof audio !== "object" || Array.isArray(audio)) return false;
+  const data = (audio as Record<string, unknown>).data;
+  return typeof data === "string" && !REMOTE_REFERENCE.test(data);
+}
+
+function isUnsizedPart(record: Record<string, unknown>) {
+  if (typeof record.type !== "string") return false;
+  if (UNSIZED_PART_TYPES.has(record.type)) return true;
+  return record.type === "input_audio" && !isInlineAudioPart(record);
+}
+
+function tallyUnsizedPart(value: unknown, tally: InputTally) {
+  tally.characters += JSON.stringify(value).length;
+  tally.unsizedParts += 1;
+}
+
+/** One element of a message's `content` array. */
+function tallyContentPart(part: unknown, tally: InputTally) {
+  if (part && typeof part === "object" && !Array.isArray(part)) {
+    const type = (part as Record<string, unknown>).type;
+    if (typeof type === "string" && !SIZED_CONTENT_PART_TYPES.has(type)) {
+      tallyUnsizedPart(part, tally);
+      return;
+    }
+  }
+  tallyValue(part, tally);
+}
+
+function tallyContent(content: unknown, tally: InputTally) {
+  if (Array.isArray(content)) {
+    for (const part of content) tallyContentPart(part, tally);
+    return;
+  }
+  tallyValue(content, tally);
+}
+
+function tallyValue(value: unknown, tally: InputTally) {
+  if (typeof value === "string") {
+    tallyString(value, tally);
+    return;
+  }
+  if (value === null || value === undefined) return;
 
   if (Array.isArray(value)) {
-    return value.reduce((sum, item) => sum + countTextCharacters(item), 0);
+    for (const item of value) tallyValue(item, tally);
+    return;
   }
 
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
+    if (isUnsizedPart(record)) {
+      tallyUnsizedPart(value, tally);
+      return;
+    }
+    if (typeof record.type === "string" && IMAGE_PART_TYPES.has(record.type)) {
+      const part = emptyTally();
+      tallyString(JSON.stringify(value), part);
+      tally.characters += part.characters;
+      tally.imageTokens += Math.max(textTokens(part), IMAGE_INPUT_TOKEN_FLOOR);
+      return;
+    }
     if (typeof record.text === "string") {
-      return record.text.length;
+      tallyString(record.text, tally);
+      return;
     }
     if (typeof record.content === "string") {
-      return record.content.length;
+      tallyString(record.content, tally);
+      return;
     }
-    return JSON.stringify(value).length;
+    tallyString(JSON.stringify(value), tally);
+    return;
   }
 
-  return String(value).length;
+  tallyString(String(value), tally);
 }
 
-function estimateInputCharacters(request: {
+function tallyJson(value: unknown, tally: InputTally) {
+  if (value === undefined) return;
+  tallyString(JSON.stringify(value), tally);
+}
+
+function estimateInput(request: {
   messages?: ChatMessage[];
   tools?: unknown;
   functions?: unknown;
   response_format?: unknown;
-}) {
-  const messageCharacters = Array.isArray(request.messages)
-      ? request.messages.reduce((sum, message) => {
-        return (
-          sum +
-          countTextCharacters(message.content) +
-          countTextCharacters(message.tool_calls) +
-          countTextCharacters(message.function_call)
-        );
-      }, 0)
-    : 0;
+}): InputTally {
+  const tally = emptyTally();
+  if (Array.isArray(request.messages)) {
+    for (const message of request.messages) {
+      if (!message || typeof message !== "object") continue;
+      tallyContent(message.content, tally);
+      tallyValue(message.tool_calls, tally);
+      tallyValue(message.function_call, tally);
+      tallyValue(message.reasoning_content, tally);
+    }
+  }
+  tallyJson(request.tools, tally);
+  tallyJson(request.functions, tally);
+  tallyJson(request.response_format, tally);
+  return tally;
+}
 
-  const toolCharacters =
-    request.tools === undefined ? 0 : JSON.stringify(request.tools).length;
-  const functionCharacters =
-    request.functions === undefined ? 0 : JSON.stringify(request.functions).length;
-  const responseFormatCharacters =
-    request.response_format === undefined
-      ? 0
-      : JSON.stringify(request.response_format).length;
+export interface VeniceChatEstimateRequest {
+  model: string;
+  messages?: ChatMessage[];
+  max_completion_tokens?: unknown;
+  max_tokens?: unknown;
+  n?: unknown;
+  tools?: unknown;
+  functions?: unknown;
+  response_format?: unknown;
+  [key: string]: unknown;
+}
 
-  return messageCharacters + toolCharacters + functionCharacters + responseFormatCharacters;
+/**
+ * The per-choice output cap Venice can run a request to, as forwarded:
+ * the larger of the sent cap fields, else the model maximum, never above the
+ * model maximum. Throws InvalidVeniceChatRequestError for a malformed cap.
+ */
+export function worstCaseVeniceChatOutputCap(
+  request: Pick<VeniceChatEstimateRequest, "max_completion_tokens" | "max_tokens">,
+  price: Pick<VeniceChatModelPrice, "maxOutputTokens">
+): number {
+  const caps = [
+    readVeniceChatPositiveInteger(request.max_completion_tokens, "max_completion_tokens"),
+    readVeniceChatPositiveInteger(request.max_tokens, "max_tokens"),
+  ].filter((cap): cap is number => cap !== null);
+  const requested = caps.length ? Math.max(...caps) : price.maxOutputTokens;
+  return Math.min(requested, price.maxOutputTokens);
 }
 
 export function estimateChatCompletionCost(
-  request: {
-    model: string;
-    messages?: ChatMessage[];
-    max_completion_tokens?: number;
-    max_tokens?: number;
-    n?: number;
-    tools?: unknown;
-    functions?: unknown;
-    response_format?: unknown;
-  },
+  request: VeniceChatEstimateRequest,
   pricingMap?: VenicePricingMap,
 ) {
   const price = resolvePrice(request.model, pricingMap);
-  const inputCharacters = estimateInputCharacters(request);
-  const inputTokens = Math.ceil(inputCharacters / 3);
-  const explicitOutputCap =
-    request.max_completion_tokens !== undefined
-      ? requirePositiveInteger(request.max_completion_tokens, "max_completion_tokens")
-      : request.max_tokens !== undefined
-        ? requirePositiveInteger(request.max_tokens, "max_tokens")
-        : null;
-  // When the caller is explicit, trust them — they accepted the cost of
-  // that ceiling. When they aren't, reserve against a defensive default
-  // rather than the model's native max; Venice still streams the full
-  // response and any overage is captured against the wallet at settle
-  // time (or flagged for reconciliation if it can't be covered).
-  const outputCap =
-    explicitOutputCap ?? Math.min(price.maxOutputTokens, RESERVATION_OUTPUT_TOKEN_DEFAULT);
-  const outputChoices =
-    request.n === undefined ? 1 : requirePositiveInteger(request.n, "n");
+  const input = estimateInput(request);
+  const inputTokens =
+    input.unsizedParts > 0
+      ? price.contextWindow
+      : Math.min(textTokens(input) + input.imageTokens, price.contextWindow);
+  const outputCap = worstCaseVeniceChatOutputCap(request, price);
+  const outputChoices = readVeniceChatPositiveInteger(request.n, "n") ?? 1;
   const outputTokens = outputCap * outputChoices;
 
   const inputCostMicroUsd = calculateVeniceTokenCostMicroUsd(
@@ -157,23 +319,58 @@ export function estimateChatCompletionCost(
   const estimatedCostMicroUsd = inputCostMicroUsd + outputCostMicroUsd;
   const reservedCostMicroUsd = multiplyMicrodollarsByRatio(
     estimatedCostMicroUsd,
-    110,
-    100
+    RESERVATION_BUFFER_NUMERATOR,
+    RESERVATION_BUFFER_DENOMINATOR
   );
 
   return {
     model: price.model,
-    inputCharacters,
+    inputCharacters: input.characters,
     inputTokens,
+    /** Parts held at the context window because their size is not in the request. */
+    unsizedInputParts: input.unsizedParts,
+    outputCap,
     outputTokens,
     outputChoices,
-    outputCapExplicit: explicitOutputCap !== null,
+    modelMaxOutputTokens: price.maxOutputTokens,
+    outputCapExplicit:
+      request.max_completion_tokens != null || request.max_tokens != null,
     inputCostMicroUsd,
     outputCostMicroUsd,
     estimatedCostMicroUsd,
     reservedCostMicroUsd,
     safetyBufferBps: 1000,
   };
+}
+
+/**
+ * The largest per-choice output cap whose hold (input + cap x n, plus the
+ * buffer, exactly as estimateChatCompletionCost computes it) fits in
+ * `availableMicroUsd`, never above the model maximum. 0 when even the input
+ * alone does not fit. Pure: the caller decides whether that cap is useful.
+ */
+export function maxAffordableVeniceChatOutputCap(
+  request: VeniceChatEstimateRequest,
+  availableMicroUsd: number,
+  pricingMap?: VenicePricingMap
+): number {
+  const base = estimateChatCompletionCost(
+    { ...request, max_completion_tokens: 1, max_tokens: undefined },
+    pricingMap
+  );
+  const available = BigInt(Math.max(0, Math.floor(availableMicroUsd)));
+  // ceil(estimate * 110 / 100) <= available  <=>  estimate <= floor(available * 100 / 110)
+  const estimateBudget =
+    (available * BigInt(RESERVATION_BUFFER_DENOMINATOR)) / BigInt(RESERVATION_BUFFER_NUMERATOR);
+  const outputBudget = estimateBudget - BigInt(base.inputCostMicroUsd);
+  if (outputBudget < BigInt(0)) return 0;
+  const price = resolvePrice(request.model, pricingMap);
+  if (price.outputMicroUsdPerMillion === 0) return price.maxOutputTokens;
+  // ceil(tokens * rate / 1e6) <= budget  <=>  tokens <= floor(budget * 1e6 / rate)
+  const affordableTokens =
+    (outputBudget * BigInt(1_000_000)) / BigInt(price.outputMicroUsdPerMillion);
+  const perChoice = affordableTokens / BigInt(base.outputChoices);
+  return Number(perChoice < BigInt(price.maxOutputTokens) ? perChoice : BigInt(price.maxOutputTokens));
 }
 
 export function calculateActualChatCost(
