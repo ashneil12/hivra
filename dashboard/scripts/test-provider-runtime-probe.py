@@ -227,6 +227,48 @@ class Probe(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.module["directory"](str(root), owner)
 
+    def test_terminal_socket_modes(self):
+        # ttyd's libwebsockets creates its socket 0660 (found on a real Ubuntu
+        # 24.04 VM). The 0700 bux folder is the boundary, so the probe accepts
+        # group bits on the socket and refuses a socket others may connect to.
+        import stat as stat_module
+        terminal = self.module["terminal"]
+        owner = 1001
+        answers = []
+
+        class Unix:
+            def __init__(self, path, timeout):
+                answers.append(path)
+
+            def request(self, method, path):
+                self.path = path
+
+            def getresponse(self):
+                return SimpleNamespace(status=200)
+
+            def close(self):
+                pass
+
+        def fake(folder_mode, socket_mode, socket_uid=owner):
+            def lstat(path):
+                if path.endswith(".sock"):
+                    return os.stat_result((stat_module.S_IFSOCK | socket_mode, 0, 0, 1, socket_uid, 1001, 0, 0, 0, 0))
+                return os.stat_result((stat_module.S_IFDIR | folder_mode, 0, 0, 2, owner, 1001, 0, 0, 0, 0))
+            return lstat
+
+        for folder_mode, socket_mode in ((0o700, 0o660), (0o700, 0o600), (0o700, 0o755)):
+            with patch.object(self.module["os"], "lstat", fake(folder_mode, socket_mode)), \
+                 patch.dict(self.module, {"UnixHTTPConnection": Unix}):
+                self.assertEqual(terminal(7681, "/terminal/", owner), 200)
+        self.assertEqual(answers, ["/run/hivra-terminal/ttyd.sock"] * 3)
+        for folder_mode, socket_mode, socket_uid in ((0o700, 0o666, owner), (0o750, 0o660, owner),
+                                                     (0o705, 0o600, owner), (0o700, 0o600, owner + 1)):
+            with patch.object(self.module["os"], "lstat", fake(folder_mode, socket_mode, socket_uid)), \
+                 patch.dict(self.module, {"UnixHTTPConnection": Unix}):
+                with self.assertRaises(ValueError):
+                    terminal(7682, "/box-terminal/", owner)
+        self.assertEqual(len(answers), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

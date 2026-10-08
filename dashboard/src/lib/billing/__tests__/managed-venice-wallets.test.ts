@@ -2,11 +2,14 @@ import {
   ManagedVeniceInsufficientBalanceError,
   captureManagedVeniceReservation,
   createManagedVeniceReservation,
+  debitManagedVeniceWallet,
   ensureManagedVeniceWalletAccount,
   getManagedVeniceWalletSummary,
   grantManagedVeniceCardTopUpCredit,
   releaseManagedVeniceReservation,
 } from "@/lib/billing/managed-venice-wallets";
+import { createManagedVeniceSpendWorld } from "@/test-utils/managed-venice-spend-world";
+import { createManagedVeniceWalletRpc } from "@/test-utils/managed-venice-wallet-rpc";
 
 type Row = Record<string, unknown>;
 
@@ -57,19 +60,29 @@ function createUpdate(rows: Row[], patch: Row) {
   const filters: Array<[string, unknown]> = [];
   const query: {
     eq: (column: string, value: unknown) => typeof query;
+    select: () => Promise<{ data: Row[]; error: null }>;
     then: Promise<{ error: null }>["then"];
   } = {} as typeof query;
+
+  const apply = () => {
+    const changed: Row[] = [];
+    for (const row of rows) {
+      if (filters.every(([column, value]) => row[column] === value)) {
+        Object.assign(row, patch);
+        changed.push(row);
+      }
+    }
+    return changed;
+  };
 
   query.eq = (column, value) => {
     filters.push([column, value]);
     return query;
   };
+  // Like PostgREST: update(...).select() resolves to the rows it changed.
+  query.select = async () => ({ data: apply(), error: null });
   query.then = (resolve, reject) => {
-    for (const row of rows) {
-      if (filters.every(([column, value]) => row[column] === value)) {
-        Object.assign(row, patch);
-      }
-    }
+    apply();
     return Promise.resolve({ error: null }).then(resolve, reject);
   };
 
@@ -134,7 +147,8 @@ function createMemoryDb() {
   }
 
   return {
-    db: { from: table },
+    // The wallet debit functions run against the same tables.
+    db: { from: table, rpc: createManagedVeniceWalletRpc((name) => tables[name]) },
     tables,
     insertRow,
   };
@@ -216,7 +230,7 @@ describe("managed Venice wallet accounting", () => {
         if (name !== "managed_venice_reservations") return base;
         return {
           ...base,
-          upsert: () => ({
+          insert: () => ({
             select: () => ({
               single: async () => ({
                 data: null,
@@ -376,6 +390,76 @@ describe("managed Venice wallet accounting", () => {
     });
   });
 
+  it("captures a card reservation that holds the whole balance (its own hold is not counted against it)", async () => {
+    // Regression: the card debit's balance check subtracted EVERY active card
+    // hold — including the one being captured — so a user whose hold covered
+    // most of the balance could never be charged (capture threw "insufficient").
+    const { db, insertRow, tables } = createMemoryDb();
+    const account = await ensureManagedVeniceWalletAccount("user_1", db);
+    insertRow("managed_venice_card_ledger_entries", {
+      account_id: account.id,
+      user_id: "user_1",
+      amount_micro_usd: 500_000,
+      source: "stripe",
+      reason: "stripe_topup",
+      reference_id: "topup_1",
+    });
+    await createManagedVeniceReservation(
+      { userId: "user_1", walletType: "card", amountMicroUsd: 500_000, referenceId: "usage_full" },
+      db
+    );
+
+    await expect(
+      captureManagedVeniceReservation(
+        { userId: "user_1", referenceId: "usage_full", captureMicroUsd: 300_000 },
+        db
+      )
+    ).resolves.toMatchObject({ captured: true, capturedMicroUsd: 300_000 });
+
+    expect(tables.managed_venice_card_ledger_entries).toContainEqual(
+      expect.objectContaining({ amount_micro_usd: -300_000, reference_id: "usage_full" })
+    );
+    await expect(getManagedVeniceWalletSummary("user_1", db)).resolves.toMatchObject({
+      card: { totalValueMicroUsd: 200_000, reservedMicroUsd: 0, availableMicroUsd: 200_000 },
+    });
+  });
+
+  it("still refuses a direct card debit that would eat into other requests' holds", async () => {
+    const { db, insertRow } = createMemoryDb();
+    const account = await ensureManagedVeniceWalletAccount("user_1", db);
+    insertRow("managed_venice_card_ledger_entries", {
+      account_id: account.id,
+      user_id: "user_1",
+      amount_micro_usd: 500_000,
+      source: "stripe",
+      reason: "stripe_topup",
+      reference_id: "topup_1",
+    });
+    await createManagedVeniceReservation(
+      { userId: "user_1", walletType: "card", amountMicroUsd: 200_000, referenceId: "usage_a" },
+      db
+    );
+    await createManagedVeniceReservation(
+      { userId: "user_1", walletType: "card", amountMicroUsd: 300_000, referenceId: "usage_b" },
+      db
+    );
+
+    // An overage-style debit outside any reservation sees every hold.
+    await expect(
+      debitManagedVeniceWallet(
+        { userId: "user_1", walletType: "card", amountMicroUsd: 100_000, referenceId: "usage_a:overage" },
+        db
+      )
+    ).rejects.toBeInstanceOf(ManagedVeniceInsufficientBalanceError);
+    // Each capture only excludes its OWN hold, so both still settle in full.
+    await expect(
+      captureManagedVeniceReservation({ userId: "user_1", referenceId: "usage_a", captureMicroUsd: 200_000 }, db)
+    ).resolves.toMatchObject({ captured: true });
+    await expect(
+      captureManagedVeniceReservation({ userId: "user_1", referenceId: "usage_b", captureMicroUsd: 300_000 }, db)
+    ).resolves.toMatchObject({ captured: true });
+  });
+
   it("credits managed Venice card top-ups idempotently and records a financial event", async () => {
     const { db, tables } = createMemoryDb();
 
@@ -417,5 +501,150 @@ describe("managed Venice wallet accounting", () => {
         amount_micro_usd: 50_000_000,
       })
     );
+  });
+});
+
+// Regression (pre-launch review, MEDIUM "Token-lot debit race"): a token-lot
+// debit wrote the lot's new remaining value filtered by id alone, so debits
+// that read the lot at the same time overwrote each other. Ten $0.05 media
+// captures on a $1.00 lot left $0.95, and every hold still closed as captured.
+// Every debit is now one database function under the per-user wallet lock
+// (20260925201500_managed_venice_atomic_wallet_debits.sql; PGlite and
+// real-PostgreSQL proofs in scripts/test-managed-venice-*-wallet-debit*.cjs).
+// These run the real wallet code against the in-memory twin of those
+// functions.
+describe("token lot debits under concurrency", () => {
+  const USER = "user_lot_race";
+
+  it("ten captures of one lot at the same time each debit it", async () => {
+    const world = createManagedVeniceSpendWorld();
+    world.fundHermesos(USER, 1_000_000);
+    for (let index = 0; index < 10; index += 1) {
+      await createManagedVeniceReservation(
+        { userId: USER, walletType: "hermesos", amountMicroUsd: 50_000, referenceId: `media_${index}` },
+        world.db
+      );
+    }
+
+    const captures = await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        captureManagedVeniceReservation({ userId: USER, referenceId: `media_${index}`, captureMicroUsd: 50_000 }, world.db)
+      )
+    );
+
+    expect(captures.every((capture) => capture.captured)).toBe(true);
+    expect(world.tables.managed_venice_token_lots[0]).toMatchObject({
+      remaining_value_micro_usd: 500_000,
+      remaining_token_amount_raw: "500000",
+      status: "active",
+    });
+    await expect(getManagedVeniceWalletSummary(USER, world.db)).resolves.toMatchObject({
+      hermesos: { totalValueMicroUsd: 500_000, reservedMicroUsd: 0, availableMicroUsd: 500_000 },
+    });
+  });
+
+  it("a debit that started from a stale read still lands on the lot's current value", async () => {
+    const world = createManagedVeniceSpendWorld();
+    world.fundHermesos(USER, 1_000_000);
+    // This client read the lot at $1.00; another debit of $0.40 then commits.
+    const racing = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots, {
+      untilWrite: true,
+    });
+    await debitManagedVeniceWallet(
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 400_000, referenceId: "other_debit" },
+      world.db
+    );
+
+    await debitManagedVeniceWallet(
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 50_000, referenceId: "racing_debit" },
+      racing
+    );
+
+    // $1.00 - $0.40 - $0.05, not the $0.95 a write of its stale read would leave.
+    expect(world.tables.managed_venice_token_lots[0]).toMatchObject({
+      remaining_value_micro_usd: 550_000,
+      remaining_token_amount_raw: "550000",
+    });
+  });
+
+  it("skips a lot that was voided after it was read", async () => {
+    const world = createManagedVeniceSpendWorld();
+    world.fundHermesos(USER, 300_000);
+    world.fundHermesos(USER, 300_000);
+    const racing = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots, {
+      untilWrite: true,
+    });
+    world.tables.managed_venice_token_lots[0].status = "voided";
+
+    await debitManagedVeniceWallet(
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 100_000, referenceId: "after_void" },
+      racing
+    );
+
+    expect(world.tables.managed_venice_token_lots.map((lot) => [lot.status, lot.remaining_value_micro_usd])).toEqual([
+      ["voided", 300_000],
+      ["active", 200_000],
+    ]);
+  });
+
+  // A debit spanning two lots used to write the first lot, then fail on the
+  // second (a voided lot, a lost race, a dropped connection) with the first
+  // write already made: the user paid part of a charge that was never recorded.
+  it("a debit the lots can no longer cover changes no lot and leaves the hold active", async () => {
+    const world = createManagedVeniceSpendWorld();
+    world.fundHermesos(USER, 300_000);
+    world.fundHermesos(USER, 300_000);
+    await createManagedVeniceReservation(
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 600_000, referenceId: "two_lots" },
+      world.db
+    );
+    // This capture read both lots as active; the second was voided since.
+    const stale = world.withStaleReads("managed_venice_token_lots", world.tables.managed_venice_token_lots, {
+      untilWrite: true,
+    });
+    world.tables.managed_venice_token_lots[1].status = "voided";
+
+    await expect(
+      captureManagedVeniceReservation({ userId: USER, referenceId: "two_lots", captureMicroUsd: 600_000 }, stale)
+    ).rejects.toBeInstanceOf(ManagedVeniceInsufficientBalanceError);
+
+    expect(world.tables.managed_venice_token_lots.map((lot) => [lot.status, lot.remaining_value_micro_usd])).toEqual([
+      ["active", 300_000],
+      ["voided", 300_000],
+    ]);
+    expect(world.reservations()[0]).toMatchObject({ reference_id: "two_lots", status: "active" });
+  });
+
+  // The stale-hold sweep retries captures that failed in-request. A capture
+  // whose money moved but whose caller saw an error must not be charged again.
+  it("a capture retried after its outcome was lost is charged once", async () => {
+    const world = createManagedVeniceSpendWorld();
+    world.fundHermesos(USER, 1_000_000);
+    await createManagedVeniceReservation(
+      { userId: USER, walletType: "hermesos", amountMicroUsd: 100_000, referenceId: "lost_reply" },
+      world.db
+    );
+    // The debit commits, then the caller sees an error: a dropped connection
+    // after the function ran, or (before) a failed write of the hold's status.
+    world.failNext({ table: "managed_venice_reservations", op: "update" });
+    const lossy = {
+      ...world.db,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        await world.db.rpc(fn, args);
+        return { data: null, error: { code: "08006", message: "connection to server was lost" } };
+      },
+    };
+
+    await expect(
+      captureManagedVeniceReservation({ userId: USER, referenceId: "lost_reply", captureMicroUsd: 100_000 }, lossy)
+    ).rejects.toThrow();
+    const retry = await captureManagedVeniceReservation(
+      { userId: USER, referenceId: "lost_reply", captureMicroUsd: 100_000 },
+      world.db
+    );
+
+    expect(retry).toMatchObject({ captured: false, capturedMicroUsd: 100_000 });
+    expect(world.tables.managed_venice_token_lots[0].remaining_value_micro_usd).toBe(900_000);
+    expect(world.reservations()[0]).toMatchObject({ status: "captured", captured_micro_usd: 100_000 });
   });
 });

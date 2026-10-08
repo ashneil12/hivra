@@ -105,9 +105,21 @@ describe("POST /api/admin/warm-pool-campaign", () => {
     authMock.mockResolvedValue({ userId: "user_other" });
     currentUserMock.mockResolvedValue({
       id: "user_other",
-      primaryEmailAddress: { emailAddress: "someone@else.com" },
+      primaryEmailAddress: { emailAddress: "someone@else.com", verification: { status: "verified" } },
       emailAddresses: [{ emailAddress: "someone@else.com" }],
     });
+    const res = await POST(makeRequest({ body: {} }));
+    expect(res.status).toBe(403);
+    expect(runCampaignMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an unverified primary email", { primaryEmailAddress: { emailAddress: "ash@example.com", verification: { status: "unverified" } } }],
+    ["a primary email with no verification record", { primaryEmailAddress: { emailAddress: "ash@example.com" } }],
+    ["the admin address only as a non-primary email", { emailAddresses: [{ emailAddress: "ash@example.com" }] }],
+  ])("403s a session whose admin address is %s", async (_label, clerkUser) => {
+    authMock.mockResolvedValue({ userId: "user_not_admin" });
+    currentUserMock.mockResolvedValue({ id: "user_not_admin", ...clerkUser });
     const res = await POST(makeRequest({ body: {} }));
     expect(res.status).toBe(403);
     expect(runCampaignMock).not.toHaveBeenCalled();
@@ -117,7 +129,7 @@ describe("POST /api/admin/warm-pool-campaign", () => {
     authMock.mockResolvedValue({ userId: "user_ash" });
     currentUserMock.mockResolvedValue({
       id: "user_ash",
-      primaryEmailAddress: { emailAddress: "ash@example.com" },
+      primaryEmailAddress: { emailAddress: "ash@example.com", verification: { status: "verified" } },
       emailAddresses: [{ emailAddress: "ash@example.com" }],
     });
     const res = await POST(makeRequest({ body: {} }));

@@ -22,9 +22,10 @@ import { posthogClient } from "@/lib/posthog";
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
   DEFAULT_PROXMOX_VM_DISK_GB,
-  getReservedProxmoxVmidsForNode,
+  buildProxmoxVmidReferenceLedger,
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
+import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { selectAvailableProxmoxProvisionTarget } from "@/lib/services/instance-service";
 import { BoxTunnelProvisionError, deleteBoxTunnel, isTunnelConfigured } from "@/lib/services/cloudflare-tunnel";
@@ -37,7 +38,7 @@ import { validateResourceEnvelope } from "@/lib/launch/resource-envelope";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
-import { validateAgentResources, isActiveComputeStatus } from "@/lib/hivra/resource-gate";
+import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
@@ -57,7 +58,7 @@ import {
 import { launchProviderAgent, ProviderAgentLaunchError, type ProviderAgentLaunchInput } from "@/lib/hivra/provider-agent-launch";
 import { GvisorComputerError, launchGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { createLaunchModelAdmissionService, type LaunchModelAdmission } from "@/lib/hivra/launch-model-admission";
-import { LaunchModelRequestError } from "@/lib/hivra/launch-model-store";
+import { LaunchModelRequestError, LaunchPlanAgentLimitError } from "@/lib/hivra/launch-model-store";
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
 import {
   createHivraLaunchOperationService,
@@ -178,6 +179,7 @@ function launchOperationReplayResponse(replay: HivraLaunchOperationReplay) {
       provider_conflict: "This computer is already assigned or its connection changed.",
       provider_not_ready: "This cloud computer is not ready for launch.",
       provider_access: "Secure access is not configured on this Hivra installation.",
+      plan_agent_limit: "Your plan's agent limit was reached before this computer was created. Upgrade for more slots, or remove an agent first.",
     };
     return apiError(messages[replay.failureCode] ?? "The launch failed before a computer was created.",
       replay.failureStatus, undefined, {
@@ -261,6 +263,8 @@ function phase1Script(params: {
   vmidStart: number;
   vmidEnd: number;
   reservedVmids: ReadonlyArray<number>;
+  /** Managed hosts only: the cross-plane host VMID reference ledger. */
+  vmidLedger?: VmidReferenceLedger | null;
   ipLastOctetStart: number;
   operationId: string;
   infrastructureBindingTag: string;
@@ -512,13 +516,18 @@ claimed_vmids="$(printf '%s\\n%s\\n' "$cluster_vmids" "$intent_vmids" | sed '/^$
 if [ -n "$RESERVED_VMIDS" ]; then
   claimed_vmids="$(printf '%s\\n%s\\n' "$claimed_vmids" "$RESERVED_VMIDS" | sed '/^$/d' | sort -un)"
 fi
+${params.vmidLedger ? `${buildVmidReferenceLedgerScript(params.vmidLedger)}hivra_vmid_reference_sync
+if [ -n "$HIVRA_FOREIGN_VMIDS" ]; then
+  claimed_vmids="$(printf '%s\\n%s\\n' "$claimed_vmids" "$HIVRA_FOREIGN_VMIDS" | sed '/^$/d' | sort -un)"
+fi` : ""}
 for c in $(seq ${params.vmidStart} ${params.vmidEnd}); do
   if printf '%s\\n' "$claimed_vmids" | grep -qx "$c"; then continue; fi
   exec 9>"/run/lock/hivra-vmids/$c.lock"
   if flock -n 9; then VMID="$c"; break; fi
   exec 9>&-
 done
-[ -n "$VMID" ] || { echo "no free vmid in ${params.vmidStart}-${params.vmidEnd}" >&2; exit 1; }
+[ -n "$VMID" ] || { echo "no free vmid in ${params.vmidStart}-${params.vmidEnd}" >&2; exit 1; }${params.vmidLedger ? `
+hivra_vmid_reference_record "$VMID"` : ""}
 # Last octets already configured on this host's private subnet, read from every
 # VM's cloud-init ipconfig0. The octet MUST avoid these: a VMID-derived octet is
 # not collision-safe because out-of-band VMs (an older vmid->octet scheme, manual
@@ -1288,7 +1297,9 @@ async function launchAgent(request: NextRequest) {
           placementMessage: placement.message,
           placementError: placement.error ?? null,
         });
-        return apiError(placement.message, placement.status);
+        // Refused before anything was created: the launch can be tried again
+        // as it is, and the client must not treat it as possibly created.
+        return apiError(placement.message, placement.status, undefined, { code: "placement_unavailable" });
       }
       env = placement.env;
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
@@ -1458,16 +1469,42 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       .update(randomBytes(32))
       .digest("hex");
     const infrastructureBindingTag = hivraInfrastructureBindingTag(infrastructureBindingTokenHash);
-    const reservedLaunch = launchAdmission && launchModels ? await launchModels.reserve(launchAdmission, {
-      id: randomUUID(), type: "codex", name, cpu, ram,
-      ...(hasExplicitEnvelope ? { cpu_max: maximumCpu, ram_max: maximumRam } : {}),
-      deployment_mode: deployment.mode,
-      computer_substrate: "proxmox-kvm", operation_id: provisionOperationId,
-      managed_provisioner_channel: managedProvisionerChannel,
-      proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : host,
-      infrastructure_binding_token_hash: infrastructureBindingTokenHash, pool_id: poolId,
-      goal, context, personality, emoji, template_skills: templateSkillsColumn, ...deploymentBinding,
-    }) : null;
+    // The database counts the plan's agent slots again under the owner's slot
+    // lock before it writes a Hivra-managed row (T35), so a launch racing an
+    // attach or another launch cannot pass the limit the gate above checked.
+    const slotPlan = deployment.mode === "hivra-managed" ? await resolvePlanAgentSlots(userId) : null;
+    if (deployment.mode === "hivra-managed" && !slotPlan) {
+      await releaseLlmKeyOnFailure();
+      return apiError(`Plan access is required before launching ${def.name}.`, 403);
+    }
+    const agentLimit = slotPlan?.agentLimit ?? 0;
+    const planLimitResponse = async (error: LaunchPlanAgentLimitError) => {
+      await releaseLlmKeyOnFailure();
+      log.warn("hivra launch refused by the database plan slot count", {
+        source: "hivra/agents", failureType: "hivra_agent_plan_limit", userId, agentType: type,
+        activeCount: error.activeCount, limit: error.limit,
+      });
+      if (launchOperations && launchOperationAdmission) {
+        await launchOperations.fail(launchOperationAdmission, 403, "plan_agent_limit");
+      }
+      return apiError(planAgentLimitMessage(slotPlan?.planName ?? "current", error.limit), 403, undefined, { code: "plan_agent_limit" });
+    };
+    let reservedLaunch;
+    try {
+      reservedLaunch = launchAdmission && launchModels ? await launchModels.reserve(launchAdmission, {
+        id: randomUUID(), type: "codex", name, cpu, ram,
+        ...(hasExplicitEnvelope ? { cpu_max: maximumCpu, ram_max: maximumRam } : {}),
+        deployment_mode: deployment.mode,
+        computer_substrate: "proxmox-kvm", operation_id: provisionOperationId,
+        managed_provisioner_channel: managedProvisionerChannel,
+        proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : host,
+        infrastructure_binding_token_hash: infrastructureBindingTokenHash, pool_id: poolId,
+        goal, context, personality, emoji, template_skills: templateSkillsColumn, ...deploymentBinding,
+      }, agentLimit) : null;
+    } catch (error) {
+      if (error instanceof LaunchPlanAgentLimitError) return await planLimitResponse(error);
+      throw error;
+    }
     if (reservedLaunch && !reservedLaunch.created) return apiSuccess({
       agent: sanitizeHivraAgentRow(reservedLaunch.agent), launchRequestId: reservedLaunch.requestId,
     }, 200);
@@ -1477,53 +1514,68 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       const reservation = await launchOperations.reserve(launchOperationAdmission);
       if (!reservation.created) return launchOperationReplayResponse(reservation.existing);
     }
-    const insertAgentRow = async () => reservedLaunch ? { data: reservedLaunch.agent, error: null } : await supabaseAdmin!
-      .from("hivra_agents")
-      .insert({
-        user_id: userId,
-        type,
-        computer_profile: computerProfile,
-        name,
-        status: "provisioning",
-        deployment_mode: deployment.mode,
-        computer_substrate: "proxmox-kvm",
-        managed_provisioner_channel: managedProvisionerChannel,
-        desired_state: "running",
-        operation_id: provisionOperationId,
-        operation_kind: "provision",
-        operation_payload: { stage: "pre_allocation_access" },
-        operation_started_at: new Date().toISOString(),
-        infrastructure_binding_token_hash: infrastructureBindingTokenHash,
-        // Every new allocation is provider-bound. Portable hosts stamp tags in
-        // the reviewed bundle; managed legacy hosts use an operation-scoped
-        // root-owned qm wrapper that injects the same tags into the exact
-        // atomic create. Only rows backfilled by the migration remain on the
-        // narrow managed-legacy unenforced compatibility path.
-        infrastructure_binding_token_enforced: true,
-        proxmox_host: deployment.mode === "self-managed"
-          ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL
-          : host,
-        cpu,
-        ram,
-        cpu_max: maximumCpu,
-        ram_max: maximumRam,
-        pool_id: poolId,
-        goal,
-        context,
-        personality,
-        emoji,
-        managed_venice: managedVenice,
-        llm_config: llmConfig,
-        llm_api_key_encrypted: llmKeyEncrypted,
-        template_skills: templateSkillsColumn,
-        ...deploymentBinding,
-      })
-      .select()
-      .single();
+    const agentRow = {
+      user_id: userId,
+      type,
+      computer_profile: computerProfile,
+      name,
+      status: "provisioning",
+      deployment_mode: deployment.mode,
+      computer_substrate: "proxmox-kvm",
+      managed_provisioner_channel: managedProvisionerChannel,
+      desired_state: "running",
+      operation_id: provisionOperationId,
+      operation_kind: "provision",
+      operation_payload: { stage: "pre_allocation_access" },
+      operation_started_at: new Date().toISOString(),
+      infrastructure_binding_token_hash: infrastructureBindingTokenHash,
+      // Every new allocation is provider-bound. Portable hosts stamp tags in
+      // the reviewed bundle; managed legacy hosts use an operation-scoped
+      // root-owned qm wrapper that injects the same tags into the exact
+      // atomic create. Only rows backfilled by the migration remain on the
+      // narrow managed-legacy unenforced compatibility path.
+      infrastructure_binding_token_enforced: true,
+      proxmox_host: deployment.mode === "self-managed"
+        ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL
+        : host,
+      cpu,
+      ram,
+      cpu_max: maximumCpu,
+      ram_max: maximumRam,
+      pool_id: poolId,
+      goal,
+      context,
+      personality,
+      emoji,
+      managed_venice: managedVenice,
+      llm_config: llmConfig,
+      llm_api_key_encrypted: llmKeyEncrypted,
+      template_skills: templateSkillsColumn,
+      ...deploymentBinding,
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the stored row shape is the same one the insert returned before.
+    const insertAgentRow = async (): Promise<{ data: any; error: unknown }> => {
+      if (reservedLaunch) return { data: reservedLaunch.agent, error: null };
+      if (deployment.mode !== "hivra-managed") {
+        return await supabaseAdmin!.from("hivra_agents").insert(agentRow).select().single();
+      }
+      // A Hivra-managed row is written only by the database, after it counts
+      // the owner's plan slots under the slot lock (T35).
+      const { data, error } = await supabaseAdmin!.rpc("insert_hivra_managed_agent", { p_row: agentRow, p_agent_limit: agentLimit });
+      if (error) return { data: null, error };
+      const result = data as { status?: unknown; row?: unknown; activeCount?: unknown; limit?: unknown } | null;
+      if (result?.status === "plan_agent_limit") {
+        throw new LaunchPlanAgentLimitError(Number(result.activeCount) || 0, Number(result.limit) || agentLimit);
+      }
+      if (result?.status === "invalid_request") return { data: null, error: { code: "22023", message: "invalid managed agent row" } };
+      if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") return { data: null, error: null };
+      return { data: result.row as Record<string, unknown>, error: null };
+    };
     let insertResult: Awaited<ReturnType<typeof insertAgentRow>>;
     try {
       insertResult = await insertAgentRow();
     } catch (insertError) {
+      if (insertError instanceof LaunchPlanAgentLimitError) return await planLimitResponse(insertError);
       await releaseLlmKeyOnFailure();
       log.error("hivra agent row insert acknowledgement was lost", insertError, {
         source: "hivra/agents",
@@ -1753,12 +1805,13 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // user-owned target. Managed reservations still include in-flight database
     // rows because those launches share Hivra's allocator. A target-scoped DB
     // uniqueness constraint protects the final self-managed write.
-    const reservedVmids = deployment.mode === "hivra-managed"
-      ? await getReservedProxmoxVmidsForNode({
+    const { reservedVmids, vmidLedger } = deployment.mode === "hivra-managed"
+      ? await buildProxmoxVmidReferenceLedger({
           proxmoxNode: host,
           excludeInstanceId: agent.id,
+          lane: "hivra",
         })
-      : [];
+      : { reservedVmids: [] as number[], vmidLedger: null };
 
     // The out-of-repo Hivra provisioner accepts a guest-visible core count.
     // Fractional free-tier CPU is a Proxmox scheduler cap, not a fractional
@@ -1821,6 +1874,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       vmidStart,
       vmidEnd,
       reservedVmids,
+      vmidLedger,
       ipLastOctetStart,
       operationId: provisionOperationId,
       infrastructureBindingTag,

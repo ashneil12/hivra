@@ -4,13 +4,9 @@ import { ArrowLeft, ArrowRight, Bot, Cloud, ExternalLink, Server, ShieldCheck } 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { HivraCloudCapacityDto } from "@/lib/infrastructure/hivra-cloud-client";
-import { PLANS } from "@/lib/subscription/plans";
 import styles from "./Infrastructure.module.css";
 
 type Path = "choose" | "cloud" | "machine" | "remote" | "local";
-
-/** The Free plan's Hivra Cloud allowance, from the plan definition. */
-const FREE_CAPACITY = `${PLANS.free.totalCpu} CPU and ${PLANS.free.totalRam >= 1024 ? `${PLANS.free.totalRam / 1024} GB` : `${PLANS.free.totalRam} MB`}`;
 
 export function InfrastructureEntryChooser({
   firstConnection, hivraCloud, selfHosted, onChooseHivraCloud, onConnectHetzner, onConnectDigitalOcean, onConnectExisting,
@@ -56,11 +52,11 @@ export function InfrastructureEntryChooser({
               ? "Use the separate hosted Hivra service. Your self-hosted installation stays independent."
               : hivraCloud?.paid
                 ? "Hivra runs and maintains the servers your plan uses."
-                : `Start free: ${FREE_CAPACITY} of Hivra Cloud, enough for one small agent. Hivra runs and maintains the servers.`}</p>
+                : "Choose a plan and Hivra runs and maintains the servers. Your free account works with the machines you connect yourself."}</p>
             {selfHosted ? <a className={styles.primaryButton} href="https://hivra.cloud/dashboard/infrastructure" target="_blank" rel="noreferrer">Open Hivra Cloud <ExternalLink size={14} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span></a>
               : hivraCloud?.paid ? <Link className={styles.primaryButton} href="/dashboard/billing">Manage Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></Link>
-                : <button type="button" className={styles.primaryButton} onClick={onChooseHivraCloud}>Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></button>}
-            <small>{hivraCloud?.paid ? `${hivraCloud.plan?.name ?? "Your plan"} is active. Review plan options in Billing.` : "Free needs no card. Paid plans show their price before payment."}</small>
+                : <button type="button" className={styles.secondaryButton} onClick={onChooseHivraCloud}>Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></button>}
+            <small>{hivraCloud?.paid ? `${hivraCloud.plan?.name ?? "Your plan"} is active. Review plan options in Billing.` : "Paid plans show their price before payment. Connecting your own machine costs nothing here."}</small>
           </article>
           <article className={styles.guidedChoice}>
             <Cloud size={22} aria-hidden="true" />
@@ -122,19 +118,32 @@ export function InfrastructureEntryChooser({
             </details>
           ) : null}
           <h3>Before you connect</h3>
-          <ol className={styles.guidedChecklist}>
-            <li><strong>A Linux server.</strong> Hivra checks what it can run without changing it.</li>
-            <li><strong>Its address and SSH key.</strong> Find the hostname or IP in your provider or machine settings. Have a key file ready that already lets you sign in.</li>
-            <li><strong>A way to verify its identity.</strong> Open the server’s trusted console. The next step shows how to check its fingerprint so Hivra connects to the right machine.</li>
-          </ol>
+          {path === "remote" ? (
+            // The setup command is the default path (slice 13); SSH details are
+            // its advanced alternative, offered in the next step.
+            <ol className={styles.guidedChecklist}>
+              <li><strong>A Linux server.</strong> Ubuntu 22.04 or 24.04 on x86, with a public IPv4 address that accepts SSH from the internet.</li>
+              <li><strong>A terminal on it</strong> as root or a user who can use sudo. You paste one command there, and it asks before it changes anything.</li>
+              <li><strong>This page, open.</strong> When the server reports, Hivra shows its name, address and SSH identity, and you confirm it’s yours. Hivra then checks what it can run.</li>
+            </ol>
+          ) : (
+            <ol className={styles.guidedChecklist}>
+              <li><strong>A Linux server.</strong> Hivra checks what it can run without changing it.</li>
+              <li><strong>Its address and SSH key.</strong> Find the hostname or IP in your provider or machine settings. Have a key file ready that already lets you sign in.</li>
+              <li><strong>A way to verify its identity.</strong> Open the server’s trusted console. The next step shows how to check its fingerprint so Hivra connects to the right machine.</li>
+            </ol>
+          )}
+          {path === "remote" ? (
+            <p>Proxmox VE, or no terminal on the server? The next step also lets you connect with SSH details instead.</p>
+          ) : null}
           <details className={styles.hostSupportDisclosure}>
             <summary>What can this machine run?</summary>
-            <p>Existing Proxmox/KVM can run hardware VMs after readiness checks. Compatible Ubuntu amd64 with root access and cgroup v2 can be prepared for Linux terminal and Python sandboxes; these do not provide a desktop or Windows.</p>
+            <p>Existing Proxmox/KVM can run hardware VMs after readiness checks. Compatible Ubuntu amd64 with root or passwordless sudo and cgroup v2 can be prepared for Linux terminal and Python sandboxes; these do not provide a desktop or Windows.</p>
             <p>Proxmox manages the host; KVM provides the hardware-VM isolation boundary. A cloud VM needs nested KVM to host hardware VMs. Linux sandboxes use gVisor’s application-kernel boundary, not a hardware VM. Connecting does not guarantee compatibility.</p>
           </details>
           <p>Preparation and launch are separate steps you approve after inspection.</p>
           <div className={styles.entryActions}>
-            {path !== "local" || selfHosted ? <button type="button" className={styles.primaryButton} onClick={onConnectExisting}>Connect existing host <ArrowRight size={14} aria-hidden="true" /></button> : <button type="button" className={styles.secondaryButton} onClick={() => { setRemoteOrigin("machine"); setPath("remote"); }}>Use a remote server instead <ArrowRight size={14} aria-hidden="true" /></button>}
+            {path !== "local" || selfHosted ? <button type="button" className={styles.primaryButton} onClick={onConnectExisting}>Connect a server you already have <ArrowRight size={14} aria-hidden="true" /></button> : <button type="button" className={styles.secondaryButton} onClick={() => { setRemoteOrigin("machine"); setPath("remote"); }}>Use a remote server instead <ArrowRight size={14} aria-hidden="true" /></button>}
           </div>
         </div>
       )}

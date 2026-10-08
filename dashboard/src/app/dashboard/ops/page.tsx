@@ -9,7 +9,7 @@ import { OpsHandoffCopyButton } from '@/components/ops/OpsHandoffCopyButton';
 import { OpsRowActions } from '@/components/ops/OpsRowActions';
 import { OpsSourceGroup } from '@/components/ops/OpsSourceGroup';
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
-import { isOpsAdminUser } from '@/lib/ops-access';
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from '@/lib/ops-access';
 import { classifyOpsEvent, type OpsEventBucket } from '@/lib/ops-event-classification';
 import { extractOpsEventHostIp, resolveOpsEventHostIpMap } from '@/lib/ops-event-hosts';
 import { buildOpsEventHandoffPrompt } from '@/lib/ops-event-handoff';
@@ -159,7 +159,7 @@ export default async function OpsPage(props: {
   const { userId } = await auth();
   await auth.protect();
   const user = await currentUser();
-  const userEmail = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null;
+  const userEmail = verifiedPrimaryEmailOf(user);
   const isOpsAdmin = isOpsAdminUser({ userId: userId || user?.id || null, email: userEmail });
 
   if (!isOpsAdmin) {
@@ -297,6 +297,13 @@ export default async function OpsPage(props: {
               style={{ padding: '10px 20px', fontSize: 10, letterSpacing: '0.1em', textDecoration: 'none' }}
             >
               Refresh Feed
+            </Link>
+            <Link
+              href="/dashboard/ops/releases"
+              className="action-button"
+              style={{ padding: '10px 20px', fontSize: 10, letterSpacing: '0.1em', textDecoration: 'none' }}
+            >
+              Releases
             </Link>
           </div>
         </div>

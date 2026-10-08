@@ -8,6 +8,7 @@ import {
   listInstallableSkillMeta,
 } from "../skill-install";
 import { bankrSkillSlug } from "../bankr-skills-seed";
+import { skillFrontmatterProblem } from "../skill-file";
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   __esModule: true,
@@ -57,6 +58,17 @@ describe("collectSkillFilesForIds", () => {
     expect(files).toHaveLength(1);
     expect(skipped).toContain("ghost-id");
     if (CONTENTLESS) expect(skipped).toContain(CONTENTLESS.id);
+  });
+
+  it("writes only SKILL.md files Codex can load, for every skill the picker offers", () => {
+    const { files, skipped, unloadable } = collectSkillFilesForIds(installable.map((s) => s.id));
+    expect(skipped).toEqual([]);
+    expect(unloadable).toEqual([]);
+    expect(files).toHaveLength(installable.length);
+    const problems = files
+      .map((f) => ({ id: f.id, problem: skillFrontmatterProblem(f.content) }))
+      .filter((result) => result.problem !== null);
+    expect(problems).toEqual([]);
   });
 
   it("produces unique slugs across many requested skills (no on-disk collisions)", () => {

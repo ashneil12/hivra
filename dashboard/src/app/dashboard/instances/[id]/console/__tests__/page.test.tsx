@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 
 let mockSearchParams = new URLSearchParams();
 const mockPush = jest.fn();
@@ -114,10 +115,15 @@ function createConsoleFetchMock(options?: {
   patchResponse?: unknown;
   postReject?: Error;
   postResponse?: unknown;
+  releaseStatus?: Record<string, unknown>;
   snapshotData?: Record<string, unknown>;
 }) {
   return jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
+
+    if (url === "/api/instances/inst_123/release-status") {
+      return Promise.resolve(buildJsonResponse({ success: true, data: options?.releaseStatus ?? null }));
+    }
 
     if (url === "/api/instances/inst_123?no_sync=true") {
       return Promise.resolve(buildJsonResponse(buildSnapshotPayload(options?.snapshotData)));
@@ -309,6 +315,41 @@ describe("AdvancedConsolePage", () => {
         body: JSON.stringify({ action: "redeploy" }),
       }));
     });
+  });
+
+  // The sidebar, ⌘K and Home reuse a list of agents read in the last few
+  // seconds. An action here changes it, so it is read again.
+  it("reads the agents list again after an action on the agent", async () => {
+    const consoleFetch = createConsoleFetchMock({ postResponse: { success: true } });
+    let listReads = 0;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/instances?summary=true") {
+        listReads += 1;
+        return Promise.resolve(buildJsonResponse({ success: true, data: [] }));
+      }
+      return consoleFetch(input, init);
+    }) as jest.Mock;
+    resetResourceInventory();
+    await act(async () => { await resourceInventory.load("hermes"); });
+    // The sidebar is showing the list.
+    const stopShowing = resourceInventory.subscribe(() => undefined);
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+      expect(listReads).toBe(1);
+      fireEvent.click(screen.getByRole("button", { name: /redeploy config/i }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm redeploy/i }));
+      });
+      await waitFor(() => expect(listReads).toBe(2));
+    } finally {
+      stopShowing();
+      resetResourceInventory();
+    }
   });
 
   it("offers agent repair from the advanced console and posts the repair action", async () => {
@@ -717,6 +758,65 @@ describe("AdvancedConsolePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /back to chat/i }));
     expect(mockPush).toHaveBeenCalledWith("/dashboard/instances/inst_123");
+  });
+
+  it("shows the update notice outside the collapsed Actions list at phone width and updates through the confirm modal", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(max-width: 640px)",
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+    global.fetch = createConsoleFetchMock({
+      releaseStatus: {
+        currentVersion: "2026.9.1",
+        updateAvailable: true,
+        direction: "upgrade",
+        target: { version: "2026.10.2", digest: "sha256:new" },
+        updateHealth: "ok",
+      },
+    });
+
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+
+      const banner = await screen.findByTestId("update-available-banner");
+      expect(banner).toHaveTextContent("Hermes 2026.10.2 is ready. This agent runs 2026.9.1.");
+      expect(screen.getByTestId("console-actions")).not.toContainElement(banner);
+      const backupsTab = screen.getByRole("button", { name: /backups/i });
+      expect(banner.compareDocumentPosition(backupsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      fireEvent.click(within(banner).getByRole("button", { name: "Update" }));
+      expect(screen.getByRole("dialog")).toHaveTextContent(/without removing mounted docker volumes/i);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm update/i }));
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalledWith("/api/instances/inst_123", expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ action: "update" }),
+        }));
+      });
+      // A successful action reads the release status again.
+      await waitFor(() => {
+        const reads = (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "/api/instances/inst_123/release-status");
+        expect(reads.length).toBeGreaterThanOrEqual(2);
+      });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 
   it("collapses the ops buttons into one Actions disclosure below the tabs at phone width", async () => {

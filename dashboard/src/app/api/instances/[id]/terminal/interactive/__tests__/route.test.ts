@@ -391,6 +391,8 @@ describe("/api/instances/[id]/terminal/interactive", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(consoleWarnSpy.mock.calls.flat().join(" ")).not.toContain("terminal_sidecar_unexpected_content_type");
     await expect(response.text()).resolves.toContain('"hello"');
     expect(mockedFetchFirstReachableGatewayResponse).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -401,6 +403,38 @@ describe("/api/instances/[id]/terminal/interactive", () => {
         method: "GET",
       }),
     );
+  });
+
+  it("serves the attach stream as an event stream whatever Content-Type the box sends", async () => {
+    // The box is not trusted to choose how the dashboard origin renders its
+    // bytes. A compromised or prompt-injected box answering with HTML must not
+    // get a document that runs script on the dashboard origin.
+    mockedFetchFirstReachableGatewayResponse.mockResolvedValue({
+      response: new Response("<!doctype html><script>document.title = 'box script ran'</script>", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "public, max-age=86400",
+        },
+      }),
+      url: "https://agent.example.com/_sidecar/api/terminal",
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/instances/inst_123/terminal/interactive?sessionKey=term:user_123:inst_123:shell&sessionToken=11111111-1111-4111-8111-111111111111",
+      ),
+      { params: Promise.resolve({ id: "inst_123" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(response.headers.get("cache-control")).toBe("private, no-cache, no-transform");
+    const warningOutput = consoleWarnSpy.mock.calls.flat().join(" ");
+    expect(warningOutput).toContain("terminal_sidecar_unexpected_content_type");
+    expect(warningOutput).toContain("text/html");
   });
 
   it("does not expose upstream attach failures to the client", async () => {

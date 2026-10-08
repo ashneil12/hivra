@@ -19,6 +19,11 @@ import {
   isEvmAddress,
   normalizeEvmAddress,
 } from "@/lib/billing/token-holdings";
+import { noticeWithdrawDestinationChange } from "@/lib/billing/withdraw-destination-notice";
+import {
+  withdrawDestinationAvailableAt,
+  withdrawDestinationHeldUntil,
+} from "@/lib/billing/withdraw-destination-policy";
 
 type QueryError = { message?: string } | null;
 
@@ -184,6 +189,11 @@ export interface InstanceBankrWalletPublicSummary {
   bankrWalletId: string | null;
   status: InstanceBankrWalletRecord["status"];
   withdrawalDestinationEvm: string | null;
+  /**
+   * When a newly saved destination can first receive a withdrawal; null once
+   * it can (or when none is saved). See withdraw-destination-policy.ts.
+   */
+  withdrawalDestinationAvailableAt: string | null;
   apiKeyStatus: InstanceBankrWalletRecord["apiKeyStatus"];
   custody: AgentWalletCustody;
   /** Preview of the key the user pasted; null for Hivra-provisioned wallets. */
@@ -632,6 +642,9 @@ export function instanceBankrWalletPublicSummary(
     bankrWalletId: isActive ? record.bankrWalletId : null,
     status: record.status,
     withdrawalDestinationEvm: record.withdrawalDestinationEvm,
+    withdrawalDestinationAvailableAt: record.withdrawalDestinationEvm
+      ? withdrawDestinationHeldUntil(record.withdrawalDestinationSetAt)?.toISOString() ?? null
+      : null,
     apiKeyStatus: record.apiKeyStatus,
     custody,
     apiKeyPreview: custody === "user_connected" && isActive ? record.apiKeyPreview : null,
@@ -793,7 +806,12 @@ export async function upsertWithdrawalRecipient(params: {
     throw new Error(error?.message || "Failed to save withdrawal recipient");
   }
 
-  if (params.setPrimary) {
+  // Re-marking the current destination as primary must not move
+  // withdrawal_destination_set_at: that would restart its cooldown.
+  const currentDestination = wallet.withdrawalDestinationEvm
+    ? normalizeEvmAddress(wallet.withdrawalDestinationEvm)
+    : null;
+  if (params.setPrimary && currentDestination !== normalizedAddress) {
     const { error: walletError } = await table(admin, "instance_bankr_wallets")
       .update({
         withdrawal_destination_evm: normalizedAddress,
@@ -953,26 +971,73 @@ export async function provisionBankrWalletForHivraAgent(params: {
   return provisionBankrWalletForOwner({ owner: { hivraAgentId }, ...rest });
 }
 
+/**
+ * Email the owner after an agent wallet's destination changed. The new
+ * destination is held for the cooldown from `withdrawal_destination_set_at`.
+ */
+async function noticeAgentWalletDestinationChange(params: {
+  record: InstanceBankrWalletRecord;
+  previousAddress: string | null;
+  changedAt: Date;
+}) {
+  await noticeWithdrawDestinationChange({
+    userId: params.record.userId,
+    kind: "agent_wallet",
+    walletAddress: params.record.evmAddress,
+    previousAddress: params.previousAddress,
+    newAddress: normalizeEvmAddress(params.record.withdrawalDestinationEvm ?? ""),
+    changedAt: params.changedAt,
+    availableAt: withdrawDestinationAvailableAt(params.changedAt),
+  });
+}
+
+function sameDestination(current: string | null, next: string): boolean {
+  return Boolean(current) && normalizeEvmAddress(current ?? "") === next;
+}
+
+/**
+ * Set a Hermes agent wallet's withdrawal destination. A different address is
+ * saved as the primary recipient with a new set time (its cooldown starts) and
+ * the owner is emailed; the same address again changes nothing. The caller
+ * must already have required a fresh sign-in check.
+ */
 export async function setWithdrawalDestination(params: {
   instanceId: string;
   userId: string;
   destinationEvm: string;
   db?: SupabaseLike | null;
+  now?: Date;
 }): Promise<InstanceBankrWalletRecord> {
   const admin = requireDb(params.db ?? supabaseAdmin);
+  const normalizedAddress = normalizeEvmAddress(params.destinationEvm);
+  const existing = await getBankrWalletForInstance({ instanceId: params.instanceId, db: admin });
+  if (!existing || existing.userId !== params.userId || existing.status !== "active") {
+    throw new Error("No active agent wallet found for withdrawal destination");
+  }
+  if (sameDestination(existing.withdrawalDestinationEvm, normalizedAddress)) {
+    return existing;
+  }
+
+  const changedAt = params.now ?? new Date();
   await upsertWithdrawalRecipient({
     instanceId: params.instanceId,
     userId: params.userId,
-    address: params.destinationEvm,
+    address: normalizedAddress,
     setPrimary: true,
     incrementUseCount: false,
     db: admin,
+    now: changedAt,
   });
   const record = await getBankrWalletForInstance({ instanceId: params.instanceId, db: admin });
   if (!record || record.userId !== params.userId) {
     throw new Error("Failed to update withdrawal destination");
   }
 
+  await noticeAgentWalletDestinationChange({
+    record,
+    previousAddress: existing.withdrawalDestinationEvm,
+    changedAt,
+  });
   return record;
 }
 
@@ -987,6 +1052,11 @@ export async function setWithdrawalDestination(params: {
  * entirely and persists the destination directly on the owner-agnostic
  * `instance_bankr_wallets.withdrawal_destination_evm` column — the same column
  * the withdraw flow reads. No migration required; works for both lanes.
+ *
+ * Same change rules as `setWithdrawalDestination`: a different address gets a
+ * new set time (its cooldown starts) and the owner is emailed; the same
+ * address again changes nothing. The caller must already have required a
+ * fresh sign-in check.
  */
 export async function setWithdrawalDestinationForOwner(params: {
   owner: BankrWalletOwner;
@@ -1002,8 +1072,12 @@ export async function setWithdrawalDestinationForOwner(params: {
   if (!wallet || wallet.userId !== params.userId || wallet.status !== "active") {
     throw new Error("No active agent wallet found for withdrawal destination");
   }
+  if (sameDestination(wallet.withdrawalDestinationEvm, normalizedAddress)) {
+    return wallet;
+  }
 
-  const timestamp = (params.now ?? new Date()).toISOString();
+  const changedAt = params.now ?? new Date();
+  const timestamp = changedAt.toISOString();
   const { error } = await table(admin, "instance_bankr_wallets")
     .update({
       withdrawal_destination_evm: normalizedAddress,
@@ -1020,6 +1094,11 @@ export async function setWithdrawalDestinationForOwner(params: {
     throw new Error("Failed to update withdrawal destination");
   }
 
+  await noticeAgentWalletDestinationChange({
+    record,
+    previousAddress: wallet.withdrawalDestinationEvm,
+    changedAt,
+  });
   return record;
 }
 

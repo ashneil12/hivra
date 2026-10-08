@@ -115,7 +115,7 @@ describe('ProfileService', () => {
   describe('syncProfiles', () => {
     it('gracefully protects profiles currently in "creating" status from premature deletion due to race conditions', async () => {
       // 1. Mock getHostIpForInstance so it doesn't query DB
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
       jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
 
       // 2. Mock sshExec to simulate that no profiles are running natively yet on the host
@@ -161,7 +161,7 @@ describe('ProfileService', () => {
     });
 
     it("reuses the loaded profile rows when assigning ports to multiple host-created profiles", async () => {
-      jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+      jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
       jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
 
       (sshExec as jest.Mock).mockResolvedValue({
@@ -212,7 +212,7 @@ describe('ProfileService', () => {
     });
 
     it("throws when a host-created profile cannot be assigned a gateway port", async () => {
-      jest.spyOn(ProfileService, "getHostIpForInstance").mockResolvedValue("127.0.0.1");
+      jest.spyOn(ProfileService, "getGuestSshForInstance").mockResolvedValue({ ip: "127.0.0.1", guestTarget: null });
       jest.spyOn(ProfileService, "getHermesHomeForInstance").mockResolvedValue("/opt/data");
 
       (sshExec as jest.Mock).mockResolvedValue({
@@ -256,7 +256,7 @@ describe('ProfileService', () => {
   describe('startProfileGateway', () => {
     it('rebuilds profile gateway env cleanly and fails startup if the gateway never binds', async () => {
       // 1. Mock getHostIpForInstance
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
       jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');
 
       // 2. Mock DB query retrieving gateway_port
@@ -361,7 +361,7 @@ describe('ProfileService', () => {
 
   describe('updateAgentCaddyRouting', () => {
     it('rebuilds profile routes using the saved gateway host when DNS env is absent', async () => {
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
 
       const mockChain: Record<string, jest.Mock> = {
         select: jest.fn().mockReturnThis(),
@@ -385,19 +385,22 @@ describe('ProfileService', () => {
       expect(sshExec).toHaveBeenCalledWith(
         '127.0.0.1',
         expect.stringContaining('203-0-113-11.sslip.io {'),
+        { proxmoxHostConfig: null },
       );
       expect(sshExec).toHaveBeenCalledWith(
         '127.0.0.1',
         expect.not.stringContaining('203-0-113-11.sslip.io, :80'),
+        { proxmoxHostConfig: null },
       );
       expect(sshExec).toHaveBeenCalledWith(
         '127.0.0.1',
         expect.stringContaining('handle_path /profiles/marcus*'),
+        { proxmoxHostConfig: null },
       );
     });
 
     it('drops the gateway port when reconstructing the public caddy host', async () => {
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
 
       const mockChain: Record<string, jest.Mock> = {
         select: jest.fn().mockReturnThis(),
@@ -421,15 +424,17 @@ describe('ProfileService', () => {
       expect(sshExec).toHaveBeenCalledWith(
         '127.0.0.1',
         expect.stringContaining('203-0-113-11.sslip.io {'),
+        { proxmoxHostConfig: null },
       );
       expect(sshExec).toHaveBeenCalledWith(
         '127.0.0.1',
         expect.not.stringContaining('203-0-113-11.sslip.io:8443, :80'),
+        { proxmoxHostConfig: null },
       );
     });
 
     it('emits a script that snapshots the old Caddyfile, validates, reloads, then health-probes the public gateway', async () => {
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
 
       const mockChain: Record<string, jest.Mock> = {
         select: jest.fn().mockReturnThis(),
@@ -484,7 +489,7 @@ describe('ProfileService', () => {
       ['null (column unset — fail closed)', null],
       ['undefined (column absent — fail closed)', undefined],
     ])('never writes a Caddyfile to a webfree box: backend=%s', async (_label, backend) => {
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
 
       const mockChain: Record<string, jest.Mock> = {
         select: jest.fn().mockReturnThis(),
@@ -520,7 +525,7 @@ describe('ProfileService', () => {
       delete process.env.NEXT_PUBLIC_DNS_DOMAIN_DEPLOY;
 
       try {
-        jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+        jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
 
         const mockChain: Record<string, jest.Mock> = {
           select: jest.fn().mockReturnThis(),
@@ -580,7 +585,7 @@ describe('ProfileService', () => {
     it('redacts secrets when caddy reload errors are logged', async () => {
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-      jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('127.0.0.1');
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
 
       const mockChain: Record<string, jest.Mock> = {
         select: jest.fn().mockReturnThis(),

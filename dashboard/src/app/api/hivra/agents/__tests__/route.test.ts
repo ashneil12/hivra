@@ -99,6 +99,19 @@ let mockAgentInsertThrows: unknown;
 const mockHivraAgentEqCalls: Array<[string, unknown]> = [];
 const mockAgentUpdates: Array<Record<string, unknown>> = [];
 let mockSubscriptionRow: Record<string, unknown> | null;
+// The Free-account refusal (hosted compute is paid) has its own tests below and
+// in resource-gate.test.ts. Everything else in this file exercises pool, slot,
+// placement and idempotency behaviour through the small Free-sized fixture, so
+// the refusal is off unless a test turns it on.
+let mockEnforceFreeAccountRefusal = false;
+jest.mock("@/lib/billing/hosted-compute", () => {
+  const actual = jest.requireActual("@/lib/billing/hosted-compute");
+  return {
+    ...actual,
+    isFreeAccountEntitlement: (sub: unknown) =>
+      mockEnforceFreeAccountRefusal && actual.isFreeAccountEntitlement(sub),
+  };
+});
 let mockExistingAgents: Array<Record<string, unknown>>;
 let mockVmIdentityUpdateError: unknown;
 let mockInsertedAgentId = "agent-1";
@@ -190,8 +203,31 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: (...args: unknown[]) => mockSupabaseFrom(...args),
+    rpc: (...args: unknown[]) => mockSupabaseRpc(...args),
   },
 }));
+
+// The database's side of the plan slot count (T35): the count every gate reads,
+// and the slot-locked writer that replaced the direct Hivra-managed insert. The
+// writer records the same payload the old insert spy saw, so the launch
+// assertions keep reading mockAgentInsert.
+const mockSupabaseRpc = jest.fn();
+let mockSlotCountOverride: number | null = null;
+function mockDefaultRpc(name: string, args: Record<string, unknown>) {
+  if (name === "hivra_owner_agent_slot_count") {
+    const counted = mockExistingAgents.filter(row => (row.deployment_mode ?? "hivra-managed") === "hivra-managed"
+      && ["provisioning", "running", "stopped"].includes(String(row.status))).length;
+    return Promise.resolve({ data: mockSlotCountOverride ?? counted, error: null });
+  }
+  if (name === "insert_hivra_managed_agent") {
+    const row = args.p_row as Record<string, unknown>;
+    mockAgentInsert(row);
+    if (mockAgentInsertThrows) return Promise.reject(mockAgentInsertThrows);
+    if (mockAgentInsertError) return Promise.resolve({ data: null, error: mockAgentInsertError });
+    return Promise.resolve({ data: { status: "inserted", row: { id: mockInsertedAgentId, ...row } }, error: null });
+  }
+  return Promise.resolve({ data: null, error: { message: `unexpected rpc ${name}` } });
+}
 
 jest.mock("@/lib/hivra/hivra-flag", () => ({
   isHivraApiAllowed: () => true,
@@ -239,7 +275,7 @@ jest.mock("@/lib/services/cloudflare-tunnel", () => ({
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   DEFAULT_PROXMOX_VM_DISK_GB: 30,
-  getReservedProxmoxVmidsForNode: (...args: unknown[]) => mockGetReservedProxmoxVmidsForNode(...args),
+  buildProxmoxVmidReferenceLedger: (...args: unknown[]) => mockBuildProxmoxVmidReferenceLedger(...args),
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveProxmoxTargetConfiguration(...args),
   runProxmoxHostScript: (...args: unknown[]) => mockRunProxmoxHostScript(...args),
 }));
@@ -399,6 +435,7 @@ describe("POST /api/hivra/agents", () => {
     delete process.env.HIVRA_CLAUDE_CODE_PROXMOX_HOST;
     delete process.env.NEXT_PUBLIC_APP_URL;
     delete process.env.VERCEL_TARGET_ENV;
+    mockEnforceFreeAccountRefusal = false;
     mockSubscriptionRow = {
       plan: "free",
       status: "active",
@@ -413,6 +450,8 @@ describe("POST /api/hivra/agents", () => {
     mockAgentInsertError = null;
     mockAgentInsertThrows = null;
     mockExistingAgents = [];
+    mockSlotCountOverride = null;
+    mockSupabaseRpc.mockReset().mockImplementation(mockDefaultRpc);
     mockAuth.mockResolvedValue({ userId: "user-free" });
     mockTunnelConfigured = false;
     mockLocalAuthMode = false;
@@ -740,6 +779,24 @@ describe("POST /api/hivra/agents", () => {
     expect(mockOperationReserve).not.toHaveBeenCalled();
   });
 
+  it("maps the model reservation's plan-limit refusal to the launch copy and releases nothing it did not create", async () => {
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    const { LaunchPlanAgentLimitError } = jest.requireActual("@/lib/hivra/launch-model-store");
+    mockLaunchReserve.mockRejectedValueOnce(new LaunchPlanAgentLimitError(4, 4));
+    mockRunProxmoxHostScript.mockReset()
+      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_RESOURCE_MAXIMUM_FITS 16 65536\n" });
+    mockTunnelConfigured = true;
+    const response = await POST(makeRequest({ type: "codex", llm: MODEL_SELECTION, cpu: 1.5, ram: 3,
+      launchRequestId: LAUNCH_REQUEST_ID }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ code: "plan_agent_limit" }));
+    expect(mockLaunchReserve).toHaveBeenCalledWith(expect.objectContaining({ agentLimit: 4 }));
+    expect(mockCreateBoxTunnel).not.toHaveBeenCalled();
+  });
+
   it("rejects an explicit launch maximum below the reserved allocation", async () => {
     const response = await POST(makeRequest({
       type: "codex", cpu: 2, ram: 4, maximumCpu: 1, maximumRam: 2,
@@ -1005,6 +1062,8 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual(expect.objectContaining({
       error: expect.stringMatching(/provisioner is being prepared/i),
+      // Refused before anything was created: Launch goes back to Review.
+      code: "placement_unavailable",
     }));
     expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(1);
     const readinessScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
@@ -1907,6 +1966,39 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  it("writes a Hivra-managed row only through the slot-locked database writer with the plan's limit", async () => {
+    const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+    expect(response.status).toBe(201);
+    expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
+      p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
+    }));
+  });
+
+  it("refuses a launch the database counts past the plan limit, with the existing copy and no computer work (T35)", async () => {
+    // The courtesy gate saw a free slot; a concurrent attach or launch took it
+    // before the database counted under the owner's slot lock.
+    mockSupabaseRpc.mockImplementation((name: string, args: Record<string, unknown>) => name === "insert_hivra_managed_agent"
+      ? Promise.resolve({ data: { status: "plan_agent_limit", activeCount: 1, limit: 1 }, error: null })
+      : mockDefaultRpc(name, args));
+    const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      error: "Your Free plan allows 1 active agent.", code: "plan_agent_limit",
+    }));
+    expect(mockOperationFail).toHaveBeenCalledWith(expect.objectContaining({ requestId: LAUNCH_REQUEST_ID }), 403, "plan_agent_limit");
+    expect(mockOperationMarkReconciling).not.toHaveBeenCalled();
+    expect(mockOperationBindAgent).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("counts the plan from the database slot count, so an agent attached to a computer fills the Free slot", async () => {
+    mockSlotCountOverride = 1;
+    const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({ error: "Your Free plan allows 1 active agent." }));
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
   it("keeps a thrown generic row-insert acknowledgement reconciling", async () => {
     mockAgentInsertThrows = new Error("lost insert response");
     const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
@@ -2636,6 +2728,38 @@ describe("POST /api/hivra/agents", () => {
     const kickoffScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
     expect(kickoffScript).toContain("RESERVED_VMIDS='200\n201'");
     expect(kickoffScript).toContain('if [ -n "$RESERVED_VMIDS" ]; then');
+    // Cross-plane host ledger: publish this plane's references under the
+    // allocation lock, skip other planes', and record the selected VMID.
+    expect(kickoffScript).toContain("HIVRA_VMID_REFERENCE_PLANE='canaryplanefixture'");
+    expect(kickoffScript).toContain("HIVRA_VMID_REFERENCE_LANE=hivra");
+    expect(kickoffScript).toContain("HIVRA_VMID_REFERENCES='200\n201'");
+    const lock = kickoffScript.indexOf("flock -w 60 8");
+    const sync = kickoffScript.indexOf("\nhivra_vmid_reference_sync");
+    const record = kickoffScript.indexOf('hivra_vmid_reference_record "$VMID"');
+    expect(lock).toBeGreaterThan(-1);
+    expect(sync).toBeGreaterThan(lock);
+    expect(record).toBeGreaterThan(sync);
+    expect(jest.requireActual<typeof import("node:child_process")>("node:child_process")
+      .spawnSync("bash", ["-n"], { input: kickoffScript, encoding: "utf8" }).status).toBe(0);
+    expect(kickoffScript).toContain('claimed_vmids="$(printf \'%s\\n%s\\n\' "$claimed_vmids" "$HIVRA_FOREIGN_VMIDS"');
+  });
+
+  it("refuses a Hivra-hosted launch for a Free account before any allocation", async () => {
+    mockEnforceFreeAccountRefusal = true;
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      browser: false,
+    }) as never);
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(/paid plan/i);
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
   it("rejects browser automation on the free pool before provisioning", async () => {
@@ -3405,4 +3529,32 @@ describe("GET /api/hivra/agents", () => {
       expect.objectContaining({ id: "agent-running", status: "running" }),
     ]);
   });
+
+  it("does not send internal host topology to the browser", async () => {
+    mockExistingAgents = [{
+      id: "agent-running", type: "claude-code", name: "RUNNING_AGENT", status: "running",
+      cpu: 2, ram: 4, vmid: 163, proxmox_host: "fixturenode10", ip: "10.253.0.90",
+    }];
+
+    const response = await GET(makeGetRequest() as never);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    expect(body.data.agents).toEqual([expect.objectContaining({ id: "agent-running", vmid: 163 })]);
+    expect(body.data.agents[0]).not.toHaveProperty("proxmox_host");
+    expect(body.data.agents[0]).not.toHaveProperty("ip");
+    expect(JSON.stringify(body)).not.toMatch(/fixturenode10|10\.253\.0\.90/);
+  });
 });
+
+// Defined after the suite so fixture line numbers above stay stable; jest only
+// calls it at test time. It routes through the reserved-VMID mock so existing
+// reservation assertions keep describing the DB lookup.
+async function mockBuildProxmoxVmidReferenceLedger(...args: unknown[]) {
+  const params = args[0] as { proxmoxNode: string; excludeInstanceId: string; lane: "hermes" | "hivra" };
+  const references = await mockGetReservedProxmoxVmidsForNode({
+    proxmoxNode: params.proxmoxNode,
+    excludeInstanceId: params.excludeInstanceId,
+  });
+  return { reservedVmids: references, vmidLedger: { plane: "canaryplanefixture", lane: params.lane, references } };
+}

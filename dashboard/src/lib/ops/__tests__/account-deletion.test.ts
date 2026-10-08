@@ -74,6 +74,15 @@ describe("account deletion safeguards", () => {
     );
   });
 
+  // Slice 13 (T41): setup commands and their observed addresses go with the
+  // account. Receipts (the events table) go by cascade from their enrollment:
+  // the service role can't delete them directly, so they are not listed.
+  it("deletes server setup commands by user, and leaves their receipts to the cascade", () => {
+    const entry = ACCOUNT_DELETION_TABLES.find((table) => table.table === "infrastructure_server_enrollments");
+    expect(entry).toMatchObject({ filterColumn: "user_id", source: "userId" });
+    expect(ACCOUNT_DELETION_TABLES.map((table) => table.table)).not.toContain("infrastructure_server_enrollment_events");
+  });
+
   it("deletes yearly token rows before the quotes they reference", () => {
     const tableNames = ACCOUNT_DELETION_TABLES.map((entry) => entry.table);
 

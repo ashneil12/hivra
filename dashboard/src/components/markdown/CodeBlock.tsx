@@ -2,9 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/cjs/styles/prism';
+// The light async build loads the highlighter, then each language's grammar,
+// the first time a block needs them, instead of every grammar Prism knows on
+// every page that can show code. A block reads as plain code until then.
+import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-async-light';
+import vscDarkPlus from 'react-syntax-highlighter/dist/cjs/styles/prism/vsc-dark-plus';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
+import { prismLanguage } from './prism-languages';
 
 interface ChatCodeBlockProps {
   language: string;
@@ -63,7 +67,7 @@ export function CodeBlock({ language, value }: ChatCodeBlockProps) {
       </div>
       <div style={{ overflowX: 'auto', background: '#0d0d0d' }}>
         <SyntaxHighlighter
-          language={parsedLang}
+          language={prismLanguage(parsedLang)}
           style={vscDarkPlus}
           customStyle={{ margin: 0, padding: '16px', background: '#0d0d0d', fontSize: '13px', lineHeight: 1.5, fontFamily: 'var(--font-mono), monospace' }}
           PreTag="div"

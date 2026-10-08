@@ -6,6 +6,12 @@
  */
 import { NextRequest } from "next/server";
 
+// Run the blocked-country cases against the COMMITTED country list, not the empty
+// one jest.setup.tsx gives other suites, and never replace the policy for them:
+// if the list stopped reaching the routes, these would fail. The dormant cases
+// below still empty the policy on purpose.
+jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
+
 const mockFrom = jest.fn();
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
@@ -66,6 +72,9 @@ const mockRefreshHolding = jest.fn();
 jest.mock("@/lib/billing/token-holdings", () => ({
   ...jest.requireActual("@/lib/billing/token-holdings"),
   getTokenVerificationWallet: jest.fn(async () => ({ address: "0xabc" })),
+  // No legacy lock wallet, so verifying a wallet changes no withdrawal
+  // destination and needs no fresh sign-in check (wallet/verify route tests).
+  getHermesLockWallet: jest.fn(async () => null),
   refreshPrimaryHermesTokenHolding: (...args: unknown[]) => mockRefreshHolding(...args),
 }));
 const mockEvaluate = jest.fn();
@@ -90,6 +99,7 @@ const mockVerifyChallenge = jest.fn();
 jest.mock("@/lib/billing/wallet-verification", () => ({
   createWalletVerificationChallenge: (...args: unknown[]) => mockCreateChallenge(...args),
   isWalletClaimedByAnotherAccount: jest.fn(async () => false),
+  getPendingWalletChallengeAddress: jest.fn(async () => "0x000000000000000000000000000000000000dead"),
   verifyWalletChallenge: (...args: unknown[]) => mockVerifyChallenge(...args),
 }));
 
@@ -339,9 +349,9 @@ describe("dormant policy (no country listed)", () => {
   });
 });
 
-describe("policy of ['GB']", () => {
-  beforeEach(() => {
-    jest.replaceProperty(TOKEN_GEO_POLICY, "blockedCountries", ["GB"]);
+describe("the committed country list (GB)", () => {
+  it("is what the routes read: GB is listed and the policy is active", () => {
+    expect(TOKEN_GEO_POLICY.blockedCountries).toContain("GB");
   });
 
   it.each(TOKEN_ACTIONS)("$name is refused for a GB IP: 403 token_geo_blocked, nothing created", async ({ call, created }) => {

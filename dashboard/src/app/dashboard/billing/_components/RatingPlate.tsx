@@ -20,7 +20,7 @@ export function formatAmount(value: number): string {
 
 const STATUS_LABELS: Record<string, { label: string; tone: "good" | "warn" | "bad" | "neutral" }> = {
   active: { label: "Active", tone: "good" },
-  trialing: { label: "Trial", tone: "neutral" },
+  trialing: { label: "Active", tone: "good" },
   past_due: { label: "Payment due", tone: "warn" },
   unpaid: { label: "Unpaid", tone: "bad" },
   canceled: { label: "Canceled", tone: "bad" },
@@ -183,6 +183,9 @@ export function RatingPlate({
 }) {
   const unlimitedSlots = usage.maxAgents >= UNLIMITED;
   const boost = plan.veniceBoost?.active ? plan.veniceBoost : null;
+  // Free is an account, not a computer. A grandfathered free account that
+  // still holds a Hivra-run computer keeps the full plate so it sees what runs.
+  const accountOnly = plan.key === "free" && usage.agentCount === 0;
 
   return (
     <section className={styles.plate} aria-labelledby="billing-plate-name">
@@ -206,6 +209,20 @@ export function RatingPlate({
         </div>
       </div>
 
+      {accountOnly ? (
+        // A free account holds no Hivra-run computer, so 0.5 vCPU / 1 GB and
+        // an idle-sleep rule would describe hardware it never gets.
+        <dl className={styles.plateSpecs}>
+          <div className={styles.plateSpec}>
+            <dt>Computer</dt>
+            <dd>Your own</dd>
+          </div>
+          <div className={styles.plateSpec}>
+            <dt>Run by Hivra</dt>
+            <dd>No</dd>
+          </div>
+        </dl>
+      ) : (
       <dl className={styles.plateSpecs}>
         <div className={styles.plateSpec}>
           <dt>{specLabels.slots}</dt>
@@ -227,7 +244,9 @@ export function RatingPlate({
           <dd>{idlePolicy}</dd>
         </div>
       </dl>
+      )}
 
+      {!accountOnly && (
       <div className={styles.plateMeters}>
         <SlotMeter label={labels.slots} used={usage.agentCount} total={usage.maxAgents} />
         <BarMeter id="billing-meter-cpu" label={labels.cpu} used={usage.usedCpu} total={usage.totalCpu} unit="vCPU" />
@@ -239,6 +258,7 @@ export function RatingPlate({
           unit="GB"
         />
       </div>
+      )}
 
       <div className={styles.plateActions}>{actions}</div>
     </section>

@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
+import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
 import styles from "../public-site/public-site.module.css";
 
 const COLUMNS = [
   { title: "Product", links: [
-    { label: "Agents", href: "/#agents" },
+    { label: "Agents", href: "/agents" },
     { label: "Computers", href: "/#computers" },
     { label: "Hosting & self-hosting", href: "/#hosting" },
-    { label: "Pricing", href: "/#pricing" },
+    { label: "Pricing", href: "/pricing" },
     { label: "Roadmap", href: "/roadmap" },
     { label: "Changelog", href: "/changelog" },
     { label: "Status", href: "/status" },
@@ -17,16 +18,19 @@ const COLUMNS = [
     { label: "Open source", href: "/#open-source" },
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
-    { label: "Litepaper", href: "/docs/litepaper/" },
+    { label: "Litepaper", href: LITEPAPER_HREF },
     { label: "Blog", href: "/blog" },
+    { label: "Free tools", href: "/tools" },
     { label: "Download the app", href: "/download" },
     { label: "Ecosystem", href: "/ecosystem" },
     { label: "Token", href: "/token" },
   ] },
   { title: "Company", links: [
+    { label: "About", href: "/about" },
     { label: "Why I’m building Hivra", href: "/why-hivra" },
     { label: "Stats", href: "/stats" },
     { label: "Contact", href: "mailto:info@hivra.cloud" },
+    { label: "Security", href: "/security" },
     { label: "Terms", href: "/terms" },
     { label: "Privacy", href: "/privacy" },
   ] },
@@ -41,9 +45,9 @@ export default function Footer() {
             <nav key={column.title} aria-label={column.title}>
               <h2>{column.title}</h2>
               {column.links.map(({ label, href }) => (
-                <Link key={href} href={href} {...(href.startsWith("https://") ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
+                <PublicLink key={href} href={href} {...(href.startsWith("https://") ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
                   {label}{href.startsWith("https://") && <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" />}
-                </Link>
+                </PublicLink>
               ))}
             </nav>
           ))}

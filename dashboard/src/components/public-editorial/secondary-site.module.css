@@ -25,6 +25,13 @@
 .artLines { position:absolute; inset:0; display:grid; grid-template-columns:repeat(5,1fr); pointer-events:none; transform:skewY(-26deg) scale(1.4); }
 .artLines i { border-right:1px solid color-mix(in srgb,var(--ink-black) 16%,transparent); }
 .artArrow { position:absolute; width:24%; height:auto; right:7%; bottom:7%; color:var(--ink-black); }
+/* Blog topic hubs: a row of jump links, then one section per topic. */
+.topicNav { display:flex; flex-wrap:wrap; gap:10px 12px; align-items:center; margin:72px 0 0; }
+.topicNav span { font:11px var(--public-mono,monospace); color:var(--text-muted); margin-right:8px; }
+.topicNav a { font-size:14px; line-height:1; padding:11px 16px; border:1px solid var(--etched-border); color:var(--ink-black); text-decoration:none; transition:background .2s, color .2s, border-color .2s; }
+.topicNav a:hover, .topicNav a:focus-visible { background:var(--ink-black); color:var(--public-bg, var(--vellum-bg)); border-color:var(--ink-black); }
+.topicSection { scroll-margin-top:110px; }
+.topicBlurb { max-width:62ch; margin:-8px 0 28px; font-size:16px; line-height:1.75; color:var(--text-secondary); }
 .rows { border-top:1px solid var(--etched-border); }
 .row { display:grid; grid-template-columns:65px minmax(0,1fr) 185px 28px; align-items:start; gap:28px; padding:35px 0; border-bottom:1px solid var(--etched-border); text-decoration:none; color:inherit; transition:background .2s; }
 .row:hover { background:color-mix(in srgb,var(--ink-black) 3%,transparent); }
@@ -64,6 +71,19 @@
 .articleBody :not(pre)>code { font: .84em/1.6 var(--public-mono,monospace); background:var(--public-surface); border:1px solid var(--etched-border); padding:2px 5px; border-radius:3px; }
 .code { margin:28px 0; max-width:100%; }
 .articleBody .code>code { display:block; max-width:100%; overflow-x:auto; white-space:pre; padding:20px; }
+/* Reader comfort (2026-09-30). The syntax highlighter renders its <code> inside a <div>, so the inline-code chip rule above
+   matched every line of every code block (pale text on a pale chip). Reset it there. */
+.articleBody .code div code { background:none; border:0; padding:0; border-radius:0; font-size:13px; line-height:1.6; }
+/* Body text a step darker than the secondary tone, and a line length near 70 characters; tables, code and figures keep the full column. */
+.articleBody { color:color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black)); }
+.articleBody p, .articleBody ul, .articleBody ol, .articleBody blockquote { max-width:68ch; }
+.articleBody figure { margin:36px 0; }
+.articleBody figure img { display:block; width:100%; height:auto; border:1px solid var(--etched-border); background:var(--public-surface); }
+.articleBody figcaption { margin-top:12px; max-width:68ch; font:12px/1.6 var(--public-mono,monospace); color:var(--text-muted); }
+.articleBody .shortAnswer { margin:0 0 56px; padding:24px 28px; border:1px solid var(--etched-border); border-left:3px solid var(--gold-leaf); background:var(--public-surface); scroll-margin-top:110px; }
+.articleBody .shortAnswer h2 { margin:0 0 12px; font:11px/1.6 var(--public-mono,monospace); font-weight:400; letter-spacing:.08em; text-transform:uppercase; color:var(--text-muted); }
+.articleBody .shortAnswer p { max-width:none; margin:0; font-size:19px; line-height:1.65; color:var(--ink-black); }
+.articleBody .shortAnswer p + p { margin-top:14px; }
 .tableScroll { overflow-x:auto; max-width:100%; margin:32px 0; border:1px solid var(--etched-border); }
 .tableScroll:focus-visible { outline:2px solid var(--gold-leaf); outline-offset:4px; }
 .tableScroll table { width:100%; min-width:560px; border-collapse:collapse; text-align:left; font-size:14px; }

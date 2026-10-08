@@ -226,6 +226,9 @@ export async function GET(req: NextRequest) {
             // sideways. Capped to scalars so the JSONB stays lean.
             qm_status: metrics.raw.status ?? null,
             qm_cpu: metrics.raw.cpu ?? null,
+            // "kvm_proc" = /proc utime+stime of the kvm process. Rows without
+            // this key predate it and carry cpu_seconds_total = 0 on PVE 9.
+            cpu_seconds_source: metrics.cpu_seconds_source ?? null,
             // Real guest '/' total + whether disk_used is a capacity fallback,
             // so the disk-usage banner can divide by the real total (not the
             // stale provisioned disk_size_gb) and suppress a bogus reading.

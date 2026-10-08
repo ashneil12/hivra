@@ -53,7 +53,7 @@ export async function GET(
       const result = await sshExec(
         access.hostIp,
         buildNousPollCommand(id, sessionId, WEBUI_EXEC_USER, WEBUI_HERMES_HOME),
-        { timeoutMs: WEBUI_NOUS_POLL_TIMEOUT_MS }
+        { timeoutMs: WEBUI_NOUS_POLL_TIMEOUT_MS, proxmoxHostConfig: access.proxmoxHostConfig ?? null }
       );
 
       if (!result.ok) {

@@ -147,7 +147,7 @@ describe("GET /api/cron/check-orphaned-instances", () => {
 
     expect(shutdownProxmoxInstance).toHaveBeenCalledWith(
       { vmid: 209, node: "fixturenode2" },
-      { hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
+      { expectedInstanceId: "inst_orphan", hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
     );
   });
 

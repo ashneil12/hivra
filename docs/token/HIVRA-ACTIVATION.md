@@ -34,9 +34,10 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    - DEXScreener lists the canonical pool with at least
      `HIVRA_MIN_PRICE_LIQUIDITY_USD` of liquidity (default $25,000; see
      `dashboard/src/lib/billing/token-registry.ts`).
-   - GeckoTerminal has indexed the pool (it has at least one five-minute
-     candle), and the price has not risen more than 10% in the last two
-     hours. Until then the median check refuses quotes (section 5).
+   - GeckoTerminal has indexed the pool, its first completed five-minute
+     candle is at least four hours old, it has traded in at least 24
+     five-minute periods, and the price has not risen more than 10% in the
+     last two hours. Until then the median check refuses quotes (section 5).
 4. **Token surfaces are switched on.** The wallet, token-holding, token-access
    and token quote routes answer 404 unless crypto billing is enabled on the
    target (`CRYPTO_BILLING_ENABLED=true` or
@@ -75,9 +76,61 @@ Nothing else changes for activation. No environment variable, no migration,
 no other file (the conversion links in precondition 6 are a separate PR).
 Everything else (balances, tiers, quotes, settlement, sweeps, the price feed,
 the /token page, emails and wallet links) reads this block through
-`token-registry.ts`.
+`token-registry.ts`. That includes the public token copy: /token, /tokenomics,
+/why-hivra/evolution and /llms.txt switch from their dormant wording to their
+launched wording (`dashboard/src/lib/token-phase-copy.ts`) when the block is
+filled in, and again at `activatesAt`. The launched wording needs the UK
+financial-promotion / legal review before any Promote.
 
-How to get each value:
+### The activation helper
+
+`dashboard/scripts/token/prepare-hivra-activation.mjs` checks a launch and
+fills in the block. It is **read-only**: it reads Base (`eth_getCode` and
+`eth_call` to `name()`, `symbol()`, `decimals()` and `totalSupply()` on the
+public RPC `https://mainnet.base.org`), DEXScreener and GeckoTerminal. It
+signs nothing, sends no transaction and posts to no service.
+
+```sh
+cd dashboard
+node scripts/token/prepare-hivra-activation.mjs \
+  --address 0x… --activates-at 2026-10-01T16:00:00Z          # report only
+node scripts/token/prepare-hivra-activation.mjs \
+  --address 0x… --activates-at 2026-10-01T16:00:00Z --write  # also fill in the block
+```
+
+Options: `--pool-id 0x…` uses that HIVRA/WETH pool instead of the deepest
+one; `--json` prints the result as JSON. Exit code 0 means every check passed,
+1 means one failed, 2 means bad usage.
+
+It checks, and `--write` refuses unless every FAIL-level check passes:
+
+| Check | Passes when |
+|---|---|
+| `address.format`, `address.not_hermesos` | a non-zero 20-byte address that is not the $HermesOS contract |
+| `address.checksum` | a mixed-case address has a valid EIP-55 checksum (a lowercase one is written in its EIP-55 form) |
+| `activatesAt.format`, `activatesAt.future` | a real UTC instant to the second, in the future |
+| `chain.code`, `chain.name`, `chain.symbol`, `chain.decimals`, `chain.total_supply` | contract code on Base, `name()` is `Hivra`, `symbol()` is `HIVRA`, `decimals()` is 18, `totalSupply()` is 100,000,000,000 whole tokens |
+| `pool.found`, `pool.id_format` | DEXScreener lists a HIVRA/WETH pool on Base (the deepest, or `--pool-id`), with an id `token-registry.ts` accepts |
+| `pool.liquidity` | the pool holds at least `HIVRA_MIN_PRICE_LIQUIDITY_USD` (read from `token-registry.ts`) |
+| `candles.pool_token`, `candles.present` | GeckoTerminal prices the pool for this address and has at least one five-minute candle |
+
+It also warns (WARN, does not block) when `activatesAt` is less than two hours
+away, when there is more than one HIVRA/WETH pool, when the pool has less than
+four hours of candle history (quotes stay closed with `insufficient_history`
+until it has; section 5), and when the spot is more than 10% above the
+four-hour median (quotes pause until the median catches up; section 5).
+
+`--write` fills in only the four fields, with the checksummed address, the
+on-chain decimals and the lowercase pool id, and changes nothing else in the
+file. It refuses to overwrite a block that already names a launch (see
+section 7 before changing one). The edit is only in your checkout: it ships
+through the reviewed PR like any other change, and a failed check means waiting
+(for liquidity, or for GeckoTerminal to index the pool) and running it again.
+Its fixture tests run without network in the dashboard suite
+(`__tests__/prepare-hivra-activation.test.ts`), which also fails if the helper
+drifts from the registry's pool id and instant formats or its liquidity floor.
+
+How to get each value by hand (the helper does these checks for you):
 
 | Field | Source | Check |
 |---|---|---|
@@ -205,7 +258,7 @@ by hand, and then resolves the item.
 
 ## 5. Price gates (both tokens, all the time)
 
-Every price used for a quote or a new tier threshold passes two gates, or the
+Every price used for a quote or a new tier threshold passes these gates, or the
 quote fails closed with a 503 "try again later":
 
 1. **Liquidity floor:** the canonical pool holds at least the token's
@@ -215,14 +268,52 @@ quote fails closed with a 503 "try again later":
    from GeckoTerminal, compared with the DEXScreener spot in the pool's
    paired token (WETH), so an ETH move is not read as a token move. A bucket
    with no trades carries the last close forward, so a quiet pool is still
-   quotable at its last price. The check fails closed only when the pool has
-   no candle at all or a source is down.
-3. **Pricing:** a quote is priced at the lower of spot and the median, so a
+   quotable at its last price. Only completed candles count (the one still
+   forming is just the latest trade). The check fails closed when the pool
+   has no candle at all or a source is down.
+3. **Minimum history:** the median is trusted only once the pool's first
+   completed candle is at least `PLATFORM_PRICE_MIN_HISTORY_MINUTES` old (the
+   whole four-hour window) and the pool has traded in at least
+   `PLATFORM_PRICE_MIN_TRADED_CANDLES` (24) five-minute periods. A young
+   pool's median is only its last few candles, which a pump sets, so until
+   then every quote fails closed with the reason `insufficient_history`. This
+   is a market condition, not an outage: no cached price is served instead.
+4. **Pricing:** a quote is priced at the lower of spot and the median, so a
    pump never buys a cheaper quote. A spot more than
    `PLATFORM_PRICE_MAX_DEVIATION_BPS` (10%) above the median is refused
    outright until the median catches up (about two hours); a spot below it
    is used as is. Managed-Venice deposits also refuse a spot more than 5%
    from the median, in either direction.
+
+**Watching the gates.** Each quote a gate refuses (the 503s from
+`/api/billing/wallet/quote`, `/api/billing/yearly-token-quote` and
+`/api/billing/managed-venice/hermesos/quote`) is reported by
+`dashboard/src/lib/billing/price-gate-alerts.ts`:
+
+- a warn log line, `Price gate refused a token quote`, with the route
+  (`source`), the token (`asset`, `assetKey`), the reason (`gateReason`:
+  `liquidity_floor`, `median_deviation`, `insufficient_history`, `no_candle`
+  or `feed_error`), the
+  underlying `gate` and the `observed` values (for example `liquidityUsd` and
+  `minLiquidityUsd`, `aboveMedianBps` and `maxDeviationBps`, or the price
+  source's `httpStatus`: a pool GeckoTerminal has not indexed yet answers 404
+  and is reported as `no_candle`, while a 429 rate limit or a 5xx outage is
+  `feed_error`). At most one line per token and reason per minute per server
+  process; the next line's
+  `refusalsSinceLastLog` counts the refusals folded into it. The per-request
+  503 line is logged at info, so it does not flood production logs.
+- an ops alert: a `warn` row in `ops_events` with source `billing/price-gate`,
+  on /dashboard/ops and in the `/api/ops/events/feed` alert feed. At most one
+  per token per 30 minutes from each server process, and the row is keyed to
+  the 30-minute window, so other processes in the same window add to its
+  count rather than opening another row. Each report overwrites the row's
+  metadata, so the gate, reason and observed values on it are from the most
+  recently reported refusal in the window, not the first. It does not page
+  anyone: email and Telegram paging is only for fatal ops events. There is no
+  Discord or Slack alert path in the code base.
+
+On launch day, filter the logs for `price_gate_refused` or watch
+/dashboard/ops for `billing/price-gate`.
 
 Live tier thresholds reuse the last good price through a price-source
 outage (up to an hour), but fail closed at once when a liquidity, pool or

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blocks a commit while the tracked tree holds live account ids, fleet addresses or other
+# public-tree hygiene findings. Enable once per clone: git config core.hooksPath .githooks
+# The scan reads the working tree, so stage exact paths first; it needs only Node and git.
+exec node "$(git rev-parse --show-toplevel)/scripts/release/public-tree-hygiene.mjs"

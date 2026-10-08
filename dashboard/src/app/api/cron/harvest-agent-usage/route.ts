@@ -320,7 +320,7 @@ export async function GET(req: NextRequest) {
       return;
     }
 
-    const hostConfig = getProxmoxHostRoutingConfigFromInfrastructure(
+    const routedHost = getProxmoxHostRoutingConfigFromInfrastructure(
       {
         node: infrastructure.node ?? instance.proxmox_node ?? undefined,
         ...(infrastructure.hostId ? { hostId: infrastructure.hostId } : {}),
@@ -329,6 +329,11 @@ export async function GET(req: NextRequest) {
       },
       { host_id: instance.host_id ?? null }
     );
+    // The guest IP alone names a VM on every host sharing the private prefix,
+    // so bind to this instance's VMID and check the VM is still its own.
+    const hostConfig = routedHost
+      ? { ...routedHost, vmid: infrastructure.vmid, instanceId: instance.id }
+      : null;
 
     // Resolve the live agent container on the guest, then pipe the base64
     // script into its python3. The wrapper prints NO_CONTAINER_MARKER when no

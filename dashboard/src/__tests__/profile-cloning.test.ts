@@ -28,7 +28,7 @@ describe('ProfileService Configuration Injection', () => {
     process.env = { ...originalEnv, SUPABASE_SERVICE_ROLE_KEY: 'test', NEXT_PUBLIC_SUPABASE_URL: 'https://test' };
 
     // Mock internal helpers
-    jest.spyOn(ProfileService, 'getHostIpForInstance').mockResolvedValue('203.0.113.4');
+    jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '203.0.113.4', guestTarget: null });
     // @ts-expect-error Mocking private static
     jest.spyOn(ProfileService, 'allocatePort').mockResolvedValue(8650);
     jest.spyOn(ProfileService, 'startProfileGateway').mockResolvedValue(undefined);

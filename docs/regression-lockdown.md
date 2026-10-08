@@ -63,8 +63,9 @@ These are the extra protections added to reduce the remaining “cross-repo drif
 These are the extra protections added to make the highest-risk deployment contracts fail earlier in CI:
 
 1. `dashboard/package.json` now exposes `npm run test:smoke-contracts` as a focused suite for runtime topology, gateway routing, Hetzner instance wiring, instance action routes, dashboard health and browser-session routes, dashboard↔agent bridge code, official dashboard handoff, sidecar script generation, and the deployed instance contract routes.
-2. `dashboard-ci.yml` now runs that smoke suite immediately after dependency install, before the broader hot-path suite and the full verify pipeline.
-3. This creates a fast, explicit failure point for the cross-boundary surfaces that have been regressing even when the wider dashboard test suite is still green.
+2. `dashboard-ci.yml` originally ran that smoke suite immediately after dependency install, before the broader hot-path suite and the full verify pipeline.
+3. This created a fast, explicit failure point for the cross-boundary surfaces that have been regressing even when the wider dashboard test suite is still green.
+4. Since 2026-09-25 `dashboard-ci.yml` runs the full jest suite as four duration-balanced parallel shards (about five minutes end to end), which already include every smoke-contract and hot-path suite, so the separate serial steps were removed. Both scripts remain for focused local runs.
 
 ## Phase 7 live instance smoke hardening
 
@@ -75,6 +76,15 @@ These are the extra protections added to close the remaining “tests are green 
    - fallback `direct` mode via the gateway `/v1/models` and sidecar `/_camofox/health` endpoints when dashboard session auth is not available
 2. `.github/workflows/live-instance-smoke.yml` now supports both manual dispatch and weekly scheduled smoke runs, using GitHub variables for target selection and secrets for auth material.
 3. `test:smoke-contracts` now also includes the gateway helper tests and the instance health / browser-session / instance-action route tests so the fast CI layer catches more runtime-boundary regressions before full verify.
+
+## Phase 8 every test is run, and the merged result is verified
+
+Added 2026-09-25, after an audit found 21 test files in `dashboard/scripts` that nothing ran, one of them failing since it was published:
+
+1. `dashboard/scripts/check-test-wiring.cjs` runs in "Current tree safety" (`public-release-safety.yml`), which has no path filter and runs on every pull request and every push to `canary` and `main`, and again in the Dashboard CI static checks. It covers the whole repository, so it cannot live only in path-filtered Dashboard CI: a pull request that touches only `scripts/`, `services/`, `docs/`, `apps/` or `contracts/` would skip it. `dashboard/__tests__/check-test-wiring.test.ts` fails if no unfiltered workflow runs it. Every test file in the repository must be discovered by jest, started by a jest wrapper, named by a workflow that runs on push, pull request or merge queue, or run by a package script such a workflow calls. Anything else needs an entry in `dashboard/scripts/test-wiring-exemptions.json` with a category (`vm`, `live`, `helper`, `needs-artifact`, or `not-in-ci` for suites whose runner has no CI job yet) and a reason. An exemption for a file that is now run, or gone, fails the check.
+2. New script tests follow the existing jest-wrapper pattern: run the script as a child process and assert its own `PASS` line (`node:test` files: the TAP `# fail 0` summary). Add the suite's hosted-runner seconds to `dashboard/scripts/jest-shard-weights.json` when it takes more than about a second.
+3. `dashboard-ci.yml` also runs on every push to `canary` and on `merge_group`, and only pull-request runs cancel each other, so each merged commit gets a complete run.
+4. Owner setting, not code: "Verify Dashboard" is not yet a required check on `canary` or `main`. Making it required (and optionally enabling a merge queue) is what turns these runs into a merge gate. Dashboard CI is path-filtered for pull requests, so a required check also needs a plan for PRs that touch no dashboard paths. `public-release-safety.yml` has no `merge_group` trigger, so a merge queue that requires "Current tree safety" would wait forever until one is added. The [repository settings checklist](release/REPO-SETTINGS-CHECKLIST.md) lists the safe order for these changes.
 
 ## Hosted enforcement limitation
 

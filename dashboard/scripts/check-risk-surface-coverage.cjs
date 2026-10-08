@@ -171,7 +171,26 @@ function resolveRange(repoRoot, parsed) {
 
   git(repoRoot, ["rev-parse", "--verify", head]);
 
-  return { base, head };
+  return { base: resolveMergeBase(repoRoot, base, head), head };
+}
+
+// Diff from the point where head branched off base (three-dot semantics), so
+// commits that landed on base after the branch point are not reported as
+// changes in head. The empty tree has no history and is used as-is.
+function resolveMergeBase(repoRoot, base, head) {
+  if (base === EMPTY_TREE_SHA) {
+    return base;
+  }
+
+  try {
+    return git(repoRoot, ["merge-base", base, head]);
+  } catch (error) {
+    die([
+      `Cannot find a merge base for regression diff ${base}...${head}.`,
+      "The histories are unrelated or incomplete; CI must check out with fetch-depth: 0.",
+      String(error.stderr || error.message).trim(),
+    ]);
+  }
 }
 
 function parseChangedFiles(output) {
@@ -202,7 +221,7 @@ function main() {
   );
 
   if (changedFiles.length === 0) {
-    console.log(`No dashboard changes detected for ${base}..${head}.`);
+    console.log(`No dashboard changes detected for ${base}...${head}.`);
     return;
   }
 
@@ -227,7 +246,7 @@ function main() {
 
   if (hotSurfaceChanges.length === 0) {
     console.log(
-      `Protected hot-surface coverage check passed for ${base}..${head}: no protected surfaces changed.`,
+      `Protected hot-surface coverage check passed for ${base}...${head}: no protected surfaces changed.`,
     );
     return;
   }
@@ -235,7 +254,7 @@ function main() {
   if (changedTests.length > 0) {
     console.log(
       [
-        `Protected hot-surface coverage check passed for ${base}..${head}.`,
+        `Protected hot-surface coverage check passed for ${base}...${head}.`,
         "",
         "Protected surfaces changed:",
         ...hotSurfaceChanges.map(

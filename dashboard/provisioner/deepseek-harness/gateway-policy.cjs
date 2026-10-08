@@ -36,7 +36,9 @@ function loadConfiguration() {
 }
 
 const COMPUTER = new Set(['GET /api/files', 'GET /api/file', 'POST /api/file', 'POST /api/upload',
-  'GET /api/browser/status', 'POST /api/browser/toggle', 'POST /api/cookies/import']);
+  'GET /api/browser/status', 'POST /api/browser/toggle', 'POST /api/cookies/import',
+  // Persistent terminal sessions behind /terminal and /box-terminal.
+  'GET /api/terminal/sessions', 'POST /api/terminal/sessions/close']);
 const UNSUPPORTED = new Set(['GET /api/model', 'POST /api/model', 'GET /api/llm', 'POST /api/llm',
   'GET /api/restrict', 'POST /api/restrict', 'GET /api/mcp', 'POST /api/mcp', 'POST /api/chat',
   'GET /api/login/status', 'POST /api/login/start', 'POST /api/login/complete', 'GET /api/sessions',

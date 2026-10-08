@@ -28,6 +28,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
+import { accountCode } from '@/lib/account-code';
 import { useSettings } from '@/hooks/use-settings';
 import { LanguageSwitcher, useLocale } from '@/components/i18n/LocaleProvider';
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
@@ -157,6 +158,7 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { clearCacheAndReload, isLoaded } = useSettings();
   const { user } = useUser();
+  const ownerAccountCode = user?.id ? accountCode(user.id) : null;
   const { enabled: nativeWorkspace, ownerKey: nativeOwner } = useNativeWorkspace();
   const reduceMotion = Boolean(useReducedMotion());
   const sectionVariants = buildHermesFadeSlideVariants(reduceMotion, { offset: 12 });
@@ -258,6 +260,16 @@ export default function SettingsPage() {
               <div className={styles.accountControl}><UserButton /></div>
             </ControlRow>
           )}
+          {ownerAccountCode ? (
+            <ControlRow
+              id="account-code"
+              icon={KeyRound}
+              title="Account code"
+              description="Hivra's server setup command shows this code before it connects a server to your account. Continue only if the codes match."
+            >
+              <code aria-labelledby="account-code-label">{ownerAccountCode}</code>
+            </ControlRow>
+          ) : null}
         </div>
       ),
     }]),

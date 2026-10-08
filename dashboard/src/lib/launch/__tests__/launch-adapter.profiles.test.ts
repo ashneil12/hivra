@@ -325,12 +325,12 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
     expect(bodyOf(fetchCalls[1])).not.toHaveProperty("honchoVaultKeyId");
   });
 
-  it("offers the card check when Hivra asks for a card", async () => {
-    route(() => true, () => json(402, { success: false, error: "Add a card to launch on Free.", reason: "card_required" }));
+  it("sends a free account to choose a plan, never to a card check", async () => {
+    route(() => true, () => json(402, { success: false, error: "A Hivra-hosted computer needs a paid plan.", reason: "plan_required" }));
     const error = await submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED).catch(caught => caught);
     expect(error).toBeInstanceOf(LaunchCorrectableError);
-    expect(error.action).toEqual({ kind: "verify-card" });
-    expect(error.message).toBe("Add a card to launch on Free.");
+    expect(error.action).toEqual({ kind: "open", label: "Choose a plan", href: "/dashboard/billing?tab=plans" });
+    expect(error.message).toBe("A Hivra-hosted computer needs a paid plan.");
   });
 
   it("offers the owner's existing agent when the plan holds only one", async () => {
@@ -406,7 +406,7 @@ describe("each runtime opens its own surface", () => {
   it.each([
     ["claude-code", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`],
     ["codex", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`],
-    ["codex", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage#model-settings`],
+    ["codex", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`],
     ["openclaw", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["agent-zero", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["aeon", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],

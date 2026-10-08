@@ -113,22 +113,16 @@ const PLAN_UNCHECKED: LaunchFit = { label: "Couldn't check your plan", tone: "ne
 const SERVERS_UNCHECKED: LaunchFit = { label: "Couldn't check your servers", tone: "neutral" };
 
 /** Why Hivra Cloud is closed to an account whose paid plan holds it without
- * granting anything, and what settles it. "unconfirmed": turning Free on
- * found a paid plan billing didn't describe. `subject` names what the owner
+ * granting anything, and what settles it. `subject` names what the owner
  * wants to run, when there is one. */
-export type PlanHold =
-  | { reason: "payment_overdue" | "no_slots"; planName: string }
-  | { reason: "unconfirmed" };
+export type PlanHold = { reason: "payment_overdue" | "no_slots"; planName: string };
 
 export function planHoldMessage(hold: PlanHold, subject: string | null = null): string {
   const run = subject ? `to run ${subject} on Hivra Cloud` : "to launch on Hivra Cloud";
   if (hold.reason === "payment_overdue") {
     return `Your ${hold.planName} plan is on hold because a payment didn't go through. Update your payment in Billing ${run}.`;
   }
-  if (hold.reason === "no_slots") {
-    return `Your ${hold.planName} plan has no agent slots right now. Check it in Billing ${run}.`;
-  }
-  return `Your account has a paid plan that isn't active right now, so Free can't be turned on. Check your plan in Billing ${run}.`;
+  return `Your ${hold.planName} plan has no agent slots right now. Check it in Billing ${run}.`;
 }
 
 /** The Billing link a plan hold offers. */
@@ -163,6 +157,9 @@ type CloudFit = "full" | "without-browser" | "no" | "unknown";
 
 function hivraCloudFit(subject: LaunchFitSubject, plan: PlanInfo | null): CloudFit {
   if (!plan?.usage) return "unknown";
+  // A Free account holds nothing on Hivra Cloud: hosted compute is bought, and
+  // the free account works with the owner's own computer instead.
+  if (!isPaidPlan(plan)) return "no";
   const observed = { ...plan, usage: plan.usage };
   if (!tierAllows(planKeyRank(plan), subject.minPlan)) return "no";
   if (subject.browserFloor) {
@@ -541,7 +538,6 @@ export function costSummary({
   substrate,
   planName,
   modelNote = null,
-  planPending = false,
   planOnHold = null,
 }: {
   profileId: LaunchProfileId;
@@ -549,8 +545,6 @@ export function costSummary({
   planName: string | null;
   /** How model usage is paid, when it isn't set up inside the agent. */
   modelNote?: string | null;
-  /** The account has no plan yet; the Free plan is turned on before launch. */
-  planPending?: boolean;
   /** A paid plan holds the account but is on hold until it is settled. */
   planOnHold?: string | null;
 }): string {
@@ -558,9 +552,6 @@ export function costSummary({
   if (profileId === "omarchy") return "Nothing is bought. It uses a prepared preview computer.";
   if (substrate === "hivra-cloud" && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
-  }
-  if (substrate === "hivra-cloud" && planPending) {
-    return withModel("No charge. It runs on the Free plan, which you turn on before launching.");
   }
   if (substrate === "hivra-cloud" && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);

@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { inspectPublicTree } from './public-tree-hygiene.mjs';
+import {
+  inspectPublicText,
+  inspectPublicTree,
+  isSyntheticWalletAddress,
+  projectRefAllowlist,
+  publicContractAddresses,
+  walletAddressExemptPaths,
+} from './public-tree-hygiene.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'hivra-public-tree-test-'));
@@ -94,6 +102,23 @@ test('developer-local paths and deployed instance hostnames fail globally', (t) 
     { category: 'developer-local-path', path: 'docs/not-an-example.md' },
     { category: 'developer-local-path', path: 'docs/runbook.md' },
     { category: 'live-instance-hostname', path: 'docs/runbook.md' },
+  ]);
+});
+
+test('other Clerk identifiers and live publishable keys fail, placeholders pass', (t) => {
+  const f = fixture(t);
+  const tail = '3BrimH80SPnn3OXBqVOhRQa6uDV';
+  f.write('fixtures/org.txt', `${['org_', tail].join('')}\n`);
+  f.write('fixtures/session.txt', `${['sess_', tail].join('')}\n`);
+  f.write('fixtures/instance.txt', `${['ins_', tail].join('')}\n`);
+  f.write('fixtures/key.txt', `${['pk_live_', 'Y2xlcmsuZXhhbXBsZS5oaXZyYS5jbG91ZCQ'].join('')}\n`);
+  f.write('fixtures/placeholders.txt', 'org_fixture\nsess_fixture_one\nuser_configuration\n');
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'hosted-account-identity', path: 'fixtures/instance.txt' },
+    { category: 'hosted-account-identity', path: 'fixtures/key.txt' },
+    { category: 'hosted-account-identity', path: 'fixtures/org.txt' },
+    { category: 'hosted-account-identity', path: 'fixtures/session.txt' },
   ]);
 });
 
@@ -206,4 +231,185 @@ test('internal plans, personal skills and unrelated demos cannot return to publi
   const findings = inspectPublicTree(f.root);
   assert.deepEqual(findings.map(v => v.path).sort(), paths.sort());
   assert.ok(findings.every(v => v.category === 'internal-working-material'));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Classes the gate used to miss: storage box hosts, raw wallet addresses, database project refs,
+// fleet host numbers in environment variable names, and free text such as pull request bodies.
+// Values are assembled with join() so this file does not name what it forbids.
+// ---------------------------------------------------------------------------------------------
+
+const address = (hex) => ['0', 'x', hex].join('');
+const randomLooking = address('8f3a2b9c4d5e6f708192a3b4c5d6e7f809a1b2c3');
+const randomLookingMixedCase = address('8F3a2B9c4D5e6F708192A3b4C5d6E7f809a1B2c3');
+const usdcOnBase = address('833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+
+test('a Hetzner Storage Box host fails, whatever the account name', (t) => {
+  const f = fixture(t);
+  const host = ['u123456', 'your-storagebox', 'de'].join('.');
+  f.write('dashboard/docs/backups.md', `ssh to ${host} on port 23\n`);
+  f.write('dashboard/docs/other.md', `${['box7', 'your-storagebox', 'de'].join('.')}\n`);
+  f.write('dashboard/docs/placeholder.md', 'host: <storage-box-host> (HERMES_COLD_STORAGE_HOST)\n');
+  f.write('dashboard/docs/vendor.md', 'Hetzner sells Storage Boxes; see the vendor site.\n');
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'storage-box-host', path: 'dashboard/docs/backups.md' },
+    { category: 'storage-box-host', path: 'dashboard/docs/other.md' },
+  ]);
+});
+
+test('raw wallet addresses fail unless they are published contracts or plainly made up', (t) => {
+  const f = fixture(t);
+  f.write('fixtures/real.ts', `const depositAddress = "${randomLooking}";\n`);
+  f.write('fixtures/real-checksummed.ts', `const a = "${randomLookingMixedCase}";\n`);
+  f.write('fixtures/contract.ts', `const usdc = "${usdcOnBase}";\nconst lower = "${usdcOnBase.toLowerCase()}";\n`);
+  f.write('fixtures/synthetic.ts', [
+    address('0000000000000000000000000000000000000000'),
+    address('1111111111111111111111111111111111111111'),
+    address('000000000000000000000000000000000000dEaD'),
+    address('000000000000000000000000000000000000c0fe'),
+    address('0000000000000000000000000000000000001E6a'),
+    address('deaddeaddeaddeaddeaddeaddeaddeaddeaddead'),
+    address('1234567890123456789012345678901234567890'),
+    address('1234567890abcdef1234567890abcdef12345678'),
+    address('abcdefabcdefabcdefabcdefabcdefabcdefabcd'),
+  ].join('\n'));
+  // 64 hex digits is a transaction hash or a padded topic, not an address.
+  f.write('fixtures/hash.ts', `const tx = "${address('8f3a2b9c4d5e6f708192a3b4c5d6e7f809a1b2c38f3a2b9c4d5e6f708192a3b4')}";\n`);
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'raw-wallet-address', path: 'fixtures/real-checksummed.ts' },
+    { category: 'raw-wallet-address', path: 'fixtures/real.ts' },
+  ]);
+});
+
+test('vendored skill text may list public contract addresses, and only that path', (t) => {
+  const f = fixture(t);
+  f.write('dashboard/src/data/curated-skills.ts', `Token: \`${randomLooking}\`\n`);
+  f.write('dashboard/src/data/other-skills.ts', `Token: \`${randomLooking}\`\n`);
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'raw-wallet-address', path: 'dashboard/src/data/other-skills.ts' },
+  ]);
+});
+
+test('the synthetic-address test separates made-up values from random ones', () => {
+  for (const made of ['0000000000000000000000000000000000000001', 'ffffffffffffffffffffffffffffffffffffffff',
+    'cafecafecafecafecafecafecafecafecafecafe', '0000000000000000000000000000000000abcdef']) {
+    assert.equal(isSyntheticWalletAddress(address(made)), true, made);
+  }
+  for (const random of ['8f3a2b9c4d5e6f708192a3b4c5d6e7f809a1b2c3', 'f39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+    '00000000219ab540356cbb839cbe05303d7705fa']) {
+    assert.equal(isSyntheticWalletAddress(address(random)), false, random);
+  }
+});
+
+test('a known database project ref fails by digest, without the ref being named in the gate', (t) => {
+  const f = fixture(t);
+  const ref = ['abcdefghij', 'klmnopqrst'].join('');
+  const digests = new Set([createHash('sha256').update(ref).digest('hex')]);
+  f.write('docs/runbook.md', `apply to project ${ref} first\n`);
+  f.write('docs/other-ref.md', `apply to project ${['qrstuvwxyz', 'abcdefghij'].join('')} first\n`);
+  f.write('docs/words.md', 'internationalization and responsibilities are long words\n');
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root, { projectRefDigests: digests }), [
+    { category: 'database-project-ref', path: 'docs/runbook.md' },
+  ]);
+  assert.deepEqual(inspectPublicTree(f.root, {
+    projectRefDigests: digests,
+    projectRefAllowlist: new Map([['docs/runbook.md', 'fixture reason']]),
+  }), []);
+});
+
+test('fleet host numbers fail in environment variable names too, while user examples pass', (t) => {
+  const f = fixture(t);
+  const host = (n) => ['pve', n].join('');
+  f.write('fixtures/env.txt', `PROXMOX_${host(11).toUpperCase()}_SSH_HOST=example\n`);
+  f.write('fixtures/label.txt', `ssh ${host(13)}.internal.example\n`);
+  f.write('fixtures/lower-env.txt', `export HIVRA_${host(12)}_TEMPLATE_ID=1\n`);
+  f.write('fixtures/user-example.txt', 'externalId: "pve-01"\nname: pve-fixture\n');
+  f.write('fixtures/base64.txt', `integrity sha512-Ab${host(9)}Zy+Qq/9==\n`);
+  f.write('fixtures/camel.txt', 'function seedNodeNineTargetEnv() {}\n');
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'live-infrastructure-metadata', path: 'fixtures/env.txt' },
+    { category: 'live-infrastructure-metadata', path: 'fixtures/label.txt' },
+    { category: 'live-infrastructure-metadata', path: 'fixtures/lower-env.txt' },
+  ]);
+});
+
+test('pull request text is scanned with the same rules', () => {
+  const host = ['pve', '21'].join('');
+  const dirty = [
+    `Fixes the restart loop on ${host}`,
+    `Account ${['user_', '3BrimH80SPnn3OXBqVOhRQa6uDV'].join('')} was affected`,
+    `Backups go to ${['u123456', 'your-storagebox', 'de'].join('.')}`,
+    `Paid to ${randomLooking}`,
+    `Guest at ${['10', '70', '20', '63'].join('.')}`,
+  ].join('\n');
+  assert.deepEqual(inspectPublicText(dirty, 'PR 1').map((item) => item.category), [
+    'hosted-account-identity', 'live-infrastructure-metadata', 'public-network-address',
+    'raw-wallet-address', 'storage-box-host',
+  ]);
+  assert.ok(inspectPublicText(dirty, 'PR 1').every((item) => item.path === 'PR 1'));
+  assert.deepEqual(inspectPublicText('Adds a retry to the billing cron.\nTests: jest, 4 suites.\n'), []);
+  // No path exemption applies to free text, so the vendored-skill path rule cannot hide an address.
+  assert.ok(inspectPublicText(`Token: ${randomLooking}`).length > 0);
+});
+
+test('the text scan works from the command line and exits non-zero on a finding', (t) => {
+  const f = fixture(t);
+  const body = path.join(f.root, 'pr-body.txt');
+  writeFileSync(body, `Restarted ${['pve', '19'].join('')} by hand\n`);
+  const script = path.join(path.dirname(new URL(import.meta.url).pathname), 'public-tree-hygiene.mjs');
+  assert.throws(() => execFileSync('node', [script, '--text-file', body], { stdio: 'pipe' }), (error) => {
+    assert.match(String(error.stderr), /live-infrastructure-metadata/);
+    return true;
+  });
+  writeFileSync(body, 'Adds a retry to the billing cron.\n');
+  assert.match(execFileSync('node', [script, '--text-file', body], { encoding: 'utf8' }), /"status":"pass"/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The allowlists describe this repository, so they are checked against this repository.
+// ---------------------------------------------------------------------------------------------
+
+const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+const addressPattern = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
+
+test('the current tree passes the gate', () => {
+  assert.deepEqual(inspectPublicTree(repoRoot), []);
+});
+
+test('every database project ref allowlist entry is still needed', () => {
+  const flagged = inspectPublicTree(repoRoot, { projectRefAllowlist: new Map() })
+    .filter((finding) => finding.category === 'database-project-ref')
+    .map((finding) => finding.path)
+    .sort();
+  assert.deepEqual(flagged, [...projectRefAllowlist.keys()].sort(),
+    'each allowlisted file must still name a project ref, and no other file may');
+  for (const [file, reason] of projectRefAllowlist) assert.ok(reason.length >= 20, `${file} needs a reason`);
+});
+
+test('every published-contract and exempt-path entry is still used', () => {
+  const tracked = execFileSync('git', ['-C', repoRoot, 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+    .split('\0').filter(Boolean);
+  const seen = new Set();
+  for (const file of tracked) {
+    let text;
+    try { text = readFileSync(path.join(repoRoot, file), 'utf8'); } catch { continue; }
+    for (const match of text.matchAll(addressPattern)) seen.add(match[0].toLowerCase());
+  }
+  for (const [value, reason] of publicContractAddresses) {
+    assert.ok(reason.length >= 10, `${value} needs a reason`);
+    assert.ok(seen.has(value), `stale published-contract entry ${value}: no tracked file names it`);
+  }
+  for (const [file, reason] of walletAddressExemptPaths) {
+    assert.ok(reason.length >= 10, `${file} needs a reason`);
+    assert.ok(tracked.includes(file), `stale exempt path ${file}`);
+    const text = readFileSync(path.join(repoRoot, file), 'utf8');
+    assert.ok([...text.matchAll(addressPattern)]
+      .some((match) => !publicContractAddresses.has(match[0].toLowerCase()) && !isSyntheticWalletAddress(match[0])),
+    `${file} no longer needs its exemption`);
+  }
 });

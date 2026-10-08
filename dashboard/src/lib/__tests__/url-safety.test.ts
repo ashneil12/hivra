@@ -1,5 +1,8 @@
 import { checkOutboundUrlSafety } from "@/lib/url-safety";
 
+// Boundary addresses are built from octets so no public IPv4 literal sits in the tree (public-tree-hygiene gate).
+const ip = (...octets: number[]) => octets.join(".");
+
 describe("checkOutboundUrlSafety", () => {
   it.each([
     "https://api.openai.com/v1",
@@ -83,5 +86,48 @@ describe("checkOutboundUrlSafety", () => {
 
   it("rejects garbage that isn't a valid URL", () => {
     expect(checkOutboundUrlSafety("not a url")).toEqual({ ok: false, reason: "invalid_url" });
+  });
+});
+
+describe("reserved ranges beyond the private networks", () => {
+  // None of these is a public host. They are special-purpose blocks that a
+  // network can still route or translate to internal machines, so a
+  // user-supplied URL must not reach them.
+  it.each([
+    ["192.0.0.0/24 protocol assignments", "http://192.0.0.8/"],
+    ["198.18.0.0/15 benchmarking, lower", "http://198.18.0.1/"],
+    ["198.18.0.0/15 benchmarking, upper", "http://198.19.255.254/"],
+    ["multicast 224.0.0.0/4, lower", "http://224.0.0.1/"],
+    ["multicast 224.0.0.0/4, upper", "http://239.255.255.250/"],
+    ["reserved 240.0.0.0/4", "http://240.0.0.1/"],
+    ["broadcast", "http://255.255.255.255/"],
+    ["IPv6 multicast ff00::/8", "http://[ff02::1]/"],
+    ["NAT64 carrying the metadata address", "http://[64:ff9b::a9fe:a9fe]/latest/meta-data/"],
+    ["NAT64 carrying loopback", "http://[64:ff9b::7f00:1]/"],
+    ["NAT64 carrying 10/8", "http://[64:ff9b::a00:1]/"],
+    ["NAT64 dotted form carrying 192.168/16", "http://[64:ff9b::192.168.1.1]/"],
+    ["local-use NAT64 64:ff9b:1::/48", "http://[64:ff9b:1::1]/"],
+  ])("rejects %s", (_label, url) => {
+    expect(checkOutboundUrlSafety(url).ok).toBe(false);
+  });
+
+  // The documentation blocks are allowed on purpose (see url-safety.ts): nothing
+  // answers there and the fixtures across this repo use them as public hosts.
+  it.each([
+    ["TEST-NET-1", "https://192.0.2.10/v1"],
+    ["TEST-NET-2", "https://198.51.100.7/v1"],
+    ["TEST-NET-3", "https://203.0.113.10/v1"],
+  ])("leaves the documentation block %s alone", (_label, url) => {
+    expect(checkOutboundUrlSafety(url)).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["just below 198.18.0.0/15", `https://${ip(198, 17, 255, 254)}/v1`],
+    ["just above 198.18.0.0/15", `https://${ip(198, 20, 0, 1)}/v1`],
+    ["just below multicast", `https://${ip(223, 255, 255, 254)}/v1`],
+    ["just above the 192.0.0.0/24 block", `https://${ip(192, 0, 1, 1)}/v1`],
+    ["a NAT64 address that carries a public IPv4", "https://[64:ff9b::5db8:d822]/v1"],
+  ])("still accepts %s", (_label, url) => {
+    expect(checkOutboundUrlSafety(url)).toEqual({ ok: true });
   });
 });

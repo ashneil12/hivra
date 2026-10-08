@@ -54,6 +54,30 @@ describe("POST /api/remote-desktop/sessions", () => {
     expect((await POST(request({ ...body, computerKind: "hivra-agent", requestedTransport: "selkies-websocket", ownerHandoff: true }))).status).toBe(201);
     expect(issueRemoteDesktopSession).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1", ownerHandoff: true }));
   });
+  describe("unanswered earlier requests", () => {
+    const browserController = { ...body, computerKind: "hivra-agent", requestedTransport: "selkies-websocket" };
+    const lost = "L".repeat(43);
+    it("passes a browser controller's own unanswered requests to the broker", async () => {
+      expect((await POST(request({ ...browserController, unansweredPkceChallenges: [lost] }))).status).toBe(201);
+      expect(issueRemoteDesktopSession).toHaveBeenCalledWith(expect.objectContaining({
+        userId: "user-1", unansweredPkceChallenges: [lost],
+      }));
+    });
+    it.each([
+      ["a Hermes instance", { computerKind: "hermes-instance" }],
+      ["a viewer", { inputRole: "viewer" }],
+      ["a native client", { client: { kind: "native", moonlight: true, webCodecs: true, udp: "direct" } }],
+      ["another transport", { requestedTransport: "selkies-webrtc" }],
+      ["an empty list", { unansweredPkceChallenges: [] }],
+      ["this request's own challenge", { unansweredPkceChallenges: [body.pkceChallenge] }],
+      ["a repeated challenge", { unansweredPkceChallenges: [lost, lost] }],
+      ["a malformed challenge", { unansweredPkceChallenges: ["short"] }],
+      ["more than eight", { unansweredPkceChallenges: Array.from({ length: 9 }, (_, index) => String(index).repeat(43)) }],
+    ])("rejects unanswered requests named by %s", async (_label, overrides) => {
+      expect((await POST(request({ ...browserController, unansweredPkceChallenges: [lost], ...overrides }))).status).toBe(400);
+      expect(issueRemoteDesktopSession).not.toHaveBeenCalled();
+    });
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user-1" });

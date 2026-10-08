@@ -9,6 +9,7 @@ import { MARKETING_COPY } from '@/lib/i18n';
 import { DashboardSidebar } from '../DashboardSidebar';
 import { useDashboardResources } from '../useDashboardResources';
 import type { DashboardResource } from '../dashboard-resources';
+import { recordVisit } from '@/lib/workspace/recents';
 
 jest.mock('next/navigation', () => ({ usePathname: jest.fn(), useRouter: jest.fn() }));
 jest.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'dark', setTheme: jest.fn() }) }));
@@ -27,6 +28,7 @@ const props = { userName: 'Test User', userEmail: 'test@example.com', resourceOw
 const push = jest.fn();
 const refresh = jest.fn();
 let viewportWidth = 1280;
+let coarsePointer = false;
 const mediaQueries = new Map<string, EventTarget>();
 
 function setViewportWidth(width: number) {
@@ -39,6 +41,7 @@ function setViewportWidth(width: number) {
 
 beforeEach(() => {
   viewportWidth = 1280;
+  coarsePointer = false;
   mediaQueries.clear();
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewportWidth });
   Object.defineProperty(window, 'matchMedia', {
@@ -49,6 +52,7 @@ beforeEach(() => {
         Object.defineProperties(list, {
           media: { value: query },
           matches: { get: () => {
+            if (query.includes('pointer: coarse')) return coarsePointer;
             const minimum = query.match(/min-width:\s*(\d+)px/);
             const maximum = query.match(/max-width:\s*(\d+)px/);
             return (!minimum || viewportWidth >= Number(minimum[1])) && (!maximum || viewportWidth <= Number(maximum[1]));
@@ -476,5 +480,94 @@ describe('DashboardSidebar', () => {
       fireEvent.click(screen.getByRole('button', { expanded: true, name: /侧/ }));
       expect(screen.getByRole('link', { name: '首页' })).toBeInTheDocument();
     } finally { jest.restoreAllMocks(); }
+  });
+
+  // ⌘K is the hot switch between agents: the one you were in before this is
+  // highlighted, so ⌘K then Enter goes back, and it reopens where you left it.
+  describe('Recent', () => {
+    /** Oldest first: the last uid named is the most recent. */
+    function opened(...visits: Array<[string, 'chat' | 'box' | 'desktop' | 'terminal']>) {
+      visits.forEach(([uid, tab], index) => recordVisit(uid, tab, { now: 1_000_000 + index }));
+    }
+    function openSwitcher() {
+      fireEvent.click(screen.getByRole('button', { name: 'Switch agent or computer' }));
+      return screen.getByRole('combobox');
+    }
+
+    it('lists Recent first without the current resource, and highlights the previous one', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/desktop');
+      opened(['x-same', 'chat'], ['h-same', 'chat'], ['x-desktop', 'desktop']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      const groups = screen.getAllByRole('group');
+      expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Recent', 'Computers']);
+      expect(within(groups[0]).getAllByRole('option').map((option) => option.id)).toEqual([
+        screen.getAllByRole('option')[0].id, screen.getAllByRole('option')[1].id,
+      ]);
+      expect(within(groups[0]).getAllByRole('option')[0]).toHaveTextContent('Hermes');
+      expect(within(groups[0]).getAllByRole('option')[1]).toHaveTextContent('Codex');
+      const [previous] = screen.getAllByRole('option');
+      expect(previous).toHaveAttribute('aria-selected', 'true');
+      expect(input).toHaveAttribute('aria-activedescendant', previous.id);
+      // The current resource stays listed in its own group, marked.
+      const current = within(groups[1]).getByRole('option');
+      expect(current).toHaveAttribute('aria-current', 'true');
+      expect(current).toHaveTextContent("You're here");
+      expect(screen.getByText(/↵ back to Writer/)).toBeInTheDocument();
+    });
+
+    it('goes back to the previous resource on Enter, on the surface you left it on', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/desktop');
+      opened(['x-same', 'box'], ['x-desktop', 'desktop']);
+      render(<DashboardSidebar {...props} />);
+      fireEvent.keyDown(openSwitcher(), { key: 'Enter' });
+      expect(push).toHaveBeenCalledWith('/dashboard/agent/same?tab=box');
+    });
+
+    it('opens the nth Recent entry with a digit while nothing is typed', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      opened(['x-desktop', 'desktop'], ['x-same', 'chat'], ['h-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(screen.getAllByRole('option').slice(0, 3).map((option) => option.getAttribute('aria-keyshortcuts'))).toEqual(['1', '2', '3']);
+      expect(fireEvent.keyDown(input, { key: '3' })).toBe(false);
+      expect(push).toHaveBeenCalledWith('/dashboard/agent/desktop?tab=desktop');
+    });
+
+    // A touch screen shows no digit hints, and a search can start with a
+    // digit (a name like "2nd brain", or part of an id).
+    it('lets a digit type into the search on a touch screen, where no shortcut is shown', () => {
+      coarsePointer = true;
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      opened(['x-desktop', 'desktop'], ['x-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(screen.getAllByRole('option').some((option) => option.hasAttribute('aria-keyshortcuts'))).toBe(false);
+      expect(fireEvent.keyDown(input, { key: '1' })).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+      expect(screen.getByText(/Esc close/).textContent).not.toMatch(/recent/);
+    });
+
+    it('lets a digit type into the search once something is typed, or when there is no such entry', () => {
+      opened(['x-same', 'chat']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      expect(fireEvent.keyDown(input, { key: '4' })).toBe(true);
+      fireEvent.change(input, { target: { value: 'w' } });
+      expect(fireEvent.keyDown(input, { key: '1' })).toBe(true);
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it('filters every group with the search', () => {
+      opened(['x-same', 'chat'], ['x-desktop', 'desktop']);
+      render(<DashboardSidebar {...props} />);
+      const input = openSwitcher();
+      fireEvent.change(input, { target: { value: 'writer' } });
+      expect(screen.getAllByRole('group').map((group) => group.getAttribute('aria-label'))).toEqual(['Recent', 'Agents']);
+      expect(screen.getAllByRole('option')).toHaveLength(2);
+      fireEvent.change(input, { target: { value: 'ubuntu' } });
+      expect(screen.getAllByRole('group').map((group) => group.getAttribute('aria-label'))).toEqual(['Recent']);
+      expect(screen.getByRole('option')).toHaveTextContent('My desktop');
+    });
   });
 });

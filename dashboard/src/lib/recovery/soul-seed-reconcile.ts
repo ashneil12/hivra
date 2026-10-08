@@ -15,8 +15,7 @@ import {
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
 import {
-  getProxmoxHostRoutingConfigFromInfrastructure,
-  getProxmoxInfrastructure,
+  getHermesGuestSshTarget,
 } from "@/lib/services/proxmox-infrastructure";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWebfreeBackend, WEBFREE_BACKENDS } from "@/lib/types/instance";
@@ -222,13 +221,9 @@ export async function reconcileInstanceSoulSeed(
     };
   }
 
-  // sshExec auto-routes a private Proxmox guest IP through its host, but pass the
-  // explicit per-host routing config too (mirrors the profile-read path) so the
-  // right host key/bastion is selected deterministically.
-  const proxmoxHostConfig = getProxmoxHostRoutingConfigFromInfrastructure(
-    getProxmoxInfrastructure(instance.config),
-    { host_id: typeof instance.host_id === "string" ? instance.host_id : null },
-  );
+  // The guest IP alone names a VM on every host that shares the private
+  // prefix, so reads and writes go to this instance's host and VMID.
+  const guestTarget = getHermesGuestSshTarget(instance);
 
   // Read the box's current default-profile SOUL.md. A null read means the box /
   // container isn't in a readable state (unreachable, container not up, or no
@@ -241,7 +236,7 @@ export async function reconcileInstanceSoulSeed(
       hostIp: ipv4,
       profileName: "default",
       timeoutMs: opts.readTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS,
-      ...(proxmoxHostConfig ? { proxmoxHostConfig } : {}),
+      guestTarget,
     });
   } catch (err) {
     return {
@@ -295,6 +290,7 @@ export async function reconcileInstanceSoulSeed(
     const res = await writeWebUIProfileSystemPrompt({
       instanceId: instance.id,
       hostIp: ipv4,
+      guestTarget,
       profileName: "default",
       systemPrompt: intended.soul,
       overwriteExistingIdentity: false,

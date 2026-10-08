@@ -14,6 +14,7 @@ import {
   flushPostHogQueue,
   disablePostHogClient,
 } from '@/lib/telemetry/posthog-client'
+import { sendGaEvent } from '@/lib/telemetry/ga-client'
 import { readStoredConsent } from '@/lib/consent/cookie-consent'
 
 // ---------------------------------------------------------------------------
@@ -867,6 +868,10 @@ function maybeCaptureSignupCompleted(user: ClerkSignupUser): void {
     ...readSignupAttributionForEvent(),
     signup_created_at: user.createdAt ? user.createdAt.toISOString() : null,
   });
+  // GA4's recommended sign-up event, so Google Analytics can attribute
+  // sign-ups to the organic landing page. Mark `sign_up` as a key event in the
+  // GA4 property. No personal data in the params.
+  sendGaEvent('sign_up', { method: 'clerk' });
 }
 
 export function PostHogIdentify() {

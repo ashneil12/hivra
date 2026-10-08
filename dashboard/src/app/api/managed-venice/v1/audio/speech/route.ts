@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+import { mediaPricingFieldError, planMediaRequest } from "@/lib/venice/media-request-fields";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-speech | Isaiah 50:4 | Verse: The Lord God hath given me the tongue of the learned, that I should know how to speak a word in season to him that is weary.
 const VENICE_AUDIO_SPEECH_URL = "https://api.venice.ai/api/v1/audio/speech";
@@ -32,12 +32,20 @@ export async function POST(req: NextRequest) {
     return apiError("Invalid JSON body.", 400);
   }
 
+  const fieldError = mediaPricingFieldError(body);
+  if (fieldError) return apiError(fieldError, 400);
+
   if (typeof body.model !== "string" || !body.model.trim()) {
     return apiError("Model is required.", 400);
   }
   if (typeof body.input !== "string" || !body.input.trim()) {
     return apiError("input is required.", 400);
   }
+  // Only the fields Venice documents for TTS are forwarded.
+  const plan = planMediaRequest({ endpoint: ENDPOINT_LABEL, model: body.model, fields: body, source: "managed-venice-speech" });
+  if (!plan.ok) return apiError(plan.error, 400);
+  const forward = plan.fields;
+  const input = body.input;
 
   const serverKey = resolveManagedVeniceUpstreamKey({
     proxyKeyId: verifiedKey.id,
@@ -50,76 +58,46 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const referenceId = randomUUID();
-  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
-
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetch(VENICE_AUDIO_SPEECH_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serverKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    return apiError(
-      "Venice upstream request failed.",
-      502,
-      { failureType: "managed_venice_speech_upstream_fetch_failed" },
-      undefined,
-      { cause: error }
-    );
-  }
-
-  if (upstreamResponse.ok) {
-    try {
-      await recordManagedVeniceMultimodalUsage({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        walletType,
-        referenceId,
-        endpoint: ENDPOINT_LABEL,
-        model: body.model,
-        upstreamStatus: upstreamResponse.status,
-        metadata: {
-          voice: typeof body.voice === "string" ? body.voice : null,
-          responseFormat: typeof body.response_format === "string" ? body.response_format : null,
-          inputLength: typeof body.input === "string" ? body.input.length : null,
-          speed: typeof body.speed === "number" ? body.speed : null,
-          streaming: body.streaming === true,
-        },
-      });
-    } catch (error) {
-      log.error("Managed Venice speech usage record failed", error, {
-        source: "managed-venice-speech",
-        route: ENDPOINT_LABEL,
-        method: "POST",
-        failureType: "managed_venice_speech_usage_record_failed",
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        model: body.model,
-        referenceId,
-      });
-    }
-
-    log.info("Managed Venice TTS served (unmetered)", {
-      source: "managed-venice-speech",
-      userId: verifiedKey.userId,
-      proxyKeyId: verifiedKey.id,
-      walletType,
+  const gate = await holdManagedVeniceMediaSpend({
+    key: verifiedKey,
+    operation: {
+      endpoint: ENDPOINT_LABEL,
       model: body.model,
-      referenceId,
-      upstreamStatus: upstreamResponse.status,
-    });
-  } else {
-    log.warn("Managed Venice speech upstream non-2xx", {
+      metadata: {
+        voice: typeof body.voice === "string" ? body.voice : null,
+        responseFormat: typeof body.response_format === "string" ? body.response_format : null,
+        inputLength: input.length,
+        speed: typeof body.speed === "number" ? body.speed : null,
+        streaming: body.streaming === true,
+      },
+    },
+    source: "managed-venice-speech",
+  });
+  if (!gate.ok) return gate.response;
+
+  const sent = await sendManagedVeniceMediaRequest({
+    hold: gate.hold,
+    mode: "stream",
+    fetchFailureType: "managed_venice_speech_upstream_fetch_failed",
+    send: () =>
+      fetch(VENICE_AUDIO_SPEECH_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${serverKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(forward),
+      }),
+  });
+  if (!sent.ok) return sent.response;
+
+  if (!sent.upstream.ok) {
+    log.warn("Managed Venice upstream returned non-2xx", {
       source: "managed-venice-speech",
       route: ENDPOINT_LABEL,
       method: "POST",
       failureType: "managed_venice_speech_upstream_non_2xx",
-      upstreamStatus: upstreamResponse.status,
+      upstreamStatus: sent.upstream.status,
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
       model: body.model,
@@ -128,9 +106,9 @@ export async function POST(req: NextRequest) {
 
   // TTS returns binary audio (or text/event-stream when streaming=true).
   // Pass the body through verbatim with the upstream content-type.
-  const contentType = upstreamResponse.headers.get("content-type") || "application/octet-stream";
-  return new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
+  const contentType = sent.upstream.headers.get("content-type") || "application/octet-stream";
+  return new Response(sent.upstream.body, {
+    status: sent.upstream.status,
     headers: { "Content-Type": contentType },
   });
 }

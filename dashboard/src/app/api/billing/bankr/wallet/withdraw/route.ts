@@ -100,8 +100,9 @@ export async function POST(req: NextRequest) {
     // plenty for legitimate retry-after-error, and tight enough that
     // even if the in-flight lock is bypassed (multi-process, lock map
     // cleared, etc.) the blast radius is bounded.
-    const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-real-ip") || "unknown";
-    const rate = enforceRateLimit(`withdraw:${userId}:${ip}`, {
+    // Keyed on the user alone: a client-sent address header must not open a
+    // fresh bucket.
+    const rate = enforceRateLimit(`withdraw:${userId}`, {
       limit: 3,
       windowMs: 60_000,
     });

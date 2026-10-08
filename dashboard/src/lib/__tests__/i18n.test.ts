@@ -107,7 +107,7 @@ describe("i18n locale support", () => {
 
       expect(copy.localeLabel).not.toBe(english.localeLabel);
       expect(copy.nav.pricing).not.toBe(english.nav.pricing);
-      expect(copy.hero.primaryCta).not.toBe(english.hero.primaryCta);
+      expect(copy.stats.page.cta.button).not.toBe(english.stats.page.cta.button);
       expect(copy.dashboard.library.returnToCommandCenter).not.toBe(
         english.dashboard.library.returnToCommandCenter,
       );
@@ -182,38 +182,8 @@ describe("i18n translation parity", () => {
     "getStarted.specs.agents",
     "getStarted.specs.cpu",
     "getStarted.specs.ram",
-    "howItWorks.steps[0].step",
-    "howItWorks.steps[1].step",
-    "howItWorks.steps[2].step",
     "nav.roadmap",
-    "pricing.tiers[0].name",
-    "pricing.tiers[0].price",
-    "pricing.tiers[0].specs[0].label",
-    "pricing.tiers[0].specs[0].value",
-    "pricing.tiers[0].specs[1].label",
-    "pricing.tiers[0].specs[1].value",
-    "pricing.tiers[0].specs[2].value",
-    "pricing.tiers[1].name",
-    "pricing.tiers[1].paymentPaths[0].detail",
-    "pricing.tiers[1].price",
-    "pricing.tiers[1].specs[0].label",
-    "pricing.tiers[1].specs[0].value",
-    "pricing.tiers[1].specs[1].label",
-    "pricing.tiers[1].specs[1].value",
-    "pricing.tiers[1].specs[2].value",
-    "pricing.tiers[2].name",
-    "pricing.tiers[2].paymentPaths[0].detail",
-    "pricing.tiers[2].price",
-    "pricing.tiers[2].specs[0].label",
-    "pricing.tiers[2].specs[0].value",
-    "pricing.tiers[2].specs[1].label",
-    "pricing.tiers[2].specs[1].value",
     "stats.page.headlinePrefix",
-    "useCases.items[0].headline",
-    "whatsComing.items[0].title",
-    "whatsComing.items[1].title",
-    "whatsComing.items[2].title",
-    "whatsComing.items[3].title",
   ]);
 
   function collectLeaves(value: unknown, prefix: string, out: Array<[string, string]>) {
@@ -269,5 +239,123 @@ describe("i18n translation parity", () => {
     const validPaths = new Set(englishLeaves.map(([path]) => path));
     const stale = [...INTENTIONALLY_IDENTICAL].filter((path) => !validPaths.has(path));
     expect(stale).toEqual([]);
+  });
+});
+
+describe("i18n public copy truth", () => {
+  // These blocks were the pre-Hivra landing page ("Launch AI agents in one
+  // click", a hosted free tier, the $HermesOS discount, Pro and Power). No
+  // component reads them any more: the homepage, /pricing and the agent pages
+  // carry their own reviewed copy. They were deleted from every locale so the
+  // retired claims cannot reach a public page again; do not bring them back.
+  const RETIRED_TOP_LEVEL_BLOCKS = [
+    "hero",
+    "ticker",
+    "positioning",
+    "features",
+    "howItWorks",
+    "useCases",
+    "whatsComing",
+    "pricing",
+    "token",
+    "faq",
+    "finalCta",
+  ];
+
+  // Wording the owner retired (2026-09-30): one-click deploys, a hosted free
+  // tier, a $HermesOS discount, and the old "Pro and Power" plan names. The
+  // alternation covers the translations that used to sit next to the English.
+  const RETIRED_CLAIMS =
+    /one[- ]click|一键|free (tier|plan)|always free|免费(层|计划|方案|层级)|plan(o)? (gratis|grátis|gratuito)|niveau gratuit|free-tarif|kostenlos|無料プラン|무료 플랜|pro and power|\$hermesos|hermesos discount|save up to \d+%/i;
+
+  function collectStrings(value: unknown, out: string[]) {
+    if (typeof value === "string") out.push(value);
+    else if (Array.isArray(value)) value.forEach((item) => collectStrings(item, out));
+    else if (value && typeof value === "object") {
+      Object.values(value).forEach((child) => collectStrings(child, out));
+    }
+  }
+
+  it("has none of the retired landing-page blocks in any locale", () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      const keys = Object.keys(MARKETING_COPY[locale]);
+      for (const retired of RETIRED_TOP_LEVEL_BLOCKS) {
+        expect({ locale, present: keys.includes(retired) }).toEqual({ locale, present: false });
+      }
+    }
+  });
+
+  it("keeps retired offer wording out of the copy that public pages render", () => {
+    // nav is the landing header, stats is the public /stats page, footer is the
+    // site footer. getStarted (the checkout step, noindex) and dashboard (signed
+    // in) are product screens that describe what checkout really sells, so they
+    // are deliberately not scanned here.
+    const offenders: string[] = [];
+    for (const locale of SUPPORTED_LOCALES) {
+      const copy = MARKETING_COPY[locale];
+      const strings: string[] = [];
+      collectStrings({ nav: copy.nav, stats: copy.stats, footer: copy.footer }, strings);
+      for (const text of strings) {
+        if (RETIRED_CLAIMS.test(text)) offenders.push(`${locale}: ${text}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("gives the wallet page a headline and intro with no token wording, in every language", () => {
+    // The wallet page shows these to a user the token geo-policy blocks who holds no
+    // token access (UKG-05), in place of "Your $HermesOS wallet" and the hold-to-verify intro.
+    const tokenWord = /\$HermesOS|\$HIVRA|\$HERMESOS|\btokens?\b|token\b|代币|トークン|토큰|jeton|Token/i;
+    for (const locale of SUPPORTED_LOCALES) {
+      const restricted = (MARKETING_COPY[locale] as { dashboard: { wallet: { restricted?: Record<string, string> } } })
+        .dashboard.wallet.restricted;
+      expect({ locale, keys: Object.keys(restricted ?? {}).sort() }).toEqual({
+        locale,
+        keys: ["eyebrow", "intro", "title"],
+      });
+      for (const [key, value] of Object.entries(restricted ?? {})) {
+        expect({ locale, key, value, hasTokenWord: tokenWord.test(value), hasDash: /[\u2013\u2014]/.test(value) }).toEqual({
+          locale,
+          key,
+          value,
+          hasTokenWord: false,
+          hasDash: false,
+        });
+        expect(value.trim()).not.toBe("");
+      }
+    }
+    expect(
+      (MARKETING_COPY.en as { dashboard: { wallet: { restricted: { title: string } } } }).dashboard.wallet.restricted.title,
+    ).toBe("Your wallets.");
+  });
+
+  it("describes the Wallets row in settings without the token, in every language", () => {
+    // The row is shown to every viewer, and the token geo-policy only gates the
+    // wallet page behind it. It says what the page holds for everyone: agent wallets.
+    const rows: Array<{ locale: string; title: string; description: string }> = [];
+    const find = (locale: string, value: unknown, key: string) => {
+      if (!value || typeof value !== "object") return;
+      const record = value as Record<string, unknown>;
+      if (key === "wallets" && typeof record.title === "string" && typeof record.description === "string") {
+        rows.push({ locale, title: record.title, description: record.description });
+      }
+      for (const [childKey, child] of Object.entries(record)) find(locale, child, childKey);
+    };
+    for (const locale of SUPPORTED_LOCALES) find(locale, MARKETING_COPY[locale], "");
+
+    expect(rows.map((row) => row.locale).sort()).toEqual([...SUPPORTED_LOCALES].sort());
+    for (const row of rows) {
+      expect({ locale: row.locale, token: /\$HermesOS|\$HIVRA|\btokens?\b/i.test(row.description) }).toEqual({
+        locale: row.locale,
+        token: false,
+      });
+    }
+    expect(rows.find((row) => row.locale === "en")?.description).toBe("Agent wallets");
+  });
+
+  it("describes the /stats call to action as open source on Hivra Cloud or your own server", () => {
+    expect(MARKETING_COPY.en.stats.page.cta.subtitle).toBe(
+      "Open source, on Hivra Cloud or your own server",
+    );
   });
 });

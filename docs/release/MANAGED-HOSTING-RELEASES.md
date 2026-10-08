@@ -89,6 +89,48 @@ can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database
 migrations or external side effects; those require a separately reviewed plan.
 
+## Queued database steps
+
+Some database changes break the code that is serving until the new code serves.
+They are kept in `dashboard/supabase/_pending_destructive_migrations/`, outside
+`dashboard/supabase/migrations/`, so no "apply every pending migration" run
+(including the production schema catch-up at the first Promote) can apply one
+early. Each is an explicit, ordered step in the Canary release record and in the
+Promote packet, applied per environment only after the code it needs serves
+there, following the steps in the file's header.
+
+| Queued file | Apply only after | Check before and after |
+|---|---|---|
+| `hivra_agent_slot_writer_guard.sql` (plan agent limit, migration B) | `*_hivra_agent_slot_limit.sql` is applied and the code that writes Hivra-managed agents through `insert_hivra_managed_agent` and `reserve_hivra_launch_model_request_v3` is serving on that environment | Launch smoke test; start and restart of an existing agent, including one in `error` (the file's header lists every status writer it was audited against) |
+
+Where each queued step stands:
+
+- `hivra_agent_slot_writer_guard.sql`: **Canary** applied 2026-09-25 from this
+  folder as ledger version `20260925151500_hivra_agent_slot_writer_guard`.
+  Before the apply, a launch and a restart passed on the served revision; after
+  it, a launch, stop and start, restart, and Start of a Hivra-managed Ubuntu
+  Desktop in `error` that kept its computer (answered `provisioning`) passed,
+  with no refusal logged. **Production** is pending:
+  apply the same file with the same version only after the owner's Promote,
+  never in the schema catch-up before it. The file stays here until then.
+
+## Provisioner releases in flight
+
+A provisioner release (`dashboard/provisioner/VERSION`, its sealed manifest and
+its digest-bound admission migration) is sealed on the bundle it was built on.
+When two open pull requests each carry one, whichever merges second is sealed
+again on top of the other, at a number after it, before it merges; the one that
+merged first keeps its number. A lower number is never shipped after a higher
+one: hosts install the newest sealed bundle and a runtime update moves a
+computer to it, so an older-numbered bundle released later would take back what
+the higher release shipped.
+
+Last pair: #124 (persistent sessions, 2026.09.24.2) merged first, so the
+attach release (`claude/agent-computer`) is sealed again as 2026.09.24.3 on top
+of it. Had the attach release merged first, #124 would have become 2026.09.24.4.
+#130, which also used migration version `20260924220000`, moved to
+`20260924231500` before it merged.
+
 ## Feature acceptance
 
 A contributor may propose a new adapter or optional capability without it becoming
@@ -106,6 +148,14 @@ system exists or that every current integration has been audited.
   and cost, not the safety of the contributed code.
 - Do not use `pull_request_target` or privileged `workflow_run` jobs to execute
   untrusted PR code. Do not put hosting credentials in repository-level secrets.
+- Pull request titles, descriptions and comments are public, and GitHub keeps
+  their edit history. Before posting one, run it through
+  `node scripts/release/public-tree-hygiene.mjs --text-file -` and keep live host
+  names, storage box addresses, wallet addresses, database project references and
+  customer ids out of it. CI scans the files of a pull request with the same
+  rules. It does not read the text of the pull request, so this step is manual.
+- To run the same tree scan before every local commit, enable the hook once per clone:
+  `git config core.hooksPath .githooks`. CI runs the scan regardless of the hook.
 - Live Instance Smoke is manual-only, runs only from `main` and uses the `managed-live-smoke`
   environment. That environment permits only main, requires owner approval, and
   disallows administrator bypass. Put any future smoke credentials there, scoped
@@ -125,6 +175,8 @@ It checks the named GitHub/Vercel controls and fails if required settings are
 missing or weakened. It does not deploy, inspect secret values, certify application
 security, or replace revision-bound release verification. The live configuration
 is stored in GitHub/Vercel; committing this document alone does not enforce it.
+Repository settings that this audit does not read, such as Dependabot and code
+scanning, are listed in [the repository settings checklist](REPO-SETTINGS-CHECKLIST.md).
 
 Current broader dashboard CI failures remain tracked in issue #3; provider release
 identity and staged desktop activation remain in issue #2. A passing current-tree

@@ -12,12 +12,6 @@ import { getStripe, validateOrRecreateStripeCustomer } from "@/lib/stripe";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import {
-  bucketForUser,
-  getTrialDaysForUser,
-  isTrialExperimentEnabled,
-} from "@/lib/billing/trial-experiment";
-import { posthogClient } from "@/lib/posthog";
-import {
   holdsPaidPlan,
   isLiveStripeSubscriptionId,
 } from "@/lib/billing/subscription-status";
@@ -453,7 +447,9 @@ export async function POST(req: NextRequest) {
     const appUrl = getDashboardOrigin();
 
     // Idempotency key scoped to the hour — prevents duplicate sessions
-    // from double-clicks within the same checkout window
+    // from double-clicks within the same checkout window. The "np" (no promo)
+    // segment retired every key minted while promotion codes were enabled:
+    // Stripe rejects a reused key whose parameters changed.
     // Cadence is part of the idempotency key so a user who first started
     // a monthly checkout and then switched to yearly within the same
     // hour gets a fresh session for the yearly price (vs. silently
@@ -465,22 +461,14 @@ export async function POST(req: NextRequest) {
     const expiredKey = expiredSessionIds.length
       ? `_x${keyDigest([...expiredSessionIds].sort().join(","))}`
       : "";
-    const idempotencyKey = `checkout_${clerkUserId}_${planKey}_${cadence}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
+    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
     const returnQuery = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : "";
-
-    // 7-day Pro trial experiment (default-off scaffolding). Assignment is a
-    // pure function of the user id, so this resolves to 0 trial days for
-    // everyone until TRIAL_EXPERIMENT_ENABLED + TRIAL_EXPERIMENT_PERCENT are
-    // set. Trial users get trial_period_days on the Checkout subscription;
-    // the Stripe webhook already maps status 'trialing' → 'active'.
-    const trialDays = getTrialDaysForUser(clerkUserId, planKey);
 
     const sessionMetadata = {
       user_id: clerkUserId,
       plan: planKey,
       cadence,
       checkout_ip: ip,
-      ...(trialDays > 0 ? { trial_days: String(trialDays) } : {}),
     };
 
     const session = await stripe.checkout.sessions.create(
@@ -491,49 +479,21 @@ export async function POST(req: NextRequest) {
         customer: stripeCustomerId,
         metadata: returnTo ? { ...sessionMetadata, return_to: returnTo } : sessionMetadata,
         line_items: [{ price: stripePriceId, quantity: 1 }],
+        // Direct payment only: no trial_period_days, ever (owner decision
+        // 2026-10-07: you purchase and you get what you want).
         subscription_data: {
           metadata: sessionMetadata,
-          ...(trialDays > 0 ? { trial_period_days: trialDays } : {}),
         },
         // {CHECKOUT_SESSION_ID} is replaced by Stripe — used by confirm-checkout
         // to instantly activate the account without waiting for webhook delivery
         success_url: `${appUrl}/dashboard/billing?subscription=success&session_id={CHECKOUT_SESSION_ID}${returnQuery}`,
         cancel_url: `${appUrl}/checkout/canceled?plan=${planKey}${returnQuery}`,
-        allow_promotion_codes: true,
+        // No promotion codes: you purchase and you get what you want. Explicit
+        // false so the intent is visible; Stripe's default is also off.
+        allow_promotion_codes: false,
       },
       { idempotencyKey }
     );
-
-    // A/B assignment event — fires for BOTH buckets (control is the
-    // baseline) the first time a user reaches a paid checkout while the
-    // experiment is enabled. The stable $insert_id keeps PostHog from
-    // counting repeat checkouts as new assignments. Observability only:
-    // a capture/flush failure must never break checkout.
-    if (isTrialExperimentEnabled()) {
-      try {
-        posthogClient.capture({
-          distinctId: clerkUserId,
-          event: "trial_experiment_assigned",
-          properties: {
-            bucket: bucketForUser(clerkUserId),
-            plan: planKey,
-            trial_days: trialDays,
-            $insert_id: `trial_experiment_assigned_${clerkUserId}`,
-          },
-        });
-        // Flush before the function dies — Vercel won't wait for async flushes.
-        await posthogClient.flush();
-      } catch (captureError) {
-        log.warn("trial experiment assignment capture failed", {
-          source: "billing-subscribe",
-          route: "/api/billing/subscribe",
-          method: "POST",
-          userId: clerkUserId,
-          failureType: "trial_experiment_capture_failed",
-          errorName: captureError instanceof Error ? captureError.name : typeof captureError,
-        });
-      }
-    }
 
     if (shouldPreserveExistingEntitlement) {
       log.info("manual paid subscription checkout started without mutating active entitlement", {

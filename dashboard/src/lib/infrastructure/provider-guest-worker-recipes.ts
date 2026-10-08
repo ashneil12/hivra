@@ -320,6 +320,26 @@ const recipes = Object.freeze({
     workerSha256: "d0b33f0520f2e099589a1b31a25899b00fc360cd05d2cedb9d188466383b57ac",
     workerSize: 45185,
   }),
+  "2026.09.24.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release keeps agent work running across refreshes, restarts and in-place updates.
+    workerSha256: "c0ae874587a3ebb4d0957e3dd95ece96654e561990c96f495074f05072b71f83",
+    workerSize: 45185,
+  }),
+  "2026.09.24.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release moves the terminals to sockets and adds attached agents.
+    workerSha256: "f1dded06ac1c7660d29e51552112dad37cc9ba0d89442ecdc4cfbf5452c76273",
+    workerSize: 45185,
+  }),
+  "2026.09.24.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release counts socket clients before restarting a terminal and never falls back to its port.
+    workerSha256: "24ce646e64b79de0e7b54971f9c3127628d9ec7755919036e6ff11c11db65042",
+    workerSize: 45185,
+  }),
+  "2026.10.07.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the optional Claude app helper for Ubuntu Desktop computers and moves the Claude Code CLI pin.
+    workerSha256: "b56564d16fcf745ad9ef992f6bef7d5dca2c44a8b91a460789643e5f713b9abc",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

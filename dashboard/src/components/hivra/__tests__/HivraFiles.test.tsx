@@ -41,6 +41,28 @@ async function openAndEdit(files: ReturnType<typeof access>, name = "README.md")
 }
 
 describe("HivraFiles", () => {
+  it("shows an agent-planted .html or .svg with script as text, never as a page (T10)", async () => {
+    const planted: Record<string, string> = {
+      "page.html": '<html><body><script>window.__hivraPlanted = 1</script><img src="x" onerror="window.__hivraPlanted = 2"></body></html>',
+      "logo.svg": '<svg xmlns="http://www.w3.org/2000/svg" onload="window.__hivraPlanted = 3"><script>window.__hivraPlanted = 4</script></svg>',
+    };
+    const files = access();
+    files.list.mockImplementation(async (path: string) => ({ path, error: null,
+      entries: Object.keys(planted).map((name) => ({ name, type: "file", size: planted[name].length, mtime: 1 })) }));
+    files.read.mockImplementation(async (path: string) => ({ content: planted[path.replace(/^\.\//, "")], error: null }));
+    const { container } = render(<HivraFiles boxUrl="https://box.test" access={files} />);
+    for (const name of Object.keys(planted)) {
+      fireEvent.click(await screen.findByRole("button", { name: new RegExp(name.replace(".", "\\.")) }));
+      const shown = await screen.findByText(planted[name]);
+      expect(shown.tagName).toBe("PRE");
+      expect(container.querySelector("script, iframe, object, embed, img, [onerror], [onload]")).toBeNull();
+      // The only SVGs on the page are the view's own icons.
+      expect([...container.querySelectorAll("svg")].every((icon) => icon.classList.contains("lucide"))).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "Back to files" }));
+    }
+    expect((window as unknown as { __hivraPlanted?: number }).__hivraPlanted).toBeUndefined();
+  });
+
   it("marks the split open with a file so narrow panes show the viewer alone, with a way back", async () => {
     const files = access();
     const { container } = render(<HivraFiles boxUrl="https://box.test" access={files} />);

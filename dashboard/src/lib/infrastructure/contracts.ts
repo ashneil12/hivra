@@ -354,6 +354,9 @@ function validateVmidRange(
 export const ProxmoxVmidRangeSchema =
   ProxmoxVmidRangeObjectSchema.superRefine(validateVmidRange);
 
+export const SSH_PRIVILEGES = ["login", "sudo"] as const;
+export type SshPrivilege = (typeof SSH_PRIVILEGES)[number];
+
 const ProxmoxSshEndpointSchema = z
   .object({
     sshHost: ProxmoxSshHostSchema,
@@ -365,6 +368,13 @@ const ProxmoxSshEndpointSchema = z
       .max(32)
       .regex(/^[A-Za-z_][A-Za-z0-9_.-]*$/, "SSH user contains unsupported characters"),
     sshHostFingerprintSha256: ProxmoxSshHostFingerprintSchema,
+    /** How host scripts reach root. "login": the SSH user itself (today's
+     * behaviour). "sudo": every host script runs through passwordless sudo.
+     * Absent means "login". */
+    sshPrivilege: z.enum(SSH_PRIVILEGES).optional(),
+    /** Set when Hivra knows the pinned key is Ed25519 (the setup command, or
+     * a key read from the server): SSH then offers only that algorithm. */
+    sshHostKeyType: z.literal("ssh-ed25519").nullable().optional(),
   })
   .strict();
 
@@ -404,6 +414,9 @@ export const ProxmoxAdvancedConfigurationSchema = z
 export const ProxmoxConnectionCredentialsSchema = z
   .object({
     sshPrivateKey: ProxmoxSshPrivateKeySchema,
+    /** Unlocks a passphrase-protected key once, on the server. The unlocked
+     * key goes into the sealed bundle; the passphrase is never stored. */
+    sshPrivateKeyPassphrase: z.string().min(1).max(1_024).optional(),
   })
   .strict();
 
@@ -421,6 +434,13 @@ const ProxmoxConnectionCreateObjectSchema = z
 
 export const ProxmoxConnectionCreateSchema = ProxmoxConnectionCreateObjectSchema.superRefine(
   (value, context) => {
+    if (value.endpoint.sshPrivilege === "sudo") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endpoint", "sshPrivilege"],
+        message: "Proxmox servers need a root login for now",
+      });
+    }
     const simplePlacementOverrides = value.configuration
       ? Object.keys(value.configuration).filter((key) => key !== "capacityPolicy")
       : [];
