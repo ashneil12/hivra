@@ -309,9 +309,19 @@ export function settleManagedChatSurcharge(params: {
     // not confirmed against Venice's invoice, so it never lowers that floor.
     const floor = plan.webSearch === "on" ? VENICE_WEB_SEARCH_MICRO_USD : 0;
     const reported = Math.max(floor, evidence.veniceCostMicroUsd - params.tokenCostMicroUsd);
-    return reported > ceilingMicroUsd
-      ? { surchargeMicroUsd: ceilingMicroUsd, source: "venice_cost", ceilingMicroUsd, reconciliationReason: SURCHARGE_ABOVE_CEILING_REASON }
-      : { surchargeMicroUsd: reported, source: "venice_cost", ceilingMicroUsd, reconciliationReason: null };
+    if (reported > ceilingMicroUsd) {
+      return { surchargeMicroUsd: ceilingMicroUsd, source: "venice_cost", ceilingMicroUsd, reconciliationReason: SURCHARGE_ABOVE_CEILING_REASON };
+    }
+    // X search that Venice's cost shows nothing for: either the model never
+    // searched or `cost` leaves the fee out. It can't be told here, so ops
+    // compares it with Venice's billing instead of it passing silently.
+    const unexplainedXSearch = plan.xSearch && reported === 0;
+    return {
+      surchargeMicroUsd: reported,
+      source: "venice_cost",
+      ceilingMicroUsd,
+      reconciliationReason: unexplainedXSearch ? X_SEARCH_COST_UNREPORTED_REASON : null,
+    };
   }
 
   const searched =

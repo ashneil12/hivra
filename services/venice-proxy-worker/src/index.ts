@@ -437,8 +437,9 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
       cause,
       // Only a usage-less response is charged by the output it delivered.
       ...(usage == null && observedOutputTokens !== null ? { observedOutputTokens } : {}),
-      // Only a request held for web search / scraping / X search has any: a
-      // plain chat settles with exactly the fields it always did.
+      // Sent only when the response carried Venice's `cost` or citations. The
+      // control plane uses it only for a hold made for web search / scraping /
+      // X search, and ignores it otherwise.
       ...(evidence.veniceCostMicroUsd !== null || evidence.webSearchCitations !== null
         ? { surchargeEvidence: evidence }
         : {}),

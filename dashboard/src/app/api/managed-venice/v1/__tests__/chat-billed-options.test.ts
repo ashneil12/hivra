@@ -254,6 +254,15 @@ describe("managed-Venice chat: options Venice bills on top of tokens", () => {
       expect(charged().surcharge).toBe(10_000);
     });
 
+    it("X search whose reported cost shows no fee is filed for ops, not passed silently", async () => {
+      fetchMock.mockResolvedValueOnce(veniceJson({ cost: costUsd(TOKEN_COST) }));
+      await chat({ venice_parameters: { enable_x_search: true } });
+      expect(charged().surcharge).toBe(0);
+      expect(reconciliationItems()).toEqual([
+        expect.objectContaining({ reason: "managed_venice_x_search_cost_unreported", status: "open" }),
+      ]);
+    });
+
     it("web search auto with a reported cost of tokens only is still free (the model did not search)", async () => {
       fetchMock.mockResolvedValueOnce(veniceJson({ cost: costUsd(TOKEN_COST) }));
       await chat({ venice_parameters: { enable_web_search: "auto" } });
