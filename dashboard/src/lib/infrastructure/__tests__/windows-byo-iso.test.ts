@@ -292,6 +292,20 @@ printf '${mediaEvidence.fileIdentitySha256}  -\n'
     expect(database.from).not.toHaveBeenCalled();
   });
 
+  it("admits the requested Windows disk size, not only the 64 GB setup floor", async () => {
+    const database = {
+      from: jest.fn(),
+      rpc: jest.fn(async () => ({ data: { status: "reserved", operationId, agentId, bindingHash }, error: null })),
+    } as unknown as TestDatabase;
+    const runHostScript = jest.fn(async () => ({ ok: true, stdout: inventoryOutput(), stderr: "" }));
+    // 800 GB measured free; a 1 TB disk would over-admit the thin pool.
+    await expect(launchWindowsByoIso("owner", "owner", { ...input, diskGb: 1024 }, {
+      database, resolveContext: jest.fn(async () => context()), runHostScript,
+    })).rejects.toMatchObject({ code: "target_incompatible" });
+    expect(database.from).not.toHaveBeenCalled();
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+  });
+
   it("returns the original computer on an identical retry without touching the host", async () => {
     const original = { id: agentId, name: input.name, status: "provisioning", computer_profile: "windows" };
     const database = { from: jest.fn(), rpc: jest.fn(async () => ({ data: { status: "existing", agent: original }, error: null })) } as unknown as TestDatabase;
