@@ -23,9 +23,11 @@ describe("DeepSeekHarnessPreviewPage", () => {
     render(<DeepSeekHarnessPreviewPage />);
     const key = screen.getByText("Your model key", { selector: "strong" }).parentElement;
 
-    // The preview showed the key reach its computer and never come back to
-    // the browser, not that it lives nowhere else.
-    expect(key).toHaveTextContent("Delivered to its computer, never shown back in your browser.");
+    // Hivra does not deliver this key: the preview entered it in DeepSeek
+    // Harness's own settings on its computer, and it never came back to the
+    // browser. Nothing showed that it lives nowhere else.
+    expect(key).toHaveTextContent("Added in its own settings on its computer, never shown back in your browser.");
+    expect(document.body.textContent).not.toMatch(/delivered to its computer/i);
     expect(document.body.textContent).not.toMatch(/kept on its computer only/i);
   });
 

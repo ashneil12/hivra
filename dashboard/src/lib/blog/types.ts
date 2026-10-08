@@ -18,6 +18,11 @@ export type BlogArticle = {
   author: string;
   tagline: string;
   intro: string;           // 1-2 sentences shown as the card preview and lede
+  /**
+   * The direct answer, 40 to 60 words, shown in a "Short answer" box at the top of the body (anchor #short-answer).
+   * Write it so it stands alone: it is what readers skim, and what search and AI answers quote. Markdown links allowed.
+   */
+  shortAnswer?: string;
   sections: BlogSection[];
   faqs: Array<{ q: string; a: string }>;
   relatedArticles: Array<{ slug: string; title: string }>;

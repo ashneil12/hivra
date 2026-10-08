@@ -9,7 +9,8 @@ export const runtime = "nodejs";
 /**
  * Internal authorize endpoint for the off-Vercel chat proxy (Cloudflare Worker).
  *
- * The Worker POSTs `{ plaintextKey, body }` here; this verifies the proxy key,
+ * The Worker POSTs `{ plaintextKey, body, referenceId }` here (`referenceId`, a
+ * fresh UUID the Worker chose, is optional); this verifies the proxy key,
  * reserves wallet funds, and resolves the upstream Venice key — then returns the
  * authorized context so the Worker can hold the long-lived stream itself. All
  * wallet/billing logic stays on Vercel; only the byte-pump moves to the edge.
@@ -25,9 +26,9 @@ export async function POST(req: NextRequest) {
   const denied = assertManagedVeniceInternalSecret(req);
   if (denied) return denied;
 
-  let payload: { plaintextKey?: unknown; body?: unknown };
+  let payload: { plaintextKey?: unknown; body?: unknown; referenceId?: unknown };
   try {
-    payload = (await req.json()) as { plaintextKey?: unknown; body?: unknown };
+    payload = (await req.json()) as { plaintextKey?: unknown; body?: unknown; referenceId?: unknown };
   } catch {
     return apiError("Invalid JSON body.", 400);
   }
@@ -44,7 +45,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const auth = await authorizeManagedVeniceChat({ plaintextKey, body });
+  // The Worker chooses the hold's reference so it can release the hold even if
+  // this response never reaches it. An older Worker sends none.
+  const referenceId = typeof payload.referenceId === "string" ? payload.referenceId : undefined;
+  const auth = await authorizeManagedVeniceChat({ plaintextKey, body, referenceId });
   if (!auth.ok) return auth.response;
 
   return Response.json({

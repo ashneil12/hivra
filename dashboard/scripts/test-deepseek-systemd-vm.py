@@ -28,7 +28,10 @@ NODE_URL = "https://nodejs.org/dist/v24.14.1/node-v24.14.1-linux-x64.tar.xz"
 NODE_SHA = "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be"
 ROOT = Path(__file__).resolve().parents[2]
 GUEST = Path(__file__).with_name("deepseek-systemd-guest.py")
-BUNDLE_VERSION = "2026.08.31.4"
+# The payload is the sealed release this revision ships: the committed VERSION
+# and its provisioner-releases manifest. A hard-coded older release cannot be
+# rebuilt from a newer tree, so the fixture would only ever fail closed.
+RELEASE_VERSION_PATTERN = re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{1,3}")
 STAGES = {"guest_preflight", "prepare_offline_payload", "actual_native_install", "native_http_and_synthetic_credentials",
           "real_service_stop_restart", "detached_cgroup_member_cleanup", "retained_native_replay", "provider_worker_cancellation", "complete"}
 ERROR_CODES = {"root_fixture_required", "offline_guest_required", "fixture_identity_mismatch", "actual_systemd_required",
@@ -83,11 +86,18 @@ def git_bytes(relative):
     return run(["git", "-c", "safe.directory=" + str(ROOT), "show", "HEAD:" + relative], cwd=ROOT)
 
 
+def bundle_version():
+    version = git_bytes("dashboard/provisioner/VERSION").decode("ascii").strip()
+    checked(RELEASE_VERSION_PATTERN.fullmatch(version), "fixture_bundle_version_invalid")
+    return version
+
+
 def snapshot_source(target):
-    raw = git_bytes(f"dashboard/provisioner-releases/{BUNDLE_VERSION}.json")
+    version = bundle_version()
+    raw = git_bytes(f"dashboard/provisioner-releases/{version}.json")
     manifest = json.loads(raw)
-    checked(manifest["schema"] == 1 and manifest["version"] == BUNDLE_VERSION and len(manifest["files"]) == 37,
-            "fixture_bundle_manifest_invalid")
+    checked(manifest["schema"] == 1 and manifest["version"] == version and isinstance(manifest["files"], list)
+            and len(manifest["files"]) > 0, "fixture_bundle_manifest_invalid")
     target.mkdir(mode=0o755)
     seen = set()
     for entry in manifest["files"]:
@@ -101,14 +111,14 @@ def snapshot_source(target):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
         destination.chmod(0o644)
-    checked((target / "VERSION").read_text().strip() == BUNDLE_VERSION, "fixture_source_version_mismatch")
+    checked((target / "VERSION").read_text().strip() == version, "fixture_source_version_mismatch")
     return manifest
 
 
 def require_ci():
     checked(os.name == "posix" and os.uname().sysname == "Linux" and os.geteuid() == 0, "linux_root_ci_required")
     checked(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
-            and os.environ.get("GITHUB_REPOSITORY") == "ashneil12/hermesdeploy-canary", "disposable_canary_ci_required")
+            and os.environ.get("GITHUB_REPOSITORY") == "ashneil12/hivra", "disposable_canary_ci_required")
     checked(Path(os.environ["GITHUB_WORKSPACE"]).resolve() == ROOT, "unexpected_checkout")
     # This command must never run on the persistent homelab runner.
     checked(os.environ.get("HIVRA_DISPOSABLE_CI") == "offline-native-systemd", "explicit_fixture_scope_required")
@@ -120,6 +130,8 @@ def build_payload(build, vmwork):
     payload = inputs / "hivra-test"
     payload.mkdir(mode=0o755)
     manifest = snapshot_source(payload / "source")
+    # The guest checks its copied tree against exactly this release manifest.
+    (payload / "source-release.json").write_text(json.dumps(manifest, sort_keys=True))
     download(NODE_URL, NODE_SHA, build / "node.tar.xz")
     with tarfile.open(build / "node.tar.xz") as archive:
         archive.extractall(payload, filter="data")

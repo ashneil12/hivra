@@ -381,102 +381,6 @@ describe("selectDueLifecycleEmails", () => {
     expect(due).toEqual([{ key: "stalled_5d", instance: stalled }]);
   });
 
-  describe("trial_day5 cohort", () => {
-    const ORIGINAL_ENV = process.env;
-
-    beforeEach(() => {
-      process.env = { ...ORIGINAL_ENV };
-      // 100% rollout → every user buckets 'trial' deterministically.
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-    });
-
-    afterAll(() => {
-      process.env = ORIGINAL_ENV;
-    });
-
-    const trialSub = (overrides: Partial<LifecycleSubscriptionRow> = {}) =>
-      sub({
-        plan: "operator",
-        created_at: hoursAgo(40 * 24),
-        upgraded_at: hoursAgo(130),
-        ...overrides,
-      });
-
-    it("due on a paid plan upgraded 120–144h ago when the experiment is on", () => {
-      const first = inst({ id: "first", created_at: hoursAgo(40 * 24), last_activity_at: hoursAgo(1) });
-      const due = selectDueLifecycleEmails({
-        subscription: trialSub(),
-        instances: [first],
-        now: NOW,
-        trialExperimentEnabled: true,
-      });
-      expect(due).toEqual([{ key: "trial_day5", instance: first }]);
-    });
-
-    it("inert when the experiment flag is off (the default)", () => {
-      expect(
-        selectDueLifecycleEmails({
-          subscription: trialSub(),
-          instances: [],
-          now: NOW,
-        })
-      ).toEqual([]);
-      expect(
-        selectDueLifecycleEmails({
-          subscription: trialSub(),
-          instances: [],
-          now: NOW,
-          trialExperimentEnabled: false,
-        })
-      ).toEqual([]);
-    });
-
-    it("not due for control-bucket users", () => {
-      process.env.TRIAL_EXPERIMENT_PERCENT = "0"; // everyone control
-      expect(
-        selectDueLifecycleEmails({
-          subscription: trialSub(),
-          instances: [],
-          now: NOW,
-          trialExperimentEnabled: true,
-        })
-      ).toEqual([]);
-    });
-
-    it("not due for free plans, missing upgraded_at, or outside the 120–144h window", () => {
-      for (const subscription of [
-        trialSub({ plan: "free" }),
-        trialSub({ upgraded_at: null }),
-        trialSub({ upgraded_at: hoursAgo(100) }),
-        trialSub({ upgraded_at: hoursAgo(150) }),
-      ]) {
-        expect(
-          selectDueLifecycleEmails({
-            subscription,
-            instances: [],
-            now: NOW,
-            trialExperimentEnabled: true,
-          })
-        ).toEqual([]);
-      }
-    });
-
-    it("outranks stalled_5d for the same user", () => {
-      const stalled = inst({
-        id: "stalled",
-        created_at: hoursAgo(40 * 24),
-        last_activity_at: hoursAgo(6 * 24),
-      });
-      const due = selectDueLifecycleEmails({
-        subscription: trialSub(),
-        instances: [stalled],
-        now: NOW,
-        trialExperimentEnabled: true,
-      });
-      expect(due.map((d) => d.key)).toEqual(["trial_day5", "stalled_5d"]);
-    });
-  });
-
   it("returns overlapping cohorts in priority order", () => {
     // Signed up 3 days ago AND an instance stalled — day3 wins the run.
     const stalled = inst({
@@ -509,8 +413,6 @@ function makeQuery(result: Result) {
 
 function buildDb(opts: {
   subs?: LifecycleSubscriptionRow[];
-  /** Rows returned by the trial-day5 upgraded_at window query (call #2). */
-  trialSubs?: LifecycleSubscriptionRow[];
   newInstances?: LifecycleInstanceRow[];
   stalled?: LifecycleInstanceRow[];
   /** Rows returned by the activity-digest window query (webui, active 7d). */
@@ -524,12 +426,7 @@ function buildDb(opts: {
     { data: opts.stalled ?? [], error: null },
     { data: opts.digestWindow ?? [], error: null },
   ];
-  // The signup-window query always runs first; the trial-day5 query only
-  // fires when the trial experiment is enabled.
-  const subscriptionQueue: Result[] = [
-    { data: opts.subs ?? [], error: null },
-    { data: opts.trialSubs ?? [], error: null },
-  ];
+  const subscriptionQueue: Result[] = [{ data: opts.subs ?? [], error: null }];
   const upsertMock = jest.fn().mockResolvedValue({ error: opts.upsertError ?? null });
   const db = {
     from: jest.fn().mockImplementation((table: string) => {
@@ -662,67 +559,17 @@ describe("runLifecycleEmailSweep", () => {
     expect(flushMock).toHaveBeenCalledTimes(1);
   });
 
-  it("mails the trial_day5 cohort from the upgraded_at window when the experiment is on", async () => {
+  it("never mails or queries a trial cohort, even with the retired trial env set", async () => {
     process.env.TRIAL_EXPERIMENT_ENABLED = "true";
     process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-    const agent = inst({
-      id: "inst_t",
-      user_id: "user_t",
-      name: "Atlas",
-      created_at: hoursAgo(30 * 24),
-      last_activity_at: hoursAgo(1),
-    });
-    const { db, upsertMock } = buildDb({
-      trialSubs: [
-        sub({
-          user_id: "user_t",
-          plan: "operator",
-          created_at: hoursAgo(40 * 24),
-          upgraded_at: hoursAgo(130),
-        }),
-      ],
-      byUser: [agent],
-    });
+    const { db } = buildDb({ subs: [] });
     mockSupabaseAdmin.value = db;
 
     const summary = await runLifecycleEmailSweep({ now: NOW, batchSize: 50 });
 
-    expect(summary.trial_day5).toBe(1);
-    expect(sendMock).toHaveBeenCalledWith("trial_day5", {
-      email: "user_t@example.com",
-      firstName: "Sam",
-      agentName: "Atlas",
-      instanceId: "inst_t",
-      goal: null,
-      firstTask: null,
-      idempotencyKey: "lifecycle_trial_day5_user_t",
-    });
-    expect(upsertMock).toHaveBeenCalledWith(
-      { user_id: "user_t", email_key: "trial_day5" },
-      { onConflict: "user_id,email_key", ignoreDuplicates: true }
-    );
-  });
-
-  it("never queries or mails the trial_day5 cohort while the experiment is off", async () => {
-    const { db } = buildDb({
-      subs: [],
-      trialSubs: [
-        sub({
-          user_id: "user_t",
-          plan: "operator",
-          created_at: hoursAgo(40 * 24),
-          upgraded_at: hoursAgo(130),
-        }),
-      ],
-    });
-    mockSupabaseAdmin.value = db;
-
-    const summary = await runLifecycleEmailSweep({ now: NOW, batchSize: 50 });
-
-    expect(summary.trial_day5).toBe(0);
+    expect(summary).not.toHaveProperty("trial_day5");
     expect(summary.candidates).toBe(0);
     expect(sendMock).not.toHaveBeenCalled();
-    // Only the signup-window subscription query ran.
     const subscriptionCalls = (db.from as jest.Mock).mock.calls.filter(
       ([table]) => table === "hermes_subscriptions"
     );

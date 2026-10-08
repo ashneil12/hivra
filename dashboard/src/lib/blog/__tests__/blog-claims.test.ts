@@ -31,6 +31,7 @@ function articleCopy(article: (typeof BLOG_ARTICLES_LIST)[number]): string {
     article.metaDescription,
     article.tagline,
     article.intro,
+    article.shortAnswer ?? "",
     ...article.sections.flatMap((section) => [section.heading, ...section.paragraphs]),
     ...article.faqs.flatMap(({ q, a }) => [q, a]),
   ].join("\n");
@@ -69,6 +70,12 @@ const BANNED_ANYWHERE: Array<[string, RegExp]> = [
     /behave exactly as they would|not a fork or a wrapper|official unmodified runtimes|assumes the managed platform runs the same software/i,
   ],
   ["money-back guarantee without the card-payments limit", /money-back guarantee(?! on card payments)/i],
+  // Found by the 2026-09-30 review: old sentences the scanners missed because
+  // they do not name Hivra or use the exact retired phrasing.
+  ["daily encrypted backups", /daily encrypted backups/i],
+  ["natural-language schedule", /natural language or cron/i],
+  ["official unmodified CLI", /official (?:CLIs?,? )?unmodified|unmodified CLIs?|CLIs, unmodified|both open-source projects unmodified/i],
+  ["absolute privacy claim", /never used to train models and never shared/i],
   ["denies the Claude Code agent's Telegram tab", /does not claim a built-in Telegram connection|No built-in Hivra Telegram connection/i],
 ];
 
@@ -83,11 +90,27 @@ const BANNED_ABOUT_HIVRA: Array<[string, RegExp]> = [
   // to say so.
   ["backups as a guarantee", /^(?![\s\S]*\bnot\b)[\s\S]*\bbackups?\b/i],
   ["one-click claim", /one[- ]click|\binstantly\b/i],
+  // Zero markup is true for your own key, login or subscription; Hivra also
+  // sells managed credits.
+  [
+    "zero markup without the own-key scope",
+    /^(?![\s\S]*\b(?:your own|own (?:key|login|account|subscription|API)|BYO|bring your own)\b)[\s\S]*\b(?:zero|no) markup\b/i,
+  ],
+  // State price and size together: $9.99 is 2 vCPU and 4 GB, $19.99 is 4 vCPU and 8 GB.
+  ["Hivra price without its size", /^(?![\s\S]*\bvCPU\b)[\s\S]*\$(?:9\.99|19\.99)/],
   ["unmeasured speed claim", /hours to minutes/i],
   // The JSON export exists only for Claude Code and Codex agents
   // (api/hivra/agents/[id]/export reads hivra_agents).
   ["JSON export claimed beyond Claude Code and Codex", /^(?![\s\S]*\b(?:Claude Code|Codex)\b)[\s\S]*\bJSON\b/],
 ];
+
+/**
+ * Sentences that say Hivra runs or hosts Claude Code or Codex. Any article
+ * containing one must carry the non-affiliation line.
+ */
+function hostsVendorCli(copy: string): boolean {
+  return hivraSentences(copy).some((sentence) => /\b(?:Claude Code|Codex)\b/.test(sentence));
+}
 
 /** Markdown table rows as cell arrays, for every table in the copy. */
 function markdownTables(copy: string): string[][][] {
@@ -134,6 +157,21 @@ function bareYesHivraLaptopRows(copy: string): string[] {
 
 function bannedAnywhere(copy: string): string[] {
   return BANNED_ANYWHERE.filter(([, pattern]) => pattern.test(copy)).map(([label]) => label);
+}
+
+/** Hivra-column table cells that quote a plan price without the size it buys. */
+function hivraTablePricesWithoutSize(copy: string): string[] {
+  const found: string[] = [];
+  for (const table of markdownTables(copy)) {
+    const columns = table[0].flatMap((cell, index) => (/\bHivra\b/.test(cell) ? [index] : []));
+    for (const row of table.slice(1)) {
+      for (const index of columns) {
+        const cell = row[index] ?? "";
+        if (/\$(?:9\.99|19\.99)/.test(cell) && !/\bvCPU\b/.test(cell)) found.push(row.join(" | "));
+      }
+    }
+  }
+  return found;
 }
 
 function bannedAboutHivra(copy: string): string[] {
@@ -183,16 +221,37 @@ const KNOWN_TRUE_ABOUT_HIVRA = [
   SERVER_SIDE_AGENTS_KEEP_WORKING,
 ];
 
+// Copy the 2026-09-30 review found in the blog. Each must be caught.
+const KNOWN_FALSE_2026_09_30 = [
+  "Daily encrypted backups cover all three layers.",
+  "In the Hivra dashboard, set the schedule using natural language or cron format.",
+  "Hivra runs the official CLIs, unmodified, and you sign in with the account you already have.",
+  "Both run on Hivra as the official, unmodified CLIs.",
+  "For Hivra managed hosting, data is stored but never used to train models and never shared.",
+  "Hivra adds zero markup on AI usage either way.",
+  "Hivra starts at $9.99/month with no server to manage.",
+  "Hivra runs both open-source projects unmodified.",
+];
+const KNOWN_TRUE_2026_09_30 = [
+  "Hivra plans start at $9.99 a month for 2 vCPU and 4 GB of RAM.",
+  "On your own Anthropic or OpenAI login, usage bills through that provider with no Hivra markup.",
+  "Hivra does not mark up AI usage on your own subscription or API key.",
+  "Hivra runs the official CLIs, and you sign in with the account you already have.",
+  "| Platform fee | $0 | $9.99/mo (2 vCPU and 4 GB of RAM) or $19.99/mo (4 vCPU and 8 GB of RAM) |",
+];
+
 // Posts that pitch Hivra for keeping Claude Code or Codex running. Each must
 // carry the one true statement of which runs survive a closed laptop: only what
 // holds on every computer, old runtime or new.
 const CLI_24_7_POSTS = [
+  "claude-max-vs-pro-for-claude-code",
   "keep-claude-code-running-24-7",
   "run-codex-24-7-in-the-cloud",
   "claude-code-vs-codex-24-7",
   "ai-agent-hosting-guide",
   "ai-agent-dies-terminal-closes-fixes",
   "run-ai-agents-24-7",
+  "claude-code-remote-control",
 ];
 
 describe("blog claims", () => {
@@ -206,6 +265,15 @@ describe("blog claims", () => {
       expect(bareYesHivraLaptopRows(copy)).toEqual([]);
     }
     expect(bannedAnywhere(`Paid plans come with a ${MONEY_BACK_GUARANTEE}.`)).toEqual([]);
+    for (const claim of KNOWN_FALSE_2026_09_30) expect(bannedAnywhere(claim).concat(bannedAboutHivra(claim))).not.toEqual([]);
+    expect(hivraTablePricesWithoutSize("| | Self-hosted | Hivra |\n|---|---|---|\n| Platform fee | $0 | $9.99/mo or $19.99/mo |")).not.toEqual([]);
+    expect(
+      hivraTablePricesWithoutSize("| | Self-hosted | Hivra |\n|---|---|---|\n| Platform fee | $0 | $9.99/mo (2 vCPU and 4 GB of RAM) |")
+    ).toEqual([]);
+    for (const copy of KNOWN_TRUE_2026_09_30) {
+      expect(bannedAnywhere(copy)).toEqual([]);
+      expect(bannedAboutHivra(copy)).toEqual([]);
+    }
   });
 
   it("states no banned claim anywhere in any article", () => {
@@ -265,10 +333,15 @@ describe("blog claims", () => {
     expect(PLAN_SUMMARY).toContain(MONEY_BACK_GUARANTEE);
   });
 
-  it("uses the checkout's exact money-back wording, card payments only", () => {
+  it("states the money-back guarantee for card payments only, and the checkout screen names the same 7-day guarantee", () => {
     const i18n = fs.readFileSync(path.join(__dirname, "..", "..", "i18n.ts"), "utf8");
     expect(MONEY_BACK_GUARANTEE).toBe("7-day money-back guarantee on card payments");
-    expect(i18n).toContain(MONEY_BACK_GUARANTEE);
+    // This used to assert the full sentence in i18n.ts, but only the retired
+    // landing-page pricing block carried it (deleted with that block, which no
+    // component read). The live checkout step (getStarted) says "7-day
+    // money-back guarantee" without the card limit: an open owner decision, not
+    // something this test should pin either way.
+    expect(i18n).toContain("7-day money-back guarantee");
   });
 
   it("never marks a Hivra table cell as surviving a closed laptop with a bare yes", () => {
@@ -354,12 +427,27 @@ describe("blog claims", () => {
     expect(fs.existsSync(path.join(__dirname, "..", "trial-claim.ts"))).toBe(false);
   });
 
+  it("states a plan size beside every Hivra price in a table", () => {
+    const found = BLOG_ARTICLES_LIST.flatMap((article) =>
+      hivraTablePricesWithoutSize(articleCopy(article)).map((row) => `${article.slug}: ${row.slice(0, 160)}`)
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("carries a non-affiliation line on every post that says Hivra runs Claude Code or Codex", () => {
+    const missing = BLOG_ARTICLES_LIST.filter(
+      (article) => hostsVendorCli(articleCopy(article)) && !/not affiliated with/i.test(articleCopy(article))
+    ).map((article) => article.slug);
+    expect(missing).toEqual([]);
+  });
+
   it("keeps a non-affiliation line on the posts that host a vendor's agent", () => {
     const expectations: Record<string, RegExp> = {
       "keep-claude-code-running-24-7": /not affiliated with Anthropic/,
       "run-codex-24-7-in-the-cloud": /not affiliated with OpenAI/,
       "claude-code-vs-codex-24-7": /not affiliated with Anthropic or OpenAI/,
       "control-claude-code-from-telegram": /not affiliated with Anthropic/,
+      "claude-code-remote-control": /not affiliated with Anthropic or OpenAI/,
       "openclaw-broken-after-update": /not affiliated with the OpenClaw project/,
       "agent-zero-vs-openclaw-hosting": /not affiliated with or endorsed by either project/,
     };

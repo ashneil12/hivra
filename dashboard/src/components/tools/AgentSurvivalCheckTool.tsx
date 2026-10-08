@@ -22,6 +22,7 @@ import { ArrowUpRight } from "lucide-react";
 
 import styles from "@/app/tools/tools.module.css";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { monthYear } from "@/lib/tools/month-year";
 
 // Commands and behavior checked on 2026-09-24 against first-party docs: the
 // macOS caffeinate(8) manual, Apple's closed-display mode support article,
@@ -554,7 +555,7 @@ export default function AgentSurvivalCheckTool() {
       <p className={styles.note}>
         Assumptions: severities and interruption counts are rough estimates from common failure reports, not
         measurements of your machine. The free fixes are real and often enough; a VPS with tmux and a systemd unit
-        is a fine setup if you want to run it. Commands and defaults last verified {DEFAULTS.lastVerified} against
+        is a fine setup if you want to run it. Commands and defaults last checked {monthYear(DEFAULTS.lastVerified)} against
         the macOS, OpenSSH, tmux, systemd and util-linux manuals.
       </p>
 

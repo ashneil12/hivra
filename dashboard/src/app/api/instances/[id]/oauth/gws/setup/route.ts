@@ -43,7 +43,7 @@ export async function POST(
     const execCommand = buildGoogleWorkspaceSetupCommand(instanceId, credentialsJson);
     
     // We increase timeout because setup might install dependencies if it's the first time
-    const result = await sshExec(hostIp, execCommand, { timeoutMs: 60000 });
+    const result = await sshExec(hostIp, execCommand, { timeoutMs: 60000, proxmoxHostConfig: access.proxmoxHostConfig ?? null });
     const output = (result.stdout || '') + '\\n' + (result.stderr || '');
 
     if (!result.ok && output.includes('No such container')) {

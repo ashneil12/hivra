@@ -10,6 +10,7 @@ are separate assets and are never rewritten by this script.
 import argparse
 import html
 import hashlib
+import json
 import math
 import re
 import struct
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from link_policy import enhance_links
+import restrict
 
 REPO = Path(__file__).resolve().parents[2]
 OUTPUT = REPO / "docs/litepaper/index.html"
@@ -28,13 +30,65 @@ OUTPUT = REPO / "docs/litepaper/index.html"
 SITE_ROOT_FILES = {
     "/favicon.ico": "dashboard/src/app/favicon.ico",
     "/apple-icon.png": "dashboard/src/app/apple-icon.png",
+    # The approved barcode mark, exported by docs/brand/export-brand-assets.py.
+    "/brand/hivra-icon-192.png": "dashboard/public/brand/hivra-icon-192.png",
+    # Web copies of assets/boundary-monolith-v5.png that the homepage also serves.
+    "/images/home/monolith-900.webp": "dashboard/public/images/home/monolith-900.webp",
+    "/images/home/monolith-1600.webp": "dashboard/public/images/home/monolith-1600.webp",
 }
+# App pages the page links to. They are routes rather than files, so they are
+# checked by path; the query picks what Launch opens with.
+SITE_ROUTES = {"/dashboard/launch"}
+AGENT_LAUNCH = "/dashboard/launch?kind=agent&start=1"
+COMPUTER_LAUNCH = "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop"
+# Tabler's MIT brand-github path; attribution is in vendor/NOTICE.md.
+GITHUB_MARK = '<svg class="hero-open-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5"/></svg>'
+BRAND_MARK = '<img class="brand-mark" src="/brand/hivra-icon-192.png" alt="" width="192" height="192" decoding="async">'
+MONOLITH_WEBP = "/images/home/monolith-900.webp 900w, /images/home/monolith-1600.webp 1600w"
+
+
+def delegation_figure():
+    """The constitution's rule in three plain steps, using the refund and payouts
+    example from Gate."""
+    steps = [
+        ("You", "Give your agent one job: refunding orders.", "granted", "Granted"),
+        ("Your agent", "Asks a helper agent to refund one order.", "allowed", "Allowed"),
+        ("The helper", "Tries to change where your payouts go.", "blocked", "Blocked. Nobody gave it that."),
+    ]
+    cards = "".join(
+        f'<li class="rule-step" data-state="{state}"><span class="rule-who">{who}</span><p>{what}</p><span class="rule-verdict">{verdict}</span></li>'
+        for who, what, state, verdict in steps
+    )
+    return f'<figure class="delegation"><ol class="rule-steps">{cards}</ol><figcaption>An example of the rule above.</figcaption></figure>'
+
+
+DELEGATION = delegation_figure()
+
+
+def monolith(attributes, sizes):
+    """The monolith render as WebP where supported, with the PNG as fallback."""
+    return ('<picture><source type="image/webp" srcset="{}" sizes="{}">'
+            '<img src="assets/boundary-monolith-v5.png" {}></picture>').format(MONOLITH_WEBP, sizes, attributes)
+# The three generated renders have WebP exports beside them, made by
+# export-litepaper-images.py and recorded as derived exports in
+# docs/release/asset-derived-exports.json.
+WEBP_WIDTHS = (768, 1536)
+
+
+def render(png, attributes, sizes):
+    """A generated render as WebP where supported, with the PNG as fallback."""
+    stem = png.removesuffix(".png")
+    srcset = ", ".join("assets/{}-{}.webp {}w".format(stem, width, width) for width in WEBP_WIDTHS)
+    return ('<picture><source type="image/webp" srcset="{}" sizes="{}">'
+            '<img src="assets/{}" {}></picture>').format(srcset, sizes, png, attributes)
+
+
 # Share tags need absolute URLs; they name the canonical site.
 SITE_URL = "https://hivra.cloud"
 PAGE_URL = SITE_URL + "/docs/litepaper/index.html"
 PAGE_TITLE = "Hivra · Somewhere better to work"
-PAGE_DESCRIPTION = ("Your agent needs a computer. It doesn't need yours. Explore Hivra's vision for "
-                    "independent agent computers and an ecosystem with boundaries outside the agent.")
+PAGE_DESCRIPTION = ("Your agent needs a computer. It doesn't need yours. See how Hivra gives AI agents "
+                    "computers of their own, with limits the agent can't talk its way past.")
 SHARE_IMAGE = "assets/boundary-monolith-v5.png"
 SHARE_IMAGE_ALT = "Architectural illustration of a bounded computer."
 PRODUCT_GROUPS = {
@@ -44,16 +98,21 @@ PRODUCT_GROUPS = {
     "Missions": "Horizon", "Foundry": "Horizon", "Colony": "Horizon",
     "Interchange": "Horizon", "Ports": "Horizon",
 }
+FIT_TITLE = "Keep the agents you like. Move them off your computer."
+THREAT_TITLE = "This is not a future problem"
+BOUNDARY_TITLE = "The boundary lives outside the model"
 REQUIRED_SECTIONS = {
     "Your agent needs a computer. It doesn't need yours.",
-    "The problem is where it lives", "Why I'm building it",
+    "The problem is where it lives", THREAT_TITLE, FIT_TITLE, "Why I'm building it",
     "Start with an agent. Or a computer.", "A computer you can actually work in",
-    "Open source. Yours to run.", "Keeping a mistake from reaching everything",
+    "Open source. Yours to run.", BOUNDARY_TITLE,
     "What we're building around it", "The economy", "Read further",
     "Somewhere better to work",
 }
 REQUIRED_SUBSECTIONS = {
-    "The problem is where it lives": {"Try it", "A good agent can still be led somewhere bad"},
+    "The problem is where it lives": {"Try it", "Instructions are not boundaries"},
+    THREAT_TITLE: {"Safety training is not proof", "Think about what we're doing"},
+    FIT_TITLE: {"Who it's for"},
     "Start with an agent. Or a computer.": {
         "Launch an agent", "Launch a computer", "Keep several running", "Choose who runs it",
     },
@@ -103,12 +162,80 @@ def inline(value):
     return re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", value)
 
 
+def table(block):
+    """A Markdown table as HTML. Yes/No cells get a class so they can carry a mark;
+    the words stay in the cell so they read the same without CSS."""
+    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in block.splitlines()]
+    require(len(rows) >= 3 and all(re.fullmatch(r":?-{3,}:?", cell) for cell in rows[1]), "Malformed table")
+    header, body = rows[0], rows[2:]
+    require(all(len(row) == len(header) for row in body), "Table rows differ in length")
+    def cell_class(value, column):
+        kind = {"Yes": "is-yes", "No": "is-no"}.get(value, "is-partial")
+        return kind + (" is-hivra" if column == len(header) - 1 else "")
+    head = "".join('<th scope="col"{}>{}</th>'.format(' class="is-hivra"' if i == len(header) - 1 else "", inline(cell)) for i, cell in enumerate(header))
+    rows_html = "".join(
+        "<tr><th scope=\"row\">{}</th>{}</tr>".format(
+            inline(row[0]),
+            "".join('<td class="{}">{}</td>'.format(cell_class(cell, i + 1), inline(cell)) for i, cell in enumerate(row[1:])),
+        )
+        for row in body
+    )
+    return '<div class="fit-table" role="region" aria-label="Where each option stands" tabindex="0"><table><thead><tr>{}</tr></thead><tbody>{}</tbody></table></div>'.format(head, rows_html)
+
+
+GLOSSARY = json.loads((REPO / "dashboard/src/lib/glossary.json").read_text(encoding="utf-8"))
+# Token-facing tooltips are part of the token copy and wait for its review.
+GLOSS_TOKEN_TERMS = True
+GLOSS_SKIP = {"a", "button", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code"}
+
+
+def glossify(markup, seen):
+    """Wrap the first use of each glossary term in a hover and focus tooltip.
+
+    The definition lives in data-tip, so it is never reader text: the approved
+    wording is unchanged, and the Markdown file stays plain. Links and headings
+    are skipped. `seen` holds the terms already explained in this stretch of copy."""
+    entries = [(entry, re.compile(r"\b(?:" + entry["pattern"] + r")\b",
+                                  0 if entry.get("caseSensitive") else re.IGNORECASE))
+               for entry in GLOSSARY if GLOSS_TOKEN_TERMS or not entry.get("token")]
+    parts, depth = re.split(r"(<[^>]+>)", markup), 0
+    for index, part in enumerate(parts):
+        if part.startswith("<"):
+            tag = re.match(r"</?([a-zA-Z0-9]+)", part)
+            if tag and tag[1].lower() in GLOSS_SKIP and not part.endswith("/>"):
+                depth += -1 if part.startswith("</") else 1
+            continue
+        if depth > 0 or not part.strip():
+            continue
+        hits = []
+        for entry, pattern in entries:
+            if entry["key"] in seen:
+                continue
+            match = pattern.search(part)
+            if match and not any(match.start() < end and start < match.end() for start, end, _, _ in hits):
+                hits.append((match.start(), match.end(), entry, match[0]))
+        if not hits:
+            continue
+        out, cursor = [], 0
+        for start, end, entry, text in sorted(hits, key=lambda hit: hit[0]):
+            seen.add(entry["key"])
+            out.append(part[cursor:start])
+            out.append('<span class="gloss" tabindex="0" aria-description="{0}" data-tip="{0}">{1}</span>'.format(
+                escape(entry["tip"], quote=True), text))
+            cursor = end
+        out.append(part[cursor:])
+        parts[index] = "".join(out)
+    return "".join(parts)
+
+
 def blocks(value):
     rendered = []
     for block in re.split(r"\n\s*\n", value.strip()):
         if not block or block == "---" or block.startswith("*[Interactive:"):
             continue
-        if block.startswith("### "):
+        if block.startswith("|"):
+            rendered.append(table(block))
+        elif block.startswith("### "):
             rendered.append("<h3>" + inline(block[4:]) + "</h3>")
         elif re.match(r"^\d+\. ", block):
             items = re.findall(r"^\d+\. (.+)$", block, flags=re.MULTILINE)
@@ -119,7 +246,7 @@ def blocks(value):
             rendered.append("<pre>" + escape(block.strip("`\n")) + "</pre>")
         else:
             rendered.append("<p>" + inline(block) + "</p>")
-    return "\n".join(rendered)
+    return glossify("\n".join(rendered), set())
 
 
 def split_sub(value):
@@ -143,6 +270,8 @@ def check_local_url(value, base):
     if target.path in SITE_ROOT_FILES:
         require((REPO / SITE_ROOT_FILES[target.path]).is_file(),
                 "Site file is missing from the dashboard: " + value)
+        return
+    if target.path in SITE_ROUTES:
         return
     path = unquote(target.path)
     require(not path.startswith("/") and "\\" not in path,
@@ -199,9 +328,13 @@ class LocalLinkChecker(HTMLParser):
     # Check output URLs after HTML escaping has been decoded by the parser.
     def handle_starttag(self, tag, attrs):
         for key, value in attrs:
-            if key not in {"href", "src"} or not value:
+            if not value:
                 continue
-            check_local_url(value, OUTPUT.parent)
+            if key in {"href", "src"}:
+                check_local_url(value, OUTPUT.parent)
+            elif key in {"srcset", "imagesrcset"}:
+                for candidate in value.split(","):
+                    check_local_url(candidate.split()[0], OUTPUT.parent)
 
 
 def png_size(path):
@@ -217,17 +350,34 @@ def slug(value):
 def build_page():
     sections, products, roadmap_tail = load_inputs()
     problem, sub = split_sub(sections["The problem is where it lives"])
+    threat_intro, threat_sub = split_sub(sections[THREAT_TITLE])
+    fit_intro, fit_sub = split_sub(sections[FIT_TITLE])
+    fit_blocks = re.split(r"\n\s*\n", fit_intro.strip())
+    fit_table_at = next(index for index, block in enumerate(fit_blocks) if block.startswith("|"))
+    fit_options = [block for block in fit_blocks[:fit_table_at] if block.startswith("**")]
+    require(len(fit_options) == 3, "Where it fits needs its three options")
+    first_option = fit_blocks.index(fit_options[0])
+    fit_lead = "\n\n".join(fit_blocks[:first_option])
+    fit_close = "\n\n".join(fit_blocks[first_option + 3:fit_table_at])
+    fit_table = "\n\n".join(fit_blocks[fit_table_at:])
+    fit_option_html = "".join(
+        f'<article class="fit-option" data-option="{index}"><span class="fit-option-mark" aria-hidden="true">{index + 1:02d}</span>{blocks(option)}</article>'
+        for index, option in enumerate(fit_options)
+    )
     doors, doors_sub = split_sub(sections["Start with an agent. Or a computer."])
     qualities, quality_sub = split_sub(sections["A computer you can actually work in"])
     roadmap_intro, stages = split_sub(sections["What we're building around it"])
     economy, econ_sub = split_sub(sections["The economy"])
     feature_names = ["Come back to it", "Settle in", "Follow the work", "Know what has access"]
-    feature_big = ['STAYS.', 'CLOSE.', 'VISIBLE.', 'BOUNDED.']
+    feature_big = ['STAYS.', 'SETTLE.', 'VISIBLE.', 'BOUNDED.']
     feature_images = ['agent-computer-opportunity-v2.png', 'boundary-monolith-v5.png', 'observable-run-v2.png', 'agent-computer-hero-v2.png']
     feature_alts = ['One workspace connects to a laptop, tablet and phone.', SHARE_IMAGE_ALT, 'Concept illustration connecting a request, observed actions and result.', 'Personal device beside a separate agent computer.']
     features = ''
     for i, name in enumerate(feature_names):
-        features += f'<article class="quality-panel"><div class="quality-word" aria-hidden="true">{feature_big[i]}</div><div class="quality-layout"><figure><img src="assets/{feature_images[i]}" alt="{feature_alts[i]}" width="1536" height="1024" loading="lazy"></figure><div class="quality-copy"><span class="quality-position" aria-hidden="true">{i+1:02d} / 04</span><h3>{escape(name)}</h3>{blocks(quality_sub[name])}</div></div></article>'
+        image = render(feature_images[i], f'alt="{feature_alts[i]}" width="1536" height="1024" loading="lazy"', '(max-width: 999px) 100vw, 46vw')
+        if feature_images[i] == 'boundary-monolith-v5.png':
+            image = monolith(f'alt="{feature_alts[i]}" width="1672" height="940" loading="lazy"', '(max-width: 999px) 100vw, 46vw')
+        features += f'<article class="quality-panel"><div class="quality-word" aria-hidden="true">{feature_big[i]}</div><div class="quality-layout"><figure>{image}</figure><div class="quality-copy"><span class="quality-position" aria-hidden="true">{i+1:02d} / 04</span><h3>{escape(name)}</h3>{blocks(quality_sub[name])}</div></div></article>'
     launch_body, launch_list = doors_sub['Choose who runs it'].split('**The launch:**', 1)
     utility_source = econ_sub["What it's for"]
     utility_intro = utility_source.split('**Access to compute.**', 1)[0]
@@ -273,15 +423,16 @@ def build_page():
         stage_label = 'Research' if group == 'Horizon' else group
         panel_html += f'<article class="product-panel" id="product-{s}" tabindex="-1" data-stage="{group}"><button class="back-to-atlas">{explore_arrow} All products</button><p class="product-stage">{stage_label}</p><h3>{p["name"]}.</h3><p class="product-summary">{inline(p["summary"])}</p>{extra}<div class="product-pagination"><button data-product="{slug(products[(i-1)%15]["name"])}" aria-label="Previous product: {products[(i-1)%15]["name"]}">← Previous</button><span>{i+1:02d} / 15</span><button data-product="{slug(products[(i+1)%15]["name"])}" aria-label="Next product: {products[(i+1)%15]["name"]}">Next →</button></div></article>'
     boundary_markup = (OUTPUT.parent / "boundary.html").read_text(encoding="utf-8")
-    protection = sections['Keeping a mistake from reaching everything']
+    protection = sections[BOUNDARY_TITLE]
     before_quote, quote_and_after = protection.split('\n\n> ', 1)
     quote, after_quote = quote_and_after.split('\n\n', 1)
     problem_paragraphs = problem.split('\n\n')
     problem_opening = '\n\n'.join(problem_paragraphs[:3])
     problem_context = '\n\n'.join(problem_paragraphs[3:])
-    chapter_links = [('opportunity', 'The problem'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('platform', 'Open by design'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
+    chapter_links = [('opportunity', 'The problem'), ('threat', 'Not a future problem'), ('fit', 'Where it fits'), ('platform', 'Open source'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
     index_links = ''.join(f'<a href="#{target}"><span class="index-number">{i+1:02d}</span><span>{label}</span>{explore_arrow}</a>' for i, (target, label) in enumerate(chapter_links))
     share_width, share_height = png_size(OUTPUT.parent / SHARE_IMAGE)
+    HERO_SIZES = "(max-width: 999px) 100vw, 62vw"
     # Reader copy is rendered at build time. Chapter headings and diagrams are intentionally shaped below.
     page=f'''<!doctype html>
 <html lang="en">
@@ -303,7 +454,7 @@ def build_page():
 <meta name="twitter:site" content="@HivraOS">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-icon.png">
-<link rel="preload" as="image" href="assets/boundary-monolith-v5.png">
+<link rel="preload" as="image" type="image/webp" href="/images/home/monolith-1600.webp" imagesrcset="{MONOLITH_WEBP}" imagesizes="{HERO_SIZES}" fetchpriority="high">
 <link rel="stylesheet" href="litepaper.css?v={hashlib.sha256((OUTPUT.parent / "litepaper.css").read_bytes()).hexdigest()[:12]}">
 <link rel="preload" as="font" type="font/ttf" crossorigin href="assets/fonts/Manrope-Variable.ttf">
 <script defer src="vendor/gsap-3.15.0.min.js"></script>
@@ -314,35 +465,37 @@ def build_page():
 <body>
 <div id="top" aria-hidden="true"></div>
 <a class="skip-link" href="#main">Skip to the litepaper</a>
-<header class="site-header"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><nav aria-label="Primary navigation"><a href="#opportunity">Why Hivra</a><a href="#experience">How it works</a><a href="#observability">Activity</a><a href="#future">What's next</a></nav><div class="reader-tools"><button class="chapter-index-toggle" aria-controls="chapter-index" aria-expanded="false">Index<span aria-hidden="true" class="index-icon"></span></button><button class="reading-toggle" aria-pressed="false">Read</button><button class="motion-toggle" aria-pressed="false" aria-label="Pause animation">Motion on</button><button class="theme-toggle" aria-label="Switch to light theme">Light</button></div></header>
-<dialog class="chapter-index-panel" id="chapter-index" aria-labelledby="index-title"><div class="index-top"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><button class="chapter-index-close" aria-label="Close chapter index">Close <span aria-hidden="true">×</span></button></div><div class="index-layout"><div class="index-intro"><p class="mini-label">The Hivra litepaper</p><h2 id="index-title">Find your<br>place.</h2><p>Give it room to work.<br>Decide what it can reach.</p></div><nav class="index-links" aria-label="Chapter index">{index_links}</nav></div><div class="index-bottom"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../LITEPAPER.md">Save the litepaper {explore_arrow}</a></div></dialog>
+<header class="site-header"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><nav aria-label="Primary navigation"><a href="#opportunity">Why Hivra</a><a href="#fit">Where it fits</a><a href="#platform">Open source</a><a href="#experience">How it works</a><a href="#future">What's next</a></nav><div class="reader-tools"><button class="chapter-index-toggle" aria-controls="chapter-index" aria-expanded="false">Index<span aria-hidden="true" class="index-icon"></span></button><button class="reading-toggle" aria-pressed="false">Read</button><button class="motion-toggle" aria-pressed="false" aria-label="Pause animation">Motion on</button><button class="theme-toggle" aria-label="Switch to light theme">Light</button></div></header>
+<dialog class="chapter-index-panel" id="chapter-index" aria-labelledby="index-title"><div class="index-top"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><button class="chapter-index-close" aria-label="Close chapter index">Close <span aria-hidden="true">×</span></button></div><div class="index-layout"><div class="index-intro"><p class="mini-label">The Hivra litepaper</p><h2 id="index-title">Find your<br>place.</h2><p>Give it room to work.<br>Decide what it can reach.</p></div><nav class="index-links" aria-label="Chapter index">{index_links}</nav></div><div class="index-bottom"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../LITEPAPER.md">Save the litepaper {explore_arrow}</a></div></dialog>
 <main id="main">
 <section class="hero" id="beginning" data-chapter="The beginning">
-<div class="hero-art" aria-hidden="true"><div class="hero-object-stage"><div class="hero-object"><img src="assets/boundary-monolith-v5.png" alt="" width="1672" height="940" fetchpriority="high"><div class="hero-object-edge"></div></div><div class="hero-coordinate coordinate-top">HIVRA / AGENT COMPUTERS</div><div class="hero-coordinate coordinate-bottom">A place of its own.</div></div><div class="hero-shade"></div><canvas id="field-canvas"></canvas></div><div class="hero-watermark" aria-hidden="true">HIVRA</div>
-<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a></div>
-<div class="hero-caption"><span class="hero-caption-mark" aria-hidden="true">H—</span>{hero_caption}<span class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE<span></span></span></div>
+<div class="hero-art" aria-hidden="true"><div class="hero-object-stage"><div class="hero-object">{monolith('alt="" width="1672" height="940" fetchpriority="high"', HERO_SIZES)}<div class="hero-object-edge"></div></div><div class="hero-coordinate coordinate-top">HIVRA / AGENT COMPUTERS</div><div class="hero-coordinate coordinate-bottom">A place of its own.</div></div><div class="hero-shade"></div><canvas id="field-canvas"></canvas></div><div class="hero-watermark" aria-hidden="true">HIVRA</div>
+<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><div class="hero-links"><a class="hero-open" href="https://github.com/ashneil12/hivra">{GITHUB_MARK}Open source · Run it yourself</a><a class="hero-open hero-token" href="#economy">Tokenomics<span aria-hidden="true">&rarr;</span></a></div></div>
+<div class="hero-caption"><span class="hero-caption-mark" aria-hidden="true">H / 00</span>{hero_caption}<span class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE<span></span></span></div>
 <div class="hero-transition" aria-hidden="true">Give it room<br>to work.</div>
 </section>
 <section class="problem chapter shell" id="opportunity" data-chapter="The problem">
 <div class="chapter-heading"><h2>The problem is<br>where it lives</h2></div>
-<div class="prose problem-intro">{blocks(problem_opening)}</div><div class="problem-layout">{boundary_markup}<div class="prose problem-context">{blocks(problem_context)}<h3>Try it</h3>{try_it_copy}</div></div><div class="problem-prose"><h3>A good agent can still be led somewhere bad</h3><div class="prose">{blocks(sub["A good agent can still be led somewhere bad"])}</div></div>
+<div class="prose problem-intro">{blocks(problem_opening)}</div><div class="problem-layout">{boundary_markup}<div class="prose problem-context">{blocks(problem_context)}<h3>Try it</h3>{try_it_copy}</div></div><div class="problem-prose"><h3>Instructions are not boundaries</h3><div class="prose">{blocks(sub["Instructions are not boundaries"])}</div></div>
 </section>
+<section class="threat chapter shell" id="threat" data-chapter="Not a future problem"><div class="chapter-heading"><h2>This is not<br><span class="muted-text">a future problem</span></h2></div><div class="prose threat-intro">{blocks(threat_intro)}</div><div class="problem-prose threat-turn"><h3>Safety training is not proof</h3><div class="prose">{blocks(threat_sub["Safety training is not proof"])}</div></div><div class="problem-prose threat-turn threat-close"><h3>Think about what we're doing</h3><div class="prose">{blocks(threat_sub["Think about what we're doing"])}</div></div></section>
+<section class="fit chapter shell" id="fit" data-chapter="Where it fits"><div class="chapter-heading"><h2>Keep the agents you like.<br><span class="muted-text">Move them off your computer.</span></h2><div class="intro-copy">{blocks(fit_lead)}</div></div><div class="fit-options">{fit_option_html}</div><div class="fit-verdict"><span class="fit-verdict-rule" aria-hidden="true"></span><div class="prose">{blocks(fit_close)}</div></div>{blocks(fit_table)}<div class="fit-who"><h3>Who it's for</h3><div class="prose">{blocks(fit_sub["Who it's for"])}</div></div></section>
+<section class="open-section chapter shell" id="platform" data-chapter="Open source"><div class="open-visual" aria-hidden="true"><div class="open-frame frame-one"></div><div class="open-frame frame-two"></div><div class="open-frame frame-three"></div><span>OPEN.</span></div><div class="open-copy"><h2>Open source.<br>Yours to run.</h2><div class="prose">{blocks(sections['Open source. Yours to run.'])}</div></div></section>
 <section class="founder chapter shell" id="founder" data-chapter="Why I’m building it"><div class="founder-heading"><span class="founder-rule" aria-hidden="true"></span><h2>Why I'm<br>building it</h2></div><div class="prose founder-copy">{blocks(sections["Why I'm building it"])}</div></section>
-<section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{''.join('<i></i>' for _ in range(8))}</div><p>Give it room to work.<br><span>Decide what it can reach.</span></p></section>
+<section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{''.join('<i></i>' for _ in range(8))}</div><p><span class="passage-room">Give it room to work.</span><br><span class="passage-decide">Decide what it can reach.</span></p></section>
 <section class="doors-section chapter shell" id="experience" data-chapter="Agent or computer"><div class="chapter-heading"><h2>Start with an agent.<br>Or a computer.</h2><div class="intro-copy">{blocks(doors)}</div></div><div class="doors"><article class="door door-agent scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol">&gt;_</span></div><h3>Launch an agent</h3>{blocks(doors_sub['Launch an agent'])}</article><article class="door door-computer scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol"><svg viewBox="0 0 80 70"><rect x="7" y="5" width="66" height="44" rx="3"/><path d="M40 50v12M24 64h32"/></svg></span></div><h3>Launch a computer</h3>{blocks(doors_sub['Launch a computer'])}</article></div><div class="two-column-copy"><div><h3>Keep several running</h3>{blocks(doors_sub['Keep several running'])}</div><div id="operation"><h3>Choose who runs it</h3>{blocks(launch_body)}</div></div><div class="launch-journey"><p>The launch:</p>{blocks(launch_list)}</div></section>
-<section class="qualities chapter" id="observability" data-chapter="The product bar"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
-<section class="open-section chapter shell" id="platform" data-chapter="Open by design"><div class="open-visual" aria-hidden="true"><div class="open-frame frame-one"></div><div class="open-frame frame-two"></div><div class="open-frame frame-three"></div><span>OPEN.</span></div><div class="open-copy"><h2>Open source.<br>Yours to run.</h2><div class="prose">{blocks(sections['Open source. Yours to run.'])}</div></div></section>
-<section class="constitution chapter shell" id="security" data-chapter="The constitution"><div class="chapter-heading"><h2>Keeping a mistake<br>from reaching everything</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The constitution</p><blockquote>{inline(quote)}</blockquote></div></div><div class="constitution-foot">{blocks(after_quote)}</div></section>
-<section class="roadmap chapter" id="future" data-chapter="The ecosystem"><div class="shell chapter-heading"><h2>What we're building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div><div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers · Available now</h3>{blocks(stages['Agent Computers · Available now'])}</div></div><div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div><div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div><div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg><div class="atlas-core" aria-hidden="true"><span class="brand-mark"></span><strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren't implemented connections.</p></div><div class="product-panels">{panel_html}</div></div><div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>
-<section class="economy chapter shell" id="economy" data-chapter="The economy"><div class="chapter-heading"><h2>The economy</h2></div><div class="economy-intro prose">{blocks(economy)}</div><div class="economy-visual scene-reveal" aria-hidden="true"><span class="economy-wordmark">HIVRA</span><div class="economy-token"><span class="brand-mark"></span></div><div class="economy-visual-caption"><span>COMPUTE · TOOLS · WORK · KNOWLEDGE</span><span>ONE CONNECTED ECONOMY</span></div></div>{economy_html}</section>
+<section class="qualities chapter" id="observability" data-chapter="What you get"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
+<section class="constitution chapter shell" id="security" data-chapter="The rule"><div class="chapter-heading"><h2>The boundary lives<br>outside the model</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The rule</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
+<section class="roadmap chapter" id="future" data-chapter="The ecosystem"><div class="shell chapter-heading"><h2>What we're building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div><div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers · Available now</h3>{blocks(stages['Agent Computers · Available now'])}</div></div><div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div><div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div><div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg><div class="atlas-core" aria-hidden="true">{BRAND_MARK}<strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren't implemented connections.</p></div><div class="product-panels">{panel_html}</div></div><div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>
+<section class="economy chapter shell" id="economy" data-chapter="The economy"><div class="chapter-heading"><h2>The economy</h2></div><div class="economy-intro prose">{blocks(economy)}</div><div class="economy-visual scene-reveal" aria-hidden="true"><span class="economy-wordmark">HIVRA</span><div class="economy-token">{BRAND_MARK}</div><div class="economy-visual-caption"><span>COMPUTE · TOOLS · WORK · KNOWLEDGE</span><span>ONE CONNECTED ECONOMY</span></div></div>{economy_html}</section>
 <section class="reading-room chapter shell" id="reading-room" data-chapter="Read further"><h2>Read further</h2><div class="prose">{blocks(reading_copy)}</div><div class="reading-actions"><p class="source-links">{source_reading_links}</p><button class="text-link reading-toggle" aria-pressed="false">Continuous reading <span aria-hidden="true">↗</span></button></div></section>
-<section class="finale chapter" id="somewhere-better" data-chapter="Somewhere better"><div class="finale-art" aria-hidden="true"><img src="assets/boundary-monolith-v5.png" alt="" width="1672" height="940" loading="lazy"></div><div class="shell"><h2>Somewhere<br><span>better to work</span></h2><div class="prose finale-copy">{blocks(finale_copy)}</div><div class="finale-links source-links">{source_finale_links}</div></div></section>
+<section class="finale chapter" id="somewhere-better" data-chapter="Somewhere better"><div class="finale-art" aria-hidden="true">{monolith('alt="" width="1672" height="940" loading="lazy" decoding="async"', '100vw')}</div><div class="shell"><h2>Somewhere<br><span>better to work</span></h2><div class="prose finale-copy">{blocks(finale_copy)}</div><div class="finale-actions"><a class="finale-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><a class="finale-computer" href="{COMPUTER_LAUNCH}">Start with a computer {explore_arrow}</a></div><div class="finale-links source-links">{source_finale_links}</div></div></section>
 </main>
-<footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage"><span class="brand-mark" aria-hidden="true"></span>Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper {explore_arrow}</a></div></footer>
-<nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The constitution">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><div class="reading-progress" aria-hidden="true"></div></nav>
+<footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper {explore_arrow}</a></div></footer>
+<nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#fit" aria-label="Where it fits">Where it fits</a><a href="#platform" aria-label="Open source">Open source</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The boundary">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><a class="dock-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><div class="reading-progress" aria-hidden="true"></div></nav>
 </body></html>'''
     # Chapter markers are navigational metadata; the approved narrative stays intact.
-    markers = iter(('The problem', 'The computer', 'The experience', 'The boundary', 'The ecosystem', 'The economy'))
+    markers = iter(('The problem', 'Not a future problem', 'Where it fits', 'The computer', 'The experience', 'The boundary', 'The ecosystem', 'The economy'))
     marker_number = 0
     def masthead(match):
         nonlocal marker_number
@@ -368,9 +521,15 @@ def main():
     parser.add_argument("--check", action="store_true", help="Fail if the page or tokenomics download needs regeneration")
     args = parser.parse_args()
     try:
+        page = build_page()
         outputs = {
-            OUTPUT: build_page().encode("utf-8"),
+            OUTPUT: page.encode("utf-8"),
             REPO / "TOKENOMICS.md": build_tokenomics().encode("utf-8"),
+            # Token-free copies, served by country (dashboard/next.config.ts).
+            OUTPUT.parent / "restricted.html": restrict.litepaper_html(page).encode("utf-8"),
+            OUTPUT.parent / "restricted/LITEPAPER.md": restrict.litepaper_md((REPO / "LITEPAPER.md").read_text(encoding="utf-8")).encode("utf-8"),
+            OUTPUT.parent / "restricted/WHITEPAPER.md": restrict.whitepaper_md((REPO / "WHITEPAPER.md").read_text(encoding="utf-8")).encode("utf-8"),
+            OUTPUT.parent / "restricted/TOKENOMICS.md": restrict.tokenomics_md().encode("utf-8"),
         }
         if args.check:
             stale = [str(path.relative_to(REPO)) for path, content in outputs.items()
@@ -381,6 +540,7 @@ def main():
             print("Current: page and tokenomics download (15 products, {} token uses)".format(len(UTILITY_NAMES)))
         else:
             for path, content in outputs.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
                 print("Built {}: {} bytes".format(path.relative_to(REPO), len(content)))
     except (OSError, ValueError, KeyError, IndexError) as error:

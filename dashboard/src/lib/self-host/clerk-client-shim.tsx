@@ -114,6 +114,15 @@ export function useSession() {
   };
 }
 
+/**
+ * Clerk's useReverification retries a request after its "confirm it's you"
+ * dialog. A local operator has no such dialog, and the server shim answers
+ * that check for any signed-in operator, so requests go straight through.
+ */
+export function useReverification<Fetcher extends (...args: never[]) => unknown>(fetcher: Fetcher): Fetcher {
+  return fetcher;
+}
+
 function safeRedirect(value: unknown, fallback: string): string {
   return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
     ? value

@@ -46,7 +46,7 @@ import { decryptApiKey } from "@/lib/crypto";
 import { validateHivraHostRunningResult } from "@/lib/hivra/agent-host-result";
 import {
   buildRemoteDesktopCapabilityInspectionScript,
-  parseRemoteDesktopCapabilityReceipt,
+  verifyDesktopReadinessReceipt,
 } from "@/lib/remote-computers/capability-inspection";
 import { HivraAgentDeleteCleanupError } from "@/lib/hivra/agent-delete-cleanup";
 import {
@@ -73,11 +73,13 @@ import {
 } from "@/lib/hivra/tailscale-private-access";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
+import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import {
+  parseActivityCollectorMarker,
   recordCollectorInstallResult,
   supportsNativeTracing,
-  type ActivityCollectorInstallStatus,
 } from "@/lib/activity-observability/collectors";
 
 type ProxmoxEnvironment = Record<string, string | undefined>;
@@ -86,19 +88,6 @@ type ProxmoxEnvironment = Record<string, string | undefined>;
 // helper write into the host log (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
 // Closed enum only; anything else is ignored.
 const ACTIVITY_COLLECTOR_MARKER_PATTERN = "^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$";
-
-function parseActivityCollectorMarker(
-  lines: string[],
-): { status: ActivityCollectorInstallStatus; reason?: string } | null {
-  let parsed: { status: ActivityCollectorInstallStatus; reason?: string } | null = null;
-  for (const candidate of lines) {
-    const line = candidate.trim();
-    if (line === "HIVRA_ACTIVITY_COLLECTOR status=installed") parsed = { status: "installed" };
-    const failed = line.match(/^HIVRA_ACTIVITY_COLLECTOR status=failed reason=([a-z_]{1,40})$/);
-    if (failed) parsed = { status: "failed", reason: failed[1] };
-  }
-  return parsed;
-}
 
 function verifiedDestroyHivraVmScript(input: {
   vmid: number;
@@ -343,6 +332,17 @@ async function maybeSeedTemplateSkills(
 // to finish by this deadline, measured from the start of the poll.
 const BACKGROUND_UPKEEP_DEADLINE_MS = 110_000;
 
+// Every agent the poll returns carries its Manage capability map: what the
+// owner can do with this computer, and why not. It is computed here, where
+// the private fields that decide it are visible, and adds no host call.
+function publicAgent(row: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    ...sanitizeHivraAgentRow(row),
+    ...extra,
+    manage: manageCapabilitiesFor(row, { preparedMatch: Boolean(matchPreparedCanaryComputer(row)) }),
+  };
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const pollStartedAt = Date.now();
   try {
@@ -405,22 +405,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         );
       }
       const sameOperation = latest.operation_id === agent.operation_id && latest.operation_kind === agent.operation_kind;
-      const response = apiSuccess({ agent: { ...sanitizeHivraAgentRow(latest),
+      const response = apiSuccess({ agent: publicAgent(latest, {
         ...(sameOperation && latest.status === "provisioning" && readiness ? { readiness_stage: readiness } : {}),
         ...(sameOperation && latest.status === "provisioning" && power ? { power_stage: power } : {}),
-        ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}) } });
+        ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}) }) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
     if (agent.computer_substrate === "do-managed-session") {
       // DigitalOcean sessions are observed through their own reconcile path;
       // never pass them to the Proxmox poll, seed, or managed-fleet fallback.
-      const response = apiSuccess({ agent: sanitizeHivraAgentRow(agent) });
+      const response = apiSuccess({ agent: publicAgent(agent) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
     if (agent.computer_substrate === "gvisor") {
-      const response = apiSuccess({ agent: sanitizeHivraAgentRow(agent) });
+      const response = apiSuccess({ agent: publicAgent(agent) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
@@ -520,9 +520,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             .eq("id", current.id)
             .eq("user_id", userId)
             .maybeSingle();
-          return apiSuccess({ agent: sanitizeHivraAgentRow(superseded || current) });
+          return apiSuccess({ agent: publicAgent(superseded || current) });
         }
-        return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+        return apiSuccess({ agent: publicAgent(current) });
       }
       const vmid = Number(current.vmid);
       let context: HivraAgentExecutionContext;
@@ -634,7 +634,7 @@ fi` : ""}`;
                 operationKind: convergenceOperationKind,
                 vmid,
               });
-              return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+              return apiSuccess({ agent: publicAgent(current) });
             }
             if (
               !nMinusOneCompatibility &&
@@ -649,7 +649,7 @@ fi` : ""}`;
                 agentId: current.id,
                 vmid,
               });
-              return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+              return apiSuccess({ agent: publicAgent(current) });
             }
             // Portable provisioning deliberately omits the bearer from the
             // persistent host log. Do not converge to running until its
@@ -668,7 +668,7 @@ fi` : ""}`;
                 vmid,
                 proxmoxHost: context.host,
               });
-              return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+              return apiSuccess({ agent: publicAgent(current) });
             }
             const validatedResult = validateHivraHostRunningResult({
               result: j,
@@ -713,7 +713,7 @@ fi` : ""}`;
                 .eq("id", current.id)
                 .eq("user_id", userId)
                 .maybeSingle();
-              return apiSuccess({ agent: sanitizeHivraAgentRow(failed || current) });
+              return apiSuccess({ agent: publicAgent(failed || current) });
             }
             if (current.type === "linux-desktop") {
               const capabilityResult = await runProxmoxHostScript(
@@ -729,19 +729,17 @@ fi` : ""}`;
                   earlyFinishMarker: "HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ",
                 },
               );
-              const capability = capabilityResult.ok
-                ? parseRemoteDesktopCapabilityReceipt(capabilityResult.stdout || "")
-                : null;
-              if (
-                !capability ||
-                capability.computerId !== current.id ||
-                capability.brokerOrigin !== validatedResult.value.chatUrl
-              ) {
+              const readiness = verifyDesktopReadinessReceipt(capabilityResult, {
+                computerId: String(current.id),
+                brokerOrigin: validatedResult.value.chatUrl,
+                operationKind: convergenceOperationKind,
+              });
+              if (!readiness.ok) {
                 await releaseHivraAgentOperation({
                   userId,
                   agentId: String(current.id),
                   operationId: provisionOperationId,
-                  error: "Ubuntu Desktop did not publish its exact remote-desktop capability receipt.",
+                  error: readiness.ownerMessage,
                   markError: true,
                 });
                 log.warn("linux desktop readiness capability is unavailable", {
@@ -750,7 +748,10 @@ fi` : ""}`;
                   userId,
                   agentId: current.id,
                   vmid,
+                  operationKind: convergenceOperationKind,
                   capabilityCommandOk: capabilityResult.ok,
+                  capabilityFailureCode: readiness.failureCode,
+                  observedRevision: readiness.observedRevision,
                 });
                 const { data: failed } = await supabaseAdmin
                   .from("hivra_agents")
@@ -758,7 +759,7 @@ fi` : ""}`;
                   .eq("id", current.id)
                   .eq("user_id", userId)
                   .maybeSingle();
-                return apiSuccess({ agent: sanitizeHivraAgentRow(failed || current) });
+                return apiSuccess({ agent: publicAgent(failed || current) });
               }
             }
             const isFirstProvision =
@@ -784,7 +785,7 @@ fi` : ""}`;
                 .eq("id", current.id)
                 .eq("user_id", userId)
                 .maybeSingle();
-              return apiSuccess({ agent: sanitizeHivraAgentRow(superseded || current) });
+              return apiSuccess({ agent: publicAgent(superseded || current) });
             }
             if (provisionSecret && returnedSecret) {
               const cleanupResult = await runProxmoxHostScript(
@@ -1006,7 +1007,7 @@ fi` : ""}`;
       );
     }
 
-    return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+    return apiSuccess({ agent: publicAgent(current) });
   } catch (err) {
     return handleApiError(err);
   }

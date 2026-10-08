@@ -10,6 +10,8 @@ import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import type { HivraAgentActivity } from "./agent-authority";
+import type { ManageCapabilities } from "./manage-sections";
+import type { ComputerHistoryEvent } from "./computer-history";
 import type { ProviderAgentReadinessStage } from "./provider-readiness-contract";
 import type { ProviderAgentPowerStage } from "./provider-power-contract";
 import {
@@ -48,8 +50,6 @@ export interface HivraAgent {
   cpu_max?: number | null;
   ram_max?: number | null;
   vmid?: number | null;
-  proxmox_host?: string | null;
-  ip?: string | null;
   chat_url?: string | null;
   error?: string | null;
   created_at?: string;
@@ -76,6 +76,9 @@ export interface HivraAgent {
   /** Key-free alternative-LLM provider summary (null = native vendor auth).
    *  Drives box-side inference routing for codex (and claude-code post-shim). */
   llm_config?: AgentLlmSummary | null;
+  /** What Manage offers for this computer, and why not (server-computed,
+   *  public fields only). Absent only from an older server. */
+  manage?: ManageCapabilities;
 }
 
 export interface HivraAgentSnapshot {
@@ -250,7 +253,9 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
         typeof j?.code === "string" ? j.code : null,
       );
     }
-    if (r.status >= 400 && r.status < 500) {
+    // Refused before anything was created (no host could take it right now):
+    // back to Review with the reason, never "couldn't confirm".
+    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable") {
       throw new HivraLaunchCorrectableError(
         message,
         r.status,
@@ -530,6 +535,16 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return (await fetchPlanStrict()) ?? FREE_PLAN;
 }
 
+/** A lifecycle action the server refused or could not verify, with its HTTP status. */
+export class AgentActionError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AgentActionError";
+    this.status = status;
+  }
+}
+
 async function agentAction(id: string, action: string, extra?: Record<string, unknown>): Promise<void> {
   const r = await fetch(`/api/hivra/agents/${id}/action`, {
     method: "POST",
@@ -537,7 +552,7 @@ async function agentAction(id: string, action: string, extra?: Record<string, un
     body: JSON.stringify({ action, ...(extra || {}) }),
   });
   const j = await readJson(r);
-  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Action failed");
+  if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
 }
 export const stopAgent = (id: string) => agentAction(id, "stop");
 export const startAgent = (id: string) => agentAction(id, "start");
@@ -628,6 +643,18 @@ export async function confirmProviderResize(input: {
   return ProviderResizeOperationViewSchema.parse(data.operation);
 }
 
+/** The computer's last lifecycle events, newest first (Manage › Advanced). */
+export async function getAgentEvents(id: string, signal?: AbortSignal): Promise<ComputerHistoryEvent[]> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/events`, { cache: "no-store", signal });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error((j?.error as string) || "Could not load this computer's history.");
+  const events = (j.data as { events?: unknown } | undefined)?.events;
+  return Array.isArray(events)
+    ? events.filter((row): row is ComputerHistoryEvent => Boolean(row) && typeof row === "object"
+      && typeof (row as ComputerHistoryEvent).label === "string" && typeof (row as ComputerHistoryEvent).createdAt === "string")
+    : [];
+}
+
 export async function listAgentSnapshots(id: string): Promise<{
   snapshots: HivraAgentSnapshot[];
   supported: boolean;
@@ -657,11 +684,56 @@ function boxBase(boxUrl: string): string {
   return boxUrl.replace(/\/$/, "");
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null }> {
+/** An Aeon computer's last sync with the user's GitHub fork, as recorded by
+ *  the computer (~/.hivra/aeon-connect.json). `pushReady` means dashboard
+ *  saves reach the fork; `workflows` maps each Aeon workflow file to its
+ *  GitHub state after the computer enabled the ones GitHub disabled itself.
+ *  - auth_failed: GitHub rejected the computer's sign-in (401/403).
+ *  - unreachable: GitHub could not be reached; retried until `retryAt`.
+ *  - fetch_failed: the fork could not be read; also retried.
+ *  - credentials_failed: git could not be given the GitHub sign-in.
+ *  - push_denied: GitHub refused the push (token permissions).
+ *  - push_failed: the push failed for another reason; `detail` carries what
+ *    GitHub said (a repository rule, push protection, a protected branch).
+ *  - on_other_branch: the owner checked out another branch by hand; nothing
+ *    was changed and saves are not pushed until the default branch is back.
+ *  - operation_in_progress: a git rebase, merge or other operation the sync
+ *    did not start is unfinished in the clone; nothing was changed and saves
+ *    are not pushed until it is finished or cancelled.
+ *  GitHub connect fails (HTTP 400) for every status other than syncing, ok,
+ *  unreachable and fetch_failed. */
+export interface AeonConnectStatus {
+  status:
+    | "syncing"
+    | "ok"
+    | "auth_failed"
+    | "unreachable"
+    | "fetch_failed"
+    | "credentials_failed"
+    | "push_denied"
+    | "push_failed"
+    | "on_other_branch"
+    | "operation_in_progress"
+    | "error";
+  repo: string;
+  branch: string | null;
+  pushReady: boolean;
+  workflows: Record<string, string>;
+  /** Local branches holding edits that could not be applied to the fork. */
+  parkedBranches: string[];
+  detail?: string;
+  /** How many syncs have run in this series (1 for the first). */
+  attempt?: number;
+  /** When the computer will try again, for the retried statuses. */
+  retryAt?: string;
+  at: string;
+}
+
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
   } catch {
     return { loggedIn: false };
   }
@@ -726,9 +798,11 @@ export async function listBoxSessions(boxUrl: string, token?: string | null): Pr
     const r = await fetch(`${boxBase(boxUrl)}/api/sessions`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return [];
     const sessions = (((await r.json()) as { sessions?: BoxSession[] }).sessions) || [];
-    // The box persists the hidden welcome-generation turn as a session; drop it so
-    // the setup prompt never appears as a visible, readable chat in the rail.
-    return sessions.filter((s) => !isHiddenWelcomeTitle(s.title));
+    // The box titles a conversation with its first message, which for the
+    // first-contact welcome is the hidden setup prompt. That conversation is the
+    // owner's to read and continue, so it lists as "Welcome", and a computer
+    // whose only history is its welcome still counts as one with history.
+    return sessions.map((s) => (isHiddenWelcomeTitle(s.title) ? { ...s, title: "Welcome" } : s));
   } catch { return []; }
 }
 export async function readBoxSession(boxUrl: string, id: string, token?: string | null): Promise<BoxMessage[]> {
@@ -755,10 +829,10 @@ export interface BoxChatRun {
   createdAt: string;
   finishedAt: string | null;
 }
-/** Recent runs, newest first; null when the box predates detached runs or is unreachable. */
-export async function listBoxChatRuns(boxUrl: string, token?: string | null): Promise<BoxChatRun[] | null> {
+/** Recent runs, newest first; null when the box predates detached runs, is unreachable, or the signal aborts. */
+export async function listBoxChatRuns(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatRun[] | null> {
   try {
-    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token) });
+    const r = await fetch(`${boxBase(boxUrl)}/api/chat/runs`, { cache: "no-store", headers: boxHeaders(token), signal });
     if (!r.ok) return null;
     const runs = ((await r.json()) as { runs?: BoxChatRun[] }).runs;
     return Array.isArray(runs) ? runs : null;
@@ -921,6 +995,78 @@ export async function browserToggle(boxUrl: string, enabled: boolean, token?: st
     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; enabled?: boolean; error?: string };
     if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
     return { ok: true, enabled: j.enabled, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// ---- Claude app on Ubuntu Desktop computers (optional, owner-initiated) -----
+// The computer's gateway asks a narrow root helper to report, add, update, switch
+// the view of, or remove Anthropic's own Claude app inside the contained desktop.
+// The owner signs in to the app themselves; nothing here handles that sign-in.
+export type ClaudeAppView = "app" | "desktop";
+export type ClaudeAppStatus = {
+  enabled: boolean;
+  desktopRunning: boolean;
+  installedVersion: string | null;
+  pinnedVersion: string | null;
+  updateAvailable: boolean;
+  appRunning: boolean;
+  mode: ClaudeAppView;
+  profileSaved: boolean;
+  installing: boolean;
+  lastError: string | null;
+};
+const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
+function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
+  const v = value as Record<string, unknown> | null;
+  if (!v || typeof v !== "object" || v.protocol !== CLAUDE_APP_PROTOCOL) return null;
+  const version = (x: unknown) => typeof x === "string" && /^[0-9.]{1,32}$/.test(x) ? x : null;
+  return {
+    enabled: v.enabled === true,
+    desktopRunning: v.desktopRunning === true,
+    installedVersion: version(v.installedVersion),
+    pinnedVersion: version(v.pinnedVersion),
+    updateAvailable: v.updateAvailable === true,
+    appRunning: v.appRunning === true,
+    mode: v.mode === "desktop" ? "desktop" : "app",
+    profileSaved: v.profileSaved === true,
+    installing: v.installing === true,
+    lastError: typeof v.lastError === "string" && v.lastError ? v.lastError.slice(0, 200) : null,
+  };
+}
+/** `available: false` means this computer does not offer the Claude app at all
+ * (an older gateway, another computer kind); the screen then shows nothing. */
+export async function claudeAppStatus(boxUrl: string, token?: string | null): Promise<{ available: boolean; status: ClaudeAppStatus | null; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/status`, { cache: "no-store", headers: boxHeaders(token) });
+    if (r.status === 404) return { available: false, status: null, error: null };
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { available: true, status: null, error: (j as { error?: string }).error || `HTTP ${r.status}` };
+    const status = parseClaudeAppStatus(j);
+    return status ? { available: true, status, error: null } : { available: true, status: null, error: "The Claude app status was not understood." };
+  } catch (e) { return { available: true, status: null, error: (e as Error).message }; }
+}
+export async function claudeAppInstall(boxUrl: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/install`, { method: "POST", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function claudeAppSetView(boxUrl: string, mode: ClaudeAppView, token?: string | null): Promise<{ ok: boolean; applied?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/mode`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ mode }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; applied?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, applied: j.applied === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function claudeAppRemove(boxUrl: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/remove`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ confirm: true }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 

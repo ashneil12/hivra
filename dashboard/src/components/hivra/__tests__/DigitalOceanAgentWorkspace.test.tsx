@@ -9,6 +9,13 @@ const mockChange = jest.fn();
 const mockChatProps = jest.fn();
 const mockContractFetch = jest.fn();
 const mockContractAction = jest.fn();
+const mockRename = jest.fn();
+const mockEvents = jest.fn();
+jest.mock("@/lib/hivra/agent-api", () => ({
+  ...jest.requireActual("@/lib/hivra/agent-api"),
+  renameAgent: (...args: unknown[]) => mockRename(...args),
+  getAgentEvents: (...args: unknown[]) => mockEvents(...args),
+}));
 
 jest.mock("@/components/hivra/ManagedSessionChat", () => ({
   ManagedSessionChat: (props: Record<string, unknown>) => {
@@ -59,7 +66,9 @@ function note(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  for (const mock of [mockGetWithExpiry, mockForget, mockList, mockChange, mockChatProps, mockContractFetch, mockContractAction]) mock.mockReset();
+  for (const mock of [mockGetWithExpiry, mockForget, mockList, mockChange, mockChatProps, mockContractFetch, mockContractAction, mockRename, mockEvents]) mock.mockReset();
+  mockRename.mockResolvedValue(undefined);
+  mockEvents.mockResolvedValue([]);
   mockContractFetch.mockResolvedValue(note());
   window.localStorage.clear();
 });
@@ -221,4 +230,83 @@ it("asks before resuming a paused session to read its files", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Resume session/ }));
   await waitFor(() => expect(mockChange).toHaveBeenCalledWith(AGENT, "resume"));
   expect(await screen.findByText(/Nothing in \/workspace yet/)).toBeInTheDocument();
+});
+
+describe("Manage on the shared sections", () => {
+  const lastChatProps = () => mockChatProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+  async function openManage() {
+    mockGetWithExpiry.mockResolvedValue({ session, credentialExpiry: null });
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} onDeleted={onDeleted} onChanged={onChanged} />);
+    await screen.findByText("chat surface");
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+  }
+  const onDeleted = jest.fn();
+  const onChanged = jest.fn();
+  beforeEach(() => {
+    onDeleted.mockReset();
+    onChanged.mockReset();
+    // Manage remembers its open section in the address; each test starts clean.
+    window.history.replaceState(null, "", "/dashboard/agent/do-agent");
+  });
+
+  it("shows Overview, a fixed-size Resources and Advanced, and keeps the chat header's own controls", async () => {
+    await openManage();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Chat", "Files", "Manage", "Overview", "Resources", "Advanced"]);
+    expect(screen.getByText("Codex · My cloud · DigitalOcean")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Resources" }));
+    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("Fixed size · 2 CPU / 4 GB");
+    // The chat still gets the session, and hears about changes Manage makes.
+    expect(lastChatProps().session).toEqual(session);
+    expect(typeof lastChatProps().onSessionChange).toBe("function");
+  });
+
+  it("renames the agent in place", async () => {
+    await openManage();
+    fireEvent.click(screen.getByRole("button", { name: /Rename/ }));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    fireEvent.change(name, { target: { value: "Reviewer" } });
+    fireEvent.keyDown(name, { key: "Enter" });
+    await waitFor(() => expect(mockRename).toHaveBeenCalledWith(AGENT, "Reviewer"));
+    expect(await screen.findByRole("heading", { name: "Reviewer" })).toBeInTheDocument();
+    expect((lastChatProps().session as { name: string }).name).toBe("Reviewer");
+    // The sidebar, ⌘K and Home read the agents list again.
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the page after a pause and a resume, but not after a refused one", async () => {
+    await openManage();
+    mockChange.mockResolvedValueOnce({ ...session, status: "paused" });
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    mockChange.mockResolvedValueOnce({ ...session, status: "ready" });
+    fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(2));
+    mockChange.mockRejectedValueOnce(new Error("DigitalOcean didn't pause it."));
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("DigitalOcean didn't pause it.");
+    expect(onChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it("pauses from Overview and tells the chat", async () => {
+    await openManage();
+    mockChange.mockResolvedValueOnce({ ...session, status: "paused" });
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(mockChange).toHaveBeenCalledWith(AGENT, "pause"));
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
+    expect((lastChatProps().session as { status: string }).status).toBe("paused");
+  });
+
+  it("deletes from Advanced only after the acknowledgement and the typed name", async () => {
+    await openManage();
+    fireEvent.click(screen.getByRole("tab", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand this is irreversible/ }));
+    const confirm = screen.getByRole("button", { name: "Permanently destroy" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Type Builder to confirm" }), { target: { value: "Builder" } });
+    mockChange.mockResolvedValueOnce({ ...session, status: "deleted" });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(mockChange).toHaveBeenCalledWith(AGENT, "delete"));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+  });
 });

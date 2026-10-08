@@ -1,0 +1,60 @@
+/* A plain-English term with its meaning on hover and focus. The meaning is in
+   data-tip, so it never becomes page text. gloss-tip.ts draws one shared bubble
+   on the page body, so no card can clip it. The bubble is dark on every page,
+   so it reads the same on light and dark sections. */
+.gloss {
+  cursor: help;
+  border-bottom: 1px dotted currentColor;
+  text-decoration: none;
+  outline-offset: 2px;
+}
+
+.gloss:hover,
+.gloss:focus-visible {
+  border-bottom-style: solid;
+}
+
+.tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  padding: 10px 12px;
+  background: #1a1c1f;
+  color: #f0efe9;
+  border: 1px solid #3a3f45;
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  font: 400 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+}
+
+.tip[hidden] {
+  display: none;
+}
+
+/* A strip across the gap to the word, so the pointer can cross onto the bubble. */
+.tip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+}
+
+.tip[data-side="above"]::before {
+  top: 100%;
+}
+
+.tip[data-side="below"]::before {
+  bottom: 100%;
+}
+
+@media print {
+  .tip {
+    display: none;
+  }
+}

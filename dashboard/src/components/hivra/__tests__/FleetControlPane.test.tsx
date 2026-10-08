@@ -63,6 +63,7 @@ function state(overrides: Record<string, unknown> = {}) {
     loading: false,
     hermesError: null,
     hivraError: null,
+    attachedError: null,
     lastRefreshedAt: null,
     retryHermes: jest.fn(async () => undefined),
     retryHivra: jest.fn(async () => undefined),
@@ -186,6 +187,20 @@ describe("FleetControlPane", () => {
     expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retryHermes).toHaveBeenCalledTimes(1);
+    expect(retryHivra).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps every other agent and computer current when only the list of added agents failed", () => {
+    const retryHivra = jest.fn(async () => undefined);
+    const added = agent("a-attach", "Codex on MY_UBUNTU_DESKTOP", { id: "ubuntu",
+      attachment: { id: "attach", computerId: "ubuntu", computerName: "MY_UBUNTU_DESKTOP", phase: "attached" } });
+    mockedUseWorkspaceAgents.mockReturnValue(state({ attachedError: "x", retryHivra,
+      agents: [{ ...ubuntu, state: "error", attention: "error" }, added] }));
+    render(<FleetControlPane />);
+    // The computer's own attention is still current; only the added agent is shown as last known.
+    expect(screen.getByText("1 needs attention")).toBeInTheDocument();
+    expect(screen.getByText(/Last known: Running/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retryHivra).toHaveBeenCalledTimes(1);
   });
 

@@ -59,7 +59,7 @@ export async function POST(
     `;
     
     // We increase timeout because token requests might occasionally be slow
-    const result = await sshExec(hostIp, execCommand, { timeoutMs: 30000 });
+    const result = await sshExec(hostIp, execCommand, { timeoutMs: 30000, proxmoxHostConfig: access.proxmoxHostConfig ?? null });
     const output = (result.stdout || '') + '\\n' + (result.stderr || '');
 
     if (!result.ok && output.includes('No such container')) {

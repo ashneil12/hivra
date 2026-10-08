@@ -229,9 +229,9 @@ describe("GetStartedPage", () => {
     render(<GetStartedPage />);
     fireEvent.click(screen.getByRole("button", { name: /^Free/ }));
 
-    expect(screen.getByText(/free is best/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/Most users can launch without a card/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/higher-risk free-tier deploys may need card verification first/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/a free account is best if you have your own computer/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/connect your own computer or choose a plan/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Most users can launch without a card/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/free sandbox/i)).not.toBeInTheDocument();
     expect(mockSignUp.mock.calls[mockSignUp.mock.calls.length - 1][0]).toMatchObject({
       forceRedirectUrl: "/get-started/activate?plan=free",
@@ -258,7 +258,7 @@ describe("GetStartedPage", () => {
     });
   });
 
-  it("states concretely what the Free plan lacks on the free card", () => {
+  it("states concretely what the free account does not include on the free card", () => {
     mockUseAuth.mockReturnValue({
       isLoaded: true,
       isSignedIn: false,
@@ -272,7 +272,7 @@ describe("GetStartedPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Free/ }));
 
     expect(
-      screen.getByText(/no web browsing · no persistent memory · no scheduled tasks · 0\.5 vCPU/i)
+      screen.getByText(/no computer run by hivra · connect your own computer or server/i)
     ).toBeInTheDocument();
   });
 

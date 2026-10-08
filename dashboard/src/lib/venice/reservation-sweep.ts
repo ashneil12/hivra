@@ -1,143 +1,336 @@
 import {
+  ManagedVeniceInsufficientBalanceError,
   loadManagedVeniceReservation,
   releaseManagedVeniceReservation,
 } from "@/lib/billing/managed-venice-wallets";
+import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { CHAT_STREAM_CANCELLED_RECONCILIATION_REASON } from "./chat-stream-reconciliation";
+import {
+  CHAT_RELEASE_FAILED_RECONCILIATION_REASON,
+  MANAGED_VENICE_SWEEP_CAPTURE_POLICY,
+  MEDIA_CAPTURE_FAILED_RECONCILIATION_REASON,
+  MEDIA_RELEASE_FAILED_RECONCILIATION_REASON,
+  holdEstimateMicroUsd,
+  observedOutputCostMicroUsd,
+  readObservedOutputTokens,
+} from "./hold-lifecycle";
+import { captureManagedVeniceHoldCost, recordManagedVeniceEstimatedCapture } from "./proxy-settlement";
+import { RESPONSES_RECONCILIATION_REASON, RESPONSES_UNKNOWN_OUTCOME_CAUSES } from "./responses-protocol";
 
-type QueryError = { message?: string } | null;
+type QueryError = { code?: string; message?: string } | null;
 
 type SupabaseLike = { from: (table: string) => unknown };
 
-// Reconciliation-item reasons that signal "Venice returned 200 but we could
-// not settle the request from its usage telemetry" — a missing SSE usage
-// frame, a settlement insert that threw, or a non-streaming response with no
-// usage block. Every one of those paths files a reconciliation item with
-// pauseKey:false and leaves the reservation hold *active*: the stream's
-// controller.close()/controller.error() never fires the cancel() callback
-// that would release it. So the held estimate sits on the wallet forever,
-// silently shrinking the user's available balance. These are the items the
-// sweep is allowed to resolve.
+// The stale-hold sweep settles wallet holds the request path could not. It
+// runs hourly (/api/cron/managed-venice-hold-sweep). One rule decides every
+// hold:
+//   * Venice answered 2xx (or nothing proves it didn't): CAPTURE, at the
+//     number the request path recorded: Venice's reported usage when only
+//     writing it failed, the input estimate plus the output the request
+//     observed, or a media request's catalog price. A reported or observed
+//     cost past the hold captures the hold and debits the rest as an
+//     overage, as the request path does. Only a hold with none of those on
+//     record (the function died mid-request) is charged an estimate: input
+//     plus at most MANAGED_VENICE_SWEEP_OUTPUT_TOKENS_PER_CHOICE output tokens
+//     per choice.
+//   * Venice refused the request (or it never reached Venice) and the
+//     in-request release failed: RELEASE.
+//   * Venice's outcome is unknown (a Responses dispatch that threw): left
+//     for an operator for UNKNOWN_OUTCOME_AGE_HOURS, then RELEASED.
+// No hold is left active for good. Captures go through
+// capture_managed_venice_reservation, which debits and closes the hold in one
+// transaction, so retrying a capture whose outcome was lost, or two sweeps
+// racing, never charges twice.
 //
-// Deliberately excludes `managed_venice_overage_uncovered`: that path already
-// captured the reservation and represents genuinely unpaid usage we mean to
-// collect (and which legitimately pauses the key) — not a telemetry gap.
-export const SWEEPABLE_RECONCILIATION_REASONS = [
+// Security review 2026-09 (#150, #160, #167): this sweep used to RELEASE holds
+// for 200 streams that finished without a usage frame (free inference six
+// hours later), and once it captured them, charged a flat estimate however
+// much had streamed. Kept stream and Responses holds sat for a day or for
+// good, and a refused request whose release failed was charged once its hold
+// expired.
+
+// Items the sweep captures once STALE_RECONCILIATION_AGE_HOURS old. Every one
+// follows a request Venice answered 2xx whose in-request settlement did not
+// finish.
+export const SWEEP_CAPTURE_REASONS = [
+  // Venice answered 200, but the usage never arrived or settling it threw.
   "managed_venice_missing_stream_usage",
   "managed_venice_stream_settlement_failed",
   "managed_venice_missing_usage",
+  "managed_venice_anthropic_missing_usage",
+  "managed_venice_anthropic_capture_failed",
+  "managed_venice_anthropic_stream_capture_failed",
+  // The client closed a 200 stream before the usage frame, and charging the
+  // observed output in the request failed.
+  CHAT_STREAM_CANCELLED_RECONCILIATION_REASON,
+  // A media 2xx whose capture failed (media-spend-gate.ts).
+  MEDIA_CAPTURE_FAILED_RECONCILIATION_REASON,
 ] as const;
 
-// A chat request that returned 200 is definitively finished within seconds,
-// so a hold still active hours later is stranded, not in-flight. 6h is far
-// past any plausible slow stream, so releasing can't race a live settlement.
-const STALE_RECONCILIATION_AGE_HOURS = 6;
+// Items the sweep releases once STALE_RECONCILIATION_AGE_HOURS old: Venice
+// refused the request, or it never reached Venice, and the release failed.
+export const SWEEP_RELEASE_REASONS = [
+  MEDIA_RELEASE_FAILED_RECONCILIATION_REASON,
+  CHAT_RELEASE_FAILED_RECONCILIATION_REASON,
+] as const;
+
+// Responses items (RESPONSES_RECONCILIATION_REASON) are captured like the
+// capture reasons above, except RESPONSES_UNKNOWN_OUTCOME_CAUSES: Venice's
+// answer never arrived. An operator can settle those from Venice's records
+// within UNKNOWN_OUTCOME_AGE_HOURS; after that the sweep releases them.
+export { RESPONSES_UNKNOWN_OUTCOME_CAUSES };
+
+// A request whose in-request settlement did not finish is over well within
+// this: the Vercel routes stop at MANAGED_VENICE_STREAM_DEADLINE_MS and the
+// Worker files its item when its stream ends.
+const STALE_RECONCILIATION_AGE_HOURS = 0.25;
+// Unknown-outcome items are released once this old. They used to wait for
+// the hold to expire, a day after the request: Codex retries a failed request
+// and each retry holds its own worst case, so an outage locked a wallet for a
+// day (security review 2026-09, #167 second review). With the hourly sweep a
+// hold is released one to two hours after its request.
+const UNKNOWN_OUTCOME_AGE_HOURS = 1;
 
 const PER_RUN_ITEM_CAP = 500;
+// Expired holds with no item have their own budget, so a backlog of items
+// can never starve them.
+const PER_RUN_EXPIRED_HOLD_CAP = 500;
+
+const OPEN_DISPOSITIONS = new Set<string>(["capture_failed", "release_failed", "waiting_for_unknown_outcome"]);
 
 interface ReconciliationItemRow {
   id: string;
   user_id: string;
+  proxy_key_id?: string | null;
   reason: string;
   status: string;
   metadata: Record<string, unknown> | null;
   created_at: string | null;
 }
 
-type SweepDisposition =
-  | "released_stale_reservation"
+interface ReservationRow {
+  id: string;
+  account_id?: string | null;
+  user_id: string;
+  wallet_type: string;
+  status: string;
+  reference_id: string;
+  estimated_cost_micro_usd?: number | null;
+  reserved_micro_usd: number;
+  model?: string | null;
+  endpoint?: string | null;
+  expires_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export type SweepDisposition =
+  | "captured_hold"
+  | "captured_expired_hold"
+  | "released_failed_request"
+  | "released_unknown_outcome"
   | "reservation_already_captured"
   | "reservation_already_released"
   | "reservation_not_found"
-  | "missing_reference_id";
+  | "missing_reference_id"
+  | "capture_failed"
+  | "release_failed"
+  | "waiting_for_unknown_outcome"
+  | "left_for_open_item";
 
-interface ReservationSweepResult {
-  itemId: string;
+export type SweepCaptureBasis = "catalog_price" | "reported_usage" | "observed_output" | "pre_request_estimate";
+
+export interface ReservationSweepResult {
+  itemId: string | null;
   userId: string;
-  reason: string;
+  reason: string | null;
   referenceId: string | null;
   disposition: SweepDisposition;
+  /** What the wallet paid: the hold's capture plus any overage debited. */
+  capturedMicroUsd: number;
   releasedMicroUsd: number;
+  basis?: SweepCaptureBasis;
+  /** The cost past the hold, debited on top of it (or filed when uncovered). */
+  overageMicroUsd?: number;
 }
 
 export interface ReservationSweepSummary {
+  /** Items and expired holds examined. */
   scanned: number;
+  /** Items closed. */
   closed: number;
+  capturedReservations: number;
+  totalCapturedMicroUsd: number;
   releasedReservations: number;
   totalReleasedMicroUsd: number;
+  /** Expired holds left alone because an open item decides them. */
+  heldForOpenItem: number;
+  /** Captures or releases that failed; the item or hold is retried next run. */
+  failed: number;
   results: ReservationSweepResult[];
 }
 
-type ItemSelectChain = {
-  select: (cols: string) => {
-    eq: (col: string, val: string) => {
-      in: (col: string, vals: readonly string[]) => {
-        lt: (col: string, val: string) => {
-          order: (col: string, opts: { ascending: boolean }) => {
-            limit: (n: number) => Promise<{ data: unknown; error: QueryError }>;
-          };
-        };
-      };
-    };
-  };
+type SelectChain = {
+  select: (cols: string) => SelectChain;
+  eq: (col: string, val: string) => SelectChain;
+  neq: (col: string, val: string) => SelectChain;
+  in: (col: string, vals: readonly string[]) => SelectChain;
+  lt: (col: string, val: string) => SelectChain;
+  order: (col: string, opts: { ascending: boolean }) => SelectChain;
+  limit: (n: number) => PromiseLike<{ data: unknown; error: QueryError }>;
 };
 
 type ItemUpdateChain = {
   update: (patch: Record<string, unknown>) => {
-    eq: (col: string, val: string) => Promise<{ error: QueryError }>;
+    eq: (col: string, val: string) => PromiseLike<{ error: QueryError }>;
   };
 };
 
-function readReferenceId(metadata: Record<string, unknown> | null): string | null {
+function select(db: SupabaseLike, table: string) {
+  return db.from(table) as SelectChain;
+}
+
+function readReferenceId(metadata: Record<string, unknown> | null | undefined): string | null {
   const ref = metadata?.referenceId;
   return typeof ref === "string" && ref.trim() ? ref : null;
 }
 
-async function loadStaleItems(
+function readMicroUsd(value: unknown): number | null {
+  const parsed = typeof value === "string" && value.trim() ? Number(value) : value;
+  return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function readStatus(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function isUnknownOutcome(item: ReconciliationItemRow): boolean {
+  return (
+    item.reason === RESPONSES_RECONCILIATION_REASON &&
+    (RESPONSES_UNKNOWN_OUTCOME_CAUSES as readonly unknown[]).includes(item.metadata?.cause)
+  );
+}
+
+function isReleaseItem(item: ReconciliationItemRow): boolean {
+  return (SWEEP_RELEASE_REASONS as readonly string[]).includes(item.reason) || isUnknownOutcome(item);
+}
+
+async function loadItems(
   db: SupabaseLike,
+  query: (chain: SelectChain) => SelectChain,
   cutoff: string,
   limit: number
 ): Promise<ReconciliationItemRow[]> {
-  const { data, error } = await (db.from(
-    "managed_venice_reconciliation_items"
-  ) as unknown as ItemSelectChain)
-    .select("id, user_id, reason, status, metadata, created_at")
-    .eq("status", "open")
-    .in("reason", SWEEPABLE_RECONCILIATION_REASONS)
+  if (limit <= 0) return [];
+  const { data, error } = await query(
+    select(db, "managed_venice_reconciliation_items")
+      .select("id, user_id, proxy_key_id, reason, status, metadata, created_at")
+      .eq("status", "open")
+  )
     .lt("created_at", cutoff)
     .order("created_at", { ascending: true })
     .limit(limit);
-
   if (error) {
     throw new Error(error.message || "Failed to load managed Venice reconciliation items");
   }
   return Array.isArray(data) ? (data as ReconciliationItemRow[]) : [];
 }
 
+async function loadExpiredHolds(db: SupabaseLike, nowIso: string, limit: number): Promise<ReservationRow[]> {
+  if (limit <= 0) return [];
+  // expires_at < now leaves out holds without an expiry: those predate
+  // expiring holds, and settling them is an operator's call.
+  const { data, error } = await select(db, "managed_venice_reservations")
+    .select("*")
+    .eq("status", "active")
+    .lt("expires_at", nowIso)
+    .order("expires_at", { ascending: true })
+    .limit(limit);
+  if (error) {
+    throw new Error(error.message || "Failed to load expired managed Venice reservations");
+  }
+  return Array.isArray(data) ? (data as ReservationRow[]) : [];
+}
+
+async function hasOpenItem(db: SupabaseLike, hold: ReservationRow): Promise<boolean> {
+  const { data, error } = await select(db, "managed_venice_reconciliation_items")
+    .select("id")
+    .eq("status", "open")
+    .eq("user_id", hold.user_id)
+    .eq("metadata->>referenceId", hold.reference_id)
+    .limit(1);
+  if (error) {
+    throw new Error(error.message || "Failed to load managed Venice reconciliation items for a hold");
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+// What a capture charges, from the best number on record:
+//   1. a media request's catalog price, recorded on the hold when it was made
+//      (media-spend-gate.ts) or on its capture-failed item;
+//   2. Venice's reported usage, when the request had it but writing the
+//      charge failed;
+//   3. the input estimate plus the output the request observed;
+//   4. the hold's estimate (holdEstimateMicroUsd), for a hold nothing
+//      recorded anything about.
+// The reported and observed costs can exceed the hold: captureHold debits
+// the part past it as an overage. The catalog price and the estimate never
+// do.
+function captureAmount(
+  hold: ReservationRow,
+  item: ReconciliationItemRow | null
+): { costMicroUsd: number; listMicroUsd: number; basis: SweepCaptureBasis } {
+  const reserved = hold.reserved_micro_usd;
+  const holdMeta = hold.metadata ?? {};
+  const itemMeta = item?.metadata ?? {};
+  const catalog = readMicroUsd(holdMeta.captureOnSuccessMicroUsd) ?? readMicroUsd(itemMeta.chargeMicroUsd);
+  if (catalog !== null && catalog <= reserved) {
+    const list =
+      readMicroUsd(holdMeta.captureOnSuccessListMicroUsd) ?? readMicroUsd(itemMeta.listCostMicroUsd) ?? catalog;
+    return { costMicroUsd: catalog, listMicroUsd: list, basis: "catalog_price" };
+  }
+  const usageCost = readMicroUsd(itemMeta.usageCostMicroUsd);
+  if (usageCost !== null) {
+    return { costMicroUsd: usageCost, listMicroUsd: usageCost, basis: "reported_usage" };
+  }
+  const observedTokens = readObservedOutputTokens(itemMeta.observedOutputTokens);
+  const observed = observedTokens === null ? null : observedOutputCostMicroUsd(hold, observedTokens);
+  if (observed !== null) {
+    return { costMicroUsd: observed, listMicroUsd: observed, basis: "observed_output" };
+  }
+  const amount = holdEstimateMicroUsd(hold);
+  return { costMicroUsd: amount, listMicroUsd: amount, basis: "pre_request_estimate" };
+}
+
 async function closeItem(
   db: SupabaseLike,
   item: ReconciliationItemRow,
-  disposition: SweepDisposition,
-  releasedMicroUsd: number,
-  referenceId: string | null
+  result: ReservationSweepResult,
+  sweptAt: string
 ): Promise<void> {
-  const sweptAt = new Date().toISOString();
+  const settled =
+    result.disposition === "captured_hold" ||
+    result.disposition === "released_failed_request" ||
+    result.disposition === "released_unknown_outcome";
+  const amount = result.capturedMicroUsd || result.releasedMicroUsd;
   const note =
-    `Closed by reservation sweep: ${disposition}` +
-    (releasedMicroUsd > 0 ? ` (released ${releasedMicroUsd} µUSD hold)` : "");
+    `Closed by reservation sweep: ${result.disposition}` +
+    (amount > 0 ? ` (${result.capturedMicroUsd > 0 ? "captured" : "released"} ${amount} µUSD)` : "");
 
-  const { error } = await (db.from(
-    "managed_venice_reconciliation_items"
-  ) as unknown as ItemUpdateChain)
+  const { error } = await (db.from("managed_venice_reconciliation_items") as unknown as ItemUpdateChain)
     .update({
-      status: "ignored",
+      status: settled ? "resolved" : "ignored",
       resolved_at: sweptAt,
       operator_notes: note,
       metadata: {
         ...(item.metadata || {}),
         sweep: {
-          disposition,
-          releasedMicroUsd,
-          referenceId,
+          disposition: result.disposition,
+          basis: result.basis ?? null,
+          capturedMicroUsd: result.capturedMicroUsd,
+          overageMicroUsd: result.overageMicroUsd ?? 0,
+          releasedMicroUsd: result.releasedMicroUsd,
+          referenceId: result.referenceId,
           sweptAt,
         },
       },
@@ -149,84 +342,255 @@ async function closeItem(
   }
 }
 
+async function captureHold(
+  db: SupabaseLike,
+  hold: ReservationRow,
+  item: ReconciliationItemRow | null,
+  disposition: "captured_hold" | "captured_expired_hold",
+  sweptAt: string
+): Promise<Omit<ReservationSweepResult, "itemId" | "userId" | "reason" | "referenceId">> {
+  const price = captureAmount(hold, item);
+  const proxyKeyId =
+    (typeof item?.proxy_key_id === "string" && item.proxy_key_id) ||
+    (typeof hold.metadata?.proxyKeyId === "string" ? hold.metadata.proxyKeyId : null);
+  let charge: Awaited<ReturnType<typeof captureManagedVeniceHoldCost>>;
+  try {
+    // Past the hold, the rest is debited as an overage (#167 second review).
+    charge = await captureManagedVeniceHoldCost(
+      {
+        hold,
+        proxyKeyId,
+        costMicroUsd: price.costMicroUsd,
+        cause: `sweep_${price.basis}`,
+        source: "managed-venice-reservation-sweep",
+      },
+      db
+    );
+  } catch (error) {
+    log.error("Managed Venice sweep could not capture a stale hold", error, {
+      source: "managed-venice-reservation-sweep",
+      failureType:
+        error instanceof ManagedVeniceInsufficientBalanceError
+          ? "managed_venice_sweep_capture_uncovered"
+          : "managed_venice_sweep_capture_failed",
+      userId: hold.user_id,
+      referenceId: hold.reference_id,
+      costMicroUsd: price.costMicroUsd,
+      reason: item?.reason ?? null,
+    });
+    return { disposition: "capture_failed", capturedMicroUsd: 0, releasedMicroUsd: 0, basis: price.basis };
+  }
+  if (!charge.captured) {
+    // Settled between the read and the capture (another sweep, a late
+    // in-request settlement). The function moved no money.
+    return { disposition: "reservation_already_captured", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
+  await recordManagedVeniceEstimatedCapture(
+    {
+      hold,
+      proxyKeyId,
+      amountMicroUsd: charge.chargedMicroUsd,
+      listMicroUsd: price.listMicroUsd,
+      pricingPolicy: MANAGED_VENICE_SWEEP_CAPTURE_POLICY,
+      upstreamStatus: readStatus(item?.metadata?.upstreamStatus),
+      idempotencyKey: `managed_venice_hold_sweep_capture:${hold.reference_id}`,
+      detailKey: "sweep",
+      detail: {
+        disposition,
+        basis: price.basis,
+        reason: item?.reason ?? null,
+        itemId: item?.id ?? null,
+        heldMicroUsd: hold.reserved_micro_usd,
+        overageMicroUsd: charge.overageMicroUsd,
+        overageStatus: charge.overageStatus,
+        sweptAt,
+      },
+    },
+    db
+  );
+  return {
+    disposition,
+    capturedMicroUsd: charge.chargedMicroUsd,
+    releasedMicroUsd: 0,
+    basis: price.basis,
+    overageMicroUsd: charge.overageMicroUsd,
+  };
+}
+
+async function releaseHold(
+  db: SupabaseLike,
+  item: ReconciliationItemRow,
+  referenceId: string,
+  disposition: "released_failed_request" | "released_unknown_outcome"
+): Promise<Pick<ReservationSweepResult, "disposition" | "capturedMicroUsd" | "releasedMicroUsd">> {
+  try {
+    const released = await releaseManagedVeniceReservation({ userId: item.user_id, referenceId }, db);
+    if (!released.released) {
+      return { disposition: "reservation_already_released", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+    }
+    return { disposition, capturedMicroUsd: 0, releasedMicroUsd: released.releasedMicroUsd ?? 0 };
+  } catch (error) {
+    log.error("Managed Venice sweep could not release a hold", error, {
+      source: "managed-venice-reservation-sweep",
+      failureType: "managed_venice_sweep_release_failed",
+      userId: item.user_id,
+      referenceId,
+      reason: item.reason,
+    });
+    return { disposition: "release_failed", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
+}
+
+function unknownOutcomeIsDue(item: ReconciliationItemRow, cutoffMs: number) {
+  const filedAt = item.created_at ? Date.parse(item.created_at) : Number.NaN;
+  return Number.isFinite(filedAt) && filedAt <= cutoffMs;
+}
+
+async function settleItem(
+  db: SupabaseLike,
+  item: ReconciliationItemRow,
+  sweptAt: string,
+  clock: { unknownOutcomeCutoffMs: number }
+): Promise<ReservationSweepResult> {
+  const referenceId = readReferenceId(item.metadata);
+  const base = { itemId: item.id, userId: item.user_id, reason: item.reason, referenceId };
+  if (!referenceId) {
+    return { ...base, disposition: "missing_reference_id", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
+  const hold = (await loadManagedVeniceReservation(item.user_id, referenceId, db)) as ReservationRow | null;
+  if (!hold) {
+    return { ...base, disposition: "reservation_not_found", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
+  if (hold.status === "captured") {
+    return { ...base, disposition: "reservation_already_captured", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
+  if (hold.status !== "active") {
+    return { ...base, disposition: "reservation_already_released", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+  }
+
+  if (isUnknownOutcome(item)) {
+    if (!unknownOutcomeIsDue(item, clock.unknownOutcomeCutoffMs)) {
+      return { ...base, disposition: "waiting_for_unknown_outcome", capturedMicroUsd: 0, releasedMicroUsd: 0 };
+    }
+    return { ...base, ...(await releaseHold(db, item, referenceId, "released_unknown_outcome")) };
+  }
+  if (isReleaseItem(item)) {
+    return { ...base, ...(await releaseHold(db, item, referenceId, "released_failed_request")) };
+  }
+  return { ...base, ...(await captureHold(db, hold, item, "captured_hold", sweptAt)) };
+}
+
 /**
- * Release stranded reservation holds for managed-Venice requests that
- * returned 200 but whose usage telemetry was missing/garbled, then close the
- * reconciliation items that flagged them. Without this, a hold filed by
- * {@link SWEEPABLE_RECONCILIATION_REASONS} stays active indefinitely and the
- * user's available balance shrinks for usage we never billed.
- *
- * We release rather than capture: there is no usage data to compute an actual
- * cost, the hold is only a defensive over-estimate, and we'd rather eat the
- * (rare, low-volume) Venice cost than over-bill a paying customer for a gap
- * that is Venice's, not theirs. Idempotent: closed items drop out of the
- * scan, and release is a no-op once the reservation is no longer active.
+ * Settle wallet holds the request path left active, by the rule at the top of
+ * this file:
+ *   1. open items with SWEEP_CAPTURE_REASONS or SWEEP_RELEASE_REASONS, and
+ *      Responses items with a known outcome, once `ageHours` old;
+ *   2. Responses items with an unknown outcome once `unknownOutcomeAgeHours`
+ *      old, released;
+ *   3. then, on their own budget, active holds past their `expires_at` with
+ *      no open item, which nothing settled at all (the function died
+ *      mid-request): captured.
+ * Idempotent: settled items drop out of the scan, and a hold that is no longer
+ * active is never charged again.
  */
 export async function sweepStaleManagedVeniceReservations(
-  params: { ageHours?: number; limit?: number } = {},
+  params: { ageHours?: number; unknownOutcomeAgeHours?: number; limit?: number; expiredHoldLimit?: number } = {},
   db: SupabaseLike | null | undefined = supabaseAdmin
 ): Promise<ReservationSweepSummary> {
   if (!db) throw new Error("Database not configured");
-  const ageHours = params.ageHours ?? STALE_RECONCILIATION_AGE_HOURS;
-  const limit = params.limit ?? PER_RUN_ITEM_CAP;
-  const cutoff = new Date(Date.now() - ageHours * 60 * 60 * 1_000).toISOString();
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const cutoff = (hours: number) => new Date(now - hours * 60 * 60 * 1_000).toISOString();
+  const staleCutoff = cutoff(params.ageHours ?? STALE_RECONCILIATION_AGE_HOURS);
+  const unknownOutcomeCutoff = cutoff(params.unknownOutcomeAgeHours ?? UNKNOWN_OUTCOME_AGE_HOURS);
+  const clock = { unknownOutcomeCutoffMs: Date.parse(unknownOutcomeCutoff) };
+  let budget = params.limit ?? PER_RUN_ITEM_CAP;
 
-  const items = await loadStaleItems(db, cutoff, limit);
-  const results: ReservationSweepResult[] = [];
-  let releasedReservations = 0;
-  let totalReleasedMicroUsd = 0;
+  const items: ReconciliationItemRow[] = [];
+  const take = (rows: ReconciliationItemRow[]) => {
+    items.push(...rows);
+    budget -= rows.length;
+  };
+  take(
+    await loadItems(
+      db,
+      (chain) => chain.in("reason", [...SWEEP_CAPTURE_REASONS, ...SWEEP_RELEASE_REASONS]),
+      staleCutoff,
+      budget
+    )
+  );
+  take(
+    await loadItems(
+      db,
+      (chain) =>
+        RESPONSES_UNKNOWN_OUTCOME_CAUSES.reduce(
+          (next, cause) => next.neq("metadata->>cause", cause),
+          chain.eq("reason", RESPONSES_RECONCILIATION_REASON)
+        ),
+      staleCutoff,
+      budget
+    )
+  );
+  take(
+    await loadItems(
+      db,
+      (chain) =>
+        chain.eq("reason", RESPONSES_RECONCILIATION_REASON).in("metadata->>cause", RESPONSES_UNKNOWN_OUTCOME_CAUSES),
+      unknownOutcomeCutoff,
+      budget
+    )
+  );
+
+  const summary: ReservationSweepSummary = {
+    scanned: items.length,
+    closed: 0,
+    capturedReservations: 0,
+    totalCapturedMicroUsd: 0,
+    releasedReservations: 0,
+    totalReleasedMicroUsd: 0,
+    heldForOpenItem: 0,
+    failed: 0,
+    results: [],
+  };
+  const count = (result: ReservationSweepResult) => {
+    summary.results.push(result);
+    if (result.disposition === "captured_hold" || result.disposition === "captured_expired_hold") {
+      summary.capturedReservations += 1;
+      summary.totalCapturedMicroUsd += result.capturedMicroUsd;
+    }
+    if (result.disposition === "released_failed_request" || result.disposition === "released_unknown_outcome") {
+      summary.releasedReservations += 1;
+      summary.totalReleasedMicroUsd += result.releasedMicroUsd;
+    }
+    if (result.disposition === "capture_failed" || result.disposition === "release_failed") summary.failed += 1;
+    if (result.disposition === "left_for_open_item") summary.heldForOpenItem += 1;
+  };
 
   for (const item of items) {
-    const referenceId = readReferenceId(item.metadata);
-    let disposition: SweepDisposition;
-    let releasedMicroUsd = 0;
-
-    if (!referenceId) {
-      disposition = "missing_reference_id";
-    } else {
-      const reservation = await loadManagedVeniceReservation(item.user_id, referenceId, db);
-      if (!reservation) {
-        disposition = "reservation_not_found";
-      } else if (reservation.status === "captured") {
-        disposition = "reservation_already_captured";
-      } else if (reservation.status !== "active") {
-        disposition = "reservation_already_released";
-      } else {
-        const released = await releaseManagedVeniceReservation(
-          { userId: item.user_id, referenceId },
-          db
-        );
-        if (released.released) {
-          disposition = "released_stale_reservation";
-          releasedMicroUsd = released.releasedMicroUsd ?? 0;
-          releasedReservations += 1;
-          totalReleasedMicroUsd += releasedMicroUsd;
-        } else {
-          // Lost a race: the reservation was resolved between our load and
-          // our release. Treat it as already released and close the item.
-          disposition = "reservation_already_released";
-        }
-      }
+    const sweptAt = new Date().toISOString();
+    const result = await settleItem(db, item, sweptAt, clock);
+    count(result);
+    // A failed capture or release, or an unknown outcome whose hold has not
+    // expired, keeps its item open for a later run.
+    if (!OPEN_DISPOSITIONS.has(result.disposition)) {
+      await closeItem(db, item, result, sweptAt);
+      summary.closed += 1;
     }
-
-    await closeItem(db, item, disposition, releasedMicroUsd, referenceId);
-    results.push({
-      itemId: item.id,
-      userId: item.user_id,
-      reason: item.reason,
-      referenceId,
-      disposition,
-      releasedMicroUsd,
-    });
   }
 
-  return {
-    scanned: items.length,
-    closed: results.length,
-    releasedReservations,
-    totalReleasedMicroUsd,
-    results,
-  };
+  const expired = await loadExpiredHolds(db, nowIso, params.expiredHoldLimit ?? PER_RUN_EXPIRED_HOLD_CAP);
+  summary.scanned += expired.length;
+  for (const hold of expired) {
+    const base = { itemId: null, userId: hold.user_id, reason: null, referenceId: hold.reference_id };
+    if (await hasOpenItem(db, hold)) {
+      count({ ...base, disposition: "left_for_open_item", capturedMicroUsd: 0, releasedMicroUsd: 0 });
+      continue;
+    }
+    const sweptAt = new Date().toISOString();
+    count({ ...base, ...(await captureHold(db, hold, null, "captured_expired_hold", sweptAt)) });
+  }
+
+  return summary;
 }
 
 // managed_venice_reservations grows ~1 row per inference and is never pruned,

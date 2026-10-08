@@ -1,7 +1,6 @@
 import { apiError } from "@/lib/api-response";
 import {
   enforceRateLimit,
-  getIP,
   reserveRateLimit,
   type RateLimitConfig,
   type RateLimitRefusalReason,
@@ -24,8 +23,15 @@ interface AuthenticatedRouteRateLimitOptions extends RateLimitConfig {
   userId: string;
 }
 
-function rateLimitKey(request: Request, { routeKey, userId }: AuthenticatedRouteRateLimitOptions): string {
-  return `${routeKey}:${userId}:${getIP(request)}`;
+/**
+ * A signed-in route's limit is per user, so the key is the route and the user
+ * and nothing else. It used to include the client address, which let one user
+ * multiply their allowance (or run a second "in flight" host operation) by
+ * arriving from another address, and before getIP() was fixed, by just
+ * sending a different `cf-connecting-ip` header.
+ */
+function rateLimitKey({ routeKey, userId }: AuthenticatedRouteRateLimitOptions): string {
+  return `${routeKey}:${userId}`;
 }
 
 /** Whole seconds until the window resets, never less than one. */
@@ -38,12 +44,14 @@ function withRetryAfter(response: Response, retryAfterMs: number): Response {
   return response;
 }
 
+// The request stays in the signature so every caller keeps one shape; the key
+// deliberately does not read it (see rateLimitKey).
 export function enforceAuthenticatedRouteRateLimit(
-  request: Request,
+  _request: Request,
   options: AuthenticatedRouteRateLimitOptions
 ) {
   const { limit, windowMs } = options;
-  const result = enforceRateLimit(rateLimitKey(request, options), { limit, windowMs });
+  const result = enforceRateLimit(rateLimitKey(options), { limit, windowMs });
 
   return result.success
     ? null
@@ -65,11 +73,11 @@ export type AuthenticatedRouteReservation =
  * refusal so it can explain it in plain words.
  */
 export function reserveAuthenticatedRouteRateLimit(
-  request: Request,
+  _request: Request,
   options: AuthenticatedRouteRateLimitOptions & Pick<ReservationRateLimitConfig, "failureLimit">,
 ): AuthenticatedRouteReservation {
   const { limit, windowMs, failureLimit } = options;
-  const result = reserveRateLimit(rateLimitKey(request, options), { limit, windowMs, failureLimit });
+  const result = reserveRateLimit(rateLimitKey(options), { limit, windowMs, failureLimit });
   return result.success
     ? { limited: null, settle: result.settle }
     : { limited: { retryAfterMs: result.retryAfterMs, inFlight: result.inFlight, reason: result.reason }, settle: null };

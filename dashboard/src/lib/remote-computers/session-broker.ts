@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import { log } from "@/lib/logger";
+import { MAX_UNANSWERED_DESKTOP_ISSUES } from "@/lib/remote-computers/desktop-session-limits";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   assessRemoteDesktopAccessGrant,
@@ -83,6 +85,19 @@ interface ControllerSessionRow {
   input_state: string;
   revoked_at: string | null;
   expires_at: string;
+}
+
+interface UnansweredHandoffRow {
+  id?: unknown;
+  user_id?: unknown;
+  computer_kind?: unknown;
+  computer_id?: unknown;
+  transport?: unknown;
+  input_role?: unknown;
+  input_state?: unknown;
+  exchanged_at?: unknown;
+  revoked_at?: unknown;
+  pkce_challenge?: unknown;
 }
 
 interface SessionProtocolEvidenceRow {
@@ -349,6 +364,77 @@ async function classifyControllerConflict(params: {
   return fallback;
 }
 
+/**
+ * Retire this owner's browser controller leases that the browser says it
+ * never heard back about, and only those.
+ *
+ * A session request can reach this server and create its lease while the
+ * answer, the only place its one-time exchange code ever exists, is lost on
+ * the way back (a network drop, a page reload, a cut-off body). Nobody can
+ * use that lease, but the one-controller fence counts it as a live controller
+ * until it expires, so the same tab's next open waited and then stopped at
+ * Take over here. The browser remembers the PKCE challenge of every request
+ * whose answer it never read and names it on its next request. A lease is
+ * retired only when it is this owner's, for this computer, a browser Selkies
+ * controller, still takeover-pending, never exchanged, not revoked, and bears
+ * one of those challenges. Revoking such a lease releases it at once (it
+ * never held input), so the next issue passes the fence. A lease anyone
+ * exchanged, another owner's, or one whose challenge was not named is never
+ * touched.
+ */
+async function retireUnansweredHandoffs(params: {
+  userId: string;
+  computerKind: RemoteDesktopComputerKind;
+  computerId: string;
+  challenges: readonly string[];
+}): Promise<number> {
+  if (!supabaseAdmin || params.challenges.length === 0) return 0;
+  let rows: UnansweredHandoffRow[];
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("hivra_remote_desktop_sessions")
+      .select("id,user_id,computer_kind,computer_id,transport,input_role,input_state,exchanged_at,revoked_at,pkce_challenge")
+      .eq("user_id", params.userId)
+      .eq("computer_kind", params.computerKind)
+      .eq("computer_id", params.computerId)
+      .eq("transport", "selkies-websocket")
+      .eq("input_role", "controller")
+      .eq("input_state", "takeover-pending")
+      .is("exchanged_at", null)
+      .is("revoked_at", null)
+      .in("pkce_challenge", [...params.challenges])
+      .returns<UnansweredHandoffRow[]>();
+    if (error || !Array.isArray(data)) return 0;
+    rows = data;
+  } catch {
+    return 0;
+  }
+  let retired = 0;
+  for (const row of rows) {
+    // The query is the filter; this re-check is the proof for each row.
+    if (!row || typeof row.id !== "string" || !UUID_RE.test(row.id)
+      || row.user_id !== params.userId
+      || row.computer_kind !== params.computerKind || row.computer_id !== params.computerId
+      || row.transport !== "selkies-websocket" || row.input_role !== "controller"
+      || row.input_state !== "takeover-pending"
+      || row.exchanged_at !== null || row.revoked_at !== null
+      || typeof row.pkce_challenge !== "string" || !params.challenges.includes(row.pkce_challenge)) continue;
+    const revoked = await revokeRemoteDesktopSession({
+      userId: params.userId, sessionId: row.id, reason: "handoff_abandoned",
+    });
+    if (revoked.ok) retired += 1;
+  }
+  if (retired > 0) {
+    log.info("retired a desktop lease whose session answer never reached the browser", {
+      source: "remote-desktop-session-broker",
+      failureType: "remote_desktop_unanswered_handoff_retired",
+      computerId: params.computerId,
+      retired,
+    });
+  }
+  return retired;
+}
+
 async function loadCapability(params: {
   userId: string;
   computerKind: RemoteDesktopComputerKind;
@@ -403,6 +489,12 @@ export async function recordRemoteDesktopCapability(params: {
 export async function issueRemoteDesktopSession(params: {
   userId: string;
   ownerHandoff?: boolean;
+  /**
+   * PKCE challenges of this browser's earlier requests for this computer whose
+   * answers it never read (see retireUnansweredHandoffs). Browser Hivra
+   * Selkies controllers only.
+   */
+  unansweredPkceChallenges?: readonly string[];
   sessionId?: string;
   computerKind: RemoteDesktopComputerKind;
   computerId: string;
@@ -430,13 +522,22 @@ export async function issueRemoteDesktopSession(params: {
   };
 } | BrokerFailure> {
   if (!supabaseAdmin) return failure(503, "database_unavailable", "Desktop sessions are unavailable.");
+  const browserHivraController = params.computerKind === "hivra-agent"
+    && params.purpose === "daily-driver" && params.inputRole === "controller"
+    && params.client.kind === "browser" && params.requestedTransport === "selkies-websocket"
+    && params.sessionId === undefined && params.nativeProfile === undefined;
+  const unanswered = params.unansweredPkceChallenges;
   if (
     !params.userId || !validComputerRef(params.computerKind, params.computerId)
     || (params.ownerHandoff !== undefined && typeof params.ownerHandoff !== "boolean")
-    || (params.ownerHandoff === true && (params.computerKind !== "hivra-agent"
-      || params.purpose !== "daily-driver" || params.inputRole !== "controller"
-      || params.client.kind !== "browser" || params.requestedTransport !== "selkies-websocket"
-      || params.sessionId !== undefined || params.nativeProfile !== undefined))
+    || (params.ownerHandoff === true && !browserHivraController)
+    || (unanswered !== undefined && (
+      !browserHivraController || !Array.isArray(unanswered)
+      || unanswered.length > MAX_UNANSWERED_DESKTOP_ISSUES
+      || new Set(unanswered).size !== unanswered.length
+      || unanswered.some(challenge => typeof challenge !== "string" || !PKCE_CHALLENGE_RE.test(challenge)
+        || challenge === params.pkceChallenge)
+    ))
     || (params.sessionId !== undefined && !UUID_RE.test(params.sessionId))
     || !PKCE_CHALLENGE_RE.test(params.pkceChallenge)
     || !["daily-driver", "recovery"].includes(params.purpose)
@@ -519,26 +620,45 @@ export async function issueRemoteDesktopSession(params: {
   // shape; browser and recovery identifiers remain server-generated.
   const sessionId = params.sessionId ?? crypto.randomUUID();
   const exchangeCode = crypto.randomBytes(32).toString("base64url");
-  const { data, error } = await supabaseAdmin.rpc("issue_hivra_remote_desktop_session_v3", {
+  const selectedTransport = selection.selected;
+  // A refused issue inserts nothing, so a retry may reuse the same identity.
+  const issueOnce = () => supabaseAdmin!.rpc("issue_hivra_remote_desktop_session_v3", {
     p_user_id: params.userId,
     p_session_id: sessionId,
     p_computer_kind: params.computerKind,
     p_computer_id: params.computerId,
-    p_transport: selection.selected.id,
+    p_transport: selectedTransport.id,
     p_input_role: params.inputRole,
     p_handoff: "message",
     p_exchange_code_hash: sha256Hex(exchangeCode),
     p_pkce_challenge: params.pkceChallenge,
     p_issued_at: issuedAt,
     p_expires_at: expiresAt,
-    p_relay_credential_expires_at: selection.selected.media.requiresUdp ? expiresAt : null,
+    p_relay_credential_expires_at: selectedTransport.media.requiresUdp ? expiresAt : null,
     p_streaming_mode: params.streamingMode,
     p_native_client_id: params.nativeProfile?.clientId ?? null,
     p_native_client_certificate_pem: params.nativeProfile?.clientCertificatePem ?? null,
     p_native_client_certificate_sha256: params.nativeProfile?.clientCertificateSha256 ?? null,
   });
+  let { data, error } = await issueOnce();
   if (error) return failure(503, "session_issue_failed", "Desktop sessions are unavailable.");
-  const issueStatus = rpcStatus(data);
+  let issueStatus = rpcStatus(data);
+  // The fence met a controller. When that is this browser's own lease from a
+  // request whose answer never reached it, retire that lease and ask once
+  // more; the fence decides again, so anything else still conflicts.
+  if (
+    issueStatus === "controller_conflict" && params.ownerHandoff !== true && unanswered?.length
+    && await retireUnansweredHandoffs({
+      userId: params.userId,
+      computerKind: params.computerKind,
+      computerId: params.computerId,
+      challenges: unanswered,
+    }) > 0
+  ) {
+    ({ data, error } = await issueOnce());
+    if (error) return failure(503, "session_issue_failed", "Desktop sessions are unavailable.");
+    issueStatus = rpcStatus(data);
+  }
   if (issueStatus !== "issued") {
     if (issueStatus === "controller_conflict" && params.inputRole === "controller") {
       return classifyControllerConflict({

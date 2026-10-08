@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { LanguageSwitcher, useLocale } from "@/components/i18n/LocaleProvider";
 import styles from "../public-site/public-site.module.css";
 import SourceLink from "../public-site/SourceLink";
+import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 
@@ -94,7 +95,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
     { label: copy.nav.pricing, href: "/#pricing" },
     { label: "Blog", href: "/blog" },
     { label: "Ecosystem", href: "/ecosystem" },
-    { label: "Litepaper", href: "/docs/litepaper/" },
+    { label: "Litepaper", href: LITEPAPER_HREF },
   ];
 
   useEffect(() => {
@@ -132,7 +133,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
       <div className={styles.headerInner}>
         <Link ref={brandRef} href="/" aria-label="Hivra, back to homepage" className={styles.brand}><HivraMark size={32} /><span>Hivra</span></Link>
         <nav className={styles.desktopNav} aria-label="Primary navigation">
-          {links.map(({ label, href }) => <Link key={href} href={href}>{label}</Link>)}
+          {links.map(({ label, href }) => <PublicLink key={href} href={href}>{label}</PublicLink>)}
         </nav>
         <div className={styles.headerTools}>
           {PUBLIC_PROJECT_LINKS.repository.status === "published" && <SourceLink className={styles.headerSource} />}
@@ -172,15 +173,15 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
         {phoneMenu && accountLinks(true)}
         <nav aria-label="Mobile navigation" className={styles.mobileNav}>
           {links.map(({ label, href }, index) => (
-            <Link key={href} href={href} onClick={() => setMenuOpen(false)} style={{ "--menu-order": index } as CSSProperties}>
+            <PublicLink key={href} href={href} onClick={() => setMenuOpen(false)} style={{ "--menu-order": index } as CSSProperties}>
               <span>{label}</span><ArrowRight size={24} strokeWidth={1.5} aria-hidden="true" />
-            </Link>
+            </PublicLink>
           ))}
         </nav>
         <div className={styles.mobileExtras}>
           <Link href="/#founder" onClick={() => setMenuOpen(false)}>Why I’m building Hivra</Link>
           {/* Phones already list the litepaper in the menu links above. */}
-          {!phoneMenu && <Link href="/docs/litepaper/" onClick={() => setMenuOpen(false)}>Read the litepaper</Link>}
+          {!phoneMenu && <PublicLink href={LITEPAPER_HREF} onClick={() => setMenuOpen(false)}>Read the litepaper</PublicLink>}
           {PUBLIC_PROJECT_LINKS.repository.status === "published" && <SourceLink />}
           <div className={styles.menuTools}>
             <div className={styles.themeControl}><ThemeToggle /></div>

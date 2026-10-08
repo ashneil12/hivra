@@ -40,7 +40,8 @@ const SURFACE_IDS = new Set<string>(AGENT_SURFACE_IDS);
 const LEGACY_LAST_VIEW_KEY = "hivra:agent-last-view";
 
 export interface RecentVisit {
-  /** Source-qualified uid: `x-<id>` for a Hivra agent or computer, `h-<id>` for Hermes. */
+  /** Source-qualified uid: `x-<id>` for a Hivra agent or computer, `h-<id>` for
+   *  Hermes, `a-<attachment id>` for an agent added to a computer. */
   uid: string;
   /** The surface that was open, in the resource page's own tab vocabulary. */
   tab: AgentSurfaceId;
@@ -222,6 +223,9 @@ export function visitHref(uid: string, tab: AgentSurfaceId | null, fallback?: st
   if (!isWorkspaceAgentUid(uid)) return fallback ?? "/dashboard?runtimes=1";
   const id = uid.slice(2);
   if (uid.startsWith("h-")) return fallback ?? `/dashboard/instances/${encodeURIComponent(id)}`;
+  // An added agent's id is its attachment, never a page: only its own link
+  // (the computer's Chat tab) opens it.
+  if (uid.startsWith("a-")) return fallback ?? "/dashboard?runtimes=1";
   const base = `/dashboard/agent/${encodeURIComponent(id)}`;
   if (!tab) return fallback ?? base;
   if (fallback) {

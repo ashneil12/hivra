@@ -1,5 +1,6 @@
 import "server-only";
 
+import { attachActivityLine } from "@/lib/agent-computers/attach-activity";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { supportsNativeTracing } from "./collectors";
@@ -133,7 +134,7 @@ const after = (value: string, reference: string | undefined): boolean => !refere
 const lifecycleTitles: Record<string,string> = {
   launch_requested:"Launch requested", provisioned:"Computer provisioned", failed:"Computer action failed",
   resized:"Computer resized", stopped:"Computer stopped", started:"Computer started",
-  restarted:"Computer restarted", deleted:"Computer deleted",
+  restarted:"Computer restarted", runtime_updated:"Connection service updated", deleted:"Computer deleted",
 };
 
 /**
@@ -191,7 +192,8 @@ function normalizeEvent(row: ActivityEventRow, names: Map<string,string>): Activ
     return { id:row.id, kind:isTrace?"trace_span":"tool_activity", title:text(telemetry?.title,isTrace?"Instrumented operation":"Agent activity"), occurredAt:row.created_at, agentId, agentName, ...(row.agent_id?{computerId:row.agent_id}:{}), ...(runId?{runId}:{}), ...definedIds, source:{kind:isTrace?"otlp_trace":"otlp_log",label:isTrace?"OpenTelemetry trace":"OpenTelemetry agent log"}, outcome:eventOutcome, severity:eventSeverity, summary:text(telemetry?.summary,"Agent-reported telemetry observed."), evidence, needsAttention:eventOutcome==="failure"||eventSeverity==="error" };
   }
   const failed = row.event === "failed" || /fail|error/i.test(row.event);
-  return { id:row.id, kind:"lifecycle", title:lifecycleTitles[row.event] || row.event.replaceAll("_"," "), occurredAt:row.created_at, agentId, agentName, ...(row.agent_id?{computerId:row.agent_id}:{}), source:{kind:"hivra_lifecycle",label:"Hivra lifecycle"}, outcome:failed?"failure":"unknown", severity:failed?"error":"info", summary:failed?"A lifecycle operation reported a failure.":"A computer lifecycle change was recorded.", evidence:row.agent_type?[{label:"Computer type",value:row.agent_type}]:[], needsAttention:failed };
+  const attachTitle = attachActivityLine(row.event, object(row.detail));
+  return { id:row.id, kind:"lifecycle", title:attachTitle || lifecycleTitles[row.event] || row.event.replaceAll("_"," "), occurredAt:row.created_at, agentId, agentName, ...(row.agent_id?{computerId:row.agent_id}:{}), source:{kind:"hivra_lifecycle",label:"Hivra lifecycle"}, outcome:failed?"failure":"unknown", severity:failed?"error":"info", summary:failed?"A lifecycle operation reported a failure.":"A computer lifecycle change was recorded.", evidence:row.agent_type?[{label:"Computer type",value:row.agent_type}]:[], needsAttention:failed };
 }
 
 function normalizeSession(row: ActivitySessionRow, names: Map<string,string>): ActivityEvent {

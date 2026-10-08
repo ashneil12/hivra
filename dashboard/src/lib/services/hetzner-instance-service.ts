@@ -323,6 +323,8 @@ export async function provisionHetznerInstance(params: {
       autoUpdate: params.autoUpdate,
       globalSettings: params.globalSettings,
       includeHostTimeSyncRepair: Boolean(params.hostId && params.hostIp),
+      // Only an existing host can still hold the ghcr.io login older scripts left.
+      includeRegistryCredentialScrub: Boolean(params.hostId && params.hostIp),
       // An existing host receives the script uncompressed over SSH; a new
       // server receives it inside renderCompressedProvisioningUserData.
       embeddedFileEncoding: params.hostId && params.hostIp ? "gzip-base64" : "heredoc",

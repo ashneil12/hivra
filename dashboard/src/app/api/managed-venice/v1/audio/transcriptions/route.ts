@@ -5,7 +5,8 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-import { recordManagedVeniceMultimodalUsage } from "@/lib/venice/proxy-settlement";
+import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
+import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
 
 // SCRIPTURE_ANCHOR: venice-transcribe | Job 33:32 | Verse: If thou hast anything to say, answer me: speak, for I desire to justify thee.
 const VENICE_AUDIO_TRANSCRIPTIONS_URL =
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest) {
     return apiError("Expected multipart/form-data body.", 400);
   }
 
+  const fieldError = mediaPricingFieldError(formData);
+  if (fieldError) return apiError(fieldError, 400);
   const modelField = formData.get("model");
   const model = typeof modelField === "string" && modelField.trim()
     ? modelField.trim()
@@ -54,88 +57,60 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const walletType = verifiedKey.defaultWalletType ?? "hermesos";
-
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetch(VENICE_AUDIO_TRANSCRIPTIONS_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${serverKey}` },
-      body: formData,
-    });
-  } catch (error) {
-    return apiError(
-      "Venice upstream request failed.",
-      502,
-      { failureType: "managed_venice_transcribe_upstream_fetch_failed" },
-      undefined,
-      { cause: error }
-    );
-  }
-
-  const upstreamText = await upstreamResponse.text();
-
-  if (upstreamResponse.ok) {
-    try {
-      const language = formData.get("language");
-      const responseFormat = formData.get("response_format");
-      const fileField = formData.get("file");
-      const fileSize =
-        fileField && typeof fileField === "object" && "size" in fileField
-          ? (fileField as { size: number }).size
-          : null;
-      await recordManagedVeniceMultimodalUsage({
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        walletType,
-        referenceId,
-        endpoint: ENDPOINT_LABEL,
-        model,
-        upstreamStatus: upstreamResponse.status,
-        metadata: {
-          language: typeof language === "string" ? language : null,
-          responseFormat: typeof responseFormat === "string" ? responseFormat : null,
-          fileSizeBytes: fileSize,
-        },
-      });
-    } catch (error) {
-      log.error("Managed Venice transcribe usage record failed", error, {
-        source: "managed-venice-transcribe",
-        route: ENDPOINT_LABEL,
-        method: "POST",
-        failureType: "managed_venice_transcribe_usage_record_failed",
-        userId: verifiedKey.userId,
-        proxyKeyId: verifiedKey.id,
-        model,
-        referenceId,
-      });
-    }
-
-    log.info("Managed Venice STT served (unmetered)", {
-      source: "managed-venice-transcribe",
-      userId: verifiedKey.userId,
-      proxyKeyId: verifiedKey.id,
-      walletType,
+  const language = formData.get("language");
+  const responseFormat = formData.get("response_format");
+  const fileField = formData.get("file");
+  const fileSize =
+    fileField && typeof fileField === "object" && "size" in fileField
+      ? (fileField as { size: number }).size
+      : null;
+  // STT is priced per audio second and the duration isn't known up front, so
+  // the gate refuses it until the catalog can price it.
+  const gate = await holdManagedVeniceMediaSpend({
+    key: verifiedKey,
+    operation: {
+      endpoint: ENDPOINT_LABEL,
       model,
-      referenceId,
-      upstreamStatus: upstreamResponse.status,
-    });
-  } else {
-    log.warn("Managed Venice transcribe upstream non-2xx", {
+      metadata: {
+        language: typeof language === "string" ? language : null,
+        responseFormat: typeof responseFormat === "string" ? responseFormat : null,
+        fileSizeBytes: fileSize,
+      },
+    },
+    referenceId,
+    source: "managed-venice-transcribe",
+  });
+  if (!gate.ok) return gate.response;
+
+  const sent = await sendManagedVeniceMediaRequest({
+    hold: gate.hold,
+    mode: "buffer",
+    fetchFailureType: "managed_venice_transcribe_upstream_fetch_failed",
+    send: () =>
+      fetch(VENICE_AUDIO_TRANSCRIPTIONS_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${serverKey}` },
+        body: formData,
+      }),
+  });
+  if (!sent.ok) return sent.response;
+
+  if (!sent.upstream.ok) {
+    log.warn("Managed Venice upstream returned non-2xx", {
       source: "managed-venice-transcribe",
       route: ENDPOINT_LABEL,
       method: "POST",
       failureType: "managed_venice_transcribe_upstream_non_2xx",
-      upstreamStatus: upstreamResponse.status,
+      upstreamStatus: sent.upstream.status,
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
-      model,
+      model: model,
     });
   }
 
-  const contentType = upstreamResponse.headers.get("content-type") || "application/json";
-  return new Response(upstreamText, {
-    status: upstreamResponse.status,
+  const contentType = sent.upstream.headers.get("content-type") || "application/json";
+  return new Response(sent.body, {
+    status: sent.upstream.status,
     headers: { "Content-Type": contentType },
   });
 }

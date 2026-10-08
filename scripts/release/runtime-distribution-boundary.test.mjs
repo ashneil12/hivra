@@ -15,7 +15,7 @@ test('accepts the exact source-only runtime boundary', () => {
   assert.equal(evidence.sourceOnlyBoundaryApproved, true);
   assert.equal(evidence.releaseApproved, false);
   assert.deepEqual(evidence.gaps, []);
-  assert.equal(evidence.summary.externalInputs, 12);
+  assert.equal(evidence.summary.externalInputs, 13);
   assert.equal(evidence.summary.digestPinnedContainerInputs, 3);
   assert.equal(evidence.summary.embeddedExternalArtifacts, 0);
 });

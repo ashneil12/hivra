@@ -205,7 +205,7 @@ describe("HivraAgentsPanel", () => {
     fireEvent.click(within(firstMenu).getByRole("button", { name: "Tools" }));
     expect(firstMenu).not.toHaveAttribute("open");
     expect(pushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/agent-1?tab=manage&tools=1",
+      "/dashboard/agent/agent-1?tab=manage&section=model&tools=1",
     );
   });
 
@@ -271,7 +271,7 @@ describe("HivraAgentsPanel", () => {
     fireEvent.click(screen.getByText("Actions"));
     fireEvent.click(screen.getByRole("button", { name: "Tools" }));
     expect(pushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/agent-1?tab=manage&tools=1&hivra=1",
+      "/dashboard/agent/agent-1?tab=manage&section=model&tools=1&hivra=1",
     );
   });
 

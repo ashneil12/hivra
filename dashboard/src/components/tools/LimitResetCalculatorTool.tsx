@@ -20,7 +20,9 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import styles from "@/app/tools/tools.module.css";
+import { CLAUDE_PLAN_FACTS } from "@/lib/tools/claude-plan-facts";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { monthYear } from "@/lib/tools/month-year";
 
 // External facts, checked on 2026-09-24 against claude.com/pricing (rolling
 // five-hour session window, weekly limits on paid plans, one pool across web,
@@ -29,12 +31,15 @@ import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
 // /usage, automatic continue) and anthropic.com/news/higher-limits-spacex.
 const LIMITS = {
   lastVerified: "2026-09-24",
-  windowHours: 5,
+  // The window length and the 2026-05-06 doubling come from the shared plan
+  // facts (lib/tools/claude-plan-facts.ts), so this tool and the plan calculator
+  // cannot disagree about them. lastVerified stays this tool's own.
+  windowHours: CLAUDE_PLAN_FACTS.windowHours,
   sharedPool: "Claude on the web, desktop and mobile, and Claude Code",
   // Published 2026-05-06: Claude Code's five-hour limits doubled for Pro, Max,
   // Team and seat-based Enterprise, and the peak-hours limit reduction was
   // removed on Claude Code for Pro and Max.
-  doubledOn: "2026-05-06",
+  doubledOn: CLAUDE_PLAN_FACTS.limitChanges.fiveHourDoubled,
 } as const;
 
 const WINDOW_MINUTES = LIMITS.windowHours * 60;
@@ -304,7 +309,7 @@ export default function LimitResetCalculatorTool() {
         timing question only. On {LIMITS.doubledOn} Anthropic doubled Claude Code&apos;s {LIMITS.windowHours} hour
         limits for Pro, Max, Team and seat-based Enterprise plans and removed the peak-hours limit reduction on
         Claude Code for Pro and Max. All times use your own local clock. Nothing you enter leaves your browser. Facts
-        last verified {LIMITS.lastVerified} on Anthropic&apos;s own pages.
+        as of {monthYear(LIMITS.lastVerified)}, from Anthropic&apos;s own pages.
       </p>
 
       {/* Hosting does not raise or reset Anthropic limits. The honest bridge is

@@ -40,6 +40,10 @@ describe("POST /api/mobile/iap/attach", () => {
     txn?: Record<string, unknown> | null;
     verifyThrows?: boolean;
     existingBinding?: { user_id: string } | null;
+    /** What Apple says right now. Defaults to active (1). */
+    liveStatus?: number | "missing";
+    /** "config" = API credentials not set; "network" = Apple unreachable. */
+    liveFails?: "config" | "network";
   } = {}) {
     const userId = opts.userId === undefined ? "user_1" : opts.userId;
 
@@ -61,6 +65,17 @@ describe("POST /api/mobile/iap/attach", () => {
       .fn()
       .mockResolvedValue({ action: "activated", userId });
 
+    const actualLive = jest.requireActual("@/lib/billing/apple-live-status");
+    const getAppleLiveSubscriptionStatus = jest.fn(async () => {
+      if (opts.liveFails === "config") throw new actualLive.AppleLiveStatusConfigError("APPLE_ISSUER_ID missing");
+      if (opts.liveFails === "network") throw new Error("ECONNRESET");
+      return opts.liveStatus ?? actualLive.APPLE_LIVE_STATUS_ACTIVE;
+    });
+    jest.doMock("@/lib/billing/apple-live-status", () => ({
+      ...actualLive,
+      getAppleLiveSubscriptionStatus,
+    }));
+
     jest.doMock("@/lib/services/apple-webhook-service", () => ({
       AppleWebhookService: {
         verifyTransaction,
@@ -81,7 +96,7 @@ describe("POST /api/mobile/iap/attach", () => {
       },
     }));
 
-    return { verifyTransaction, activateFromTransaction };
+    return { verifyTransaction, activateFromTransaction, getAppleLiveSubscriptionStatus };
   }
 
   it("verifies, binds and activates through the canonical activation primitive", async () => {
@@ -94,6 +109,7 @@ describe("POST /api/mobile/iap/attach", () => {
     const body = await res.json();
     expect(body.data.attached).toBe(true);
     expect(mocks.verifyTransaction).toHaveBeenCalledWith("signed-jws");
+    expect(mocks.getAppleLiveSubscriptionStatus).toHaveBeenCalledWith("2000000123456789", "Production");
     expect(mocks.activateFromTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user_1",
@@ -155,6 +171,65 @@ describe("POST /api/mobile/iap/attach", () => {
     expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
   });
 
+  it("rejects a transaction Apple marked revoked, without asking Apple or activating", async () => {
+    const mocks = mockAll({ txn: transaction({ revocationDate: Date.now() - 1000, revocationReason: 0 }) });
+
+    const { POST } = await import("../route");
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(400);
+    expect(mocks.getAppleLiveSubscriptionStatus).not.toHaveBeenCalled();
+    expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a saved pre-refund transaction once Apple reports the subscription revoked", async () => {
+    // The saved record has no revocationDate and a future expiresDate, so only
+    // the live status shows the refund.
+    const mocks = mockAll({ existingBinding: { user_id: "user_1" }, liveStatus: 5 });
+
+    const { POST } = await import("../route");
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(400);
+    expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["expired", 2],
+    ["in billing retry", 3],
+    ["in grace period", 4],
+    ["unknown to Apple", "missing" as const],
+  ])("rejects when Apple reports the subscription %s", async (_label, liveStatus) => {
+    const mocks = mockAll({ liveStatus });
+
+    const { POST } = await import("../route");
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(400);
+    expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 and grants nothing when the App Store Server API is not configured", async () => {
+    const mocks = mockAll({ liveFails: "config" });
+
+    const { POST } = await import("../route");
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(503);
+    expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+
+  it("answers 503 and grants nothing when Apple cannot be reached", async () => {
+    const mocks = mockAll({ liveFails: "network" });
+
+    const { POST } = await import("../route");
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(503);
+    expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
+  });
+
   it("refuses with 409 when the subscription is bound to a different account", async () => {
     const mocks = mockAll({ existingBinding: { user_id: "user_other" } });
 
@@ -162,6 +237,7 @@ describe("POST /api/mobile/iap/attach", () => {
     const res = await POST(createRequest());
 
     expect(res.status).toBe(409);
+    expect(mocks.getAppleLiveSubscriptionStatus).not.toHaveBeenCalled();
     expect(mocks.activateFromTransaction).not.toHaveBeenCalled();
   });
 

@@ -16,6 +16,12 @@
 !/docs/litepaper
 /docs/litepaper/*
 !/docs/litepaper/index.html
+!/docs/litepaper/restricted.html
+!/docs/litepaper/restricted
+/docs/litepaper/restricted/*
+!/docs/litepaper/restricted/LITEPAPER.md
+!/docs/litepaper/restricted/WHITEPAPER.md
+!/docs/litepaper/restricted/TOKENOMICS.md
 !/docs/litepaper/litepaper.css
 !/docs/litepaper/litepaper.js
 !/docs/litepaper/experience-motion.js
@@ -25,6 +31,12 @@
 !/docs/litepaper/assets/agent-computer-opportunity-v2.png
 !/docs/litepaper/assets/observable-run-v2.png
 !/docs/litepaper/assets/boundary-monolith-v5.png
+!/docs/litepaper/assets/agent-computer-hero-v2-768.webp
+!/docs/litepaper/assets/agent-computer-hero-v2-1536.webp
+!/docs/litepaper/assets/agent-computer-opportunity-v2-768.webp
+!/docs/litepaper/assets/agent-computer-opportunity-v2-1536.webp
+!/docs/litepaper/assets/observable-run-v2-768.webp
+!/docs/litepaper/assets/observable-run-v2-1536.webp
 !/docs/litepaper/assets/fonts
 /docs/litepaper/assets/fonts/*
 !/docs/litepaper/assets/fonts/Manrope-Variable.ttf

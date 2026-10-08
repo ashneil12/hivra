@@ -7,13 +7,33 @@ manual restore procedure for one tenant.
 
 ## Provisioning state
 
-- **Storage Box**: `u594993.your-storagebox.de:23`
-- **Username**: `u594993`
+- **Storage Box**: host `<storage-box-host>`, SSH port 23. The host and account
+  name are deployment settings, not source. They live in the Vercel environment
+  as `HERMES_COLD_STORAGE_HOST` and `HERMES_COLD_STORAGE_USER`, and in the
+  maintainer's private operations notes. They are not written in this repository.
 - **Capacity**: 10 TB (BX31), Helsinki HEL1, eu-central network zone
 - **Pubkey authorized**: `/path/to/cold-storage-key` (also registered in
-  Hetzner Cloud as `hermes-deploy-2026-05-16`, key id `112370034`)
+  Hetzner Cloud under a name and key id kept in the private operations notes)
 - **SSH config** on each PVE host (`/root/.ssh/config`) has aliases `cold` and
   `hermes-cold-storage` pointing at the box with `StrictHostKeyChecking accept-new`.
+  The backup routes write this block on each host from the settings below; see
+  `src/lib/cold-storage-ssh.ts`.
+
+## Settings the backup routes need
+
+| Setting | Meaning |
+|---|---|
+| `HERMES_COLD_STORAGE_HOST` | Storage Box host name. No default in source. |
+| `HERMES_COLD_STORAGE_USER` | Storage Box account name. No default in source. |
+| `HETZNER_SSH_PRIVATE_KEY_B64` | Base64 private key that the box accepts. |
+
+All three are needed to install the `cold` alias. `daily-vm-backups` skips the
+install with a warning when one is missing, so a host that already has the alias
+from an earlier run keeps working and a host without it fails at its first
+`ssh cold`. `daily-instance-backups` and the restore-point listing in
+`instances/[id]/backups` stop with an error that names the missing setting. Set
+the two new settings on every Vercel project that runs these routes (Canary and
+Production) before a build that contains this change is deployed or promoted.
 
 ## Directory layout (Storage Box root = user home)
 

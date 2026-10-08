@@ -38,55 +38,112 @@ describe("Rate Limiting Utility", () => {
     const res = enforceRateLimit("test_ip", { limit: 5, windowMs: 60000 });
     expect(res.success).toBe(true);
   });
+});
 
-  test("getIP should extract ip from cf-connecting-ip", () => {
-    const req = new NextRequest("http://localhost");
-    req.headers.set("cf-connecting-ip", "203.0.113.4");
-    expect(getIP(req)).toBe("203.0.113.4");
+describe("getIP reads only the address the hosting platform wrote", () => {
+  const ENV_KEYS = ["VERCEL", "HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER"] as const;
+  const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+
+  beforeEach(() => {
+    for (const key of ENV_KEYS) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
   });
 
-  test("getIP should fall back to x-real-ip when cf-connecting-ip is missing", () => {
-    const req = new NextRequest("http://localhost");
-    req.headers.set("x-real-ip", "203.0.113.1");
-    expect(getIP(req)).toBe("203.0.113.1");
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
   });
 
-  test("getIP should fall back to x-forwarded-for if cf-connecting-ip is missing", () => {
+  function request(headers: Record<string, string>): NextRequest {
     const req = new NextRequest("http://localhost");
-    req.headers.set("x-forwarded-for", "10.240.0.1, 10.240.0.2");
-    expect(getIP(req)).toBe("10.240.0.1");
+    for (const [name, value] of Object.entries(headers)) req.headers.set(name, value);
+    return req;
+  }
+
+  describe("on Vercel", () => {
+    beforeEach(() => {
+      process.env.VERCEL = "1";
+    });
+
+    test("uses Vercel's x-vercel-forwarded-for and ignores a client cf-connecting-ip", () => {
+      expect(getIP(request({
+        "cf-connecting-ip": "198.51.100.5",
+        "x-vercel-forwarded-for": "203.0.113.20",
+        "x-real-ip": "203.0.113.20",
+        "x-forwarded-for": "203.0.113.20",
+      }))).toBe("203.0.113.20");
+    });
+
+    test("rotating a spoofed cf-connecting-ip never changes the key", () => {
+      const keys = new Set(
+        ["198.51.100.1", "198.51.100.2", "2001:db8::9", "not-an-ip"].map((spoofed) =>
+          getIP(request({ "cf-connecting-ip": spoofed, "x-vercel-forwarded-for": "203.0.113.21" })),
+        ),
+      );
+      expect([...keys]).toEqual(["203.0.113.21"]);
+    });
+
+    test("falls back to Vercel's x-real-ip, then the rightmost x-forwarded-for hop", () => {
+      expect(getIP(request({ "cf-connecting-ip": "198.51.100.5", "x-real-ip": "203.0.113.22" }))).toBe("203.0.113.22");
+      expect(getIP(request({ "cf-connecting-ip": "198.51.100.5", "x-forwarded-for": "198.51.100.6, 203.0.113.23" })))
+        .toBe("203.0.113.23");
+    });
   });
 
-  test("getIP should strip a forwarded IPv4 port before returning it", () => {
-    const req = new NextRequest("http://localhost");
-    req.headers.set("x-real-ip", "203.0.113.7:443");
-    expect(getIP(req)).toBe("203.0.113.7");
+  describe("self-hosted with a named trusted header", () => {
+    test("reads only that header's rightmost hop", () => {
+      process.env.HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER = "X-Client-Address";
+      expect(getIP(request({
+        "cf-connecting-ip": "198.51.100.5",
+        "x-real-ip": "198.51.100.6",
+        "x-forwarded-for": "198.51.100.7",
+        "x-client-address": "198.51.100.8, 203.0.113.24",
+      }))).toBe("203.0.113.24");
+    });
   });
 
-  test("getIP should ignore invalid direct proxy headers instead of returning unsafe filter text", () => {
-    const req = new NextRequest("http://localhost");
-    req.headers.set("cf-connecting-ip", '198.51.100.7,or(status.eq.active)');
-    req.headers.set("x-forwarded-for", "203.0.113.9");
-    expect(getIP(req)).toBe("198.51.100.7");
+  describe("with no platform header configured", () => {
+    test("never reads cf-connecting-ip or x-real-ip, which any client can send", () => {
+      expect(getIP(request({ "cf-connecting-ip": "198.51.100.5" }))).toBe("127.0.0.1");
+      expect(getIP(request({ "x-real-ip": "198.51.100.6" }))).toBe("127.0.0.1");
+      expect(getIP(request({
+        "cf-connecting-ip": "198.51.100.5",
+        "x-real-ip": "198.51.100.6",
+        "x-forwarded-for": "203.0.113.25",
+      }))).toBe("203.0.113.25");
+    });
+
+    test("uses the rightmost x-forwarded-for hop, the one the nearest proxy appended", () => {
+      expect(getIP(request({ "x-forwarded-for": "10.240.0.1, 10.240.0.2" }))).toBe("10.240.0.2");
+    });
+
+    test("a client-prepended x-forwarded-for entry cannot choose the key", () => {
+      const keys = new Set(
+        ["198.51.100.1", "198.51.100.2", "2001:db8::9"].map((spoofed) =>
+          getIP(request({ "x-forwarded-for": `${spoofed}, 203.0.113.26` })),
+        ),
+      );
+      expect([...keys]).toEqual(["203.0.113.26"]);
+    });
+
+    test("never walks left past an invalid rightmost hop", () => {
+      expect(getIP(request({ "x-forwarded-for": "198.51.100.7,or(status.eq.active)" }))).toBe("127.0.0.1");
+    });
   });
 
-  test("getIP should prefer cf-connecting-ip over x-real-ip and x-forwarded-for", () => {
-    const req = new NextRequest("http://localhost");
-    req.headers.set("cf-connecting-ip", "198.51.100.5");
-    req.headers.set("x-real-ip", "203.0.113.1");
-    req.headers.set("x-forwarded-for", "10.240.0.1, 10.240.0.2");
-    expect(getIP(req)).toBe("198.51.100.5");
+  test("strips a port and unwraps an IPv4-mapped address", () => {
+    expect(getIP(request({ "x-forwarded-for": "203.0.113.7:443" }))).toBe("203.0.113.7");
+    expect(getIP(request({ "x-forwarded-for": "[2001:db8::1]:443" }))).toBe("2001:db8::1");
+    expect(getIP(request({ "x-forwarded-for": "::ffff:203.0.113.8" }))).toBe("203.0.113.8");
   });
 
-  test("getIP should default to 127.0.0.1 if no headers present", () => {
-    const req = new NextRequest("http://localhost");
-    expect(getIP(req)).toBe("127.0.0.1");
-  });
-
-  test("getIP should fall back when proxy headers do not contain a valid IP literal", () => {
-    const req = new NextRequest("http://localhost");
-    req.headers.set("cf-connecting-ip", "definitely-not-an-ip");
-    expect(getIP(req)).toBe("127.0.0.1");
+  test("defaults to 127.0.0.1 when there is no usable address", () => {
+    expect(getIP(request({}))).toBe("127.0.0.1");
+    expect(getIP(request({ "x-forwarded-for": "definitely-not-an-ip" }))).toBe("127.0.0.1");
   });
 });
 

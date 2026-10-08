@@ -128,6 +128,25 @@ describe("read-only provider runtime SSH", () => {
     await expect(runProviderGuestSeed({ ...input, script }, f.deps)).rejects.toThrow("invalid_identity");
     expect(f.client.connect).not.toHaveBeenCalled();
   });
+  it("sends a seed of exactly MAX_PROVIDER_GUEST_SEED_BYTES UTF-8 bytes and refuses one byte more", async () => {
+    // "é" is 2 bytes: both scripts are far under the limit in characters.
+    const room = MAX_PROVIDER_GUEST_SEED_BYTES - Buffer.byteLength("set -e\n#\n");
+    const script = `set -e\n#${"é".repeat(Math.floor(room / 2))}${"#".repeat(room % 2)}\n`;
+    expect(Buffer.byteLength(script)).toBe(MAX_PROVIDER_GUEST_SEED_BYTES);
+    expect(script.length).toBeLessThan(MAX_PROVIDER_GUEST_SEED_BYTES * 0.6);
+    const f = fake(), stream = new Channel();
+    const pending = runProviderGuestSeed({ ...input, script }, f.deps);
+    f.verify(); f.sign(f.signer(f.authenticate())); f.client.emit("ready");
+    f.client.exec.mock.calls[0][1](null, stream);
+    expect(stream.end).toHaveBeenCalledWith(script);
+    stream.emit("close", 0);
+    await expect(pending).resolves.toMatchObject({ hostVerified: true, output: "" });
+
+    const over = `${script}#`, refused = fake();
+    expect(Buffer.byteLength(over)).toBe(MAX_PROVIDER_GUEST_SEED_BYTES + 1);
+    await expect(runProviderGuestSeed({ ...input, script: over }, refused.deps)).rejects.toThrow("invalid_identity");
+    expect(refused.deps.client).not.toHaveBeenCalled();
+  });
   it("fails a guest seed whose script exits non-zero", async () => {
     const f = fake(), stream = new Channel();
     const pending = runProviderGuestSeed({ ...input, script: "set -e\nexit 3\n" }, f.deps), rejected = expect(pending).rejects.toThrow("command_failed");
@@ -406,7 +425,7 @@ describe("pinned read-only guest inspection",()=>{
     const f=inspecting();expect(f.client.exec).not.toHaveBeenCalled();f.ready();f.ready();f.acknowledge();
     expect(f.client.exec).toHaveBeenCalledTimes(1);
     expect(f.client.exec.mock.calls[0][0]).toBe("sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C /usr/bin/timeout --signal=TERM --kill-after=1s 8s /bin/bash --noprofile --norc -s");
-    expect(f.stream.end).toHaveBeenCalledWith(buildReadOnlyHostDiscoveryScript(inspectInput.connectionId));
+    expect(f.stream.end).toHaveBeenCalledWith(buildReadOnlyHostDiscoveryScript(inspectInput.connectionId,"provider-guest"));
     f.stream.emit("data",Buffer.from("facts"));f.stream.stderr.emit("data",Buffer.from("private diagnostic"));f.stream.emit("close",0);
     await expect(f.pending).resolves.toMatchObject({hostVerified:true,administratorAuthenticated:true,output:"facts"});
     expect(f.client.destroy).toHaveBeenCalledTimes(1);
@@ -475,7 +494,7 @@ it("executes the exact probe protocol over a real local SSH channel, without exe
         commands++;const stream=acceptExec(),chunks:Buffer[]=[];
         stream.on("data",(chunk:Buffer)=>chunks.push(chunk));
         stream.on("end",()=>{
-          if(Buffer.concat(chunks).toString()!==buildReadOnlyHostDiscoveryScript(connectionId)){stream.exit(1);stream.end();return;}
+          if(Buffer.concat(chunks).toString()!==buildReadOnlyHostDiscoveryScript(connectionId,"provider-guest")){stream.exit(1);stream.end();return;}
           scripts++;stream.write(guestDiscoveryOutput());stream.exit(0);stream.end();
         });
       });

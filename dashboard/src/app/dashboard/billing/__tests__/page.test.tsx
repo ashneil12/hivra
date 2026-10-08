@@ -766,9 +766,9 @@ describe("BillingPage", () => {
     it("says how each plan differs from yours in words, not as a bare signed number", async () => {
       render(<BillingPage />);
       fireEvent.click(await screen.findByRole("tab", { name: "Plans" }));
+      // The free account shows no compute rows, so it has nothing to compare.
       const free = (await screen.findByRole("heading", { name: "Free" })).closest("article") as HTMLElement;
-      expect(within(free).getByText("(−3.5 vs yours)")).toBeInTheDocument();
-      expect(within(free).getByText("(−7 GB vs yours)")).toBeInTheDocument();
+      expect(within(free).queryByText(/vs yours/)).not.toBeInTheDocument();
       const pro = screen.getByRole("heading", { name: "Pro" }).closest("article") as HTMLElement;
       expect(within(pro).getByText("(−4 GB vs yours)")).toBeInTheDocument();
     });
@@ -1629,6 +1629,72 @@ describe("BillingPage", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/billing/token-holding", { method: "POST" });
   });
 
+  it("asks the owner to confirm it's them when verifying a wallet needs it, then retries the same signed request", async () => {
+    type Fetcher = (...args: unknown[]) => Promise<unknown>;
+    const clerk = jest.requireMock("@clerk/nextjs") as { useReverification: (fetcher: Fetcher) => Fetcher };
+    const passthrough = clerk.useReverification;
+    let prompts = 0;
+    // Clerk's useReverification, faithfully enough: a reverification answer
+    // opens the "confirm it's you" dialog, then the request is retried.
+    clerk.useReverification = (fetcher) => async (...args) => {
+      const first = (await fetcher(...args)) as { clerk_error?: { reason?: string } } | undefined;
+      if (first?.clerk_error?.reason !== "reverification-error") return first;
+      prompts += 1;
+      return fetcher(...args);
+    };
+    try {
+      tokenHoldingData = {
+        token: { chainId: 8453, tokenAddress: HERMESOS_CONTRACT, tokenSymbol: "Hivra", minimumBalanceDisplay: "1" },
+        wallet: null,
+        snapshot: null,
+        entitlement: { verified: false, qualifiesBaseTier: false },
+      };
+      tokenRefreshData = {
+        token: { chainId: 8453, tokenAddress: HERMESOS_CONTRACT, tokenSymbol: "Hivra", minimumBalanceDisplay: "1" },
+        refresh: {
+          status: "refreshed",
+          snapshot: { id: "snapshot_2", balanceDisplay: "2", qualifiesBaseTier: true, checkedAt: "2026-04-24T12:05:00.000Z" },
+        },
+        entitlement: { verified: true, qualifiesBaseTier: true },
+      };
+      const baseFetch = fetchMock.getMockImplementation()!;
+      let verifyCalls = 0;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/wallet/verify")) {
+          verifyCalls += 1;
+          if (verifyCalls === 1) {
+            return Promise.resolve(apiResponse(
+              { clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } } },
+              { ok: false, status: 403 },
+            ));
+          }
+        }
+        return baseFetch(input, init);
+      });
+      (window as unknown as { ethereum?: { request: jest.Mock } }).ethereum = {
+        request: jest.fn()
+          .mockResolvedValueOnce(["0x000000000000000000000000000000000000dEaD"])
+          .mockResolvedValueOnce("0xsigned"),
+      };
+
+      render(<BillingPage />);
+      await openTab("Payment methods");
+      await waitFor(() => {
+        expect(screen.getByText(/no verified wallet/i)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /connect wallet/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("0x000000000000000000000000000000000000dead")).toBeInTheDocument();
+      });
+      expect(prompts).toBe(1);
+      expect(verifyCalls).toBe(2);
+    } finally {
+      clerk.useReverification = passthrough;
+    }
+  });
+
   it("asks the wallet for accounts on billing even when the provider reports disconnected before permission", async () => {
     tokenHoldingData = {
       token: {
@@ -2104,10 +2170,28 @@ describe("BillingPage", () => {
     render(<BillingPage />);
 
     const free = await screen.findByRole("article", { name: "Free" });
-    expect(free).toHaveTextContent("start without a bill");
+    expect(free).toHaveTextContent("free to use. bring your own computer");
+    expect(free).not.toHaveTextContent(/vCPU|Memory|Sleeps after/);
     expect(free).not.toHaveTextContent(/Power/);
-    expect(within(free).getByRole("button", { name: "Start free" })).toBeInTheDocument();
+    expect(within(free).getByRole("button", { name: "Use the free account" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Power" })).toHaveTextContent("Most popular");
+  });
+
+  it("shows an account-only Free plate with no hardware or idle-sleep rule when it holds no computer", async () => {
+    usageData = {
+      subscribed: true,
+      plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
+      usage: { agentCount: 0, maxAgents: 1, usedCpu: 0, totalCpu: 0.5, usedRam: 0, totalRam: 1024, instances: [] },
+      credits: { balance: 0, monthlyGrant: 0, unit: "100 credits = $1" },
+    };
+
+    render(<BillingPage />);
+
+    const plate = await screen.findByRole("region", { name: "Free" });
+    expect(within(plate).getByText("Your own")).toBeInTheDocument();
+    expect(within(plate).getByText("Run by Hivra")).toBeInTheDocument();
+    expect(plate).not.toHaveTextContent(/vCPU|Memory|Sleeps after|idle|0\.5/i);
+    expect(within(plate).queryByRole("meter")).not.toBeInTheDocument();
   });
 
   it("switches card prices to yearly with computed savings and checks out yearly", async () => {

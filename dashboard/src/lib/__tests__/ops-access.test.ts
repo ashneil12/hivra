@@ -1,4 +1,31 @@
-import { isOpsAdminUser } from '../ops-access';
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from '../ops-access';
+
+describe('verifiedPrimaryEmailOf', () => {
+  it('returns the primary email when Clerk has verified it', () => {
+    expect(
+      verifiedPrimaryEmailOf({
+        primaryEmailAddress: { emailAddress: ' Admin@Example.com ', verification: { status: 'verified' } },
+      }),
+    ).toBe('Admin@Example.com');
+  });
+
+  it.each([
+    ['unverified', { emailAddress: 'a@example.com', verification: { status: 'unverified' } }],
+    ['transferable', { emailAddress: 'a@example.com', verification: { status: 'transferable' } }],
+    ['no verification record', { emailAddress: 'a@example.com' }],
+    ['null verification', { emailAddress: 'a@example.com', verification: null }],
+    ['an empty address', { emailAddress: '  ', verification: { status: 'verified' } }],
+  ])('returns null for a primary email with %s', (_label, primary) => {
+    expect(verifiedPrimaryEmailOf({ primaryEmailAddress: primary })).toBeNull();
+  });
+
+  it('returns null when there is no primary email, whatever other addresses exist', () => {
+    const user = { emailAddresses: [{ emailAddress: 'a@example.com', verification: { status: 'verified' } }] };
+    expect(verifiedPrimaryEmailOf(user as never)).toBeNull();
+    expect(verifiedPrimaryEmailOf(null)).toBeNull();
+    expect(verifiedPrimaryEmailOf(undefined)).toBeNull();
+  });
+});
 
 describe('isOpsAdminUser', () => {
   const originalAdminEmails = process.env.OPS_ADMIN_EMAILS;

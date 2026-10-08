@@ -36,6 +36,13 @@ import { article as openclawBrokenAfterUpdate } from "./blog/articles/openclaw-b
 import { article as unattendedAgentSafety } from "./blog/articles/is-it-safe-to-leave-an-ai-agent-running-unattended";
 import { article as aiAgentGpuRequirements } from "./blog/articles/do-you-need-a-gpu-to-run-an-ai-agent";
 import { article as controlClaudeCodeFromTelegram } from "./blog/articles/control-claude-code-from-telegram";
+import { article as claudeCodeRemoteControl } from "./blog/articles/claude-code-remote-control";
+import { article as claudeMaxVsProForClaudeCode } from "./blog/articles/claude-max-vs-pro-for-claude-code";
+import { article as claudeCodeDangerouslySkipPermissions } from "./blog/articles/claude-code-dangerously-skip-permissions";
+import { article as codexPricingByChatgptPlan } from "./blog/articles/codex-pricing-by-chatgpt-plan";
+import { article as codexResumeSession } from "./blog/articles/codex-resume-session";
+import { article as cursorCloudAgents } from "./blog/articles/cursor-cloud-agents";
+import { article as cursorVsClaudeCode } from "./blog/articles/cursor-vs-claude-code";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -76,6 +83,13 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "is-it-safe-to-leave-an-ai-agent-running-unattended": unattendedAgentSafety,
   "do-you-need-a-gpu-to-run-an-ai-agent": aiAgentGpuRequirements,
   "control-claude-code-from-telegram": controlClaudeCodeFromTelegram,
+  "claude-code-remote-control": claudeCodeRemoteControl,
+  "claude-max-vs-pro-for-claude-code": claudeMaxVsProForClaudeCode,
+  "claude-code-dangerously-skip-permissions": claudeCodeDangerouslySkipPermissions,
+  "codex-pricing-by-chatgpt-plan": codexPricingByChatgptPlan,
+  "codex-resume-session": codexResumeSession,
+  "cursor-cloud-agents": cursorCloudAgents,
+  "cursor-vs-claude-code": cursorVsClaudeCode,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

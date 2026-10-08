@@ -235,6 +235,28 @@ describe("POST /api/billing/bankr/wallet/withdraw", () => {
     expect(mockWithdrawAll).not.toHaveBeenCalled();
   });
 
+  it("keys the withdraw limit on the user alone, so client address headers cannot reset it", async () => {
+    mockEnforceRateLimit.mockReturnValue({ success: false });
+    const spoofedHeaders: Array<Record<string, string>> = [
+      { "cf-connecting-ip": "198.51.100.31" },
+      { "cf-connecting-ip": "198.51.100.32" },
+      { "x-real-ip": "198.51.100.33" },
+    ];
+    for (const headers of spoofedHeaders) {
+      const request = new Request("http://localhost/api/billing/bankr/wallet/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: "{}",
+      }) as unknown as NextRequest;
+      expect((await POST(request)).status).toBe(429);
+    }
+    mockEnforceRateLimit.mockReturnValue({ success: true });
+
+    const keys = mockEnforceRateLimit.mock.calls.map((call) => (call as unknown[])[0]);
+    expect(keys).toEqual(["withdraw:user_a", "withdraw:user_a", "withdraw:user_a"]);
+    expect(mockWithdrawAll).not.toHaveBeenCalled();
+  });
+
   it("rejects a second concurrent POST with 409 instead of double-submitting", async () => {
     // Pause the underlying withdraw so we can fire two POSTs while the
     // first is in flight. The second must short-circuit on the in-flight

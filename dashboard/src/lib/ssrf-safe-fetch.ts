@@ -117,6 +117,10 @@ export async function ssrfSafeFetch(
   options: RequestInit = {},
 ): Promise<Response> {
   return fetch(url, {
+    // A redirect would hand the request to a host that nobody validated with
+    // checkOutboundUrlSafety, so redirects are not followed unless a caller asks
+    // for it (every caller today passes "manual" itself).
+    redirect: "manual",
     ...(options as RequestInitWithDispatcher),
     dispatcher: (options as RequestInitWithDispatcher).dispatcher ?? ssrfSafeAgent,
   } as RequestInitWithDispatcher);
@@ -125,5 +129,5 @@ export async function ssrfSafeFetch(
 export async function directSslipSafeFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const parsed = new URL(url);
   if (!directSslipAddress(parsed.hostname)) throw new Error("direct_sslip_address_invalid");
-  return fetch(url, { ...(options as RequestInitWithDispatcher), dispatcher: directSslipSafeAgent } as RequestInitWithDispatcher);
+  return fetch(url, { redirect: "manual", ...(options as RequestInitWithDispatcher), dispatcher: directSslipSafeAgent } as RequestInitWithDispatcher);
 }

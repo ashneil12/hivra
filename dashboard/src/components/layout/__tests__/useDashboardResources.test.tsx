@@ -81,23 +81,27 @@ describe('useDashboardResources', () => {
   it('reads each list once for a Home load, whoever asks, and again only when asked', async () => {
     const fetchMock = jest.fn((url) => Promise.resolve(response(url === '/api/instances?summary=true' ? hermes : hivra)));
     global.fetch = fetchMock as jest.Mock;
+    // Home also reads the agents added to computers, its own list; the sidebar never does.
+    const lists = () => fetchMock.mock.calls.map(([url]) => url).filter((url) => url !== '/api/hivra/attached-agents');
+    const attachedReads = () => fetchMock.mock.calls.filter(([url]) => url === '/api/hivra/attached-agents').length;
     const sidebar = renderHook(({ route }) => useDashboardResources('one', route), { initialProps: { route: '/dashboard' } });
     const home = renderHook(() => useWorkspaceAgents(), { wrapper: ownedBy('one') });
     await waitFor(() => expect(sidebar.result.current.loading).toBe(false));
     await waitFor(() => expect(home.result.current.loading).toBe(false));
-    expect(fetchMock.mock.calls.map(([url]) => url).sort()).toEqual(['/api/hivra/agents', '/api/instances?summary=true']);
+    expect(lists().sort()).toEqual(['/api/hivra/agents', '/api/instances?summary=true']);
+    expect(attachedReads()).toBe(1);
     expect(home.result.current.agents.map((agent) => agent.uid).sort()).toEqual(['h-writer', 'x-desktop']);
 
     // Moving to a resource the lists already hold reuses them.
     sidebar.rerender({ route: '/dashboard/agent/desktop' });
     await waitFor(() => expect(sidebar.result.current.loading).toBe(false));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(lists()).toHaveLength(2);
 
     // Refresh reads both again, and Home sees the new lists too.
     fetchMock.mockImplementation((url) => Promise.resolve(response(url === '/api/instances?summary=true' ? [] : hivra)));
     act(() => sidebar.result.current.refresh());
     await waitFor(() => expect(home.result.current.agents.map((agent) => agent.uid)).toEqual(['x-desktop']));
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(lists()).toHaveLength(4);
 
     // Back to Home with the lists fresh: Home still reads once, as it offers
     // to continue in an agent, and the sidebar shares that read.
@@ -105,7 +109,8 @@ describe('useDashboardResources', () => {
     sidebar.rerender({ route: '/dashboard' });
     const again = renderHook(() => useWorkspaceAgents(), { wrapper: ownedBy('one') });
     await waitFor(() => expect(again.result.current.loading).toBe(false));
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(lists()).toHaveLength(6);
+    expect(attachedReads()).toBe(2);
   });
 
   // A delete, stop or rename made on a page: the list the sidebar shows is read

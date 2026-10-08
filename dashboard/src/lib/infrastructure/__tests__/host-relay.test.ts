@@ -16,6 +16,7 @@ import {
   openRelaySocket,
   revokeRelayConnector,
 } from "../host-relay";
+import { generateVerifiedEd25519SshKeyPair } from "../ed25519-ssh-key";
 
 const SECRET = "test-relay-secret-with-at-least-32-characters";
 const HOST = "11111111-1111-4111-8111-111111111111";
@@ -66,9 +67,16 @@ async function fakeRelay(target: () => number): Promise<FakeRelay> {
   });
 }
 
+// ssh2's own Ed25519 generator makes a key it can't parse about 1 time in 256
+// (a leading zero byte, see ed25519-ssh-key.ts); the verified generator skips those.
+function ed25519Pair() {
+  const pair = generateVerifiedEd25519SshKeyPair("host-relay-test");
+  return { private: pair.privateKeyOpenSsh, public: pair.publicKeyOpenSsh };
+}
+
 /** A real SSH server that accepts one key and answers `echo`. */
 async function sshServer(authorizedKey: { getPublicSSH(): Buffer }): Promise<{ port: number; hostKey: string; server: NetServer }> {
-  const host = sshUtils.generateKeyPairSync("ed25519");
+  const host = ed25519Pair();
   const server = new SshServer({ hostKeys: [host.private] }, (client) => {
     // A client that rejects the host key ends the handshake; that is expected here.
     client.on("error", () => undefined);
@@ -97,10 +105,10 @@ async function sshServer(authorizedKey: { getPublicSSH(): Buffer }): Promise<{ p
 
 let relay: FakeRelay;
 let ssh: Awaited<ReturnType<typeof sshServer>>;
-let clientKey: ReturnType<typeof sshUtils.generateKeyPairSync>;
+let clientKey: ReturnType<typeof ed25519Pair>;
 
 beforeAll(async () => {
-  clientKey = sshUtils.generateKeyPairSync("ed25519");
+  clientKey = ed25519Pair();
   const parsed = sshUtils.parseKey(clientKey.public);
   ssh = await sshServer((Array.isArray(parsed) ? parsed[0] : parsed) as { getPublicSSH(): Buffer });
   relay = await fakeRelay(() => ssh.port);

@@ -13,7 +13,7 @@ const DESCRIPTION = "Ash on AI, accountability, Christian faith, and why the lim
 export const metadata: Metadata = { title: TITLE, description: DESCRIPTION, ...buildWebsiteMetadata({ path: "/why-hivra", title: TITLE, description: DESCRIPTION }) };
 export default function WhyHivraPage() {
   const source = readFileSync(path.join(process.cwd(), "public/THOUGHTS.md"), "utf8");
-  const introduction = "The platform is Apache 2.0. Self-hosting needs no token and no account, and card payment works everywhere. None of what follows is a condition of using Hivra.";
+  const introduction = "The platform is open source. Self-hosting needs no token and no account, and card payment works everywhere. None of what follows is a condition of using Hivra.";
   const withIntroduction = source.replace("\n\n", `\n\n${introduction}\n\n`);
   return <PublicSite><main id="main-content" className={styles.main}>
     <Breadcrumbs items={[{label: "Why I'm building Hivra"}]} />

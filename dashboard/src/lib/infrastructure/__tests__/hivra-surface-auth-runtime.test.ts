@@ -23,8 +23,11 @@ describe("Hivra guest surface authentication runtime", () => {
   let gateway: http.Server | undefined;
   let upstream: http.Server | undefined;
   let gatewayPort = 0;
+  let upstreamPort = 0;
   let upstreamUpgradeCount = 0;
   const sockets = new Set<Socket>();
+  // Every evaluation of the guest module is one gateway process lifetime.
+  const extraGateways: http.Server[] = [];
 
   function trackSockets(server: http.Server) {
     server.on("connection", (socket) => {
@@ -46,14 +49,78 @@ describe("Hivra guest surface authentication runtime", () => {
     });
   }
 
+  // Evaluate the complete, unmodified guest module. Only filesystem and
+  // process creation are isolated; requests, routing, crypto, cookies, and
+  // WebSocket handshakes exercise the real server on ephemeral loopback ports.
+  // Do not inherit process.env or read the developer's HOME/credentials.
+  // The fixture offers no sign-in store the gateway can trust (no user id, no
+  // ~/.hivra), so sign-ins live in each evaluation only: the fallback a real
+  // gateway uses when its store cannot be saved. Restarts with a saved store
+  // run real processes in hivra-surface-session-store.test.ts.
+  async function evaluateGuest(): Promise<http.Server> {
+    const serverPath = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
+    const source = readFileSync(serverPath, "utf8");
+    const fixtureFs = {
+      readFileSync: (filename: string) => {
+        if (filename === "/home/bux/.hivra/api-token") return FIXTURE_TOKEN;
+        throw Object.assign(new Error("Fixture file does not exist"), { code: "ENOENT" });
+      },
+    };
+    const rejectProcess = () => { throw new Error("Auth tests must not start a real agent or shell"); };
+    let created: http.Server | undefined;
+    vm.runInNewContext(source, {
+      require: (name: string) => {
+        switch (name) {
+          case "http":
+            return {
+              ...http,
+              createServer: (handler: http.RequestListener) => {
+                created = http.createServer(handler);
+                trackSockets(created);
+                return created;
+              },
+            };
+          case "fs": return fixtureFs;
+          case "path": return path;
+          case "child_process": return { spawn: rejectProcess, execFile: rejectProcess };
+          case "net": return net;
+          case "crypto": return crypto;
+          case "./llm-application.js": return createRequire(serverPath)(name);
+          case "./guarded-files.cjs":
+          case "./agent-zero-editor.cjs":
+          // Loaded for chat runtimes; it touches the disk only when a run starts.
+          case "./chat-runs.cjs": return createRequire(serverPath)(name);
+          default: throw new Error(`Unexpected guest dependency: ${name}`);
+        }
+      },
+      process: {
+        env: {
+          HIVRA_CHAT_PORT: "0",
+          HIVRA_AGENT_KIND: "generic",
+          AEON_DASHBOARD_PORT: String(upstreamPort),
+        },
+      },
+      __dirname: path.dirname(serverPath),
+      console: { log: () => undefined, warn: () => undefined, error: () => undefined },
+      Buffer,
+      URL,
+      URLSearchParams,
+      setTimeout,
+      clearTimeout,
+    }, { filename: serverPath, timeout: 2_000 });
+    if (!created) throw new Error("Guest did not create its HTTP server");
+    if (!created.listening) await once(created, "listening");
+    return created;
+  }
+
   function request(
     pathname: string,
-    options: { method?: string; headers?: OutgoingHttpHeaders; body?: string } = {},
+    options: { method?: string; headers?: OutgoingHttpHeaders; body?: string; port?: number } = {},
   ): Promise<HttpResult> {
     return new Promise((resolve, reject) => {
       const req = http.request({
         hostname: "127.0.0.1",
-        port: gatewayPort,
+        port: options.port ?? gatewayPort,
         path: pathname,
         method: options.method ?? "GET",
         agent: false,
@@ -104,8 +171,9 @@ describe("Hivra guest surface authentication runtime", () => {
     });
   }
 
-  function bootstrap(destination = "/aeon/?view=compact", token = FIXTURE_TOKEN) {
+  function bootstrap(destination = "/aeon/?view=compact", token = FIXTURE_TOKEN, port?: number) {
     return request("/auth/bootstrap", {
+      port,
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -142,70 +210,14 @@ describe("Hivra guest surface authentication runtime", () => {
         `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
       );
     });
-    const upstreamPort = await listen(upstream);
-    const serverPath = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
-    const source = readFileSync(serverPath, "utf8");
-    const fixtureFs = {
-      readFileSync: (filename: string) => {
-        if (filename === "/home/bux/.hivra/api-token") return FIXTURE_TOKEN;
-        throw Object.assign(new Error("Fixture file does not exist"), { code: "ENOENT" });
-      },
-    };
-    const rejectProcess = () => { throw new Error("Auth tests must not start a real agent or shell"); };
-
-    // Evaluate the complete, unmodified guest module. Only filesystem and
-    // process creation are isolated; requests, routing, crypto, cookies, and
-    // WebSocket handshakes exercise the real server on ephemeral loopback ports.
-    // Do not inherit process.env or read the developer's HOME/credentials.
-    vm.runInNewContext(source, {
-      require: (name: string) => {
-        switch (name) {
-          case "http":
-            return {
-              ...http,
-              createServer: (handler: http.RequestListener) => {
-                gateway = http.createServer(handler);
-                trackSockets(gateway);
-                return gateway;
-              },
-            };
-          case "fs": return fixtureFs;
-          case "path": return path;
-          case "child_process": return { spawn: rejectProcess, execFile: rejectProcess };
-          case "net": return net;
-          case "crypto": return crypto;
-          case "./llm-application.js": return createRequire(serverPath)(name);
-          case "./guarded-files.cjs":
-          case "./agent-zero-editor.cjs":
-          // Loaded for chat runtimes; it touches the disk only when a run starts.
-          case "./chat-runs.cjs": return createRequire(serverPath)(name);
-          default: throw new Error(`Unexpected guest dependency: ${name}`);
-        }
-      },
-      process: {
-        env: {
-          HIVRA_CHAT_PORT: "0",
-          HIVRA_AGENT_KIND: "generic",
-          AEON_DASHBOARD_PORT: String(upstreamPort),
-        },
-      },
-      __dirname: path.dirname(serverPath),
-      console: { log: () => undefined, warn: () => undefined, error: () => undefined },
-      Buffer,
-      URL,
-      URLSearchParams,
-      setTimeout,
-      clearTimeout,
-    }, { filename: serverPath, timeout: 2_000 });
-
-    if (!gateway) throw new Error("Guest did not create its HTTP server");
-    if (!gateway.listening) await once(gateway, "listening");
+    upstreamPort = await listen(upstream);
+    gateway = await evaluateGuest();
     gatewayPort = (gateway.address() as AddressInfo).port;
   });
 
   afterAll(async () => {
     for (const socket of sockets) socket.destroy();
-    await Promise.all([close(gateway), close(upstream)]);
+    await Promise.all([close(gateway), close(upstream), ...extraGateways.map(close)]);
   });
 
   it("advertises POST-cookie surface auth on the public capability endpoint", async () => {
@@ -217,6 +229,42 @@ describe("Hivra guest surface authentication runtime", () => {
     });
     expect(result.headers["access-control-allow-origin"]).toBe("*");
     expect(result.body).not.toContain(FIXTURE_TOKEN);
+  });
+
+  it("advertises one stable, uncached bootId (the sign-in epoch) while the gateway runs", async () => {
+    const first = await request("/api/meta");
+    const second = await request("/api/meta");
+    const bootId = JSON.parse(first.body).bootId;
+    expect(bootId).toMatch(/^[a-f0-9]{32}$/);
+    expect(JSON.parse(second.body).bootId).toBe(bootId);
+    expect(first.headers["cache-control"]).toBe("no-store");
+    // Public metadata: the identity is not the bearer and not a session.
+    expect(FIXTURE_TOKEN).not.toContain(bootId);
+    const cookie = await sessionCookie();
+    expect(cookie).not.toContain(bootId);
+  });
+
+  it("changes bootId on restart when the sign-ins could not be saved and are gone", async () => {
+    const before = JSON.parse((await request("/api/meta")).body).bootId;
+    const cookie = await sessionCookie();
+    expect((await request("/aeon/", { headers: { Cookie: cookie } })).status).toBe(200);
+
+    // Re-evaluating the module is a fresh gateway process (systemd restart)
+    // with nothing saved from the previous one.
+    const restarted = await evaluateGuest();
+    extraGateways.push(restarted);
+    const port = (restarted.address() as AddressInfo).port;
+    const after = JSON.parse((await request("/api/meta", { port })).body).bootId;
+    expect(after).toMatch(/^[a-f0-9]{32}$/);
+    expect(after).not.toBe(before);
+    // This is the failure the dashboard watches bootId for: the frame's old
+    // cookie is now a 401 until it re-submits its bootstrap form.
+    expect((await request("/aeon/", { port, headers: { Cookie: cookie } })).status).toBe(401);
+    const renewed = await bootstrap("/aeon/", FIXTURE_TOKEN, port);
+    expect(renewed.status).toBe(303);
+    const renewedCookie = renewed.headers["set-cookie"]![0].split(";")[0];
+    expect((await request("/aeon/", { port, headers: { Cookie: renewedCookie } })).status).toBe(200);
+    expect(JSON.parse((await request("/api/meta", { port })).body).bootId).toBe(after);
   });
 
   it("rejects a long-lived bearer in a terminal URL without minting a cookie", async () => {

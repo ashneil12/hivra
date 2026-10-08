@@ -4,6 +4,14 @@ A worked run of [PROD-CUTOVER-PACKET.md](PROD-CUTOVER-PACKET.md). Everything her
 was read-only. It goes stale as soon as `canary` or either database changes;
 recompute with the packet before acting on it.
 
+> **Removal proposed, owner decision pending.** This page records production
+> database state, deployment ids and a rollback target. [The public transition
+> rules](PUBLIC-TRANSITION.md) keep operational inventory outside public Git, so
+> a review proposed removing this file from the public tree once the first
+> production Promote is finished. The owner has not decided yet. Removing a file
+> does not erase earlier public commits. Do not add a new snapshot to this
+> repository. Keep the record of each later recompute in private.
+
 ## Pinned state
 
 | Item | Value |

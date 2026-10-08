@@ -10,7 +10,7 @@ import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { buildAbsoluteSiteUrl, buildWebsiteMetadata } from "@/lib/metadata";
-import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 import styles from "../page.module.css";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
@@ -20,7 +20,7 @@ const SITE_ROOT = buildAbsoluteSiteUrl("/");
 const PAGE_URL = buildAbsoluteSiteUrl(PAGE_PATH);
 const PAGE_TITLE = "Why Hivra? The Evolution of HermesOS";
 const PAGE_DESCRIPTION =
-  "HermesOS (Hermes Agent OS) is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
+  "HermesOS is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
 
 // The $HIVRA copy changes at its activation instant: re-render at least every
 // minute rather than freezing the build-time phase into static HTML.
@@ -58,7 +58,9 @@ const pageSchema = {
       isPartOf: { "@id": `${SITE_ROOT}/#website` },
       about: [
         { "@type": "SoftwareApplication", name: "Hivra", alternateName: "HermesOS" },
-        { "@type": "SoftwareApplication", name: "HermesOS", alternateName: "Hermes Agent OS" },
+        // Hermes Agent is Nous Research's product name, so it is not an alternate
+        // name for HermesOS in markup.
+        { "@type": "SoftwareApplication", name: "HermesOS" },
       ],
     },
   ],
@@ -146,10 +148,11 @@ function SectionShell({
 }
 
 export default function WhyHivraPage() {
-  // Token geo-policy dormant: render exactly as before, without reading the request country.
+  // No country is listed (the list is empty, so the policy is dormant): render
+  // as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) return <WhyHivraContent geoNotice={null} />;
-  // A country is listed: render per request; a blocked viewer doesn't see the
-  // token payment discount.
+  // A country is listed (GB today): render per request; a blocked viewer sees
+  // the notice and the facts, not the token payment discount or the proposal.
   return renderForViewer();
 }
 
@@ -184,7 +187,7 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
 
         <div className={styles.sectionList}>
           <SectionShell number="01" title="Why change the name?">
-            <p>HermesOS (the Hermes Agent OS) was originally built around a single agent ecosystem.</p>
+            <p>HermesOS was originally built around a single agent ecosystem.</p>
             <p>Today the platform is expanding to support multiple AI workers, frameworks, and deployment types.</p>
             <p>The future of the platform is not one agent.</p>
             <p>It is networks of specialised agents working together.</p>
@@ -214,18 +217,18 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
                 </ul>
               </>
             )}
-            <div className={styles.sameTokenBox}>
-              <p>{tokenCopy.hivraStatus}</p>
-              {geoNotice ? null : (
-                <>
-                  {tokenCopy.hivraDetails.map((line) => (
-                    <p key={line}>{line}</p>
-                  ))}
-                </>
-              )}
-            </div>
+            {/* A blocked viewer reads no $HIVRA status or proposal line here: the notice above and the
+                token page link below are what stays (RESTRICTED_TOKEN_PAGE_COPY). */}
+            {geoNotice ? null : (
+              <div className={styles.sameTokenBox}>
+                <p>{tokenCopy.hivraStatus}</p>
+                {tokenCopy.hivraDetails.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            )}
             <p>
-              {tokenCopy.addressNote}{" "}
+              {geoNotice ? RESTRICTED_TOKEN_PAGE_COPY.evolutionAddressNote : tokenCopy.addressNote}{" "}
               <Link href="/token">token page</Link>.
             </p>
           </SectionShell>
@@ -282,7 +285,7 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
             <p>Simple version:</p>
             <div className={styles.relationshipBox}>
               <p>Hivra is the platform.</p>
-              <p>{tokenCopy.relationship}</p>
+              {geoNotice ? null : <p>{tokenCopy.relationship}</p>}
             </div>
             <p>The platform became bigger than its original name.</p>
             <p>The vision expanded.</p>

@@ -7,6 +7,7 @@ import { InfrastructureConnectionStoreError } from "../connection-store";
 import { HetznerCloudCapacityQuoteDtoSchema } from "../contracts";
 import type { StoredHetznerCloudCapacityOrder } from "../hetzner-cloud-store";
 import { createHetznerCreationReceipt } from "../hetzner-creation-receipt";
+import { generateVerifiedEd25519SshKeyPair } from "../ed25519-ssh-key";
 import { FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
 import {
   connectHetznerCloudProject,
@@ -689,13 +690,18 @@ describe("self-managed Hetzner Cloud connection service", () => {
   });
 
   it("rejects a malformed ssh2 Ed25519 serialization and samples a verified pair before any provider work", () => {
-    const originalGenerate = ssh2Utils.generateKeyPairSync;
+    // A pre-verified pair keeps the second sample deterministic: the real
+    // generator is itself rejected about 1 time in 256 (leading zero byte).
+    const knownGood = generateVerifiedEd25519SshKeyPair("hivra-capacity");
     const generate = jest.spyOn(ssh2Utils, "generateKeyPairSync")
       .mockReturnValueOnce({
         private: "malformed private key",
         public: "ssh-ed25519 malformed hivra-capacity",
       })
-      .mockImplementation(originalGenerate);
+      .mockReturnValueOnce({ private: knownGood.privateKeyOpenSsh, public: knownGood.publicKeyOpenSsh })
+      .mockImplementation(() => {
+        throw new Error("unexpected third Ed25519 sample");
+      });
 
     try {
       const bundle = generateHetznerBootstrapBundle({
@@ -707,8 +713,8 @@ describe("self-managed Hetzner Cloud connection service", () => {
       });
 
       expect(generate).toHaveBeenCalledTimes(2);
-      expect(ssh2Utils.parseKey(bundle.privateKeyOpenSsh)).not.toBeInstanceOf(Error);
-      expect(ssh2Utils.parseKey(bundle.publicKeyOpenSsh)).not.toBeInstanceOf(Error);
+      expect(bundle.privateKeyOpenSsh).toBe(knownGood.privateKeyOpenSsh);
+      expect(bundle.publicKeyOpenSsh).toBe(knownGood.publicKeyOpenSsh);
     } finally {
       generate.mockRestore();
     }

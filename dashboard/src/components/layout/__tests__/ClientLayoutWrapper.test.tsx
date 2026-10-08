@@ -80,6 +80,12 @@ describe('ClientLayoutWrapper', () => {
     delete host.webkit;
   });
 
+  it('shows the account code the server setup script names in the account menu (T5)', () => {
+    render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
+    // accountCode("user_123"), the same fixed vector as account-code.test.ts.
+    expect(screen.getAllByText('Account code QJK7-53FK').length).toBeGreaterThan(0);
+  });
+
   it('uses native chrome only when both injected capabilities are present, with one metadata source', () => {
     const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown; webkit?: unknown };
     host.__HIVRA_NATIVE_WORKSPACE__ = { version: 1 };

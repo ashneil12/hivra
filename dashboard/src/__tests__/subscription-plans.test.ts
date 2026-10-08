@@ -1,4 +1,4 @@
-import { PLANS, getPlan, getStripePriceId, formatPrice, ACTIVE_PLAN_KEYS, getTrialDays } from '@/lib/subscription';
+import { PLANS, getPlan, getStripePriceId, formatPrice, ACTIVE_PLAN_KEYS } from '@/lib/subscription';
 
 describe('Subscription Plans', () => {
   describe('PLANS', () => {
@@ -60,13 +60,19 @@ describe('Subscription Plans', () => {
           expect(copy).not.toMatch(pattern);
         }
 
-        expect(plan.specs.agents).toContain(String(plan.maxAgents));
+        // The free account holds no Hivra-run computer, so its specs name none.
+        if (plan.name !== "Free") expect(plan.specs.agents).toContain(String(plan.maxAgents));
       }
     });
 
     it('names active-agent counts in sellable plan descriptions', () => {
       for (const key of ACTIVE_PLAN_KEYS) {
         const plan = PLANS[key];
+        if (key === "free") {
+          expect(plan.description).toMatch(/own computer/i);
+          expect(plan.description).toMatch(/paid plan/i);
+          continue;
+        }
         expect(plan.description).toMatch(new RegExp(`\\b${plan.maxAgents}\\b`));
         expect(plan.description).toMatch(/active agent/i);
       }
@@ -153,20 +159,11 @@ describe('Subscription Plans', () => {
     });
   });
 
-  describe('trial days', () => {
-    it('operator has no trial', () => {
-      expect(PLANS.operator.trialDays).toBe(0);
-      expect(getTrialDays('operator')).toBe(0);
-    });
-
-    it('fleet has no trial', () => {
-      expect(PLANS.fleet.trialDays).toBe(0);
-      expect(getTrialDays('fleet')).toBe(0);
-    });
-
-    it('command has no trial', () => {
-      expect(PLANS.command.trialDays).toBe(0);
-      expect(getTrialDays('command')).toBe(0);
+  describe('no trials', () => {
+    it('no plan carries a trial field', () => {
+      for (const plan of Object.values(PLANS)) {
+        expect(plan).not.toHaveProperty('trialDays');
+      }
     });
   });
 });

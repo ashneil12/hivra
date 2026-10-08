@@ -20,13 +20,14 @@ import {
   buildResolveAgentContainerScript,
   buildResolveGatewayContainerScript,
 } from "@/lib/services/agent-container";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { buildComposioMcpServerEntry, getUserComposioKey } from "@/lib/composio/connect";
 import {
   readCurrentComposioEntry,
   type ComposioMcpServerEntry,
 } from "@/lib/composio/mcp-server";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
 
 export type ComposioSyncResult =
   | { applied: false; reason: "composio_disabled" | "no_public_ipv4" }
@@ -86,6 +87,7 @@ else:
 
 async function mergeComposioOverSsh(params: {
   ip: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   containerName: string;
   hermesHomeDir: string;
   entry: ComposioMcpServerEntry | null;
@@ -125,7 +127,7 @@ async function mergeComposioOverSsh(params: {
     `printf 'COMPOSIO_SYNC changed=%s restarted=%s\\n' "$CHANGED" "$RESTARTED"`,
   ].join("\n");
 
-  const result = await sshExec(params.ip, command);
+  const result = await sshExec(params.ip, command, params.guestTarget ? { proxmoxHostConfig: params.guestTarget } : {});
   if (!result.ok) {
     const detail = [result.error, result.stderr].filter(Boolean).join(" :: ");
     throw new Error(detail || "SSH composio merge failed");
@@ -134,12 +136,16 @@ async function mergeComposioOverSsh(params: {
   return { changed: /changed=1/.test(stdout), restarted: /restarted=1/.test(stdout) };
 }
 
-async function restartGatewayOverSsh(ip: string, baseContainerName: string): Promise<boolean> {
+async function restartGatewayOverSsh(
+  ip: string,
+  guestTarget: ProxmoxSshHostConfig | null,
+  baseContainerName: string,
+): Promise<boolean> {
   const script = [
     buildResolveGatewayContainerScript(baseContainerName, "GW_CONTAINER"),
     `if [ -n "$GW_CONTAINER" ]; then nohup sh -c "sleep 1 && docker restart $GW_CONTAINER" >/dev/null 2>&1 & echo "COMPOSIO_RESTART=1"; else echo "COMPOSIO_RESTART=0"; fi`,
   ].join("\n");
-  const result = await sshExec(ip, script);
+  const result = await sshExec(ip, script, guestTarget ? { proxmoxHostConfig: guestTarget } : {});
   return result.ok && /COMPOSIO_RESTART=1/.test(result.stdout || "");
 }
 
@@ -173,6 +179,7 @@ export async function syncComposioToInstance(params: {
   const key = await getUserComposioKey(userId);
   const ip = await resolveInstanceIpv4(instance);
   if (!ip) return { applied: false, reason: "no_public_ipv4" };
+  const guestTarget = getHermesGuestSshTarget(instance);
 
   const containerName = `agent-${sanitizeDockerName(instanceId)}`;
   const hermesHomeDir = resolveHermesHomeDirFromConfig(
@@ -189,6 +196,7 @@ export async function syncComposioToInstance(params: {
     // entry is deterministic and the merge already no-ops on an unchanged entry.
     const { changed, restarted } = await mergeComposioOverSsh({
       ip,
+      guestTarget,
       containerName,
       hermesHomeDir,
       entry: desiredEntry, // null → strip (no key); object → set
@@ -219,12 +227,13 @@ export async function syncComposioToInstance(params: {
     containerName,
     hermesHomeDir,
     ip,
+    guestTarget,
     instanceId,
     userId,
     composioEntry: desiredEntry, // null strips, object sets
   });
 
-  const restarted = restartOnChange ? await restartGatewayOverSsh(ip, containerName) : false;
+  const restarted = restartOnChange ? await restartGatewayOverSsh(ip, guestTarget, containerName) : false;
   return { applied: true, backend: "agent", changed: true, restarted };
 }
 

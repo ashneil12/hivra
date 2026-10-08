@@ -13,7 +13,7 @@ export interface BannedClaim {
 }
 
 export const BANNED_CLAIMS: BannedClaim[] = [
-  { pattern: /free trial|trial period|7-day trial|\btrial\b/i, why: "No plan has a trial (plans.ts trialDays 0)." },
+  { pattern: /free trial|trial period|7-day trial|\btrial\b/i, why: "No plan has a trial." },
   { pattern: /card required|no card|credit card required|no credit card/i, why: "No card or no-card trial claims." },
   { pattern: /never sleeps|never log(?:s)? off|never paused(?! for inactivity)/i, why: "Only paid plans stay on; say 'not paused for inactivity'." },
   { pattern: /free tier|free plan|starts at \$0|\$0 for one agent/i, why: "Do not advertise a hosted Free plan." },
@@ -31,6 +31,17 @@ export const BANNED_CLAIMS: BannedClaim[] = [
   { pattern: /sizes (?:are )?(?:on|listed on) the pricing page|current (?:caps|sizes)/i, why: "State the $9.99 and $19.99 sizes inline instead of sending readers elsewhere for them." },
   { pattern: /\$79\b|\$149\b|\/yr\b|per year|yearly plan/i, why: "Do not state a Hivra annual price." },
   { pattern: /[–—]/, why: "No em or en dashes in copy." },
+  // Nothing measured backs an hour count for setting up or keeping a server
+  // running (the compare pages once gave 4-8, 6-8 and 2-8+ hours for the same
+  // job). The hosting cost calculator takes the reader's own hours and rate,
+  // and its live result may show the rate the reader typed, so a bare
+  // "$50/hour" is not scanned here; public-claims.ts scans it on the
+  // /compare and /features pages, where no calculator renders.
+  {
+    pattern:
+      /\b\d+\s*(?:-|to)\s*\d+\+?\s*(?:hours?|hrs?)\b|\b(?:an? hour|\d+ hours?) (?:per|a|each|\/) ?month\b|\b(?:spend|spent) (?:a|the) weekend\b|\b(?:the|a) weekend (?:you|setting|configuring|of)\b|\b(?:full|whole) (?:weekend|afternoon)\b/i,
+    why: "No invented hours for setting up or running a server; the hosting cost calculator takes the reader's own.",
+  },
   // Claude Code and Codex keep-running claims, shared with the blog and /agents:
   // the old survives-anything claims, "stops when you close the tab" and "the
   // browser chat keeps going". Only tmux (or Telegram, on Claude Code) runs are

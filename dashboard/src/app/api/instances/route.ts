@@ -36,6 +36,12 @@ import {
   type ProxmoxInstanceStatus,
 } from "@/lib/services/proxmox-instance-service";
 import { checkProvisioningGate } from "@/lib/abuse/gate";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import {
+  HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
+  HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+  isFreeAccountEntitlement,
+} from "@/lib/billing/hosted-compute";
 import { getRequestContext, type RequestContext } from "@/lib/request-context";
 import {
   buildInstanceLifecyclePatch,
@@ -608,6 +614,22 @@ export async function POST(request: NextRequest) {
     const json = await request.json();
     const fingerprintRequestId =
       typeof json?.fingerprintRequestId === "string" ? json.fingerprintRequestId : null;
+
+    // A Free account never gets a Hivra-hosted computer, so don't walk it
+    // through card verification for one. Checked ahead of the abuse gate;
+    // createInstance enforces the same rule as the final authority.
+    if (json?.productSurface !== "workspace_cloud") {
+      const entitlement = await resolveEffectiveSubscription(userId);
+      if (isFreeAccountEntitlement(entitlement)) {
+        return apiError(
+          HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+          403,
+          { failureType: HOSTED_COMPUTE_REQUIRES_PLAN_CODE },
+          { failureType: HOSTED_COMPUTE_REQUIRES_PLAN_CODE },
+          { ctx, failureType: HOSTED_COMPUTE_REQUIRES_PLAN_CODE, logLevel: "error" }
+        );
+      }
+    }
 
     const user = await currentUser();
     const email =

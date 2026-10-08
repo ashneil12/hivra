@@ -397,7 +397,7 @@ export default function StatusPageContent() {
           textAlign: "center",
         }}
       >
-        Checks run in your browser against public pages only — no account data is
+        Checks run in your browser against public pages only. No account data is
         read and nothing is stored.
       </p>
     </main>

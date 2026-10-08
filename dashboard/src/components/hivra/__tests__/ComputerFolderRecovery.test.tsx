@@ -57,7 +57,7 @@ describe("entered from a computer's Manage tab", () => {
     jest.mocked(listAgents).mockResolvedValue(rows);
     render(<ComputerFolderRecovery />);
     const back = await screen.findByRole("link", { name: "Back to First" });
-    expect(back.getAttribute("href")).toBe(`/dashboard/agent/${first}?tab=manage`);
+    expect(back.getAttribute("href")).toBe(`/dashboard/agent/${first}?tab=manage&section=recovery`);
     expect(screen.queryByRole("link", { name: "Back to computers" })).toBeNull();
   });
 

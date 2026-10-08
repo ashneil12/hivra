@@ -13,6 +13,8 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/ops-access", () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual("@/lib/ops-access"),
   isOpsAdminUser: jest.fn(),
 }));
 
@@ -32,7 +34,7 @@ describe("force-suspend Proxmox import boundary", () => {
     jest.clearAllMocks();
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "admin_user" });
     (currentUser as jest.Mock).mockResolvedValue({
-      primaryEmailAddress: { emailAddress: "ops@example.com" },
+      primaryEmailAddress: { emailAddress: "ops@example.com", verification: { status: "verified" } },
     });
     (isOpsAdminUser as jest.Mock).mockReturnValue(true);
     (shutdownServer as jest.Mock).mockResolvedValue({ action: { id: 1 } });

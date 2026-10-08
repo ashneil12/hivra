@@ -123,7 +123,7 @@ export function HivraCloudCapacityCard({
                     Open <ArrowRight size={13} aria-hidden="true" />
                   </Link>
                   {computer.source === "hivra" ? (
-                    <a href={`/dashboard/agent/${encodeURIComponent(computer.id)}?tab=manage#resources`} aria-label={`Manage resources for ${computer.name}`}>
+                    <a href={`/dashboard/agent/${encodeURIComponent(computer.id)}?tab=manage&section=resources`} aria-label={`Manage resources for ${computer.name}`}>
                       Manage resources
                     </a>
                   ) : null}

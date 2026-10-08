@@ -10,6 +10,7 @@ import {
   HivraLaunchRejectedError,
   confirmProviderResize,
   getProviderResizeState,
+  listBoxSessions,
   ProviderResizeApiError,
   reviewProviderResize,
   resizeAgent,
@@ -17,6 +18,24 @@ import {
   telegramStatus,
   telegramDisconnect,
 } from "../agent-api";
+
+describe("listBoxSessions", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("lists the first-contact welcome conversation as Welcome, never under its hidden prompt", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ sessions: [
+      { id: "00000000-0000-4000-8000-000000000001", title: "This is a hidden Hivra first-contact setup message. Do not mention", updatedAt: 2 },
+      { id: "00000000-0000-4000-8000-000000000002", title: "Plan the week", updatedAt: 1 },
+    ] }) } as Response);
+
+    await expect(listBoxSessions("https://box.example.com", "box-token")).resolves.toEqual([
+      { id: "00000000-0000-4000-8000-000000000001", title: "Welcome", updatedAt: 2 },
+      { id: "00000000-0000-4000-8000-000000000002", title: "Plan the week", updatedAt: 1 },
+    ]);
+  });
+});
 
 describe("resource envelope client", () => {
   const originalFetch = global.fetch;
@@ -195,6 +214,25 @@ describe("createAgent receipt handling", () => {
     expect(outcome).toBeInstanceOf(HivraLaunchCorrectableError);
     expect(outcome).not.toBeInstanceOf(HivraLaunchRejectedError);
     expect(outcome).toMatchObject({ status: 409, code: "target_revision_changed" });
+  });
+
+  // Live on Canary, a launch refused because no host had the current
+  // provisioner read as "We couldn't confirm the launch yet": nothing had
+  // been created, and the launch only needed trying again.
+  it("returns a refusal made before anything was created to Review, even as a 503", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        success: false,
+        error: "Deployment target is temporarily unavailable while the Hivra provisioner is being prepared. Please try again shortly.",
+        code: "placement_unavailable",
+      }),
+    } as Response);
+
+    const outcome = await createAgent(input).catch(error => error);
+    expect(outcome).toBeInstanceOf(HivraLaunchCorrectableError);
+    expect(outcome).toMatchObject({ status: 503, code: "placement_unavailable" });
   });
 
   it("requires a new receipt when the server reports request identity conflict", async () => {

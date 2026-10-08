@@ -11,6 +11,7 @@ import {
   getPublicTailscaleConfig,
 } from "@/lib/private-access/tailscale";
 import {
+  getHermesGuestSshTarget,
   getProxmoxHostRoutingConfigFromInfrastructure,
   getProxmoxInfrastructure,
   type ProxmoxHostRoutingConfig,
@@ -84,7 +85,10 @@ function getInstanceSshOptions(instance: InstanceRow): InstanceSshOptions | unde
   const infrastructure = getProxmoxInfrastructure(instance.config);
   if (!infrastructure) return undefined;
 
-  const proxmoxHostConfig = getProxmoxHostRoutingConfigFromInfrastructure(infrastructure, instance);
+  // Bind to this instance's VMID too: the guest IP alone names a VM on every
+  // host that shares the private prefix.
+  const proxmoxHostConfig =
+    getHermesGuestSshTarget(instance) ?? getProxmoxHostRoutingConfigFromInfrastructure(infrastructure, instance);
 
   return proxmoxHostConfig ? { proxmoxHostConfig } : undefined;
 }

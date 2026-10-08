@@ -11,6 +11,9 @@ const MAX_STORED_SELECTION_LENGTH = 512;
 const SOURCE_QUALIFIED_UID = new RegExp(
   `^[hx]-[A-Za-z0-9][A-Za-z0-9._:-]{0,${MAX_BACKING_ID_LENGTH - 1}}$`,
 );
+/** An agent added to one of the owner's computers: `a-<attachment id>`, a
+ * lowercase UUID. Its backing id is the attachment, not a page id. */
+const ATTACHED_AGENT_UID = /^a-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN_MARKERS = /(?:^|[-_.:])(bearer|token|api[-_]?key|secret|sk[-_]|pk[-_])/i;
 const JWT_LIKE = /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const WORKSPACE_SURFACES = new Set<WorkspaceSurface>([
@@ -46,11 +49,13 @@ function selectedStorage(storage?: SelectionStorage): SelectionStorage | null {
 }
 
 /**
- * A source-qualified uid (`x-` Hivra, `h-` Hermes) that is safe to keep in
+ * A source-qualified uid (`x-` Hivra, `h-` Hermes, `a-` an agent added to a
+ * computer) that is safe to keep in
  * browser storage: bounded, plain characters, and nothing that reads like a
  * credential. Shared with the recents list, which stores the same uids.
  */
 export function isWorkspaceAgentUid(value: unknown): value is string {
+  if (typeof value === "string" && ATTACHED_AGENT_UID.test(value)) return true;
   if (typeof value !== "string" || !SOURCE_QUALIFIED_UID.test(value)) {
     return false;
   }

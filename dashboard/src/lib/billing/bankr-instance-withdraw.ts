@@ -4,7 +4,6 @@ import {
   getBankrWalletForInstance,
   getBankrWalletForOwner,
   instanceBankrWalletPublicSummary,
-  setWithdrawalDestinationForOwner,
   upsertWithdrawalRecipient,
   type BankrWalletOwner,
   type InstanceBankrWalletPublicSummary,
@@ -22,6 +21,10 @@ import {
   parseTokenAmountToRaw,
 } from "@/lib/billing/token-holdings";
 import { submitBankrTransfer } from "@/lib/billing/bankr-withdraw";
+import {
+  withdrawDestinationHeldMessage,
+  withdrawDestinationHeldUntil,
+} from "@/lib/billing/withdraw-destination-policy";
 import { log } from "@/lib/logger";
 
 type JsonRpcFetch = typeof fetch;
@@ -67,8 +70,12 @@ export interface InstanceBankrWithdrawResult {
     | "no_withdrawal_destination"
     | "not_configured"
     | "transfer_failed"
-    | "already_in_flight";
+    | "already_in_flight"
+    | "destination_cooling_down"
+    | "recipient_not_destination";
   txHash?: string | null;
+  /** destination_cooling_down: when the saved destination can first receive funds. */
+  availableAt?: string;
   amountRaw?: string;
   amountDisplay?: string;
   recipientAddress?: string;
@@ -84,6 +91,21 @@ export interface BaseWithdrawalToken {
 
 function claimTable(db: SupabaseLike): ClaimTable {
   return db.from("bankr_withdrawals") as ClaimTable;
+}
+
+/**
+ * A destination saved within the cooldown cannot receive anything yet
+ * (withdraw-destination-policy.ts). Checked before any claim, key or
+ * transfer, so a held withdrawal leaves no trace but the refusal.
+ */
+function destinationHold(record: InstanceBankrWalletRecord): InstanceBankrWithdrawResult | null {
+  const heldUntil = withdrawDestinationHeldUntil(record.withdrawalDestinationSetAt);
+  if (!heldUntil) return null;
+  return {
+    status: "destination_cooling_down",
+    availableAt: heldUntil.toISOString(),
+    errorMessage: withdrawDestinationHeldMessage(heldUntil),
+  };
 }
 
 function withdrawalClaimPayload(
@@ -513,6 +535,9 @@ async function withdrawAssetCore(
     }
   }
 
+  const held = destinationHold(record);
+  if (held) return { ...held, recipientAddress: recipient };
+
   const requestedAmountInput = params.amountDisplay.trim().replace(/,/g, "");
   let requestedAmountRaw: bigint;
   try {
@@ -621,16 +646,15 @@ async function withdrawAssetCore(
 
 async function withdrawBaseTokenCore(
   params: WithdrawCoreParams & {
+    /** Must equal the wallet's saved withdrawal destination. */
     recipientAddress: string | undefined;
     token: BaseWithdrawalToken;
-    setPrimaryRecipient?: boolean;
     loadRecord: LoadWalletRecord;
-    /** Persist the withdrawal destination. Owner lane makes this a no-op
-     *  unless `shouldSetPrimary` (it writes the wallet row directly); the
-     *  instance lane always records recipient history. */
-    persistDestination: (args: {
+    /** After a submitted transfer, record the use of the destination. The
+     *  instance lane counts it in recipient history; the owner lane has no
+     *  history table. A withdrawal never changes the saved destination. */
+    recordRecipientUse?: (args: {
       recipient: string;
-      shouldSetPrimary: boolean;
       db: SupabaseLike | null | undefined;
     }) => Promise<void>;
     persistenceWarning: string;
@@ -656,6 +680,26 @@ async function withdrawBaseTokenCore(
   if (!record || record.userId !== params.userId || record.status !== "active") {
     return { status: "no_wallet" };
   }
+
+  // Funds leave only for the destination the account saved (which needed a
+  // fresh sign-in check and emailed the owner), never an address typed into
+  // this request.
+  if (!record.withdrawalDestinationEvm) {
+    return {
+      status: "no_withdrawal_destination",
+      errorMessage: "Save this agent wallet's withdrawal destination before withdrawing.",
+    };
+  }
+  if (normalizeEvmAddress(record.withdrawalDestinationEvm) !== recipient) {
+    return {
+      status: "recipient_not_destination",
+      errorMessage:
+        "Withdrawals go only to this wallet's saved withdrawal destination. To send somewhere else, change the destination first.",
+    };
+  }
+
+  const held = destinationHold(record);
+  if (held) return { ...held, recipientAddress: recipient };
 
   const requestedAmountInput = params.amountDisplay.trim().replace(/,/g, "");
   let requestedAmountRaw: bigint;
@@ -755,14 +799,9 @@ async function withdrawBaseTokenCore(
     txHash,
   });
 
-  let wallet = instanceBankrWalletPublicSummary(record);
+  const wallet = instanceBankrWalletPublicSummary(record);
   try {
-    const shouldSetPrimary = params.setPrimaryRecipient === true || !record.withdrawalDestinationEvm;
-    await params.persistDestination({ recipient, shouldSetPrimary, db });
-    if (shouldSetPrimary) {
-      const updatedRecord = await params.loadRecord(db);
-      wallet = instanceBankrWalletPublicSummary(updatedRecord ?? record);
-    }
+    await params.recordRecipientUse?.({ recipient, db });
   } catch (err) {
     log.warn(params.persistenceWarning, {
       source: "agent-wallet-withdraw",
@@ -794,10 +833,10 @@ async function withdrawBaseTokenCore(
 export async function withdrawBaseTokenForInstance(params: {
   instanceId: string;
   userId: string;
+  /** Must equal the wallet's saved withdrawal destination. */
   recipientAddress: string;
   amountDisplay: string;
   token: BaseWithdrawalToken;
-  setPrimaryRecipient?: boolean;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   env?: Record<string, string | undefined>;
@@ -808,20 +847,19 @@ export async function withdrawBaseTokenForInstance(params: {
     amountDisplay: params.amountDisplay,
     recipientAddress: params.recipientAddress,
     token: params.token,
-    setPrimaryRecipient: params.setPrimaryRecipient,
     rpcUrl: params.rpcUrl,
     fetchImpl: params.fetchImpl,
     env: params.env,
     db: params.db,
     loadRecord: (db) => getBankrWalletForInstance({ instanceId: params.instanceId, db }),
-    persistDestination: async ({ recipient, shouldSetPrimary, db }) => {
-      // The instance lane ALWAYS records recipient history, even when the
-      // withdraw did not flip the saved destination.
+    recordRecipientUse: async ({ recipient, db }) => {
+      // Count the use in recipient history. Never flips the primary: only
+      // setWithdrawalDestination changes where funds go.
       await upsertWithdrawalRecipient({
         instanceId: params.instanceId,
         userId: params.userId,
         address: recipient,
-        setPrimary: shouldSetPrimary,
+        setPrimary: false,
         db,
       });
     },
@@ -838,26 +876,22 @@ export async function withdrawBaseTokenForInstance(params: {
 // (NOT `getBankrWalletForInstance`). Using the instance-locked resolver for a
 // Hivra agent would drain the WRONG wallet. The instance wrappers above and
 // these owner wrappers share the same cores; the ONLY behavioural differences
-// are (1) wallet resolution is owner-keyed, and (2) post-transfer destination
-// persistence goes to the owner-agnostic
-// `instance_bankr_wallets.withdrawal_destination_evm` column via
-// `setWithdrawalDestinationForOwner` instead of the instance-only
-// `instance_bankr_wallet_recipients` table (whose FK would reject a Hivra box).
+// are (1) wallet resolution is owner-keyed, and (2) no recipient history is
+// recorded after a transfer: the instance-only
+// `instance_bankr_wallet_recipients` table's FK would reject a Hivra box.
 
 type WithdrawForOwnerParams = {
   owner: BankrWalletOwner;
   userId: string;
   /** Optional client echo of the saved destination, checked before transfer. */
   expectedRecipient?: string;
-  /** Required when `token` is supplied; the explicit Base recipient. */
+  /** Required when `token` is supplied; must equal the saved destination. */
   recipientAddress?: string;
   amountDisplay: string;
   /** Convenience asset selector (HERMESOS / ETH) when no explicit token. */
   asset?: InstanceBankrWithdrawAsset;
   /** Explicit Base token (symbol + address + decimals) for arbitrary ERC-20s. */
   token?: BaseWithdrawalToken;
-  /** Persist `recipientAddress` as the saved destination (token shape only). */
-  setPrimaryRecipient?: boolean;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   env?: Record<string, string | undefined>;
@@ -866,10 +900,10 @@ type WithdrawForOwnerParams = {
 
 /**
  * Owner-agnostic withdraw entrypoint. Routes to the explicit-token core when a
- * `token` is supplied (arbitrary Base ERC-20 / native ETH to a caller-supplied
- * recipient), otherwise to the asset core (HERMESOS / ETH to the saved
- * destination). Behaviourally identical to the instance withdraw route's two
- * branches, but wallet resolution + destination persistence are owner-keyed.
+ * `token` is supplied (arbitrary Base ERC-20 / native ETH), otherwise to the
+ * asset core (HERMESOS / ETH). Both send only to the saved destination, once
+ * it is past its cooldown. Behaviourally identical to the instance withdraw
+ * route's two branches, but wallet resolution is owner-keyed.
  */
 export async function withdrawForOwner(
   params: WithdrawForOwnerParams
@@ -883,27 +917,13 @@ export async function withdrawForOwner(
       amountDisplay: params.amountDisplay,
       recipientAddress: params.recipientAddress,
       token: params.token,
-      setPrimaryRecipient: params.setPrimaryRecipient,
       rpcUrl: params.rpcUrl,
       fetchImpl: params.fetchImpl,
       env: params.env,
       db: params.db,
       loadRecord,
-      persistDestination: async ({ recipient, shouldSetPrimary, db }) => {
-        // Owner-agnostic destination persistence. Hivra boxes CANNOT use the
-        // instance-only `instance_bankr_wallet_recipients` table (FK to
-        // hermes_instances), so persist straight onto the wallet row — and
-        // only when the caller asked for a new primary destination.
-        if (!shouldSetPrimary) return;
-        await setWithdrawalDestinationForOwner({
-          owner: params.owner,
-          userId: params.userId,
-          destinationEvm: recipient,
-          db,
-        });
-      },
-      persistenceWarning: "agent wallet withdrawal submitted but destination persistence failed",
-      persistenceFailureType: "agent_wallet_withdraw_destination_persist_failed",
+      persistenceWarning: "agent wallet withdrawal submitted but recipient history update failed",
+      persistenceFailureType: "agent_wallet_withdraw_recipient_history_failed",
     });
   }
 

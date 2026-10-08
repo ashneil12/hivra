@@ -22,10 +22,7 @@ async function loadHostedConfig(): Promise<NextConfig> {
 describe("legacy SEO redirects", () => {
   // The retired private build served these as 308s; without them the URLs 404
   // after cutover and their links and rankings are lost.
-  it.each([
-    ["/faq", "https://hivra.cloud/#faq"],
-    ["/about", "https://hivra.cloud/why-hivra"],
-  ])("permanently redirects %s", async (path, location) => {
+  it.each([["/faq", "https://hivra.cloud/#faq"]])("permanently redirects %s", async (path, location) => {
     const nextConfig = await loadHostedConfig();
     const response = await unstable_getResponseFromNextConfig({
       url: `https://hivra.cloud${path}`,
@@ -34,5 +31,55 @@ describe("legacy SEO redirects", () => {
 
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe(location);
+  });
+
+  // Guessed slugs of the laptop-close post that Search Console reported with
+  // impressions. They 404ed on the retired build and on canary until this rule.
+  it("sends every guessed laptop-post slug to the real post", async () => {
+    const nextConfig = await loadHostedConfig();
+    const { LAPTOP_POST_SLUG_VARIANTS } = await import("../../next.config");
+    expect(LAPTOP_POST_SLUG_VARIANTS.length).toBeGreaterThan(10);
+    for (const path of LAPTOP_POST_SLUG_VARIANTS) {
+      const response = await unstable_getResponseFromNextConfig({ url: `https://hivra.cloud${path}`, nextConfig });
+      expect(response.status).toBe(308);
+      expect(response.headers.get("location")).toBe("https://hivra.cloud/blog/keep-claude-code-running-24-7");
+    }
+  });
+
+  it("does not redirect the real post or other blog slugs", async () => {
+    const nextConfig = await loadHostedConfig();
+    for (const path of ["/blog/keep-claude-code-running-24-7", "/blog/codex-resume-session"]) {
+      const response = await unstable_getResponseFromNextConfig({ url: `https://hivra.cloud${path}`, nextConfig });
+      expect(response.headers.get("location")).toBeNull();
+    }
+  });
+
+  it("sends the retired roadmap PDF to the roadmap page", async () => {
+    const nextConfig = await loadHostedConfig();
+    const response = await unstable_getResponseFromNextConfig({
+      url: "https://hivra.cloud/roadmap/HermesOS_Roadmap_2026.pdf",
+      nextConfig,
+    });
+    expect(response.status).toBe(308);
+    expect(response.headers.get("location")).toBe("https://hivra.cloud/roadmap");
+  });
+
+  // /about used to 308 to the founder essay. It is now the entity home page, so
+  // no redirect may shadow it: a redirect here would hide the page from
+  // crawlers and from everyone who follows the footer link.
+  it("serves /about and /security as pages instead of redirecting them", async () => {
+    const nextConfig = await loadHostedConfig();
+    const redirects = (await nextConfig.redirects?.()) ?? [];
+    expect(redirects.map((rule) => rule.source)).not.toContain("/about");
+    expect(redirects.map((rule) => rule.source)).not.toContain("/security");
+
+    for (const path of ["/about", "/security"]) {
+      const response = await unstable_getResponseFromNextConfig({
+        url: `https://hivra.cloud${path}`,
+        nextConfig,
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+    }
   });
 });

@@ -12,12 +12,17 @@ import { MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import pageStyles from "./pricing.module.css";
+import { glossify } from "@/components/gloss/glossify";
 import {
   HOSTED_SIZES,
+  PRICES_AS_OF,
   PRICING_DESCRIPTION,
   PRICING_FAQ,
+  PRICING_ROWS,
   PRICING_TITLE,
   SELF_HOST_SOURCE_URL,
+  buildPricingOffers,
+  formatPricesAsOf,
 } from "./pricing-content";
 
 // /pricing was an indexed page on the retired site. It states only what can be
@@ -38,6 +43,15 @@ const pricingSchema = {
         { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
         { "@type": "ListItem", position: 2, name: "Pricing", item: `${SITE_URL}/pricing` },
       ],
+    },
+    {
+      // The same rows as the visible table: one Offer per row (pricing-content.ts).
+      "@type": "SoftwareApplication",
+      "@id": `${SITE_URL}/#softwareapp`,
+      name: "Hivra",
+      applicationCategory: "DeveloperApplication",
+      url: SITE_URL,
+      offers: buildPricingOffers(SITE_URL),
     },
     {
       "@type": "FAQPage",
@@ -86,10 +100,9 @@ export default function PricingPage() {
                   <span>software</span>
                 </p>
                 <p className={cardStyles.description}>
-                  Run Hivra on your own server. The source is public under the Apache-2.0 license, and self-hosting is a
-                  preview for a single operator.
+                  Run Hivra on your own server from the open source code.
                 </p>
-                <p className={cardStyles.freeCosts}>You provide and maintain the server. Server and model usage are paid separately.</p>
+                <p className={cardStyles.freeCosts}>You provide and maintain the server. Server and AI usage are paid separately.</p>
                 <a className={cardStyles.action} href={SELF_HOST_SOURCE_URL} target="_blank" rel="noopener noreferrer">
                   See the source on GitHub
                   <ArrowRight size={18} aria-hidden="true" />
@@ -106,7 +119,7 @@ export default function PricingPage() {
                   <p className={cardStyles.machinePrice}>
                     <strong>{size.price}</strong>
                     <span className={pageStyles.priceFor}>
-                      a month for {size.cpu} vCPU and {size.ramGb} GB of RAM
+                      {glossify(`a month for ${size.cpu} vCPU and ${size.ramGb} GB of RAM`)}
                     </span>
                   </p>
                   <p className={cardStyles.description}>{size.body}</p>
@@ -117,9 +130,49 @@ export default function PricingPage() {
                 </article>
               ))}
             </div>
+            <div className={pageStyles.tableBlock} id="pricing-table">
+              <h3 id="pricing-table-heading" className={pageStyles.tableHeading}>
+                Pricing at a glance
+              </h3>
+              <div className={pageStyles.tableScroll} role="region" aria-labelledby="pricing-table-heading" tabIndex={0}>
+                <table className={pageStyles.table}>
+                  <caption className={pageStyles.caption}>Hivra sizes and prices, in US dollars</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Size</th>
+                      <th scope="col">vCPU</th>
+                      <th scope="col">RAM</th>
+                      <th scope="col">Price per month</th>
+                      <th scope="col">Billing</th>
+                      <th scope="col">Refund</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {PRICING_ROWS.map((row) => (
+                      <tr key={row.key}>
+                        <th scope="row">{row.option}</th>
+                        <td>{row.vcpu}</td>
+                        <td>{row.ram}</td>
+                        <td>
+                          <strong>{row.price}</strong> <span className={pageStyles.priceNote}>{row.priceFor}</span>
+                        </td>
+                        <td>{row.billing}</td>
+                        <td>{row.refund}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className={pageStyles.asOf}>
+                Prices as of <time dateTime={PRICES_AS_OF}>{formatPricesAsOf()}</time>.
+              </p>
+            </div>
             <div className={cardStyles.notes}>
               <p>
-                {MONEY_BACK_GUARANTEE}. Bring your own model key or login; that usage is billed by your model provider.
+                {MONEY_BACK_GUARANTEE}. Bring your own AI key or login. Your AI company bills you for that usage.
+              </p>
+              <p>
+                OpenClaw and Agent Zero need a paid size. Hermes runs on Hivra Cloud only.
               </p>
               <p>
                 Larger sizes are planned. The proposed sizes are in the <Link href="/#pricing">pricing preview</Link>.

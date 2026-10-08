@@ -46,17 +46,22 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   // Home acts on this list (Continue, resuming on app open), so it waits for
   // a read made since it opened: a held one can still list an agent deleted
   // or stopped a moment ago.
-  const { agents, loading: listLoading, hermesError, hivraError, retryHermes, retryHivra } =
+  const { agents, loading: listLoading, hermesError, hivraError, attachedError, retryHermes, retryHivra } =
     useWorkspaceAgents();
   const loading = listLoading || recentView === null;
   const recents = recentView?.recents ?? NO_RECENTS;
+  // Which failed list a row came from: an agent added to a computer has its own.
+  const staleSource = useCallback(
+    (agent: UnifiedAgent) => agent.kind === "hermes" ? hermesError : agent.attachment ? attachedError || hivraError : hivraError,
+    [attachedError, hermesError, hivraError],
+  );
   const [query, setQuery] = useState("");
   // Set by the "needs attention" button: narrows the list to the broken ones.
   const [attentionOnly, setAttentionOnly] = useState(attentionRequested);
   // Failed refreshes retain inventory for browsing, but cannot validate attention or resumption.
   const currentAgents = useMemo(
-    () => agents.filter((agent) => !(agent.kind === "hermes" ? hermesError : hivraError)),
-    [agents, hermesError, hivraError],
+    () => agents.filter((agent) => !staleSource(agent)),
+    [agents, staleSource],
   );
   const attention = useMemo(
     () => currentAgents.filter((agent) => (agent.attention || agent.state === "error")),
@@ -69,10 +74,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   const sections = useMemo(() => fleetSections(visible, query), [visible, query]);
   const duplicates = useMemo(() => duplicateFleetNames(agents), [agents]);
   const recent = useMemo(() => inRecentOrder(agents, recents), [agents, recents]);
-  const isStale = useCallback(
-    (agent: UnifiedAgent) => Boolean(agent.kind === "hermes" ? hermesError : hivraError),
-    [hermesError, hivraError],
-  );
+  const isStale = useCallback((agent: UnifiedAgent) => Boolean(staleSource(agent)), [staleSource]);
   const searching = query.trim().length > 0;
   const empty = !loading && agents.length === 0 && !hermesError && !hivraError;
 
@@ -183,10 +185,10 @@ export function FleetControlPane({ requested = false, attentionRequested = false
 
       {/* One message, whichever list failed: how Hivra stores an agent is
           not something the owner should have to know (FTUE-03). */}
-      {hermesError || hivraError ? (
+      {hermesError || hivraError || attachedError ? (
         <SourceFailure onRetry={() => {
           if (hermesError) void retryHermes();
-          if (hivraError) void retryHivra();
+          if (hivraError || attachedError) void retryHivra();
         }} />
       ) : null}
 
@@ -223,7 +225,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {section.items.map((agent) => (
                   <li key={agent.uid} className="min-w-0">
-                    <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(agent.kind === "hermes" ? hermesError : hivraError)} />
+                    <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(staleSource(agent))} />
                   </li>
                 ))}
               </ul>

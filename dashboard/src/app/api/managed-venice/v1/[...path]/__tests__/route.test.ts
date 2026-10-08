@@ -2,15 +2,24 @@ import { NextRequest } from "next/server";
 import { getRouteRegex } from "next/dist/shared/lib/router/utils/route-regex";
 import { getRouteMatcher } from "next/dist/shared/lib/router/utils/route-matcher";
 
-const mockVerifyKey = jest.fn();
-const mockRecordUsage = jest.fn();
+import {
+  createManagedVeniceSpendWorld,
+  type ManagedVeniceSpendWorld,
+} from "@/test-utils/managed-venice-spend-world";
 
+let mockWorld: ManagedVeniceSpendWorld;
+const mockVerifyKey = jest.fn();
+
+jest.mock("@/lib/supabase", () => ({
+  get supabaseAdmin() {
+    return mockWorld.db;
+  },
+}));
 jest.mock("@/lib/venice/proxy-keys", () => ({
   verifyManagedVeniceProxyKey: (...args: unknown[]) => mockVerifyKey(...args),
 }));
-jest.mock("@/lib/venice/proxy-settlement", () => ({
-  recordManagedVeniceMultimodalUsage: (...args: unknown[]) => mockRecordUsage(...args),
-}));
+
+const usageRows = () => mockWorld.usageEvents();
 
 import { GET, POST } from "../route";
 
@@ -38,14 +47,17 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockWorld = createManagedVeniceSpendWorld();
+    mockWorld.fundCard("user_1", 1_000_000);
     mockVerifyKey.mockResolvedValue({
       id: "key_1",
       userId: "user_1",
       status: "active",
-      defaultWalletType: "hermesos",
+      defaultWalletType: "card",
     });
-    mockRecordUsage.mockResolvedValue(undefined);
     process.env.VENICE_API_KEY = "server-key";
+    delete process.env.MANAGED_VENICE_INFERENCE_KEYS;
+    delete process.env.MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED;
   });
 
   afterEach(() => {
@@ -68,7 +80,7 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
       expect(result.status).toBe(404);
       expect(result.headers.get("cache-control")).toBe("no-store");
     }
-    expect(global.fetch).not.toHaveBeenCalled(); expect(mockRecordUsage).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled(); expect(usageRows()).toHaveLength(0);
   });
 
   it.each(["responses%2Fcompact", "responses%252Fcompact", "responses%5Ccompact", "Responses/compact"])("fences the actual Next-decoded path %s before dispatch", async suffix => {
@@ -77,7 +89,7 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
     if (!match) throw new Error("Expected route match");
     global.fetch = jest.fn();
     const result = await POST(makeReq("POST", "https://hivra.test/api/managed-venice/v1/" + suffix, "fixture", "{}"), ctx(match.path as string[]));
-    expect(result.status).toBe(404); expect(fetch).not.toHaveBeenCalled(); expect(mockRecordUsage).not.toHaveBeenCalled();
+    expect(result.status).toBe(404); expect(fetch).not.toHaveBeenCalled(); expect(usageRows()).toHaveLength(0);
     expect(result.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -90,7 +102,7 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
     expect(res.status).toBe(401);
   });
 
-  it("forwards POST /image/generate to Venice's SINGULAR path with the server key + meters it", async () => {
+  it("forwards POST /image/generate to Venice's SINGULAR path with the server key under a wallet hold", async () => {
     const fetchMock = jest.fn().mockResolvedValue(
       new Response(JSON.stringify({ images: ["b64"], id: "req_1" }), {
         status: 200,
@@ -104,7 +116,7 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
         "POST",
         "http://localhost/api/managed-venice/v1/image/generate",
         "hven_live_good",
-        JSON.stringify({ model: "venice-sd35", prompt: "a cat" })
+        JSON.stringify({ model: "qwen-image-2", prompt: "a cat" })
       ),
       ctx(["image", "generate"])
     );
@@ -114,11 +126,15 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
     expect(calledUrl).toBe("https://api.venice.ai/api/v1/image/generate");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer server-key");
     expect(init.method).toBe("POST");
-    expect(mockRecordUsage).toHaveBeenCalledTimes(1);
-    const usage = mockRecordUsage.mock.calls[0][0];
+    expect(usageRows()).toHaveLength(1);
+    const [usage] = usageRows();
     expect(usage.endpoint).toBe("/api/v1/image/generate");
-    expect(usage.model).toBe("venice-sd35");
-    expect(usage.upstreamRequestId).toBe("req_1");
+    expect(usage.model).toBe("qwen-image-2");
+    expect(usage.upstream_request_id).toBe("req_1");
+    // Charged in-request even with MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED unset.
+    expect(usage.status).toBe("recorded");
+    expect(mockWorld.reservations()[0].status).toBe("captured");
+    expect(mockWorld.cardBalanceMicroUsd("user_1")).toBe(950_000);
   });
 
   it("forwards the query string for GET reads and does NOT bill them", async () => {
@@ -137,7 +153,7 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
 
     expect(res.status).toBe(200);
     expect(fetchMock.mock.calls[0][0]).toBe("https://api.venice.ai/api/v1/models?type=music");
-    expect(mockRecordUsage).not.toHaveBeenCalled();
+    expect(usageRows()).toHaveLength(0);
   });
 
   it("does NOT bill audio/retrieve polls and passes binary through byte-exact", async () => {
@@ -161,16 +177,11 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
     expect(res.headers.get("content-type")).toBe("audio/mpeg");
     const out = new Uint8Array(await res.arrayBuffer());
     expect(Array.from(out)).toEqual([1, 2, 3, 4]);
-    expect(mockRecordUsage).not.toHaveBeenCalled();
+    expect(usageRows()).toHaveLength(0);
   });
 
-  it("forwards POST /crypto/rpc/{network} (read-only on-chain) and bills it", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x1" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
+  it("refuses POST /crypto/rpc/{network} while Venice RPC has no known price (never forwarded)", async () => {
+    const fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const res = await POST(
@@ -183,11 +194,9 @@ describe("/api/managed-venice/v1/[...path] passthrough", () => {
       ctx(["crypto", "rpc", "ethereum-mainnet"])
     );
 
-    expect(res.status).toBe(200);
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      "https://api.venice.ai/api/v1/crypto/rpc/ethereum-mainnet"
-    );
-    expect(mockRecordUsage).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(402);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(usageRows()).toHaveLength(0);
   });
 
   it("rejects path traversal", async () => {

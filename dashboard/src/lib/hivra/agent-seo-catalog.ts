@@ -59,8 +59,12 @@ export interface AgentSeoEntry {
   relatedBlogSlugs: string[];
 }
 
-/** Date these pages last changed substantively (sitemap lastmod). */
-export const AGENT_PAGES_LAST_MODIFIED = "2026-09-24";
+/**
+ * Date these pages last changed substantively (sitemap lastmod). The agent pages
+ * were reworded on 2026-09-30 (plain English, open source without a licence
+ * name, no preview labels). Move it only for a real content change.
+ */
+export const AGENT_PAGES_LAST_MODIFIED = "2026-09-30";
 
 /**
  * Entry monthly price for every agent page, as the JSON-LD Offer price. It is
@@ -80,7 +84,7 @@ export const PRICING_HREF = "/pricing";
 
 const SELF_HOST_FAQ: AgentSeoFaq = {
   q: "Can I run Hivra on my own server instead?",
-  a: "Hivra's own source is public under the Apache-2.0 license at github.com/ashneil12/hivra, and self-hosting is available as a preview for a single operator. The managed plans are for people who would rather not run the server themselves.",
+  a: "Hivra's own source is open source at github.com/ashneil12/hivra, and you can self-host it. The managed plans are for people who would rather not run the server themselves.",
 };
 
 export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
@@ -93,7 +97,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     metaTitle: "Run Claude Code in the Cloud 24/7",
     metaDescription:
       "Run Claude Code 24/7 on a managed cloud VM with your own Anthropic sign-in. Live browser, web terminal and files. Plans from $9.99/mo.",
-    cardSummary: "The official Anthropic CLI with a live browser, a web terminal and your own Claude sign-in.",
+    cardSummary: "Anthropic's coding agent, with a live browser, a web text window and your own Claude sign-in.",
     longDescription: [
       "Claude Code on your laptop stops when your laptop does. The lid closes, the session dies, and the refactor you kicked off at 6pm is gone by dinner. Keeping it alive means a spare machine, or a VPS with tmux and SSH keys you now get to maintain.",
       "Hivra runs the official Claude Code CLI on a private cloud VM that stays on. You sign in with your own Anthropic account on the computer after launch, the same way you would on your laptop. Then you get chat, a web terminal, files, and an optional live browser in one tab, from any device.",
@@ -167,7 +171,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     metaTitle: "Codex Hosting: Run OpenAI Codex 24/7 in the Cloud",
     metaDescription:
       "Run the official OpenAI Codex CLI 24/7 on a managed cloud VM with your own ChatGPT sign-in or API key. Optional live browser. From $9.99/mo.",
-    cardSummary: "OpenAI's official Codex CLI on a private VM, with your own ChatGPT sign-in or API key.",
+    cardSummary: "OpenAI's coding agent on its own private computer, with your ChatGPT sign-in or your own key.",
     longDescription: [
       "Codex is OpenAI's coding agent. On your machine it works while the terminal is open and stops when it isn't. Long tasks need a computer that stays on, and most people don't want to run one.",
       "Hivra hosts the official Codex CLI on a private VM that stays on. Sign in with your own ChatGPT account, or use your own OpenAI API key, on the computer after launch. Then hand it real work: a repo to inspect, a change to implement, a failing build to debug.",
@@ -237,7 +241,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     metaTitle: "Hermes Agent Hosting: Run It 24/7 in the Cloud",
     metaDescription:
       "Deploy the open-source Hermes agent on a managed cloud VM. Persistent memory, skills, browser and cron, with your own model key. From $9.99/mo.",
-    cardSummary: "The open-source agent from Nous Research, with persistent memory, skills, browser and cron.",
+    cardSummary: "Open-source agent from Nous Research. It remembers, has a browser, and runs repeat jobs.",
     longDescription: [
       "Hermes is the general-purpose agent you shape yourself. It remembers you between sessions, picks up skills as it works, and runs scheduled tasks while you sleep. On Hivra it lives on a private virtual machine that stays on, so nothing resets when you close the tab.",
       "You bring the model provider you already pay for. Paste a key, name the agent, and start giving it work: research briefs, recurring workflows, builds inside its own workspace. Hivra adds its chat, terminal, files, and skills views around the open-source agent.",
@@ -293,7 +297,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       "Self-hosting Hermes means a VPS, Docker, a reverse proxy, SSL, and you on call when it breaks at midnight.",
       "Hivra provisions the computer and keeps the agent running for you.",
       "You keep control: the same open-source agent and your own provider key.",
-      "A DIY setup costs a VPS bill plus the weekend you spend configuring it. Hivra starts at $9.99 a month.",
+      "A DIY setup costs a VPS bill plus the time you spend configuring and updating it. Hivra starts at $9.99 a month.",
     ],
     affiliation: "Hivra is independent and is not affiliated with Nous Research.",
     relatedBlogSlugs: ["what-is-hermes-agent", "what-can-hermes-agent-actually-do", "hermes-agent-skills-guide"],
@@ -307,7 +311,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     metaTitle: "Aeon Agent Hosting: Runs on Your GitHub",
     metaDescription:
       "Host the Aeon autonomous agent on Hivra. Tasks run on your own GitHub Actions: research digests, PR reviews and scans, unattended. From $9.99/mo.",
-    cardSummary: "An autonomous agent framework whose recurring tasks run on your own GitHub Actions.",
+    cardSummary: "An agent that works on its own. Its repeat jobs run through your own GitHub Actions.",
     longDescription: [
       "Aeon is an autonomous agent framework that runs recurring work on your own GitHub Actions: monitoring, code review, research digests, security scans. Set a task once and it runs on schedule without you.",
       "Hivra hosts Aeon's dashboard on a small managed computer. Connect with a GitHub token after launch, and the computer sets up your own fork of Aeon on GitHub. Then configure tasks inside Aeon's own dashboard. The heavy lifting happens on your fork's GitHub Actions, not the computer.",
@@ -381,7 +385,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     metaTitle: "OpenClaw Hosting: Always-On Cloud Computer, $9.99/mo",
     metaDescription:
       "Host OpenClaw on a managed cloud VM from $9.99/mo. An always-on agent you reach from Telegram, WhatsApp or Signal, with an optional live browser.",
-    cardSummary: "The open-source agent you message like a contact, with a heartbeat that runs routines on schedule.",
+    cardSummary: "The open-source agent you message like a contact. It has a timer that runs routines on a schedule.",
     longDescription: [
       "OpenClaw is the open-source agent you message like a contact. It runs a persistent gateway with a heartbeat scheduler, so routines fire on time whether you're online or not. That only works on a machine that stays on, which is exactly what your laptop is not.",
       "Hivra runs OpenClaw on a private managed VM. The Control UI runs exactly as the project ships it, behind Hivra's authenticated gateway. Choose your model provider, wire up Telegram, WhatsApp, or Signal inside it, set a heartbeat, and the agent keeps working after you close the tab.",
@@ -454,7 +458,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
     metaTitle: "Agent Zero Hosting: Deploy It in the Cloud for $9.99/mo",
     metaDescription:
       "Deploy Agent Zero on a managed cloud VM. Its own dashboard, browser and computer, behind an authenticated gateway. Paid plans from $9.99/mo.",
-    cardSummary: "A general autonomous agent with its own dashboard, browser and computer. Give it a goal.",
+    cardSummary: "A general-purpose agent with its own screen, browser and computer. Give it a goal.",
     longDescription: [
       "Agent Zero is a general autonomous agent. You give it a goal in its web dashboard and it plans the steps, writes and runs code, browses with its own browser, and reports back. Running it yourself means Docker, a server that stays on, and a public endpoint you have to secure.",
       "Hivra hosts the full Agent Zero stack on a private managed VM: the agent loop, its tools, and its own browser and computer, exactly as the project ships. The dashboard sits behind an authenticated gateway with a login created at provision. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option.",
@@ -559,6 +563,11 @@ export const AGENT_COPY_BANNED_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason
   { pattern: /multi-agent coordination|orchestrat/i, reason: "coordination is not built in" },
   { pattern: /\b(Free|Pro|Power|Starter|Studio|Max|Command) plan\b/, reason: "plan names collide between checkout and the public ladder; use price and size" },
   { pattern: /[–—]/, reason: "no em or en dashes in page copy" },
+  // Nothing measured backs an hour count for setting up a server (2026-09-30 copy audit, F-15).
+  {
+    pattern: /\b\d+\s*(?:-|to)\s*\d+\+?\s*hours?\b|\b(?:an? hour|\d+ hours?) (?:per|a|each|\/) ?month\b|\b(?:spend|spent) (?:a|the) weekend\b|\b(?:the|a) weekend (?:you|setting|configuring|of)\b|\b(?:full|whole) (?:weekend|afternoon)\b/i,
+    reason: "no invented hours for setting up or running a server",
+  },
   // Claude Code and Codex keep-running claims, shared with the blog and /tools
   // (lib/blog/runtime-facts.ts): the old survives-anything claims, "stops when
   // you close the tab" (false on updated computers) and "the browser chat keeps

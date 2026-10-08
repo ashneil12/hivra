@@ -201,7 +201,6 @@ describe("/api/billing/bankr/wallet", () => {
     expect(ensureBankrDepositWalletForUser).toHaveBeenCalledWith({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     expect(ensureBankrDepositWalletForUser).not.toHaveBeenCalledWith(
       expect.objectContaining({ purpose: "hermesos_lock" })
@@ -224,7 +223,6 @@ describe("/api/billing/bankr/wallet", () => {
     expect(ensureBankrDepositWalletForUser).toHaveBeenCalledWith({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     expect(ensureBankrDepositWalletForUser).not.toHaveBeenCalledWith(
       expect.objectContaining({ purpose: "hermesos_lock" })
@@ -252,7 +250,6 @@ describe("/api/billing/bankr/wallet", () => {
     expect(ensureBankrDepositWalletForUser).toHaveBeenCalledWith({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     expect(ensureBankrDepositWalletForUser).not.toHaveBeenCalledWith(
       expect.objectContaining({ purpose: "hermesos_lock" })

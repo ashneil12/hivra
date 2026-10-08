@@ -1,5 +1,6 @@
 "use client";
 
+import { parseAttachedAgentsEnvelope } from "@/lib/hivra/attached-agents-envelope";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { clientLog } from "@/lib/client/logger";
@@ -35,6 +36,9 @@ export interface UseWorkspaceAgentsOptions {
    */
   fetchHermes?: WorkspaceSourceFetcher;
   fetchHivra?: WorkspaceSourceFetcher;
+  /** The agents added to the owner's computers. With stand-ins and without
+   * this one, nothing is attached. */
+  fetchAttached?: WorkspaceSourceFetcher;
   getNow?: () => Date;
   /**
    * Show the list already held at once, instead of reporting it as loading
@@ -51,7 +55,12 @@ export interface UseWorkspaceAgentsResult {
   agents: UnifiedAgent[];
   loading: boolean;
   hermesError: string | null;
+  /** The owner's agents and computers could not be read. */
   hivraError: string | null;
+  /** Only the agents added to the owner's computers could not be read: every
+   * other row is current. Optional so callers built before it (and their
+   * fixtures) still type-check. */
+  attachedError?: string | null;
   lastRefreshedAt: string | null;
   retryHermes: () => Promise<void>;
   retryHivra: () => Promise<void>;
@@ -61,6 +70,7 @@ export interface UseWorkspaceAgentsResult {
 // Shown to people: never the name of the store an agent lives in (FTUE-03).
 const HERMES_ERROR = "Some agents couldn't be loaded. Retry to check again.";
 const HIVRA_ERROR = "Some agents and computers couldn't be loaded. Retry to check again.";
+const ATTACHED_ERROR = "Agents added to your computers couldn't be loaded. Retry to check again.";
 const HIVRA_STATUSES = new Set(["provisioning", "running", "stopped", "error", "deleted"]);
 const HIVRA_SUBSTRATES = new Set(["proxmox-kvm", "provider-vm", "gvisor", "do-managed-session"]);
 const HIVRA_DEPLOYMENT_MODES = new Set(["hivra-managed", "self-managed"]);
@@ -153,7 +163,8 @@ function parseHivraEnvelope(value: unknown): HivraAgent[] {
   });
 }
 
-function logSourceFailure(agentSource: "hermes" | "hivra"): void {
+
+function logSourceFailure(agentSource: "hermes" | "hivra" | "attached"): void {
   clientLog.warn("Workspace agent source unavailable", {
     source: "workspace-agents",
     agentSource,
@@ -189,13 +200,16 @@ function sourceRows<T>(state: InventorySourceState, parse: (value: unknown) => T
   return { rows, settled, failed: settled && (state.failed || unreadable) };
 }
 
+const NOT_OFFERED = { success: true, data: { enabled: false, agents: [] } };
+
 function privateInventory(options: UseWorkspaceAgentsOptions): ResourceInventory | null {
-  if (!options.fetchHermes && !options.fetchHivra) return null;
-  const { fetchHermes, fetchHivra, getNow } = options;
+  if (!options.fetchHermes && !options.fetchHivra && !options.fetchAttached) return null;
+  const { fetchHermes, fetchHivra, fetchAttached, getNow } = options;
   return createResourceInventory({
     fetchers: {
       ...(fetchHermes ? { hermes: () => fetchHermes() } : {}),
       ...(fetchHivra ? { hivra: () => fetchHivra() } : {}),
+      attached: fetchAttached ? () => fetchAttached() : async () => NOT_OFFERED,
     },
     now: getNow ? () => getNow().getTime() : undefined,
   });
@@ -211,8 +225,8 @@ export function useWorkspaceAgents(
   const [inventory] = useState(() => privateInventory(options) ?? resourceInventory);
   const [reuseHeld] = useState(() => options.reuseHeldList === true);
   const [marks] = useState<Record<InventorySource, number>>(() => reuseHeld
-    ? { hermes: 0, hivra: 0 }
-    : { hermes: inventory.readMark("hermes"), hivra: inventory.readMark("hivra") });
+    ? { hermes: 0, hivra: 0, attached: 0 }
+    : { hermes: inventory.readMark("hermes"), hivra: inventory.readMark("hivra"), attached: inventory.readMark("attached") });
   const snapshot = useSyncExternalStore(
     inventory.subscribe,
     inventory.getSnapshot,
@@ -237,24 +251,38 @@ export function useWorkspaceAgents(
     () => mine ? sourceRows(snapshot.hivra, parseHivraEnvelope, marks.hivra) : NO_ROWS,
     [mine, snapshot.hivra, marks.hivra],
   );
+  // The agents added to the owner's computers are their own list: its failure
+  // (a rate limit, say) is reported on its own, the agents and computers it
+  // did not touch stay current, and nothing waits for it.
+  const attached = useMemo(
+    () => mine ? sourceRows(snapshot.attached, parseAttachedAgentsEnvelope, marks.attached) : NO_ROWS,
+    [mine, snapshot.attached, marks.attached],
+  );
 
   // Logged once per failed read this hook sees, never with the response.
   const hermesFailedAt = hermes.failed ? snapshot.hermes.settledAt : 0;
   const hivraFailedAt = hivra.failed ? snapshot.hivra.settledAt : 0;
+  const attachedFailedAt = attached.failed ? snapshot.attached.settledAt : 0;
   useEffect(() => {
     if (hermesFailedAt) logSourceFailure("hermes");
   }, [hermesFailedAt]);
   useEffect(() => {
     if (hivraFailedAt) logSourceFailure("hivra");
   }, [hivraFailedAt]);
+  useEffect(() => {
+    if (attachedFailedAt) logSourceFailure("attached");
+  }, [attachedFailedAt]);
 
   const retryHermes = useCallback(() => inventory.load("hermes", { force: true }), [inventory]);
-  const retryHivra = useCallback(() => inventory.load("hivra", { force: true }), [inventory]);
+  // An agent added to a computer is shown with the Hivra list, so its Retry reads both.
+  const retryHivra = useCallback(async () => {
+    await Promise.all([inventory.load("hivra", { force: true }), inventory.load("attached", { force: true })]);
+  }, [inventory]);
   const retryAll = useCallback(async () => {
     await Promise.all([retryHermes(), retryHivra()]);
   }, [retryHermes, retryHivra]);
 
-  const agents = useMemo(() => unifyAll(hermes.rows, hivra.rows), [hermes.rows, hivra.rows]);
+  const agents = useMemo(() => unifyAll(hermes.rows, hivra.rows, attached.rows), [hermes.rows, hivra.rows, attached.rows]);
   const refreshedAt = mine ? Math.max(snapshot.hermes.settledAt, snapshot.hivra.settledAt) : 0;
 
   return {
@@ -262,6 +290,7 @@ export function useWorkspaceAgents(
     loading: !hermes.settled || !hivra.settled,
     hermesError: hermes.failed ? HERMES_ERROR : null,
     hivraError: hivra.failed ? HIVRA_ERROR : null,
+    attachedError: attached.failed ? ATTACHED_ERROR : null,
     lastRefreshedAt: refreshedAt > 0 ? new Date(refreshedAt).toISOString() : null,
     retryHermes,
     retryHivra,

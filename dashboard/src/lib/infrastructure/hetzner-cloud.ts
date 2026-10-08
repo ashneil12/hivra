@@ -2,7 +2,6 @@ import "server-only";
 
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
-import { utils as ssh2Utils } from "ssh2";
 
 import {
   createHetznerCloudProjectClient,
@@ -41,6 +40,7 @@ import {
   type HetznerCloudServerInventoryDto,
 } from "./contracts";
 import { InfrastructureConnectionStoreError } from "./connection-store";
+import { generateVerifiedEd25519SshKeyPair } from "./ed25519-ssh-key";
 import { FIRST_BOOT_RECIPE_VERSION } from "./first-boot-enrollment";
 import { isHetznerGuidedSetupImage, isHetznerGuidedSetupServerType } from "./hetzner-guided-setup";
 import {
@@ -261,57 +261,27 @@ export function generateHetznerBootstrapBundle(input: {
   orderId: string;
   quoteFingerprintSha256: string;
 }): HetznerBootstrapBundle {
-  // ssh2 1.17's Ed25519 DER conversion removes all leading zero bytes from
-  // the ASN.1 BitString. When the actual 32-byte public key begins with 0x00,
-  // that produces a malformed 31-byte OpenSSH key. Treat key generation as
-  // rejection sampling: accept only a pair that independently parses, matches,
-  // and has the exact public form. This happens before any durable claim or
-  // provider mutation and stays bounded so a persistent generator fault fails
+  // Shared rejection-sampling generator (see ed25519-ssh-key.ts). It runs
+  // before any durable claim or provider mutation, and a generator fault fails
   // closed instead of looping.
-  for (let attempt = 0; attempt < HETZNER_KEY_GENERATION_MAX_ATTEMPTS; attempt += 1) {
-    let keyPair: ReturnType<typeof ssh2Utils.generateKeyPairSync>;
-    try {
-      keyPair = ssh2Utils.generateKeyPairSync("ed25519", {
-        comment: "hivra-capacity",
-      });
-    } catch {
-      throw new HetznerCloudCapacityError("access_setup_failed");
-    }
-    const parsedPrivateKey = ssh2Utils.parseKey(keyPair.private);
-    const parsedPublicKey = ssh2Utils.parseKey(keyPair.public);
-    if (
-      parsedPrivateKey instanceof Error
-      || parsedPublicKey instanceof Error
-      || !parsedPrivateKey.isPrivateKey()
-      || parsedPublicKey.isPrivateKey()
-    ) {
-      continue;
-    }
-    const privatePublicBlob = parsedPrivateKey.getPublicSSH();
-    const publicBlob = parsedPublicKey.getPublicSSH();
-    if (!privatePublicBlob.equals(publicBlob)) continue;
-    const publicKeyOpenSsh = keyPair.public.trim();
-    if (!/^ssh-ed25519 [A-Za-z0-9+/]+={0,2} hivra-capacity$/.test(publicKeyOpenSsh)) {
-      continue;
-    }
-    const publicKeyFingerprint = `SHA256:${createHash("sha256")
-      .update(publicBlob)
-      .digest("base64")
-      .replace(/=+$/, "")}`;
-    return {
-      version: 2,
-      provider: "hetzner-cloud",
-      userId: input.userId,
-      connectionId: input.connectionId,
-      connectionRevision: input.connectionRevision,
-      orderId: input.orderId,
-      quoteFingerprintSha256: input.quoteFingerprintSha256,
-      privateKeyOpenSsh: keyPair.private,
-      publicKeyOpenSsh,
-      publicKeyFingerprint,
-    };
+  let keyPair: ReturnType<typeof generateVerifiedEd25519SshKeyPair>;
+  try {
+    keyPair = generateVerifiedEd25519SshKeyPair("hivra-capacity", HETZNER_KEY_GENERATION_MAX_ATTEMPTS);
+  } catch {
+    throw new HetznerCloudCapacityError("access_setup_failed");
   }
-  throw new HetznerCloudCapacityError("access_setup_failed");
+  return {
+    version: 2,
+    provider: "hetzner-cloud",
+    userId: input.userId,
+    connectionId: input.connectionId,
+    connectionRevision: input.connectionRevision,
+    orderId: input.orderId,
+    quoteFingerprintSha256: input.quoteFingerprintSha256,
+    privateKeyOpenSsh: keyPair.privateKeyOpenSsh,
+    publicKeyOpenSsh: keyPair.publicKeyOpenSsh,
+    publicKeyFingerprint: keyPair.fingerprintSha256,
+  };
 }
 
 function cloudInitForBootstrap(publicKeyOpenSsh: string): string {
