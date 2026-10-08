@@ -90,8 +90,8 @@ Done:
   (`sha256:2c44e99e...`), notes "Baseline ... Test only". It is at Registered (offered
   to nobody). Registering it made the Canary image repository governed: boxes there
   hold their current image instead of following `:stable`.
-- Disposable fixture box `f75974c9` (pve12, owned by the first-run audit identity) is
-  running on the stable channel with no release reported yet. The three QA banner boxes
+- A disposable fixture box (owned by the first-run audit identity, named in the
+  private ops notes) is running on the stable channel with no release reported yet. The three QA banner boxes
   and the other stable boxes were not touched.
 
 Not done (blocked, not failed):
@@ -106,7 +106,7 @@ Not done (blocked, not failed):
 
 Console steps for whoever runs it (`/dashboard/ops/releases` on Canary):
 1. Promote the baseline row to Canary.
-2. Move only the fixture box `f75974c9` to the canary channel.
+2. Move only the fixture box to the canary channel.
 3. After the next :07 tick, check the box reports the old version (the
    `agent_version` and `agent_image_digest` columns fill in).
 4. Register `ghcr.io/ashneil12/vanilla-hermes-agent-canary` tag `v2026.9.24-a440677`
