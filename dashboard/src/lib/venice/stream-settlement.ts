@@ -29,6 +29,12 @@ import {
   markManagedVeniceReconciliationRequired,
 } from "./proxy-settlement";
 import { createManagedVeniceOutputMeter, type ManagedVeniceOutputMeter } from "./stream-output-meter";
+import {
+  NO_SURCHARGE_EVIDENCE,
+  mergeSurchargeEvidence,
+  readSurchargeEvidenceFromSseFrame,
+  type ManagedChatSurchargeEvidence,
+} from "./chat-surcharges";
 
 export type ManagedVeniceStreamOutcome = "completed" | "upstream_failed" | "client_cancelled" | "deadline";
 
@@ -37,6 +43,12 @@ export interface ManagedVeniceStreamSettlement {
   meter: ManagedVeniceOutputMeter;
   /** Keep the latest usage block a frame carried. */
   observeUsage(usage: unknown): void;
+  /**
+   * Keep Venice's `cost` and web-search citations from an SSE frame, for a
+   * request held for billed options (chat-surcharges.ts). A no-op unless the
+   * settlement was created with `collectSurchargeEvidence`.
+   */
+  observeSurchargeFrame(frame: string): void;
   /** Whether Venice's usage block has arrived. */
   hasUsage(): boolean;
   /**
@@ -56,6 +68,8 @@ export function createManagedVeniceStreamSettlement(params: {
   pricingMap?: VenicePricingMap;
   source: string;
   route: string;
+  /** The request was held for billed options: read their evidence from the stream. */
+  collectSurchargeEvidence?: boolean;
   reasons: {
     /** Filed when charging the observed output fails. */
     usageMissing: (outcome: ManagedVeniceStreamOutcome) => string;
@@ -66,6 +80,7 @@ export function createManagedVeniceStreamSettlement(params: {
   const meter = createManagedVeniceOutputMeter();
   const identity = { userId: params.userId, proxyKeyId: params.proxyKeyId, referenceId: params.referenceId };
   let usage: unknown = null;
+  let surchargeEvidence: ManagedChatSurchargeEvidence = NO_SURCHARGE_EVIDENCE;
   let settlement: Promise<unknown> | null = null;
 
   async function fileCaptureFailure(outcome: ManagedVeniceStreamOutcome) {
@@ -106,6 +121,10 @@ export function createManagedVeniceStreamSettlement(params: {
     observeUsage(next) {
       if (next) usage = next;
     },
+    observeSurchargeFrame(frame) {
+      if (!params.collectSurchargeEvidence) return;
+      surchargeEvidence = mergeSurchargeEvidence(surchargeEvidence, readSurchargeEvidenceFromSseFrame(frame));
+    },
     hasUsage() {
       return Boolean(usage);
     },
@@ -121,6 +140,7 @@ export function createManagedVeniceStreamSettlement(params: {
                 upstreamStatus: params.upstreamStatus,
                 usage,
                 pricingMap: params.pricingMap,
+                ...(params.collectSurchargeEvidence ? { surchargeEvidence } : {}),
               });
               return null;
             } catch (error) {

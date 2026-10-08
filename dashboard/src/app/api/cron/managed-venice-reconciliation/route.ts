@@ -197,7 +197,11 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
-    const shouldCharge = recomputed.actualCostMicroUsd;
+    // Web search, scraping and X search are charged on top of tokens
+    // (chat-surcharges.ts). Re-costing the tokens alone would call that a
+    // token overcharge and refund it. Absent (0) on every row written with
+    // the surcharge flag off.
+    const shouldCharge = recomputed.actualCostMicroUsd + readNumber(meta.surchargeMicroUsd);
     const charged = row.charged_micro_usd;
     const delta = charged - shouldCharge; // positive = overcharge
 

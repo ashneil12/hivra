@@ -35,6 +35,14 @@
 //      maximum came from the catalog, the cap the hold covers is always written
 //      into the forwarded request, even when it equals that maximum.
 //
+// Options Venice bills outside tokens (web search, scraping, X search) are held
+// on top of all this when MANAGED_VENICE_CHAT_SURCHARGES_ENABLED is on
+// (chat-surcharges.ts): a fixed amount the output cap cannot lower. It comes
+// off the budget before the cap is sized, the half-balance rule covers the
+// token hold and the surcharge together, and the floor is the smallest answer
+// plus the surcharge. With the flag off the surcharge is 0 and nothing here
+// changes.
+//
 // A caller that cannot rewrite the forwarded body (an older Cloudflare Worker
 // that forwards its own copy) gets rule 1 only: the full worst-case hold, or a
 // 402. It never gets a lower cap it would not apply, and the half-balance rule
@@ -51,6 +59,7 @@ import {
 } from "@/lib/billing/managed-venice-wallets";
 import { microdollarsToDisplayDollars } from "@/lib/billing/microdollars";
 import { log } from "@/lib/logger";
+import { surchargeHoldMicroUsd, type ManagedChatSurchargePlan } from "@/lib/venice/chat-surcharges";
 import { reserveManagedVeniceChatRequest } from "@/lib/venice/proxy-settlement";
 import {
   estimateChatCompletionCost,
@@ -174,15 +183,25 @@ function unpatchedRequestPricing(
 }
 
 /**
+ * Model `fallbacks` can run a different model than the one priced, with or
+ * without the surcharge flag. Returns "fallbacks" when the request has any.
+ */
+export function unpricedVeniceChatFallbacks(body: Record<string, unknown>): string | null {
+  if (body.fallbacks !== undefined && body.fallbacks !== null) {
+    if (!Array.isArray(body.fallbacks) || body.fallbacks.length > 0) return "fallbacks";
+  }
+  return null;
+}
+
+/**
  * Venice bills these chat options per search / URL / result, outside token
  * usage, so a token hold cannot cover them (pricing: $10 per 1K each). Model
  * `fallbacks` can run a different model than the one priced. Returns the
  * offending field, or null when the request only uses token-billed features.
  */
 export function unbilledVeniceChatOption(body: Record<string, unknown>): string | null {
-  if (body.fallbacks !== undefined && body.fallbacks !== null) {
-    if (!Array.isArray(body.fallbacks) || body.fallbacks.length > 0) return "fallbacks";
-  }
+  const fallbacks = unpricedVeniceChatFallbacks(body);
+  if (fallbacks) return fallbacks;
   const params = body.venice_parameters;
   if (params === undefined || params === null) return null;
   if (typeof params !== "object" || Array.isArray(params)) return "venice_parameters";
@@ -264,8 +283,12 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   allowBodyRewrite: boolean;
   /** The proxy route, for logs. */
   route: string;
+  /** Options Venice bills on top of tokens, when the surcharge flag is on (chat-surcharges.ts). */
+  surcharge?: ManagedChatSurchargePlan | null;
 }): Promise<ManagedVeniceChatBudgetedReservation> {
   const { protocol, body, pricingMap } = params;
+  const surcharge = params.surcharge ?? null;
+  const surchargeMicroUsd = surchargeHoldMicroUsd(surcharge);
   const modelId = String(body.model);
   const price = resolveVeniceChatPrice(modelId, pricingMap);
   const modelMaxOutputTokens = price.maxOutputTokens;
@@ -282,6 +305,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
       requestBody: managedVeniceChatEstimateBody(protocol, body, patch),
       ...(protocol === "responses" ? { endpoint: VENICE_RESPONSES_ENDPOINT } : {}),
       pricingMap: options.holdPricing ?? pricingMap,
+      ...(surcharge ? { surcharge } : {}),
       ...(options.maxShareOfAvailableBps !== undefined
         ? { maxShareOfAvailableBps: options.maxShareOfAvailableBps }
         : {}),
@@ -310,7 +334,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
       const worstCase = estimateChatCompletionCost(
         managedVeniceChatEstimateBody(protocol, body),
         unpatched.pricingMap
-      ).reservedCostMicroUsd;
+      ).reservedCostMicroUsd + surchargeMicroUsd;
       throw refusal(await balanceOf(error), worstCase);
     }
   }
@@ -339,13 +363,20 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   const balance = await balanceOf(refused);
   const estimateBody = managedVeniceChatEstimateBody(protocol, body, fullPatch);
   const floorCap = Math.min(MIN_CLAMPED_OUTPUT_TOKENS, fullCap);
-  const floorHoldMicroUsd = estimateChatCompletionCost(
-    { ...estimateBody, max_completion_tokens: floorCap, max_tokens: undefined },
+  const floorHoldMicroUsd =
+    estimateChatCompletionCost(
+      { ...estimateBody, max_completion_tokens: floorCap, max_tokens: undefined },
+      pricingMap
+    ).reservedCostMicroUsd + surchargeMicroUsd;
+  // The surcharge is a fixed part of the hold: the output cap is sized from
+  // what is left after it.
+  const affordable = maxAffordableVeniceChatOutputCap(
+    estimateBody,
+    balance.availableMicroUsd - surchargeMicroUsd,
     pricingMap
-  ).reservedCostMicroUsd;
-  const affordable = maxAffordableVeniceChatOutputCap(estimateBody, balance.availableMicroUsd, pricingMap);
+  );
   if (affordable < floorCap) throw refusal(balance, floorHoldMicroUsd);
-  const shareMicroUsd = Math.floor((balance.availableMicroUsd * MAX_HOLD_SHARE_BPS) / 10_000);
+  const shareMicroUsd = Math.floor((balance.availableMicroUsd * MAX_HOLD_SHARE_BPS) / 10_000) - surchargeMicroUsd;
   const affordableShare = maxAffordableVeniceChatOutputCap(estimateBody, shareMicroUsd, pricingMap);
   const outputCap = Math.min(fullCap, Math.max(affordableShare, floorCap));
   const bodyPatch = managedVeniceOutputCapPatch(protocol, body, outputCap, price);

@@ -29,6 +29,15 @@ import {
   estimateChatCompletionCost,
 } from "./cost-estimator";
 import {
+  NO_SURCHARGE_EVIDENCE,
+  readSurchargePlan,
+  settleManagedChatSurcharge,
+  surchargeFallbackChargeMicroUsd,
+  surchargeHoldMicroUsd,
+  type ManagedChatSurchargeEvidence,
+  type ManagedChatSurchargePlan,
+} from "./chat-surcharges";
+import {
   VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT,
   applyVeniceMultimodalMarkup,
   computeVeniceMultimodalCost,
@@ -132,11 +141,29 @@ export async function reserveManagedVeniceChatRequest(
     pricingMap?: import("./cost-estimator").VenicePricingMap;
     /** Refuse a hold above this share of the available balance (chat-output-budget.ts). */
     maxShareOfAvailableBps?: number;
+    /**
+     * Options Venice bills on top of tokens (chat-surcharges.ts). Held on top
+     * of the token hold, and recorded on the reservation so every settlement
+     * path charges them. Absent when the surcharge flag is off.
+     */
+    surcharge?: ManagedChatSurchargePlan | null;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
   const client = requireDb(db);
-  const estimate = estimateChatCompletionCost(params.requestBody, params.pricingMap);
+  const tokenEstimate = estimateChatCompletionCost(params.requestBody, params.pricingMap);
+  // Web search, scraping and X search are held at their most (X search at the
+  // held results); capture charges what Venice reports or its published rates.
+  const surcharge = params.surcharge ?? null;
+  const surchargeHold = surchargeHoldMicroUsd(surcharge);
+  // What a settlement without Venice's figures charges for them: the
+  // published rates (chat-surcharges.ts).
+  const surchargeFallbackCharge = surchargeFallbackChargeMicroUsd(surcharge);
+  const estimate = {
+    ...tokenEstimate,
+    estimatedCostMicroUsd: tokenEstimate.estimatedCostMicroUsd + surchargeHold,
+    reservedCostMicroUsd: tokenEstimate.reservedCostMicroUsd + surchargeHold,
+  };
   // Protective monthly spend cap (off by default). Throws ManagedVeniceSpendCapError
   // before any reservation is held; the proxy route maps it to a 402. No-op when
   // caps are disabled or unconfigured, so existing behavior is unchanged.
@@ -157,7 +184,8 @@ export async function reserveManagedVeniceChatRequest(
     estimate.inputCostMicroUsd +
       (estimate.outputTokens > 0
         ? Math.ceil((estimate.outputCostMicroUsd * sweepOutputTokens) / estimate.outputTokens)
-        : 0)
+        : 0) +
+      surchargeFallbackCharge
   );
   // The price of a million output tokens, as this estimate priced them. With
   // the input estimate it prices a stream whose usage never arrived at the
@@ -194,6 +222,15 @@ export async function reserveManagedVeniceChatRequest(
         sweepEstimateMicroUsd,
         subsidyState,
         pricingPolicy: "provider_rate_credits_no_usage_discount",
+        ...(surcharge
+          ? {
+              surcharge: {
+                plan: surcharge,
+                holdMicroUsd: surchargeHold,
+                estimateMicroUsd: surchargeFallbackCharge,
+              },
+            }
+          : {}),
       },
     },
     client
@@ -410,6 +447,8 @@ export async function captureManagedVeniceChatUsage(
     endpoint?: typeof VENICE_RESPONSES_ENDPOINT;
     subsidyState?: ManagedVeniceSubsidyState;
     pricingMap?: import("./cost-estimator").VenicePricingMap;
+    /** What Venice's response said about billed options (chat-surcharges.ts). */
+    surchargeEvidence?: ManagedChatSurchargeEvidence;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
@@ -445,13 +484,27 @@ export async function captureManagedVeniceChatUsage(
       ? Number(reservation.reserved_micro_usd)
       : null;
 
+  // Options Venice bills on top of tokens, from the plan the hold was made
+  // for, so a settle that only carries usage (the Worker's) still charges them.
+  // The plan is read off the reservation, never the flag: a hold made with the
+  // flag on is charged in full after it is turned off.
+  const surchargePlan = readSurchargePlan(reservation?.metadata);
+  const surcharge = surchargePlan
+    ? settleManagedChatSurcharge({
+        plan: surchargePlan,
+        evidence: params.surchargeEvidence ?? NO_SURCHARGE_EVIDENCE,
+        tokenCostMicroUsd: actual.actualCostMicroUsd,
+      })
+    : null;
+  const actualCostMicroUsd = actual.actualCostMicroUsd + (surcharge?.surchargeMicroUsd ?? 0);
+
   const cappedCaptureMicroUsd =
     reservedMicroUsd === null
-      ? actual.actualCostMicroUsd
-      : Math.min(actual.actualCostMicroUsd, reservedMicroUsd);
+      ? actualCostMicroUsd
+      : Math.min(actualCostMicroUsd, reservedMicroUsd);
   const overageMicroUsd = Math.max(
     0,
-    actual.actualCostMicroUsd - cappedCaptureMicroUsd
+    actualCostMicroUsd - cappedCaptureMicroUsd
   );
 
   const capture = await captureManagedVeniceReservation(
@@ -472,12 +525,12 @@ export async function captureManagedVeniceChatUsage(
       failureType: "managed_venice_capture_hold_already_settled",
       userId: params.userId,
       referenceId: params.referenceId,
-      actualCostMicroUsd: actual.actualCostMicroUsd,
+      actualCostMicroUsd,
       capturedMicroUsd: capture.capturedMicroUsd,
     });
     return {
       referenceId: params.referenceId,
-      actualCostMicroUsd: actual.actualCostMicroUsd,
+      actualCostMicroUsd,
       chargedMicroUsd: 0,
       discountMicroUsd: 0,
       overageMicroUsd: 0,
@@ -512,7 +565,7 @@ export async function captureManagedVeniceChatUsage(
     prompt_tokens: responsesTokens?.totalInputTokens ?? actual.promptTokens,
     completion_tokens: actual.completionTokens,
     total_tokens: (responsesTokens?.totalInputTokens ?? actual.promptTokens) + actual.completionTokens,
-    actual_cost_micro_usd: actual.actualCostMicroUsd,
+    actual_cost_micro_usd: actualCostMicroUsd,
     charged_micro_usd: chargedMicroUsd,
     discount_micro_usd: 0,
     upstream_status: params.upstreamStatus,
@@ -525,6 +578,14 @@ export async function captureManagedVeniceChatUsage(
       overageStatus,
       subsidyState,
       pricingPolicy: "provider_rate_credits_no_usage_discount",
+      ...(surcharge && surchargePlan
+        ? {
+            tokenCostMicroUsd: actual.actualCostMicroUsd,
+            surchargeMicroUsd: surcharge.surchargeMicroUsd,
+            surchargeSource: surcharge.source,
+            surchargePlan,
+          }
+        : {}),
     },
   });
   if (usageError) {
@@ -538,7 +599,7 @@ export async function captureManagedVeniceChatUsage(
       walletType: params.walletType,
       eventType: "usage_capture",
       amountMicroUsd: chargedMicroUsd,
-      veniceCostMicroUsd: actual.actualCostMicroUsd,
+      veniceCostMicroUsd: actualCostMicroUsd,
       discountMicroUsd: 0,
       referenceId: params.referenceId,
       idempotencyKey: `managed_venice_usage_capture:${params.referenceId}`,
@@ -550,10 +611,46 @@ export async function captureManagedVeniceChatUsage(
         overageStatus,
         subsidyState,
         pricingPolicy: "provider_rate_credits_no_usage_discount",
+        ...(surcharge ? { surchargeMicroUsd: surcharge.surchargeMicroUsd, surchargeSource: surcharge.source } : {}),
       },
     },
     client
   );
+
+  if (surcharge?.reconciliationReason) {
+    // Charged, but not from Venice's own figure (X search results can't be
+    // counted) or clamped to the published rates: ops compares it with
+    // Venice's billing. The request is paid for, so the key stays live, and
+    // a failure to file the item must not fail a charged request.
+    await markManagedVeniceReconciliationRequired(
+      {
+        userId: params.userId,
+        proxyKeyId: params.proxyKeyId,
+        referenceId: params.referenceId,
+        reason: surcharge.reconciliationReason,
+        metadata: {
+          model: params.model,
+          surchargePlan,
+          surchargeMicroUsd: surcharge.surchargeMicroUsd,
+          surchargeCeilingMicroUsd: surcharge.ceilingMicroUsd,
+          veniceCostMicroUsd: params.surchargeEvidence?.veniceCostMicroUsd ?? null,
+          tokenCostMicroUsd: actual.actualCostMicroUsd,
+        },
+        pauseKey: false,
+      },
+      client
+    ).catch((error) => {
+      log.error("Managed Venice chat surcharge reconciliation item could not be filed", error, {
+        source: "managed-venice-chat",
+        failureType: "managed_venice_surcharge_reconciliation_write_failed",
+        userId: params.userId,
+        proxyKeyId: params.proxyKeyId,
+        referenceId: params.referenceId,
+        reason: surcharge.reconciliationReason,
+        surchargeMicroUsd: surcharge.surchargeMicroUsd,
+      });
+    });
+  }
 
   if (overageStatus === "reconciliation_required") {
     await fileManagedVeniceUncoveredOverage(
@@ -563,7 +660,7 @@ export async function captureManagedVeniceChatUsage(
         referenceId: params.referenceId,
         model: params.model,
         reservedMicroUsd,
-        actualCostMicroUsd: actual.actualCostMicroUsd,
+        actualCostMicroUsd,
         overageMicroUsd,
         walletType: params.walletType,
         pauseKey: true,
@@ -574,7 +671,7 @@ export async function captureManagedVeniceChatUsage(
 
   return {
     referenceId: params.referenceId,
-    actualCostMicroUsd: actual.actualCostMicroUsd,
+    actualCostMicroUsd,
     chargedMicroUsd,
     discountMicroUsd: 0,
     overageMicroUsd,

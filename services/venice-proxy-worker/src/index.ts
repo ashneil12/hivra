@@ -187,6 +187,68 @@ function createOutputMeter() {
   };
 }
 
+interface SurchargeEvidence {
+  veniceCostMicroUsd: number | null;
+  webSearchCitations: number | null;
+}
+
+const NO_SURCHARGE_EVIDENCE: SurchargeEvidence = { veniceCostMicroUsd: null, webSearchCitations: null };
+
+/**
+ * Mirror of dashboard readSurchargeEvidence (lib/venice/chat-surcharges.ts),
+ * keep in lockstep: Venice's per-request `cost` (usd + diem) and the web
+ * search citation count, so settle can charge web search / scraping / X search
+ * from Venice's own figure. Without it settle charges the published rates
+ * from the plan held on the reservation.
+ */
+function readSurchargeEvidence(payload: unknown): SurchargeEvidence {
+  if (!isRecord(payload)) return NO_SURCHARGE_EVIDENCE;
+  const cost = payload.cost;
+  let veniceCostMicroUsd: number | null = null;
+  if (isRecord(cost) && (cost.usd !== undefined || cost.diem !== undefined)) {
+    const usd = cost.usd ?? 0;
+    const diem = cost.diem ?? 0;
+    if (
+      typeof usd === "number" &&
+      typeof diem === "number" &&
+      Number.isFinite(usd) &&
+      Number.isFinite(diem) &&
+      usd >= 0 &&
+      diem >= 0
+    ) {
+      veniceCostMicroUsd = Math.round((usd + diem) * 1_000_000);
+    }
+  }
+  const citations = isRecord(payload.venice_parameters) ? payload.venice_parameters.web_search_citations : undefined;
+  return { veniceCostMicroUsd, webSearchCitations: Array.isArray(citations) ? citations.length : null };
+}
+
+function mergeSurchargeEvidence(seen: SurchargeEvidence, next: SurchargeEvidence): SurchargeEvidence {
+  return {
+    veniceCostMicroUsd: next.veniceCostMicroUsd ?? seen.veniceCostMicroUsd,
+    webSearchCitations:
+      seen.webSearchCitations === null && next.webSearchCitations === null
+        ? null
+        : Math.max(seen.webSearchCitations ?? 0, next.webSearchCitations ?? 0),
+  };
+}
+
+function readSurchargeEvidenceFromSseFrame(frame: string): SurchargeEvidence {
+  let evidence = NO_SURCHARGE_EVIDENCE;
+  for (const line of frame.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      evidence = mergeSurchargeEvidence(evidence, readSurchargeEvidence(JSON.parse(data)));
+    } catch {
+      // non-JSON keep-alive / comment frame
+    }
+  }
+  return evidence;
+}
+
 const SETTLE_ATTEMPTS = 5;
 const SETTLE_RETRY_BASE_MS = 250;
 
@@ -354,7 +416,13 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
       cause,
       upstreamStatus,
     });
-  const settle = (usage: unknown, upstreamStatus: number, cause: string, observedOutputTokens: number | null) =>
+  const settle = (
+    usage: unknown,
+    upstreamStatus: number,
+    cause: string,
+    observedOutputTokens: number | null,
+    evidence: SurchargeEvidence = NO_SURCHARGE_EVIDENCE
+  ) =>
     callSettle(env, {
       outcome: "settle",
       userId: auth.userId,
@@ -367,6 +435,11 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
       cause,
       // Only a usage-less response is charged by the output it delivered.
       ...(usage == null && observedOutputTokens !== null ? { observedOutputTokens } : {}),
+      // Only a request held for web search / scraping / X search has any: a
+      // plain chat settles with exactly the fields it always did.
+      ...(evidence.veniceCostMicroUsd !== null || evidence.webSearchCitations !== null
+        ? { surchargeEvidence: evidence }
+        : {}),
     });
 
   const upstreamBody = streaming
@@ -449,7 +522,13 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
       },
     }),
     // Settled after the response, so the box isn't blocked on the round-trip.
-    settled: settle(usage, upstream.status, usage ? "completed" : "missing_usage", meter.outputTokens()),
+    settled: settle(
+      usage,
+      upstream.status,
+      usage ? "completed" : "missing_usage",
+      meter.outputTokens(),
+      readSurchargeEvidence(json)
+    ),
   };
 }
 
@@ -465,13 +544,20 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
 function streamToBox(
   upstream: Response,
   body: ReadableStream<Uint8Array>,
-  settle: (usage: unknown, upstreamStatus: number, cause: string, observedOutputTokens: number | null) => Promise<boolean>
+  settle: (
+    usage: unknown,
+    upstreamStatus: number,
+    cause: string,
+    observedOutputTokens: number | null,
+    evidence: SurchargeEvidence
+  ) => Promise<boolean>
 ): ProxiedChat {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const meter = createOutputMeter();
   let buffer = "";
   let finalUsage: unknown = null;
+  let surchargeEvidence = NO_SURCHARGE_EVIDENCE;
   let boxGone = false;
   // The pull in progress, which a drain after disconnect waits for.
   let reading: Promise<void> = Promise.resolve();
@@ -479,7 +565,7 @@ function streamToBox(
   let markSettled!: () => void;
   const settled = new Promise<void>((resolve) => (markSettled = resolve));
   const finish = (cause: string) => {
-    settlement ??= settle(finalUsage, upstream.status, cause, meter.outputTokens())
+    settlement ??= settle(finalUsage, upstream.status, cause, meter.outputTokens(), surchargeEvidence)
       .then(() => undefined)
       .finally(() => markSettled());
     return settlement;
@@ -488,7 +574,10 @@ function streamToBox(
     buffer += text;
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = flush ? "" : frames.pop() ?? "";
-    for (const frame of frames) finalUsage = meter.observeChatSseFrame(frame) ?? finalUsage;
+    for (const frame of frames) {
+      finalUsage = meter.observeChatSseFrame(frame) ?? finalUsage;
+      surchargeEvidence = mergeSurchargeEvidence(surchargeEvidence, readSurchargeEvidenceFromSseFrame(frame));
+    }
   };
   const drainAfterDisconnect = async () => {
     const stop = setTimeout(() => void reader.cancel().catch(() => undefined), DRAIN_AFTER_DISCONNECT_MS);
