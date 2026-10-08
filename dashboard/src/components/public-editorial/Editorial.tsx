@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import styles from "./secondary-site.module.css";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { glossify } from "@/components/gloss/glossify";
 
 export function EditorialMarkdownLink({ href, ...props }: ComponentProps<"a">) {
   let external = false;
@@ -24,12 +25,12 @@ export function Breadcrumbs({ items }: { items: { label: string; href?: string }
 }
 
 export function EditorialCTA({ title, label = "Start Now" }: { title?: ReactNode; label?: string }) {
-  return <section className={styles.cta}><div><h2>{title ?? <>Deploy in <strong>5 minutes.</strong></>}</h2><p>Free to start. BYO AI key. Paid plans from $9.99/mo, with a 7-day money-back guarantee.</p></div><Link href={PUBLIC_START_HREF} className={styles.button}>{label}<ArrowUpRight size={20} aria-hidden="true" /></Link></section>;
+  return <section className={styles.cta}><div><h2>{title ?? <>Give your agent a computer <strong>that stays on.</strong></>}</h2><p>From $9.99/mo. Bring your own AI key. 7-day money-back guarantee on card payments.</p></div><Link href={PUBLIC_START_HREF} className={styles.button}>{label}<ArrowUpRight size={20} aria-hidden="true" /></Link></section>;
 }
 
 export function EditorialQuestions({ questions }: { questions: { q: string; a: string }[] }) {
   if (!questions.length) return null;
-  return <section className={styles.questions}><h2>Common questions</h2><div>{questions.map(({ q, a }) => <details key={q} open><summary>{q}<span aria-hidden="true">+</span></summary><p>{a}</p></details>)}</div></section>;
+  return <section className={styles.questions}><h2>Common questions</h2><div>{questions.map(({ q, a }) => <details key={q} open><summary>{q}<span aria-hidden="true">+</span></summary><p>{glossify(a)}</p></details>)}</div></section>;
 }
 
 export function EditorialRelated({ title = "Related", links }: { title?: string; links: { label: string; href: string }[] }) {

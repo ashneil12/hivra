@@ -2,13 +2,30 @@
 // or remote install is needed. The production entrypoint fixes all filesystem
 // roots. Tests invoke run() with disposable roots, never real guest data.
 export const FOLDER_RECOVERY_GUEST_PYTHON = String.raw`
-import base64, fcntl, hashlib, json, os, pwd, stat, subprocess, sys, uuid
+import base64, fcntl, hashlib, json, os, pwd, re, stat, subprocess, sys, uuid
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_ENTRIES = 512
 FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
 WORKSPACE_SERVICES = ['hivra-selkies-desktop.service', 'hivra-remote-desktop-broker.service', 'bux-ttyd.service',
                       'bux-box-ttyd.service', 'bux-hivra-chat.service']
+ATTACHED_UNITS_DIR = '/etc/systemd/system'
+
+def workspace_services():
+    # An agent added to this computer sees ~/Hivra through a view of the
+    # folder's inode; it stops (and its view is unmounted) while the folder is
+    # replaced, and starts on the new folder afterwards (design 5.9).
+    try:
+        names = os.listdir(ATTACHED_UNITS_DIR)
+    except FileNotFoundError:
+        names = []
+    attached = []
+    for name in sorted(names):
+        match = re.fullmatch(r'hivra-attached-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-workspace\.service', name)
+        if match:
+            unit = 'hivra-attached-' + match.group(1)
+            attached += [unit + '-workspace.service', unit + '.socket', unit + '.service']
+    return WORKSPACE_SERVICES + attached
 
 class RecoveryError(Exception):
     pass
@@ -162,6 +179,7 @@ def run(request, home='/home/bux', receipt_root='/var/lib/hivra/folder-recovery'
             require(os.fstat(receipts).st_uid == os.getuid() and os.fstat(receipts).st_mode & 0o077 == 0, 'invalid_receipt_directory')
             lockfd = os.open('lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=receipts)
             desktop_stop_attempted = False
+            services_now = workspace_services() if services else WORKSPACE_SERVICES
             try:
                 fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 name = operation + '.json'
@@ -259,14 +277,14 @@ def run(request, home='/home/bux', receipt_root='/var/lib/hivra/folder-recovery'
                             os.close(tree)
                         if services:
                             desktop_stop_attempted = True
-                            subprocess.run(['systemctl', 'stop'] + list(reversed(WORKSPACE_SERVICES)), check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            subprocess.run(['systemctl', 'stop'] + list(reversed(services_now)), check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         os.rename('tree', 'Hivra', src_dir_fd=stage, dst_dir_fd=homefd)
                         os.fsync(homefd)
                     finally:
                         os.close(stage)
                 if services:
-                    subprocess.run(['systemctl', 'restart'] + WORKSPACE_SERVICES, check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    for unit in WORKSPACE_SERVICES:
+                    subprocess.run(['systemctl', 'restart'] + services_now, check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    for unit in services_now:
                         subprocess.run(['systemctl', 'is-active', '--quiet', unit], check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     desktop_stop_attempted = False
                 workspace = os.open('Hivra', FLAGS | os.O_DIRECTORY, dir_fd=homefd)
@@ -301,7 +319,7 @@ def run(request, home='/home/bux', receipt_root='/var/lib/hivra/folder-recovery'
                     # not leave the previously working desktop stopped. This is
                     # best-effort service cleanup, never restore success evidence.
                     try:
-                        subprocess.run(['systemctl', 'start'] + WORKSPACE_SERVICES, check=False, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(['systemctl', 'start'] + services_now, check=False, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception:
                         pass
                 os.close(lockfd)

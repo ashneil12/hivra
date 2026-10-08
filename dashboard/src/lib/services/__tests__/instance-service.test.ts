@@ -364,6 +364,18 @@ function emptyHivraAgentsQuery() {
   return query;
 }
 
+// hivra_agents allocation query that resolves to `rows` however the chain
+// filters it (the mock does not apply the filters; assert them instead).
+function hivraAllocationRowsQuery(rows: Array<Record<string, unknown>>) {
+  const query: Record<string, jest.Mock | unknown> = {};
+  query.select = jest.fn().mockReturnValue(query);
+  query.in = jest.fn().mockReturnValue(query);
+  query.neq = jest.fn().mockReturnValue(query);
+  query.then = (resolve: (value: { data: unknown[]; error: null }) => void) =>
+    Promise.resolve({ data: rows, error: null }).then(resolve);
+  return query as Record<string, jest.Mock>;
+}
+
 function buildProxmoxCapacityRowsSupabaseStub(
   rows: Array<{
     status: string | null;
@@ -1028,6 +1040,76 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
+  it("refuses a launch with no entitlement and names only the plans, never the token", async () => {
+    // A user with no subscription, no Apple plan, no yearly year and no tier
+    // qualification: every lookup comes back empty.
+    const emptyQuery: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "in", "order", "limit", "not", "is"]) {
+      emptyQuery[method] = jest.fn().mockReturnThis();
+    }
+    emptyQuery.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    emptyQuery.then = (resolve: (value: unknown) => unknown) => resolve({ data: [], error: null });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation(() => emptyQuery);
+
+    const result = await InstanceService.createInstance(
+      "user_no_entitlement",
+      CreateInstanceSchema.parse({
+        name: "No Plan Agent",
+        provider: "openrouter",
+        apiKey: "sk-or-test",
+      })
+    );
+
+    expect(result).toEqual({
+      success: false,
+      status: 403,
+      message: "Active subscription required. Choose a plan to start deploying agents.",
+    });
+    if (!result.success) expect(result.message).not.toMatch(/token|hermesos|hold/i);
+    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+  });
+
+  it("refuses a NEW provision on an App Store trialing sub, exactly like a Stripe trialing one", async () => {
+    const emptyQuery: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "in", "order", "limit", "not", "is"]) {
+      emptyQuery[method] = jest.fn().mockReturnThis();
+    }
+    emptyQuery.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    emptyQuery.then = (resolve: (value: unknown) => unknown) => resolve({ data: [], error: null });
+    const appleQuery = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: {
+          plan: "operator",
+          status: "trialing",
+          current_period_end: "2999-01-01T00:00:00.000Z",
+        },
+        error: null,
+      }),
+    };
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((tableName: string) =>
+      tableName === "apple_iap_subscriptions" ? appleQuery : emptyQuery
+    );
+
+    const result = await InstanceService.createInstance(
+      "user_apple_trial",
+      CreateInstanceSchema.parse({
+        name: "Apple Trial Agent",
+        provider: "openrouter",
+        apiKey: "sk-or-test",
+      })
+    );
+
+    expect(result).toEqual({
+      success: false,
+      status: 403,
+      message: "Active subscription required. Choose a plan to start deploying agents.",
+    });
+    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+  });
+
   it("blocks a NEW provision while a paid sub is past_due (dunning), before any backend call", async () => {
     const subscriptionQuery = {
       select: jest.fn().mockReturnThis(),
@@ -1554,9 +1636,9 @@ describe("InstanceService.createInstance free-tier guard", () => {
   });
 
   it("persists the wallet the minted key ACTUALLY bills, not the one the deploy card requested", async () => {
-    // A brand-new free user: the deploy card submits 'hermesos' (their card
-    // wallet was empty at page load), but the mint grants the starter credit and
-    // binds the key to 'card'. If the instance config recorded the REQUESTED
+    // The deploy card submits 'hermesos' (the card wallet was empty at page
+    // load), but the mint finds the card wallet funded and binds the key to
+    // 'card'. If the instance config recorded the REQUESTED
     // wallet, config would claim hermesos while every request bills card — and
     // managed-webui-enable would re-mint a fresh key on every enable click.
     (createManagedVeniceProxyKey as jest.Mock).mockResolvedValue({
@@ -3546,25 +3628,15 @@ describe("InstanceService.createInstance free-tier guard", () => {
       return Promise.resolve({ data: [], error: null });
     });
 
-    const hivraAllocationQuery: Record<string, unknown> = {
-      select: jest.fn().mockReturnThis(),
-    };
-    let hivraInCalls = 0;
-    hivraAllocationQuery.in = jest.fn(() => {
-      hivraInCalls += 1;
-      if (hivraInCalls === 1) return hivraAllocationQuery;
-      return Promise.resolve({
-        data: [
-          {
-            proxmox_host: "fixturenode1",
-            cpu: 4,
-            ram: 48,
-            status: "running",
-          },
-        ],
-        error: null,
-      });
-    });
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      {
+        proxmox_host: "fixturenode1",
+        cpu: 4,
+        ram: 48,
+        status: "running",
+        vmid: 1090,
+      },
+    ]);
 
     const fakeSupabase = {
       from: jest.fn((tableName: string) => {
@@ -3592,7 +3664,110 @@ describe("InstanceService.createInstance free-tier guard", () => {
         env: expect.objectContaining({ PROXMOX_NODE: "fixturenode2" }),
       })
     );
-    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status");
+    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status, vmid");
+  });
+
+  it("counts stopped Hivra computers' disk but not their CPU/RAM when ranking hosts", async () => {
+    // A stopped Hivra computer keeps its thin-pool disk. Placement used to
+    // read only provisioning/running rows, so a host full of stopped
+    // computers looked empty on disk and kept winning placements.
+    delete process.env.HERMES_PROXMOX_TARGETS;
+    delete process.env.HERMES_PROXMOX_TARGET;
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+
+    (getProxmoxTemplateAvailability as jest.Mock).mockImplementation(
+      async ({ env }: { env: NodeJS.ProcessEnv }) => ({
+        ok: true,
+        targetId: env.PROXMOX_NODE,
+        templateId: 9000,
+      })
+    );
+    (getProxmoxVmidAvailability as jest.Mock).mockImplementation(
+      async ({ env }: { env: NodeJS.ProcessEnv }) => ({
+        ok: true,
+        targetId: env.PROXMOX_NODE,
+        vmidStart: 1090,
+        vmidEnd: 1097,
+        occupiedVmids: [],
+        freeVmids: [1090],
+      })
+    );
+
+    const host = {
+      status: "active",
+      env_prefix: null,
+      total_cpu: 12,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: 391,
+      thinpool_overcommit_ratio: 1.5,
+    };
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({
+        data: [
+          // More free RAM, so worst-fit prefers it unless disk rules it out.
+          { ...host, id: "fixturenode1", total_ram_mb: 131072 },
+          { ...host, id: "fixturenode2", total_ram_mb: 65536 },
+        ],
+        error: null,
+      }),
+    };
+
+    let allocationInCalls = 0;
+    const legacyAllocationQuery: Record<string, unknown> = {
+      select: jest.fn().mockReturnThis(),
+    };
+    legacyAllocationQuery.in = jest.fn(() => {
+      allocationInCalls += 1;
+      if (allocationInCalls === 1) return legacyAllocationQuery;
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    // fixturenode1: 19 stopped computers x 30 GB = 570 GB of a 586.5 GB
+    // budget, leaving less than one more VM's disk.
+    // fixturenode2: two stopped computers whose CPU/RAM would exhaust the host
+    // if counted, but a stopped VM holds neither.
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      ...Array.from({ length: 19 }, (_, index) => ({
+        proxmox_host: "fixturenode1",
+        cpu: 2,
+        ram: 4,
+        status: "stopped",
+        vmid: 2000 + index,
+      })),
+      { proxmox_host: "fixturenode2", cpu: 20, ram: 64, status: "stopped", vmid: 3000 },
+      { proxmox_host: "fixturenode2", cpu: 20, ram: 64, status: "stopped", vmid: 3001 },
+    ]);
+
+    const fakeSupabase = {
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return hivraAllocationQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env: process.env,
+      hostConfig: null,
+      userId: "user_stopped_hivra_disk",
+      neededCpu: 2,
+      neededRamMb: 4096,
+      neededDiskGb: 30,
+    });
+
+    expect(selection).toEqual(
+      expect.objectContaining({
+        ok: true,
+        targetId: "fixturenode2",
+        env: expect.objectContaining({ PROXMOX_NODE: "fixturenode2" }),
+      })
+    );
+    expect(hivraAllocationQuery.neq).toHaveBeenCalledWith("status", "deleted");
   });
 
   it("uses the configured VM disk size for placement instead of the template default", async () => {
@@ -3875,7 +4050,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
     return {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
-        if (tableName === "hermes_instances" || tableName === "hivra_agents") return allocationQuery;
+        if (tableName === "hermes_instances") return allocationQuery;
+        if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -3948,7 +4124,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return allocationQuery;
-        if (tableName === "hivra_agents") return allocationQuery;
+        if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -6002,101 +6178,40 @@ describe("InstanceService.createInstance free-tier guard", () => {
     );
   });
 
-  it("logs insert diagnostics when a Free instance row cannot be created", async () => {
-    const subscriptionQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({
-        data: {
-          plan: "free",
-          status: "active",
-          instance_limit: 1,
-          total_cpu_budget: 0.5,
-          total_ram_budget: 1024,
-        },
-      }),
-    };
-
-    const freeGuardQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      or: jest.fn().mockReturnThis(),
-      not: jest.fn().mockReturnThis(),
-      neq: jest.fn().mockReturnThis(),
-      limit: jest.fn(async () => ({ data: [], error: null })),
-    };
-
-    const agentCountQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      not: jest.fn().mockReturnValue({ not: jest.fn().mockResolvedValue({ count: 0 }) }),
-    };
-
-    const resourceUsageQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      not: jest.fn().mockReturnValue({ not: jest.fn().mockResolvedValue({ data: [] }) }),
-    };
-
-    const insertQuery = {
-      insert: jest.fn().mockReturnThis(),
-      select: jest.fn().mockReturnThis(),
-      single: jest.fn().mockResolvedValue({
-        data: null,
-        error: {
-          code: "22P02",
-          message: 'invalid input syntax for type integer: "0.5"',
-          details: "Bad fractional CPU input",
-          hint: null,
-        },
-      }),
-    };
-
-    // resolveEffectiveSubscription falls through to apple + yearly +
-    // token-tier tables when the Stripe row is 'free' (so wallet-only users
-    // aren't blocked). This test exercises the Free fallback, so all must
-    // return empty.
-    const appleIapQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      in: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
-    };
-    const yearlyTokenQuery = {
+  it("refuses a Hivra-hosted computer for a Free account before any placement or record", async () => {
+    // The Free account is the platform: bring your own computer or buy ours.
+    // resolveEffectiveSubscription falls through to apple + yearly + token-tier
+    // tables when the Stripe row is 'free'; all return empty, so the Free
+    // fallback entitlement is what createInstance sees.
+    const query = (rows: unknown) => ({
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
-    };
+      maybeSingle: jest.fn().mockResolvedValue({ data: rows, error: null }),
+    });
+    const subscriptionQuery = query({
+      plan: "free",
+      status: "active",
+      instance_limit: 1,
+      total_cpu_budget: 0.5,
+      total_ram_budget: 1024,
+    });
     const tokenQualQuery = {
       select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockImplementation(function (this: typeof tokenQualQuery, col: string) {
-        // Second .eq("currently_eligible", true) resolves the chain.
-        if (col === "currently_eligible") {
-          return Promise.resolve({ data: [], error: null });
-        }
+      eq: jest.fn().mockImplementation(function (this: unknown, col: string) {
+        if (col === "currently_eligible") return Promise.resolve({ data: [], error: null });
         return this;
       }),
     };
-
-    let hermesInstancesCall = 0;
-    const proxmoxHostsRegistry = createEmptyProxmoxHostsRegistry();
     (supabaseAdmin!.from as jest.Mock).mockImplementation((tableName: string) => {
       if (tableName === "hermes_subscriptions") return subscriptionQuery;
-      if (tableName === "apple_iap_subscriptions") return appleIapQuery;
-      if (tableName === "yearly_token_subscriptions") return yearlyTokenQuery;
+      if (tableName === "apple_iap_subscriptions") return query(null);
+      if (tableName === "yearly_token_subscriptions") return query(null);
       if (tableName === "token_tier_qualifications") return tokenQualQuery;
-      if (tableName === "hermes_instances") {
-        hermesInstancesCall += 1;
-        if (hermesInstancesCall === 1) return freeGuardQuery;
-        if (hermesInstancesCall === 2) return agentCountQuery;
-        if (hermesInstancesCall === 3) return resourceUsageQuery;
-        if (hermesInstancesCall === 4) return insertQuery;
-      }
-      if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
-      throw new Error(`Unexpected table lookup: ${tableName}`);
+      // Placement, usage counts and the instance insert must never be reached.
+      throw new Error(`Free account reached ${tableName}: the refusal must come first`);
     });
 
     const result = await InstanceService.createInstance(
@@ -6105,32 +6220,15 @@ describe("InstanceService.createInstance free-tier guard", () => {
         name: "Free Agent",
         provider: "openrouter",
         apiKey: "sk-or-test",
-        cpuLimit: 1,
-        ramLimit: 2048,
       })
     );
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: false,
-        status: 500,
-        message: "Failed to create instance record",
-      })
-    );
-    expect(log.error).toHaveBeenCalledWith(
-      "failed to create instance record",
-      expect.any(Error),
-      expect.objectContaining({
-        failureType: "instance_record_insert_failed",
-        userId: "user_free",
-        resourceTier: "credit_base",
-        cpuLimit: 0.5,
-        ramLimit: 1024,
-        insertErrorCode: "22P02",
-        insertErrorDetailsPresent: true,
-        verboseErrors: true,
-      })
-    );
+    expect(result).toEqual({
+      success: false,
+      status: 403,
+      message: expect.stringMatching(/paid plan/i),
+      failureType: "hosted_compute_requires_plan",
+    });
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 

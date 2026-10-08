@@ -46,6 +46,10 @@ import { isCodexAuthProvider } from "@/lib/provider-auth";
 import { isOperatorosAgentImage } from "@/lib/operatoros-flavor";
 import { resolvePersonaSoulFromSystemPrompt } from "@/lib/persona-souls-accessor";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  resolveVmidReferencePlane,
+  type VmidReferenceLedger,
+} from "@/lib/proxmox/vmid-reference-ledger";
 // Proxmox script generation and output parsing live in dedicated modules
 // (./proxmox/script-builders, ./proxmox/output-parsers). Everything this
 // module used to export is re-exported below, so existing importers keep
@@ -65,11 +69,23 @@ import {
   buildProxmoxStatusBatchScript,
   buildProxmoxStatusScript,
   buildProxmoxTemplateAvailabilityScript,
+  buildProxmoxVmIdentityGuardScript,
   buildProxmoxVmidAvailabilityScript,
   resolveProxmoxBalloonFloorMb,
   shQuote,
 } from "./proxmox/script-builders";
 import type { ProxmoxInstanceMetrics } from "./proxmox/output-parsers";
+import {
+  buildSudoTransportCommand,
+  frameSudoTransportInput,
+  HIVRA_SUDO_LOADER,
+  parseMissingTool,
+  stripSudoSentinel,
+  SUDO_MISSING_TOOLS_PROBE,
+  SUDO_TRUE_PROBE,
+  sudoTransportFailureMessage,
+  type SudoTransportFailure,
+} from "./proxmox-sudo-transport";
 import {
   parseProxmoxInfrastructureDiscoveryOutput,
   parseProxmoxMetricsOutput,
@@ -80,6 +96,7 @@ import {
 
 export {
   DEFAULT_PROXMOX_VM_DISK_GB,
+  PROXMOX_VM_IDENTITY_MISMATCH_MARKER,
   PROXMOX_VM_MISSING_MARKER,
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxCaddySiteCleanupScript,
@@ -180,6 +197,12 @@ export interface HostScriptResult {
   stdout: string;
   stderr: string;
   error?: string;
+  /** A user connection's server presented a different host key than the
+   * pinned one. Nothing was authenticated or sent. Lowercase SHA-256 hex. */
+  presentedHostFingerprintSha256?: string;
+  /** Sudo transport only: the command never reached the script, and the
+   * fixed diagnosis says why. */
+  sudoFailure?: SudoTransportFailure;
 }
 
 /** Default and absolute host-output limits protect the control plane from a
@@ -221,7 +244,18 @@ export type ProxmoxTemplateAvailability =
 type EnvLike = Record<string, string | undefined>;
 type HostScriptTimeoutOverride =
   | number
-  | { timeoutMs?: number; earlyFinishMarker?: string; maxOutputBytes?: number };
+  | {
+      timeoutMs?: number;
+      earlyFinishMarker?: string;
+      maxOutputBytes?: number;
+      /** Sudo transport only. "bounded" (the default) stops the remote script
+       * with TERM, then KILL, just before Hivra's own deadline. "none" is for
+       * scripts that change packages (gVisor Prepare): a KILL inside apt or
+       * dpkg would leave the package database interrupted, so, exactly as for
+       * a root login, the script finishes on the server even if Hivra stopped
+       * waiting. */
+      remoteLimit?: "bounded" | "none";
+    };
 
 type ProvisionDeps = ProxmoxHostAwareDeps & {
   buildDeployScript?: typeof buildAgentDeployScript;
@@ -1010,9 +1044,36 @@ export async function getReservedProxmoxVmidsForNode(params: {
   proxmoxNode: string;
   excludeInstanceId: string;
 }): Promise<number[]> {
-  if (!supabaseAdmin) return [];
+  return (await lookupReservedProxmoxVmidsForNode(params)) ?? [];
+}
+
+/**
+ * This control plane's VMID references on one host, for the cross-plane host
+ * ledger. Unlike the picker's reservation (which degrades to []), a failed
+ * lookup is null so the allocator never publishes an empty list over a good one.
+ */
+export async function buildProxmoxVmidReferenceLedger(params: {
+  proxmoxNode: string;
+  excludeInstanceId: string;
+  lane: VmidReferenceLedger["lane"];
+  references?: readonly number[];
+}): Promise<{ reservedVmids: number[]; vmidLedger: VmidReferenceLedger }> {
+  const references = params.references
+    ? [...params.references]
+    : await lookupReservedProxmoxVmidsForNode(params);
+  return {
+    reservedVmids: references ?? [],
+    vmidLedger: { plane: resolveVmidReferencePlane(process.env), lane: params.lane, references },
+  };
+}
+
+async function lookupReservedProxmoxVmidsForNode(params: {
+  proxmoxNode: string;
+  excludeInstanceId: string;
+}): Promise<number[] | null> {
+  if (!supabaseAdmin) return null;
   const node = params.proxmoxNode.trim();
-  if (!node) return [];
+  if (!node) return null;
   // `hermes_instances.id` is a uuid. The vmid-availability preflight calls this
   // with a sentinel string (`__vmid_availability_preflight__`) — there's no row
   // to exclude — and comparing that to a uuid column throws "invalid input
@@ -1054,7 +1115,7 @@ export async function getReservedProxmoxVmidsForNode(params: {
       legacyError: legacyError ? redactSensitiveCommandOutput(legacyError.message ?? "", 400) : null,
       hivraError: hivraError ? redactSensitiveCommandOutput(hivraError.message ?? "", 400) : null,
     });
-    return [];
+    return null;
   }
   const seen = new Set<number>();
   for (const row of legacyRows ?? []) {
@@ -1168,8 +1229,15 @@ export async function getProxmoxVmidAvailability(
     };
   }
 
+  const { reservedVmids, vmidLedger } = targetId
+    ? await buildProxmoxVmidReferenceLedger({
+        proxmoxNode: targetId,
+        excludeInstanceId: "__vmid_availability_preflight__",
+        lane: "hermes",
+      })
+    : { reservedVmids: [] as number[], vmidLedger: null };
   const runner = deps.runHostScript ?? ((script: string) => runProxmoxHostScript(script, env));
-  const result = await runner(buildProxmoxVmidAvailabilityScript({ vmidStart, vmidEnd }));
+  const result = await runner(buildProxmoxVmidAvailabilityScript({ vmidStart, vmidEnd, vmidLedger }));
   if (!result.ok) {
     return {
       ok: false,
@@ -1184,12 +1252,6 @@ export async function getProxmoxVmidAvailability(
   }
 
   const parsed = parseProxmoxVmidAvailabilityOutput(result.stdout);
-  const reservedVmids = targetId
-    ? await getReservedProxmoxVmidsForNode({
-        proxmoxNode: targetId,
-        excludeInstanceId: "__vmid_availability_preflight__",
-      })
-    : [];
   const occupiedSet = new Set(parsed.occupiedVmids);
   for (const vmid of reservedVmids) {
     if (vmid >= vmidStart && vmid <= vmidEnd) occupiedSet.add(vmid);
@@ -1387,9 +1449,10 @@ function spawnWithInput(
   input: string,
   timeoutMs: number,
   maxOutputBytes: number,
+  childEnv?: NodeJS.ProcessEnv,
 ): Promise<HostScriptResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], ...(childEnv ? { env: childEnv } : {}) });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let capturedBytes = 0;
@@ -1458,9 +1521,22 @@ function spawnWithInput(
   });
 }
 
+/** One host script run. `loginCommand`/`loginInput` are today's exact SSH
+ * command and stdin; `script`/`stdin` are what the sudo transport frames
+ * instead, for connections whose privilege is "sudo". */
+type HostInvocation = {
+  loginCommand: string;
+  loginInput: string;
+  script: string;
+  stdin: string;
+};
+
+function withoutSudoSentinel(result: HostScriptResult): HostScriptResult {
+  return { ...result, stderr: stripSudoSentinel(result.stderr).stderr };
+}
+
 async function runProxmoxHostInvocation(
-  command: string,
-  input: string,
+  invocation: HostInvocation,
   env: EnvLike = process.env,
   timeoutMsOverride?: HostScriptTimeoutOverride
 ): Promise<HostScriptResult> {
@@ -1483,8 +1559,30 @@ async function runProxmoxHostInvocation(
     typeof timeoutMsOverride === "object" ? timeoutMsOverride?.earlyFinishMarker : undefined;
   const maxOutputBytes = resolveHostScriptMaxOutputBytes(timeoutMsOverride);
   const mode = envValue(env, "PROXMOX_EXEC_MODE", "ssh");
+  const userInfrastructureConnection =
+    envValue(env, "HIVRA_USER_INFRA_CONNECTION").toLowerCase() === "true";
+  // The managed fleet never sets this; login connections keep today's exact
+  // commands. Only a user connection that recorded sudo uses the transport.
+  const sudoTransport = userInfrastructureConnection
+    && envValue(env, "PROXMOX_SSH_PRIVILEGE") === "sudo";
+  const sudoInput = sudoTransport ? frameSudoTransportInput(invocation.script, invocation.stdin) : null;
+  if (sudoTransport && sudoInput === null) {
+    return { ok: false, stdout: "", stderr: "", error: "Invalid host script for the sudo transport" };
+  }
+  const remoteLimit = typeof timeoutMsOverride === "object" && timeoutMsOverride.remoteLimit === "none" ? "none" : "bounded";
+  const command = sudoTransport ? buildSudoTransportCommand(timeoutMs, remoteLimit) : invocation.loginCommand;
+  const input = sudoTransport ? sudoInput! : invocation.loginInput;
 
   if (mode === "local") {
+    // Local mode runs the same framing without sudo, so the loader's
+    // behaviour can be checked on a development machine. LC_ALL=C as on the
+    // server: the loader counts the script's length in bytes.
+    if (sudoTransport) {
+      return withoutSudoSentinel(
+        await spawnWithInput("bash", ["--noprofile", "--norc", "-c", HIVRA_SUDO_LOADER], input, timeoutMs, maxOutputBytes,
+          { ...process.env, LC_ALL: "C" }),
+      );
+    }
     return command === "bash -s"
       ? spawnWithInput("bash", ["-s"], input, timeoutMs, maxOutputBytes)
       : spawnWithInput("bash", ["-c", command], input, timeoutMs, maxOutputBytes);
@@ -1493,8 +1591,10 @@ async function runProxmoxHostInvocation(
   const host = envValue(env, "PROXMOX_SSH_HOST");
   const user = envValue(env, "PROXMOX_SSH_USER", "root");
   const port = envValue(env, "PROXMOX_SSH_PORT", "22");
-  const userInfrastructureConnection =
-    envValue(env, "HIVRA_USER_INFRA_CONNECTION").toLowerCase() === "true";
+  const hostKeyType = userInfrastructureConnection ? envValue(env, "PROXMOX_SSH_HOST_KEY_TYPE") : "";
+  if (hostKeyType && hostKeyType !== "ssh-ed25519") {
+    return { ok: false, stdout: "", stderr: "", error: "Unsupported pinned SSH host key type." };
+  }
   const configuredHostFingerprint = envValue(env, "PROXMOX_SSH_HOST_FINGERPRINT");
   let expectedHostFingerprint: string | null = null;
   if (configuredHostFingerprint) {
@@ -1556,6 +1656,8 @@ async function runProxmoxHostInvocation(
   return await new Promise<HostScriptResult>((resolve) => {
       const conn = new Ssh2Client();
       let settled = false;
+      // What the server presented, recorded before the verifier refuses it.
+      let presentedFingerprint: string | null = null;
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       let stdoutBytes = 0;
@@ -1580,7 +1682,8 @@ async function runProxmoxHostInvocation(
         } catch {
           // ignore
         }
-        resolve(result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result);
+        const bounded = result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result;
+        resolve(sudoTransport ? withoutSudoSentinel(bounded) : bounded);
       };
 
       const timer = setTimeout(() => {
@@ -1622,11 +1725,16 @@ async function runProxmoxHostInvocation(
         // if PROXMOX_ALLOW_SSH_AGENT=true is configured at runtime.
         ...(privateKeyBuf ? { privateKey: privateKeyBuf } : {}),
         readyTimeout: Math.min(timeoutMs, 60_000),
+        // An enrolled connection recorded its Ed25519 key: offer only that
+        // algorithm, so another key type is refused before authentication.
+        ...(hostKeyType === "ssh-ed25519" ? { algorithms: { serverHostKey: ["ssh-ed25519" as const] } } : {}),
         ...(expectedHostFingerprint
           ? {
               hostHash: "sha256",
-              hostVerifier: (fingerprint: string) =>
-                active() && String(fingerprint).trim().toLowerCase() === expectedHostFingerprint,
+              hostVerifier: (fingerprint: string) => {
+                presentedFingerprint = String(fingerprint).trim().toLowerCase();
+                return active() && presentedFingerprint === expectedHostFingerprint;
+              },
             }
           : {}),
       };
@@ -1674,6 +1782,17 @@ async function runProxmoxHostInvocation(
             const { stdout, stderr } = capturedOutput();
             if (code === 0) {
               finish({ ok: true, stdout, stderr });
+            } else if (sudoTransport && !stripSudoSentinel(stderr).sentinel) {
+              // No sentinel: the command never reached the script. sudo's own
+              // messages follow the server's locale, so run fixed probes
+              // instead of parsing them. Only on this failure path.
+              void diagnoseSudoTransport().then((failure) => finish({
+                ok: false,
+                stdout,
+                stderr,
+                error: sudoTransportFailureMessage(failure),
+                sudoFailure: failure,
+              }));
             } else {
               finish({
                 ok: false,
@@ -1725,11 +1844,48 @@ async function runProxmoxHostInvocation(
         });
       });
 
+      // Up to two fixed commands on the same connection, each bounded by the
+      // same dispatch deadline and a small output cap.
+      const runProbe = (probe: string): Promise<{ code: number | null; stdout: string }> =>
+        new Promise((settle) => {
+          if (!active()) {
+            settle({ code: null, stdout: "" });
+            return;
+          }
+          conn.exec(probe, (err, stream) => {
+            if (err || !active()) {
+              try { stream?.destroy(); } catch { /* Best-effort probe teardown. */ }
+              settle({ code: null, stdout: "" });
+              return;
+            }
+            const chunks: Buffer[] = [];
+            let bytes = 0;
+            stream.on("data", (chunk: Buffer) => {
+              if (bytes < 4_096) chunks.push(chunk.subarray(0, 4_096 - bytes));
+              bytes += chunk.length;
+            });
+            stream.stderr.on("data", () => undefined);
+            stream.on("close", (code: number) => {
+              settle({ code: typeof code === "number" ? code : null, stdout: Buffer.concat(chunks).toString("utf8") });
+            });
+            stream.end();
+          });
+        });
+      const diagnoseSudoTransport = async (): Promise<SudoTransportFailure> => {
+        const missing = parseMissingTool((await runProbe(SUDO_MISSING_TOOLS_PROBE)).stdout);
+        if (missing) return { kind: "missing_tool", path: missing };
+        const sudoTrue = await runProbe(SUDO_TRUE_PROBE);
+        return sudoTrue.code === 0 ? { kind: "command_not_allowed" } : { kind: "password_required" };
+      };
+
       conn.on("error", (err: Error) => {
         finish({
           ok: false,
           ...capturedOutput(),
           error: `SSH connection failed: ${err.message}`,
+          ...(expectedHostFingerprint && presentedFingerprint !== null && presentedFingerprint !== expectedHostFingerprint
+            ? { presentedHostFingerprintSha256: presentedFingerprint }
+            : {}),
         });
       });
 
@@ -1752,7 +1908,11 @@ export async function runProxmoxHostScript(
   env: EnvLike = process.env,
   timeoutMsOverride?: HostScriptTimeoutOverride,
 ): Promise<HostScriptResult> {
-  return runProxmoxHostInvocation("bash -s", script, env, timeoutMsOverride);
+  return runProxmoxHostInvocation(
+    { loginCommand: "bash -s", loginInput: script, script, stdin: "" },
+    env,
+    timeoutMsOverride,
+  );
 }
 
 /**
@@ -1771,7 +1931,17 @@ export async function runProxmoxHostScriptWithStdin(
   }
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const command = `/bin/bash -c "$(printf '%s' '${encoded}' | /usr/bin/base64 --decode)"`;
-  return runProxmoxHostInvocation(command, stdin, env, timeoutMsOverride);
+  // A root login runs this command as one argument to its shell, and Linux
+  // refuses any one argument of 128 KiB or more: a script near 96 KiB would
+  // fail on the host as "Argument list too long".
+  if (Buffer.byteLength(command) > 128 * 1024 - 1) {
+    return { ok: false, stdout: "", stderr: "", error: "Invalid Proxmox host script or stdin" };
+  }
+  return runProxmoxHostInvocation(
+    { loginCommand: command, loginInput: stdin, script, stdin },
+    env,
+    timeoutMsOverride,
+  );
 }
 
 export async function provisionProxmoxInstance(params: {
@@ -2147,14 +2317,16 @@ export async function provisionProxmoxInstance(params: {
   // value stored in `proxmox_node` by buildPostProvisionMetadataPayload
   // — see instance-service.ts:~2417. Empty slug short-circuits to [] so
   // single-host deployments without a slug keep working.
-  const reservedVmidLookup =
-    deps.getReservedVmidsForNode ?? getReservedProxmoxVmidsForNode;
-  const reservedVmids = inferredHostSlug
-    ? await reservedVmidLookup({
+  const { reservedVmids, vmidLedger } = inferredHostSlug
+    ? await buildProxmoxVmidReferenceLedger({
         proxmoxNode: inferredHostSlug,
         excludeInstanceId: params.instanceId,
+        lane: "hermes",
+        references: deps.getReservedVmidsForNode
+          ? await deps.getReservedVmidsForNode({ proxmoxNode: inferredHostSlug, excludeInstanceId: params.instanceId })
+          : undefined,
       })
-    : [];
+    : { reservedVmids: [] as number[], vmidLedger: null };
   const script = buildProxmoxProvisionScript({
     instanceId: params.instanceId,
     vmName: sanitizeVmName(`hermes-${params.name}-${params.instanceId.slice(0, 8)}`),
@@ -2162,6 +2334,7 @@ export async function provisionProxmoxInstance(params: {
     vmidStart,
     vmidEnd,
     reservedVmids,
+    vmidLedger,
     ipLastOctetStart: envInt(env, "PROXMOX_IP_LAST_OCTET_START", 50),
     privateSubnetPrefix: envValue(env, "PROXMOX_PRIVATE_SUBNET_PREFIX", "10.250.20"),
     privateCidr: envInt(env, "PROXMOX_PRIVATE_CIDR", 24),
@@ -2397,17 +2570,20 @@ export async function deleteProxmoxInstance(
 export async function shutdownProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   deps: ProxmoxHostAwareDeps & {
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
     shutdownTimeoutSeconds?: number;
     /** Pass 0 when pausing for inactivity/capacity so a host reboot doesn't
      * auto-start the paused VM. Undefined leaves onboot untouched. */
     setOnboot?: 0 | 1;
-  } = {}
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "shutdown",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
     setOnboot: deps.setOnboot,
@@ -2419,17 +2595,20 @@ export async function shutdownProxmoxInstance(
 export async function startProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   deps: ProxmoxHostAwareDeps & {
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
     /** Pass 1 when resuming an agent so it survives host reboots while active
      * (the inverse of the inactivity-pause onboot:0). Undefined leaves onboot
      * untouched. */
     setOnboot?: 0 | 1;
-  } = {}
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "start",
     setOnboot: deps.setOnboot,
   });
@@ -2439,13 +2618,14 @@ export async function startProxmoxInstance(
 
 export async function rebootProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
-  deps: ProxmoxHostAwareDeps & { shutdownTimeoutSeconds?: number } = {}
+  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string; shutdownTimeoutSeconds?: number }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "reboot",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
   });
@@ -2457,13 +2637,14 @@ export async function rebootProxmoxInstance(
 export async function resizeProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   resources: { cpuLimit: number; ramLimit: number },
-  deps: ProxmoxHostAwareDeps = {}
+  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxResizeScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     cores: resources.cpuLimit,
     memoryMb: resources.ramLimit,
     balloonFloorMb: envInt(env, "PROXMOX_VM_BALLOON_FLOOR_MB", 0) || undefined,
@@ -2583,7 +2764,15 @@ echo "[resize] container cgroup reapply: $updated container(s) set to \${MEM_MB}
  * to a running VM with no chat interruption.
  */
 export async function resizeProxmoxVm(
-  params: { vmid: number; node?: string; cpuLimit: number; memoryMb: number; cpuUnits?: number },
+  params: {
+    vmid: number;
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
+    node?: string;
+    cpuLimit: number;
+    memoryMb: number;
+    cpuUnits?: number;
+  },
   deps: ProxmoxHostAwareDeps = {}
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
@@ -2649,7 +2838,7 @@ if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "VM $VMID not found" >&2
   exit 1
 fi
-
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}
 # Same ipconfig0 parse the metrics script uses — the guest's private IP is the
 # only route from the Proxmox host into the VM.
 PRIVATE_IP="$(qm config "$VMID" 2>/dev/null | sed -n 's/^ipconfig0: .*ip=\\([^,\\/]*\\).*/\\1/p' | head -n1)"

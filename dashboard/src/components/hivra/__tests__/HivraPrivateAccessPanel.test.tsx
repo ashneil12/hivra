@@ -51,8 +51,33 @@ it("supports a deliberate Headscale origin and fresh refresh", async () => {
 it("shows unsupported lifecycle state without an enrollment control", async () => {
   mockFetch.mockResolvedValue(jsonResponse({ success: true, data: { supported: false, connection: null } }));
   render(<HivraPrivateAccessPanel agentId="agent-1" />);
-  expect(await screen.findByText(/running, owner-bound Ubuntu computer on Proxmox/)).toBeInTheDocument();
+  expect(await screen.findByText(/needs a running Ubuntu computer on Hivra Cloud or My server/)).toBeInTheDocument();
   expect(screen.queryByLabelText("One-time enrollment key")).not.toBeInTheDocument();
+});
+
+// Regression: a stopped, eligible Ubuntu computer was told it "does not meet
+// that support contract", as if it could never connect.
+it.each([
+  ["not_running", "Start this computer to connect it to a private network."],
+  ["operation_in_progress", "Wait for the current operation to finish, then connect."],
+  ["not_ready", "Wait for this computer to finish starting, then connect."],
+  ["not_bound", "It was created before Hivra recorded ownership checks."],
+])("says what to do when the server reports %s", async (reason, copy) => {
+  mockFetch.mockResolvedValue(jsonResponse({ success: true, data: { supported: false, reason, connection: null } }));
+  render(<HivraPrivateAccessPanel agentId="agent-1" />);
+  expect(await screen.findByText(new RegExp(copy.replace(/[.?]/g, "\\$&")))).toBeInTheDocument();
+  expect(screen.queryByText(/support contract/)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("One-time enrollment key")).not.toBeInTheDocument();
+});
+
+it("checks again when the computer's status changes, keeping a typed key", async () => {
+  mockFetch.mockResolvedValue(jsonResponse({ success: true, data: { supported: false, reason: "not_running", connection: null } }));
+  const view = render(<HivraPrivateAccessPanel agentId="agent-1" observedStatus="stopped" />);
+  await screen.findByText(/Start this computer/);
+  mockFetch.mockResolvedValue(jsonResponse({ success: true, data: { supported: true, reason: null, connection: null } }));
+  view.rerender(<HivraPrivateAccessPanel agentId="agent-1" observedStatus="running" />);
+  expect(await screen.findByLabelText("One-time enrollment key")).toBeInTheDocument();
+  expect(mockFetch).toHaveBeenCalledTimes(2);
 });
 
 it("asks before disconnecting, because reconnecting needs a new enrollment key", async () => {

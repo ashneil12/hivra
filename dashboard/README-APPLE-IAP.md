@@ -33,9 +33,9 @@ without grace), `expired`, `revoked` do not.
 | `APPLE_BUNDLE_ID` | recommended (defaults to `cloud.hivra.app`) | Bundle id every JWS verification is pinned to. |
 | `APPLE_ENVIRONMENT` | yes | `Production` or `Sandbox` — primary verifier + App Store Server API host selection. |
 | `APPLE_APP_APPLE_ID` | yes in Production | Numeric App Store app id; the verifier requires it for Production payloads. |
-| `APPLE_ISSUER_ID` | yes (reconciler) | App Store Connect API key issuer id (Users and Access → Integrations). |
-| `APPLE_KEY_ID` | yes (reconciler) | App Store Connect API key id. |
-| `APPLE_PRIVATE_KEY` | yes (reconciler) | The `.p8` private key PEM. Literal `\n` sequences are accepted (Vercel env convention). Pass inline on redeploys — `vercel env pull` masks sensitive values. |
+| `APPLE_ISSUER_ID` | yes (reconciler and attach) | App Store Connect API key issuer id (Users and Access → Integrations). Without the three API values, `POST /api/mobile/iap/attach` answers 503 and grants nothing. |
+| `APPLE_KEY_ID` | yes (reconciler and attach) | App Store Connect API key id. |
+| `APPLE_PRIVATE_KEY` | yes (reconciler and attach) | The `.p8` private key PEM. Literal `\n` sequences are accepted (Vercel env convention). Pass inline on redeploys — `vercel env pull` masks sensitive values. |
 | `APPLE_ACCEPT_SANDBOX_NOTIFICATIONS` | optional | `true` lets a Production deploy verify sandbox-signed payloads (TestFlight / App Review purchases). Defaults: on outside production `NODE_ENV`, off in production. |
 | `APPLE_PRODUCT_ID_PRO_MONTHLY` | optional | Override, default `cloud.hivra.pro.monthly` → `operator` plan. |
 | `APPLE_PRODUCT_ID_PRO_YEARLY` | optional | Override, default `cloud.hivra.pro.yearly` → `operator`. |
@@ -59,6 +59,10 @@ without grace), `expired`, `revoked` do not.
   webhook.
 - Add `/api/cron/reconcile-apple-subscriptions` to the cron schedule
   (15-minute cadence, same as `reconcile-subscription-grace`).
+- `POST /api/mobile/iap/attach` refuses a transaction with a `revocationDate`
+  and asks the App Store Server API for the live status before it grants
+  anything; only status 1 (active) passes. A signed transaction saved before a
+  refund still looks valid, so the record alone cannot be trusted.
 - The lane is dormant until the iOS app ships: rollback = stop pointing the
   ASC notification URL at the route. No web-user impact.
 - Never route Apple subscribers to Stripe surfaces: the billing page shows

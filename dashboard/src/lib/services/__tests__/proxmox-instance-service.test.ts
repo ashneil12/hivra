@@ -92,6 +92,8 @@ async function withEnv<T>(
   }
 }
 
+const TEST_INSTANCE_ID = "00000000-0000-4000-8000-0000000c0201";
+
 describe("proxmox-instance-service", () => {
   it("resolves a positive VM disk override and rejects invalid values", () => {
     expect(resolveProxmoxVmDiskGb({ PROXMOX_VM_DISK_GB: "800" })).toBe(800);
@@ -1390,7 +1392,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       apiServerKey: "a".repeat(64),
     });
 
-    expect(script).toContain('ssh -n "${GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5');
+    expect(script).toContain('ssh -n "${UNATTESTED_GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5');
     // The guest bootstrap + deploy now run through a bounded retry helper so
     // a single transient failure (apt-lock / mirror blip) doesn't trip set -e
     // and immediately destroy a fresh-signup VM. Only a persistent failure
@@ -1398,8 +1400,10 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(script).toContain('run_guest_script bootstrap "$BOOTSTRAP_B64_FILE"');
     expect(script).toContain('run_guest_script deploy "$DEPLOY_B64_FILE"');
     // The payload still streams from the staged FILE (not the orchestrator's
-    // remaining stdin) — the property this test originally guarded.
-    expect(script).toContain('base64 -d < "$b64_file" | ssh "${GUEST_SSH_OPTS[@]}"');
+    // remaining stdin) — the property this test originally guarded — over the
+    // connection each call site names (the deploy's is the VMID-pinned one).
+    expect(script).toContain('base64 -d < "$b64_file" | "$@" "sudo bash -s"');
+    expect(script).toContain('run_guest_script deploy "$DEPLOY_B64_FILE" "${GUEST_SSH[@]}"');
     // Bounded, not infinite: 3 attempts then give up and tear down.
     expect(script).toContain('while [ "$attempt" -le 3 ];');
   });
@@ -2215,6 +2219,55 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(script).toContain("METRIC cleanup_timer=");
   });
 
+  it("reads cumulative CPU from the kvm process on PVE 9, where qm status prints no cpu", () => {
+    // Real `buildProxmoxMetricsScript` output captured read-only on a
+    // pve-manager 9.2.2 Hermes host on 2026-09-24. Scrubbed for the public
+    // tree: VM name, vmid, pid and the machine-type suffix.
+    const captured = readFileSync(
+      join(__dirname, "fixtures", "proxmox-9-qm-metrics.capture.txt"),
+      "utf8"
+    );
+    // PVE 9's one-shot `qm status --verbose` has no cpu/cputime line at all.
+    expect(captured).not.toMatch(/^METRIC (cpu|cputime)=/m);
+
+    const metrics = parseProxmoxMetricsOutput(captured);
+    expect(metrics?.cpu_seconds_total).toBeCloseTo(228359.06, 2);
+    expect(metrics?.cpu_seconds_source).toBe("kvm_proc");
+    expect(metrics?.runtime_seconds).toBe(4773538);
+
+    // Without the kvm lines (the old script) the same host yields 0 CPU —
+    // every prod metering row since 2026-04-29 recorded exactly this.
+    const legacy = parseProxmoxMetricsOutput(
+      captured.replace(/^METRIC (proc_cpu_ticks|clk_tck)=.*$/gm, "")
+    );
+    expect(legacy?.cpu_seconds_total).toBe(0);
+    expect(legacy?.cpu_seconds_source).toBe("none");
+  });
+
+  it("keeps qm cputime and the uptime*cpu estimate as fallbacks", () => {
+    const withCputime = parseProxmoxMetricsOutput(
+      ["METRIC status=running", "METRIC uptime=3600", "METRIC cputime=55.5", "METRIC cpu=0.5"].join("\n")
+    );
+    expect(withCputime?.cpu_seconds_total).toBe(55.5);
+    expect(withCputime?.cpu_seconds_source).toBe("qm_cputime");
+
+    const estimate = parseProxmoxMetricsOutput(
+      ["METRIC status=running", "METRIC uptime=3600", "METRIC cpu=0.5"].join("\n")
+    );
+    expect(estimate?.cpu_seconds_total).toBe(1800);
+    expect(estimate?.cpu_seconds_source).toBe("qm_cpu_estimate");
+  });
+
+  it("builds a metrics script that reads kvm CPU ticks from /proc for the right VM", () => {
+    const script = buildProxmoxMetricsScript(201);
+    expect(script).toContain('pid_file="/var/run/qemu-server/$VMID.pid"');
+    expect(script).toContain('/proc/$kvm_pid/cmdline');
+    expect(script).toContain("-id $VMID");
+    expect(script).toContain("getconf CLK_TCK");
+    expect(script).toContain("METRIC proc_cpu_ticks=");
+    expect(script).toContain("METRIC clk_tck=");
+  });
+
   it("prefers guest filesystem usage over Proxmox maxdisk fallback when parsing metrics", () => {
     const metrics = parseProxmoxMetricsOutput(
       [
@@ -2647,12 +2700,12 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
   });
 
   it("builds idempotent Proxmox power scripts for pause and resume", () => {
-    const shutdown = buildProxmoxPowerScript({
+    const shutdown = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID,
       vmid: 201,
       action: "shutdown",
       shutdownTimeoutSeconds: 45,
     });
-    const start = buildProxmoxPowerScript({ vmid: 201, action: "start" });
+    const start = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, action: "start" });
 
     expect(shutdown).toContain('qm status 201 | grep -q "status: stopped"');
     expect(shutdown).toContain("qm shutdown 201 --timeout 45 || qm stop 201 --skiplock 1");
@@ -2665,7 +2718,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     // shutdown script must poll until `qm status` says stopped, force-stop each
     // round, and FAIL with HERMES_STILL_RUNNING if the guest never dies — so the
     // caller never records paused/stopped for a VM that is still running.
-    const shutdown = buildProxmoxPowerScript({ vmid: 201, action: "shutdown" });
+    const shutdown = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, action: "shutdown" });
     expect(shutdown).toContain("for _ in $(seq 1 8); do");
     expect(shutdown).toContain('qm status 201 | grep -q "status: stopped"');
     expect(shutdown).toContain("qm stop 201 --skiplock 1 >/dev/null 2>&1 || true");
@@ -2674,8 +2727,8 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
 
     // The verify-down loop is shutdown-only: start never force-stops, and reboot
     // must still come back up (it is allowed to leave the VM running).
-    const start = buildProxmoxPowerScript({ vmid: 201, action: "start" });
-    const reboot = buildProxmoxPowerScript({ vmid: 201, action: "reboot" });
+    const start = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, action: "start" });
+    const reboot = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, action: "reboot" });
     expect(start).not.toContain(PROXMOX_VM_STILL_RUNNING_MARKER);
     expect(reboot).not.toContain(PROXMOX_VM_STILL_RUNNING_MARKER);
   });
@@ -2703,13 +2756,13 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
 
   it("leaves onboot untouched by default (no qm set) for every action", () => {
     for (const action of ["start", "shutdown", "reboot"] as const) {
-      const script = buildProxmoxPowerScript({ vmid: 201, action });
+      const script = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, action });
       expect(script).not.toContain("--onboot");
     }
   });
 
   it("clears onboot on pause (setOnboot:0) BEFORE the power action and best-effort", () => {
-    const shutdown = buildProxmoxPowerScript({
+    const shutdown = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID,
       vmid: 201,
       action: "shutdown",
       setOnboot: 0,
@@ -2725,7 +2778,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
   });
 
   it("restores onboot on resume (setOnboot:1) so a resumed agent survives host reboots", () => {
-    const start = buildProxmoxPowerScript({
+    const start = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID,
       vmid: 201,
       action: "start",
       setOnboot: 1,
@@ -2745,11 +2798,11 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
 
     await shutdownProxmoxInstance(
       { vmid: 201 },
-      { runHostScript: runner, setOnboot: 0 },
+      { expectedInstanceId: TEST_INSTANCE_ID, runHostScript: runner, setOnboot: 0 },
     );
     await startProxmoxInstance(
       { vmid: 201 },
-      { runHostScript: runner, setOnboot: 1 },
+      { expectedInstanceId: TEST_INSTANCE_ID, runHostScript: runner, setOnboot: 1 },
     );
 
     expect(scripts[0]).toContain("qm set 201 --onboot 0");
@@ -2764,7 +2817,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     // with code 255" with no actionable hint. The pre-flight check makes
     // the destroyed-VM case detectable up front.
     for (const action of ["start", "shutdown", "reboot"] as const) {
-      const script = buildProxmoxPowerScript({ vmid: 201, action });
+      const script = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, action });
       expect(script).toContain(`if ! qm status 201 >/dev/null 2>&1`);
       expect(script).toContain(PROXMOX_VM_MISSING_MARKER);
       expect(script).toContain("exit 64");
@@ -2810,15 +2863,15 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       return { ok: true, stdout: "", stderr: "" };
     };
 
-    await shutdownProxmoxInstance({ vmid: 201 }, { runHostScript: runner });
-    await startProxmoxInstance({ vmid: 201 }, { runHostScript: runner });
+    await shutdownProxmoxInstance({ vmid: 201 }, { expectedInstanceId: TEST_INSTANCE_ID, runHostScript: runner });
+    await startProxmoxInstance({ vmid: 201 }, { expectedInstanceId: TEST_INSTANCE_ID, runHostScript: runner });
 
     expect(scripts[0]).toContain("qm shutdown 201");
     expect(scripts[1]).toContain("qm start 201");
   });
 
   it("builds a reboot script that recovers stopped VMs and falls back through stop+start", () => {
-    const reboot = buildProxmoxPowerScript({
+    const reboot = buildProxmoxPowerScript({ expectedInstanceId: TEST_INSTANCE_ID,
       vmid: 201,
       action: "reboot",
       shutdownTimeoutSeconds: 60,
@@ -2837,14 +2890,14 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       return { ok: true, stdout: "", stderr: "" };
     };
 
-    await rebootProxmoxInstance({ vmid: 201 }, { runHostScript: runner });
+    await rebootProxmoxInstance({ vmid: 201 }, { expectedInstanceId: TEST_INSTANCE_ID, runHostScript: runner });
 
     expect(scripts).toHaveLength(1);
     expect(scripts[0]).toContain("qm reboot 201");
   });
 
   it("builds and runs Proxmox resize scripts without touching disk size", async () => {
-    const resizeScript = buildProxmoxResizeScript({
+    const resizeScript = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID,
       vmid: 201,
       cores: 2,
       memoryMb: 4096,
@@ -2866,7 +2919,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     await resizeProxmoxInstance(
       { vmid: 201 },
       { cpuLimit: 2, ramLimit: 4096 },
-      { runHostScript: runner }
+      { expectedInstanceId: TEST_INSTANCE_ID, runHostScript: runner }
     );
 
     expect(scripts[0]).toContain("VMID='201'");
@@ -2890,7 +2943,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     };
 
     await resizeProxmoxVm(
-      { vmid: 201, cpuLimit: 2, memoryMb: 4096 },
+      { expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cpuLimit: 2, memoryMb: 4096 },
       { runHostScript: runner }
     );
 
@@ -2930,7 +2983,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       env?: Record<string, string>
     ) => {
       const scripts: string[] = [];
-      await resizeProxmoxVm(params, {
+      await resizeProxmoxVm({ ...params, expectedInstanceId: TEST_INSTANCE_ID }, {
         runHostScript: async (script) => {
           scripts.push(script);
           return { ok: true, stdout: "", stderr: "" };
@@ -3156,7 +3209,7 @@ esac
         // ships silently and turns every tier upgrade into a failed resize.
         let host = "";
         await resizeProxmoxVm(
-          { vmid: 1148, cpuLimit: 2, memoryMb: 4096 },
+          { expectedInstanceId: TEST_INSTANCE_ID, vmid: 1148, cpuLimit: 2, memoryMb: 4096 },
           {
             runHostScript: async (s) => {
               host = s;
@@ -3190,7 +3243,7 @@ esac
     // lets Proxmox shrink/grow guest RAM dynamically — but a sidecar-sized
     // ceiling (Jarvis fixturenodea/1200) must never drop below 2560 or the
     // browser sidecar exits 0 forever.
-    const script = buildProxmoxResizeScript({
+    const script = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID,
       vmid: 201,
       cores: 2,
       memoryMb: 8192,
@@ -3202,10 +3255,10 @@ esac
   });
 
   it("buildProxmoxResizeScript clamps balloonFloorMb to [64, memoryMb]", () => {
-    const tooLow = buildProxmoxResizeScript({ vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
+    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
     expect(tooLow).toContain("BALLOON_FLOOR_MB='64'");
 
-    const tooHigh = buildProxmoxResizeScript({ vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
+    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
     expect(tooHigh).toContain("BALLOON_FLOOR_MB='2048'");
   });
 
@@ -3217,7 +3270,7 @@ esac
     };
 
     await resizeProxmoxVm(
-      { vmid: 201, cpuLimit: 2, memoryMb: 8192 },
+      { expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cpuLimit: 2, memoryMb: 8192 },
       {
         runHostScript: runner,
         env: {
@@ -3239,7 +3292,7 @@ esac
       return { ok: true, stdout: "", stderr: "" };
     };
     await resizeProxmoxVm(
-      { vmid: 201, cpuLimit: 2, memoryMb: 4096 },
+      { expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cpuLimit: 2, memoryMb: 4096 },
       {
         runHostScript: runner,
         env: {
@@ -3259,7 +3312,7 @@ esac
     // value but a number<1 must survive the integer-floor in the script.
     const scripts: string[] = [];
     await resizeProxmoxVm(
-      { vmid: 100, cpuLimit: 0.5, memoryMb: 1024 },
+      { expectedInstanceId: TEST_INSTANCE_ID, vmid: 100, cpuLimit: 0.5, memoryMb: 1024 },
       { runHostScript: async (s) => { scripts.push(s); return { ok: true, stdout: "", stderr: "" }; } }
     );
     expect(scripts[0]).toContain("CPU_LIMIT='0.5'");

@@ -35,6 +35,11 @@ test('method and exact path distinguish management, native RPC and computer surf
   assert.equal(policy.routeKind('GET', '/api/git/diff'), 'unsupported');
   assert.equal(policy.routeKind('GET', '/terminal-other'), 'native');
   assert.equal(policy.routeKind('GET', '/terminal/ws'), 'surface');
+  // The dashboard's terminal session tabs list and close sessions with the
+  // management bearer; they are Hivra routes, never upstream DeepSeek RPC.
+  assert.equal(policy.routeKind('GET', '/api/terminal/sessions'), 'computer');
+  assert.equal(policy.routeKind('POST', '/api/terminal/sessions/close'), 'computer');
+  assert.equal(policy.routeKind('POST', '/api/terminal/sessions'), 'native');
 });
 
 test('complete gateway separates native cookies from Hivra management, routing and readiness', async t => {
@@ -123,6 +128,19 @@ test('complete gateway separates native cookies from Hivra management, routing a
   assert.equal(await broker.acceptLaunchLine(`dsh web: http://127.0.0.1:${upstream.address().port}/?token=${launchToken}`), true);
   assert.equal((await request('/healthz')).status, 200);
   assert.equal(JSON.parse((await request('/api/meta')).body).nativeReady, true);
+  // Terminal session tabs, with the native surface ready: the dashboard's
+  // cross-origin bearer preflight gets management CORS, and a native cookie
+  // alone never reaches either route or the upstream runtime.
+  for (const [method, url] of [['GET', '/api/terminal/sessions?surface=agent'], ['POST', '/api/terminal/sessions/close']]) {
+    const preflight = await request(url, { method: 'OPTIONS', headers: { origin: 'https://dashboard.example.test', 'access-control-request-method': method, 'access-control-request-headers': 'authorization' } });
+    assert.equal(preflight.status, 204, `${method} ${url} preflight`);
+    assert.equal(preflight.headers['access-control-allow-origin'], '*');
+    assert.match(preflight.headers['access-control-allow-headers'], /Authorization/);
+    const observed = observations.length;
+    const cookieOnly = await request(url, { method, headers: nativeHeaders, body: method === 'POST' ? '{"surface":"agent","slot":1}' : undefined });
+    assert.equal(cookieOnly.status, 401, `${method} ${url} without the management bearer`);
+    assert.equal(observations.length, observed, `${method} ${url} is not proxied upstream`);
+  }
   const root = await request('/', { headers: { cookie, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' } });
   assert.equal(root.status, 200); assert.equal(root.body, 'native fixture');
   assert.equal(root.headers['access-control-allow-origin'], undefined);

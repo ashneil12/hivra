@@ -39,6 +39,14 @@ jest.mock("@/lib/infrastructure/client", () => ({
 jest.mock("@/lib/infrastructure/hivra-cloud-client", () => ({
   getHivraCloudCapacity: jest.fn(),
 }));
+// My server is command first (slice 13); the SSH details wizard is its
+// advanced path.
+jest.mock("@/lib/infrastructure/server-enrollment-client", () => ({
+  listServerEnrollments: jest.fn(async () => ({ enrollments: [], uninstallCommand: null })),
+  issueServerEnrollment: jest.fn(async () => { throw new Error("Setup commands aren't available on this deployment."); }),
+  getServerEnrollment: jest.fn(),
+  cancelServerEnrollment: jest.fn(async () => undefined),
+}));
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 const CHECKED_AT = "2026-08-25T17:00:00.000Z";
@@ -337,8 +345,11 @@ describe("InfrastructureConnectionsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Choose cloud provider/i }));
     expect(screen.getByRole("button", { name: /Start with Hetzner/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Use an existing server/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Connect existing host/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Connect a server you already have/i }));
 
+    // The one-line command comes first; SSH details stay one click away.
+    const commandFirst = await screen.findByRole("dialog", { name: "Connect a server you already have" });
+    fireEvent.click(within(commandFirst).getByRole("button", { name: /Connect with SSH details instead \(advanced\)/ }));
     expect(screen.getByRole("dialog", { name: "Connect a host" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Setup mode" })).not.toBeInTheDocument();
     expect(screen.getByText("Read-only inspection first")).toBeInTheDocument();

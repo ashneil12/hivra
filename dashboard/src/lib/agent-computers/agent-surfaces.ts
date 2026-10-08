@@ -45,6 +45,11 @@ function ordered(ids: Iterable<AgentSurfaceId>): AgentSurfaceId[] {
  * toggled off, so the owner can find the switch; the tab itself explains that
  * it is off. A DigitalOcean session has its own workspace with Chat and a
  * read-only Files view.
+ *
+ * No Hivra agent shows Tasks: scheduled tasks run on the Hermes lane's own
+ * scheduler (/api/instances/[id]/cron), which Hivra computers do not have, so
+ * the tab could only ever fail to load. The id stays so it can come back when a
+ * Hivra computer scheduler exists.
  */
 export function agentSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[] {
   const def = catalogAgent(subject.type);
@@ -59,7 +64,7 @@ export function agentSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[]
   if (def?.surface === "dashboard") {
     return ordered([...DASHBOARD_SURFACES, ...(def.browser ? ["browser" as const] : [])]);
   }
-  return AGENT_SURFACE_IDS.filter((id) => id !== "aeon" && id !== "desktop" && (id !== "browser" || Boolean(def?.browser)));
+  return AGENT_SURFACE_IDS.filter((id) => id !== "aeon" && id !== "desktop" && id !== "tasks" && (id !== "browser" || Boolean(def?.browser)));
 }
 
 /** The one user-facing name for each surface. The shell is "Terminal"
@@ -102,14 +107,14 @@ const GROUP_ORDER: Record<AgentSurfaceGroupId, readonly AgentSurfaceId[]> = {
 
 /**
  * Agent pages group their surfaces as the agent, its computer, and Manage:
- * Chat · Computer (Terminal, Files, Browser, Git) · Manage. Groups with no
+ * Agent · Computer (Terminal, Files, Browser, Git) · Manage. Groups with no
  * surface are dropped. Computers keep their short flat list and never call this.
  */
 export function agentSurfaceGroups(surfaces: readonly AgentSurfaceId[], def?: Pick<AgentDef, "surface"> | null): AgentSurfaceGroup[] {
   const present = new Set(surfaces);
   const groups: AgentSurfaceGroup[] = (["work", "computer", "manage"] as const).map((id) => ({
     id,
-    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Chat") : id === "computer" ? "Computer" : "Manage",
+    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "computer" ? "Computer" : "Manage",
     surfaces: GROUP_ORDER[id].filter((surface) => present.has(surface)),
   }));
   return groups.filter((group) => group.surfaces.length > 0);

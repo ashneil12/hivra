@@ -5,8 +5,9 @@ import { buildLegacyManagedGatewayRunPython, buildManagedGatewayStatusCommand } 
 import { DELETE, GET, PATCH, POST, isAdvancedCloudAccessEligible } from "../route";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { enableServerBackup, getServer, powerOnServer, rebuildServer, shutdownServer } from "@/lib/hetzner/client";
+import { disableServerBackup, enableServerBackup, getServer, powerOnServer, rebuildServer, shutdownServer } from "@/lib/hetzner/client";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-orchestrator";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
 import { apiError } from "@/lib/api-response";
 import {
@@ -42,6 +43,7 @@ import {
   removeInstanceDnsBestEffort,
 } from "@/lib/services/cloudflare-dns";
 import { isProTierUser } from "@/lib/billing/pro-tier";
+import { removeBackupAddonBilling } from "@/lib/billing/backup-addon-billing";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
 import { makeJsonRequest } from "@/test-utils";
@@ -190,6 +192,10 @@ jest.mock("@/lib/webui/instance", () => ({
 
 jest.mock("@/lib/billing/pro-tier", () => ({
   isProTierUser: jest.fn(),
+}));
+
+jest.mock("@/lib/billing/backup-addon-billing", () => ({
+  removeBackupAddonBilling: jest.fn(),
 }));
 
 // Post-ready SOUL.md seed hook: the route schedules it when a webfree box is
@@ -404,7 +410,8 @@ describe("POST /api/instances/[id]", () => {
     expect(sshExec).toHaveBeenCalledWith(
       "10.250.20.98",
       expect.stringContaining('docker restart "$AGENT_CONTAINER"'),
-      { proxmoxHostConfig }
+      // Bound to the VMID being restarted and this instance, not just the host.
+      { proxmoxHostConfig: { ...proxmoxHostConfig, vmid: 1148, instanceId: "inst-123" } }
     );
   });
 
@@ -719,7 +726,7 @@ describe("POST /api/instances/[id]", () => {
     expect(sshExec).toHaveBeenCalledWith(
       "10.250.20.52",
       expect.stringContaining("docker compose restart gateway"),
-      { timeoutMs: 300_000, proxmoxHostConfig }
+      { timeoutMs: 300_000, proxmoxHostConfig: { ...proxmoxHostConfig, vmid: 1302, instanceId: "inst-123" } }
     );
   });
 
@@ -1125,11 +1132,12 @@ describe("POST /api/instances/[id]", () => {
     );
 
     expect(response.status).toBe(200);
-    const expectedArguments: unknown[] = [webuiInstance, "10.250.20.55", {}, supabaseAdmin];
-    if (action === "redeploy" && applyTerminalBackend === true) {
-      expectedArguments.push({ applyTerminalBackend: true });
-    }
-    expect(applyLiveUpdate).toHaveBeenCalledWith(...expectedArguments);
+    // The owner asked for this restart: user-initiated, so no in-flight deferral.
+    const expectedOptions =
+      action === "redeploy" && applyTerminalBackend === true
+        ? { initiator: USER_LIVE_UPDATE, applyTerminalBackend: true }
+        : { initiator: USER_LIVE_UPDATE };
+    expect(applyLiveUpdate).toHaveBeenCalledWith(webuiInstance, "10.250.20.55", {}, supabaseAdmin, expectedOptions);
     expect(buildAgentDeployScript).not.toHaveBeenCalled();
     expect(sshExec).not.toHaveBeenCalled();
   });
@@ -1702,7 +1710,7 @@ describe("POST /api/instances/[id]", () => {
     expect(hostUpdateEqMock).toHaveBeenCalledWith("id", "host-456");
   });
 
-  it("keeps the attached host in provisioning while a shared instance restore is underway", async () => {
+  it("refuses the removed restore_backup action without rebuilding the server", async () => {
     const hostUpdateEqMock = jest.fn().mockResolvedValue({ error: null });
     const hostUpdateMock = jest.fn().mockReturnValue({
       eq: hostUpdateEqMock,
@@ -1767,38 +1775,21 @@ describe("POST /api/instances/[id]", () => {
       throw new Error(`Unexpected table ${table}`);
     });
 
+    // restore_backup rebuilt the owner's server from any caller-supplied
+    // Hetzner image id without checking the image belonged to that server, so
+    // another tenant's backup or snapshot could be booted on the caller's
+    // server. Nothing in the UI used it; the action is gone.
     const response = await POST(
       makeJsonRequest("http://localhost/api/instances/inst-123", { action: "restore_backup", backupId: 99 }, { method: "POST" }),
       { params: Promise.resolve({ id: "inst-123" }) }
     );
     const json = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(json.success).toBe(true);
-    expect(rebuildServer).toHaveBeenCalledWith(42, { image: "99" });
-    expect(instanceUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "redeploying",
-        updated_at: expect.any(String),
-      })
-    );
-    // F055: the instance status mirror is scoped to the TARGET instance only
-    // (not host_id), so a shared-host power action never flips siblings' rows.
-    // The host mirror row (hermes_hosts) still syncs — asserted via hostUpdateEqMock.
-    expect(instanceUpdateEqMock).toHaveBeenCalledWith("id", "inst-123");
-    expect(instanceUpdateEqMock).not.toHaveBeenCalledWith("host_id", "host-456");
-    expect(instanceUpdateNotMock).toHaveBeenCalledWith(
-      "status",
-      "in",
-      '("deleted","scheduled_for_deletion")'
-    );
-    expect(hostUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "provisioning",
-        updated_at: expect.any(String),
-      })
-    );
-    expect(hostUpdateEqMock).toHaveBeenCalledWith("id", "host-456");
+    expect(response.status).toBe(400);
+    expect(json.error).toBe("Unknown action");
+    expect(rebuildServer).not.toHaveBeenCalled();
+    expect(instanceUpdateMock).not.toHaveBeenCalled();
+    expect(hostUpdateMock).not.toHaveBeenCalled();
   });
 
   it("does not update the instance row if the shared host status cannot be synced", async () => {
@@ -1955,6 +1946,7 @@ describe("POST /api/instances/[id]", () => {
       // setOnboot:1 restores boot-on-host-reboot for the resumed agent (inverse
       // of the inactivity-pause onboot:0).
       expect(startProxmoxInstance).toHaveBeenCalledWith(infrastructure, {
+        expectedInstanceId: "inst-123",
         hostConfig: null,
         setOnboot: 1,
       });
@@ -1996,6 +1988,7 @@ describe("POST /api/instances/[id]", () => {
       expect(startProxmoxInstance).toHaveBeenCalledWith(
         { vmid: 201, node: "fixturenode1" },
         {
+          expectedInstanceId: "inst-123",
           hostConfig: { hostId: null, hostSlug: "fixturenode1", envPrefix: null, failClosed: true },
           setOnboot: 1,
         }
@@ -2209,7 +2202,7 @@ describe("POST /api/instances/[id]", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(shutdownProxmoxInstance).toHaveBeenCalledWith(infrastructure, { hostConfig: null });
+      expect(shutdownProxmoxInstance).toHaveBeenCalledWith(infrastructure, { expectedInstanceId: "inst-123", hostConfig: null });
       expect(shutdownServer).not.toHaveBeenCalled();
       expect(updateMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2234,7 +2227,7 @@ describe("POST /api/instances/[id]", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(rebootProxmoxInstance).toHaveBeenCalledWith(infrastructure, { hostConfig: null });
+      expect(rebootProxmoxInstance).toHaveBeenCalledWith(infrastructure, { expectedInstanceId: "inst-123", hostConfig: null });
       expect(updateMock).toHaveBeenCalledWith(
         expect.objectContaining({ status: "running" })
       );
@@ -2421,6 +2414,65 @@ describe("PATCH /api/instances/[id]", () => {
     expect(response.status).toBe(403);
     expect(json.error).toContain("only available on isolated customer VMs");
     expect(instanceUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to enable paid Hetzner backups from the settings PATCH", async () => {
+    // Backups are a paid add-on enabled only through /api/billing/backup-addon;
+    // the settings PATCH used to turn them on at Hetzner without the charge.
+    instanceRow = {
+      ...instanceRow,
+      hetzner_server_id: 42,
+    };
+
+    const response = await PATCH(
+      new NextRequest("http://localhost/api/instances/inst-123", {
+        method: "PATCH",
+        body: JSON.stringify({ backupsEnabled: true }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(json.error).toContain("paid add-on");
+    expect(enableServerBackup).not.toHaveBeenCalled();
+    expect(instanceUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("looks up the host for a backup toggle only among the caller's own hosts", async () => {
+    instanceRow = { ...instanceRow, hetzner_server_id: null, host_id: "host-9" };
+    instanceUpdateMock = jest.fn().mockReturnValue({
+      eq: jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            single: jest.fn().mockResolvedValue({ data: { ...instanceRow, config: {} }, error: null }),
+          }),
+        }),
+      }),
+    });
+    const hostUserEq = jest.fn().mockReturnValue({
+      single: jest.fn().mockResolvedValue({ data: { hetzner_server_id: 77 }, error: null }),
+    });
+    const hostIdEq = jest.fn().mockReturnValue({ eq: hostUserEq });
+    const previousFrom = (supabaseAdmin!.from as jest.Mock).getMockImplementation()!;
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) =>
+      table === "hermes_hosts"
+        ? { select: jest.fn().mockReturnValue({ eq: hostIdEq }) }
+        : previousFrom(table)
+    );
+
+    const response = await PATCH(
+      new NextRequest("http://localhost/api/instances/inst-123", {
+        method: "PATCH",
+        body: JSON.stringify({ backupsEnabled: false }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(hostIdEq).toHaveBeenCalledWith("id", "host-9");
+    expect(hostUserEq).toHaveBeenCalledWith("user_id", "user_123");
+    expect(disableServerBackup).toHaveBeenCalledWith(77);
   });
 
   it("passes auto-approve chat preference through the settings save schema", async () => {
@@ -2769,7 +2821,8 @@ describe("PATCH /api/instances/[id]", () => {
       }),
       "203.0.113.10",
       {},
-      supabaseAdmin
+      supabaseAdmin,
+      { initiator: USER_LIVE_UPDATE }
     );
     expect(json.data.applied).toBe(true);
     expect(json.data.instance.config).toEqual(nextConfig);
@@ -2836,7 +2889,8 @@ describe("PATCH /api/instances/[id]", () => {
     );
     expect(sshExec).toHaveBeenCalledWith(
       "203.0.113.10",
-      "#!/usr/bin/env bash\necho auto-update"
+      "#!/usr/bin/env bash\necho auto-update",
+      {}
     );
     expect(json.data.autoUpdateApplied).toBe(true);
     expect(json.data.autoUpdateError).toBeNull();
@@ -3250,13 +3304,15 @@ describe("PATCH /api/instances/[id]", () => {
 
   it("does not leak raw Hetzner backup toggle failures", async () => {
     (log.error as jest.Mock).mockClear();
-    (enableServerBackup as jest.Mock).mockRejectedValueOnce(new Error("hetzner-backup-secret"));
+    // Enabling is refused before any Hetzner call (paid add-on only), so the
+    // failure path is exercised through the still-allowed disable toggle.
+    (disableServerBackup as jest.Mock).mockRejectedValueOnce(new Error("hetzner-backup-secret"));
 
     const response = await PATCH(
       new NextRequest("http://localhost/api/instances/inst-123", {
         method: "PATCH",
         body: JSON.stringify({
-          backupsEnabled: true,
+          backupsEnabled: false,
         }),
       }),
       { params: Promise.resolve({ id: "inst-123" }) }
@@ -3283,6 +3339,143 @@ describe("PATCH /api/instances/[id]", () => {
       })
     );
     expect(JSON.stringify((apiError as jest.Mock).mock.calls.at(-1)?.[2])).not.toContain("hetzner-backup-secret");
+  });
+
+  describe("turning backups off on an instance that bought the backup add-on", () => {
+    // Turning backups off used to stop the Hetzner backups only. It left
+    // backups_enabled true (so the add-on could not be bought again) and left
+    // the Stripe line item billing. It now undoes all three, billing first.
+    let order: string[];
+    let flagUpdate: jest.Mock;
+    let flagServerEq: jest.Mock;
+    let flagUserEq: jest.Mock;
+    let flagResult: { error: { message: string } | null };
+
+    beforeEach(() => {
+      order = [];
+      flagResult = { error: null };
+      instanceRow = { ...instanceRow, backups_enabled: true, hetzner_server_id: 42 };
+      (removeBackupAddonBilling as jest.Mock).mockReset().mockImplementation(async () => {
+        order.push("stripe");
+        return { removed: 1 };
+      });
+      (disableServerBackup as jest.Mock).mockReset().mockImplementation(async () => {
+        order.push("hetzner");
+      });
+
+      flagUserEq = jest.fn(async () => {
+        order.push("flag");
+        return flagResult;
+      });
+      flagServerEq = jest.fn().mockReturnValue({ eq: flagUserEq });
+      flagUpdate = jest.fn().mockReturnValue({ eq: flagServerEq });
+
+      instanceUpdateMock = jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnValue({
+              // Read instanceRow when called, so a test can change it.
+              single: jest.fn(async () => ({ data: { ...instanceRow, config: {} }, error: null })),
+            }),
+          }),
+        }),
+      });
+
+      const peersQuery = {
+        eq: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ data: [{ id: "inst-123" }, { id: "inst-peer" }], error: null }),
+        }),
+      };
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+        return {
+          select: jest.fn((columns: string) =>
+            columns === "id"
+              ? peersQuery
+              : {
+                  eq: jest.fn().mockReturnValue({
+                    eq: jest.fn().mockReturnValue({
+                      neq: jest.fn().mockReturnValue({
+                        single: jest.fn().mockResolvedValue({ data: instanceRow, error: null }),
+                      }),
+                    }),
+                  }),
+                },
+          ),
+          update: jest.fn((patch: Record<string, unknown>) =>
+            "backups_enabled" in patch && Object.keys(patch).length === 1 ? flagUpdate(patch) : instanceUpdateMock(patch),
+          ),
+        };
+      });
+    });
+
+    function patchBackupsOff() {
+      return PATCH(
+        new NextRequest("http://localhost/api/instances/inst-123", {
+          method: "PATCH",
+          body: JSON.stringify({ backupsEnabled: false }),
+        }),
+        { params: Promise.resolve({ id: "inst-123" }) },
+      );
+    }
+
+    it("removes the add-on line, turns off Hetzner backups, then clears backups_enabled, in that order", async () => {
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(200);
+      expect(order).toEqual(["stripe", "hetzner", "flag"]);
+      expect(removeBackupAddonBilling).toHaveBeenCalledWith({
+        userId: "user_123",
+        instanceIds: ["inst-123", "inst-peer"],
+      });
+      expect(disableServerBackup).toHaveBeenCalledWith(42);
+      expect(flagUpdate).toHaveBeenCalledWith({ backups_enabled: false });
+      expect(flagServerEq).toHaveBeenCalledWith("hetzner_server_id", 42);
+      expect(flagUserEq).toHaveBeenCalledWith("user_id", "user_123");
+    });
+
+    it("keeps backups on, and leaves the flag set, when the add-on line cannot be removed", async () => {
+      (removeBackupAddonBilling as jest.Mock).mockRejectedValueOnce(new Error("stripe down sk_live_secret"));
+
+      const response = await patchBackupsOff();
+      const json = await response.json();
+
+      expect(response.status).toBe(502);
+      expect(json.error).toContain("Backups are still on");
+      expect(JSON.stringify(json)).not.toContain("sk_live_secret");
+      expect(disableServerBackup).not.toHaveBeenCalled();
+      expect(flagUpdate).not.toHaveBeenCalled();
+    });
+
+    it("does not clear the flag when Hetzner refuses, so a retry finishes the job", async () => {
+      (disableServerBackup as jest.Mock).mockRejectedValueOnce(new Error("hetzner down"));
+
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(500);
+      expect(order).toEqual(["stripe"]);
+      expect(flagUpdate).not.toHaveBeenCalled();
+    });
+
+    it("reports a failed flag clear instead of claiming success", async () => {
+      flagResult = { error: { message: "db down" } };
+
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(500);
+      expect(order).toEqual(["stripe", "hetzner", "flag"]);
+    });
+
+    it("does not touch billing when the instance never bought the add-on", async () => {
+      instanceRow = { ...instanceRow, backups_enabled: false };
+
+      const response = await patchBackupsOff();
+
+      expect(response.status).toBe(200);
+      expect(removeBackupAddonBilling).not.toHaveBeenCalled();
+      expect(flagUpdate).not.toHaveBeenCalled();
+      expect(disableServerBackup).toHaveBeenCalledWith(42);
+    });
   });
 });
 

@@ -75,16 +75,19 @@ describe("SSH fingerprint schema compatibility", () => {
     });
 
     expect(runProxmoxHostScript).toHaveBeenCalledWith(
-      expect.stringContaining('"$VM_SSH_USER@$PRIVATE_IP"'),
+      expect.stringContaining('"hermes@$GUEST_IP"'),
       process.env,
       8_000
     );
     const script = (runProxmoxHostScript as jest.Mock).mock.calls[0][0] as string;
     expect(script).toContain("PRIVATE_IP='10.250.20.50'");
-    expect(script).toContain("VM_SSH_USER='hermes'");
+    expect(script).toContain('"hermes@$GUEST_IP"');
     expect(script).toContain("VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
     expect(script).toContain("-o LogLevel=ERROR");
     expect(script).toContain('"sudo bash -s"');
+    // Pinned to the host key the VM's guest agent attests; never trust-on-first-use.
+    expect(script).toContain("StrictHostKeyChecking=yes");
+    expect(script).not.toContain("accept-new");
   });
 
   it("uses the instance Proxmox host routing metadata when provided for private guest SSH", async () => {
@@ -164,7 +167,7 @@ describe("SSH fingerprint schema compatibility", () => {
     );
     const script = (runProxmoxHostScript as jest.Mock).mock.calls[0][0] as string;
     expect(script).toContain("PRIVATE_IP='10.250.21.52'");
-    expect(script).toContain("VM_SSH_USER='hermes'");
+    expect(script).toContain('"hermes@$GUEST_IP"');
     expect(script).toContain("VM_SSH_KEY_PATH='/etc/hivra/keys/vm-orchestrator'");
   });
 

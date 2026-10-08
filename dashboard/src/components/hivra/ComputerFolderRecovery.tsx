@@ -83,7 +83,7 @@ export function ComputerFolderRecovery() {
   const entrySource = computers.find((computer) => computer.id === entrySourceId);
   return <div className={styles.page}>
     {entrySourceId
-      ? <Link href={`/dashboard/agent/${encodeURIComponent(entrySourceId)}?tab=manage`} className={styles.link}>Back to {entrySource?.name || "computer"}</Link>
+      ? <Link href={`/dashboard/agent/${encodeURIComponent(entrySourceId)}?tab=manage&section=recovery`} className={styles.link}>Back to {entrySource?.name || "computer"}</Link>
       : <Link href="/dashboard/computers" className={styles.link}>Back to computers</Link>}
     <header>
       <h1>Move your Ubuntu Hivra folder</h1>

@@ -196,6 +196,48 @@
   line-height: 1.45;
 }
 
+/* Update and repair can close the desktop's apps, so their warning reads at
+   body size rather than as a footnote. */
+.stripMenuConfirm {
+  margin-top: 10px;
+}
+
+.stripMenuConfirm .stripMenuNote,
+.panelConfirm .stripMenuNote {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: 12px;
+}
+
+.stripMenuConfirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The same question under a failure message, centred with it. */
+.panelConfirm {
+  margin-top: 16px;
+}
+
+.panelConfirm .stripMenuNote {
+  line-height: 1.55;
+}
+
+.panelConfirm .stripMenuConfirmActions {
+  justify-content: center;
+}
+
+.panelAction {
+  margin-top: 16px;
+}
+
+.panelConfirm button:focus-visible,
+.panelAction:focus-visible {
+  outline: 2px solid var(--hivra-red);
+  outline-offset: 1px;
+}
+
 /* The evidence grid, folded in rather than sitting above the desktop. */
 .stripEvidence {
   margin-top: 10px;

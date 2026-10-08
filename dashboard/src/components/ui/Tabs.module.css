@@ -81,6 +81,54 @@
   }
 }
 
+/* Unsaved-changes marker and its description, read by screen readers only. */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--hivra-red);
+  flex-shrink: 0;
+}
+
+.description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Vertical list: a side nav. Tabs stack, wrap long labels, and mark the
+   selected one with a 2px red rule on the left. The attribute selectors
+   outrank the narrow-container rule above, which suits horizontal lists. */
+.bar[data-orientation="vertical"] {
+  border-bottom: 0;
+}
+
+.bar[data-orientation="vertical"] .list {
+  flex-direction: column;
+  overflow: visible;
+  padding-right: 0;
+  mask-image: none;
+}
+
+.bar[data-orientation="vertical"] .tab {
+  min-height: 44px;
+  padding: 0 0.85rem;
+  white-space: normal;
+  text-align: left;
+  box-shadow: none;
+}
+
+.bar[data-orientation="vertical"] .tab[aria-selected="true"] {
+  background: var(--bg-elevated);
+  box-shadow: inset 2px 0 0 var(--hivra-red);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tab {
     transition: none;

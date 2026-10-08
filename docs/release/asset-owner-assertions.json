@@ -21,6 +21,15 @@
       "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling only, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit afd750bbec44befbfcfb60623227210623a53a7d."
     },
     {
+      "path": "dashboard/public/brand/hivra-icon-384.webp",
+      "sha256": "afcc34b4f0f502bf0da6bf7a279389db89874bf36914acd4ffbcf6800b7b4b7b",
+      "assertedBy": "repository-owner",
+      "assertion": "Resized export of docs/brand/hivra-logo.jpg. The owner's assertion for that logo applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Produced from docs/brand/hivra-logo.jpg (SHA-256 9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f4, the owner-supplied original byte match) by docs/brand/export-brand-assets.py using Pillow Lanczos resampling to 384px, saved as WebP at quality 86, method 6, with no crop, padding, colour change or redraw; rerunning the script reproduces these bytes. The exact bytes first appear in repository commit f0ca5e4bb5b8e179382742bf0d9bdc099eddcb35."
+    },
+    {
       "path": "dashboard/public/brand/hivra-token-1024.png",
       "sha256": "1a5518f79b5ebc1357f7d47b9457d03d89cefc8cba672663320f0c63d17f70ce",
       "assertedBy": "repository-owner",
@@ -163,6 +172,24 @@
       "redistributionBasis": "owner-originality-assertion",
       "independentEvidenceLevel": "repository-history-only",
       "independentEvidence": "The exact bytes first appear in repository commit 00bfc4d412bf78eeace8bc95bd33537d6bf3bc3d; no embedded author, source, prompt, generation receipt, or upstream-origin metadata was found."
+    },
+    {
+      "path": "dashboard/public/images/home/monolith-1600.webp",
+      "sha256": "757953a8f72c81d8e63696876a3b31602596e0d633a0c1364f393ce21f6fd17c",
+      "assertedBy": "repository-owner",
+      "assertion": "Resized export of docs/litepaper/assets/boundary-monolith-v5.png. The owner's assertion for that artwork applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Produced from docs/litepaper/assets/boundary-monolith-v5.png (SHA-256 cebb1ae84c23f7eaae8fdc9825c0fc028e90eb66c968e77d11fd9e844ebb5ee2) with Pillow: Lanczos resize to 1600px wide at the original aspect ratio, then WebP at quality 74, method 6; no crop, colour change or redraw. The exact bytes first appear in repository commit f0ca5e4bb5b8e179382742bf0d9bdc099eddcb35."
+    },
+    {
+      "path": "dashboard/public/images/home/monolith-900.webp",
+      "sha256": "fe4136000971311389b05070aaf3181bbc31ea9ec7a643db0c113d0c40740a04",
+      "assertedBy": "repository-owner",
+      "assertion": "Resized export of docs/litepaper/assets/boundary-monolith-v5.png. The owner's assertion for that artwork applies unchanged: \"The artwork was not taken from anybody.\"",
+      "redistributionBasis": "owner-originality-assertion",
+      "independentEvidenceLevel": "repository-history-only",
+      "independentEvidence": "Produced from docs/litepaper/assets/boundary-monolith-v5.png (SHA-256 cebb1ae84c23f7eaae8fdc9825c0fc028e90eb66c968e77d11fd9e844ebb5ee2) with Pillow: Lanczos resize to 900px wide at the original aspect ratio, then WebP at quality 72, method 6; no crop, colour change or redraw. The exact bytes first appear in repository commit f0ca5e4bb5b8e179382742bf0d9bdc099eddcb35."
     }
   ],
   "boundary": "These are owner assertions, not independent proof of a creation tool, prompt, generation terms, or upstream origin. The repository history and exact logo source-file match are recorded separately as independent evidence."

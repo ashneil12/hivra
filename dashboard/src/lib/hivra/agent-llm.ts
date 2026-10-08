@@ -153,7 +153,9 @@ export function publicLlmConfig(config: StoredLlmConfig | null) {
 
 // Strip the encrypted key column and normalize llm_config before an agent row
 // leaves the server. Every route that returns hivra_agents rows goes through
-// this — the ciphertext must never reach the browser.
+// this — the ciphertext must never reach the browser. proxmox_host and ip are
+// internal topology (host name, private bridge address): server routes keep
+// using them, clients never see them.
 type PrivateHivraAgentColumn =
   | "llm_api_key_encrypted"
   | "infrastructure_binding_token_hash"
@@ -168,7 +170,9 @@ type PrivateHivraAgentColumn =
   | "provider_install_identity"
   | "provider_install_dispatched_at"
   | "provider_install_stopped_at"
-  | "provider_install_outcome";
+  | "provider_install_outcome"
+  | "proxmox_host"
+  | "ip";
 
 type PublicAgentSummaries = {
   llm_config: ReturnType<typeof publicLlmConfig>;
@@ -191,6 +195,8 @@ export function sanitizeHivraAgentRow<T extends Record<string, unknown>>(row: T)
   delete rest.provider_install_dispatched_at;
   delete rest.provider_install_stopped_at;
   delete rest.provider_install_outcome;
+  delete rest.proxmox_host;
+  delete rest.ip;
   return {
     ...rest,
     activity: publicHivraAgentActivity(row),

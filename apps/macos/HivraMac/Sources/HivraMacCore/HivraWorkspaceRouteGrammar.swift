@@ -188,7 +188,7 @@ extension HivraWorkspaceRouteGrammar {
             case let resource where resource.count == 2 && resource[0] == "agent" && HivraWorkspaceRoute.isResourceID(resource[1]):
                 // A launch result arrives with welcome (and Codex's #model-settings); the page consumes these once.
                 return Rule(kept: [tab, Parameter("open", .oneOf(["fast", "native"]), requires: ("tab", "desktop"))],
-                            discarded: ["welcome", "prepare", "tools"])
+                            discarded: ["welcome", "prepare", "tools", "section"])
             case let resource where resource.count == 2 && resource[0] == "instances" && HivraWorkspaceRoute.isResourceID(resource[1]):
                 return Rule(kept: [tab, Parameter("surface", .oneOf(["chat"]))], discarded: ["welcome", "connect", "focus"])
             default:

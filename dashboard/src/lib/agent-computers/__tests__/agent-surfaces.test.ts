@@ -15,7 +15,7 @@ const RUNNING = { status: "running", chat_url: "https://box.example.com" };
 
 describe("agentSurfacesFor", () => {
   it("pins every chat agent's tabs, Browser only for agents that ship one", () => {
-    const full = ["chat", "terminal", "browser", "box", "files", "git", "skills", "telegram", "tasks", "manage"];
+    const full = ["chat", "terminal", "browser", "box", "files", "git", "skills", "telegram", "manage"];
     expect(agentSurfacesFor({ type: "claude-code", ...RUNNING })).toEqual(full);
     expect(agentSurfacesFor({ type: "codex", ...RUNNING })).toEqual(full);
     // Browser stays discoverable while it is toggled off; the tab says so.
@@ -38,19 +38,37 @@ describe("agentSurfacesFor", () => {
     expect(agentSurfacesFor({ type: "linux-terminal", computer_substrate: "gvisor", ...RUNNING })).toEqual(["manage"]);
   });
 
+  it("offers no Tasks tab: scheduled tasks are Hermes-only and Hivra computers have no scheduler", () => {
+    for (const type of ["claude-code", "codex", "hermes", "aeon", "openclaw", "agent-zero", "linux-desktop"]) {
+      expect(agentSurfacesFor({ type, ...RUNNING })).not.toContain("tasks");
+    }
+    expect(agentSurfacesFor({ type: "codex", computer_substrate: "do-managed-session", ...RUNNING })).not.toContain("tasks");
+  });
+
   it("gives a DigitalOcean session Chat and its read-only Files", () => {
     expect(agentSurfacesFor({ type: "codex", computer_substrate: "do-managed-session", ...RUNNING })).toEqual(["chat", "files"]);
   });
 });
 
 describe("agent page groups", () => {
-  it("groups a chat agent as Chat · Computer (Terminal, Files, Browser, Git) · Manage", () => {
+  it("groups a chat agent as Agent (Chat, its session) · Computer (Terminal, Files, Browser, Git) · Manage", () => {
     const def = getAgent("codex");
     expect(agentSurfaceGroups(agentSurfacesFor({ type: "codex" }), def)).toEqual([
-      { id: "work", label: "Chat", surfaces: ["chat", "terminal"] },
+      { id: "work", label: "Agent", surfaces: ["chat", "terminal"] },
       { id: "computer", label: "Computer", surfaces: ["box", "files", "browser", "git"] },
-      { id: "manage", label: "Manage", surfaces: ["manage", "skills", "tasks", "telegram"] },
+      { id: "manage", label: "Manage", surfaces: ["manage", "skills", "telegram"] },
     ]);
+  });
+
+  it("never gives a chat agent's group the name of a tab inside it", () => {
+    // "Chat" under "Chat" read as two bars for the same thing (owner feedback).
+    for (const type of ["codex", "claude-code", "hermes"]) {
+      const def = getAgent(type);
+      for (const group of agentSurfaceGroups(agentSurfacesFor({ type }), def)) {
+        if (group.id === "manage") continue; // Its own tab reads "Settings" inside the group.
+        expect(group.surfaces.map((id) => agentSurfaceLabel(id, def))).not.toContain(group.label);
+      }
+    }
   });
 
   it("leads a dashboard runtime with its dashboard and drops empty groups", () => {

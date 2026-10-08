@@ -23,6 +23,7 @@
 - [Managed hosting releases](release/MANAGED-HOSTING-RELEASES.md)
 - [Repository and installation boundaries](release/PUBLIC-TRANSITION.md)
 - [Dependency evidence](release/DEPENDENCIES.md)
+- [Repository settings checklist](release/REPO-SETTINGS-CHECKLIST.md)
 - [Runtime distribution](release/RUNTIME-DISTRIBUTION.md)
 - [Verification status](release/VERIFICATION-STATUS.md)
 - [Staged desktop changes](release/staged-patches/README.md)

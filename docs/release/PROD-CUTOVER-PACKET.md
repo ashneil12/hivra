@@ -12,7 +12,11 @@ migration backlog. It is not an incremental release.
 The procedure is written to be recomputed at Promote time, because `canary`
 keeps moving. [PROD-CUTOVER-SNAPSHOT.md](PROD-CUTOVER-SNAPSHOT.md) records one
 run of it (candidate `1f825ba`, 2026-09-23) as a worked example. Treat the
-snapshot's numbers as stale once `canary` or either database changes.
+snapshot's numbers as stale once `canary` or either database changes. A review
+proposed removing the snapshot from the public tree after the first Promote, and
+the owner has not decided yet. Until then, do not link to it from new documents.
+Keep the record of a new recompute in private, outside this repository, because
+it names live deployment ids, database state and the rollback target.
 
 Binding rules: the "Deployment topology" section of `AGENTS.md` and
 [MANAGED-HOSTING-RELEASES.md](MANAGED-HOSTING-RELEASES.md). In short: no agent

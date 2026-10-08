@@ -2,6 +2,7 @@ import { applyBankrWalletChangeToWebfreeInstance } from "../hermes-webfree-walle
 import { loadGlobalHermesSettingsForUser } from "@/lib/clerk-hermes-settings";
 import { log } from "@/lib/logger";
 import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-orchestrator";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@/lib/supabase", () => {
@@ -51,7 +52,7 @@ describe("applyBankrWalletChangeToWebfreeInstance", () => {
     chain.maybeSingle.mockResolvedValue({ data: row(), error: null });
     mockedIpv4.mockResolvedValue("10.250.20.55");
     mockedSettings.mockResolvedValue(settings);
-    mockedApply.mockResolvedValue({ applied: true });
+    mockedApply.mockResolvedValue({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
   });
 
   it("runs one live update of a running, active webfree box from a fresh owned row", async () => {
@@ -65,11 +66,14 @@ describe("applyBankrWalletChangeToWebfreeInstance", () => {
     expect(mockedSettings).toHaveBeenCalledWith("user_123", { instanceId: "inst_123" });
     expect(mockedApply).toHaveBeenCalledTimes(1);
     // Same call as the Update button, and never the terminal-backend override.
+    // User-initiated: the owner ticked "restart the agent now", so it recreates
+    // immediately rather than waiting out an in-flight turn.
     expect(mockedApply.mock.calls[0]).toEqual([
       expect.objectContaining({ id: "inst_123", backend: "gateway" }),
       "10.250.20.55",
       settings,
       supabaseAdmin,
+      { initiator: USER_LIVE_UPDATE },
     ]);
   });
 
@@ -104,7 +108,11 @@ describe("applyBankrWalletChangeToWebfreeInstance", () => {
   });
 
   it("reports a launch failure with a redacted log", async () => {
-    mockedApply.mockResolvedValue({ applied: false, error: 'ssh failed {"client_secret":"super-secret"}' });
+    mockedApply.mockResolvedValue({
+      applied: false,
+      error: 'ssh failed {"client_secret":"super-secret"}',
+      initiator: USER_LIVE_UPDATE,
+    });
 
     await expect(run()).resolves.toEqual({ status: "failed" });
     expect(log.warn).toHaveBeenCalledWith(

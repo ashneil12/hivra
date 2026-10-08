@@ -50,6 +50,7 @@ import {
   PENDING_RESIZE_SELECT,
   type PendingResizeRow,
 } from "@/lib/services/pending-resize";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { WEBFREE_BACKENDS } from "@/lib/types/instance";
@@ -199,7 +200,9 @@ export async function POST(req?: NextRequest) {
           .not("status", "in", '("deleted","scheduled_for_deletion")');
         const rows = (pendingRows ?? []) as unknown as PendingResizeRow[];
         if (rows.length > 0) {
-          const summary = await redeployPendingResizes(rows);
+          // User-initiated: the user just unlocked this compute, so the new caps
+          // land now (no in-flight deferral), as they always have.
+          const summary = await redeployPendingResizes(rows, { initiator: USER_LIVE_UPDATE });
           redeployed = summary.redeployed;
         }
       } catch (err) {

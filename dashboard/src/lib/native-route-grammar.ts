@@ -107,7 +107,7 @@ function ruleFor(route: readonly string[]): Rule {
     if (section === "agent") {
       return {
         kept: [TAB, { name: "open", value: oneOf("fast", "native"), requires: { name: "tab", value: "desktop" } }],
-        discarded: ["welcome", "prepare", "tools"],
+        discarded: ["welcome", "prepare", "tools", "section"],
       };
     }
     if (section === "instances") {

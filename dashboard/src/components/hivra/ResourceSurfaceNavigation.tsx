@@ -8,9 +8,17 @@ import { SurfaceActions } from "./SurfaceActions";
 import { useNativeWorkspaceSurfaces } from "@/components/layout/NativeWorkspaceBridge";
 
 type Surface = { id: string; label: string; icon: ReactNode };
-/** A top-level destination and the surfaces it holds, in order. */
-export type SurfaceGroup<T extends string> = { id: string; label: string; icon: ReactNode; surfaces: T[] };
+/**
+ * A top-level destination and the surfaces it holds, in order. `home` is the
+ * surface its button always opens; without one the button reopens the view
+ * last used in the group (its first view the first time).
+ */
+export type SurfaceGroup<T extends string> = { id: string; label: string; icon: ReactNode; surfaces: T[]; home?: T };
 const PRIMARY = new Set(["chat", "aeon", "terminal", "desktop", "files", "manage"]);
+// Inside the Manage group its own pane is the settings, so its tab says so
+// instead of repeating the group's name. The flat bar (computers) and native
+// clients have no group around it and keep "Manage".
+const GROUPED_LABEL: Partial<Record<string, string>> = { manage: "Settings" };
 
 /**
  * Organizes existing surfaces without owning or remounting their sessions.
@@ -24,10 +32,10 @@ export function ResourceSurfaceNavigation<T extends string>({
 }: {
   surfaces: (Surface & { id: T })[];
   /**
-   * Agent pages pass groups (Chat · Computer · Manage): the bar shows one
-   * button per group and a second row for the active group's own surfaces.
-   * Without groups (computers) every surface stays in one flat bar. Native
-   * clients always receive the flat list.
+   * Agent pages pass groups (Agent · Computer · Manage): the bar shows one
+   * button per group and, when the active group holds more than one surface,
+   * a second row for them. Without groups (computers) every surface stays in
+   * one flat bar. Native clients always receive the flat list.
    */
   groups?: SurfaceGroup<T>[];
   /** The element the surfaces render into, for the sub-row's aria-controls. */
@@ -184,11 +192,13 @@ export function ResourceSurfaceNavigation<T extends string>({
 }
 
 /**
- * Chat · Computer (Terminal, Files, Browser, Git) · Manage.
+ * Agent · Computer (Terminal, Files, Browser, Git) · Manage.
  *
- * Chat and Manage open their namesake surface; Computer reopens the view last
- * used in it (Terminal first). The active group's surfaces sit in their own
- * row as tabs, so every surface stays one tap away without an overflow menu.
+ * Agent and Manage open their home surface (Chat or the dashboard, Settings);
+ * Computer reopens the view last used in it (Terminal first). The active
+ * group's surfaces sit in their own row as tabs, so every surface stays one
+ * tap away without an overflow menu. A group with a single surface has no
+ * row: its button already opens it, and the row would only repeat its name.
  */
 function GroupedSurfaceNavigation<T extends string>({
   surfaces, groups, active, onSelect, exportHref, identity, actions, panelId, notes,
@@ -211,14 +221,13 @@ function GroupedSurfaceNavigation<T extends string>({
     onSelect(id);
   };
   const openGroup = (group: SurfaceGroup<T>) => {
-    // A button named after one of its surfaces (Chat, Manage, Dashboard)
-    // always opens that surface. Computer reopens the view last used in it.
-    const namesake = group.surfaces.find(id => byId.get(id)?.label === group.label);
+    const home = group.home && group.surfaces.includes(group.home) ? group.home : undefined;
     const last = remembered[group.id];
-    choose(group, namesake ?? (last && group.surfaces.includes(last) ? last : group.surfaces[0]));
+    choose(group, home ?? (last && group.surfaces.includes(last) ? last : group.surfaces[0]));
   };
+  const subSurfaces = activeGroup.surfaces.length > 1 ? activeGroup.surfaces : [];
+  // Export sits with Manage: in its row, or in the bar when Manage has none.
   const showExport = Boolean(exportHref) && activeGroup.id === "manage";
-  const subSurfaces = activeGroup.surfaces.length > 1 || showExport ? activeGroup.surfaces : [];
 
   return <>
     <nav aria-label="Resource surfaces" className={styles.navigation} data-grouped="true">
@@ -231,6 +240,10 @@ function GroupedSurfaceNavigation<T extends string>({
         </button>)}
       </div>
       {actions}
+      {showExport && subSurfaces.length === 0 ? <a href={exportHref} title="Download chats and memory as JSON" aria-label="Export data"
+        className={`${styles.surface} ${styles.barExport}`}>
+        <Download size={14} aria-hidden="true" /><span>Export data</span>
+      </a> : null}
     </nav>
     {subSurfaces.length > 0 ? <div className={styles.subnav} role="tablist" aria-label={`${activeGroup.label} views`}>
       {subSurfaces.map(id => {
@@ -248,7 +261,7 @@ function GroupedSurfaceNavigation<T extends string>({
             const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
             buttons?.[subSurfaces.indexOf(next)]?.focus();
           }}>
-          {surface.icon}<span>{surface.label}</span>
+          {surface.icon}<span>{GROUPED_LABEL[id] ?? surface.label}</span>
         </button>;
       })}
       {showExport ? <a href={exportHref} title="Download chats and memory as JSON" className={styles.subExport}>

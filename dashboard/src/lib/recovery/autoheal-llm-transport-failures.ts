@@ -44,6 +44,7 @@ import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { sshExec } from "@/lib/hetzner/ssh";
 import { supabaseAdmin } from "@/lib/supabase";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
 
 const AUTOHEAL_LLM_LOG_SOURCE = "autoheal-llm-transport-failures";
 const RESTART_OPS_SOURCE = "cron.autoheal_llm_transport_restart";
@@ -97,6 +98,9 @@ interface ActiveInstanceRow {
   ipv4_address: string | null;
   proxmox_vmid: number | null;
   proxmox_node: string | null;
+  config?: unknown;
+  host_id?: string | null;
+  gateway_url?: string | null;
   last_activity_at: string | null;
 }
 
@@ -217,12 +221,14 @@ async function probeAndMaybeRestart(
 ): Promise<"restarted" | "skipped"> {
   const ip = row.ipv4_address;
   if (!ip || !INSTANCE_ID_RE.test(row.id)) return "skipped";
+  const guestTarget = getHermesGuestSshTarget(row);
 
   // 1. Detect a fresh burst of transport-class LLM failures.
   let detect;
   try {
     detect = await sshExec(ip, buildDetectCommand(row.id), {
       timeoutMs: DETECT_SSH_TIMEOUT_MS,
+      ...(guestTarget ? { proxmoxHostConfig: guestTarget } : {}),
     });
   } catch (err) {
     summary.probeErrors += 1;
@@ -291,6 +297,7 @@ async function probeAndMaybeRestart(
   try {
     restart = await sshExec(ip, buildRestartCommand(row.id), {
       timeoutMs: RESTART_SSH_TIMEOUT_MS,
+      ...(guestTarget ? { proxmoxHostConfig: guestTarget } : {}),
     });
   } catch (err) {
     summary.restartFailed += 1;
@@ -363,7 +370,7 @@ export async function runAutohealLlmTransportFailuresSweep(): Promise<AutohealLl
   const { data, error } = await db
     .from("hermes_instances")
     .select(
-      "id, user_id, ipv4_address, proxmox_vmid, proxmox_node, last_activity_at",
+      "id, user_id, ipv4_address, proxmox_vmid, proxmox_node, config, host_id, gateway_url, last_activity_at",
     )
     .eq("lifecycle_state", "active")
     .eq("status", "running")

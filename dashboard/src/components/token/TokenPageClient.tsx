@@ -6,13 +6,22 @@ import { Check, Copy } from "lucide-react";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
-import type { TokenPageEntry, TokenPageEntryStatus } from "@/lib/token-verification-content";
+import type { HivraTokenPhase } from "@/lib/billing/token-registry";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import {
+  formatLaunchInstantUtc,
+  tokenPhaseFromEntries,
+  tokenVerificationContent,
+  type TokenPageEntry,
+  type TokenPageEntryStatus,
+} from "@/lib/token-verification-content";
 import { TokenGeoNotice } from "./TokenGeoNotice";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
   legacy: "LEGACY",
-  scheduled: "LAUNCHING SOON",
+  // $HIVRA is on Base; the note under it names the instant Hivra starts using it.
+  scheduled: "LIVE ON BASE",
   not_launched: "NOT LAUNCHED YET",
 };
 
@@ -26,10 +35,22 @@ const ENTRY_NOTE: Record<"hermesos" | "hivra", Record<TokenPageEntryStatus, stri
   hivra: {
     live: "The $HIVRA contract. New token payments and holdings use it.",
     legacy: "The $HIVRA contract.",
-    scheduled: "The $HIVRA contract. It goes live at the published launch time.",
+    scheduled: "The $HIVRA contract. Hivra starts using it at the published switch time.",
     not_launched: "",
   },
 };
+
+/** The note under a listed contract. Only the scheduled phase needs more than the status. */
+function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
+  if (phase === "scheduled") {
+    // $HIVRA is on Base but Hivra has not switched yet: never say "$HIVRA has not launched".
+    if (entry.key === "hermesos") return ENTRY_NOTE.hermesos.scheduled;
+    if (entry.activatesAt) {
+      return `The $HIVRA contract. Hivra starts using it at ${formatLaunchInstantUtc(entry.activatesAt)}.`;
+    }
+  }
+  return ENTRY_NOTE[entry.key][entry.status];
+}
 
 type CopyState = "idle" | "copied" | "failed";
 
@@ -51,9 +72,10 @@ function CopyAddressButton({ value }: { value: string }) {
 }
 
 /**
- * `entries` are computed on the server at render, so the markup never depends on the viewer's clock.
+ * `entries` are computed on the server at render, so the markup never depends on the viewer's clock;
+ * the $HIVRA phase, and with it the phase-dependent copy, is read from them.
  * `geoNotice` is set only when the token geo-policy blocks this viewer: the page then keeps the
- * factual contract and access sections, adds the notice, and drops the proposals.
+ * factual contract, official account and access sections, adds the notice, and drops the proposals.
  */
 export default function TokenPageClient({
   entries,
@@ -62,13 +84,21 @@ export default function TokenPageClient({
   entries: TokenPageEntry[];
   geoNotice?: string | null;
 }) {
+  const phase = tokenPhaseFromEntries(entries);
+  const phaseCopy = getTokenPhaseCopy(phase).tokenPage;
+  // A blocked viewer reads the contracts and the access they already have, not the
+  // status, proposal or qualify-for-compute lines (RESTRICTED_TOKEN_PAGE_COPY).
+  const restricted = geoNotice ? RESTRICTED_TOKEN_PAGE_COPY : null;
+  const copy = { ...phaseCopy, heroTitle: restricted?.heroTitle ?? phaseCopy.heroTitle, heroLead: restricted?.heroLead ?? phaseCopy.heroLead };
+  const { officialAccounts, noTelegram, lookalikeWarning, riskLine } = tokenVerificationContent;
   return <PublicSite>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
       <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>
-        <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>OPTIONAL TOKEN</p>
-        <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>$HermesOS and Hivra.</h1>
-        <p style={{ fontSize: "1.2rem", color: "var(--public-muted)" }}>Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the proposed $HIVRA token.</p>
+        <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>{restricted ? restricted.eyebrow : "OPTIONAL TOKEN"}</p>
+        <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>{copy.heroTitle}</h1>
+        <p style={{ fontSize: "1.2rem", color: "var(--public-muted)" }}>{copy.heroLead}</p>
+        <p data-testid="token-risk-line" style={{ color: "var(--public-muted)" }}>{riskLine}</p>
       </header>
       {geoNotice ? <TokenGeoNotice notice={geoNotice} /> : null}
       <section id="verify" aria-labelledby="verify-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
@@ -89,7 +119,7 @@ export default function TokenPageClient({
                     {entry.key === "hermesos" ? "View the contract on BaseScan" : "View the $HIVRA contract on BaseScan"}
                   </a>
                 </p>
-                <p style={{ color: "var(--public-muted)" }}>{ENTRY_NOTE[entry.key][entry.status]}</p>
+                <p style={{ color: "var(--public-muted)" }}>{entryNote(entry, phase)}</p>
               </>
             ) : (
               <p style={{ color: "var(--public-muted)" }}>
@@ -98,21 +128,37 @@ export default function TokenPageClient({
             )}
           </div>
         ))}
+        <p data-testid="token-lookalike-warning"><strong>{lookalikeWarning}</strong></p>
         <p><strong>Hivra never confirms contract addresses in DMs or private messages.</strong> This page is the only place Hivra publishes them.</p>
+      </section>
+      <section id="official-accounts" aria-labelledby="official-accounts-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
+        <h2 id="official-accounts-title">Official accounts</h2>
+        <p>These are Hivra&apos;s official accounts. Compare the handle before you trust a post or a message.</p>
+        <ul>
+          {officialAccounts.map((account) => (
+            <li key={account.service}>
+              {account.service}:{" "}
+              <a href={account.href} target="_blank" rel="noopener noreferrer">{account.handle}</a>
+            </li>
+          ))}
+        </ul>
+        <p><strong>{noTelegram}</strong></p>
       </section>
       <section id="live-now" aria-labelledby="access-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
         <p className="mono" style={{ fontSize: 11 }}>CURRENT ACCESS</p>
         <h2 id="access-title">Existing holder access</h2>
-        <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>
+        {restricted
+          ? <p>{restricted.accessParagraph}</p>
+          : <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>}
         <p>Open Billing to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
       {geoNotice ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
-        <p className="mono" style={{ fontSize: 11 }}>PROPOSED. NOT AVAILABLE HERE.</p>
-        <h2 id="proposals-title">The proposed $HIVRA migration</h2>
-        <p>The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.</p>
-        <p>The proposed claim would sell the old tokens into their existing pool and use the ETH proceeds to buy from the new pool. Conversion terms, fees and price protections must be published with the contract before claims open. No migration action is offered on this page.</p>
+        <p className="mono" style={{ fontSize: 11 }}>{copy.migrationEyebrow}</p>
+        <h2 id="proposals-title">{copy.migrationHeading}</h2>
+        <p>{copy.migrationParagraphs[0]}</p>
+        <p>{copy.migrationParagraphs[1]}</p>
         <h3>Utility and treasury proposals</h3>
         <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
         <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>

@@ -9,6 +9,9 @@ import { useWorkspaceModalLayer } from '@/components/workspace/WorkspaceModalLay
 import { useDashboardResources } from '../useDashboardResources';
 import type { DashboardResource } from '../dashboard-resources';
 import { useWorkspaceViewport } from '../useWorkspaceViewport';
+import { FleetControlPane } from '@/components/hivra/FleetControlPane';
+import { resetResourceInventory, resourceInventory } from '@/lib/workspace/resource-inventory';
+import { recordVisit } from '@/lib/workspace/recents';
 
 jest.mock('../ClientLayoutWrapper.module.css', () => ({
   __esModule: true,
@@ -75,6 +78,12 @@ describe('ClientLayoutWrapper', () => {
     const host = window as Window & { __HIVRA_NATIVE_WORKSPACE__?: unknown; webkit?: unknown };
     delete host.__HIVRA_NATIVE_WORKSPACE__;
     delete host.webkit;
+  });
+
+  it('shows the account code the server setup script names in the account menu (T5)', () => {
+    render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
+    // accountCode("user_123"), the same fixed vector as account-code.test.ts.
+    expect(screen.getAllByText('Account code QJK7-53FK').length).toBeGreaterThan(0);
   });
 
   it('uses native chrome only when both injected capabilities are present, with one metadata source', () => {
@@ -384,6 +393,40 @@ describe('ClientLayoutWrapper', () => {
     );
 
     expect(screen.queryByRole('navigation', { name: /app navigation/i })).not.toBeInTheDocument();
+  });
+
+  // The agents list is held between pages. Signing out and into another
+  // account without a page load must not show Home the first account's list,
+  // or offer to continue in one of its agents.
+  it("never shows Home the list held for another account", async () => {
+    const listFor = (agents: unknown[]) => jest.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.startsWith('/api/instances') ? { success: true, data: [] } : { success: true, data: { agents } },
+    })) as unknown as typeof fetch;
+    const originalFetch = global.fetch;
+    resetResourceInventory();
+    window.localStorage.clear();
+    try {
+      global.fetch = listFor([{ id: 'secret', name: 'ACCOUNT_A_PROJECT', type: 'codex', status: 'running', cpu: 1, ram: 2 }]);
+      resourceInventory.setOwner('account-a');
+      await Promise.all([resourceInventory.load('hermes'), resourceInventory.load('hivra')]);
+      recordVisit('x-secret', 'chat');
+
+      global.fetch = listFor([]);
+      render(
+        <ClientLayoutWrapper {...mockProps} resourceOwnerKey="account-b">
+          <FleetControlPane requested />
+        </ClientLayoutWrapper>
+      );
+      expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('home-continue')).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByText('Choose an agent to work with, or a computer of your own.')).toBeInTheDocument());
+      expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
+    } finally {
+      global.fetch = originalFetch;
+      resetResourceInventory();
+      window.localStorage.clear();
+    }
   });
 
   it('leaves no pending timers after unmount', () => {

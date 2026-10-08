@@ -1,4 +1,5 @@
 import { ManagedVeniceInsufficientBalanceError } from "@/lib/billing/managed-venice-wallets";
+import { createManagedVeniceWalletRpc } from "@/test-utils/managed-venice-wallet-rpc";
 import {
   captureManagedVeniceChatUsage,
   markManagedVeniceReconciliationRequired,
@@ -56,27 +57,32 @@ function createUpdate(rows: Row[], patch: Row) {
   const filters: Array<[string, unknown]> = [];
   const query: {
     eq: (column: string, value: unknown) => typeof query;
-    select: () => { single: () => Promise<{ data: Row | null; error: null }> };
+    select: () => {
+      single: () => Promise<{ data: Row | null; error: null }>;
+      then: Promise<{ data: Row[]; error: null }>["then"];
+    };
     then: Promise<{ error: null }>["then"];
   } = {} as typeof query;
 
   function applyPatch() {
-    let last: Row | null = null;
+    const changed: Row[] = [];
     for (const row of rows) {
       if (filters.every(([column, value]) => row[column] === value)) {
         Object.assign(row, patch);
-        last = row;
+        changed.push(row);
       }
     }
-    return last;
+    return changed;
   }
 
   query.eq = (column, value) => {
     filters.push([column, value]);
     return query;
   };
+  // Like PostgREST: update(...).select() resolves to the rows it changed.
   query.select = () => ({
-    single: async () => ({ data: applyPatch(), error: null }),
+    single: async () => ({ data: applyPatch().at(-1) ?? null, error: null }),
+    then: (resolve, reject) => Promise.resolve({ data: applyPatch(), error: null as null }).then(resolve, reject),
   });
   query.then = (resolve, reject) => {
     applyPatch();
@@ -147,7 +153,13 @@ function createMemoryDb() {
     };
   }
 
-  return { db: { from: table }, tables, insertRow };
+  // The wallet debit functions (capture_managed_venice_reservation,
+  // debit_managed_venice_wallet) run against the same tables.
+  return {
+    db: { from: table, rpc: createManagedVeniceWalletRpc((name) => tables[name]) },
+    tables,
+    insertRow,
+  };
 }
 
 async function seedBalance(db: ReturnType<typeof createMemoryDb>, userId = "user_1") {
@@ -227,6 +239,50 @@ describe("managed Venice proxy settlement", () => {
         model: "venice-uncensored-1-2",
       })
     );
+  });
+
+  // Security review 2026-09: a hold whose settlement never arrives (the
+  // function was killed mid-stream, the Worker never called back) sat on the
+  // wallet forever. It now expires after a day, and the stale-hold sweep
+  // captures its estimate (lib/venice/reservation-sweep.ts).
+  it("gives a chat hold a day before the stale-hold sweep may settle it", async () => {
+    const memory = createMemoryDb();
+    await seedBalance(memory);
+    const before = Date.now();
+
+    await reserveManagedVeniceChatRequest(
+      { userId: "user_1", proxyKeyId: "key_1", walletType: "hermesos", referenceId: "req_ttl", requestBody },
+      memory.db
+    );
+
+    const expiresAt = Date.parse(String(memory.tables.managed_venice_reservations[0].expires_at));
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000);
+  });
+
+  // The hold covers the request's whole output cap; the sweep charges a
+  // bounded share of it when Venice answers but the usage never arrives.
+  it("records a sweep estimate of the input plus at most 4,096 output tokens", async () => {
+    const memory = createMemoryDb();
+    await seedBalance(memory);
+
+    await reserveManagedVeniceChatRequest(
+      {
+        userId: "user_1",
+        proxyKeyId: "key_1",
+        walletType: "hermesos",
+        referenceId: "req_big_cap",
+        requestBody: { ...requestBody, max_completion_tokens: 8_192 },
+      },
+      memory.db
+    );
+
+    // venice-uncensored-1-2: $0.20/M input, $0.90/M output. 4 input tokens
+    // cost 1 µUSD; 8,192 output tokens 7,373 µUSD, half of that 3,687.
+    expect(memory.tables.managed_venice_reservations[0]).toMatchObject({
+      estimated_cost_micro_usd: 7_374,
+      metadata: expect.objectContaining({ sweepEstimateMicroUsd: 3_688 }),
+    });
   });
 
   it("fails before upstream work when the wallet cannot cover the reservation", async () => {
@@ -369,11 +425,13 @@ describe("managed Venice proxy settlement", () => {
         proxyKeyId: "key_1",
         walletType: "hermesos",
         referenceId: "req_overage",
-        // No max_completion_tokens — reservation lands on the defensive
-        // default (4096) but the response will pretend to run longer.
+        // The hold covers 4,096 output tokens; the response pretends to run
+        // longer (as it could if input were under-estimated) to exercise the
+        // overage debit.
         requestBody: {
           model: "venice-uncensored-1-2",
           messages: [{ role: "user", content: "hi" }],
+          max_completion_tokens: 4_096,
         },
       },
       memory.db

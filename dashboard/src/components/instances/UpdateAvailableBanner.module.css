@@ -1,0 +1,22 @@
+/* Update notice shared by the agent page and the console. The text takes the
+   row and the button wraps below it, full width, once the row gets narrow. */
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.body { flex: 1 1 260px; min-width: 0; display: grid; gap: 4px; }
+
+.text { overflow-wrap: anywhere; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 1 auto; }
+
+.button { min-height: 44px; padding: 0 18px; }
+
+@media (max-width: 520px) {
+  .actions { flex: 1 1 100%; }
+  .button { flex: 1 1 100%; }
+}

@@ -35,7 +35,18 @@ jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
 }));
 
+const mockReportPriceGateRefusal = jest.fn<Promise<unknown>, unknown[]>(async () => ({
+  refusal: { assetKey: "hermesos", asset: "$HermesOS", reason: "liquidity_floor", gate: "liquidity", observed: {} },
+  logged: true,
+  alerted: true,
+}));
+jest.mock("@/lib/billing/price-gate-alerts", () => ({
+  reportPriceGateRefusal: (...args: unknown[]) => mockReportPriceGateRefusal(...args),
+}));
+
 import { auth } from "@clerk/nextjs/server";
+import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
+import { HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 import { GET, POST } from "../route";
 
 function makeReq(url: string, body?: unknown): NextRequest {
@@ -183,6 +194,30 @@ describe("/api/billing/wallet/quote", () => {
       expect(response.status).toBe(403);
       expect(body.error).toMatch(/connect and verify/i);
       expect(mockCreateDepositQuote).not.toHaveBeenCalled();
+    });
+
+    it("answers a refused price gate with a 503 and reports the refusal once, without an error-level log", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const refusal = new PlatformTokenPriceGateError("liquidity", "$HermesOS pricing pool holds $9000, below the $10000 floor", {
+        token: HERMESOS_TOKEN,
+        observed: { liquidityUsd: 9_000, minLiquidityUsd: 10_000 },
+      });
+      mockCreateDepositQuote.mockRejectedValueOnce(refusal);
+
+      const response = await POST(makeReq("http://localhost/api/billing/wallet/quote", { tier: "pro" }));
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body.error).toMatch(/try again later/i);
+      expect(mockReportPriceGateRefusal).toHaveBeenCalledTimes(1);
+      expect(mockReportPriceGateRefusal).toHaveBeenCalledWith(refusal, {
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
+      });
+      // The per-request line is info: the rate-limited gate log is the signal.
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
     });
 
     it("does not leak the underlying error message", async () => {

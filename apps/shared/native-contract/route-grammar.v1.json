@@ -61,6 +61,7 @@
     { "family": "agent", "input": "/dashboard/agent/abc?open=native&tab=desktop", "expect": "/dashboard/agent/abc?tab=desktop&open=native" },
     { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=terminal", "expect": "/dashboard/agent/abc?tab=terminal", "shell": { "resource": "x-abc", "destination": "agents" }, "note": "A CLI agent's launch result." },
     { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=aeon", "expect": "/dashboard/agent/abc?tab=aeon", "note": "A dashboard agent's launch result." },
+    { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=manage&section=model#model-settings", "expect": "/dashboard/agent/abc?tab=manage", "shell": { "resource": "x-abc", "destination": "agents" }, "note": "Codex's launch result since Manage gained sections: section is a one-shot arrival parameter like tools." },
     { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=manage#model-settings", "expect": "/dashboard/agent/abc?tab=manage", "shell": { "resource": "x-abc", "destination": "agents" }, "note": "Codex's launch result with a model key." },
     { "family": "agent", "input": "/dashboard/agent/abc?welcome=1", "expect": "/dashboard/agent/abc" },
     { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop&welcome=1&open=fast", "expect": "/dashboard/agent/abc?tab=desktop&open=fast" },

@@ -80,6 +80,16 @@ describe("StatusPageContent", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
   });
 
+  it("writes everything the page says without em or en dashes", async () => {
+    mockFetchBy(() => ({ ok: true }));
+
+    const { container } = render(<StatusPageContent />);
+    await screen.findAllByText("Operational");
+
+    expect(container.textContent).toContain("Checks run in your browser against public pages only.");
+    expect(container.textContent).not.toMatch(/[\u2013\u2014]/);
+  });
+
   it("issues unauthenticated, no-store GETs for the public surfaces", async () => {
     const fetchMock = mockFetchBy(() => ({ ok: true }));
 

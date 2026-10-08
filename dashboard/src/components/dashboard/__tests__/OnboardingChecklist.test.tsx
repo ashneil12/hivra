@@ -184,6 +184,27 @@ describe("OnboardingChecklist", () => {
     expect(screen.queryByTestId("paywall-modal")).not.toBeInTheDocument();
   });
 
+  it("never offers scheduled tasks when the only deployments are Hivra agents, which have no scheduler", async () => {
+    (fetchPlan as jest.Mock).mockResolvedValue(PRO_PLAN);
+
+    render(<OnboardingChecklist instances={[]} />);
+
+    expect(await screen.findByText("1 of 4 done")).toBeInTheDocument();
+    expect(screen.queryByText("Add a scheduled task")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-item-cron")).not.toBeInTheDocument();
+  });
+
+  it("sends the scheduled-task item to the Hermes instance's Tasks, even when a Hivra agent exists too", async () => {
+    (fetchPlan as jest.Mock).mockResolvedValue(PRO_PLAN);
+
+    render(<OnboardingChecklist instances={[freshInstance()]} />);
+
+    const cronItem = await screen.findByTestId("onboarding-item-cron");
+    await waitFor(() => expect(cronItem).toHaveAttribute("data-state", "pending"));
+    fireEvent.click(cronItem);
+    expect(pushMock).toHaveBeenCalledWith("/dashboard/instances/inst-1/console?tab=tasks");
+  });
+
   it("navigates to the box Telegram tab from the channel item", async () => {
     render(<OnboardingChecklist instances={[freshInstance()]} />);
 

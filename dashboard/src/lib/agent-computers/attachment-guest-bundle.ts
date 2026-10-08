@@ -7,7 +7,7 @@ import { ATTACHED_CODEX_FETCHER_SHA256, ATTACHED_CODEX_STAGER_SHA256 } from "./a
 import { ATTACHMENT_GUEST_WORKER_SHA256, snapshotAttachmentGuestExpectation,
   type ExpectedAttachmentGuestResult } from "./attachment-guest-result";
 
-const ATTACHMENT_BUNDLE_RUNNER_SHA256 = "ec5760568541f03024a10c62c884638b3ba2a0bbca26c18b91260c8130111fb3";
+const ATTACHMENT_BUNDLE_RUNNER_SHA256 = "63d48ded14d682353996dd9212c1a8c396a71afa72916c21a2a6950971b7b8da";
 const FILES = {
   fetcher: { file: "fetch-attached-codex.py", digest: ATTACHED_CODEX_FETCHER_SHA256 },
   worker: { file: "run-attached-codex-stage.py", digest: ATTACHMENT_GUEST_WORKER_SHA256 },

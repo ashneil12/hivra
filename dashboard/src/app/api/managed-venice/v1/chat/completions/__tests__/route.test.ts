@@ -6,19 +6,21 @@ const mockReserve = jest.fn();
 const mockCapture = jest.fn();
 const mockRelease = jest.fn();
 const mockReconcile = jest.fn();
+const mockObserved = jest.fn();
 const mockFetch = jest.fn();
+const mockWalletSummary = jest.fn();
 
 jest.mock("@/lib/venice/proxy-keys", () => ({
   verifyManagedVeniceProxyKey: (...args: unknown[]) => mockVerifyKey(...args),
 }));
 
 jest.mock("@/lib/venice/cost-estimator", () => ({
+  ...jest.requireActual("@/lib/venice/cost-estimator"),
   estimateChatCompletionCost: (...args: unknown[]) => mockEstimate(...args),
-  MissingVeniceUsageError: class MissingVeniceUsageError extends Error {},
 }));
 
 jest.mock("@/lib/venice/pricing", () => ({
-  UnsupportedVeniceModelError: class UnsupportedVeniceModelError extends Error {},
+  ...jest.requireActual("@/lib/venice/pricing"),
   checkVeniceChatPricingCatalogStaleness: jest.fn(() => ({
     updatedAt: "2026-05-17",
     ageDays: 0,
@@ -27,11 +29,26 @@ jest.mock("@/lib/venice/pricing", () => ({
   })),
 }));
 
+// The output-cap budget reads the wallet only after a reservation is refused.
+jest.mock("@/lib/billing/managed-venice-wallets", () => ({
+  ...jest.requireActual("@/lib/billing/managed-venice-wallets"),
+  getManagedVeniceWalletSummary: (...args: unknown[]) => mockWalletSummary(...args),
+}));
+
 jest.mock("@/lib/venice/proxy-settlement", () => ({
   reserveManagedVeniceChatRequest: (...args: unknown[]) => mockReserve(...args),
   captureManagedVeniceChatUsage: (...args: unknown[]) => mockCapture(...args),
   releaseManagedVeniceChatReservation: (...args: unknown[]) => mockRelease(...args),
+  releaseManagedVeniceChatReservationOrFile: (...args: unknown[]) => mockRelease(...args),
+  captureManagedVeniceObservedOutput: (...args: unknown[]) => mockObserved(...args),
+  managedVeniceUsageCostMicroUsd: () => null,
   markManagedVeniceReconciliationRequired: (...args: unknown[]) => mockReconcile(...args),
+}));
+
+// The route's 270 s deadline, shortened so a test can reach it.
+jest.mock("@/lib/venice/hold-lifecycle", () => ({
+  ...jest.requireActual("@/lib/venice/hold-lifecycle"),
+  MANAGED_VENICE_STREAM_DEADLINE_MS: 100,
 }));
 
 jest.mock("@/lib/venice/live-pricing", () => ({
@@ -57,6 +74,34 @@ function makeReq(body: unknown, key = "hven_live_test") {
     },
     body: JSON.stringify(body),
   }) as unknown as NextRequest;
+}
+
+// An upstream SSE body that stays open after its chunks, like Venice mid-
+// generation, and records whether the proxy cancelled it.
+function openUpstreamStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { stream, wasCancelled: () => cancelled };
+}
+
+async function settleMicrotasks() {
+  for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 3_000) {
+  const startedAt = Date.now();
+  while (!check()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for the settlement");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 const body = {
@@ -103,6 +148,10 @@ describe("/api/managed-venice/v1/chat/completions", () => {
     mockCapture.mockResolvedValue({ chargedMicroUsd: 8 });
     mockRelease.mockResolvedValue({ released: true });
     mockReconcile.mockResolvedValue({ status: "open" });
+    mockWalletSummary.mockResolvedValue({
+      hermesos: { availableMicroUsd: 0 },
+      card: { availableMicroUsd: 0 },
+    });
     mockFetch.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -289,7 +338,7 @@ describe("/api/managed-venice/v1/chat/completions", () => {
     expect(mockCapture).not.toHaveBeenCalled();
   });
 
-  it("marks reconciliation and pauses the key when usage is missing from a successful response", async () => {
+  it("charges the observed output and delivers the answer when usage is missing from a successful response", async () => {
     mockCapture.mockRejectedValueOnce(new MissingVeniceUsageError());
     mockFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ id: "chatcmpl_1", choices: [] }), {
@@ -300,16 +349,19 @@ describe("/api/managed-venice/v1/chat/completions", () => {
 
     const response = await POST(makeReq(body));
 
-    expect(response.status).toBe(502);
-    expect(mockReconcile).toHaveBeenCalledWith(
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "chatcmpl_1", choices: [] });
+    expect(mockObserved).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user_1",
         proxyKeyId: "key_1",
-        reason: "managed_venice_missing_usage",
-        // Telemetry gap on a successful 200 must NOT brick the key.
-        pauseKey: false,
+        cause: "missing_usage",
+        observedOutputTokens: 0,
+        reconciliationReason: "managed_venice_missing_usage",
       })
     );
+    // Telemetry gap on a successful 200 must NOT brick the key.
+    expect(mockReconcile).not.toHaveBeenCalled();
   });
 
   it("streams through Venice chunks, forces include_usage, and captures the final usage chunk", async () => {
@@ -349,7 +401,7 @@ describe("/api/managed-venice/v1/chat/completions", () => {
     );
   });
 
-  it("reconciles WITHOUT pausing when a stream finishes without usage", async () => {
+  it("charges the observed output WITHOUT pausing when a stream finishes without usage", async () => {
     const encoder = new TextEncoder();
     mockFetch.mockResolvedValueOnce(
       new Response(
@@ -370,12 +422,157 @@ describe("/api/managed-venice/v1/chat/completions", () => {
     await response.text();
 
     expect(response.status).toBe(200);
+    expect(mockObserved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxyKeyId: "key_1",
+        cause: "completed",
+        observedOutputTokens: 1,
+        reconciliationReason: "managed_venice_missing_stream_usage",
+      })
+    );
+    // Never a key pause over a telemetry gap.
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  // Security review 2026-09 (HIGH): once Venice has answered 200 it is
+  // generating, and billing Hivra, for this request. A client that closes the
+  // connection before the final usage frame used to get the whole hold
+  // released, so every streamed completion was free. A disconnect must never
+  // release the hold. The route keeps reading Venice for its usage frame
+  // (#167 second review); one that never comes is charged the input estimate
+  // plus the output read, at the deadline.
+  it("keeps reading after the client disconnects, then charges the observed output, never releases, when no usage arrives", async () => {
+    const upstream = openUpstreamStream([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    expect(response.status).toBe(200);
+    const client = response.body!.getReader();
+    const first = await client.read();
+    expect(new TextDecoder().decode(first.value)).toContain('"content":"hi"');
+    await client.cancel();
+    await settleMicrotasks();
+    // The client leaving does not stop the read: Venice's usage may follow.
+    expect(upstream.wasCancelled()).toBe(false);
+    expect(mockObserved).not.toHaveBeenCalled();
+    await waitFor(() => mockObserved.mock.calls.length > 0);
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockCapture).not.toHaveBeenCalled();
+    expect(mockReconcile).not.toHaveBeenCalled();
+    expect(mockObserved).toHaveBeenCalledTimes(1);
+    expect(mockObserved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user_1",
+        proxyKeyId: "key_1",
+        referenceId: mockReserve.mock.calls[0][0].referenceId,
+        upstreamStatus: 200,
+        cause: "client_cancelled",
+        observedOutputTokens: 1,
+        reconciliationReason: "managed_venice_chat_stream_cancelled",
+      })
+    );
+    // The read stops at the route deadline.
+    expect(upstream.wasCancelled()).toBe(true);
+  });
+
+  it("settles from the observed usage frame when the client disconnects after it arrived", async () => {
+    const upstream = openUpstreamStream([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":10}}\n\n',
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    const client = response.body!.getReader();
+    let seen = "";
+    while (!seen.includes('"usage"')) {
+      const next = await client.read();
+      if (next.done) break;
+      seen += new TextDecoder().decode(next.value);
+    }
+    await client.cancel();
+    await settleMicrotasks();
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(mockCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceId: mockReserve.mock.calls[0][0].referenceId,
+        usage: { prompt_tokens: 4, completion_tokens: 10 },
+        upstreamStatus: 200,
+      })
+    );
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hold under the cancel reason when capture fails after a client disconnect", async () => {
+    mockCapture.mockRejectedValueOnce(new Error("ledger write failed"));
+    const upstream = openUpstreamStream([
+      'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":10}}\n\n',
+    ]);
+    mockFetch.mockResolvedValueOnce(
+      new Response(upstream.stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    const client = response.body!.getReader();
+    await client.read();
+    await client.cancel();
+    await settleMicrotasks();
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockReconcile).toHaveBeenCalledTimes(1);
     expect(mockReconcile).toHaveBeenCalledWith(
       expect.objectContaining({
-        reason: "managed_venice_missing_stream_usage",
-        proxyKeyId: "key_1",
-        // Reservation is held + invoice cron settles offline — keep the key live.
+        reason: "managed_venice_chat_stream_cancelled",
         pauseKey: false,
+        metadata: expect.objectContaining({ cause: "settlement_failed" }),
+      })
+    );
+  });
+
+  it("charges the observed output, never releases, when Venice drops the stream mid-generation", async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+            );
+            controller.error(new Error("upstream socket reset"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
+    );
+
+    const response = await POST(makeReq({ ...body, stream: true }));
+    await expect(response.text()).rejects.toThrow("upstream socket reset");
+
+    expect(mockRelease).not.toHaveBeenCalled();
+    expect(mockReconcile).not.toHaveBeenCalled();
+    expect(mockObserved).toHaveBeenCalledTimes(1);
+    expect(mockObserved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cause: "upstream_failed",
+        reconciliationReason: "managed_venice_stream_settlement_failed",
       })
     );
   });

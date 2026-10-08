@@ -85,7 +85,26 @@ function resolveRange(repoRoot, parsed) {
 
   git(repoRoot, ["rev-parse", "--verify", head]);
 
-  return { base, head };
+  return { base: resolveMergeBase(repoRoot, base, head), head };
+}
+
+// Diff from the point where head branched off base (three-dot semantics), so
+// commits that landed on base after the branch point are not reported as
+// changes in head. The empty tree has no history and is used as-is.
+function resolveMergeBase(repoRoot, base, head) {
+  if (base === EMPTY_TREE_SHA) {
+    return base;
+  }
+
+  try {
+    return git(repoRoot, ["merge-base", base, head]);
+  } catch (error) {
+    die([
+      `Cannot find a merge base for migration diff ${base}...${head}.`,
+      "The histories are unrelated or incomplete; CI must check out with fetch-depth: 0.",
+      String(error.stderr || error.message).trim(),
+    ]);
+  }
 }
 
 function validateCurrentMigrations(migrationsDir) {
@@ -211,7 +230,7 @@ function main() {
   }
 
   console.log(
-    `Supabase migration hygiene check passed for ${migrationsPath} (${base}..${head}).`,
+    `Supabase migration hygiene check passed for ${migrationsPath} (${base}...${head}).`,
   );
 }
 

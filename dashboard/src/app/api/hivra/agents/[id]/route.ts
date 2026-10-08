@@ -46,7 +46,7 @@ import { decryptApiKey } from "@/lib/crypto";
 import { validateHivraHostRunningResult } from "@/lib/hivra/agent-host-result";
 import {
   buildRemoteDesktopCapabilityInspectionScript,
-  parseRemoteDesktopCapabilityReceipt,
+  verifyDesktopReadinessReceipt,
 } from "@/lib/remote-computers/capability-inspection";
 import { HivraAgentDeleteCleanupError } from "@/lib/hivra/agent-delete-cleanup";
 import {
@@ -73,11 +73,13 @@ import {
 } from "@/lib/hivra/tailscale-private-access";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
+import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import {
+  parseActivityCollectorMarker,
   recordCollectorInstallResult,
   supportsNativeTracing,
-  type ActivityCollectorInstallStatus,
 } from "@/lib/activity-observability/collectors";
 
 type ProxmoxEnvironment = Record<string, string | undefined>;
@@ -86,19 +88,6 @@ type ProxmoxEnvironment = Record<string, string | undefined>;
 // helper write into the host log (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
 // Closed enum only; anything else is ignored.
 const ACTIVITY_COLLECTOR_MARKER_PATTERN = "^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$";
-
-function parseActivityCollectorMarker(
-  lines: string[],
-): { status: ActivityCollectorInstallStatus; reason?: string } | null {
-  let parsed: { status: ActivityCollectorInstallStatus; reason?: string } | null = null;
-  for (const candidate of lines) {
-    const line = candidate.trim();
-    if (line === "HIVRA_ACTIVITY_COLLECTOR status=installed") parsed = { status: "installed" };
-    const failed = line.match(/^HIVRA_ACTIVITY_COLLECTOR status=failed reason=([a-z_]{1,40})$/);
-    if (failed) parsed = { status: "failed", reason: failed[1] };
-  }
-  return parsed;
-}
 
 function verifiedDestroyHivraVmScript(input: {
   vmid: number;
@@ -195,13 +184,14 @@ echo "destroyed $VMID"`;
 // once, guarded by `bootstrapped_at`. Best-effort and idempotent: if the SSH seed
 // fails we leave `bootstrapped_at` null and retry on the next poll, well before
 // the user finishes connecting their account and sends a first message.
+// Resolves true once it has stamped the column; the poll reads the row back.
 async function maybeSeedBootstrap(
   agent: Record<string, unknown>,
   userId: string,
   env: ProxmoxEnvironment,
-): Promise<Record<string, unknown>> {
-  if (!supabaseAdmin) return agent;
-  if (agent.status !== "running" || agent.bootstrapped_at || !agent.ip) return agent;
+): Promise<boolean> {
+  if (!supabaseAdmin) return false;
+  if (agent.status !== "running" || agent.bootstrapped_at || !agent.ip) return false;
   // Deploy-time LLM choice rides the same one-time seed: decrypt the stored key
   // and have the guest script write ~/.hivra/llm-provider.json alongside the
   // identity files. Decrypt failures degrade to native auth rather than blocking
@@ -244,15 +234,13 @@ async function maybeSeedBootstrap(
     },
     env,
   );
-  if (!res.ok) return agent; // retry next poll
-  const { data: updated } = await supabaseAdmin
+  if (!res.ok) return false; // retry next poll
+  await supabaseAdmin
     .from("hivra_agents")
     .update({ bootstrapped_at: new Date().toISOString() })
-    .eq("id", agent.id as string)
-    .select()
-    .single();
+    .eq("id", agent.id as string);
   await logHivraAgentEvent({ userId, event: "bootstrapped", agentId: agent.id as string, agentType: agent.type as string });
-  return updated || agent;
+  return true;
 }
 
 // Bankr skills seeding: once a box is running, push the curated Bankr skill suite
@@ -261,14 +249,15 @@ async function maybeSeedBootstrap(
 // expose a skills dir get them (codex / claude-code); other agent types are
 // skipped without ever stamping the column. Independent of bootstrap + wallet:
 // the skills are static content and don't need a wallet to be useful.
+// Resolves true once it has stamped the column; the poll reads the row back.
 async function maybeSeedBankrSkills(
   agent: Record<string, unknown>,
   userId: string,
   env: ProxmoxEnvironment,
-): Promise<Record<string, unknown>> {
-  if (!supabaseAdmin) return agent;
-  if (agent.status !== "running" || agent.bankr_skills_seeded_at || !agent.ip) return agent;
-  if (!bankrSkillsDirForType(agent.type as string | null)) return agent; // unsupported type — never attempt
+): Promise<boolean> {
+  if (!supabaseAdmin) return false;
+  if (agent.status !== "running" || agent.bankr_skills_seeded_at || !agent.ip) return false;
+  if (!bankrSkillsDirForType(agent.type as string | null)) return false; // unsupported type — never attempt
   const res = await seedBankrSkillsOntoBox(
     {
       id: String(agent.id),
@@ -277,13 +266,11 @@ async function maybeSeedBankrSkills(
     },
     env,
   );
-  if (!res.ok) return agent; // retry next poll
-  const { data: updated } = await supabaseAdmin
+  if (!res.ok) return false; // retry next poll
+  await supabaseAdmin
     .from("hivra_agents")
     .update({ bankr_skills_seeded_at: new Date().toISOString() })
-    .eq("id", agent.id as string)
-    .select()
-    .single();
+    .eq("id", agent.id as string);
   await logHivraAgentEvent({
     userId,
     event: "bankr_skills_seeded",
@@ -291,7 +278,7 @@ async function maybeSeedBankrSkills(
     agentType: agent.type as string,
     detail: { count: res.count },
   });
-  return updated || agent;
+  return true;
 }
 
 // Template skills seeding (Wave 5.2 follow-up): when a box was forked from a
@@ -300,20 +287,21 @@ async function maybeSeedBankrSkills(
 // Bankr seed. Best-effort + idempotent (installCuratedSkillsOnBox overwrites and
 // the SSH write is atomic, so a transport failure just retries next poll). CLI
 // boxes only; the skill bodies come from the catalog, never the DB.
+// Resolves true once it has stamped the column; the poll reads the row back.
 async function maybeSeedTemplateSkills(
   agent: Record<string, unknown>,
   userId: string,
   env: ProxmoxEnvironment,
-): Promise<Record<string, unknown>> {
-  if (!supabaseAdmin) return agent;
-  if (agent.status !== "running" || agent.template_skills_seeded_at || !agent.ip) return agent;
-  if (!bankrSkillsDirForType(agent.type as string | null)) return agent; // unsupported type — never attempt
+): Promise<boolean> {
+  if (!supabaseAdmin) return false;
+  if (agent.status !== "running" || agent.template_skills_seeded_at || !agent.ip) return false;
+  if (!bankrSkillsDirForType(agent.type as string | null)) return false; // unsupported type — never attempt
   // Nothing to seed (not a template fork, or the template carried no skills):
   // bail without a DB write so this never causes a fleet-wide write on first poll.
   // The check is an in-memory coerce, cheap to repeat each poll; the column stays
   // NULL forever for non-forks (which is correct — no template skills were seeded).
   const skillIds = coerceSkillIds(agent.template_skills);
-  if (skillIds.length === 0) return agent;
+  if (skillIds.length === 0) return false;
   const res = await installCuratedSkillsOnBox(
     {
       id: String(agent.id),
@@ -323,13 +311,11 @@ async function maybeSeedTemplateSkills(
     skillIds,
     env,
   );
-  if (!res.ok) return agent; // transport failure — retry next poll
-  const { data: updated } = await supabaseAdmin
+  if (!res.ok) return false; // transport failure — retry next poll
+  await supabaseAdmin
     .from("hivra_agents")
     .update({ template_skills_seeded_at: new Date().toISOString() })
-    .eq("id", agent.id as string)
-    .select()
-    .single();
+    .eq("id", agent.id as string);
   await logHivraAgentEvent({
     userId,
     event: "template_skills_seeded",
@@ -337,7 +323,7 @@ async function maybeSeedTemplateSkills(
     agentType: agent.type as string,
     detail: { count: res.installed.length, installed: res.installed, skipped: res.skipped },
   });
-  return updated || agent;
+  return true;
 }
 
 // Upkeep that reaches the computer (the provider launch seeds and the Computer
@@ -345,6 +331,17 @@ async function maybeSeedTemplateSkills(
 // invocation's maxDuration (120 s), so every round trip it starts must be able
 // to finish by this deadline, measured from the start of the poll.
 const BACKGROUND_UPKEEP_DEADLINE_MS = 110_000;
+
+// Every agent the poll returns carries its Manage capability map: what the
+// owner can do with this computer, and why not. It is computed here, where
+// the private fields that decide it are visible, and adds no host call.
+function publicAgent(row: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    ...sanitizeHivraAgentRow(row),
+    ...extra,
+    manage: manageCapabilitiesFor(row, { preparedMatch: Boolean(matchPreparedCanaryComputer(row)) }),
+  };
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const pollStartedAt = Date.now();
@@ -408,22 +405,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         );
       }
       const sameOperation = latest.operation_id === agent.operation_id && latest.operation_kind === agent.operation_kind;
-      const response = apiSuccess({ agent: { ...sanitizeHivraAgentRow(latest),
+      const response = apiSuccess({ agent: publicAgent(latest, {
         ...(sameOperation && latest.status === "provisioning" && readiness ? { readiness_stage: readiness } : {}),
         ...(sameOperation && latest.status === "provisioning" && power ? { power_stage: power } : {}),
-        ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}) } });
+        ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}) }) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
     if (agent.computer_substrate === "do-managed-session") {
       // DigitalOcean sessions are observed through their own reconcile path;
       // never pass them to the Proxmox poll, seed, or managed-fleet fallback.
-      const response = apiSuccess({ agent: sanitizeHivraAgentRow(agent) });
+      const response = apiSuccess({ agent: publicAgent(agent) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
     if (agent.computer_substrate === "gvisor") {
-      const response = apiSuccess({ agent: sanitizeHivraAgentRow(agent) });
+      const response = apiSuccess({ agent: publicAgent(agent) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
@@ -523,9 +520,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             .eq("id", current.id)
             .eq("user_id", userId)
             .maybeSingle();
-          return apiSuccess({ agent: sanitizeHivraAgentRow(superseded || current) });
+          return apiSuccess({ agent: publicAgent(superseded || current) });
         }
-        return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+        return apiSuccess({ agent: publicAgent(current) });
       }
       const vmid = Number(current.vmid);
       let context: HivraAgentExecutionContext;
@@ -637,7 +634,7 @@ fi` : ""}`;
                 operationKind: convergenceOperationKind,
                 vmid,
               });
-              return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+              return apiSuccess({ agent: publicAgent(current) });
             }
             if (
               !nMinusOneCompatibility &&
@@ -652,7 +649,7 @@ fi` : ""}`;
                 agentId: current.id,
                 vmid,
               });
-              return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+              return apiSuccess({ agent: publicAgent(current) });
             }
             // Portable provisioning deliberately omits the bearer from the
             // persistent host log. Do not converge to running until its
@@ -671,7 +668,7 @@ fi` : ""}`;
                 vmid,
                 proxmoxHost: context.host,
               });
-              return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+              return apiSuccess({ agent: publicAgent(current) });
             }
             const validatedResult = validateHivraHostRunningResult({
               result: j,
@@ -716,7 +713,7 @@ fi` : ""}`;
                 .eq("id", current.id)
                 .eq("user_id", userId)
                 .maybeSingle();
-              return apiSuccess({ agent: sanitizeHivraAgentRow(failed || current) });
+              return apiSuccess({ agent: publicAgent(failed || current) });
             }
             if (current.type === "linux-desktop") {
               const capabilityResult = await runProxmoxHostScript(
@@ -732,19 +729,17 @@ fi` : ""}`;
                   earlyFinishMarker: "HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ",
                 },
               );
-              const capability = capabilityResult.ok
-                ? parseRemoteDesktopCapabilityReceipt(capabilityResult.stdout || "")
-                : null;
-              if (
-                !capability ||
-                capability.computerId !== current.id ||
-                capability.brokerOrigin !== validatedResult.value.chatUrl
-              ) {
+              const readiness = verifyDesktopReadinessReceipt(capabilityResult, {
+                computerId: String(current.id),
+                brokerOrigin: validatedResult.value.chatUrl,
+                operationKind: convergenceOperationKind,
+              });
+              if (!readiness.ok) {
                 await releaseHivraAgentOperation({
                   userId,
                   agentId: String(current.id),
                   operationId: provisionOperationId,
-                  error: "Ubuntu Desktop did not publish its exact remote-desktop capability receipt.",
+                  error: readiness.ownerMessage,
                   markError: true,
                 });
                 log.warn("linux desktop readiness capability is unavailable", {
@@ -753,7 +748,10 @@ fi` : ""}`;
                   userId,
                   agentId: current.id,
                   vmid,
+                  operationKind: convergenceOperationKind,
                   capabilityCommandOk: capabilityResult.ok,
+                  capabilityFailureCode: readiness.failureCode,
+                  observedRevision: readiness.observedRevision,
                 });
                 const { data: failed } = await supabaseAdmin
                   .from("hivra_agents")
@@ -761,7 +759,7 @@ fi` : ""}`;
                   .eq("id", current.id)
                   .eq("user_id", userId)
                   .maybeSingle();
-                return apiSuccess({ agent: sanitizeHivraAgentRow(failed || current) });
+                return apiSuccess({ agent: publicAgent(failed || current) });
               }
             }
             const isFirstProvision =
@@ -787,7 +785,7 @@ fi` : ""}`;
                 .eq("id", current.id)
                 .eq("user_id", userId)
                 .maybeSingle();
-              return apiSuccess({ agent: sanitizeHivraAgentRow(superseded || current) });
+              return apiSuccess({ agent: publicAgent(superseded || current) });
             }
             if (provisionSecret && returnedSecret) {
               const cleanupResult = await runProxmoxHostScript(
@@ -948,9 +946,45 @@ fi` : ""}`;
       // Resolve once, then give every directly invoked guest seed the exact same
       // owner-scoped execution environment. None may reconstruct ambient fleet
       // credentials from a hostname.
-      if (needsBootstrap) current = await maybeSeedBootstrap(current, userId, context.env);
-      if (needsBankrSkills) current = await maybeSeedBankrSkills(current, userId, context.env);
-      if (needsTemplateSkills) current = await maybeSeedTemplateSkills(current, userId, context.env);
+      //
+      // The identity seed and the skills seeds write different files, so they
+      // run side by side instead of adding up (about 2 s and 3 s over SSH) before
+      // the page sees its agent running. The Bankr and template skills write into
+      // the same skills folder, and a template can name a Bankr skill, so those
+      // two stay in order and the template's copy still lands last. A seed that
+      // throws still fails this poll, as before.
+      const seedEnv = context.env;
+      const seeds = await Promise.allSettled([
+        needsBootstrap ? maybeSeedBootstrap(current, userId, seedEnv) : false,
+        (async () => {
+          const bankrStamped = needsBankrSkills && await maybeSeedBankrSkills(current, userId, seedEnv);
+          const templateStamped = needsTemplateSkills && await maybeSeedTemplateSkills(current, userId, seedEnv);
+          return bankrStamped || templateStamped;
+        })(),
+      ]);
+      const seedFailure = seeds.find((seed): seed is PromiseRejectedResult => seed.status === "rejected");
+      if (seedFailure) throw seedFailure.reason;
+      // Each seed stamps only its own column. Read the row back once so the
+      // response and the Computer Contract step below see every stamp.
+      if (seeds.some((seed) => seed.status === "fulfilled" && seed.value)) {
+        const { data: seeded, error: seededReloadError } = await supabaseAdmin
+          .from("hivra_agents")
+          .select("*")
+          .eq("id", current.id)
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (seeded) {
+          current = seeded;
+        } else {
+          log.warn("hivra agent row could not be read back after seeding", {
+            source: "hivra/agents/[id]",
+            failureType: "hivra_agent_seed_reload_failed",
+            userId,
+            agentId: current.id,
+            errorMessage: seededReloadError?.message ?? null,
+          });
+        }
+      }
     }
 
     // Computer Contract: keep what the agent is told about its computer
@@ -973,7 +1007,7 @@ fi` : ""}`;
       );
     }
 
-    return apiSuccess({ agent: sanitizeHivraAgentRow(current) });
+    return apiSuccess({ agent: publicAgent(current) });
   } catch (err) {
     return handleApiError(err);
   }

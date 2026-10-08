@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Network, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
+import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
 
 type Connection = {
   state: "connected" | "disconnected" | "unknown" | "error";
@@ -17,17 +18,36 @@ type Connection = {
 const DEFAULT_SERVER = "https://controlplane.tailscale.com";
 const PANEL_CSS = `@media (max-width: 767px) { .private-access-actions > button { flex: 1 1 140px; justify-content: center; } }`;
 
+type UnsupportedReason = "not_eligible" | "not_bound" | "operation_in_progress" | "not_running" | "not_ready";
+
+// Why the server won't connect this computer right now (the GET's reason).
+const UNSUPPORTED_COPY: Record<UnsupportedReason, string> = {
+  not_eligible: "A private network is available on Ubuntu computers on Hivra Cloud and My server.",
+  not_bound: "A private network isn't available for this computer. It was created before Hivra recorded ownership checks.",
+  operation_in_progress: "Wait for the current operation to finish, then connect.",
+  not_running: "Start this computer to connect it to a private network.",
+  not_ready: "Wait for this computer to finish starting, then connect.",
+};
+const UNSUPPORTED_FALLBACK = "Private access needs a running Ubuntu computer on Hivra Cloud or My server with no other operation in progress.";
+
 async function readResponse(response: Response): Promise<{
   success?: boolean;
   error?: string;
-  data?: { supported?: boolean; pending?: boolean; connection?: Connection | null };
+  data?: { supported?: boolean; reason?: string | null; pending?: boolean; connection?: Connection | null };
 }> {
   try { return await response.json(); } catch { return {}; }
 }
 
-export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
+export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackChange }: {
+  agentId: string;
+  /** The computer's status; a change (say, it started) checks eligibility again. */
+  observedStatus?: string;
+  /** A change in progress or a failure, for Manage to show while this section is closed. */
+  onFeedbackChange?: (feedback: ManageFeedback) => void;
+}) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [supported, setSupported] = useState(true);
+  const [reason, setReason] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<"connect" | "refresh" | "disconnect" | null>(null);
@@ -48,6 +68,7 @@ export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
       const body = await readResponse(response);
       if (!response.ok || body.success !== true) throw new Error(body.error || "Private access could not be loaded.");
       setSupported(body.data?.supported === true);
+      setReason(typeof body.data?.reason === "string" ? body.data.reason : null);
       setPending(body.data?.pending === true);
       setConnection(body.data?.connection ?? null);
       if (body.data?.connection?.loginServer) setLoginServer(body.data.connection.loginServer);
@@ -56,7 +77,7 @@ export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
     } finally { setLoading(false); }
   }, [agentId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, observedStatus]);
 
   async function mutate(kind: "connect" | "refresh" | "disconnect") {
     const submittedKey = authKey;
@@ -85,6 +106,8 @@ export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
 
   const busy = action !== null;
   const connected = connection?.state === "connected";
+  useReportManageFeedback(onFeedbackChange, error ? { kind: "alert", message: error }
+    : action && action !== "refresh" ? { kind: "status", message: "Updating private access…" } : null);
   const buttonStyle: React.CSSProperties = {
     border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)",
     padding: "8px 12px", minHeight: 40, fontSize: 11, fontWeight: 700, cursor: busy ? "default" : "pointer",
@@ -154,7 +177,9 @@ export function HivraPrivateAccessPanel({ agentId }: { agentId: string }) {
 
         {!supported && !loading ? <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
           {pending ? "A private-access change needs a fresh guest observation before another change."
-            : "Private access currently requires a running, owner-bound Ubuntu computer on Proxmox with no other operation in progress. This computer does not meet that support contract."}
+            : reason && Object.prototype.hasOwnProperty.call(UNSUPPORTED_COPY, reason)
+              ? UNSUPPORTED_COPY[reason as UnsupportedReason]
+              : UNSUPPORTED_FALLBACK}
         </div> : null}
 
         {connection || pending ? <div className="private-access-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

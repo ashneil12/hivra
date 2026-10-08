@@ -4203,6 +4203,16 @@ ${body}
       expect(cleared.result.stdout + cleared.result.stderr).not.toContain(hivraWallet.apiKey);
     });
 
+    it("strips the bankr: block from the terminal.cwd repair's timestamped backups too", () => {
+      const terminalCwdBackup = "config.yaml.bak.20261007T101500Z";
+      const cleared = run(disconnect, { stateEnv: userSeededEnv, ...allConfigs }, () =>
+        writeFileSync(join(dir, "state", terminalCwdBackup), configWithBankr)
+      );
+
+      expect(cleared.read("state", terminalCwdBackup)).toBe(configWithoutBankr);
+      expect(cleared.result.stdout).toContain(`stripped bankr: block from ${dir}/state/${terminalCwdBackup}`);
+    });
+
     it("leaves BANKR_* and config.yaml alone when /state/.env holds a different wallet", () => {
       const ownKeyEnv = seededEnvWith([
         `BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`,
@@ -4469,6 +4479,185 @@ ${body}
       expect(result.stdout).not.toContain("stripped bankr: block");
       expect(readBox("state", "config.yaml")).toBe(configWithoutBankr);
       expect(statSync(join(dir, "state", "config.yaml")).mtime.getTime()).toBe(old.getTime());
+    });
+  });
+});
+
+describe("terminal.cwd points the file tree at the workspace volume", () => {
+  // Upstream's _fs_default_cwd reads terminal.cwd before TERMINAL_CWD and the
+  // agent default "." opens its install directory, so Hivra has to write it.
+  const python = process.env.HERMES_CONFIG_TEST_PYTHON || "python3";
+  const REPAIR_MARKER = "<<'HERMES_TERMINAL_CWD_PY'";
+
+  function parsedTerminal(source: string) {
+    const parsed = spawnSync(
+      python,
+      ["-c", "import json, sys, yaml; print(json.dumps(yaml.safe_load(sys.stdin.read()).get('terminal')))"],
+      { input: source, encoding: "utf8", timeout: 10_000 },
+    );
+    expect(parsed.stderr).toBe("");
+    return JSON.parse(parsed.stdout);
+  }
+
+  describe("fresh provisions", () => {
+    it.each([
+      [undefined, undefined, undefined, "local"],
+      ["local", true, undefined, "local"],
+      ["docker", true, undefined, "docker"],
+      ["modal", false, undefined, "modal"],
+      ["daytona", false, "key", "daytona"],
+    ] as const)("seeds terminal.cwd only for the local backend (%s)", (terminalBackend, gatewayDockerAccess, daytonaApiKey, expected) => {
+      const yaml = buildWebUIConfigYaml({ ...baseParams, terminalBackend, gatewayDockerAccess, daytonaApiKey });
+      expect(parsedTerminal(yaml)).toEqual(
+        expected === "local" ? { backend: "local", cwd: "/workspace" } : { backend: expected },
+      );
+    });
+  });
+
+  describe("update-mode repair", () => {
+    let directory: string;
+    let state: string;
+    let seed: string;
+
+    beforeAll(() => {
+      const result = spawnSync(python, ["-c", "import yaml"], { encoding: "utf8", timeout: 10_000 });
+      if (result.error || result.status !== 0) {
+        throw new Error(
+          "terminal.cwd behavioral tests require Python 3 with PyYAML (set HERMES_CONFIG_TEST_PYTHON). " +
+            (result.error?.message || result.stderr),
+        );
+      }
+    });
+
+    beforeEach(() => {
+      directory = mkdtempSync(join(tmpdir(), "hermes-terminal-cwd-test-"));
+      state = join(directory, "state-config.yaml");
+      seed = join(directory, "seed-config.yaml");
+    });
+
+    afterEach(() => {
+      rmSync(directory, { recursive: true, force: true });
+    });
+
+    function updateScript(params: WebUIDeployParams = { ...baseParams, agentImage: "agent:test" }) {
+      return buildWebUIBootstrapScript(buildWebUIProvisioningArtifacts(params), params, { mode: "update" });
+    }
+
+    // The Python and arguments exactly as the generated update script hands
+    // them to the agent image; run here against local files instead of /state.
+    function generatedRepair() {
+      const script = updateScript();
+      const heredocStart = script.indexOf(REPAIR_MARKER);
+      expect(heredocStart).toBeGreaterThan(-1);
+      const commandLine = script.slice(script.lastIndexOf("agent:test - ", heredocStart), heredocStart).trim();
+      const args = [...commandLine.matchAll(/'([^']*)'|(\S+)/g)].map((match) => match[1] ?? match[2]).slice(2);
+      expect(args).toEqual(["/workspace", ".bak.", "/state/config.yaml", "/seed/config.yaml"]);
+      const code = script.slice(script.indexOf("\n", heredocStart) + 1, script.indexOf("\nHERMES_TERMINAL_CWD_PY\n", heredocStart));
+      return { code, desired: args[0], infix: args[1] };
+    }
+
+    function runRepair() {
+      const { code, desired, infix } = generatedRepair();
+      return spawnSync(python, ["-c", code, desired, infix, state, seed], { encoding: "utf8", timeout: 10_000 });
+    }
+
+    function repair(stateSource: string, seedSource = "model: seed-copy\n") {
+      writeFileSync(state, stateSource, { mode: 0o640 });
+      writeFileSync(seed, seedSource, { mode: 0o600 });
+      return runRepair();
+    }
+
+    const backups = () => readdirSync(directory).filter((name) => name.startsWith("state-config.yaml.bak."));
+
+    it("runs after the agent image pull and before compose recreates the stack, in update mode only", () => {
+      const params = { ...baseParams, agentImage: "agent:test" };
+      const script = updateScript(params);
+      const offset = script.indexOf(REPAIR_MARKER);
+      expect(script).toContain("agent:test - '/workspace' '.bak.' /state/config.yaml /seed/config.yaml <<'HERMES_TERMINAL_CWD_PY'");
+      expect(script).toContain("--entrypoint /opt/hermes/.venv/bin/python");
+      expect(offset).toBeGreaterThan(script.indexOf("docker pull agent:test"));
+      expect(offset).toBeLessThan(script.indexOf("timeout 180s docker compose up -d"));
+      // A failed repair warns but never fails the update.
+      expect(script).toContain("could not set terminal.cwd; config.yaml left as it was");
+
+      const provision = buildWebUIBootstrapScript(buildWebUIProvisioningArtifacts(params), params, { mode: "provision" });
+      expect(provision).not.toContain("HERMES_TERMINAL_CWD_PY");
+    });
+
+    it("adds terminal.cwd to a box whose config has no terminal section, with a timestamped backup", () => {
+      const original = "# owner comment\nmodel:\n  default: m\n";
+      const result = repair(original);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      const repaired = readFileSync(state, "utf8");
+      expect(repaired).toContain("# owner comment");
+      expect(parsedTerminal(repaired)).toEqual({ cwd: "/workspace" });
+      expect(backups()).toHaveLength(1);
+      expect(backups()[0]).toMatch(/^state-config\.yaml\.bak\.\d{8}T\d{6}Z$/);
+      expect(readFileSync(join(directory, backups()[0]), "utf8")).toBe(original);
+      // The instance-dir copy is repaired too, without a second backup.
+      expect(parsedTerminal(readFileSync(seed, "utf8"))).toEqual({ cwd: "/workspace" });
+      expect(readdirSync(directory)).toHaveLength(3);
+      expect(result.stdout).toContain("terminal.cwd set_from_missing");
+      expect(statSync(state).mode & 0o777).toBe(0o640);
+    });
+
+    it.each([
+      ["a terminal section with only a backend", 'terminal:\n  backend: "local"\n', { backend: "local", cwd: "/workspace" }],
+      ["a stock unquoted dot", "terminal:\n  backend: local\n  cwd: .\n  timeout: 90\n", { backend: "local", cwd: "/workspace", timeout: 90 }],
+      ["a stock quoted dot", "terminal:\n  cwd: '.'\n  timeout: 90\n", { cwd: "/workspace", timeout: 90 }],
+      ["an empty cwd", "terminal:\n  backend: local\n  cwd:\n  timeout: 90\n", { backend: "local", cwd: "/workspace", timeout: 90 }],
+      ["a null cwd", "terminal:\n  cwd: null\n", { cwd: "/workspace" }],
+      ["a flow-style terminal mapping", "terminal: {backend: local}\nmodel: x\n", { backend: "local", cwd: "/workspace" }],
+      ["an empty terminal section", "terminal:\nmodel: x\n", { cwd: "/workspace" }],
+      ["an empty terminal section at the end of the file", "model: x\nterminal:\n", { cwd: "/workspace" }],
+    ])("sets it for %s", (_label, source, expected) => {
+      const result = repair(source);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(parsedTerminal(readFileSync(state, "utf8"))).toEqual(expected);
+      expect(backups()).toHaveLength(1);
+      expect(readFileSync(join(directory, backups()[0]), "utf8")).toBe(source);
+    });
+
+    it.each([
+      ["an owner-chosen directory", 'terminal:\n  backend: "local"\n  cwd: "/home/hermes/projects"\n'],
+      ["a relative owner directory", "terminal:\n  cwd: ./notes\n"],
+      ["the value already set", 'terminal:\n  backend: "local"\n  cwd: "/workspace"\n'],
+      ["a docker backend", 'terminal:\n  backend: "docker"\n  cwd: "."\n'],
+      ["a modal backend with no cwd", 'terminal:\n  backend: "modal"\n'],
+    ])("keeps %s and takes no backup", (_label, source) => {
+      const result = repair(source, source);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(readFileSync(state, "utf8")).toBe(source);
+      expect(readFileSync(seed, "utf8")).toBe(source);
+      expect(backups()).toEqual([]);
+    });
+
+    it("is idempotent: the second run changes nothing and takes no second backup", () => {
+      repair('model:\n  default: m\nterminal:\n  backend: "local"\n');
+      const firstPass = readFileSync(state, "utf8");
+      const second = runRepair();
+      expect(second.status).toBe(0);
+      expect(second.stdout).toContain("terminal.cwd kept_owner_value");
+      expect(readFileSync(state, "utf8")).toBe(firstPass);
+      expect(backups()).toHaveLength(1);
+    });
+
+    it("leaves a config it cannot safely edit exactly as it was", () => {
+      const duplicated = "terminal:\n  cwd: .\nterminal:\n  backend: local\n";
+      const result = repair(duplicated);
+      expect(result.status).toBe(1);
+      expect(readFileSync(state, "utf8")).toBe(duplicated);
+      expect(backups()).toEqual([]);
+
+      const unparsable = "terminal: [unclosed\nsecret_key: hunter2\n";
+      const broken = repair(unparsable);
+      expect(broken.status).toBe(1);
+      expect(readFileSync(state, "utf8")).toBe(unparsable);
+      expect(broken.stderr).not.toContain("hunter2");
+      expect(backups()).toEqual([]);
     });
   });
 });

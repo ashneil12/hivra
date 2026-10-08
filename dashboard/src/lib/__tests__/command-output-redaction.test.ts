@@ -86,4 +86,60 @@ describe("redactSensitiveCommandOutput", () => {
     expect(redacted).not.toContain("bk_ptr_secret_that_must_not_be_logged");
     expect(redacted).not.toContain("partner-key-secret");
   });
+
+  // The assignment pattern used to start at a word boundary, and there is no
+  // boundary between an underscore and a letter. So `API_KEY=` was redacted but
+  // `OPENAI_API_KEY=` and `GITHUB_TOKEN=` were not: the name is one word, and
+  // the secret words sat inside it.
+  it("redacts environment-style assignments whose name only ends in a secret word", () => {
+    const raw = [
+      "OPENAI_API_KEY=sk-not-really-a-key-1234",
+      "export GITHUB_TOKEN=ghp_examplevalue1234",
+      "GHCR_TOKEN=ghcr-example-value",
+      "VENICE_API_KEY=venice-example-value",
+      "API_SERVER_KEY=server-example-value",
+      "DB_PASSWORD=db-example-value",
+      "MY_CLIENT_SECRET=client-example-value",
+    ].join("\n");
+
+    const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+    expect(redacted).toBe([
+      "OPENAI_API_KEY=[REDACTED]",
+      "export GITHUB_TOKEN=[REDACTED]",
+      "GHCR_TOKEN=[REDACTED]",
+      "VENICE_API_KEY=[REDACTED]",
+      "API_SERVER_KEY=[REDACTED]",
+      "DB_PASSWORD=[REDACTED]",
+      "MY_CLIENT_SECRET=[REDACTED]",
+    ].join("\n"));
+  });
+
+  it("redacts Bankr keys in assignments and on their own", () => {
+    const raw = [
+      "BANKR_API_KEY=bk_usr_FAKEFAKEFAKEFAKE1234",
+      "BANKR_USER_KEY=bk_usr_FAKEFAKEFAKEFAKE5678",
+      "export BANKR_AGENT_KEY=bk_ptr_FAKEFAKEFAKEFAKE9012",
+      "the wallet call failed for bk_agent_FAKEFAKEFAKEFAKE3456 today",
+    ].join("\n");
+
+    const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+    expect(redacted).not.toMatch(/FAKEFAKE/);
+    expect(redacted).toContain("BANKR_API_KEY=[REDACTED]");
+    expect(redacted).toContain("BANKR_USER_KEY=[REDACTED]");
+    expect(redacted).toContain("export BANKR_AGENT_KEY=[REDACTED]");
+    expect(redacted).toContain("the wallet call failed for [REDACTED] today");
+  });
+
+  it("keeps ordinary text that only looks close to a secret name", () => {
+    const raw = [
+      "MAX_TOKENS=4096",
+      "PUBLIC_KEY=ssh-ed25519-example",
+      "monkey=banana",
+      "bk_ is a prefix, bk_short is too short to be a key",
+    ].join("\n");
+
+    expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+  });
 });

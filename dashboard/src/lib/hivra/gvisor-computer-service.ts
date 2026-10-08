@@ -9,6 +9,12 @@ import { beginInfrastructureConnectionPreparation, completeInfrastructureConnect
   loadInfrastructureConnectionSecret } from "@/lib/infrastructure/connection-store";
 import { buildUserProxmoxEnvironment, resolveValidatedSshDestination } from "@/lib/infrastructure/connection-runtime";
 import { resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
+import {
+  hasHostAdministratorAuthority,
+  hasRuntimeHostAuthority,
+  LINUX_SANDBOX_PRIVILEGE_COPY,
+  loadCurrentHostDiscoverySnapshot,
+} from "@/lib/infrastructure/host-authority";
 import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import {
   GvisorComputerReceiptSchema, GvisorComputerRequestSchema, GvisorExecReceiptSchema,
@@ -134,14 +140,16 @@ async function executionAuthority(userId: string, targetId: string, binding?: Pi
     pendingFromRevision: connection.pendingBindingRebindFromRevision,
     bindingRevision: binding?.infrastructure_connection_revision ?? null,
     targetRevision: target.evidence_connection_revision });
-  if (connection.provider !== "host" || connection.endpoint.sshUser !== "root"
-    || (!normalAuthority && !pendingBoundObservation)) {
+  // Runtime authority reads no discovery snapshot (9.5): an existing computer
+  // keeps working however long ago its host was last inspected.
+  if (!hasRuntimeHostAuthority(connection) || (!normalAuthority && !pendingBoundObservation)) {
     throw new GvisorComputerError("not_ready", "The connected host authority changed. Inspect it again.");
   }
   const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost);
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
-    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey }, destination);
+    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
+    sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
   return { target, connection, env };
 }
 
@@ -229,11 +237,20 @@ async function createAndStartGvisorComputer(userId: string, targetId: string, ag
 
 export async function prepareGvisorHost(userId: string, connectionId: string) {
   const connection = await loadInfrastructureConnectionSecret(userId, connectionId);
-  if (connection.provider !== "host" || connection.endpoint.sshUser !== "root") throw new GvisorComputerError("not_ready", "gVisor preparation requires a root Linux host connection.");
+  if (!hasRuntimeHostAuthority(connection)) throw new GvisorComputerError("not_ready", LINUX_SANDBOX_PRIVILEGE_COPY);
+  // Prepare checks the inspection before anything is installed; its route
+  // runs preflight straight after, which needs the same evidence.
+  const snapshot = await loadCurrentHostDiscoverySnapshot(userId, connectionId, connection.revision)
+    .catch(() => { throw new GvisorComputerError("database_failed", "Host discovery evidence could not be read."); });
+  if (!snapshot) {
+    throw new GvisorComputerError("not_ready", "Hivra's last look at this server has expired. Inspect it again, then set up Linux Sandbox.");
+  }
+  if (!hasHostAdministratorAuthority(connection, snapshot)) throw new GvisorComputerError("not_ready", LINUX_SANDBOX_PRIVILEGE_COPY);
   const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost);
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
-    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey }, destination);
+    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
+    sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
   const root = path.join(process.cwd(), "provisioner", "gvisor");
   const [prepare, adapter] = await Promise.all([readFile(path.join(root, "prepare-gvisor-host.sh")), readFile(path.join(root, "hivra-gvisor-adapter.py"))]);
   const adapterSha = createHash("sha256").update(adapter).digest("hex");
@@ -244,7 +261,11 @@ export async function prepareGvisorHost(userId: string, connectionId: string) {
     throw new GvisorComputerError("conflict", "Another infrastructure preparation or inspection is already running.");
   }
   try {
-    const remote = await runProxmoxHostScript(`export HIVRA_GVISOR_BUNDLE_URL='${HIVRA_GVISOR_BUNDLE_URL}'\nexport HIVRA_GVISOR_BUNDLE_SHA256='${HIVRA_GVISOR_BUNDLE_SHA256}'\nexport HIVRA_GVISOR_ADAPTER_SHA256='${adapterSha}'\nexport HIVRA_GVISOR_ADAPTER_SOURCE='${adapter.toString("base64")}'\n${script}`, env, { timeoutMs: 360_000, maxOutputBytes: 64 * 1024 });
+    const remote = await runProxmoxHostScript(`export HIVRA_GVISOR_BUNDLE_URL='${HIVRA_GVISOR_BUNDLE_URL}'\nexport HIVRA_GVISOR_BUNDLE_SHA256='${HIVRA_GVISOR_BUNDLE_SHA256}'\nexport HIVRA_GVISOR_ADAPTER_SHA256='${adapterSha}'\nexport HIVRA_GVISOR_ADAPTER_SOURCE='${adapter.toString("base64")}'\n${script}`, env, {
+      // Prepare installs packages: under sudo it runs without the remote
+      // TERM/KILL limit, so apt and dpkg are never killed mid-install.
+      timeoutMs: 360_000, maxOutputBytes: 64 * 1024, remoteLimit: "none",
+    });
     const receipt = remote.stdout.split("\n").find(value => value.startsWith(`HIVRA_GVISOR_PREPARED_V1 ${HIVRA_GVISOR_BUNDLE_SHA256} `));
     const runscSha256 = receipt?.split(" ")[2];
     if (!remote.ok || !receipt || !/^[0-9a-f]{64}$/.test(runscSha256 ?? "") || !receipt.endsWith(` ${adapterSha}`)) {

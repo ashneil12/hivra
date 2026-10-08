@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { createHmac } from "crypto";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
+import { buildColdStorageInstallScriptOrExit } from "@/lib/cold-storage-ssh";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
@@ -40,35 +41,9 @@ function deriveResticPassword(instanceId: string): string {
   return createHmac("sha256", master).update(instanceId).digest("hex");
 }
 
-function buildColdStorageInstallScript(): string {
-  const storageKeyB64 = process.env.HETZNER_SSH_PRIVATE_KEY_B64?.trim() ?? "";
-  if (!storageKeyB64) {
-    return `echo "HETZNER_SSH_PRIVATE_KEY_B64 missing; cold storage alias unavailable" >&2; exit 20`;
-  }
-  return `install -d -m 700 /root/.ssh
-base64 -d > /etc/hivra/keys/cold-storage <<'HERMES_COLD_STORAGE_KEY'
-${storageKeyB64}
-HERMES_COLD_STORAGE_KEY
-chmod 600 /etc/hivra/keys/cold-storage
-touch /root/.ssh/config
-chmod 600 /root/.ssh/config
-sed -i '/# BEGIN HERMES COLD STORAGE/,/# END HERMES COLD STORAGE/d' /root/.ssh/config 2>/dev/null || true
-cat >> /root/.ssh/config <<'HERMES_COLD_STORAGE_SSH_CONFIG'
-# BEGIN HERMES COLD STORAGE
-Host cold hermes-cold-storage
-  HostName u594993.your-storagebox.de
-  User u594993
-  Port 23
-  IdentityFile /etc/hivra/keys/cold-storage
-  StrictHostKeyChecking accept-new
-  UserKnownHostsFile /root/.ssh/known_hosts
-# END HERMES COLD STORAGE
-HERMES_COLD_STORAGE_SSH_CONFIG`;
-}
-
 function buildListResticScript(instanceId: string, password: string): string {
   return `set -uo pipefail
-${buildColdStorageInstallScript()}
+${buildColdStorageInstallScriptOrExit()}
 command -v restic >/dev/null 2>&1 || (DEBIAN_FRONTEND=noninteractive apt-get install -y restic >/dev/null 2>&1 || true)
 export RESTIC_PASSWORD=${shellQuote(password)}
 export RESTIC_CACHE_DIR=/var/lib/hermes-restic-cache

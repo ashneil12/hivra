@@ -2,12 +2,14 @@ import { readFileSync } from "fs";
 import path from "path";
 
 import {
+  ACCOUNT_DELETION_FUNCTIONS,
   ACCOUNT_DELETION_TABLES,
   assertClerkDeletionPolicy,
   assertConfirmedAccountDeletion,
   assertNoLiveHivraComputers,
   buildDeletionTableSummary,
   extractStorageObjectPath,
+  isMissingOptionalAccountDeletionFunctionError,
   isMissingOptionalAccountDeletionTableError,
   requireClerkSecretKey,
   resolveOpsSecretEnvPath,
@@ -72,6 +74,15 @@ describe("account deletion safeguards", () => {
     expect(tableNames.indexOf("instance_bankr_wallets")).toBeLessThan(
       tableNames.indexOf("hermes_instances")
     );
+  });
+
+  // Slice 13 (T41): setup commands and their observed addresses go with the
+  // account. Receipts (the events table) go by cascade from their enrollment:
+  // the service role can't delete them directly, so they are not listed.
+  it("deletes server setup commands by user, and leaves their receipts to the cascade", () => {
+    const entry = ACCOUNT_DELETION_TABLES.find((table) => table.table === "infrastructure_server_enrollments");
+    expect(entry).toMatchObject({ filterColumn: "user_id", source: "userId" });
+    expect(ACCOUNT_DELETION_TABLES.map((table) => table.table)).not.toContain("infrastructure_server_enrollment_events");
   });
 
   it("deletes yearly token rows before the quotes they reference", () => {
@@ -302,6 +313,27 @@ describe("account deletion safeguards", () => {
     expect(
       ACCOUNT_DELETION_TABLES.find((entry) => entry.table === "hivra_agent_events")?.optionalIfMissing
     ).toBeUndefined();
+  });
+
+  // Agent network (package B1): the organization of one, its policy history and its
+  // append-only audit log can only be erased by a database function.
+  it("erases the agent-network organization of one through its function, and tolerates a database without it", () => {
+    const spec = ACCOUNT_DELETION_FUNCTIONS.find((entry) => entry.rpc === "hivra_net_erase_personal_org");
+    expect(spec).toEqual(expect.objectContaining({ userArgument: "p_user_id", optionalIfMissing: true }));
+    for (const missing of [
+      { code: "PGRST202", message: "Could not find the function public.hivra_net_erase_personal_org(p_user_id) in the schema cache" },
+      { code: "42883", message: "function public.hivra_net_erase_personal_org(text) does not exist" },
+    ]) {
+      expect(isMissingOptionalAccountDeletionFunctionError(spec!, missing)).toBe(true);
+    }
+    // A real failure, or a different function missing, is not swallowed.
+    expect(isMissingOptionalAccountDeletionFunctionError(spec!, { code: "XX000", message: "hivra_net_erase_personal_org failed" })).toBe(false);
+    expect(isMissingOptionalAccountDeletionFunctionError(spec!, { code: "PGRST202", message: "Could not find the function public.other_function" })).toBe(false);
+    expect(isMissingOptionalAccountDeletionFunctionError(spec!, { code: "42501", message: "permission denied for function hivra_net_erase_personal_org" })).toBe(false);
+    expect(isMissingOptionalAccountDeletionFunctionError({ ...spec!, optionalIfMissing: false }, { code: "PGRST202", message: "Could not find the function public.hivra_net_erase_personal_org" })).toBe(false);
+    const script = readFileSync(path.resolve(__dirname, "../../../../scripts/delete-user-account.ts"), "utf8");
+    expect(script).toContain("ACCOUNT_DELETION_FUNCTIONS");
+    expect(script).toContain(".rpc(spec.rpc, { [spec.userArgument]: args.userId })");
   });
 
   it("refuses an apply while the user still has Hivra computers that are not deleted", () => {

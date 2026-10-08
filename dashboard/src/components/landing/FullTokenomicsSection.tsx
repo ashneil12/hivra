@@ -1,16 +1,22 @@
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
+import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
+import { glossify } from "@/components/gloss/glossify";
 
 /** Set only when the token geo-policy blocks this viewer. */
 export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
 
+/** Phase-independent, and the same idea the litepaper's economy section opens with. */
+const PROJECT_LEAD = "Hivra gives an AI agent a computer of its own, so it does its work there and stays off yours. One shared token could pay for the parts around that: the computers, the security rewards, and the people who keep tools alive.";
+
 const USES = [
-  { name: "Compute and software", text: "Hold for a compute tier, fixed when you first qualify. Metered runtime, storage, extra cores and egress. Prebuilt operator packs and reserved capacity." },
-  { name: "Work that improves security", text: "Containment bounties, verified threat reports and paid reviews. Certification bonds back a specific claim with collateral; nothing accrues just for holding it." },
-  { name: "Builders and useful methods", text: "Pay the people publishing and maintaining tools on Exchange. Buy experience packages with the method, evidence and limits included for review." },
-  { name: "Budgets with boundaries", text: "Fund missions against accepted evidence. Give an agent a capped, revocable allowance. Delegating work must never multiply the money available." },
+  { name: "Compute and software", text: "Hold for a tier of computing power, fixed when you first qualify. Pay for running time, storage, extra processor cores and data sent out. Ready-made agent setups and reserved capacity." },
+  { name: "Work that improves security", text: "Rewards for breaking out of the machine, paid threat reports and paid reviews. Certification bonds put a deposit behind a specific claim; nothing grows just from holding it." },
+  { name: "Builders and useful methods", text: "Pay the people who publish and look after tools on Exchange. Buy experience packages with the method, proof and limits included for review." },
+  { name: "Budgets with boundaries", text: "Fund missions, paying when the proof is accepted. Give an agent an allowance with a cap that can be taken back. Handing a job to another agent must never multiply the money available." },
 ] as const;
 
 /**
@@ -22,8 +28,8 @@ function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLev
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
-      <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra.</p></div>
+      <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">Token<br /><em>contracts.</em></Heading></div>
+      <div><p>{RESTRICTED_TOKEN_PAGE_COPY.tokenomicsLead}</p></div>
     </header>
     <TokenGeoNotice notice={restriction.notice} />
     <div data-testid="tokenomics-contracts">
@@ -40,16 +46,23 @@ function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLev
   </section>;
 }
 
+/**
+ * `phase` is the $HIVRA phase to write the copy for; the page passes the one it
+ * rendered with, and it defaults to the phase now. Only the header and the
+ * migration paragraphs change with it; dormant, they are the copy from before.
+ */
 export default function FullTokenomicsSection({
   headingLevel = 2,
   geoRestriction = null,
-}: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null } = {}) {
+  phase = getHivraTokenPhase(),
+}: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null; phase?: HivraTokenPhase } = {}) {
+  const copy = getTokenPhaseCopy(phase).tokenomics;
   if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} />;
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
       <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+      <div><p>{glossify(PROJECT_LEAD, { token: true })}</p><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
     </header>
 
     <div className={styles.accessMigration}>
@@ -62,14 +75,14 @@ export default function FullTokenomicsSection({
       <article className={styles.migration}>
         <span className={styles.eyebrow}>Proposed migration</span>
         <h3>Keeping access and converting tokens are separate decisions.</h3>
-        <p>The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.</p>
+        <p>{glossify(copy.migrationParagraphs[0], { token: true })}</p>
         <ol className={styles.claimFlow} aria-label="Proposed claim flow"><li><span>01</span>$HermesOS</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>ETH proceeds</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>$HIVRA</li></ol>
-        <p>Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.</p>
+        <p>{glossify(copy.migrationParagraphs[1], { token: true })}</p>
       </article>
     </div>
 
     <div className={styles.proposalNote}><span>What comes next</span><p>The migration, new uses and treasury plans are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.</p></div>
-    <div className={styles.uses}>{USES.map(({ name, text }, index) => <article key={name}><span>{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><p>{text}</p></article>)}</div>
+    <div className={styles.uses}>{USES.map(({ name, text }, index) => <article key={name}><span>{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><p>{glossify(text, { token: true })}</p></article>)}</div>
 
     <div className={styles.treasury}>
       <div><span className={styles.eyebrow}>The proposed treasury</span><h3>An operating fund.<br />{" "}Its job is to spend.</h3></div>

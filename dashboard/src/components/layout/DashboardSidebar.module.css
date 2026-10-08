@@ -108,3 +108,7 @@
 
 .attention { color: var(--yellow); margin-top: 12px; }
 .attentionCount { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* ⌘K: the resource on screen, and the digit that opens a Recent entry. */
+.resultCurrent { flex-shrink: 0; font-size: 11px; color: var(--hivra-red, #e34647); }
+.resultKey { flex-shrink: 0; min-width: 20px; padding: 1px 5px; border: 1px solid var(--etched-border); color: var(--text-muted); font: 10px var(--font-mono), monospace; text-align: center; }
+@media (pointer: coarse) { .resultKey { display: none; } }

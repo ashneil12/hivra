@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import {
+  SUPABASE_CLI_DEFAULT_JWT_SECRET,
+  buildEnvironment,
+  chooseLocalSessionSecret,
+  refreshSupabaseCredentials,
   parseArgs,
   dashboardStatusUrls,
   dashboardProcessOwnershipStatus,
@@ -493,5 +497,73 @@ test("accepts only an explicit origin for remote first-boot callbacks", () => {
     "https://control.example.com/?token=secret",
   ]) {
     assert.throws(() => normalizePublicAppUrl(value), /public-url/i);
+  }
+});
+
+const SUPABASE_FIXTURE = {
+  API_URL: "http://127.0.0.1:54321",
+  ANON_KEY: "anon-value",
+  SERVICE_ROLE_KEY: "service-value",
+  JWT_SECRET: "a-private-supabase-jwt-secret-of-at-least-32-characters",
+};
+
+test("the operator session secret is never the Supabase JWT secret or its public default", () => {
+  const generated = "g".repeat(64);
+  const generate = () => generated;
+
+  // Kept when it is its own private value.
+  const own = "own-private-session-secret-of-at-least-32-characters";
+  assert.equal(chooseLocalSessionSecret(own, SUPABASE_FIXTURE.JWT_SECRET, generate), own);
+
+  // Replaced when it is the Supabase secret, the public default, short, or missing.
+  for (const unsafe of [SUPABASE_FIXTURE.JWT_SECRET, SUPABASE_CLI_DEFAULT_JWT_SECRET, "short", "", undefined, null]) {
+    assert.equal(chooseLocalSessionSecret(unsafe, SUPABASE_FIXTURE.JWT_SECRET, generate), generated);
+  }
+
+  // The real generator gives a fresh private value each time.
+  const first = chooseLocalSessionSecret(undefined, SUPABASE_FIXTURE.JWT_SECRET);
+  const second = chooseLocalSessionSecret(undefined, SUPABASE_FIXTURE.JWT_SECRET);
+  assert.match(first, /^[0-9a-f]{64}$/);
+  assert.notEqual(first, second);
+  assert.notEqual(first, SUPABASE_FIXTURE.JWT_SECRET);
+});
+
+test("a new installation signs sessions with its own secret, not the Supabase JWT secret", () => {
+  const operator = { email: "operator@example.test", name: "Operator", passwordHash: "hash" };
+  const environment = buildEnvironment(SUPABASE_FIXTURE, operator);
+  assert.notEqual(environment.HIVRA_LOCAL_JWT_SECRET, SUPABASE_FIXTURE.JWT_SECRET);
+  assert.match(environment.HIVRA_LOCAL_JWT_SECRET, /^[0-9a-f]{64}$/);
+
+  // Even when Supabase is still on its public default.
+  const onDefault = buildEnvironment({ ...SUPABASE_FIXTURE, JWT_SECRET: SUPABASE_CLI_DEFAULT_JWT_SECRET }, operator);
+  assert.notEqual(onDefault.HIVRA_LOCAL_JWT_SECRET, SUPABASE_CLI_DEFAULT_JWT_SECRET);
+
+  // A restore keeps the stored private secret.
+  const restored = buildEnvironment(SUPABASE_FIXTURE, operator, { HIVRA_LOCAL_JWT_SECRET: environment.HIVRA_LOCAL_JWT_SECRET });
+  assert.equal(restored.HIVRA_LOCAL_JWT_SECRET, environment.HIVRA_LOCAL_JWT_SECRET);
+});
+
+test("starting an older installation replaces a session secret that equals the Supabase secret, once", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "hivra-session-secret-"));
+  try {
+    const target = path.join(directory, "dashboard.env");
+    const stored = {
+      HIVRA_LOCAL_JWT_SECRET: SUPABASE_CLI_DEFAULT_JWT_SECRET,
+      HIVRA_OPERATOR_EMAIL: "operator@example.test",
+    };
+    await writeFile(target, renderPrivateEnvironment(stored), { mode: 0o600 });
+
+    const supabase = { ...SUPABASE_FIXTURE, JWT_SECRET: SUPABASE_CLI_DEFAULT_JWT_SECRET };
+    const first = await refreshSupabaseCredentials(target, stored, supabase);
+    assert.notEqual(first.HIVRA_LOCAL_JWT_SECRET, SUPABASE_CLI_DEFAULT_JWT_SECRET);
+    assert.match(first.HIVRA_LOCAL_JWT_SECRET, /^[0-9a-f]{64}$/);
+    const onDisk = parsePrivateEnvironment(await readFile(target, "utf8"));
+    assert.equal(onDisk.HIVRA_LOCAL_JWT_SECRET, first.HIVRA_LOCAL_JWT_SECRET);
+
+    // The next start keeps it, so operators are not signed out again.
+    const second = await refreshSupabaseCredentials(target, onDisk, supabase);
+    assert.equal(second.HIVRA_LOCAL_JWT_SECRET, first.HIVRA_LOCAL_JWT_SECRET);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

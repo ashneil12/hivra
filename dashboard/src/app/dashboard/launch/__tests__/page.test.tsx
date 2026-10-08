@@ -102,6 +102,20 @@ const PAID_PLAN = {
   usage: { agentCount: 0, usedCpu: 0, usedRam: 0 },
 };
 
+// A paid plan whose allowance is as small as the old Free one, so size, floor
+// and browser behaviour can be tested without a Free account hosting anything.
+const SMALL_PAID_PLAN = {
+  subscribed: true,
+  name: "Starter",
+  key: "operator",
+  maxAgents: 1,
+  maxCpuPerAgent: 0.5,
+  maxRamPerAgent: 1,
+  poolCpu: 0.5,
+  poolRam: 1,
+  usage: { agentCount: 0, usedCpu: 0, usedRam: 0 },
+};
+
 const FREE_PLAN = {
   subscribed: false,
   name: "Free",
@@ -351,7 +365,7 @@ describe("LaunchPage", () => {
     expect(agents.compareDocumentPosition(computers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     // Fit badges come from the plan and target evidence the page loaded.
-    await waitFor(() => expect(within(agents).getByRole("button", { name: /^Codex/ })).toHaveTextContent("Fits Free without a browser"));
+    await waitFor(() => expect(within(agents).getByRole("button", { name: /^Codex/ })).toHaveTextContent("Needs Pro or your own server"));
     expect(within(computers).getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server");
     expect(within(computers).getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Needs your own server");
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
@@ -359,11 +373,11 @@ describe("LaunchPage", () => {
 
     // Every catalog agent launches here; none hands off to another page.
     expect(within(agents).queryAllByRole("link")).toHaveLength(0);
-    expect(within(agents).getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Fits Free without a browser");
-    expect(within(agents).getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Fits your Free plan");
+    expect(within(agents).getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Needs Pro or your own server");
+    expect(within(agents).getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Needs Pro");
     expect(within(agents).getByRole("button", { name: /^OpenClaw/ })).toHaveTextContent("Needs Pro or your own server");
     expect(within(agents).getByRole("button", { name: /^Agent Zero/ })).toHaveTextContent("Needs Pro or your own server");
-    expect(within(agents).getByRole("button", { name: /^Aeon/ })).toHaveTextContent("Fits your Free plan");
+    expect(within(agents).getByRole("button", { name: /^Aeon/ })).toHaveTextContent("Needs Pro or your own server");
     expect(screen.queryByText(/Sets up on its own page/i)).not.toBeInTheDocument();
 
     chooseTile("Codex");
@@ -501,8 +515,8 @@ describe("LaunchPage", () => {
     })));
   });
 
-  it("shows which size presets are over a Free plan", async () => {
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+  it("shows which size presets are over a plan's per-computer limit", async () => {
+    fetchPlanStrictMock.mockResolvedValue(SMALL_PAID_PLAN);
     render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
@@ -915,8 +929,8 @@ describe("LaunchPage", () => {
     expect(screen.getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
   });
 
-  it("launches Codex without a browser at the base floor on a Free plan", async () => {
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+  it("launches Codex without a browser at the base floor on a plan too small for the browser", async () => {
+    fetchPlanStrictMock.mockResolvedValue(SMALL_PAID_PLAN);
     render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
@@ -963,7 +977,10 @@ describe("LaunchPage", () => {
   });
 
   it("states the browser shortfall with real choices and lets the owner turn the browser off", async () => {
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    fetchPlanStrictMock.mockResolvedValue({
+      ...PAID_PLAN, name: "Pro", maxAgents: 3, maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4,
+      usage: { agentCount: 1, usedCpu: 1, usedRam: 2 },
+    });
     render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
@@ -972,10 +989,10 @@ describe("LaunchPage", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
     const blocker = screen.getByRole("alert");
-    expect(blocker).toHaveTextContent("Codex with a browser needs 1.5 CPU / 3 GB. Your Free plan includes 0.5 CPU / 1 GB.");
+    expect(blocker).toHaveTextContent(/Codex with a browser needs 1\.5 CPU \/ 3 GB\. Your Pro plan has/);
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
     // The upgrade names the plan that holds this size and returns to this draft.
-    expect(within(blocker).getByRole("link", { name: "Upgrade to Pro" })).toHaveAttribute(
+    expect(within(blocker).getByRole("link", { name: "Upgrade to Power" })).toHaveAttribute(
       "href",
       `/dashboard/billing?from=launch&returnTo=${encodeURIComponent(`/dashboard/launch?draft=${storedDraftJson().launchRequestId}`)}`,
     );
@@ -1039,8 +1056,8 @@ describe("LaunchPage", () => {
     })));
   });
 
-  it("starts Codex with the browser on for a host that holds it, even on a Free plan, and follows the destination", async () => {
-    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+  it("starts Codex with the browser on for a host that holds it, even on a plan too small for it, and follows the destination", async () => {
+    fetchPlanStrictMock.mockResolvedValue(SMALL_PAID_PLAN);
     infrastructureTargets = [PROXMOX_TARGET];
     render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
@@ -1056,7 +1073,7 @@ describe("LaunchPage", () => {
     expect(screen.getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-    // Hivra Cloud Free cannot hold the browser, so the default follows it back.
+    // This plan cannot hold the browser on Hivra Cloud, so the default follows it back.
     fireEvent.click(whereButton(/Hivra Cloud/i));
     expect(browser).not.toBeChecked();
     expect(screen.getByText(CODEX_BASE_SIZE)).toBeInTheDocument();
@@ -1975,9 +1992,8 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
-    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
-    const upgrade = within(screen.getByRole("alert")).getByRole("link", { name: "Upgrade to Pro" });
+    // A Free account holds nothing on Hivra Cloud: the blocker offers a plan.
+    const upgrade = await within(await screen.findByRole("alert")).findByRole("link", { name: "Upgrade to Pro" });
     const saved = storedDraftJson();
     const href = new URL(upgrade.getAttribute("href") ?? "", "https://hivra.test");
     expect(href.pathname).toBe("/dashboard/billing");
@@ -2027,14 +2043,14 @@ describe("LaunchPage", () => {
 
   const PRO_PLAN = { ...PAID_PLAN, name: "Pro", maxAgents: 3, maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4 };
 
-  it("upgrades an Ubuntu Desktop launch from Free to the Pro the badge named and launches it on Pro", async () => {
+  it("upgrades an Ubuntu Desktop launch from a free account to the Pro the badge named and launches it on Pro", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     const first = render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server"));
     chooseTile("Ubuntu Desktop");
     const blocker = await screen.findByRole("alert");
-    expect(blocker).toHaveTextContent("Ubuntu Desktop needs a paid plan on Hivra Cloud, or a server you connected.");
+    expect(blocker).toHaveTextContent("Ubuntu Desktop on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.");
     // The blocker offers the plan the badge named, not a pricier one.
     const upgrade = within(blocker).getByRole("link", { name: "Upgrade to Pro" });
     const saved = storedDraftJson();
@@ -2169,7 +2185,7 @@ describe("LaunchPage", () => {
     expect(screen.queryByText(/haven't launched/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Nothing has started/)).not.toBeInTheDocument();
     expect(screen.getByText("Starting a new launch doesn't delete what was created.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open it to delete" })).toHaveAttribute("href", `/dashboard/agent/${partialId}?tab=manage`);
+    expect(screen.getByRole("link", { name: "Open it to delete" })).toHaveAttribute("href", `/dashboard/agent/${partialId}?tab=manage&section=advanced#danger`);
   });
 
   it("mentions a Windows ISO download still running when asking to resume", async () => {

@@ -9,7 +9,7 @@ import { readConversionInputs, resolveConversionState } from "@/lib/claim/conver
 import { log } from "@/lib/logger";
 
 export const metadata: Metadata = {
-  title: "Convert $HermesOS | Hivra",
+  title: "Convert $HermesOS",
 };
 
 // $HIVRA's phase and the user's access change over time, so never serve a cached render.

@@ -73,7 +73,6 @@ export const POST = createBankrWithdrawHandler({
           tokenAddress: body.token.tokenAddress,
           decimals: body.token.decimals,
         },
-        setPrimaryRecipient: body.setPrimaryRecipient,
       });
     }
     const withdraw = body.asset === "ETH" ? withdrawBaseEthForInstance : withdrawHermesTokensForInstance;

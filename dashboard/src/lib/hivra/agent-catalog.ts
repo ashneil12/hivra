@@ -89,11 +89,11 @@ const ALL_AGENTS: AgentDef[] = [
     id: "hermes",
     name: "Hermes",
     vendor: "Nous Research",
-    tagline: "Lightweight, general-purpose agent. The free-tier default.",
+    tagline: "Lightweight, general-purpose agent. The default.",
     minPlan: "free",
     weight: 1,
     browser: false,
-    badge: "Free tier",
+    badge: "Default",
     accent: "var(--gold-leaf)",
     available: true,
     cliKind: "claude",
@@ -137,7 +137,7 @@ const ALL_AGENTS: AgentDef[] = [
     id: "aeon",
     name: "Aeon",
     vendor: "Aeon",
-    tagline: "Autonomous agent framework. Runs on your GitHub — set it once, forget it.",
+    tagline: "Autonomous agent framework. Runs on your GitHub. Set it once, forget it.",
     minPlan: "free",
     // Near-zero footprint: the box only serves Aeon's Next.js dashboard; the real
     // work runs on the user's own GitHub Actions. Slot-only, never charges the pool.
@@ -195,7 +195,7 @@ const ALL_AGENTS: AgentDef[] = [
     id: "agent-zero",
     name: "Agent Zero",
     vendor: "Agent Zero",
-    tagline: "A general autonomous agent with its own dashboard, browser and computer. Give it a goal — it plans, runs, and reports.",
+    tagline: "A general autonomous agent with its own dashboard, browser and computer. Give it a goal and it plans, runs, and reports.",
     // Runs the full Agent Zero stack (agent loop + tools + its own browser) in a
     // Docker container ON the box — NOT pool-exempt like Aeon — so it needs a real
     // footprint and a paid tier.

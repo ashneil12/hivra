@@ -11,6 +11,7 @@ import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
 import { sanitizeDockerName } from "@/lib/services/profile-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWebfreeBackend } from "@/lib/types/instance";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
 
 function asConfig(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -88,6 +89,7 @@ export async function syncBankrConfigToRunningHermesInstance(
     containerName: `agent-${sanitizeDockerName(instance.id)}`,
     hermesHomeDir: resolveHermesHomeDirFromConfig(config),
     ip,
+    guestTarget: getHermesGuestSshTarget(instance),
     instanceId: instance.id,
     userId,
   });

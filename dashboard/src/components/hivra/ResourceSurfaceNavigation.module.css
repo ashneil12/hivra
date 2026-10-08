@@ -37,6 +37,10 @@
   /* Three group buttons fit a phone; keep their words next to the icons. */
   .navigation[data-grouped="true"] .primary .surface { min-width: 0; padding: 6px 10px; }
   .navigation[data-grouped="true"] .primary .surface svg { display: inline; }
+  /* Export in the bar (a Manage group with no row of its own) keeps its icon
+     and accessible name but gives the group buttons its words' width. */
+  .barExport { width: 44px; }
+  .barExport > span { display: none; }
   .subnav { padding: 4px 8px; }
   .subSurface, .subExport { min-height: 40px; }
   .subNote { display: none; }
@@ -54,6 +58,7 @@
 .subExport { margin-left: auto; }
 .subNote { margin-left: auto; padding-left: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono), monospace; font-size: 11px; color: var(--text-muted); }
 .subExport + .subNote { margin-left: 0; }
+.barExport { text-decoration: none; }
 .nativeActions {
   display: flex;
   justify-content: flex-end;

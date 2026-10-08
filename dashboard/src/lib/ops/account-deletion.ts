@@ -80,6 +80,17 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     // Newer than hivra_agent_events; a database without it has nothing to delete.
     optionalIfMissing: true,
   },
+  // Server setup commands and their receipts. Receipts
+  // (infrastructure_server_enrollment_events) go by cascade from their
+  // enrollment; the service role can't delete them directly.
+  {
+    table: "infrastructure_server_enrollments",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "server setup commands, observed addresses and their receipts",
+    // Newer than the other tables; a database without it has nothing to delete.
+    optionalIfMissing: true,
+  },
   {
     table: "hermes_conversations",
     filterColumn: "user_id",
@@ -436,6 +447,48 @@ export function extractStorageObjectPath(url: string | null | undefined, bucket:
   } catch {
     return objectPath;
   }
+}
+
+/**
+ * Erasure that only a database function may do: the service role has no DELETE
+ * on these tables, by design (the agent-network audit log is append-only, and
+ * policy history is immutable). The function erases the user's organization of
+ * one with its policy history and audit log, and nothing in a team they belong to.
+ */
+export interface AccountDeletionFunction {
+  rpc: string;
+  /** Name of the function's single argument, which receives the user id. */
+  userArgument: string;
+  reason: string;
+  optionalIfMissing?: boolean;
+}
+
+export const ACCOUNT_DELETION_FUNCTIONS: AccountDeletionFunction[] = [
+  {
+    rpc: "hivra_net_erase_personal_org",
+    userArgument: "p_user_id",
+    reason: "agent-network organization of one: members, agents, policy history and audit log",
+    // Newer than the other tables; a database without it has nothing to erase.
+    optionalIfMissing: true,
+  },
+];
+
+export function isMissingOptionalAccountDeletionFunctionError(
+  spec: AccountDeletionFunction,
+  error: { code?: string; details?: string; hint?: string; message?: string } | null | undefined
+): boolean {
+  if (!spec.optionalIfMissing || !error) return false;
+  const text = [error.code, error.message, error.details, error.hint]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  if (!text.includes(spec.rpc.toLowerCase())) return false;
+  return (
+    error.code === "PGRST202" ||
+    error.code === "42883" ||
+    text.includes("could not find the function") ||
+    (text.includes("function") && text.includes("does not exist"))
+  );
 }
 
 export function isMissingOptionalAccountDeletionTableError(

@@ -140,6 +140,16 @@ export function readStoredConsent(): StoredConsent | null {
   return readConsentCookie();
 }
 
+// Window event fired whenever a consent choice is stored, with the choice in
+// `detail`. Scripts that must wait for consent (Google Analytics and Tag
+// Manager in DeferredGTM) listen for it instead of loading unconditionally.
+export const ANALYTICS_CONSENT_EVENT = 'hivra:analytics-consent';
+
+/** True only when the visitor has a stored "accepted" choice for this version. */
+export function hasAnalyticsConsent(): boolean {
+  return readStoredConsent()?.choice === 'accepted';
+}
+
 /**
  * Persist a consent choice to BOTH localStorage and a first-party cookie.
  * Best-effort: never throws.
@@ -168,6 +178,14 @@ export function writeStoredConsent(choice: ConsentChoice): StoredConsent {
       document.cookie =
         `${CONSENT_COOKIE_NAME}=${encodeURIComponent(serialized)}` +
         `; Path=/; Max-Age=${CONSENT_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent<ConsentChoice>(ANALYTICS_CONSENT_EVENT, { detail: choice }));
     } catch {
       // Best-effort.
     }
