@@ -234,6 +234,8 @@ function mergeSurchargeEvidence(seen: SurchargeEvidence, next: SurchargeEvidence
 }
 
 function readSurchargeEvidenceFromSseFrame(frame: string): SurchargeEvidence {
+  // Most frames carry neither; skip parsing them.
+  if (!frame.includes('"cost"') && !frame.includes("web_search_citations")) return NO_SURCHARGE_EVIDENCE;
   let evidence = NO_SURCHARGE_EVIDENCE;
   for (const line of frame.split(/\r?\n/)) {
     const trimmed = line.trim();

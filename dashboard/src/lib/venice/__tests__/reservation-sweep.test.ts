@@ -62,6 +62,8 @@ async function chatHold(
     expiresAt?: string | null;
     endpoint?: string;
     inputEstimate?: number;
+    /** What reserveManagedVeniceChatRequest records for a hold with billed options (chat-surcharges.ts). */
+    surchargeEstimate?: number;
   } = {}
 ) {
   const estimate = options.estimate ?? 100_000;
@@ -81,6 +83,15 @@ async function chatHold(
         ...(options.inputEstimate === undefined
           ? {}
           : { inputEstimateMicroUsd: options.inputEstimate, outputMicroUsdPerMillion: OUTPUT_MICRO_USD_PER_MILLION }),
+        ...(options.surchargeEstimate === undefined
+          ? {}
+          : {
+              surcharge: {
+                plan: { webSearch: "on", scrapeUrls: null, xSearch: false },
+                holdMicroUsd: options.surchargeEstimate,
+                estimateMicroUsd: options.surchargeEstimate,
+              },
+            }),
       },
       expiresAt: options.expiresAt ?? null,
     },
@@ -212,6 +223,43 @@ describe("sweepStaleManagedVeniceReservations: holds after Venice answered 200",
 
     expect(hold("ref_usage")).toMatchObject({ status: "captured", captured_micro_usd: 1_234_567 });
     expect(world.cardBalanceMicroUsd(USER)).toBe(10_000_000 - 1_234_567);
+  });
+
+  // Reviewer finding on the chat web search / scraping / X search surcharge: the
+  // reported usage is token-only, so a capture that failed after Venice answered
+  // dropped the surcharge Venice also billed.
+  it("charges a held surcharge on top of Venice's reported usage when only writing the charge failed", async () => {
+    world.fundCard(USER, 10_000_000);
+    await chatHold("ref_usage_search", "card", { estimate: 5_000_000, inputEstimate: 2_000, surchargeEstimate: 10_000 });
+    await fileItem("ref_usage_search", "managed_venice_stream_settlement_failed", {
+      metadata: { cause: "settlement_failed", usageCostMicroUsd: 1_234_567 },
+    });
+
+    const summary = await sweepStaleManagedVeniceReservations({}, world.db);
+
+    expect(hold("ref_usage_search")).toMatchObject({ status: "captured", captured_micro_usd: 1_244_567 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(10_000_000 - 1_244_567);
+    expect(summary.results).toEqual([expect.objectContaining({ basis: "reported_usage", capturedMicroUsd: 1_244_567 })]);
+  });
+
+  it("a hold with no surcharge is charged exactly Venice's reported usage", async () => {
+    world.fundCard(USER, 10_000_000);
+    await chatHold("ref_usage_plain", "card", { estimate: 5_000_000, inputEstimate: 2_000 });
+    await fileItem("ref_usage_plain", "managed_venice_stream_settlement_failed", {
+      metadata: { cause: "settlement_failed", usageCostMicroUsd: 1_234_567 },
+    });
+    await sweepStaleManagedVeniceReservations({}, world.db);
+    expect(hold("ref_usage_plain")).toMatchObject({ status: "captured", captured_micro_usd: 1_234_567 });
+  });
+
+  it("charges the held surcharge on top of the observed output of a cancelled stream", async () => {
+    world.fundCard(USER, 10_000_000);
+    await chatHold("ref_cancel_search", "card", { estimate: 5_000_000, inputEstimate: 2_000, surchargeEstimate: 10_000 });
+    await fileItem("ref_cancel_search", "managed_venice_chat_stream_cancelled", {
+      metadata: { cause: "client_cancelled", observedOutputTokens: 10_000 },
+    });
+    await sweepStaleManagedVeniceReservations({}, world.db);
+    expect(hold("ref_cancel_search")).toMatchObject({ status: "captured", captured_micro_usd: 302_000 + 10_000 });
   });
 
   // #167 second review (HIGH): the sweep capped both numbers at the hold, so

@@ -93,7 +93,7 @@ function readMicroUsd(value: unknown): number | null {
  * (chat-surcharges.ts). 0 for a hold with none, which is every hold made
  * while MANAGED_VENICE_CHAT_SURCHARGES_ENABLED is off.
  */
-function heldSurchargeEstimateMicroUsd(meta: Record<string, unknown>): number {
+export function heldSurchargeEstimateMicroUsd(meta: Record<string, unknown>): number {
   const surcharge = meta.surcharge;
   if (!surcharge || typeof surcharge !== "object") return 0;
   return readMicroUsd((surcharge as Record<string, unknown>).estimateMicroUsd) ?? 0;

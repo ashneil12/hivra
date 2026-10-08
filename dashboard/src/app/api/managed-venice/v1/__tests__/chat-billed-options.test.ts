@@ -235,6 +235,32 @@ describe("managed-Venice chat: options Venice bills on top of tokens", () => {
     });
   });
 
+  describe("reviewer hardening", () => {
+    it.each([
+      ['enable_x_search: "false"', { enable_x_search: "false" }, 200_000],
+      ['enable_x_search: 0', { enable_x_search: 0 }, 200_000],
+      ['enable_web_search: ""', { enable_web_search: "" }, 10_000],
+      ['enable_web_search: "0"', { enable_web_search: "0" }, 10_000],
+      ['enable_web_scraping: "false"', { enable_web_scraping: "false" }, 50_000],
+    ])("a spelling of 'off' that is not false / null / 'off' is held, never forwarded unpriced: %s", async (_label, veniceParameters, surchargeHold) => {
+      const res = await chat({ venice_parameters: veniceParameters });
+      expect(res.status).toBe(200);
+      expect(Number(reservation().reserved_micro_usd)).toBe(TOKEN_HOLD + surchargeHold);
+    });
+
+    it("web search forced on is billed at least its published rate even when the reported cost shows only tokens", async () => {
+      fetchMock.mockResolvedValueOnce(veniceJson({ cost: costUsd(TOKEN_COST) }));
+      await chat({ venice_parameters: { enable_web_search: "on" } });
+      expect(charged().surcharge).toBe(10_000);
+    });
+
+    it("web search auto with a reported cost of tokens only is still free (the model did not search)", async () => {
+      fetchMock.mockResolvedValueOnce(veniceJson({ cost: costUsd(TOKEN_COST) }));
+      await chat({ venice_parameters: { enable_web_search: "auto" } });
+      expect(charged().surcharge).toBe(0);
+    });
+  });
+
   describe("charged at published rates when Venice reports no cost", () => {
     it.each([
       ["web search on", { enable_web_search: "on" }, {}, 10_000],
@@ -355,8 +381,7 @@ describe("managed-Venice chat: options Venice bills on top of tokens", () => {
     });
 
     it.each([
-      ["false / 'off' / 'false'", { enable_web_search: "off", enable_web_scraping: false, enable_x_search: "false" }],
-      ["0 / '0' / ''", { enable_web_search: "", enable_web_scraping: 0, enable_x_search: "0" }],
+      ["false / 'off'", { enable_web_search: "off", enable_web_scraping: false, enable_x_search: false }],
       ["null", { enable_web_search: null, enable_web_scraping: null, enable_x_search: null }],
       ["free options", {
         include_venice_system_prompt: false,

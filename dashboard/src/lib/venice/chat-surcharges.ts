@@ -105,18 +105,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-/** Off = absent, null, false, 0, and "", "false", "off", "0" (any case). */
+/**
+ * Off = absent, null or false: exactly what the flag-OFF refusal
+ * (chat-output-budget.ts) lets through. Anything else is ON and held, so a
+ * spelling Venice might read as true ("false", "0", "") can never be forwarded
+ * unpriced.
+ */
 function switchedOn(value: unknown) {
-  if (value === undefined || value === null || value === false || value === 0) return false;
-  if (typeof value === "string") {
-    const text = value.trim().toLowerCase();
-    return !(text === "" || text === "false" || text === "off" || text === "0");
-  }
-  return true;
+  return !(value === undefined || value === null || value === false);
 }
 
 function webSearchMode(value: unknown): "on" | "auto" | null {
-  if (!switchedOn(value)) return null;
+  // Venice's documented off switch for web search is the string "off".
+  if (!switchedOn(value) || value === "off") return null;
   return typeof value === "string" && value.trim().toLowerCase() === "auto" ? "auto" : "on";
 }
 
@@ -259,6 +260,8 @@ export function mergeSurchargeEvidence(
 
 /** Evidence across the JSON `data:` lines of one SSE frame. */
 export function readSurchargeEvidenceFromSseFrame(frame: string): ManagedChatSurchargeEvidence {
+  // Most frames carry neither; skip parsing them.
+  if (!frame.includes('"cost"') && !frame.includes("web_search_citations")) return NO_SURCHARGE_EVIDENCE;
   let evidence = NO_SURCHARGE_EVIDENCE;
   for (const line of frame.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -301,7 +304,11 @@ export function settleManagedChatSurcharge(params: {
   const ceilingMicroUsd = surchargeCeilingMicroUsd(plan);
 
   if (evidence.veniceCostMicroUsd !== null) {
-    const reported = Math.max(0, evidence.veniceCostMicroUsd - params.tokenCostMicroUsd);
+    // A search that was forced ("on") certainly ran and is billed at least its
+    // published rate, whatever the reported cost says: the shape of `cost` is
+    // not confirmed against Venice's invoice, so it never lowers that floor.
+    const floor = plan.webSearch === "on" ? VENICE_WEB_SEARCH_MICRO_USD : 0;
+    const reported = Math.max(floor, evidence.veniceCostMicroUsd - params.tokenCostMicroUsd);
     return reported > ceilingMicroUsd
       ? { surchargeMicroUsd: ceilingMicroUsd, source: "venice_cost", ceilingMicroUsd, reconciliationReason: SURCHARGE_ABOVE_CEILING_REASON }
       : { surchargeMicroUsd: reported, source: "venice_cost", ceilingMicroUsd, reconciliationReason: null };
