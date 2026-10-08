@@ -1,10 +1,9 @@
+import HivraMacCore
 import SwiftUI
 
 struct HivraWorkspaceActions {
     let switchResource: () -> Void
-    let home: () -> Void
-    let agents: () -> Void
-    let computers: () -> Void
+    let select: (HivraWorkspaceDestination) -> Void
     let launch: () -> Void
     let closeTab: () -> Void
     let openSeparateWindow: () -> Void
@@ -50,12 +49,11 @@ struct HivraWorkspaceCommands: Commands {
             Button("Switch Agent or Computer…") { actions?.switchResource() }
                 .keyboardShortcut("k", modifiers: .command)
             Divider()
-            Button("Home") { actions?.home() }
-                .keyboardShortcut("1", modifiers: .command)
-            Button("Agents") { actions?.agents() }
-                .keyboardShortcut("2", modifiers: .command)
-            Button("Computers") { actions?.computers() }
-                .keyboardShortcut("3", modifiers: .command)
+            // Command 1-5 follow the dashboard's primary navigation order.
+            ForEach(Array(HivraWorkspaceDestination.primaryNavigation.enumerated()), id: \.element) { index, destination in
+                Button(destination.label) { actions?.select(destination) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+            }
             Divider()
             Button("Focus Work Pane") { actions?.focus() }
                 .keyboardShortcut("f", modifiers: [.command, .shift])

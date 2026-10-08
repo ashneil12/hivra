@@ -4,15 +4,14 @@
 //
 // Fresh deploys land on /dashboard/agent/[id]?welcome=1 with no channel
 // connected, which means the agent can never reach the user once they close
-// the tab. When the welcome param is present and the box's Telegram bot is NOT
-// connected, this nudges them toward the Telegram tab — once, dismissably
-// (localStorage, per box). Probe and render are self-contained so the page
-// only decides placement.
+// the tab. On that welcome visit (the page reads the arrival once and drops it
+// from the address), when the box's Telegram bot is NOT connected, this nudges
+// them toward the Telegram tab — once, dismissably (localStorage, per box).
+// Probe and render are self-contained so the page only decides placement.
 //
 // Funnel instrumentation: channel_connect_nudge_shown / _clicked / _dismissed.
 
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { Send, X } from "lucide-react";
 import posthog from "posthog-js";
 
@@ -34,19 +33,20 @@ function capture(event: string, properties: Record<string, unknown>) {
 }
 
 export function ChannelConnectNudge({
+  welcome,
   boxUrl,
   token,
   boxId,
   onConnect,
 }: {
+  /** This visit arrived as a fresh launch (?welcome=1). */
+  welcome: boolean;
   boxUrl: string;
   token?: string | null;
   boxId: string;
   /** Takes the user to the Telegram tab (the page owns tab state). */
   onConnect: () => void;
 }) {
-  const searchParams = useSearchParams();
-  const welcome = searchParams?.get("welcome") === "1";
   const dismissKey = `${DISMISS_KEY_PREFIX}${boxId}`;
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {

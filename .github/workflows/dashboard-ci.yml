@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'dashboard/**'
+      # The dashboard suite checks the shared native-shell contract fixtures.
+      - 'apps/shared/**'
       - 'docker-compose.yml'
       # Workflow-only changes still report the same public verification check.
       - '.github/**'
