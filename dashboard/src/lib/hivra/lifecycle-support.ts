@@ -40,8 +40,23 @@ export function isGvisorAction(action: string): action is GvisorAction {
   return (GVISOR_ACTIONS as readonly string[]).includes(action);
 }
 
+/**
+ * Force off and Force restart: switch the computer off at once (qm stop), not
+ * a guest shutdown. They reuse the stop and restart operation kinds, so they
+ * take the same lease and settle through the same reconciler paths. Proxmox
+ * computers (Hivra Cloud, My server, prepared) only; a My cloud computer is
+ * refused (PROVIDER_REFUSED_ACTIONS) because the Hetzner power client never
+ * forces power.
+ */
+export const FORCE_POWER_ACTIONS = ["force_stop", "force_restart"] as const;
+export type ForcePowerAction = (typeof FORCE_POWER_ACTIONS)[number];
+
+export function isForcePowerAction(action: string): action is ForcePowerAction {
+  return (FORCE_POWER_ACTIONS as readonly string[]).includes(action);
+}
+
 /** Prepared Windows and Omarchy computers run their own power-only adapter. */
-export const PREPARED_ACTIONS = ["start", "stop", "restart"] as const;
+export const PREPARED_ACTIONS = ["start", "stop", "restart", ...FORCE_POWER_ACTIONS] as const;
 export type PreparedAction = (typeof PREPARED_ACTIONS)[number];
 
 export function isPreparedAction(action: string): action is PreparedAction {
@@ -49,7 +64,7 @@ export function isPreparedAction(action: string): action is PreparedAction {
 }
 
 /** Everything the Proxmox lifecycle branch accepts. */
-export const PROXMOX_ACTIONS = ["stop", "start", "restart", "update_runtime", "resize", "snapshot", "restore"] as const;
+export const PROXMOX_ACTIONS = ["stop", "start", "restart", "update_runtime", "resize", "snapshot", "restore", ...FORCE_POWER_ACTIONS] as const;
 export type ProxmoxAction = (typeof PROXMOX_ACTIONS)[number];
 
 export function isProxmoxAction(action: string): action is ProxmoxAction {
@@ -66,6 +81,8 @@ export const PROVIDER_REFUSED_ACTIONS = {
   resize: "Resizing an allocated Hetzner computer is not supported yet. Its original size and data are retained.",
   snapshot: "Restore points for allocated provider computers are not supported yet. The original computer and data are unchanged.",
   restore: "Restore points for allocated provider computers are not supported yet. The original computer and data are unchanged.",
+  force_stop: "Hivra can't force a My cloud computer off. Use Stop, or use your provider's console to force it off. Nothing was changed.",
+  force_restart: "Hivra can't force a My cloud computer to restart. Use Restart, or use your provider's console to force it off. Nothing was changed.",
 } as const;
 export type ProviderRefusedAction = keyof typeof PROVIDER_REFUSED_ACTIONS;
 
