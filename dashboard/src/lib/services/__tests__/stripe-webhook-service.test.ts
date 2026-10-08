@@ -304,7 +304,7 @@ describe("StripeWebhookService", () => {
       expect(supabaseAdmin!.from).toHaveBeenCalledWith("hermes_instances");
     });
 
-    it("falls back to subscription metadata for trial tracking and conversion capture", async () => {
+    it("falls back to subscription metadata for conversion capture and records no trial usage", async () => {
       const stripe = getStripe();
       const retrieveSubscription = stripe.subscriptions.retrieve as jest.Mock;
       retrieveSubscription.mockResolvedValue({
@@ -339,10 +339,9 @@ describe("StripeWebhookService", () => {
       expect(handleSubscriptionChangeSpy).toHaveBeenCalledWith(
         expect.objectContaining({ id: "sub_123" })
       );
-      expect(insertMock).toHaveBeenCalledWith({
-        user_id: "user_123",
-        ip_address: null,
-      });
+      // No trials exist: checkout no longer writes a trial-usage row.
+      expect(insertMock).not.toHaveBeenCalled();
+      expect((supabaseAdmin!.from as jest.Mock).mock.calls.map(call => call[0])).not.toContain("hermes_trial_usage");
       expect(posthogClient.capture).toHaveBeenCalledWith(
         expect.objectContaining({
           distinctId: "user_123",
@@ -352,70 +351,6 @@ describe("StripeWebhookService", () => {
           }),
         })
       );
-
-      handleSubscriptionChangeSpy.mockRestore();
-    });
-
-    it("redacts trial usage insert errors before logging them", async () => {
-      (log.error as jest.Mock).mockClear();
-
-      const stripe = getStripe();
-      const retrieveSubscription = stripe.subscriptions.retrieve as jest.Mock;
-      retrieveSubscription.mockResolvedValue({
-        id: "sub_123",
-        metadata: { user_id: "user_123", plan: "fleet" },
-      });
-
-      const handleSubscriptionChangeSpy = jest
-        .spyOn(StripeWebhookService, "handleSubscriptionChange")
-        .mockResolvedValue(undefined);
-
-      const insertMock = jest.fn().mockResolvedValue({
-        error: {
-          code: "XX000",
-          message: "trial-usage-secret-leak",
-          details: "trial-usage-details-leak",
-          hint: "trial-usage-hint-leak",
-        },
-      });
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        if (table === "hermes_trial_usage") {
-          return {
-            insert: insertMock,
-          };
-        }
-
-        return createMockBuilder();
-      });
-
-      await StripeWebhookService.handleCheckoutCompleted({
-        id: "sess_123",
-        mode: "subscription",
-        subscription: "sub_123",
-        payment_status: "paid",
-        metadata: {},
-      } as unknown as Stripe.Checkout.Session);
-
-      await flushAsyncStart();
-
-      expect(log.error).toHaveBeenCalledWith(
-        "failed to record trial usage",
-        expect.anything(),
-        expect.objectContaining({
-          source: "stripe-webhook-service",
-          failureType: "trial_usage_insert_failed",
-          errorCode: "XX000",
-        })
-      );
-      // The context (3rd arg) must not contain the leaked DB error fields.
-      // The 2nd-arg err object is intentionally redacted by the logger itself
-      // (covered in logger.test.ts), so we only audit the context here.
-      const contextCalls = (log.error as jest.Mock).mock.calls.map((call) => call[2]);
-      const stringifiedContext = JSON.stringify(contextCalls);
-      expect(stringifiedContext).not.toContain("trial-usage-secret-leak");
-      expect(stringifiedContext).not.toContain("trial-usage-details-leak");
-      expect(stringifiedContext).not.toContain("trial-usage-hint-leak");
 
       handleSubscriptionChangeSpy.mockRestore();
     });

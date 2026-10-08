@@ -27,7 +27,6 @@ export type LaunchFunnelEvent =
   | "activation_instance_requested"
   | "launch_request_accepted"
   | "activation_instance_ready"
-  | "activation_card_required"
   | "activation_failed"
   | "launch_outcome_uncertain"
   | "free_limit_hit"

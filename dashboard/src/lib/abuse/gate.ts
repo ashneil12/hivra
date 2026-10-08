@@ -1,5 +1,6 @@
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 import { log } from "@/lib/logger";
 import { assessRisk } from "./risk-scorer";
 import { getRiskAssessment, type RiskAssessmentRow } from "./repository";
@@ -20,7 +21,7 @@ export type GateOutcome =
       allow: false;
       status: number;
       message: string;
-      reason: "blocked" | "card_required";
+      reason: "blocked" | "plan_required";
       assessment?: RiskAssessmentRow | null;
     };
 
@@ -40,7 +41,7 @@ export interface GateInputs {
  *   2. Existing assessment with card_satisfied_at? → allow (they put a card on file)
  *   3. Existing assessment with decision="allow" + recent? → allow (already cleared)
  *   4. Existing assessment with decision="block"? → deny
- *   5. Existing assessment with decision="require_card" + no card? → deny w/ card-required
+ *   5. Existing assessment with decision="require_card" + no card? → deny, a plan is needed (no card check exists)
  *   6. No assessment / stale assessment → compute fresh, then act on decision
  *
  * Fail-open posture: if anything in the gate logic itself throws, we log
@@ -91,7 +92,7 @@ export async function checkProvisioningGate(
     }
 
     if (assessment.decision === "require_card") {
-      log.info("abuse gate requiring card on file", {
+      log.info("abuse gate requiring a plan for hosted compute", {
         source: LOG_SOURCE,
         userId: inputs.userId,
         score: assessment.score,
@@ -100,9 +101,8 @@ export async function checkProvisioningGate(
       return {
         allow: false,
         status: 402,
-        message:
-          "A card on file is required to deploy. No charge will be made.",
-        reason: "card_required",
+        message: HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+        reason: "plan_required",
       };
     }
 
@@ -151,14 +151,13 @@ function evaluateExistingAssessment(
     };
   }
 
-  // require_card without card_satisfied_at → still needs the card
+  // require_card without card_satisfied_at → a plan is needed (no card check)
   if (row.decision === "require_card") {
     return {
       allow: false,
       status: 402,
-      message:
-        "A card on file is required to deploy. No charge will be made.",
-      reason: "card_required",
+      message: HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+      reason: "plan_required",
       assessment: row,
     };
   }

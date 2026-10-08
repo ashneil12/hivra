@@ -35,7 +35,6 @@ import {
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
 import { useHermesWorkspaceReadiness } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
-import { FreeTierCardVerification } from "@/components/billing/FreeTierCardVerification";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
@@ -706,7 +705,6 @@ export function LaunchJourney() {
   // written to the draft, and it belongs to the launch it was typed for.
   const [pastedKey, setPastedKey] = useState<{ launchRequestId: string; value: string } | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
-  const [cardCheckOpen, setCardCheckOpen] = useState(false);
   const [observation, setObservation] = useState<LaunchObservation | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [reconciling, setReconciling] = useState(false);
@@ -1762,9 +1760,8 @@ export function LaunchJourney() {
   // known yet, so it is reported as uncertain.
   const recordLaunchFailure = (submitting: LaunchDraft, context: Record<string, unknown>, error: unknown) => {
     const stage = launchFailureStage(submitting);
-    if (error instanceof LaunchCorrectableError && error.action?.kind === "verify-card") {
-      captureLaunchEvent("activation_card_required", context);
-      captureLaunchEvent("paywall_viewed", { ...context, paywall: "card_required" });
+    if (error instanceof LaunchCorrectableError && error.code === "hosted_compute_requires_plan") {
+      captureLaunchEvent("paywall_viewed", { ...context, paywall: "plan_required" });
       return;
     }
     if (error instanceof HivraLaunchCorrectableError) {
@@ -1880,7 +1877,6 @@ export function LaunchJourney() {
         });
         writeLaunchDraft(correctable, storageOwner);
         setDraft(correctable);
-        if (correctable.errorAction?.kind === "verify-card") setCardCheckOpen(true);
       } else {
         const uncertain = withSavedKey({
           ...submitting,
@@ -2605,9 +2601,7 @@ export function LaunchJourney() {
           </span></div> : null}
           {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{draft.error}</strong>
             {draft.errorAction ? <span className={styles.blockerActions}>
-              {draft.errorAction.kind === "verify-card"
-                ? <button type="button" onClick={() => setCardCheckOpen(true)}>Add a card to continue</button>
-                : <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>}
+              <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>
             </span> : null}
           </span></div> : null}
           {draft.result?.status === "error" ? <div className={styles.blocker}>
@@ -2735,15 +2729,6 @@ export function LaunchJourney() {
           onRefreshSummary={() => setCreditsRevision(value => value + 1)}
         />
       ) : null}
-      <FreeTierCardVerification
-        open={cardCheckOpen}
-        message={draft.errorAction?.kind === "verify-card" ? draft.error : null}
-        onClose={() => setCardCheckOpen(false)}
-        onVerified={async () => {
-          setCardCheckOpen(false);
-          await submit();
-        }}
-      />
       {capacitySheetOpen ? (
         <LaunchCapacitySheet
           launchResourceId={capacityResourceFor(draft.profileId)}
