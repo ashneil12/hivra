@@ -2,15 +2,14 @@ import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import { getHetznerInstanceStatus } from "@/lib/services/hetzner-instance-service";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import {
   SIDECAR_SERVER_CODE,
   WEBUI_HANDOFF_APPENDAGE,
 } from "@/lib/services/sidecar-script";
 import {
   getProxmoxInfrastructure,
-  getProxmoxHostRoutingConfigFromInfrastructure,
-  type ProxmoxHostRoutingConfig,
+  getHermesGuestSshTarget,
 } from "@/lib/services/proxmox-infrastructure";
 import { log } from "@/lib/logger";
 
@@ -33,6 +32,8 @@ interface SecureUserInstanceQueryRecord {
   host_id?: string | null;
   hetzner_server_id?: number | null;
   ipv4_address?: string | null;
+  proxmox_vmid?: number | null;
+  proxmox_node?: string | null;
   cpu_limit?: number | null;
   ram_limit?: number | null;
 }
@@ -48,6 +49,8 @@ export type SecureUserInstanceResult =
       error: null;
       apiServerKey: string;
       instanceIpv4: string;
+      /** Pass to sshExec for any guest command (`getHermesGuestSshTarget`). */
+      guestTarget?: ProxmoxSshHostConfig | null;
     }
   | {
       instance: null;
@@ -197,7 +200,7 @@ interface ManagedHostRecoveryInstance {
   config?: unknown;
 }
 
-type ManagedHostSshOptions = { timeoutMs: number; proxmoxHostConfig?: ProxmoxHostRoutingConfig };
+type ManagedHostSshOptions = { timeoutMs: number; proxmoxHostConfig?: ProxmoxSshHostConfig };
 
 async function recoverApiServerKeyFromManagedHost(
   instance: ManagedHostRecoveryInstance,
@@ -217,7 +220,7 @@ async function recoverApiServerKeyFromManagedHost(
   // handle → proxmoxHostConfig stays null → the original public-IP path is used.
   const proxmoxInfra = getProxmoxInfrastructure(instance.config);
   const proxmoxHostConfig = proxmoxInfra
-    ? getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, { host_id: instance.host_id ?? null })
+    ? getHermesGuestSshTarget({ id: instance.id, config: instance.config, host_id: instance.host_id ?? null })
     : null;
 
   const instanceIpv4 = proxmoxInfra?.privateIpv4?.trim() || (await resolveInstanceIpv4(instance));
@@ -499,24 +502,22 @@ function summarizeSidecarRefreshFailure(value: string | undefined): string | und
 }
 
 function resolveManagedSidecarHostConfig(
-  params: Pick<ManagedSidecarRefreshParams, "config" | "hostId">,
-): ProxmoxHostRoutingConfig | null {
-  const proxmoxInfra = getProxmoxInfrastructure(params.config);
-  return proxmoxInfra
-    ? getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, {
-        host_id: params.hostId ?? null,
-      })
+  params: Pick<ManagedSidecarRefreshParams, "id" | "config" | "hostId">,
+): ProxmoxSshHostConfig | null {
+  return getProxmoxInfrastructure(params.config)
+    ? getHermesGuestSshTarget({ id: params.id.trim(), config: params.config, host_id: params.hostId ?? null })
     : null;
 }
 
 function managedSidecarHostCacheKey(
-  proxmoxHostConfig: ProxmoxHostRoutingConfig | null,
+  proxmoxHostConfig: ProxmoxSshHostConfig | null,
 ): string {
   if (!proxmoxHostConfig) return "direct";
   return [
     proxmoxHostConfig.hostId ?? "",
     proxmoxHostConfig.hostSlug ?? "",
     proxmoxHostConfig.envPrefix ?? "",
+    proxmoxHostConfig.vmid ?? "",
   ].join(":");
 }
 
@@ -640,7 +641,7 @@ export async function getSecureUserInstance({
 
   const { data: instance, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, gateway_url, api_server_key_encrypted, api_key_encrypted, provider, backend, config, user_id, status, host_id, hetzner_server_id, ipv4_address, cpu_limit, ram_limit")
+    .select("id, gateway_url, api_server_key_encrypted, api_key_encrypted, provider, backend, config, user_id, status, host_id, hetzner_server_id, ipv4_address, proxmox_vmid, proxmox_node, cpu_limit, ram_limit")
     .eq("id", id)
     .eq("user_id", userId)
     .neq("status", "deleted")
@@ -691,5 +692,11 @@ export async function getSecureUserInstance({
 
   const instanceIpv4 = recoveredInstanceIpv4 || await resolveInstanceIpv4(resolvedInstance);
 
-  return { instance: resolvedInstance, apiServerKey, instanceIpv4, error: null };
+  return {
+    instance: resolvedInstance,
+    apiServerKey,
+    instanceIpv4,
+    guestTarget: getHermesGuestSshTarget(resolvedInstance),
+    error: null,
+  };
 }

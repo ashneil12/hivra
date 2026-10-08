@@ -127,7 +127,6 @@ function safeModelAccess(value: unknown): LaunchModelAccess {
 function safeErrorAction(value: unknown): LaunchErrorAction | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
-  if (input.kind === "verify-card") return { kind: "verify-card" };
   if (
     input.kind === "open"
     && typeof input.label === "string" && input.label.trim() && input.label.length <= 60

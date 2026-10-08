@@ -40,7 +40,6 @@ import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { archiveInstance, type ColdArchiveResult } from "@/lib/services/cold-storage-service";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
-import { promoteNext } from "@/lib/reservations/promote-next";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -386,28 +385,6 @@ async function handle(req: NextRequest) {
       }
     })
   );
-
-  // Capacity-freed hook: archives just destroyed VMs → released host slots.
-  // Top up waitlist invites to fill the newly-available free capacity.
-  // promoteNext() recomputes available slots itself, so it's safe regardless of
-  // how many we archived. Best-effort — never fails the archive run.
-  if (results.archived > 0) {
-    try {
-      const promo = await promoteNext();
-      if (promo.promoted > 0) {
-        log.info("archive cron promoted waitlist reservations", {
-          source: LOG_SOURCE,
-          promoted: promo.promoted,
-          available: promo.available,
-        });
-      }
-    } catch (e) {
-      log.warn("archive cron promoteNext failed (non-fatal)", {
-        source: LOG_SOURCE,
-        error: String(e),
-      });
-    }
-  }
 
   if (results.timedOut) {
     log.warn("archive-stopped-vms hit time budget; remaining candidates deferred to next run", {

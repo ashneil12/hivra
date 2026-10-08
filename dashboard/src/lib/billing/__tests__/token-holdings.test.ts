@@ -39,26 +39,6 @@ function buildSingleQuery(data: unknown, error: unknown = null) {
   return query;
 }
 
-function buildListQuery(data: unknown, error: unknown = null) {
-  type MockQuery = {
-    select: jest.Mock;
-    eq: jest.Mock;
-    not: jest.Mock;
-    order: jest.Mock;
-    limit: jest.Mock;
-    then: Promise<{ data: unknown; error: unknown }>["then"];
-  };
-  const query = {} as MockQuery;
-  query.select = jest.fn(() => query);
-  query.eq = jest.fn(() => query);
-  query.not = jest.fn(() => query);
-  query.order = jest.fn(() => query);
-  query.limit = jest.fn(() => query);
-  query.then = (resolve, reject) => Promise.resolve({ data, error }).then(resolve, reject);
-
-  return query;
-}
-
 function buildInsertSnapshotTable(rows: unknown[], error: unknown = null) {
   type MockInsert = {
     insert: jest.Mock;
@@ -220,41 +200,33 @@ describe("Hivra token holdings", () => {
     });
   });
 
-  it("refreshes verified primary wallet holdings and summarizes outcomes", async () => {
-    const wallets = [
-      {
-        id: "wallet_1",
-        user_id: "user_1",
-        address: "0x000000000000000000000000000000000000dEaD",
-        normalized_address: "0x000000000000000000000000000000000000dead",
-        chain_type: "evm",
-        chain_id: BASE_CHAIN_ID,
-        is_primary: true,
-        verified_at: "2026-04-24T12:00:00.000Z",
-      },
-      {
-        id: "wallet_2",
-        user_id: "user_2",
-        address: "0x0000000000000000000000000000000000000001",
-        normalized_address: "0x0000000000000000000000000000000000000001",
-        chain_type: "evm",
-        chain_id: BASE_CHAIN_ID,
-        is_primary: true,
-        verified_at: "2026-04-24T12:01:00.000Z",
-      },
-      {
-        id: "wallet_3",
-        user_id: "user_3",
-        address: "0x0000000000000000000000000000000000000002",
-        normalized_address: "0x0000000000000000000000000000000000000002",
-        chain_type: "evm",
-        chain_id: BASE_CHAIN_ID,
-        is_primary: true,
-        verified_at: "2026-04-24T12:02:00.000Z",
-      },
-    ];
-    const query = buildListQuery(wallets);
-    const db = { from: jest.fn(() => query) };
+  it("refreshes the claimed pages of accounts, records what was judged, and summarizes outcomes", async () => {
+    const snapshotLookup = buildSingleQuery(null);
+    const claimedStanding = [{ user_id: "user_1" }, { user_id: "user_2" }, { user_id: "user_3" }];
+    let standingClaims = 0;
+    const db = {
+      rpc: jest.fn(async (name: string, args: Record<string, unknown>) => {
+        if (name === "claim_token_holding_refresh_page") {
+          if (args.p_standing !== true) return { data: [], error: null };
+          standingClaims += 1;
+          return { data: standingClaims === 1 ? claimedStanding : [], error: null };
+        }
+        if (name === "record_token_holding_refresh_judgments") return { data: 2, error: null };
+        return {
+          data: [
+            {
+              standing: 3,
+              unjudged: 1,
+              cycle_started_at: "2026-09-25T12:00:00.000Z",
+              cycle_seconds: 7,
+              cycle_completed: false,
+            },
+          ],
+          error: null,
+        };
+      }),
+      from: jest.fn(() => snapshotLookup),
+    };
     const refreshUserHolding = jest.fn()
       .mockResolvedValueOnce({
         status: "refreshed",
@@ -270,42 +242,68 @@ describe("Hivra token holdings", () => {
       .mockRejectedValueOnce(new Error("rpc-secret-leak"));
 
     const result = await refreshVerifiedHermesTokenHoldings({
+      lane: "token_holdings",
       db,
       limit: 3,
       refreshUserHolding,
     });
 
-    expect(db.from).toHaveBeenCalledWith("user_wallets");
-    expect(query.eq).toHaveBeenCalledWith("chain_type", "evm");
-    expect(query.eq).toHaveBeenCalledWith("is_primary", true);
-    expect(query.not).toHaveBeenCalledWith("verified_at", "is", null);
-    expect(query.limit).toHaveBeenCalledWith(3);
+    expect(db.rpc).toHaveBeenCalledWith("claim_token_holding_refresh_page", {
+      p_lane: "token_holdings",
+      p_standing: true,
+      p_limit: 3,
+    });
+    // The failed read is not recorded: it is claimed first on the next run.
+    expect(db.rpc).toHaveBeenCalledWith("record_token_holding_refresh_judgments", {
+      p_lane: "token_holdings",
+      p_user_ids: ["user_1", "user_2"],
+    });
+    expect(db.rpc).toHaveBeenLastCalledWith("close_token_holding_refresh_run", { p_lane: "token_holdings" });
+    // user_2 has no verification wallet: its latest snapshots are checked
+    // (none here, so nothing to zero).
+    expect(db.from).toHaveBeenCalledWith("token_holding_snapshots");
     expect(refreshUserHolding).toHaveBeenCalledTimes(3);
     expect(result).toEqual({
+      lane: "token_holdings",
       checked: 3,
       refreshed: 1,
       noVerifiedWallet: 1,
       failed: 1,
+      judged: 2,
+      unread: 0,
+      budgetExhausted: false,
+      standing: { claimed: 3, read: 3, judged: 2 },
+      withoutStanding: { claimed: 0, read: 0, judged: 0 },
+      cycle: {
+        standing: 3,
+        unjudged: 1,
+        startedAt: "2026-09-25T12:00:00.000Z",
+        ageSeconds: 7,
+        completed: false,
+        overdue: false,
+      },
       results: [
         {
           userId: "user_1",
-          walletId: "wallet_1",
+          standing: true,
           status: "refreshed",
           snapshotId: "snapshot_1",
           qualifiesBaseTier: true,
         },
         {
           userId: "user_2",
-          walletId: "wallet_2",
+          standing: true,
           status: "no_verified_wallet",
+          zeroSnapshotsRecorded: 0,
         },
         {
           userId: "user_3",
-          walletId: "wallet_3",
+          standing: true,
           status: "failed",
         },
       ],
     });
+    expect(JSON.stringify(result)).not.toContain("rpc-secret-leak");
   });
 
   it("does not use a Bankr credit deposit wallet as the token verification wallet", async () => {

@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+
 import { metadata as homeMetadata } from '../page';
 import { metadata as downloadMetadata } from '../download/page';
 import { generateMetadata as generateTokenomicsMetadata } from '../tokenomics/page';
@@ -11,8 +13,12 @@ import { generateMetadata as generateFeatureMetadata } from '../features/[slug]/
 import { generateMetadata as generateCompareMetadata } from '../compare/[slug]/page';
 
 // Both token pages generate their metadata from the $HIVRA phase; dormant here.
-const tokenomicsMetadata = generateTokenomicsMetadata();
-const tokenMetadata = generateTokenMetadata();
+let tokenomicsMetadata: Metadata;
+let tokenMetadata: Metadata;
+beforeAll(async () => {
+  tokenomicsMetadata = await generateTokenomicsMetadata();
+  tokenMetadata = await generateTokenMetadata();
+});
 
 function getObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') return null;
@@ -29,11 +35,11 @@ function getTwitterValue(metadataValue: unknown, key: string): unknown {
 
 describe('route Open Graph metadata', () => {
   it('reflects the current homepage computer choices in metadata', () => {
-    expect(homeMetadata.description).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
+    expect(homeMetadata.description).toContain('launch Ubuntu, Windows or Omarchy for yourself');
     expect(String(homeMetadata.description)).not.toMatch(/launching now/i);
     // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
     expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
-    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('Launch Ubuntu, with Windows and Omarchy in private preview');
+    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('launch Ubuntu, Windows or Omarchy for yourself');
   });
 
   it('keeps the Hermes OS brand bridge on the homepage, where most search clicks come from', () => {

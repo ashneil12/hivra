@@ -21,6 +21,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/managed-venice-hold-sweep",
+      "schedule": "20 * * * *"
+    },
+    {
       "path": "/api/cron/managed-venice-token-reconciliation",
       "schedule": "*/5 * * * *"
     },
@@ -231,10 +235,6 @@
     {
       "path": "/api/cron/aeon-tick",
       "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/reservation-claim-expiry",
-      "schedule": "23 */2 * * *"
     },
     {
       "path": "/api/cron/park-idle-hivra-agents",

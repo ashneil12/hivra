@@ -7,7 +7,7 @@ import { checkOutboundUrlSafety } from "@/lib/url-safety";
 // 5.8). The gateway says so in its public metadata from provisioner release
 // 2026.09.24.3 on (`attachedAgents: "hivra-attached-agent-v1"`). A computer
 // made before that keeps its older gateway until its owner runs Manage →
-// Update & restart: bundle sync never replaces a running computer's gateway.
+// Update connection service: bundle sync never replaces a running computer's gateway.
 // Adding Codex there would be refused by the computer after the download, so
 // the gate says it first. This is the gate's early answer, not authority: the
 // computer checks its own gateway again before it starts anything.

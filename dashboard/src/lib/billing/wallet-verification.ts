@@ -388,6 +388,35 @@ async function markChallenge(params: {
   return asChallenge(data as WalletChallengeRow);
 }
 
+/**
+ * The wallet a challenge would verify if it were signed now: its normalized
+ * address, or null when this user has no pending, unexpired challenge with
+ * that id (verifyWalletChallenge then reports why). Read-only, so a route can
+ * decide what else the verification needs before the challenge is used up.
+ */
+export async function getPendingWalletChallengeAddress(params: {
+  userId: string;
+  challengeId: string;
+  db?: SupabaseLike | null;
+  now?: Date;
+}): Promise<string | null> {
+  const admin = requireDb(params.db ?? supabaseAdmin);
+  const now = params.now ?? new Date();
+  const { data, error } = await table(admin, "wallet_verification_challenges")
+    .select("normalized_address, status, expires_at")
+    .eq("id", params.challengeId)
+    .eq("user_id", params.userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("Failed to load wallet verification challenge");
+  }
+  const challenge = data as Pick<WalletChallengeRow, "normalized_address" | "status" | "expires_at"> | null;
+  if (!challenge || challenge.status !== "pending") return null;
+  if (new Date(challenge.expires_at).getTime() <= now.getTime()) return null;
+  return challenge.normalized_address;
+}
+
 export async function verifyWalletChallenge(params: {
   userId: string;
   challengeId: string;

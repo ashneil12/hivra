@@ -71,13 +71,14 @@ class TempRoot(unittest.TestCase):
 
 class ClassificationTest(unittest.TestCase):
     def test_public_brand_files_are_published_and_next_icons_are_not(self) -> None:
-        outputs = [path for path, _edge in exporter.PNG_OUTPUTS] + [exporter.FAVICON]
+        outputs = exporter.output_paths()
         for path in outputs:
             with self.subTest(path=str(path)):
                 self.assertEqual(exporter.is_published(path), path.parent == exporter.PUBLIC_BRAND)
         published = {path.name for path in outputs if exporter.is_published(path)}
         self.assertIn("hivra-token-1024.png", published)
         self.assertIn("hivra-icon-192.png", published)
+        self.assertIn("hivra-icon-384.webp", published)
         self.assertEqual(
             {path.name for path in outputs if not exporter.is_published(path)},
             {"icon.png", "apple-icon.png", "favicon.ico"},
@@ -146,7 +147,7 @@ class MainTest(TempRoot):
         return out.getvalue()
 
     def test_new_files_are_written_and_a_changed_published_file_stops_the_run(self) -> None:
-        outputs = [path for path, _edge in exporter.PNG_OUTPUTS] + [exporter.FAVICON]
+        outputs = exporter.output_paths()
 
         self.assertEqual(self.run_main().count(" wrote "), len(outputs))
         fresh = {path: self.read(path) for path in outputs}

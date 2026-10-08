@@ -28,7 +28,15 @@ function mockReq(secret = "test-cron-secret") {
   });
 }
 
-function buildLiveResponse(overrides: Record<string, { input: number; output: number; cache_input?: number }> = {}) {
+type LiveOverride = {
+  input?: number;
+  output?: number;
+  cache_input?: number;
+  maxCompletionTokens?: number;
+  availableContextTokens?: number;
+};
+
+function buildLiveResponse(overrides: Record<string, LiveOverride> = {}) {
   // Live response = our catalog as the baseline, with overrides applied so a
   // test can target one model's drift without redeclaring the whole table.
   const data = VENICE_CHAT_MODEL_PRICES.map((entry) => {
@@ -52,7 +60,11 @@ function buildLiveResponse(overrides: Record<string, { input: number; output: nu
 
     return {
       id: entry.model,
-      model_spec: { pricing },
+      model_spec: {
+        pricing,
+        availableContextTokens: override?.availableContextTokens ?? entry.contextWindow,
+        maxCompletionTokens: override?.maxCompletionTokens ?? entry.maxOutputTokens,
+      },
     };
   });
   return new Response(JSON.stringify({ data }), {
@@ -97,11 +109,14 @@ describe("GET /api/cron/venice-pricing-drift-check", () => {
     global.fetch = jest.fn().mockResolvedValue(buildLiveResponse());
 
     const response = await GET(mockReq());
-    const body = (await response.json()) as { data: { driftedRateCount: number; liveCheckRan: boolean } };
+    const body = (await response.json()) as {
+      data: { driftedRateCount: number; driftedLimitCount: number; liveCheckRan: boolean };
+    };
 
     expect(response.status).toBe(200);
     expect(body.data.liveCheckRan).toBe(true);
     expect(body.data.driftedRateCount).toBe(0);
+    expect(body.data.driftedLimitCount).toBe(0);
     // No drift → no live-drift ops event. (Staleness alert is independent.)
     const driftAlerts = mockReportOpsEvent.mock.calls.filter(
       ([arg]) => arg?.metadata?.failureType === "venice_pricing_live_drift",
@@ -135,6 +150,55 @@ describe("GET /api/cron/venice-pricing-drift-check", () => {
     );
     expect(driftAlerts).toHaveLength(1);
     expect(driftAlerts[0][0].metadata.driftedRateCount).toBe(1);
+  });
+
+  // Review of #166: the catalog listed zai-org-glm-5-1 at 24,000 output
+  // tokens while Venice allowed 80,000, and the proxy holds for the catalog
+  // maximum while live pricing is down. The drift check compared rates only,
+  // so nothing flagged it.
+  it("detects an output maximum or context window that differs from Venice's and alerts", async () => {
+    const glm = VENICE_CHAT_MODEL_PRICES.find((row) => row.model === "zai-org-glm-5-1")!;
+    const qwen = VENICE_CHAT_MODEL_PRICES.find((row) => row.model === "qwen3-5-35b-a3b")!;
+    global.fetch = jest.fn().mockResolvedValue(
+      buildLiveResponse({
+        "zai-org-glm-5-1": { maxCompletionTokens: glm.maxOutputTokens + 16_000 },
+        "qwen3-5-35b-a3b": { availableContextTokens: qwen.contextWindow / 2 },
+      }),
+    );
+
+    const response = await GET(mockReq());
+    const body = (await response.json()) as {
+      data: { driftedRateCount: number; driftedLimitCount: number; driftedLimits: Array<Record<string, unknown>> };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data.driftedRateCount).toBe(0);
+    expect(body.data.driftedLimitCount).toBe(2);
+    expect(body.data.driftedLimits).toEqual(
+      expect.arrayContaining([
+        {
+          model: "zai-org-glm-5-1",
+          field: "max_output_tokens",
+          catalog: glm.maxOutputTokens,
+          live: glm.maxOutputTokens + 16_000,
+          catalogBelowVenice: true,
+        },
+        {
+          model: "qwen3-5-35b-a3b",
+          field: "context_window",
+          catalog: qwen.contextWindow,
+          live: qwen.contextWindow / 2,
+          catalogBelowVenice: false,
+        },
+      ])
+    );
+
+    const driftAlerts = mockReportOpsEvent.mock.calls.filter(
+      ([arg]) => arg?.metadata?.failureType === "venice_pricing_live_drift",
+    );
+    expect(driftAlerts).toHaveLength(1);
+    expect(driftAlerts[0][0].metadata.driftedLimitCount).toBe(2);
+    expect(driftAlerts[0][0].message).toContain("zai-org-glm-5-1.max_output_tokens");
   });
 
   it("flags catalog models that disappeared from Venice's live response", async () => {

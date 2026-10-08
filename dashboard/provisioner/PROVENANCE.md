@@ -234,7 +234,13 @@ inferring them from a live host.
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
   - SHA-256: `f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6`
-- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.246`
+- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.292`
+- Anthropic Claude desktop app for Linux (optional, owner-initiated):
+  `https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_2.26454.0_amd64.deb`
+  - package version: `2.26454.0`
+  - SHA-256: `6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`
+  - size: 180809792 bytes
+  - proprietary Anthropic software, downloaded from Anthropic's repository and never bundled or redistributed by Hivra
 - OpenAI Codex CLI npm package: `@openai/codex@0.149.1`
 - OpenClaw npm package: `openclaw@2026.6.10`
 - Agent Zero OCI image:
@@ -537,6 +543,40 @@ shutdown budget; the DeepSeek native broker renews its upstream session without
 a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
+
+Release `2026.10.07.1` builds on `2026.09.24.4` and adds an optional Claude app
+for Ubuntu Desktop computers, plus the vetted Claude Code CLI pin move from
+`2.1.246` to `2.1.292`. A root helper (`hivra-claude-app.py`), an inert
+supervisor unit (`hivra-claude-app.service`) and a package pin
+(`claude-desktop-pin.json`) are installed on a desktop computer by provisioning
+and by Update & restart, together with a sudoers rule that lets the gateway run
+exactly five commands: `status`, `install`, `mode app`, `mode desktop` and
+`remove`. Nothing is installed or started until the owner adds the app. Adding it
+downloads Anthropic's own Linux package from `downloads.claude.ai`, checks its
+size and SHA-256 against the pin, and unpacks it without root inside the existing
+contained desktop; Hivra never bundles or redistributes it. The desktop
+container is unchanged: no mount, port or privilege is added, so the isolation
+proof and the remote-desktop bundle revision are preserved. The app's own data is
+kept across desktop restarts as a size-capped, root-only backup on the same VM that
+no Hivra service reads; because that data includes whatever the app keeps there, a
+sign-in session among it, `remove` deletes it. The gateway gains four
+owner-authenticated routes under `/api/claude-app/` and advertises `claudeApp` in
+`/api/meta`. The owner signs in to the unmodified app themselves; Hivra's own
+systems never receive or read that sign-in. Remote-desktop assets are unchanged. This source release does not
+deploy, install, or establish Canary acceptance.
+
+Release `2026.09.24.4` builds on `2026.09.24.3` and fixes two terminal
+follow-ups from the socket move. The runtime updater's "is anyone on this
+terminal" check now counts clients on the owner-only unix sockets as well as on
+the loopback ports (a computer updating from an older release still runs its
+terminals on the ports when the check runs), so Update & restart no longer
+restarts a terminal someone is using. The gateway falls back to a terminal's
+loopback port only while its installed unit is still the port-bound one; a unit
+from the socket release answers "restarting" (503) until its socket is back,
+so no other local process that bound the port during a restart can receive the
+owner's terminal traffic. Remote-desktop assets are unchanged, so the
+remote-desktop bundle revision and every session revision are preserved. This
+source release does not deploy, install, or establish Canary acceptance.
 
 Release `2026.09.24.3` builds on `2026.09.24.2` and hardens the computer for
 agents added to it. Both terminals keep their persistent tmux session slots

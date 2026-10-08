@@ -36,20 +36,20 @@ const HERMES_OPENCLAW_MIGRATION_GUIDE = "https://hermes-agent.nousresearch.com/d
 const FEATURES: Record<string, FeatureData> = {
   "persistent-memory": {
     title: "Persistent Memory for AI Agents",
-    h1: "Your agent remembers everything.",
+    h1: "Your agent remembers from one session to the next.",
     metaDescription:
       "Host a Hermes AI agent with persistent memory across every session. No resets, no re-explaining: your agent builds on what it learned, on Hivra.",
-    tagline: "Every session. Every project. Every lesson retained.",
+    tagline: "Memory that carries over between sessions.",
     intro: [
-      "Most AI tools reset the moment you close the tab. Every new conversation starts from zero — you re-explain your stack, your preferences, your context. It compounds into wasted hours.",
+      "Most AI tools reset the moment you close the tab. Every new conversation starts from zero, so you re-explain your stack, your preferences, your context. It adds up to a lot of wasted time.",
       "Hermes agents are different. They live on a persistent server. When you come back tomorrow, next week, or six months from now, the agent knows your name, your projects, your decisions, and what it was working on.",
     ],
     sections: [
       {
         heading: "What \"persistent\" actually means here",
         paragraphs: [
-          "Context windows — the amount of text a language model can process at once — are not persistence. A 200,000-token context window still resets to zero when you start a new session. The model does not remember the previous conversation unless you manually paste it back in.",
-          "Persistent memory is a separate system that runs alongside the model. Between sessions, a memory layer stores what the agent has learned about you, your projects, and its own task history. At the start of a new session, relevant memories are retrieved and loaded into context. The agent does not start from scratch — it picks up where it left off.",
+          "Context windows, the amount of text a language model can process at once, are not persistence. A 200,000-token context window still resets to zero when you start a new session. The model does not remember the previous conversation unless you manually paste it back in.",
+          "Persistent memory is a separate system that runs alongside the model. Between sessions, a memory layer stores what the agent has learned about you, your projects, and its own task history. At the start of a new session, relevant memories are retrieved and loaded into context. The agent does not start from scratch. It picks up where it left off.",
           "This is how Hermes Agent is designed to work, and it is the main reason people use it over a general-purpose chatbot.",
         ],
       },
@@ -57,14 +57,14 @@ const FEATURES: Record<string, FeatureData> = {
         heading: "Three memory types Hermes uses",
         paragraphs: [
           "The user model is a structured record of who you are: your technical preferences, your communication style, the projects you are running, your time zone, how you like results reported. This loads at the start of every session and shapes how the agent responds without you having to re-explain.",
-          "Skill Documents are procedural memory — records of how the agent solved a particular class of problem. When Hermes successfully scrapes a tricky website, processes a specific data format, or debugs a pattern of error, it can synthesize that experience into a reusable document. The next similar task takes less time and requires less guidance because the agent already knows a working approach.",
+          "Skill Documents are procedural memory: records of how the agent solved a particular class of problem. When Hermes successfully scrapes a tricky website, processes a specific data format, or debugs a pattern of error, it can synthesize that experience into a reusable document. The next similar task takes less time and requires less guidance because the agent already knows a working approach.",
           "Event memory is a timestamped log: tasks undertaken, decisions made, results achieved, failures encountered and how they were handled. This is what lets the agent tell you what it did last Tuesday, or explain why it made a particular call three weeks ago.",
         ],
       },
       {
         heading: "Why this requires a server that stays on",
         paragraphs: [
-          "Memory stored in a local application disappears if you reinstall, switch machines, or the application crashes. For memory to be genuinely useful over months of agent use, it needs to live somewhere persistent — a server with its own storage, separate from your local environment.",
+          "Memory stored in a local application disappears if you reinstall, switch machines, or the application crashes. For memory to be genuinely useful over months of agent use, it needs to live somewhere persistent: a server with its own storage, separate from your local environment.",
           "This is why running an agent locally on your laptop is fundamentally limited for memory-intensive use. You get the capability during the session, but you lose the compounding effect that makes the agent genuinely useful over time.",
           "Hivra keeps the memory on the agent's own cloud server, not on your laptop. If you switch to a new computer, your agent's memory is exactly where you left it. Nothing is tied to a local process. Backup coverage depends on the agent and provider and is not guaranteed, so keep an export of anything you cannot afford to lose.",
         ],
@@ -72,27 +72,27 @@ const FEATURES: Record<string, FeatureData> = {
       {
         heading: "Memory isolation across agent profiles",
         paragraphs: [
-          "If you run multiple agent profiles — a research agent, a coding agent, a customer support agent — each profile has a completely separate memory store. They do not share context and cannot contaminate each other's working memory.",
+          "If you run multiple agent profiles, such as a research agent, a coding agent and a customer support agent, each profile has a completely separate memory store. They do not share context and cannot contaminate each other's working memory.",
           "The one shared piece is optional account memory for Claude Code and Codex agents: notes you write once on the dashboard's shared memory page are copied into each new Claude Code or Codex agent you launch. Hermes agents do not receive it. After that, each agent's memory evolves on its own. Agents do not coordinate or share memory automatically; if you want one agent to use another's notes, you pass them across yourself.",
         ],
       },
       {
         heading: "Memory review and correction",
         paragraphs: [
-          "Hermes keeps its memory in plain files (USER.md and MEMORY.md) rather than a hidden store. If the agent learned an incorrect assumption — a wrong belief about how a system works, a mistaken preference — you can ask it to correct or remove that memory directly rather than waiting for it to get overwritten through repeated correction in conversation.",
+          "Hermes keeps its memory in plain files (USER.md and MEMORY.md) rather than a hidden store. If the agent learned an incorrect assumption, such as a wrong belief about how a system works or a mistaken preference, you can ask it to correct or remove that memory directly. No need to wait for it to get overwritten through repeated correction in conversation.",
           "You can also download those memory files from the agent's file explorer. Claude Code and Codex agents add an Export data link on the agent's page that downloads their chats and memory as one JSON file. If you ever want to move to a self-hosted setup or a different hosting provider, you are not locked in by accumulated state.",
         ],
       },
     ],
     bullets: [
       "Full conversation and task history retained across sessions",
-      "User model lives in USER.md — goals, preferences, communication style, project context",
-      "General knowledge lives in MEMORY.md — curated facts the agent reads at session start",
+      "User model lives in USER.md: goals, preferences, communication style, project context",
+      "General knowledge lives in MEMORY.md: curated facts the agent reads at session start",
       "Skill Documents: agentskills.io open format, procedural memory that compounds over time",
       "Event log: timestamped record of every task and decision",
       "Optional Honcho integration: cross-session AI-native user modeling across tools",
-      "Checkpoint and rollback support — /rollback command reverts file changes",
-      "Memory isolated per agent profile — multiple agents, no cross-contamination",
+      "Checkpoint and rollback support: the /rollback command reverts file changes",
+      "Memory isolated per agent profile: multiple agents, no cross-contamination",
       "Shared account memory for new Claude Code and Codex agents, edited once in the dashboard",
       "Memory files you can download from the file explorer, so you are not locked in",
     ],
@@ -112,7 +112,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Can I reset or wipe an agent's memory?",
-        a: "Yes. Ask the agent to remove a specific memory, or delete the agent to wipe everything. Selective removal is supported — you do not have to wipe everything to correct one wrong memory.",
+        a: "Yes. Ask the agent to remove a specific memory, or delete the agent to wipe everything. Selective removal is supported, so you do not have to wipe everything to correct one wrong memory.",
       },
       {
         q: "Does memory work across different agent profiles?",
@@ -141,14 +141,14 @@ const FEATURES: Record<string, FeatureData> = {
     tagline: "Research. Scrape. Fill forms. All while you sleep.",
     intro: [
       "Running browser automation locally means your laptop has to stay on, your VPN has to stay connected, and you have to babysit the process. It is a fragile, exhausting setup.",
-      "Hivra deploys your agent to a persistent cloud server with a full browser environment pre-configured. Your agent can browse, click, fill forms, extract data, and interact with any website — 24 hours a day, from a stable cloud IP.",
+      "Hivra deploys your agent to a persistent cloud server with a full browser environment pre-configured. Your agent can browse, click, fill forms, extract data, and use most websites, around the clock on a paid plan, from a stable cloud IP.",
     ],
     sections: [
       {
         heading: "What browser automation actually enables",
         paragraphs: [
           "The most common agent tasks people run with browser access: competitive monitoring (checking competitor pricing or feature pages on a schedule), research briefs (collecting content from a defined list of sources and summarizing it), lead enrichment (looking up a company or person from publicly available pages), and form submission automation for repetitive workflows.",
-          "Less obvious but equally useful: the agent can maintain a logged-in session on a website. If you have a tool that lacks an API but has a web interface, the agent can interact with it directly — exporting a report, updating a record, checking a status. This covers a large surface area of tools that developers often have to scrape around.",
+          "Less obvious but equally useful: the agent can maintain a logged-in session on a website. If you have a tool that lacks an API but has a web interface, the agent can interact with it directly: exporting a report, updating a record, checking a status. This covers a large surface area of tools that developers often have to scrape around.",
           "The agent also uses screenshots as a verification step. Before taking an action on a page, it can take a screenshot, analyze it, and confirm it is on the right page and in the right state. This catches the common failure mode where a site's layout has changed and a previous CSS selector no longer applies.",
         ],
       },
@@ -163,8 +163,8 @@ const FEATURES: Record<string, FeatureData> = {
       {
         heading: "IP address and anti-bot considerations",
         paragraphs: [
-          "The agent runs from a stable cloud IP in a data center. For most standard websites — news sites, corporate pages, SaaS pricing pages, public databases — this works without any special configuration. The browser sends standard Chromium headers and behaves like a real user session.",
-          "Some sites use aggressive anti-bot systems (Cloudflare's higher-level bot protection, PerimeterX, Akamai Bot Manager) that can detect cloud IP ranges and headless browsers regardless of header spoofing. For these sites, results vary. The agent will tell you when it hits a challenge page rather than silently scraping wrong data.",
+          "The agent runs from a stable cloud IP in a data center. For most standard websites, such as news sites, corporate pages, SaaS pricing pages and public databases, this works without any special configuration. The browser sends standard Chromium headers and behaves like a real user session.",
+          "Some sites use aggressive anti-bot systems (Cloudflare's higher-level bot protection, PerimeterX, Akamai Bot Manager) that can detect cloud IP ranges and headless browsers regardless of header spoofing. For these sites, results vary. The agent will tell you when it hits a challenge page. It won't quietly scrape the wrong data.",
           "If you are targeting sites with known bot detection, point Hermes at a cloud browser service such as Browserbase with your own key. It brings its own residential IPs and fingerprinting, which a data-center browser cannot match.",
         ],
       },
@@ -172,13 +172,13 @@ const FEATURES: Record<string, FeatureData> = {
         heading: "Combining browser automation with scheduled tasks",
         paragraphs: [
           "Browser automation and scheduling are designed to work together. A daily competitive monitoring brief, for example, is a scheduled task that triggers browser navigation to each target URL, extracts the relevant data, compares it to a stored baseline, and sends you a summary over Telegram or email if anything changed.",
-          "You can also build conditional schedules — run a deeper browser research pass only when a trigger condition is met, rather than on a fixed interval. For lightweight monitoring that just checks for a changed value, the agent can use a simpler HTTP request before spinning up the full browser, keeping API token usage down for high-frequency checks.",
+          "You can also build conditional schedules: run a deeper browser research pass only when a trigger condition is met, rather than on a fixed interval. For lightweight monitoring that just checks for a changed value, the agent can use a simpler HTTP request before spinning up the full browser, keeping API token usage down for high-frequency checks.",
         ],
       },
       {
         heading: "What it does not do",
         paragraphs: [
-          "The browser automation is not JavaScript injection or a security tool. The agent navigates as a user would — it cannot bypass authentication it does not have credentials for, access data behind user-specific sessions it has not been given access to, or bypass server-side access controls.",
+          "The browser automation is not JavaScript injection or a security tool. The agent navigates as a user would. It cannot bypass authentication it does not have credentials for, access data behind user-specific sessions it has not been given access to, or bypass server-side access controls.",
           "It also does not work for sites that stream content exclusively through native apps with no web interface. If there is no publicly accessible URL for the data you want, browser automation cannot reach it.",
         ],
       },
@@ -186,7 +186,7 @@ const FEATURES: Record<string, FeatureData> = {
     bullets: [
       "A persistent Chromium on the agent's computer by default, with a live view",
       "Browserbase and Browser Use cloud browsers with your own key",
-      "Runs 24/7 from cloud infrastructure — not your laptop",
+      "Runs around the clock on a paid plan, from cloud infrastructure instead of your laptop",
       "Autonomous web research, form filling, and data extraction",
       "Screenshot verification before and after actions",
       "Session persistence for multi-step flows",
@@ -222,7 +222,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Does browser automation increase API costs significantly?",
-        a: "Screenshots are the main cost multiplier — each screenshot sent to the model for analysis uses tokens. For long research tasks that process many pages, this adds up. Text-only extraction runs are much cheaper. You can configure tasks to limit screenshot usage to verification steps only.",
+        a: "Screenshots are the main cost multiplier, because each screenshot sent to the model for analysis uses tokens. For long research tasks that process many pages, this adds up. Text-only extraction runs are much cheaper. You can configure tasks to limit screenshot usage to verification steps only.",
       },
     ],
   },
@@ -234,23 +234,23 @@ const FEATURES: Record<string, FeatureData> = {
       "Run several AI agents from one Hivra account: Hermes, OpenClaw, Claude Code, Codex and more, each on its own computer. From $9.99/mo (2 vCPU, 4 GB).",
     tagline: "Researcher. Operator. Support. All on one plan.",
     intro: [
-      "Most managed AI tools charge per agent. You end up paying for three or four separate subscriptions to run specialized agents — a researcher, an operator, a support triage bot.",
+      "Most managed AI tools charge per agent. You end up paying for several separate subscriptions to run specialized agents, such as a researcher, an operator and a support triage bot.",
       "Hivra takes a different approach: paid plans give you a compute pool, not per-seat pricing. Each agent gets its own computer, memory, tools, and role, and they share your plan's compute: $9.99/mo for 2 vCPU and 4 GB RAM, or $19.99/mo for 4 vCPU and 8 GB RAM.",
     ],
     sections: [
       {
         heading: "Why multiple agents outperform one generalist",
         paragraphs: [
-          "A single agent that handles everything — research, coding, customer support, content writing — has to context-switch constantly. Its system prompt grows bloated trying to cover every role. The memory store accumulates unrelated history that competes for context space on every task.",
-          "Specialized agents are more focused. A research agent configured for competitive intelligence has a system prompt, tool set, and memory structure optimized for that job. A coding agent has different tool access and different working memory. Each one is sharper at its task than a generalist would be.",
-          "This is how larger AI teams are being built in practice in 2026 — not one big agent, but a portfolio of focused ones with defined handoff points between them.",
+          "A single agent that handles everything, from research and coding to customer support and content writing, has to context-switch constantly. Its system prompt grows bloated trying to cover every role. The memory store accumulates unrelated history that competes for context space on every task.",
+          "Specialized agents are more focused. A research agent configured for competitive intelligence has a system prompt, tool set, and memory structure tuned for that job. A coding agent has different tool access and different working memory. Each one is sharper at its task than a generalist would be.",
+          "Many larger AI teams are being built this way in 2026, as a portfolio of focused agents with defined handoff points between them.",
         ],
       },
       {
         heading: "Isolated memory, one compute pool",
         paragraphs: [
           "Each agent profile on Hivra has a completely separate memory store. The research agent does not see the coding agent's task history and vice versa. This prevents the interference that happens when a generalist agent tries to apply patterns from one domain to an unrelated task.",
-          "Each agent still runs on its own computer. At the plan level, those computers draw from one compute pool: you split your plan's vCPU and RAM across them rather than paying for each one separately.",
+          "Each agent still runs on its own computer. At the plan level, those computers draw from one compute pool: you split your plan's vCPU and RAM across them instead of paying for each one separately.",
           "The agents run side by side, not as a team. Hivra does not coordinate work between them today; built-in orchestration is planned, not shipped. When one agent's output should feed another, you set up that handoff yourself.",
         ],
       },
@@ -289,15 +289,15 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Can different agents use different AI models?",
-        a: "Yes. Each agent profile can be configured with its own model preference. One agent can use Claude Sonnet while another uses Haiku for cheaper high-frequency tasks — all from the same API key.",
+        a: "Yes. Each agent profile can be configured with its own model preference. One agent can use Claude Sonnet while another uses Haiku for cheaper high-frequency tasks, all from the same API key.",
       },
       {
         q: "What changes on a larger plan size?",
         a: "More vCPU, more RAM, and room for more agents running at once. Hosting is $9.99/mo for 2 vCPU and 4 GB RAM, or $19.99/mo for 4 vCPU and 8 GB RAM.",
       },
       {
-        q: "Can two agents write to the same output — like a shared document or spreadsheet?",
-        a: "This depends on your external tool configuration. Agents can be given access to the same Google Sheet, Notion database, or file share. Coordination on write timing is handled at the task level — you define which agent writes first and what the handoff looks like.",
+        q: "Can two agents write to the same output, like a shared document or spreadsheet?",
+        a: "This depends on your external tool configuration. Agents can be given access to the same Google Sheet, Notion database, or file share. Coordination on write timing is handled at the task level: you define which agent writes first and what the handoff looks like.",
       },
     ],
   },
@@ -309,15 +309,15 @@ const FEATURES: Record<string, FeatureData> = {
       "Host a Hermes AI agent without Docker, VPS, or Linux config. Hivra handles the full infrastructure stack. From $9.99/mo (2 vCPU, 4 GB).",
     tagline: "No VPS. No Docker. No config files.",
     intro: [
-      "Self-hosting Hermes requires provisioning a VPS, installing Docker, configuring Caddy or Nginx, managing environment variables, and maintaining everything when it breaks. It can easily take a full weekend.",
-      "Hivra takes all of that away. The entire infrastructure layer — server provisioning, container runtime, networking, SSL, monitoring — is handled before you sign in.",
+      "Self-hosting Hermes requires provisioning a VPS, installing Docker, configuring Caddy or Nginx, managing environment variables, and maintaining everything when it breaks. That is a lot of work before the agent does anything for you.",
+      "Hivra takes all of that away. The entire infrastructure layer, including server provisioning, container runtime, networking, SSL and monitoring, is handled before you sign in.",
     ],
     sections: [
       {
         heading: "What self-hosting actually requires",
         paragraphs: [
           "To run Hermes Agent on your own VPS, you need a server running Linux (Ubuntu 22.04 or 24.04 is recommended), Docker and Docker Compose installed and configured, a domain name with DNS pointed at the server, a reverse proxy (Caddy or Nginx) configured for SSL termination, and environment variables correctly set across a ~30-variable `.env` file.",
-          "You also need a backup strategy for the persistent memory volume, monitoring so you know when the container crashes, and a restart policy so the agent comes back up after reboots. None of this is extraordinarily difficult if you know Linux, but it is a full afternoon of work minimum, and it is ongoing — each major Hermes update potentially requires migration steps, dependency updates, or config changes.",
+          "You also need a backup strategy for the persistent memory volume, monitoring so you know when the container crashes, and a restart policy so the agent comes back up after reboots. None of this is extraordinarily difficult if you know Linux, but it takes real time up front, and the work is ongoing. Each major Hermes update can require migration steps, dependency updates, or config changes.",
           "When it breaks at midnight because the Docker daemon failed or the SSL certificate did not auto-renew, you are the one who fixes it.",
         ],
       },
@@ -335,14 +335,14 @@ const FEATURES: Record<string, FeatureData> = {
         paragraphs: [
           "Create an account and choose a plan. Infrastructure provisions automatically, and a status indicator shows progress while your agent comes up.",
           "Go to the Keys section and paste your AI provider API key (Anthropic, OpenAI, or an OpenRouter key). This is the only credential you need to configure.",
-          "Optionally set up your agent's system prompt to tell it who you are and what you want it to do. This can be done at any time — the agent runs with sensible defaults immediately.",
+          "Optionally set up your agent's system prompt to tell it who you are and what you want it to do. This can be done at any time, and the agent runs with sensible defaults immediately.",
           "That is the full setup. The agent is live and accessible from the dashboard. Scheduled tasks, integrations, and additional configuration happen in the UI without touching a config file.",
         ],
       },
       {
         heading: "For users who do want terminal access",
         paragraphs: [
-          "If you want to inspect the container, add custom tools, or configure something not exposed in the UI, the dashboard exposes log viewing, the agent's tool directory, and a container shell — without managing your own SSH keys or sshd.",
+          "If you want to inspect the container, add custom tools, or configure something not exposed in the UI, the dashboard exposes log viewing, the agent's tool directory, and a container shell, without managing your own SSH keys or sshd.",
           "This is opt-in. You do not need it to use the platform, and enabling it does not change anything about the standard managed behavior. It is there for users who want the managed hosting baseline but also want escape hatches to the infrastructure.",
         ],
       },
@@ -373,7 +373,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "What if I want to customize the underlying container config?",
-        a: "Advanced users can access container configuration, the agent's tool directory, and a container shell through the dashboard. You are not locked out — we just do not require it.",
+        a: "Advanced users can access container configuration, the agent's tool directory, and a container shell through the dashboard. You keep access to all of it, and we do not require it.",
       },
       {
         q: "Is Hivra just a VPS with a UI wrapper?",
@@ -412,9 +412,9 @@ const FEATURES: Record<string, FeatureData> = {
       {
         heading: "The core trade OpenClaw users are making",
         paragraphs: [
-          "OpenClaw users typically know the trade they are making: they get maximum control and zero subscription fees beyond API costs, in exchange for handling all operations themselves. That trade makes sense for developers who genuinely value the control and have the time.",
+          "OpenClaw users usually know the trade they are making: they get maximum control and zero subscription fees beyond API costs, in exchange for handling all operations themselves. That trade makes sense for developers who genuinely value the control and have the time.",
           "The trade breaks down in a few common situations: when the setup time starts competing with the work the agent is supposed to be enabling, when the developer wants the agent available 24/7 without keeping their machine on, or when they want to run multiple agent profiles without managing separate instances.",
-          "Hivra is built for exactly these situations. You bring your API key — the same one you were using with OpenClaw — and get a managed cloud environment that runs the agent for you, whether that agent is OpenClaw or Hermes.",
+          "Hivra is built for exactly these situations. You bring your API key, the same one you were using with OpenClaw, and get a managed cloud environment that runs the agent for you, whether that agent is OpenClaw or Hermes.",
         ],
       },
       {
@@ -439,7 +439,7 @@ const FEATURES: Record<string, FeatureData> = {
     bullets: [
       "OpenClaw itself available on paid plans",
       "Or move to Hermes with its own `hermes claw migrate` command (a manual step)",
-      "Persistent cloud hosting — not a local process",
+      "Persistent cloud hosting instead of a local process",
       "Dashboard, monitoring, and restart management included",
       "Hermes updates tested and applied for you",
       "Run more than one agent from one account",
@@ -467,7 +467,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Do I lose anything by switching from OpenClaw to Hivra?",
-        a: "You gain managed hosting and an agent that stays on without your laptop. The main trade is that you are no longer running locally — which means your API key is stored on a server rather than your machine. Local browser sessions and stored credentials do not migrate, and if you move to Hermes, cron jobs and plugins need setting up again.",
+        a: "You gain managed hosting and an agent that stays on without your laptop. The main trade is that you are no longer running locally, which means your API key is stored on a server rather than your machine. Local browser sessions and stored credentials do not migrate, and if you move to Hermes, cron jobs and plugins need setting up again.",
       },
       {
         q: "I built custom tools for OpenClaw. Will they work on Hivra?",
@@ -484,21 +484,21 @@ const FEATURES: Record<string, FeatureData> = {
     tagline: "Cron jobs. Recurring tasks. Automated pipelines.",
     intro: [
       "The most powerful thing about a persistent AI agent is not what it does when you are talking to it. It is what it does when you are not.",
-      "Hivra supports full cron-style scheduling out of the box. Define a task, set a schedule, and your agent runs it autonomously — whether that is every hour, every day, or every Monday at 9am.",
+      "Hivra supports full cron-style scheduling out of the box. Define a task, set a schedule, and your agent runs it autonomously, whether that is every hour, every day, or every Monday at 9am.",
     ],
     sections: [
       {
         heading: "How scheduled tasks work on Hivra",
         paragraphs: [
           "You define a task in the agent's Tasks tab in the Hivra dashboard. Give it a name and write the task instruction in plain language: what the agent should do, what it should produce, and where the result should go. Then pick how often it runs (hourly, daily, weekly or monthly) and at what time, and on which days for a weekly task. A task that already has a custom cron schedule keeps it and shows the cron expression for editing. You can also pause, resume, or edit a task's schedule mid-run without losing its task history.",
-          "At the scheduled time, the agent's scheduler wakes it, loads the relevant memory context, and starts the task. The agent runs through it autonomously and logs the result — output text, files generated, actions taken — to the task history. If the task produces a report or notification, it sends it where you chose: Telegram, Discord, or email, or it stays in the run history.",
-          "Event hooks add conditional triggering on top of cron. Gateway hooks fire on every incoming and outgoing message — useful for logging, real-time alerting, and webhook forwarding to external monitoring. Plugin hooks intercept tool calls before and after execution, enabling metrics collection, guardrail checks, and custom business logic without modifying the agent's core configuration.",
+          "At the scheduled time, the agent's scheduler wakes it, loads the relevant memory context, and starts the task. The agent runs through it autonomously and logs the result (output text, files generated, actions taken) to the task history. If the task produces a report or notification, it sends it where you chose: Telegram, Discord, or email, or it stays in the run history.",
+          "Event hooks add conditional triggering on top of cron. Gateway hooks fire on every incoming and outgoing message, which is useful for logging, real-time alerting, and webhook forwarding to external monitoring. Plugin hooks intercept tool calls before and after execution, enabling metrics collection, guardrail checks, and custom business logic without modifying the agent's core configuration.",
         ],
       },
       {
         heading: "What runs well as a scheduled task",
         paragraphs: [
-          "Anything repetitive and verifiable: the agent needs to be able to tell when it has done the task correctly. Competitive monitoring, daily summaries, data extraction from a defined set of sources, nightly code processing, weekly reporting — these all have clear success criteria and run reliably.",
+          "Anything repetitive and verifiable: the agent needs to be able to tell when it has done the task correctly. Competitive monitoring, daily summaries, data extraction from a defined set of sources, nightly code processing and weekly reporting all have clear success criteria and run reliably.",
           "Tasks that are time-sensitive but not urgent in real time: a morning brief that arrives before you sit down is more useful than one that arrives while you are already buried in email. Scheduling it to run at 6:30am lets the agent do the research while you are sleeping and have the result ready.",
           "Tasks that chain together: a monitoring task that triggers a follow-up research task when a condition is met, or a data extraction task whose output is automatically passed to a formatting task for the final report. These multi-step scheduled workflows replace what would otherwise be manual pipe-and-process scripts.",
         ],
@@ -516,12 +516,12 @@ const FEATURES: Record<string, FeatureData> = {
         heading: "Combining scheduling with persistent memory",
         paragraphs: [
           "When the same task runs repeatedly using the same agent profile, it compounds. A competitive monitoring agent that has been running for three months has a stored history of how competitor pricing has evolved. When it runs this week, it contextualizes the current pricing against that history rather than treating each observation in isolation.",
-          "This compounding effect is what separates a persistent scheduled agent from a cron script. The script runs the same logic every time. The agent improves its execution of the task as it builds up experience — faster navigation of familiar sites, better categorization of changes it has seen patterns of before, more relevant framing of results for your specific interests.",
+          "This compounding effect is what separates a persistent scheduled agent from a cron script. The script runs the same logic every time. The agent improves its execution of the task as it builds up experience, with faster navigation of familiar sites, better categorization of changes it has seen patterns of before, and more relevant framing of results for your specific interests.",
         ],
       },
     ],
     bullets: [
-      "Full cron scheduling pre-configured — no crontab editing required",
+      "Full cron scheduling pre-configured, with no crontab editing required",
       "Write the task in plain language, then pick hourly, daily, weekly or monthly",
       "Results logged and visible in the Hivra dashboard",
       "Last status, last error, and a Run now button on every task",
@@ -558,7 +558,7 @@ const FEATURES: Record<string, FeatureData> = {
       },
       {
         q: "Is there a limit on how many scheduled tasks I can run?",
-        a: "Paid plans have no set limit on the number of tasks. Concurrent execution depends on your plan size — tasks that run simultaneously share the agent's vCPU and RAM. On the 2 vCPU, 4 GB size, stagger heavy tasks rather than running many at once.",
+        a: "Paid plans have no set limit on the number of tasks. Concurrent execution depends on your plan size, because tasks that run simultaneously share the agent's vCPU and RAM. On the 2 vCPU, 4 GB size, stagger heavy tasks. Don't run many at once.",
       },
     ],
   },

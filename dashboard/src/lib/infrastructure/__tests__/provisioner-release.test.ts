@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.09.24.3.json";
+import release from "../../../../provisioner-releases/2026.10.07.1.json";
+import terminalFollowupsRelease from "../../../../provisioner-releases/2026.09.24.4.json";
+import terminalSocketsRelease from "../../../../provisioner-releases/2026.09.24.3.json";
 import persistentSessionsRelease from "../../../../provisioner-releases/2026.09.24.2.json";
 import detachedRunsRelease from "../../../../provisioner-releases/2026.09.24.1.json";
 import desktopPlannerRelease from "../../../../provisioner-releases/2026.09.22.2.json";
@@ -10,6 +12,7 @@ import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json"
 import omarchyCursorRelease from "../../../../provisioner-releases/2026.09.21.1.json";
 import providerRelease from "../../../../provisioner-releases/2026.09.08.3.json";
 import {
+  AGENT_CLI_VERSIONS,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION,
@@ -81,10 +84,60 @@ it("ships the detached chat-run supervisor with the gateway, never into the seal
   expect(supportsModelSettingsProvisionerVersion("2026.09.22.2")).toBe(true);
 });
 
+it("ships the socket-aware terminal checks in 2026.09.24.4, keeping 2026.09.24.3 admitted", () => {
+  expect(terminalFollowupsRelease.version).toBe("2026.09.24.4");
+  const updater = readFileSync(path.join(process.cwd(), "provisioner/hivra-update-guest-runtime.sh"), "utf8");
+  expect(updater).toContain("terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1");
+  const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
+  expect(server).toContain("return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };");
+  for (const file of ["hivra-update-guest-runtime.sh", "hivra-chat/server.js"]) {
+    const current = terminalFollowupsRelease.files.find(entry => entry.path === file)!;
+    const prior = terminalSocketsRelease.files.find(entry => entry.path === file)!;
+    expect(current.sha256).not.toBe(prior.sha256);
+  }
+  expect(isCompatibleProxmoxProvisionerVersion("2026.09.24.3")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.09.24.3")).toBe(true);
+});
+
+it("ships the optional Claude app (helper, inert unit, pin) in 2026.10.07.1 without touching the desktop container's assets", () => {
+  expect(release.version).toBe("2026.10.07.1");
+  const paths = release.files.map(file => file.path);
+  for (const file of ["hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json"]) {
+    expect(paths).toContain(file);
+    expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
+    expect(terminalFollowupsRelease.files.map(entry => entry.path)).not.toContain(file);
+  }
+  // The isolation proof and the remote-desktop bundle revision are preserved:
+  // the sealed desktop installer, broker and server are byte-identical.
+  for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs"]) {
+    const current = release.files.find(entry => entry.path === file)!;
+    const prior = terminalFollowupsRelease.files.find(entry => entry.path === file)!;
+    expect(current.sha256).toBe(prior.sha256);
+  }
+  // The gateway, both lanes that install the helper, and the vetted CLI pin moved.
+  for (const file of ["hivra-chat/server.js", "hivra-update-guest-runtime.sh", "provision-claude-code-box.sh", "agent-cli-versions.json"]) {
+    const current = release.files.find(entry => entry.path === file)!;
+    const prior = terminalFollowupsRelease.files.find(entry => entry.path === file)!;
+    expect(current.sha256).not.toBe(prior.sha256);
+  }
+  expect(AGENT_CLI_VERSIONS["claude-code"]).toBe("2.1.292");
+  // The pin names Anthropic's own repository and matches the evidence documents.
+  const pin = JSON.parse(readFileSync(path.join(process.cwd(), "provisioner/claude-desktop-pin.json"), "utf8")) as { version: string; sha256: string; bytes: number; url: string };
+  expect(pin.url).toBe(`https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_${pin.version}_amd64.deb`);
+  for (const evidence of ["../docs/release/runtime-distribution-boundary.json", "../docs/release/RUNTIME-DISTRIBUTION.md", "../docs/release/DEPENDENCIES.md", "provisioner/PROVENANCE.md"]) {
+    expect(readFileSync(path.join(process.cwd(), evidence), "utf8")).toContain(pin.sha256);
+  }
+  // The previous release stays admitted everywhere it was.
+  expect(isCompatibleProxmoxProvisionerVersion("2026.09.24.4")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.09.24.4")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.09.24.4")).toBe(true);
+});
+
 it("ships the computer hardening (git routes off, ttyd on owner-only sockets) as a new release", () => {
   // The current release's gateway answers /api/git/* with 404 on a computer,
   // and its terminal units listen on unix sockets, not loopback ports.
-  expect(release.version).toBe("2026.09.24.3");
+  // Introduced in 2026.09.24.3 and carried by every later release.
+  expect(terminalSocketsRelease.version).toBe("2026.09.24.3");
   const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
   expect(server).toContain("git_unavailable_on_computer");
   for (const [file, socket] of [["bux-ttyd-base-path.conf", "/run/hivra-terminal/ttyd.sock"], ["bux-box-ttyd.service", "/run/hivra-box-terminal/ttyd.sock"]]) {
@@ -103,7 +156,7 @@ it("ships the computer hardening (git routes off, ttyd on owner-only sockets) as
   expect(persistentSessionsRelease.version).toBe("2026.09.24.2");
   for (const file of persistentSessionsRelease.files.map(entry => entry.path)) expect(release.files.map(entry => entry.path)).toContain(file);
   // The prior releases stay admitted and fully compatible.
-  for (const version of ["2026.09.24.2", "2026.09.24.1"]) {
+  for (const version of ["2026.09.24.4", "2026.09.24.3", "2026.09.24.2", "2026.09.24.1"]) {
     expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
     expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
     expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
@@ -141,9 +194,10 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   // SQL admission stopped at 2026.09.08.3, so their provider computers could
   // never be admitted or keep a valid identity.
   const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
-    "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql"]
+    "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
+    "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])

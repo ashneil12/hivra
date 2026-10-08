@@ -763,5 +763,6 @@ The runtime used for this acceptance test does not become the product's preferre
 - [Approved platform design](superpowers/specs/2026-08-24-hivra-agent-computers-design.md)
 - [Open-source boundary](OPEN-SOURCE-BOUNDARY.md)
 - [Security model](SECURITY-MODEL.md)
+- [Shared brain and agent network design](superpowers/specs/2026-10-07-shared-brain-and-agent-network.md) (target, not built)
 - [`../ROADMAP.md`](../ROADMAP.md)
 - [Core experience direction](CORE-EXPERIENCE.md)

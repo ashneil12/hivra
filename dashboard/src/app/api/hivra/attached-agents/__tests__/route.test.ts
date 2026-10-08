@@ -114,7 +114,7 @@ it("offers the pair only where the gate would open now, and says why for the oth
   expect(unchecked.computerReasons[desk.id]).toBe("Hivra couldn't check this computer right now. Open it to try again.");
 });
 
-it("says a computer whose gateway predates attached agents needs Update & restart, and asks only computers the gate would open", async () => {
+it("says a computer whose gateway predates attached agents needs Update connection service, and asks only computers the gate would open", async () => {
   readOwnerAttached.mockResolvedValue([]);
   const desk = { id: "11111111-1111-4111-8111-111111111111", type: "linux-desktop", computer_profile: "ubuntu-desktop",
     computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, deployment_mode: "hivra-managed",
@@ -127,7 +127,7 @@ it("says a computer whose gateway predates attached agents needs Update & restar
   jest.mocked(readAttachedGatewayProtocol).mockImplementation(async (url) => url === desk.chat_url ? "update_required" : "current");
   const body = (await (await get()).json()).data;
   expect(body.eligibleComputerIds).toEqual([fresh.id]);
-  expect(body.computerReasons[desk.id]).toBe("This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex.");
+  expect(body.computerReasons[desk.id]).toBe("This computer's Hivra service is older than Codex needs. In Manage, choose Update connection service, then add Codex.");
   expect(jest.mocked(readAttachedGatewayProtocol).mock.calls.map((call) => call[0]).sort()).toEqual([desk.chat_url, fresh.chat_url].sort());
 });
 

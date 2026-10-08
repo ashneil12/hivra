@@ -31,6 +31,8 @@ import {
 } from "@/lib/services/inflight-update-gate";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 import { spawnSync } from "child_process";
+import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
+import { resolveInstanceAgentImageRepo } from "@/lib/services/webui-instance-builder";
 
 jest.mock("@/lib/hetzner/ssh", () => ({
   sshExec: jest.fn(),
@@ -93,6 +95,11 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 jest.mock("@/lib/services/webui-instance-builder", () => ({
   buildWebUIBootstrapScript: jest.fn(),
   buildWebUIProvisioningArtifacts: jest.fn(),
+  resolveInstanceAgentImageRepo: jest.fn(() => null),
+}));
+// The release registry does not govern these test boxes: updates follow the floating tag as before.
+jest.mock("@/lib/hermes-releases/live-update", () => ({
+  resolveUpdateImagePolicy: jest.fn(async () => ({ policy: undefined, state: null })),
 }));
 
 jest.mock("@/lib/services/provider-config", () => ({
@@ -608,9 +615,10 @@ describe("applyLiveUpdate", () => {
     expect(wrapperScript).toContain("/api/u/inst-789");
     expect(wrapperScript).toContain('--data-urlencode "r=$2"');
     expect(wrapperScript).toContain("?s=$1&t=manual");
-    expect(wrapperScript).toContain('ru "succeeded" "completed" || true');
+    // The outcome the update script left behind (kind, digests, reason) rides on the report.
+    expect(wrapperScript).toContain('ru "succeeded" "completed" "" "$(hermes_result_extras)" || true');
     expect(wrapperScript).toContain(
-      'ru "failed" "exit_status_${status}" "/tmp/hermes-update-inst-789.log" || true'
+      'ru "failed" "${reason:-exit_status_${status}}" "/tmp/hermes-update-inst-789.log" "$(hermes_result_extras)" || true'
     );
     expect(wrapperScript).toContain("echo W >&2");
   });
@@ -637,7 +645,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-proxmox",
+        id: "00000000-0000-4000-8000-a8e7efa045b5",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -682,20 +690,20 @@ describe("applyLiveUpdate", () => {
         fqdn: "localhost",
       })
     );
-    expect(updateEq).toHaveBeenCalledWith("id", "inst-proxmox");
+    expect(updateEq).toHaveBeenCalledWith("id", "00000000-0000-4000-8000-a8e7efa045b5");
 
     // Single-tenant VM guard must be present in the wrapper that lands in the guest
     // VM, so a misrouted deploy aborts before it can drop a peer Caddyfile alongside
     // the legitimate tenant's. Decode bastion → inner → wrapper to inspect.
     const bastionScript = String((runProxmoxHostScript as jest.Mock).mock.calls[0][0]);
-    const innerB64 = bastionScript.match(/printf '%s' '([^']+)' \| base64 -d \| ssh/)?.[1];
+    const innerB64 = bastionScript.match(/printf '%s' '([^']+)' \| base64 -d \| "\$\{GUEST_SSH\[@\]\}"/)?.[1];
     const innerScript = innerB64 ? Buffer.from(innerB64, "base64").toString("utf8") : "";
     const wrapperScript = extractEmbeddedScript(
       innerScript,
-      "/tmp/hermes-update-wrapper-inst-proxmox.sh"
+      "/tmp/hermes-update-wrapper-00000000-0000-4000-8000-a8e7efa045b5.sh"
     );
     expect(wrapperScript).toContain("/opt/hermes/instances");
-    expect(wrapperScript).toContain("! -name \"inst-proxmox\"");
+    expect(wrapperScript).toContain("! -name \"00000000-0000-4000-8000-a8e7efa045b5\"");
     expect(wrapperScript).toContain('ru "failed" "stray_tenant_dir_collision"');
   });
 
@@ -730,7 +738,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-proxmox",
+        id: "00000000-0000-4000-8000-a8e7efa045b5",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -762,10 +770,20 @@ describe("applyLiveUpdate", () => {
     expect(attempts).toBeGreaterThan(0);
     expect(connectTimeoutS).toBeGreaterThan(0);
     expect(sleepS).toBeGreaterThan(0);
+    // Before any SSH the host waits for the VM's guest agent, which attests the
+    // host key the connection is pinned to; that wait shares the same cap.
+    const agentAttempts = Number(script.match(/HERMES_GUEST_AGENT_ATTEMPTS=(\d+)/)?.[1]);
+    const agentPingS = Number(script.match(/timeout (\d+) qm guest cmd "\$VMID" ping/)?.[1]);
+    const agentSleepS = Number(script.match(/-lt "\$HERMES_GUEST_AGENT_ATTEMPTS" \]; then sleep (\d+)/)?.[1]);
+    expect(agentAttempts).toBeGreaterThan(0);
+    expect(agentPingS).toBeGreaterThan(0);
+    expect(agentSleepS).toBeGreaterThan(0);
 
     // No sleep after the final attempt — it would only delay the diagnostic.
-    const worstCaseMs = (attempts * connectTimeoutS + (attempts - 1) * sleepS) * 1000;
-    expect(worstCaseMs).toBeLessThan(timeoutMs);
+    // 10s is left for the qm config/status/guest exec calls between the waits.
+    const agentWorstCaseS = agentAttempts * agentPingS + (agentAttempts - 1) * agentSleepS;
+    const sshWorstCaseS = attempts * connectTimeoutS + (attempts - 1) * sleepS;
+    expect((agentWorstCaseS + sshWorstCaseS + 10) * 1000).toBeLessThan(timeoutMs);
 
     // The diagnostic the budget exists to protect must still be emitted, and must
     // name the VM and IP rather than leaving the caller with a bare timeout.
@@ -796,7 +814,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-fixturenode1",
+        id: "00000000-0000-4000-8000-038497fcf02a",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -869,7 +887,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-fixturelegacy",
+        id: "00000000-0000-4000-8000-cf441605fbb0",
         user_id: "user-123",
         provider: "openai",
         hetzner_server_id: null,
@@ -975,7 +993,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-webui",
+        id: "00000000-0000-4000-8000-06dc49908569",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1016,8 +1034,8 @@ describe("applyLiveUpdate", () => {
     // Caddy to issue a 308 HTTPS redirect loop for /health.
     expect(buildWebUIProvisioningArtifacts).toHaveBeenCalledWith(
       expect.objectContaining({
-        instanceId: "inst-webui",
-        containerName: "agent-inst-webui",
+        instanceId: "00000000-0000-4000-8000-06dc49908569",
+        containerName: "agent-00000000-0000-4000-8000-06dc49908569",
         fqdn: "localhost",
         cpuLimit: 2,
         ramLimit: 4096,
@@ -1063,7 +1081,7 @@ describe("applyLiveUpdate", () => {
 
     const result = await applyLiveUpdate(
       {
-        id: "inst-operatoros",
+        id: "00000000-0000-4000-8000-729aa83986c8",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1117,7 +1135,7 @@ describe("applyLiveUpdate", () => {
 
     await expect(applyLiveUpdate(
       {
-        id: "inst-operatoros-noimage",
+        id: "00000000-0000-4000-8000-729aa83986c8-noimage",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1216,7 +1234,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-gated",
+        id: "00000000-0000-4000-8000-06dc49908569-sidecar-gated",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1260,7 +1278,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-enabled",
+        id: "00000000-0000-4000-8000-06dc49908569-sidecar-enabled",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1309,7 +1327,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-tier-dropped",
+        id: "00000000-0000-4000-8000-06dc49908569-sidecar-tier-dropped",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1351,7 +1369,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-default",
+        id: "00000000-0000-4000-8000-06dc49908569-sidecar-default",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1389,7 +1407,7 @@ describe("applyLiveUpdate", () => {
 
     await applyLiveUpdate(
       {
-        id: "inst-webui-sidecar-optout",
+        id: "00000000-0000-4000-8000-06dc49908569-sidecar-optout",
         user_id: "user-123",
         provider: "openai",
         backend: "webui",
@@ -1575,6 +1593,104 @@ function walletRow(
   };
 }
 
+describe("applyLiveUpdate release registry", () => {
+  const instance = {
+    id: "inst-rel",
+    user_id: "user-123",
+    provider: "openai",
+    hetzner_server_id: 1,
+    api_key_encrypted: "enc-api-key",
+    api_server_key_encrypted: "enc-gateway",
+    config: {},
+  };
+  const supabase = {
+    from: jest.fn().mockReturnValue({
+      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
+    }),
+  } as unknown as SupabaseClient;
+  const digest = `sha256:${"d".repeat(64)}`;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (decryptApiKey as jest.Mock).mockReturnValue("plain-api-key");
+    (resolveCodexDeploymentSecret as jest.Mock).mockReturnValue({ apiKey: "", authBundle: undefined });
+    (resolveNousDeploymentSecret as jest.Mock).mockReturnValue({ apiKey: "plain-api-key", authBundle: undefined });
+    (getAutoUpdateConfig as jest.Mock).mockReturnValue({ enabled: false, time: "06:00" });
+    (getRuntimeAgentSettings as jest.Mock).mockReturnValue({});
+    (getBankrWalletForInstance as jest.Mock).mockResolvedValue(null);
+    (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(null);
+    (isProTierUser as jest.Mock).mockResolvedValue({ ok: true, tier: "operator" });
+    (decryptMemorySystemSecrets as jest.Mock).mockReturnValue(undefined);
+    (validateProviderApiKey as jest.Mock).mockResolvedValue({ valid: true });
+    (getProfileDeploymentState as jest.Mock).mockResolvedValue({ profileRoutes: [], profilesToRestore: [] });
+    (resolveGatewayConfiguration as jest.Mock).mockReturnValue({ fqdn: "agent.example.com", gatewayUrl: "https://agent.example.com" });
+    (buildWebUIProvisioningArtifacts as jest.Mock).mockReturnValue({ composeYaml: "c", caddyfile: "c", envFile: "e", configYaml: "c", hermesEnvFile: "h" });
+    (buildWebUIBootstrapScript as jest.Mock).mockReturnValue("#!/bin/bash\necho webui ok\n");
+    (resolveProviderBaseUrl as jest.Mock).mockReturnValue(undefined);
+    (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({ policy: undefined, state: null });
+    (resolveInstanceAgentImageRepo as jest.Mock).mockReturnValue(null);
+  });
+
+  const lastBootstrapOptions = () => (buildWebUIBootstrapScript as jest.Mock).mock.calls.at(-1)?.[2];
+
+  it("asks the registry with the caller's intent and hands the chosen image to the update script", async () => {
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValueOnce({
+      policy: { kind: "pinned", ref: `ghcr.io/o/n@${digest}`, digest },
+      state: null,
+    });
+
+    const result = await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, {
+      initiator: USER_LIVE_UPDATE,
+      imageIntent: "release",
+    });
+
+    expect(result.applied).toBe(true);
+    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(supabase, "inst-rel", "release");
+    expect(lastBootstrapOptions()).toMatchObject({
+      mode: "update",
+      imagePolicy: { kind: "pinned", ref: `ghcr.io/o/n@${digest}`, digest },
+    });
+  });
+
+  it("leaves the image alone for updates that are not release updates (config redeploys, resizes, recovery)", async () => {
+    await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(supabase, "inst-rel", "current");
+  });
+
+  it("passes no policy for a box the registry does not govern, so it follows its floating tag as before", async () => {
+    await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE, imageIntent: "release" });
+    expect(lastBootstrapOptions()).not.toHaveProperty("imagePolicy");
+  });
+
+  it("does not launch an update it cannot place on a release", async () => {
+    (resolveUpdateImagePolicy as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, {
+      initiator: USER_LIVE_UPDATE,
+      imageIntent: "release",
+    });
+
+    expect(result).toEqual({ applied: false, error: "Could not look up the release for this update", initiator: USER_LIVE_UPDATE });
+    expect(sshExec).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("points the box's roller at the image repository its compose actually runs", async () => {
+    (resolveInstanceAgentImageRepo as jest.Mock).mockReturnValueOnce("ghcr.io/example/agent-canary");
+    await applyLiveUpdate(instance, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+    const additional = lastBootstrapOptions().additionalProvisioningScript as string;
+    const roller = Buffer.from(
+      /printf '%s' '([^']+)' \| base64 -d(?: \| gunzip)? > \/usr\/local\/bin\/hermes-roll-inst-rel\.hermes-new/.exec(additional)![1],
+      "base64"
+    );
+    const text = require("zlib").gunzipSync(roller).toString("utf8");
+    expect(text).toContain('REPO="ghcr.io/example/agent-canary"');
+  });
+});
+
 describe("applyLiveUpdate in-flight turn gate", () => {
   const FLEET_SYNC = systemLiveUpdate("fleet_sync");
 
@@ -1716,7 +1832,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
 
     await applyLiveUpdate(
       {
-        ...row("inst-gate-proxmox"),
+        ...row("00000000-0000-4000-8000-5dae837fb4ed"),
         hetzner_server_id: null,
         host_id: null,
         config: {

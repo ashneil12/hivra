@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -15,6 +15,7 @@ import { log } from "@/lib/logger";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { GATEWAY_SUBPROFILE_SUPERVISOR_SH_B64 } from "@/lib/services/gateway-supervisor";
 import { buildManagedGatewayStatusCommand } from "@/lib/services/managed-gateway-command";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
 
 // SCRIPTURE_ANCHOR: profile-branch | John 15:5 | Verse: I am the vine. You are the branches.
 const LOG_SOURCE = "profile-service";
@@ -269,16 +270,32 @@ CONTAINEREOF
    * VM lives.
    */
   static async getHostIpForInstance(instanceId: string, userId: string): Promise<string> {
+    return (await ProfileService.getGuestSshForInstance(instanceId, userId)).ip;
+  }
+
+  /**
+   * The guest IP plus the `sshExec` target for it (`getHermesGuestSshTarget`):
+   * the instance's host, stored VMID and id. Pass both to every guest command;
+   * the IP alone names a VM on every host that shares the private prefix.
+   */
+  static async getGuestSshForInstance(
+    instanceId: string,
+    userId: string
+  ): Promise<{ ip: string; guestTarget: ProxmoxSshHostConfig | null }> {
     sanitizeDockerName(instanceId);
     const { data: instance, error } = await supabaseAdmin!
       .from("hermes_instances")
-      .select("host_id, config, ipv4_address")
+      .select("id, host_id, config, ipv4_address, proxmox_vmid, proxmox_node, gateway_url")
       .eq("id", instanceId)
       .eq("user_id", userId)
       .maybeSingle<{
+        id: string;
         host_id: string | null;
         config: Record<string, unknown> | null;
         ipv4_address: string | null;
+        proxmox_vmid?: number | null;
+        proxmox_node?: string | null;
+        gateway_url?: string | null;
       }>();
 
     if (error) {
@@ -287,6 +304,16 @@ CONTAINEREOF
     if (!instance) {
       throw new InstanceAccessError();
     }
+    const guestTarget = getHermesGuestSshTarget(instance);
+    const ip = await ProfileService.resolveInstanceHostIp(instance);
+    return { ip, guestTarget };
+  }
+
+  private static async resolveInstanceHostIp(instance: {
+    host_id: string | null;
+    config: Record<string, unknown> | null;
+    ipv4_address: string | null;
+  }): Promise<string> {
 
     // Proxmox-backed instances expose the guest's private IPv4 in
     // config.infrastructure. sshExec auto-routes private subnet IPs through
@@ -482,7 +509,7 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
    * List all profiles on the container via SSH and sync with the database.
    */
   static async syncProfiles(instanceId: string, userId: string) {
-    const ip = await this.getHostIpForInstance(instanceId, userId);
+    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
     const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
     const containerName = this.buildContainerName(instanceId);
 
@@ -513,7 +540,7 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
       '
     `;
 
-    const res = await sshExec(ip, script, { timeoutMs: 15000 });
+    const res = await sshExec(ip, script, { timeoutMs: 15000, proxmoxHostConfig: guestTarget });
     if (!res.ok) {
       const failureDetails = redactSensitiveCommandOutput(
         [res.error, res.stderr, res.stdout]
@@ -633,7 +660,7 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
     if (error || !profile) throw new Error("Could not create profile record");
 
     try {
-      const ip = await this.getHostIpForInstance(instanceId, userId);
+      const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
       const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
       const containerName = this.buildContainerName(instanceId);
       const safeName = sanitizeDockerName(params.name);
@@ -675,7 +702,7 @@ if completed.returncode != 0:
         `
       );
       
-      const res = await sshExec(ip, createScript, { timeoutMs: 30000 });
+      const res = await sshExec(ip, createScript, { timeoutMs: 30000, proxmoxHostConfig: guestTarget });
       if (!res.ok) throw new Error(res.stderr || res.stdout);
 
       // When cloning, strip messaging tokens so the new profile doesn't
@@ -684,7 +711,7 @@ if completed.returncode != 0:
       const isCloning = !!(params.cloneFrom && params.cloneFrom !== 'none');
       if (isCloning) {
         const stripTokensScript = `docker exec ${containerName} sed -i -E '/^(TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_APP_TOKEN|SLACK_BOT_TOKEN)=/d' ${hermesHome}/profiles/${safeName}/.env 2>/dev/null || true`;
-        await sshExec(ip, stripTokensScript, { timeoutMs: 10000 });
+        await sshExec(ip, stripTokensScript, { timeoutMs: 10000, proxmoxHostConfig: guestTarget });
       }
 
       // --- CONFIG INJECTION ---
@@ -802,7 +829,7 @@ EOF\n`;
       }
 
       const b64Inject = b64(injectScript);
-      const injectRes = await sshExec(ip, `echo "${b64Inject}" | base64 -d | docker exec -i ${containerName} sh`, { timeoutMs: 30000 });
+      const injectRes = await sshExec(ip, `echo "${b64Inject}" | base64 -d | docker exec -i ${containerName} sh`, { timeoutMs: 30000, proxmoxHostConfig: guestTarget });
       if (!injectRes.ok) {
         log.warn("profile config injection warning", {
           source: LOG_SOURCE,
@@ -830,7 +857,7 @@ EOF\n`;
 
   static async deleteProfile(instanceId: string, userId: string, name: string) {
     const safeName = sanitizeDockerName(name);
-    const ip = await this.getHostIpForInstance(instanceId, userId);
+    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
     const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
@@ -843,7 +870,7 @@ ${ProfileService.buildGatewayStopScript(containerName, profileDir, safeName, {
 
 docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeName}" || true
 `;
-    await sshExec(ip, cleanupScript).catch(e => {
+    await sshExec(ip, cleanupScript, { proxmoxHostConfig: guestTarget }).catch(e => {
        log.warn("failed to erase profile from container disk (might be offline)", {
          source: LOG_SOURCE,
          failureType: "profile_disk_erase_failed",
@@ -896,7 +923,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
     // Note: Gateway key shouldn't be overridden unless needed.
     // The dashboard proxy authenticates with the instance's main key.
 
-    const ip = await this.getHostIpForInstance(instanceId, userId);
+    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
     const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
@@ -916,7 +943,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
       profile.gateway_port
     );
     // We update status immediately on successful launch command
-    const res = await sshExec(ip, script, { timeoutMs: 30000 });
+    const res = await sshExec(ip, script, { timeoutMs: 30000, proxmoxHostConfig: guestTarget });
     if (!res.ok) throw new Error(res.stderr || res.stdout);
 
     // Update Caddy FIRST so the route exists when the first request arrives
@@ -951,7 +978,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
       throw new Error("Profile has no allocated gateway port");
     }
 
-    const ip = await this.getHostIpForInstance(instanceId, userId);
+    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
     const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
@@ -960,7 +987,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
     const script = this.buildGatewayStopScript(containerName, profileDir, safeName, {
       removePidFile: true,
     });
-    await sshExec(ip, script);
+    await sshExec(ip, script, { proxmoxHostConfig: guestTarget });
     
     // If it fails, maybe it's already stopped. Update db anyway.
     const { error: stopStatusError } = await supabaseAdmin!
@@ -1002,7 +1029,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
   static async updateAgentCaddyRouting(instanceId: string, userId: string) {
     // Ownership is validated here (throws for a foreign instance), so it must
     // stay ahead of every early return below.
-    const ip = await this.getHostIpForInstance(instanceId, userId);
+    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
     const containerName = this.buildContainerName(instanceId);
 
     const { data: instance } = await supabaseAdmin!
@@ -1095,7 +1122,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
       probeFqdn: fqdn,
     });
 
-    const res = await sshExec(ip, script);
+    const res = await sshExec(ip, script, { proxmoxHostConfig: guestTarget });
     // Audit every Caddy reload (success or failure) to ops-events. The
     // 2026-04-30 outage left the fleet in a quietly-broken state for
     // hours because we had no record of what changed in any one

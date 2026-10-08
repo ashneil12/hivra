@@ -180,7 +180,8 @@ for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent
   [ -f "$SRC_DIR/$f" ] || die "missing artifact next to script: $f"
 done
 if [ "$AGENT_KIND" = "linux-desktop" ]; then
-  for f in remote-desktop/install-guest.py remote-desktop/broker.cjs remote-desktop/server.cjs; do
+  for f in remote-desktop/install-guest.py remote-desktop/broker.cjs remote-desktop/server.cjs \
+           hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json; do
     [ -f "$SRC_DIR/$f" ] || die "missing Linux Desktop artifact next to script: $f"
   done
 fi
@@ -702,6 +703,25 @@ if [ "$WANT_BROWSER" = 1 ] && [ -f "$SRC_DIR/hivra-browser-apply" ]; then
   chmod 0440 /etc/sudoers.d/hivra-browser
   if ! visudo -cf /etc/sudoers.d/hivra-browser >/dev/null 2>&1; then warn "hivra-browser sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-browser; fi
   ok "browser-automation toggle helper + scoped sudoers installed"
+fi
+
+# Optional Claude app on an Ubuntu Desktop computer. Nothing here installs or
+# starts the app: the root helper, its supervisor unit (inert until the owner
+# adds the app) and the vetted package pin are put in place, and the gateway
+# reaches the helper only through the four exact commands below. The managed
+# Proxmox lane only; provider desktops do not run this gateway.
+if [ "$AGENT_KIND" = "linux-desktop" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
+  install -o root -g root -m 0755 "$SRC_DIR/hivra-claude-app.py" /usr/local/bin/hivra-claude-app
+  install -o root -g root -m 0644 "$SRC_DIR/hivra-claude-app.service" /etc/systemd/system/hivra-claude-app.service
+  install -d -o root -g root -m 0755 /usr/local/share/hivra
+  install -o root -g root -m 0644 "$SRC_DIR/claude-desktop-pin.json" /usr/local/share/hivra/claude-desktop-pin.json
+  printf '%s\n' \
+    "${AGENT_USER} ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove" \
+    > /etc/sudoers.d/hivra-claude-app
+  chmod 0440 /etc/sudoers.d/hivra-claude-app
+  if ! visudo -cf /etc/sudoers.d/hivra-claude-app >/dev/null 2>&1; then warn "hivra-claude-app sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-claude-app; fi
+  systemctl daemon-reload
+  ok "Claude app helper + scoped sudoers installed (nothing started)"
 fi
 
 # ===========================================================================

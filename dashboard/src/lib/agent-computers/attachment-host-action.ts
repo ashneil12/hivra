@@ -18,15 +18,17 @@ export const ATTACHMENT_ACTION_TIMEOUTS = Object.freeze({
 /** Internal transport, not dispatch authority. The durable orchestrator must
  * admit the exact operation and win the one-time stage CAS before invoking it.
  * Never retry stage on timeout; use observe with the same durable expectation.
+ * Run the script with its bundle as a separate stdin stream
+ * (runProxmoxHostScriptWithStdin).
  */
 export function buildAttachmentHostActionScript(
   action: AttachmentGuestAction, inputTarget: AttachmentObservationTarget, inputExpected: ExpectedAttachmentGuestResult,
-): string {
+): { script: string; stdin: string } {
   if (!Object.hasOwn(ATTACHMENT_ACTION_TIMEOUTS, action)) throw new Error("Invalid attachment action.");
   const target = snapshotAttachmentObservationTarget(inputTarget);
   const expected = snapshotAttachmentGuestExpectation(inputExpected);
   if (!expected || (["operationId", "computerId", "sourceId", "architecture"] as const)
     .some(key => expected.identity[key] !== target[key])) throw new Error("Attachment target does not match the durable expectation.");
   const bundle = buildAttachmentGuestBundle(action, expected);
-  return buildAttachmentHostStepScript(target, bundle.program, bundle.stdin, ATTACHMENT_ACTION_TIMEOUTS[action].guestSeconds);
+  return { script: buildAttachmentHostStepScript(target, bundle.program, ATTACHMENT_ACTION_TIMEOUTS[action].guestSeconds), stdin: bundle.stdin };
 }

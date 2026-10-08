@@ -13,6 +13,7 @@ import type { HermesInstanceRow } from "@/app/api/instances/[id]/route";
 import { resolveHermesHomeDirFromConfig } from "@/lib/hermes-home";
 import { sanitizeDockerName } from "@/lib/services/profile-service";
 import { putHermesConfigWithBindMountFallback } from "@/lib/hermes-config-write";
+import { getHermesGuestSshTarget } from "@/lib/services/proxmox-infrastructure";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -246,6 +247,7 @@ export async function PUT(
         instance.config as Record<string, unknown> | undefined
       ),
       ip,
+      guestTarget: getHermesGuestSshTarget(instance),
       instanceId: id,
       userId,
     });

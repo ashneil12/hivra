@@ -1,0 +1,127 @@
+{
+  "format": "hivra-asset-derived-exports-v1",
+  "recordedAt": "2026-09-30",
+  "statement": "Each asset here is a deterministic resized export of one other recorded asset, not a new creation or generation. It has no prompt, tool or receipt of its own and none is inferred: the rights of the source apply unchanged. The evidence builder requires the source to be in the provenance policy, includable, itself not derived and byte-identical to the recorded source hash.",
+  "derivedAssets": [
+    {
+      "path": "docs/litepaper/assets/agent-computer-hero-v2-768.webp",
+      "sha256": "77f884216fbd549795ed4e3848109f5ee6c8a8f267344fd7fcdcbd4100acb520",
+      "sourcePath": "docs/litepaper/assets/agent-computer-hero-v2.png",
+      "sourceSha256": "ff789243915db5325495d364a27cb4e7b4cb30b431879a17eb370eae888dd173",
+      "method": "Lanczos resize of the source PNG to 768px wide at the source aspect ratio (1536x1024 to 768x512), converted to RGB, then saved as lossy WebP at quality 78, method 6. No crop, padding, colour change, redraw or new generation; the source's own generation record applies unchanged.",
+      "script": "docs/litepaper/export-litepaper-images.py",
+      "command": "python3 docs/litepaper/export-litepaper-images.py",
+      "parameters": {
+        "width": 768,
+        "quality": 78,
+        "webpMethod": 6,
+        "resampling": "LANCZOS",
+        "crop": "none"
+      },
+      "toolVersions": {
+        "pillow": "11.3.0"
+      },
+      "reproduction": "Rerunning the script from the committed source reproduces these bytes, and docs/litepaper/test_export_litepaper_images.py fails if a committed export differs from a fresh one. The script refuses a source that is not the approved file and never overwrites a published export."
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-hero-v2-1536.webp",
+      "sha256": "1cc3fbc001dc301e9233b63d9d2b1cc2995491458671a8fb8af8cfa689a4abaf",
+      "sourcePath": "docs/litepaper/assets/agent-computer-hero-v2.png",
+      "sourceSha256": "ff789243915db5325495d364a27cb4e7b4cb30b431879a17eb370eae888dd173",
+      "method": "Lanczos resize of the source PNG to 1536px wide at the source aspect ratio (1536x1024 to 1536x1024), converted to RGB, then saved as lossy WebP at quality 78, method 6. No crop, padding, colour change, redraw or new generation; the source's own generation record applies unchanged.",
+      "script": "docs/litepaper/export-litepaper-images.py",
+      "command": "python3 docs/litepaper/export-litepaper-images.py",
+      "parameters": {
+        "width": 1536,
+        "quality": 78,
+        "webpMethod": 6,
+        "resampling": "LANCZOS",
+        "crop": "none"
+      },
+      "toolVersions": {
+        "pillow": "11.3.0"
+      },
+      "reproduction": "Rerunning the script from the committed source reproduces these bytes, and docs/litepaper/test_export_litepaper_images.py fails if a committed export differs from a fresh one. The script refuses a source that is not the approved file and never overwrites a published export."
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-opportunity-v2-768.webp",
+      "sha256": "b831e718bbeb0a41d8bdfed066026a7050b2aec990a58ffd37d58b6a3dbf1d3d",
+      "sourcePath": "docs/litepaper/assets/agent-computer-opportunity-v2.png",
+      "sourceSha256": "df38e76c121b85560343da49fb0e19069be2426280e35c76198ba4bc97bece25",
+      "method": "Lanczos resize of the source PNG to 768px wide at the source aspect ratio (1536x1024 to 768x512), converted to RGB, then saved as lossy WebP at quality 78, method 6. No crop, padding, colour change, redraw or new generation; the source's own generation record applies unchanged.",
+      "script": "docs/litepaper/export-litepaper-images.py",
+      "command": "python3 docs/litepaper/export-litepaper-images.py",
+      "parameters": {
+        "width": 768,
+        "quality": 78,
+        "webpMethod": 6,
+        "resampling": "LANCZOS",
+        "crop": "none"
+      },
+      "toolVersions": {
+        "pillow": "11.3.0"
+      },
+      "reproduction": "Rerunning the script from the committed source reproduces these bytes, and docs/litepaper/test_export_litepaper_images.py fails if a committed export differs from a fresh one. The script refuses a source that is not the approved file and never overwrites a published export."
+    },
+    {
+      "path": "docs/litepaper/assets/agent-computer-opportunity-v2-1536.webp",
+      "sha256": "d278e5b34590544dc2856ed17655f3ccd4148fc14c0255687ac45dda7e1fdeff",
+      "sourcePath": "docs/litepaper/assets/agent-computer-opportunity-v2.png",
+      "sourceSha256": "df38e76c121b85560343da49fb0e19069be2426280e35c76198ba4bc97bece25",
+      "method": "Lanczos resize of the source PNG to 1536px wide at the source aspect ratio (1536x1024 to 1536x1024), converted to RGB, then saved as lossy WebP at quality 78, method 6. No crop, padding, colour change, redraw or new generation; the source's own generation record applies unchanged.",
+      "script": "docs/litepaper/export-litepaper-images.py",
+      "command": "python3 docs/litepaper/export-litepaper-images.py",
+      "parameters": {
+        "width": 1536,
+        "quality": 78,
+        "webpMethod": 6,
+        "resampling": "LANCZOS",
+        "crop": "none"
+      },
+      "toolVersions": {
+        "pillow": "11.3.0"
+      },
+      "reproduction": "Rerunning the script from the committed source reproduces these bytes, and docs/litepaper/test_export_litepaper_images.py fails if a committed export differs from a fresh one. The script refuses a source that is not the approved file and never overwrites a published export."
+    },
+    {
+      "path": "docs/litepaper/assets/observable-run-v2-768.webp",
+      "sha256": "caf8d6b7ef08ddf0c8792819678e4da4ae7882aa4d0e604029aacf2baea53aa1",
+      "sourcePath": "docs/litepaper/assets/observable-run-v2.png",
+      "sourceSha256": "e38ee51e5b2eeb3e71f9e5458719a76ec501418e8dd646f68343531d15b3d2fe",
+      "method": "Lanczos resize of the source PNG to 768px wide at the source aspect ratio (1536x1024 to 768x512), converted to RGB, then saved as lossy WebP at quality 78, method 6. No crop, padding, colour change, redraw or new generation; the source's own generation record applies unchanged.",
+      "script": "docs/litepaper/export-litepaper-images.py",
+      "command": "python3 docs/litepaper/export-litepaper-images.py",
+      "parameters": {
+        "width": 768,
+        "quality": 78,
+        "webpMethod": 6,
+        "resampling": "LANCZOS",
+        "crop": "none"
+      },
+      "toolVersions": {
+        "pillow": "11.3.0"
+      },
+      "reproduction": "Rerunning the script from the committed source reproduces these bytes, and docs/litepaper/test_export_litepaper_images.py fails if a committed export differs from a fresh one. The script refuses a source that is not the approved file and never overwrites a published export."
+    },
+    {
+      "path": "docs/litepaper/assets/observable-run-v2-1536.webp",
+      "sha256": "e9e33ccb31b0c45086e44f6c162c4ec5306879e89f9de4723c7a56fd11ba1944",
+      "sourcePath": "docs/litepaper/assets/observable-run-v2.png",
+      "sourceSha256": "e38ee51e5b2eeb3e71f9e5458719a76ec501418e8dd646f68343531d15b3d2fe",
+      "method": "Lanczos resize of the source PNG to 1536px wide at the source aspect ratio (1536x1024 to 1536x1024), converted to RGB, then saved as lossy WebP at quality 78, method 6. No crop, padding, colour change, redraw or new generation; the source's own generation record applies unchanged.",
+      "script": "docs/litepaper/export-litepaper-images.py",
+      "command": "python3 docs/litepaper/export-litepaper-images.py",
+      "parameters": {
+        "width": 1536,
+        "quality": 78,
+        "webpMethod": 6,
+        "resampling": "LANCZOS",
+        "crop": "none"
+      },
+      "toolVersions": {
+        "pillow": "11.3.0"
+      },
+      "reproduction": "Rerunning the script from the committed source reproduces these bytes, and docs/litepaper/test_export_litepaper_images.py fails if a committed export differs from a fresh one. The script refuses a source that is not the approved file and never overwrites a published export."
+    }
+  ]
+}

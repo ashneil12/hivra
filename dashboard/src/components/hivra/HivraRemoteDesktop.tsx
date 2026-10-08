@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Loader2, Maximize2, Minimize2, Monitor, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 
@@ -347,6 +347,7 @@ export function HivraRemoteDesktop({
   active = true,
   autoPrepare = false,
   handoffWarmOrigin = null,
+  toolbarSlot = null,
 }: {
   computerId: string;
   name: string;
@@ -354,6 +355,8 @@ export function HivraRemoteDesktop({
   autoPrepare?: boolean;
   /** Optional https origin to warm in parallel with session issue (chat/broker). */
   handoffWarmOrigin?: string | null;
+  /** Extra controls for the strip, such as the Claude app view switch. */
+  toolbarSlot?: ReactNode;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const fullscreenRef = useRef<HTMLElement | null>(null);
@@ -1562,6 +1565,7 @@ export function HivraRemoteDesktop({
           {message}
         </span>
         <span className={styles.stripSpacer} />
+        {toolbarSlot}
         {state === "connected" ? (
           <label className={styles.stripField}>
             <span className={styles.stripFieldLabel}>Quality</span>

@@ -24,6 +24,9 @@
 /out/
 /.hivra-data/
 /.generated/apple-certs/
+# The four token documents, staged beside the app for their route handlers by
+# scripts/stage-litepaper.mjs. They must never be committed under public/.
+/.generated/litepaper/
 
 # production
 /build
@@ -90,7 +93,9 @@ docker-compose.override.yml
 e2e/.first-run-audit/
 e2e/.remote-desktop-audit/
 
-# Generated from the approved root litepaper source by predev/prebuild.
+# Generated from the approved root litepaper source by predev/prebuild. The
+# three papers are no longer public files (their route handlers serve them by
+# country); the ignore lines stay so a stale copy can never be committed.
 /public/docs/litepaper/
 /public/LITEPAPER.md
 /public/THOUGHTS.md

@@ -8,33 +8,9 @@ import { CheckCircle, XCircle } from "lucide-react";
 import StructuredData from "@/components/StructuredData";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
-
-type ComparisonSection = {
-  heading: string;
-  paragraphs: string[];
-};
-
-type ComparisonData = {
-  title: string;
-  h1: string;
-  metaDescription: string;
-  tagline: string;
-  intro: string[];
-  sections: ComparisonSection[];
-  vsTable: Array<{
-    criterion: string;
-    hermesOs: string;
-    other: string;
-    hermosWins: boolean;
-  }>;
-  verdict: string;
-  faqs: Array<{ q: string; a: string }>;
-  relatedComparisons: Array<{ slug: string; title: string }>;
-  relatedBlog?: Array<{ slug: string; title: string }>;
-  relatedFeatures?: Array<{ slug: string; title: string }>;
-  /** Off-site references, such as upstream docs a paragraph relies on. */
-  externalRelated?: Array<{ label: string; href: string }>;
-};
+import type { ComparisonData } from "@/lib/compare/types";
+import { HOST_COMPARISONS } from "@/lib/compare/host-comparisons";
+import { COMPETITOR_FACTS_CHECKED, formatCheckedMonth } from "@/lib/compare/competitor-facts";
 
 // Competitor prices below were re-checked on the vendors' own pages on
 // 2026-09-24: hetzner.com price adjustment (15 June 2026), digitalocean.com
@@ -42,8 +18,11 @@ type ComparisonData = {
 // Hermes' own OpenClaw migration guide (`hermes claw migrate`); Hivra has no
 // OpenClaw import of its own.
 const HERMES_OPENCLAW_MIGRATION_GUIDE = "https://hermes-agent.nousresearch.com/docs/guides/migrate-from-openclaw";
+// Setup and upkeep hours are the reader's own. This page states none; the
+// calculator takes the reader's hours and hourly rate.
+const HOSTING_COST_CALCULATOR_HREF = "/tools/ai-agent-hosting-cost-calculator";
 
-const COMPARISONS: Record<string, ComparisonData> = {
+const BASE_COMPARISONS: Record<string, ComparisonData> = {
   "vs-self-hosted": {
     title: "Hivra vs Self-Hosted VPS: Which Should You Choose?",
     h1: "Self-hosting Hermes: the honest tradeoff.",
@@ -51,17 +30,17 @@ const COMPARISONS: Record<string, ComparisonData> = {
       "Hivra vs a self-hosted VPS on Hetzner or DigitalOcean: an honest comparison of cost, setup time, upkeep, and reliability for a persistent Hermes AI agent.",
     tagline: "Control vs. time. Here's what it actually costs.",
     intro: [
-      "Self-hosting Hermes is technically possible and sometimes the right call. Hetzner's CX23 (2 vCPU, 4 GB) costs €5.49/mo before VAT for a VPS you fully control. You are not saving money with Hivra — you are saving time.",
-      "The honest accounting: setting up a Hermes agent on a raw VPS takes 6-8 hours the first time. Docker, Caddy, networking, SSH keys, env files, monitoring. Then it breaks on the next update, and you spend another evening fixing it.",
+      "Self-hosting Hermes is technically possible and sometimes the right call. Hetzner's CX23 (2 vCPU, 4 GB) costs €5.49/mo before VAT for a VPS you fully control. Hivra costs more each month than that server. What it gives you back is the time you would spend on setup and upkeep.",
+      "Setting up a Hermes agent on a raw VPS means installing Docker and Caddy, setting up networking, SSH keys and environment files, and adding monitoring. After that you keep all of it updated. When an update breaks something, fixing it is on you.",
     ],
     sections: [
       {
         heading: "What self-hosting actually costs over a year",
         paragraphs: [
-          "The server itself is cheap. Hetzner's CX23 (€5.49/month before VAT and a public IPv4 address, 2 vCPU 4 GB RAM) is about €66/year for a server you fully control. CX33 (€8.49/month, 4 vCPU 8 GB RAM) is the better choice once you are running browser automation or parallel subagents. DigitalOcean's equivalent Droplets are $24-48/month. Modal or Daytona serverless are a third option — near-zero idle cost at the expense of cold-start latency, suitable for infrequent heavy tasks but not sub-minute cron jobs.",
-          "Initial setup: 4-8 hours for a developer who knows Linux. At $50/hour effective rate, that is $200-400 of time just to get started.",
-          "Ongoing maintenance: budget 1-2 hours per month minimum — Hermes updates, Docker daemon issues, certificate renewals, dependency conflicts. Infrastructure failures and disk-fill events add time on top. Over a year: 15-20 hours. At $50/hour: $750-1000.",
-          "Total real cost of self-hosting for one year at CX23 pricing, with time factored in: roughly $950-1,400 against about €66 in raw server fees. Hivra hosting starts at $9.99/month (2 vCPU, 4 GB), about $120/year, with the server upkeep handled for you. The gap widens once you value your time honestly.",
+          "The server itself is cheap. Hetzner's CX23 (€5.49/month before VAT and a public IPv4 address, 2 vCPU 4 GB RAM) is about €66/year for a server you fully control. CX33 (€8.49/month, 4 vCPU 8 GB RAM) is the better choice once you are running browser automation or parallel subagents. DigitalOcean's equivalent Droplets are $24-48/month. Modal or Daytona serverless are a third option, with near-zero idle cost at the expense of cold-start latency. They suit infrequent heavy tasks but not sub-minute cron jobs.",
+          "Setup is your own time. You install and secure the server, install Docker and a web server, connect the agent to your AI key or login, and set up monitoring. How long that takes depends on how much of it you have done before, so this page does not put a number on it.",
+          "Upkeep is your own time too: Hermes updates, Docker problems, certificate renewals and dependency conflicts. Failures and full disks add to it.",
+          "On cash alone, the server wins. The server is about €66 a year. Hivra hosting starts at $9.99/month (2 vCPU, 4 GB), about $120/year, with the server upkeep handled for you. Hivra comes out ahead only if your own setup and upkeep time is worth more to you than that difference. To check with your own hours and hourly rate, use the AI agent hosting cost calculator.",
         ],
       },
       {
@@ -69,7 +48,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
         paragraphs: [
           "Complete root access. You can modify the Hermes Agent source code, add system-level dependencies, run other services on the same server, and configure networking at any layer. If you are building something custom that requires this level of access, self-hosting is the right call.",
           "No subscription dependency. Self-hosting means your agent continues running as long as your server is running, regardless of any external product decisions. This is relevant for long-running projects where continuity matters more than convenience.",
-          "Data locality. If your project has specific requirements about where your data is stored and processed — on-premises, in a specific country, on hardware you control — self-hosting lets you meet those requirements. Hivra runs in our cloud infrastructure, which may not meet jurisdiction-specific data residency requirements.",
+          "Data locality. If your project has specific requirements about where your data is stored and processed, such as on-premises, in a specific country or on hardware you control, self-hosting lets you meet those requirements. Hivra runs in our cloud infrastructure, which may not meet jurisdiction-specific data residency requirements.",
         ],
       },
       {
@@ -83,15 +62,15 @@ const COMPARISONS: Record<string, ComparisonData> = {
       {
         heading: "The right way to think about this decision",
         paragraphs: [
-          "Self-hosting is the right choice if you have specific requirements that managed hosting cannot meet — full OS control, specific data residency, or deep customization of the stack. It is also the right choice if you genuinely enjoy the infrastructure work and treat it as a learning opportunity.",
+          "Self-hosting is the right choice if you have specific requirements that managed hosting cannot meet, such as full OS control, specific data residency, or deep customization of the stack. It is also the right choice if you genuinely enjoy the infrastructure work and treat it as a learning opportunity.",
           "Managed hosting is the right choice if your goal is to have an agent, not to build the infrastructure layer for one. The setup time you spend configuring a VPS is time you are not spending on the work the agent is supposed to do for you.",
         ],
       },
     ],
     vsTable: [
-      { criterion: "Time to first running agent", hermesOs: "No server setup: launch from the dashboard", other: "6–8 hours, by our estimate", hermosWins: true },
+      { criterion: "Time to first running agent", hermesOs: "No server setup: launch from the dashboard", other: "You set up the server yourself, so it depends on your experience", hermosWins: true },
       { criterion: "Monthly infrastructure cost", hermesOs: "From $9.99/mo for 2 vCPU, 4 GB (managed)", other: "From €5.49/mo before VAT (unmanaged)", hermosWins: false },
-      { criterion: "Agent dashboard", hermesOs: "Built-in, always running", other: "None — you build it", hermosWins: true },
+      { criterion: "Agent dashboard", hermesOs: "Built-in, always running", other: "None. You build it", hermosWins: true },
       { criterion: "Automatic updates", hermesOs: "Tested before rollout", other: "Manual, sometimes breaking", hermosWins: true },
       { criterion: "Multiple agents", hermesOs: "More than one per paid plan, one dashboard", other: "Manual configuration per agent", hermosWins: true },
       { criterion: "Monitoring & restarts", hermesOs: "Automatic", other: "You set it up or it does not exist", hermosWins: true },
@@ -104,7 +83,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
     faqs: [
       {
         q: "Is self-hosting Hermes agent really that hard?",
-        a: "For developers comfortable with Docker and Linux, it is manageable but time-consuming. For everyone else, it is a multi-day project. The ongoing maintenance is the part most people underestimate — not the initial setup.",
+        a: "For developers comfortable with Docker and Linux, it is manageable but takes time. For everyone else, it is a big project. The part people often underestimate is the ongoing maintenance.",
       },
       {
         q: "Can I switch from self-hosted to Hivra later?",
@@ -115,7 +94,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
         a: "SSH access to the underlying server is not currently exposed. Container-level configuration is accessible through the dashboard on all plans.",
       },
       {
-        q: "I already have a Hetzner server — can I run Hermes on it side by side with Hivra?",
+        q: "I already have a Hetzner server. Can I run Hermes on it side by side with Hivra?",
         a: "Yes. You can keep your self-hosted instance and run Hivra separately. Some users do this to run different agent profiles on different infrastructure.",
       },
       {
@@ -127,11 +106,14 @@ const COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-railway", title: "Hivra vs Railway" },
       { slug: "vs-render", title: "Hivra vs Render" },
       { slug: "openclaw-to-hermes", title: "OpenClaw to Hermes Migration" },
+      { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+      { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
     ],
     relatedBlog: [
       { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
     ],
+    externalRelated: [{ label: "AI agent hosting cost calculator", href: HOSTING_COST_CALCULATOR_HREF }],
   },
 
   "vs-railway": {
@@ -148,17 +130,17 @@ const COMPARISONS: Record<string, ComparisonData> = {
       {
         heading: "What Railway was built to do",
         paragraphs: [
-          "Railway is a developer-focused platform-as-a-service that makes it easy to deploy web applications, APIs, background workers, and databases. Its strengths are the developer experience — a clean UI, instant deploys from GitHub, a good database provisioning flow, and competitive pricing on per-usage billing.",
-          "For stateless or lightly stateful web services, Railway is excellent. A Next.js app, a Python API, a PostgreSQL database — these are exactly what Railway is optimized for. The platform scales these kinds of services well and makes them easy to manage.",
+          "Railway is a developer-focused platform-as-a-service that makes it easy to deploy web applications, APIs, background workers, and databases. Its strengths are the developer experience: a clean UI, instant deploys from GitHub, a good database provisioning flow, and competitive pricing on per-usage billing.",
+          "For stateless or lightly stateful web services, Railway is excellent. A Next.js app, a Python API and a PostgreSQL database are exactly what Railway is built for. The platform scales these kinds of services well and makes them easy to manage.",
         ],
       },
       {
         heading: "Where Railway falls short for Hermes",
         paragraphs: [
           "Hermes Agent is not a web service. It is a persistent process that maintains state, runs a browser, executes scheduled tasks, and accumulates memory over months of operation. This does not fit neatly into Railway's run model.",
-          "The persistent volume configuration Railway provides works for databases, but the Hermes Agent memory system is more complex — it is memory files plus a session database, both with backup and recovery requirements. Configuring this correctly on Railway requires understanding the agent's internals and building the backup solution yourself.",
+          "The persistent volume configuration Railway provides works for databases, but the Hermes Agent memory system is more complex. It is memory files plus a session database, both with backup and recovery requirements. Configuring this correctly on Railway requires understanding the agent's internals and building the backup solution yourself.",
           "Railway does not have a natural construct for the agent's scheduled task system. Railway's cron schedule is set per service, and the service must exit when its task finishes, so each scheduled task becomes a separate short-lived service with no shared state with the main agent and no natural integration with the agent's memory context.",
-          "There is also no agent dashboard on Railway. You deploy the container, you get logs. All the tooling that Hivra provides — chat and session history, file access, several agents in one dashboard, scheduled task management — you would build yourself.",
+          "There is also no agent dashboard on Railway. You deploy the container, you get logs. All the tooling that Hivra provides (chat and session history, file access, several agents in one dashboard, scheduled task management) you would build yourself.",
         ],
       },
       {
@@ -170,7 +152,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       },
     ],
     vsTable: [
-      { criterion: "Time to first running agent", hermesOs: "No setup: launch from the dashboard", other: "Hours of configuration", hermosWins: true },
+      { criterion: "Time to first running agent", hermesOs: "No setup: launch from the dashboard", other: "You set it up yourself", hermosWins: true },
       { criterion: "Hermes-specific configuration", hermesOs: "Pre-configured out of the box", other: "DIY from scratch", hermosWins: true },
       { criterion: "Agent dashboard & monitoring", hermesOs: "Built-in", other: "None", hermosWins: true },
       { criterion: "Multiple agents", hermesOs: "More than one per paid plan, one dashboard", other: "Manual configuration", hermosWins: true },
@@ -204,6 +186,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-self-hosted", title: "Hivra vs Self-Hosted" },
       { slug: "vs-render", title: "Hivra vs Render" },
       { slug: "ai-agent-hosting-alternatives", title: "All AI Agent Hosting Options" },
+      { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
     ],
     relatedBlog: [
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
@@ -212,7 +195,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
 
   "vs-render": {
     title: "Hivra vs Render: Which is Better for AI Agent Hosting?",
-    h1: "Render was not built for agents. Hivra was.",
+    h1: "Render is a web host. Hivra is built around agents.",
     metaDescription:
       "Comparing Hivra vs Render for hosting a Hermes AI agent. Render is a solid general host but lacks agent-specific tooling. Here's the honest breakdown.",
     tagline: "Render vs Hivra for persistent AI agent hosting.",
@@ -222,32 +205,32 @@ const COMPARISONS: Record<string, ComparisonData> = {
     ],
     sections: [
       {
-        heading: "Render's strengths — and the limits for agents",
+        heading: "Render's strengths and the limits for agents",
         paragraphs: [
           "Render excels at three things: simple static site hosting, background worker processes, and managed PostgreSQL/Redis databases. For web apps where you want to avoid the complexity of AWS or GCP, Render is an attractive middle ground between raw VPS and a full platform-as-a-service like Heroku.",
           "The issue with Hermes Agent is that it does not fit neatly into any of Render's service types. It is not a web service (it does not listen for HTTP requests). It is not a standard background worker (it has complex startup dependencies). And its storage needs are more specialized than a standard database volume.",
-          "Render's free tier spins down web services after 15 minutes without inbound traffic, and free services cannot use a persistent disk. Hermes Agent cannot be cold-started — it needs to be always on to run scheduled tasks, maintain browser sessions, and serve the dashboard. Free tier is unusable for any real agent deployment on Render.",
+          "Render's free tier spins down web services after 15 minutes without inbound traffic, and free services cannot use a persistent disk. Hermes Agent cannot be cold-started. It needs to be always on to run scheduled tasks, maintain browser sessions, and serve the dashboard. Free tier is unusable for any real agent deployment on Render.",
         ],
       },
       {
         heading: "The Dockerfile you would have to write",
         paragraphs: [
           "Getting Hermes running on Render requires a multi-stage Dockerfile that installs all Chromium dependencies (a list of about 15 system libraries), sets up the correct user permissions for the browser process, configures the memory volume mount, and sets the startup command correctly.",
-          "This is not undocumented, but it requires working through Hermes's own documentation and testing. The Chromium dependency list in particular changes between minor versions of the agent, meaning container rebuilds can fail in non-obvious ways.",
+          "The steps are public in Hermes's own docs, and you still have to test them. The Chromium dependency list in particular changes between minor versions of the agent, meaning container rebuilds can fail in non-obvious ways.",
           "Once running, you have no dashboard beyond Render's log viewer. Monitoring, scheduled task management, and memory inspection all require building your own tooling or accessing the agent's internal API directly.",
         ],
       },
       {
         heading: "Cost comparison",
         paragraphs: [
-          "Render's Starter compute plan ($7/month) has 512 MB RAM — far too little for Hermes. The Standard compute plan at $25/month gives 1 CPU and 2 GB RAM, which is workable for light use but will hit memory pressure during browser automation tasks. The Pro compute plan at $85/month gives 2 CPU and 4 GB RAM — the realistic minimum for reliable browser use.",
-          "Add a Render Disk for persistent memory storage: $0.25/GB/month. Add RAM overhead when you factor in the Chromium process during browser tasks. The realistic monthly cost on Render for a properly configured Hermes agent is $85-100/month before any extra services.",
+          "Render's Starter compute plan ($7/month) has 512 MB RAM, which is far too little for Hermes. The Standard compute plan at $25/month gives 1 CPU and 2 GB RAM, which is workable for light use but will hit memory pressure during browser automation tasks. The Pro compute plan at $85/month gives 2 CPU and 4 GB RAM, which is the realistic minimum for reliable browser use.",
+          "Add a Render Disk for persistent memory storage: $0.25/GB/month. Add RAM overhead when you factor in the Chromium process during browser tasks. On those prices, a Hermes agent with a browser costs at least $85/month on Render, before the disk and any extra services.",
           "Hivra: from $9.99/month for 2 vCPU and 4 GB RAM, the same CPU and memory figures as Render's $85 Pro compute plan, with the browser pre-configured. The cost comparison is not close when you look at equivalent specs.",
         ],
       },
     ],
     vsTable: [
-      { criterion: "Pre-configured for Hermes", hermesOs: "Yes — fully", other: "No — build it yourself", hermosWins: true },
+      { criterion: "Pre-configured for Hermes", hermesOs: "Yes, fully", other: "No. You build it yourself", hermosWins: true },
       { criterion: "Persistent memory storage", hermesOs: "Pre-configured, on the agent's own disk", other: "Manual disk/volume setup", hermosWins: true },
       { criterion: "Agent dashboard", hermesOs: "Built-in dashboard", other: "None", hermosWins: true },
       { criterion: "Browser automation environment", hermesOs: "Pre-installed", other: "Complex Docker setup required", hermosWins: true },
@@ -257,7 +240,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       { criterion: "Static site hosting", hermesOs: "Not supported", other: "Excellent and free", hermosWins: false },
     ],
     verdict:
-      "For running a persistent Hermes AI agent, Hivra wins on setup work, agent tooling, and cost at equivalent specs. Render makes more sense for web apps and APIs — not for autonomous agent workloads requiring persistent processes and browser access.",
+      "For running a persistent Hermes AI agent, Hivra wins on setup work, agent tooling, and cost at equivalent specs. Render makes more sense for web apps and APIs than for agent workloads that need persistent processes and browser access.",
     faqs: [
       {
         q: "Does Render's free tier work for Hermes?",
@@ -265,7 +248,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       },
       {
         q: "Is Render faster to set up than a raw VPS for Hermes?",
-        a: "Slightly — you skip OS-level setup. But you still need to configure everything at the application layer including the Chromium dependencies, memory volumes, and monitoring. Hivra still needs far less setup.",
+        a: "Slightly, because you skip OS-level setup. But you still need to configure everything at the application layer including the Chromium dependencies, memory volumes, and monitoring. Hivra still needs far less setup.",
       },
       {
         q: "What does Render lack that Hivra provides?",
@@ -280,6 +263,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       { slug: "vs-railway", title: "Hivra vs Railway" },
       { slug: "vs-self-hosted", title: "Hivra vs Self-Hosted" },
       { slug: "ai-agent-hosting-alternatives", title: "All AI Agent Hosting Options" },
+      { slug: "vs-xcloud", title: "Hivra vs xCloud" },
     ],
     relatedBlog: [
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
@@ -294,7 +278,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
       "Move from self-hosted OpenClaw to Hivra: let Hivra host OpenClaw, or switch to Hermes with its own migration command. Drop the self-hosting upkeep.",
     tagline: "Keep your agent. Leave the maintenance behind.",
     intro: [
-      "OpenClaw is a powerful open-source framework. If you have been using it, you have put real work into your agent setup — prompts, tools, workflows, memory.",
+      "OpenClaw is a powerful open-source framework. If you have been using it, you have put real work into your agent setup: prompts, tools, workflows, memory.",
       "You have two paths. Hivra can host OpenClaw itself on paid plans, or you can move to Hermes, whose `hermes claw migrate` command imports your persona, memory, skills, and settings. Neither is a one-click import in Hivra today, but either way what you leave behind is the maintenance burden. Hivra is not affiliated with the OpenClaw project.",
     ],
     sections: [
@@ -331,7 +315,7 @@ const COMPARISONS: Record<string, ComparisonData> = {
     ],
     vsTable: [
       { criterion: "Hosting model", hermesOs: "Cloud-hosted, persistent 24/7", other: "Your laptop or a server you maintain", hermosWins: true },
-      { criterion: "Update management", hermesOs: "Tested before rollout", other: "Manual — sometimes breaking", hermosWins: true },
+      { criterion: "Update management", hermesOs: "Tested before rollout", other: "Manual, sometimes breaking", hermosWins: true },
       { criterion: "Memory across sessions", hermesOs: "Built-in, on a server that stays on", other: "Built-in, on your own hardware", hermosWins: true },
       { criterion: "Scheduled tasks", hermesOs: "Native cron, runs while you are away", other: "Built-in scheduler, runs while your machine is on", hermosWins: true },
       { criterion: "Multiple agents", hermesOs: "More than one per paid plan, mixed agent types", other: "Each one set up and run yourself", hermosWins: true },
@@ -382,111 +366,132 @@ const COMPARISONS: Record<string, ComparisonData> = {
   },
 
   "ai-agent-hosting-alternatives": {
-    title: "Best AI Agent Hosting Platforms in 2026",
-    h1: "Every option for hosting a persistent AI agent.",
+    title: "AI Agent Hosting Alternatives Compared (2026)",
+    h1: "Cloud computers for AI agents, compared by criteria.",
     metaDescription:
-      "AI agent hosting in 2026 compared: self-hosted VPS, Railway, Render, OpenClaw, and Hivra. An honest look at cost, setup, and upkeep for a persistent agent.",
-    tagline: "Every option. Honest tradeoffs. No fluff.",
+      "Fly Sprites, Railway, DO Agent Droplets, Cloudways, Orgo, E2B and Hivra compared on what matters for an agent. Prices as of October 2026.",
+    tagline: "Five questions pick your host. Then the prices.",
     intro: [
-      "Running a persistent AI agent in 2026 is still harder than it should be. The agent frameworks have matured rapidly, but the hosting infrastructure has not kept up. Most options require significant DIY work.",
-      "This is a complete, honest comparison of every viable approach — from raw VPS to managed platforms. We built Hivra, so we have an incentive to recommend it. We will tell you when other options make more sense.",
+      "Need a computer that stays on for an AI agent? Five questions do most of the sorting. Does your stuff survive when it sleeps? How much do you control? Desktop or just a terminal? Flat price or a meter? And can you bring your own agent? Fair warning: we make Hivra, it's one of the options here, and we'll tell you where it loses.",
+      "Every figure comes from the vendor's own pages, as of October 2026. Prices and plan names move a lot, so open the source before you pay. Agent 37, Hostinger, xCloud and Nous Hermes Cloud each have their own comparison page.",
     ],
     sections: [
       {
-        heading: "Option 1: Raw VPS (Hetzner, DigitalOcean, Vultr)",
+        heading: "What should I check before picking a host for my agent?",
         paragraphs: [
-          "A raw VPS gives you the most flexibility. Hetzner's CX23 at €5.49/month before VAT is among the cheapest viable servers for Hermes — 2 vCPU, 4 GB RAM, enough for the agent plus light browser automation. DigitalOcean's 4 GB Droplet is $24/month.",
-          "Setup takes 6-8 hours for someone comfortable with Linux: Ubuntu install, Docker/Compose setup, Caddy for reverse proxy and SSL, environment configuration, monitoring, and backup configuration. Once running, it is the most powerful and cheapest cash option.",
-          "The catch: ongoing maintenance is real and non-trivial. Budget 1-2 hours per month. When things break (and they will), add debugging time on top. Best for: developers who want maximum control and treat the infrastructure work as part of the project.",
+          "Start with whether your work survives. Files, installs and logins should still be there after a pause or a closed laptop. Pay-per-second sandboxes that wipe the disk when the session ends fail that test for an agent you want running for weeks.",
+          "Then control. Do you get root or a terminal, can you use your own model key, and can you pick which agent runs? Some hosts only run the agents they ship.",
+          "Desktop or terminal matters less than people think. A full GUI desktop counts if your agent clicks around a screen. For Claude Code, Codex, Hermes and OpenClaw, a terminal and files are plenty for most people.",
+          "Read the price model, not just the price. Flat monthly, prepaid allowance and per-second meters all look alike on a headline, and the same dollar can buy half the hardware once you check the size. Last, can you bring your own agent (Hermes, OpenClaw, Claude Code, Codex, your own loop), or are you locked to one?",
         ],
       },
       {
-        heading: "Option 2: Railway and Render",
+        heading: "What does each option cost, and who is it for?",
         paragraphs: [
-          "Railway and Render are PaaS platforms designed for web applications. Both can theoretically run the Hermes Docker container, but neither is built for agent workloads — no native scheduling integration with the agent's memory context, no multi-agent tooling, no agent dashboard.",
-          "Render's free tier spins services down after inactivity, which is incompatible with persistent agents, and its 2 CPU, 4 GB compute plan is $85/month. Railway bills for the CPU and memory you use, so an always-on agent's cost moves with its workload. Both require a custom Dockerfile and manual configuration of the memory persistence layer.",
-          "Best for: teams already on these platforms for other services who want to avoid adding another platform. But the setup work is substantial.",
+          "Fly Sprites (fly.io/sprites): Linux computers billed only while running. CPU $0.03825 per CPU-hour, memory $0.021875 per GB-hour, hot storage about $0.50 per GB-month. Their worked examples: a 4-hour Claude Code session about $0.23, a light web app about $1.05 a month. New orgs can get $30 trial credit (one grant per user, one receive per org). Disk and checkpoints persist across sleep. Good fit if your agent works in bursts and you want an API that spins up lots of machines.",
+          "Railway free VM (railway.com/free-vm): `ssh railway.new` gives 2 vCPU and 2 GB with no account while unclaimed. Claude Code, Codex, OpenCode and others come preinstalled. Limits: about 60 minutes to build, then 24 hours to claim, up to 3 per IP per day, IPv4 only. Unclaimed VMs are deleted with their files. Great for a throwaway coding VM today. Claim it if the work matters.",
+          "DigitalOcean Agent Droplets (from DigitalOcean's docs and launch blog): Pro $50 a month with 15% off eligible agent usage (covers $58.82 at list rates), Team $200 a month with 20% off (covers $250). The blog offers new customers a $5 promotional credit to start. MicroVMs pause when idle. Listed harnesses include Claude Code, Codex CLI, OpenCode, Hermes, CrewAI and LangGraph. Third-party model spend is not discounted. Makes sense if you already live on DigitalOcean and want one bill for the agent runtime, storage and their hosted models.",
+          "Cloudways Managed AI Agents (cloudways.com/en/managed-ai-agents.php): listed Scout $9.99 for 1 vCPU and 2 GB RAM, Operator at the same dollar as Hivra's larger plan for 2 vCPU and 4 GB, Squad $39.99 for 4 vCPU and 8 GB, Swarm $79.99 for 8 vCPU and 16 GB. Same dollar as Hivra's entry price buys half the vCPU and RAM on Scout. Hivra is $9.99 for 2 vCPU and 4 GB, or $19.99 for 4 vCPU and 8 GB, so Cloudways Operator matches Hivra's entry size at a higher list price. Product cards list OpenClaw and Hermes as Generally Available; the FAQ still says only OpenClaw. BYOK for OpenAI, Anthropic and Google. The FAQ still mentions a Public Preview trial and a later intro discount with no end date on the page. Refund terms weren't on the product page, so we won't guess at them. Worth a look if you already run apps on Cloudways and want OpenClaw or Hermes in the same dashboard.",
+          "Orgo (orgo.ai/pricing): Hacker $29, Startup $99, Scale $399 a month. Hacker is 1 computer with an 8 GB RAM pool and 40 GB storage plus $5 monthly AI credit; Startup 4 computers / 32 GB / 160 GB / $10 credit; Scale 16 computers / 128 GB / 640 GB / $50 credit. Persistent cloud desktops with click and type controls, not a per-second meter. Stopped computers still count against the plan until you delete them. The pick when your agent needs a real desktop GUI, Windows on Scale, or an API built around desktops.",
+          "E2B (e2b.dev/pricing): Hobby at $0 with a one-time $100 usage credit (20 concurrent, 1-hour sessions). Pro $150 a month plus usage (100 concurrent, 24-hour sessions). Usage $0.000014 per vCPU-second and $0.0000045 per GiB-second; storage included. Default sandbox 2 vCPU and 4 GiB. Built for short code sandboxes your app spins up, not a personal computer you keep for a month. The pick if you're shipping a product that opens thousands of them.",
+          "Hivra: $9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM, billed monthly. Hermes from Hivra's maintained image, plus OpenClaw and Agent Zero on a paid size, Claude Code and Codex on your own logins, and Aeon on your GitHub Actions. Flat price for the computer. Model spend stays on your key unless you buy managed credits. 7-day money-back on card payments only. No free hosting and no trial; the platform itself is free with your own computer. Open source if you want to read the code or self-host. Hivra fits when you want one always-on computer for your own agents at a fixed monthly price, and you don't need a fleet API or a farm of GUI desktops.",
         ],
       },
       {
-        heading: "Option 3: OpenClaw (self-hosted desktop app)",
+        heading: "When is Hivra the wrong choice?",
         paragraphs: [
-          "OpenClaw is an open-source (MIT) personal agent created by Peter Steinberger and its community, with hundreds of thousands of GitHub stars. It runs a gateway on your laptop or a server, works with hosted and local model providers, and you reach it from messaging apps such as Telegram, Discord, and WhatsApp. The community builds and shares skills for it.",
-          "The framework is Node.js-based, well-documented, and actively maintained. For technical developers who want full local control with zero subscription fees beyond API costs, it is a capable and honest choice.",
-          "Its main cost is operational: 24/7 operation requires keeping your machine on or running it on a VPS yourself (which is then effectively the same as Option 1). It has its own memory and scheduler, but they only work while that machine is up. Hivra can also host OpenClaw for you on paid plans (see Option 5). Best for: power users who want full control and treat agent infrastructure as a technical project.",
+          "Building a product that opens sandboxes per user request? E2B or Fly Sprites fit that shape. Hivra is one computer per agent for you, not a metering API for your customers.",
+          "Need a free throwaway Linux VM for an afternoon of coding? Railway's free VM wins on cash. Claim it if you care about the files.",
+          "Need a watched desktop that clicks through a GUI, or Windows guests? Orgo is built for that. Hivra is terminal and files first, and it has no macOS computers.",
+          "Already deep in DigitalOcean and want harness, storage and their hosted models on one discounted plan? Agent Droplets Pro or Team are aimed at you.",
+          "Want the lowest cash bill and you are happy running Linux yourself? A raw VPS still undercuts every managed row on money alone. Use the hosting cost calculator with your own hours.",
         ],
       },
       {
-        heading: "Option 4: Serverless runtimes (Modal, Daytona, Fly.io)",
+        heading: "What about a plain VPS or self-hosted OpenClaw?",
         paragraphs: [
-          "Modal and Daytona offer serverless compute with near-zero idle cost — you pay only when the agent is actively executing. This suits agents with infrequent but compute-intensive tasks: a weekly deep-research run, a monthly data pipeline, batch processing jobs. Modal's GPU instances are particularly relevant for teams running local model inference alongside the agent.",
-          "The limitation is cold-start latency and the lack of native agent tooling. You are deploying a container and building all monitoring, memory persistence, and scheduling logic yourself. Not suitable for sub-minute cron tasks or real-time response agents.",
-          "Best for: developers already using Modal or Daytona for other compute workloads who want to add agent execution in the same billing account without a monthly fixed fee.",
+          "Still a solid option. A Hetzner, DigitalOcean or Vultr VPS gives you root and the lowest cash bill. You also own every update, restart and backup. OpenClaw as a self-hosted app on your laptop or that VPS is free software; the cost is keeping the machine awake. OpenClaw has its own memory and scheduler while that machine is up. Hivra can host OpenClaw for you on a paid size if you want the same agent without the upkeep.",
+          "Railway and Render as general PaaS hosts can run a container, but they are built for web apps. Pair them with the free VM above only when you already live there.",
         ],
       },
       {
-        heading: "Option 5: Hivra",
+        heading: "So which one should I pick?",
         paragraphs: [
-          "Hivra is managed hosting for AI agents: Hermes, OpenClaw, Claude Code, Codex, and others. For Hermes, the container, browser environment, memory persistence layer, and dashboard are all pre-configured. Sign up, add an API key or login, and launch.",
-          "Hosting is $9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM. Automatic updates and 24/7 monitoring are included; backups are not guaranteed, so keep an export of anything you cannot lose. The trade: you are not running on your own infrastructure, and $9.99/month is higher than a Hetzner CX23's raw server cost.",
-          "Best for: anyone who wants a running agent without spending days on infrastructure and ongoing maintenance hours every month.",
-        ],
-      },
-      {
-        heading: "How to choose",
-        paragraphs: [
-          "If you have specific requirements about data control, infrastructure cost is more important than your time, and you are comfortable with Linux: raw VPS is the right answer.",
-          "If you already use Railway or Render for other services and want everything on one platform: the extra setup work may be justified by operational simplicity.",
-          "If you want a running agent today and your time is the scarce resource: Hivra.",
+          "Lots of short sandboxes from an API? E2B or Fly Sprites. A free VM for an afternoon? Railway. A desktop your agent can click around? Orgo. One DigitalOcean bill for managed agents? Agent Droplets. Already on Cloudways? Stay in that dashboard. A flat monthly computer for your own Hermes, OpenClaw, Claude Code or Codex? That's Hivra. Root access and the lowest cash bill? Run a VPS yourself.",
         ],
       },
     ],
     vsTable: [
-      { criterion: "Time to first running agent", hermesOs: "No server setup", other: "2–8+ hours for alternatives", hermosWins: true },
-      { criterion: "Hermes-specific tooling", hermesOs: "Native dashboard, multi-agent", other: "None in any alternative", hermosWins: true },
-      { criterion: "Monthly cost floor", hermesOs: "Hosting from $9.99/mo (2 vCPU, 4 GB)", other: "€5.49/mo VPS before VAT (+ setup time)", hermosWins: false },
-      { criterion: "Ongoing maintenance", hermesOs: "Server upkeep handled for you", other: "Regular on self-hosted options", hermosWins: true },
-      { criterion: "Persistent memory", hermesOs: "Built-in, on the agent's own disk", other: "DIY on all alternatives", hermosWins: true },
-      { criterion: "Browser automation", hermesOs: "Pre-configured", other: "Manual on all alternatives", hermosWins: true },
-      { criterion: "Scheduled tasks", hermesOs: "Native agent scheduling", other: "DIY or not available", hermosWins: true },
+      { criterion: "Time to first running agent", hermesOs: "No server setup", other: "Varies: free VM in seconds, Sprites via CLI, VPS is DIY", hermosWins: true },
+      { criterion: "Hermes-specific tooling", hermesOs: "Native dashboard, multi-agent", other: "None in the options above", hermosWins: true },
+      { criterion: "Monthly cost floor", hermesOs: "Hosting from $9.99/mo (2 vCPU, 4 GB)", other: "Railway free VM $0 unclaimed; Sprites/E2B meter; Cloudways Scout $9.99 for 1 vCPU and 2 GB", hermosWins: false },
+      { criterion: "Ongoing maintenance", hermesOs: "Server upkeep handled for you", other: "Yours on a VPS; lighter on managed hosts", hermosWins: true },
+      { criterion: "Persistent memory", hermesOs: "Built-in, on the agent's own disk", other: "Sprites, Orgo, Cloudways, Hivra keep disks; E2B sessions are short; Railway free VM dies if unclaimed", hermosWins: true },
+      { criterion: "Browser automation", hermesOs: "Pre-configured", other: "Orgo desktop-native; others DIY or bundled tools", hermosWins: true },
+      { criterion: "Scheduled tasks", hermesOs: "Native agent scheduling", other: "DIY on a VPS, Railway, Render or serverless; OpenClaw has its own scheduler", hermosWins: true },
       { criterion: "Full infrastructure control", hermesOs: "Dashboard + container shell", other: "Full on VPS options", hermosWins: false },
-      { criterion: "Money-back guarantee", hermesOs: "Yes, 7 days, card payments only", other: "No", hermosWins: true },
+      { criterion: "Money-back guarantee", hermesOs: "Yes, 7 days, card payments only", other: "Varies by provider", hermosWins: true },
+      { criterion: "Same $9.99 hardware?", hermesOs: "$9.99/month for 2 vCPU and 4 GB RAM, or $19.99/month for 4 vCPU and 8 GB RAM", other: "Cloudways Scout $9.99 is 1 vCPU and 2 GB; Cloudways Operator matches Hivra's 2 vCPU and 4 GB entry size at a higher list price", hermosWins: true },
     ],
     verdict:
-      "Hivra is the right choice for anyone who wants a persistent agent running without becoming a part-time sysadmin. Self-hosted VPS is the right choice for developers who want complete control and do not mind the setup cost. Railway and Render are built for web apps — not persistent agent workloads.",
+      "Match the shape first. E2B and Fly for fleets of short sandboxes, Orgo for desktop computer-use, Railway's free VM for a throwaway session, DigitalOcean Agent Droplets when you want one DO bill, Cloudways when you already host there, a raw VPS when cash and root win, Hivra when you want a flat monthly computer for your own agents. We built Hivra, so check the prices against each vendor's page before you believe any of us.",
     faqs: [
       {
         q: "What is the cheapest way to host a Hermes AI agent in 2026?",
-        a: "For the lowest cash cost, a Hetzner CX23 at €5.49/month before VAT is hard to beat, but you still need to factor in 6-8 hours of setup time and ongoing maintenance. Hivra hosting at $9.99/month (2 vCPU, 4 GB) is usually cheaper when you count your time.",
+        a: "For the lowest cash cost, a small VPS still wins, but you own the upkeep. Hivra hosting at $9.99/month for 2 vCPU and 4 GB can work out cheaper once you count your time. The AI agent hosting cost calculator lets you check with your own hours. Cloudways lists $9.99 for 1 vCPU and 2 GB, so compare size, not only the dollar.",
       },
       {
         q: "Can I run a Hermes agent on a free tier service?",
-        a: "Not reliably on generic free tier hosts. Hermes requires a persistent process. Render's free web services spin down after 15 minutes without traffic, and Railway's free plan comes with only $1 of usage credit a month, which do not suit persistent agent operation and scheduled tasks. Hivra's paid plans are never paused for inactivity, so scheduled tasks keep running.",
+        a: "Railway's free VM is free while unclaimed, with a short build window and a claim deadline. E2B Hobby gives usage credit for short sandboxes, not a month-long personal computer. Render's free web services spin down after idle time, which fights a persistent agent. Hivra's paid plans are never paused for inactivity, and Hivra has no free plan.",
       },
       {
         q: "What is the best AI agent hosting for beginners?",
-        a: "Hivra — no Linux knowledge, no Docker, no networking required. If you are comfortable with a terminal and want full control, a Hetzner VPS is the most cost-effective option with the highest ceiling.",
+        a: "A managed host with stated sizes and a dashboard. Hivra needs no Linux knowledge for the managed path. If you are comfortable with a terminal and want full control, a small VPS is the highest ceiling for the cash.",
       },
       {
         q: "Is Hivra the only managed Hermes agent hosting service?",
-        a: "We do not track every provider, so we will not claim to be the only one. What Hivra focuses on is running several agents side by side, including Hermes, OpenClaw, Claude Code, and Codex, at a flat monthly price.",
+        a: "No. Cloudways lists Hermes on its managed agents page, DigitalOcean lists Hermes among Agent Droplets harnesses, and Nous runs Hermes Cloud. What Hivra focuses on is several agents side by side, including Hermes, OpenClaw, Claude Code and Codex, at a flat monthly price for the computer.",
       },
       {
-        q: "What about running Hermes on Fly.io or Kamal?",
-        a: "Both are valid options for developers who want PaaS-style deployment with more control than Railway/Render. Fly.io in particular has good support for persistent volumes. Neither provides agent-specific tooling or a dashboard — you are still building the platform layer yourself.",
+        q: "Fly Sprites or Hivra for Claude Code?",
+        a: "Sprites if you want pay-per-second Linux computers you drive from an API and you are fine with idle sleep. Hivra if you want one flat monthly computer with Claude Code on your own Anthropic login and a dashboard built around that computer.",
+      },
+      {
+        q: "Cloudways $9.99 or Hivra $9.99?",
+        a: "Different hardware. As of October 2026, Cloudways Scout lists 1 vCPU and 2 GB RAM at $9.99. Hivra is $9.99 for 2 vCPU and 4 GB RAM, or $19.99 for 4 vCPU and 8 GB RAM. Cloudways Operator lists 2 vCPU and 4 GB at a higher list price than Hivra's entry size. Compare agents and refund terms on each vendor's page before you treat the dollar as equal.",
+      },
+      {
+        q: "When should I pick Orgo or E2B instead of Hivra?",
+        a: "Orgo when the agent needs a real desktop it can click. E2B when your product opens many short code sandboxes. Hivra when you want one always-on computer for your own agents at a known monthly price.",
       },
     ],
     relatedComparisons: [
       { slug: "vs-self-hosted", title: "Hivra vs Self-Hosted VPS" },
       { slug: "vs-railway", title: "Hivra vs Railway" },
-      { slug: "openclaw-to-hermes", title: "OpenClaw to Hermes Migration" },
+      { slug: "vs-agent-37", title: "Hivra vs Agent 37" },
+      { slug: "vs-hostinger", title: "Hivra vs Hostinger" },
+      { slug: "vs-xcloud", title: "Hivra vs xCloud" },
+      { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
     ],
     relatedBlog: [
+      { slug: "ai-agent-hosting-guide", title: "AI agent hosting guide" },
+      { slug: "managed-vs-self-hosted-ai-agents", title: "Managed vs self-hosted AI agents" },
       { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
-      { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },
+    ],
+    externalRelated: [
+      { label: "AI agent hosting cost calculator", href: HOSTING_COST_CALCULATOR_HREF },
+      { label: "Fly Sprites", href: "https://fly.io/sprites" },
+      { label: "Railway free VM", href: "https://railway.com/free-vm" },
+      { label: "DigitalOcean Agent Droplets pricing", href: "https://docs.digitalocean.com/products/managed-agents/agent-harness-runtime/details/pricing/" },
+      { label: "Cloudways Managed AI Agents", href: "https://www.cloudways.com/en/managed-ai-agents.php" },
+      { label: "Orgo pricing", href: "https://www.orgo.ai/pricing" },
+      { label: "E2B pricing", href: "https://e2b.dev/pricing" },
     ],
   },
+
 };
+
+const COMPARISONS: Record<string, ComparisonData> = { ...BASE_COMPARISONS, ...HOST_COMPARISONS };
 
 interface ComparePageParams {
   params: Promise<{ slug: string }>;
@@ -547,5 +552,5 @@ export default async function ComparisonPage({ params }: ComparePageParams) {
     <header className={styles.masthead}><span className={styles.eyebrow}>{comparison.tagline}</span><h1>{comparison.h1}</h1></header>
     <div className={styles.articleLayout}><ArticleNavigation items={contents} /><div className={styles.articleBody}><div className={styles.detailIntro}>{comparison.intro.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
     {comparison.sections.map((section, index) => <section key={section.heading} id={contents[index].id}><h2>{section.heading}</h2>{section.paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>)}
-    <section><h2>Feature comparison</h2><div className={styles.tableScroll} role="region" aria-label="Feature comparison" tabIndex={0}><table><thead><tr><th scope="col">Criterion</th><th scope="col">Hivra</th><th scope="col">Alternative</th></tr></thead><tbody>{comparison.vsTable.map(({ criterion, hermesOs, other, hermosWins }) => <tr key={criterion}><th scope="row">{criterion}</th><td>{hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{hermesOs}</td><td>{!hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{other}</td></tr>)}</tbody></table></div></section><section className={styles.verdict}><h2>Verdict</h2><p>{comparison.verdict}</p></section><EditorialQuestions questions={comparison.faqs} /></div></div><EditorialCTA title={<>Ready to <strong>stop managing infra?</strong></>} label="Deploy My Agent" /><EditorialRelated links={[...comparison.relatedComparisons.map(({ slug, title }) => ({ label: title, href: `/compare/${slug}` })), ...(comparison.relatedBlog ?? []).map(({ slug, title }) => ({ label: `Blog: ${title}`, href: `/blog/${slug}` })), ...(comparison.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })), ...(comparison.externalRelated ?? []), { label: "Pricing", href: "/pricing" }, { label: "All Features", href: "/features" }]} /></main></PublicSite>);
+    <section><h2>Feature comparison</h2><div className={styles.tableScroll} role="region" aria-label="Feature comparison" tabIndex={0}><table><thead><tr><th scope="col">Criterion</th><th scope="col">Hivra</th><th scope="col">Alternative</th></tr></thead><tbody>{comparison.vsTable.map(({ criterion, hermesOs, other, hermosWins }) => <tr key={criterion}><th scope="row">{criterion}</th><td>{hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{hermesOs}</td><td>{!hermosWins ? <CheckCircle size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}{other}</td></tr>)}</tbody></table></div></section><section className={styles.verdict}><h2>Verdict</h2><p>{comparison.verdict}</p></section>{comparison.factSources ? <section aria-labelledby="fact-sources"><h2 id="fact-sources">Where these numbers come from</h2><p>Prices and terms for the other provider come from its own pages, as of <time dateTime={COMPETITOR_FACTS_CHECKED}>{formatCheckedMonth()}</time>. Vendors change prices, so check the source before you pay.</p><ul>{comparison.factSources.map(({ label, href }) => <li key={href}><a href={href} rel="noopener noreferrer">{label}</a></li>)}</ul></section> : null}<EditorialQuestions questions={comparison.faqs} /></div></div><EditorialCTA title={<>Ready to <strong>stop managing infra?</strong></>} label="Deploy My Agent" /><EditorialRelated links={[...comparison.relatedComparisons.map(({ slug, title }) => ({ label: title, href: `/compare/${slug}` })), ...(comparison.relatedBlog ?? []).map(({ slug, title }) => ({ label: `Blog: ${title}`, href: `/blog/${slug}` })), ...(comparison.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })), ...(comparison.externalRelated ?? []), { label: "Pricing", href: "/pricing" }, { label: "All Features", href: "/features" }]} /></main></PublicSite>);
 }

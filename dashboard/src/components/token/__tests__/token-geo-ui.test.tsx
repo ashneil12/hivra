@@ -15,7 +15,7 @@ import type { TokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 
 const GB_NOTICE = "Token features aren't available to people in the United Kingdom.";
 const ALLOWED: TokenGeoAccess = { status: "allowed", notice: null };
-const BLOCKED: TokenGeoAccess = { status: "blocked", notice: GB_NOTICE };
+const BLOCKED: TokenGeoAccess = { status: "blocked", notice: GB_NOTICE, existingAccess: false };
 let mockAccess: TokenGeoAccess = ALLOWED;
 
 jest.mock("@/hooks/useTokenGeoAccess", () => ({

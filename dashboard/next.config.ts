@@ -1,5 +1,10 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+// Next's own default list of bots that need metadata in <head>. The path is
+// part of Next's build output; next-config.test.ts fails if an upgrade moves it.
+import { HTML_LIMITED_BOT_UA_RE } from "next/dist/shared/lib/router/utils/html-bots";
+import { htmlLimitedBotsWithAiCrawlers } from "./src/lib/ai-crawlers";
+import { clerkAssetHeaders, clerkAssetRewrites } from "./src/lib/clerk-assets";
 
 // This is build-generation provenance only. Vercel's authoritative deployment
 // createdAt is collected from `vercel inspect --json` during Plan 08 rather
@@ -81,6 +86,24 @@ const posthogProxyOrigin = (() => {
 })();
 const posthogProxyCsp = posthogProxyOrigin ? ` ${posthogProxyOrigin}` : "";
 
+// Guessed URLs for /blog/keep-claude-code-running-24-7 that Search Console
+// reported with impressions (90 days to 2026-10-04). All returned 404.
+export const LAPTOP_POST_SLUG_VARIANTS = [
+  "/blog/claude-code-running-24-7",
+  "/blog/how-to-keep-claude-code-running-24-7",
+  "/blog/how-to-keep-claude-code-running-24-7-even-when-your",
+  "/blog/keep-claode-code-running-24-7",
+  "/blog/keep-claude-agent-running-24-7",
+  "/blog/keep-claude-code-24-7",
+  "/blog/keep-claude-code-agent-running-24-7",
+  "/blog/keep-claude-code-running-24-7-even-when-your",
+  "/blog/keep-claude-code-running-24-7-even-when-your-",
+  "/blog/keep-claude-code-running-24/7",
+  "/blog/keep-claude-code-running-247-and",
+  "/blog/keep-claude-code-running-even-when-your-laptop-closes",
+  "/blog/keep-claude-running-24-7",
+] as const;
+
 const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_BUILD_GENERATED_AT: buildGeneratedAt,
@@ -88,6 +111,9 @@ const nextConfig: NextConfig = {
   },
   distDir: process.env.VERCEL ? ".next" : ".next.nosync", // Prevent iCloud Drive thrashing locally
   trailingSlash: false,
+  // Keep Next's default list and add the AI crawlers (src/lib/ai-crawlers.ts).
+  // Setting this option replaces the default, so it must extend it.
+  htmlLimitedBots: htmlLimitedBotsWithAiCrawlers(HTML_LIMITED_BOT_UA_RE),
   compress: false, // Disable built-in gzip — it buffers entire responses, defeating SSE streaming
   crossOrigin: "anonymous",
   allowedDevOrigins: [localLiveAuthHost, `*.${localLiveAuthHost}`],
@@ -163,6 +189,27 @@ const nextConfig: NextConfig = {
     "/enroll/script": ["./bootstrap/server-enroll.sh"],
     "/enroll/script.sha256": ["./bootstrap/server-enroll.sh"],
     "/api/infrastructure/server-enrollments": ["./bootstrap/server-enroll.sh"],
+    // The four documents the token geo-policy applies to are not public files:
+    // each handler reads its full and token-free copy, staged by
+    // scripts/stage-litepaper.mjs, and picks one by the viewer's country
+    // (src/lib/compliance/token-geo-documents.ts). A handler without its files
+    // answers 500, so each one must carry them.
+    "/LITEPAPER.md": [
+      "./.generated/litepaper/full/LITEPAPER.md",
+      "./.generated/litepaper/restricted/LITEPAPER.md",
+    ],
+    "/WHITEPAPER.md": [
+      "./.generated/litepaper/full/WHITEPAPER.md",
+      "./.generated/litepaper/restricted/WHITEPAPER.md",
+    ],
+    "/TOKENOMICS.md": [
+      "./.generated/litepaper/full/TOKENOMICS.md",
+      "./.generated/litepaper/restricted/TOKENOMICS.md",
+    ],
+    "/docs/litepaper/index.html": [
+      "./.generated/litepaper/full/litepaper.html",
+      "./.generated/litepaper/restricted/litepaper.html",
+    ],
   },
   async redirects() {
     return [
@@ -180,6 +227,10 @@ const nextConfig: NextConfig = {
             "/token",
             "/tokenomics",
             "/why-hivra/:path*",
+            // Trust pages for Hivra's own site: their contact is Hivra's, not
+            // the operator's.
+            "/about",
+            "/security",
           ].map(source => ({
             source,
             destination: "/dashboard",
@@ -190,16 +241,26 @@ const nextConfig: NextConfig = {
       // and that search engines and old links still carry. The homepage FAQ
       // section is id="faq".
       { source: "/faq", destination: "/#faq", permanent: true },
-      { source: "/about", destination: "/why-hivra", permanent: true },
       // Social cards cached from the retired site point at this static file.
       { source: "/og-image.png", destination: "/opengraph-image", permanent: true },
+      // Search Console shows impressions for guessed slugs of the laptop-close
+      // post (AI answers link them); every one 404s today. Send them to the
+      // real post. Exact paths only, so no wildcard can shadow a real slug.
+      ...LAPTOP_POST_SLUG_VARIANTS.map(source => ({
+        source,
+        destination: "/blog/keep-claude-code-running-24-7",
+        permanent: true as const,
+      })),
+      // The retired site served the roadmap as a PDF that still ranks.
+      { source: "/roadmap/HermesOS_Roadmap_2026.pdf", destination: "/roadmap", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
     ];
   },
   async rewrites() {
-    return [
+    return {
+      afterFiles: [
       // UK Dental DBR GTM landing page lives on a separate Vercel project
       // (clearweb.one/dental). Proxy /dental through the dashboard origin so
       // hivra.cloud/dental returns HTTP 200 instead of 404 — marketing/outreach
@@ -233,17 +294,15 @@ const nextConfig: NextConfig = {
         source: "/p/decide",
         destination: "https://us.i.posthog.com/decide",
       },
-      // Same-origin proxy for Clerk's pinned npm assets (clerk.browser.js +
-      // ui.browser.js and the named sub-chunks ui.browser.js fans out into —
-      // Clerk resolves those relative to its own URL, so the rewrite must
-      // cover the whole /npm/* dist path). cdn.jsdelivr.net times out for a
-      // slice of users every week and takes sign-in down with it; serving
-      // through our origin rides Vercel's edge instead.
-      {
-        source: "/clerk-assets/:path*",
-        destination: "https://cdn.jsdelivr.net/npm/:path*",
-      },
-    ];
+      // Same-origin proxy for Clerk's pinned browser bundles and the lazy
+      // chunks they load from their own dist/ directory. cdn.jsdelivr.net
+      // times out for a slice of users every week and takes sign-in down with
+      // it; serving through our origin rides Vercel's edge instead. Scoped to
+      // the pinned @clerk/clerk-js and @clerk/ui dist/*.js files only: see
+      // src/lib/clerk-assets.ts.
+      ...clerkAssetRewrites(),
+      ],
+    };
   },
   async headers() {
     return [
@@ -357,6 +416,21 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // /roofing is an off-topic outreach landing page (static HTML in public/).
+      // It stays up for the people who were sent there, but it must not be
+      // indexed under hivra.cloud. A header works for both the rewritten path
+      // and the file's own URL, and robots.txt must keep allowing the page so
+      // crawlers can read this directive.
+      {
+        source: "/roofing",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+      {
+        source: "/roofing.html",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+      // After the document rule so this path keeps its own enforced policy.
+      clerkAssetHeaders,
       {
         source: "/sw.js",
         headers: [

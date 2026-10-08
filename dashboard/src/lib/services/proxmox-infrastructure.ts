@@ -180,6 +180,29 @@ export function getProxmoxHostRoutingConfigFromInfrastructure(
 }
 
 /**
+ * The `sshExec` target for a Hermes instance row: the host it lives on, its
+ * stored VMID and its id, so the Proxmox host binds SSH to that VM and checks
+ * the VM is still this instance's. Null for a row with no Proxmox handle
+ * (Hetzner boxes), which sshExec reaches directly.
+ *
+ * Every guest command for an instance should pass this. The guest IP is not an
+ * identity: hosts share a private prefix and number guests from the same
+ * start, so the same IP is a different tenant's VM on another host.
+ */
+export function getHermesGuestSshTarget(
+  row: (Omit<ProxmoxLifecycleRow, "infrastructure_provider"> & { id?: string | null }) | null | undefined,
+): (ProxmoxHostRoutingConfig & { vmid: number; instanceId: string }) | null {
+  if (!row?.id) return null;
+  const infrastructure = resolveProxmoxLifecycleTarget(row);
+  if (!infrastructure) return null;
+  return {
+    ...(getProxmoxHostRoutingConfigFromInfrastructure(infrastructure, row) ?? { failClosed: true }),
+    vmid: infrastructure.vmid,
+    instanceId: row.id,
+  };
+}
+
+/**
  * Subset of `hermes_instances` columns needed to derive a `ProxmoxInfrastructure`
  * for lifecycle (delete/shutdown/etc) operations when `config.infrastructure` is
  * incomplete or stale.

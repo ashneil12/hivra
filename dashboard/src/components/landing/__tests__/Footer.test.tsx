@@ -3,7 +3,7 @@ import "@testing-library/jest-dom";
 import fs from "fs";
 import path from "path";
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import Footer from "../Footer";
@@ -18,7 +18,7 @@ jest.mock("next/link", () => {
     children: React.ReactNode;
     [key: string]: unknown;
   }) => (
-    <a href={href} {...rest}>
+    <a data-next-link href={href} {...rest}>
       {children}
     </a>
   );
@@ -42,6 +42,17 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Stats" })).toHaveAttribute("href", "/stats");
     expect(screen.getByText(/Powered by Hivra/i)).toBeInTheDocument();
+  });
+
+  it("links the trust pages from the Company column: About and Security", () => {
+    render(<Footer />);
+    const company = screen.getByRole("navigation", { name: "Company" });
+
+    expect(within(company).getByRole("link", { name: "About" })).toHaveAttribute("href", "/about");
+    expect(within(company).getByRole("link", { name: "Security" })).toHaveAttribute("href", "/security");
+    expect(within(company).getByRole("link", { name: "Terms" })).toHaveAttribute("href", "/terms");
+    expect(within(company).getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/privacy");
+    expect(within(company).getByRole("link", { name: "Contact" })).toHaveAttribute("href", "mailto:info@hivra.cloud");
   });
 
   it("links the status page next to the changelog entry", () => {
@@ -96,7 +107,10 @@ describe("Footer", () => {
   });
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
     render(<Footer />);
-    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
+    // The litepaper is a static file: a plain link, so no Server Components prefetch 404s.
+    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
+    expect(screen.getByRole("link", { name: "Litepaper" })).not.toHaveAttribute("data-next-link");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("data-next-link");
     expect(screen.queryByText("A place of its own.")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Read the litepaper" })).not.toBeInTheDocument();
     // Nibbii is no longer part of Hivra or a token use.

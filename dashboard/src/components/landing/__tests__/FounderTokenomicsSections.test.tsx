@@ -3,17 +3,10 @@ import "@testing-library/jest-dom";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { render, screen } from "@testing-library/react";
-import FounderSection, { FOUNDER_EXCERPTS } from "../FounderSection";
 import TokenomicsSection from "../FullTokenomicsSection";
 
 const litepaper = readFileSync(path.resolve(__dirname, "../../../../../LITEPAPER.md"), "utf8");
 
-test("homepage founder note uses complete Litepaper excerpts and links the full piece", () => {
- const {container}=render(<FounderSection />);
- for (const paragraph of FOUNDER_EXCERPTS) { expect(screen.getByText(paragraph)).toBeVisible(); expect(litepaper).toContain(paragraph); }
- expect(container.querySelectorAll("blockquote p")).toHaveLength(5);
- expect(screen.getByRole("link",{name:/Read why I'm building Hivra/})).toHaveAttribute("href","/why-hivra");
-});
 test("token access is distinct from an optional claim and does not promise a conversion ratio", () => {
   render(<TokenomicsSection />);
   expect(screen.getByText(/The amount you need is fixed when your holding first qualifies/)).toBeVisible();
@@ -30,7 +23,11 @@ test("token access is distinct from an optional claim and does not promise a con
 test("the full founder source retains the faith, accountability and reference paragraphs", () => {
  const full=readFileSync(path.resolve(__dirname,"../../../../../THOUGHTS.md"),"utf8");
  for(const text of ["I'm also a Christian", "scripture already described", "Someone has to be answerable", "https://projectzero.google/", "https://www.anthropic.com/"]) expect(full).toContain(text);
- expect(litepaper).toContain(full.split("\n\n")[1]);
+ // The litepaper carries a shorter founder letter that links here, with the
+ // scripture passage word for word; THOUGHTS.md keeps the full version.
+ expect(litepaper).toContain("](THOUGHTS.md)");
+ const scripture = full.split("\n\n").find(paragraph => paragraph.includes("scripture already described"));
+ expect(litepaper).toContain(scripture);
 });
 test("proposed uses and treasury retain their boundaries and direct reading links", () => {
   render(<TokenomicsSection />);
@@ -56,7 +53,7 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
     "The amount you need is fixed when your holding first qualifies.",
     "a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits.",
     "Bankr would run the conversion.",
-    "The conversion rate, the fees and how price movement during a conversion is handled get published before claims open, along with the exact steps.",
+    "The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.",
     "Once $HIVRA launches, new users hold and pay with $HIVRA.",
     "Nothing here is an offer or an inducement to buy any asset.",
     "The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.",

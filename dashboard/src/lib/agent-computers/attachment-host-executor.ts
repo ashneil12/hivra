@@ -1,17 +1,18 @@
 import "server-only";
 
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { parseAttachmentArtifactResult, type AttachmentArtifactResult } from "./attachment-artifact-result";
 import { parseAttachmentGuestResult, snapshotAttachmentGuestExpectation,
   type AttachmentGuestResult, type ExpectedAttachmentGuestResult } from "./attachment-guest-result";
 import { ATTACHMENT_ACTION_TIMEOUTS, buildAttachmentHostActionScript, type AttachmentGuestAction } from "./attachment-host-action";
 import { parseAttachmentTargetRefusal, parseGuestStepRefusal, type AttachmentTargetRefusal } from "./attachment-host-observation";
+import { logAttachmentTransportFailure } from "./attachment-transport-diagnostic";
 
 type Dependencies = {
   resolveContext: typeof resolveHivraAgentExecutionContext;
-  runHostScript: typeof runProxmoxHostScript;
+  runHostScript: typeof runProxmoxHostScriptWithStdin;
 };
 /** What run-attached-codex-bundle.py names when a fetch, stage or observe raised (design 5.5, T3). */
 export const ATTACHMENT_STAGING_REFUSALS = ["fetch_failed", "staging_failed", "staging_in_progress", "staging_absent",
@@ -46,25 +47,27 @@ export async function executeAttachmentGuestAction(
     || agent.infrastructure_binding_token_enforced !== true || agent.vmid == null || agent.ip == null) {
     return { ok: false, code: "invalid_target" };
   }
-  const deps = { resolveContext: resolveHivraAgentExecutionContext, runHostScript: runProxmoxHostScript, ...dependencies };
+  const deps = { resolveContext: resolveHivraAgentExecutionContext, runHostScript: runProxmoxHostScriptWithStdin, ...dependencies };
   let context;
   try { context = await deps.resolveContext(ownerId, agent); }
   catch { return { ok: false, code: "authority_unavailable" }; }
   if (!context.infrastructureBindingTagEnforced) return { ok: false, code: "authority_unavailable" };
   const { operationId, computerId, sourceId, architecture } = expected.identity;
-  let script;
+  let step;
   try {
-    script = buildAttachmentHostActionScript(action, { operationId, computerId, sourceId, architecture,
+    step = buildAttachmentHostActionScript(action, { operationId, computerId, sourceId, architecture,
       vmid: agent.vmid, guestIp: agent.ip, bindingTag: context.infrastructureBindingTag }, expected);
   } catch { return { ok: false, code: "invalid_target" }; }
   try {
-    const result = await deps.runHostScript(script, { ...context.env },
+    const result = await deps.runHostScript(step.script, step.stdin, { ...context.env },
       { timeoutMs: ATTACHMENT_ACTION_TIMEOUTS[action].hostMs, maxOutputBytes: 32 * 1024 });
     if (!result.ok) {
       const refused = parseAttachmentTargetRefusal(result.stdout);
       if (refused) return { ok: false, code: "target_refused", reason: refused };
       const named = parseGuestStepRefusal(result.stdout, ATTACHMENT_STAGING_REFUSALS);
-      return named ? { ok: false, code: "guest_refused", reason: named } : { ok: false, code: "transport_failed" };
+      if (named) return { ok: false, code: "guest_refused", reason: named };
+      logAttachmentTransportFailure(action, { sourceId, vmid: agent.vmid }, result);
+      return { ok: false, code: "transport_failed" };
     }
     if (action === "fetch") {
       const artifact = parseAttachmentArtifactResult(result.stdout, expected);
@@ -72,5 +75,8 @@ export async function executeAttachmentGuestAction(
     }
     const staged = parseAttachmentGuestResult(result.stdout, expected);
     return staged ? { ok: true, action, staged } : { ok: false, code: "invalid_result" };
-  } catch { return { ok: false, code: "transport_failed" }; }
+  } catch (error) {
+    logAttachmentTransportFailure(action, { sourceId, vmid: agent.vmid }, error);
+    return { ok: false, code: "transport_failed" };
+  }
 }

@@ -103,6 +103,17 @@ there, following the steps in the file's header.
 |---|---|---|
 | `hivra_agent_slot_writer_guard.sql` (plan agent limit, migration B) | `*_hivra_agent_slot_limit.sql` is applied and the code that writes Hivra-managed agents through `insert_hivra_managed_agent` and `reserve_hivra_launch_model_request_v3` is serving on that environment | Launch smoke test; start and restart of an existing agent, including one in `error` (the file's header lists every status writer it was audited against) |
 
+Where each queued step stands:
+
+- `hivra_agent_slot_writer_guard.sql`: **Canary** applied 2026-09-25 from this
+  folder as ledger version `20260925151500_hivra_agent_slot_writer_guard`.
+  Before the apply, a launch and a restart passed on the served revision; after
+  it, a launch, stop and start, restart, and Start of a Hivra-managed Ubuntu
+  Desktop in `error` that kept its computer (answered `provisioning`) passed,
+  with no refusal logged. **Production** is pending:
+  apply the same file with the same version only after the owner's Promote,
+  never in the schema catch-up before it. The file stays here until then.
+
 ## Provisioner releases in flight
 
 A provisioner release (`dashboard/provisioner/VERSION`, its sealed manifest and
@@ -137,6 +148,14 @@ system exists or that every current integration has been audited.
   and cost, not the safety of the contributed code.
 - Do not use `pull_request_target` or privileged `workflow_run` jobs to execute
   untrusted PR code. Do not put hosting credentials in repository-level secrets.
+- Pull request titles, descriptions and comments are public, and GitHub keeps
+  their edit history. Before posting one, run it through
+  `node scripts/release/public-tree-hygiene.mjs --text-file -` and keep live host
+  names, storage box addresses, wallet addresses, database project references and
+  customer ids out of it. CI scans the files of a pull request with the same
+  rules. It does not read the text of the pull request, so this step is manual.
+- To run the same tree scan before every local commit, enable the hook once per clone:
+  `git config core.hooksPath .githooks`. CI runs the scan regardless of the hook.
 - Live Instance Smoke is manual-only, runs only from `main` and uses the `managed-live-smoke`
   environment. That environment permits only main, requires owner approval, and
   disallows administrator bypass. Put any future smoke credentials there, scoped
@@ -156,6 +175,8 @@ It checks the named GitHub/Vercel controls and fails if required settings are
 missing or weakened. It does not deploy, inspect secret values, certify application
 security, or replace revision-bound release verification. The live configuration
 is stored in GitHub/Vercel; committing this document alone does not enforce it.
+Repository settings that this audit does not read, such as Dependabot and code
+scanning, are listed in [the repository settings checklist](REPO-SETTINGS-CHECKLIST.md).
 
 Current broader dashboard CI failures remain tracked in issue #3; provider release
 identity and staged desktop activation remain in issue #2. A passing current-tree

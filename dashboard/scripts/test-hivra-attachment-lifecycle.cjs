@@ -36,6 +36,8 @@ const GRANTS = "20260925100300_hivra_agent_attachment_grants.sql";
 const READINESS = "20260925100400_hivra_agent_attach_readiness.sql";
 const INTERRUPT = "20260925100500_hivra_agent_attach_interrupt.sql";
 const REFUSALS = "20260925100600_hivra_agent_attach_refusals.sql";
+// Re-pins the lifecycle program after its Remove fix; the only later definition of the activation dispatch.
+const PROGRAM_REPIN = "20260925160000_hivra_attached_agent_program_remove_fix.sql";
 const OWNER = "owner";
 const INSTALLER = "77d72e2e8346cc19ef74264e8458bbca8802772d1c668c3fdffa653c4273d375";
 const WORKER = "2a0aee3e5e3fc0d4403d41a93dbece648648c8a84ab4349a71d7fe87243121ab";
@@ -55,7 +57,9 @@ async function main() {
   const lifecycleSql = readMigration(LIFECYCLE);
   const GRANT_POLICY = pinned(lifecycleSql, "p_intent->>'grantPolicySha256'");
   const SERVICE_POLICY = pinned(lifecycleSql, "p_service_policy_sha256");
-  const PROGRAM = pinned(lifecycleSql, "p_program_sha256");
+  const PROGRAM = pinned(readMigration(PROGRAM_REPIN), "p_program_sha256");
+  const PREVIOUS_PROGRAM = pinned(lifecycleSql, "p_program_sha256");
+  assert.notEqual(PROGRAM, PREVIOUS_PROGRAM, "the re-pin names a new program");
   try {
     // The attach migrations are idempotent, applied again in order.
     await db.exec(readMigration(LIFECYCLE));
@@ -63,6 +67,7 @@ async function main() {
     await db.exec(readMigration(READINESS));
     await db.exec(readMigration(INTERRUPT));
     await db.exec(readMigration(REFUSALS));
+    await db.exec(readMigration(PROGRAM_REPIN));
 
     let computers = 0;
     const computer = async (mode = "hivra-managed") => {
@@ -181,7 +186,8 @@ async function main() {
       return value(`select public.dispatch_hivra_attachment_activation_v2($1,$2,$3,2,$4::jsonb,$5,$6::jsonb,$7,$8,$9,$10) as result`,
         [p.owner, op, p.activation, JSON.stringify(desk.authority), boot, JSON.stringify(staged), p.policy, p.program, definition, p.token]);
     };
-    for (const change of [{ owner: "other" }, { policy: "0".repeat(64) }, { program: "0".repeat(64) }, { token: "short" }]) {
+    for (const change of [{ owner: "other" }, { policy: "0".repeat(64) }, { program: "0".repeat(64) }, { program: PREVIOUS_PROGRAM },
+      { token: "short" }]) {
       assert.equal(await activate(change), false, "an unbound or unpinned activation is refused");
     }
     assert.equal(await activate(), true);

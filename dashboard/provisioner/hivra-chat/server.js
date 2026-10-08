@@ -827,6 +827,64 @@ function handleBrowserToggle(res, body) {
   child.on("error", (e) => jsonRes(res, 500, { error: "spawn failed: " + e.message }));
 }
 
+// ---- Claude app on Ubuntu Desktop computers (optional, owner-initiated) ----
+// The app itself runs inside the contained desktop; this gateway only asks a
+// narrow root helper to report, install or update it, or to switch the window
+// between a full-screen app view and a windowed view on the desktop. The helper
+// is reached through an exact-argument sudoers rule and never receives anything
+// from the request except a fixed verb. No Claude credential passes through here.
+const CLAUDE_APP_HELPER = "/usr/local/bin/hivra-claude-app";
+const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
+function claudeAppAvailable() {
+  if (!COMPUTER_PROFILE || ATTACHED) return false;
+  try { return fs.statSync(CLAUDE_APP_HELPER).isFile(); } catch { return false; }
+}
+function claudeAppHelper(args, timeoutMs, cb) {
+  execFile("sudo", ["-n", CLAUDE_APP_HELPER, ...args], { env: AGENT_ENV, timeout: timeoutMs, maxBuffer: 64 * 1024 }, (error, stdout) => {
+    let parsed = null;
+    try { parsed = JSON.parse(String(stdout || "").trim().split("\n").pop() || "null"); } catch {}
+    cb(error, parsed);
+  });
+}
+function handleClaudeAppStatus(res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  res.setHeader("Cache-Control", "no-store");
+  claudeAppHelper(["status"], 20000, (error, status) => {
+    if (error || !status || status.protocol !== CLAUDE_APP_PROTOCOL) return jsonRes(res, 502, { error: "The Claude app status could not be read." });
+    jsonRes(res, 200, status);
+  });
+}
+function handleClaudeAppInstall(res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  // Download and unpack take a while. Start the helper detached and answer at
+  // once; the owner's screen polls status for progress and for any failure.
+  const child = spawn("sudo", ["-n", CLAUDE_APP_HELPER, "install"], { env: AGENT_ENV, detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+  jsonRes(res, 202, { ok: true, installing: true });
+}
+function handleClaudeAppMode(res, body) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  let mode = "";
+  try { const requested = JSON.parse(body || "{}").mode; mode = typeof requested === "string" ? requested : ""; } catch {}
+  if (mode !== "app" && mode !== "desktop") return jsonRes(res, 400, { error: "mode must be app or desktop" });
+  claudeAppHelper(["mode", mode], 30000, (error, result) => {
+    if (result && result.ok === false && result.error === "not_installed") return jsonRes(res, 409, { error: "The Claude app is not added to this computer yet." });
+    if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The view could not be switched." });
+    jsonRes(res, 200, { ok: true, mode: result.mode, applied: result.applied === true });
+  });
+}
+function handleClaudeAppRemove(res, body) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the Claude app is not available on this computer" });
+  let confirmed = false;
+  try { confirmed = JSON.parse(body || "{}").confirm === true; } catch {}
+  if (!confirmed) return jsonRes(res, 400, { error: "confirm is required to remove the Claude app and its saved sign-in" });
+  claudeAppHelper(["remove"], 60000, (error, result) => {
+    if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The Claude app could not be removed." });
+    jsonRes(res, 200, { ok: true });
+  });
+}
+
 function jsonRes(res, status, obj) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(obj));
@@ -2090,8 +2148,18 @@ function gateProxy(req, res, port, strip) {
 // bits, and the socket the gateway's own and not writable by others (connecting
 // to a unix socket needs write permission on it). Guests whose
 // terminal units predate the socket release still listen on loopback; the port
-// stays their fallback.
+// stays their fallback. The installed unit decides which applies: a unit from
+// the socket release never falls back to the port, not even while ttyd restarts
+// and its socket is briefly gone, because by then any local process could have
+// bound that port. The terminal answers "restarting" until its socket is back.
 const TTYD_SOCKETS = { 7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock" };
+const TTYD_UNIT_FILES = {
+  7681: process.env.HIVRA_TTYD_UNIT_FILE_AGENT || "/etc/systemd/system/bux-ttyd.service.d/base-path.conf",
+  7682: process.env.HIVRA_TTYD_UNIT_FILE_BOX || "/etc/systemd/system/bux-box-ttyd.service",
+};
+function terminalUnitUsesSocket(port) {
+  try { return fs.readFileSync(TTYD_UNIT_FILES[port], "utf8").includes("-i " + TTYD_SOCKETS[port] + " "); } catch { return false; }
+}
 const GATEWAY_UID = typeof process.getuid === "function" ? process.getuid() : -1;
 function terminalUpstream(port) {
   const socketPath = TTYD_SOCKETS[port];
@@ -2101,17 +2169,27 @@ function terminalUpstream(port) {
     if (folder.isDirectory() && folder.uid === GATEWAY_UID && (folder.mode & 0o077) === 0
       && info.isSocket() && info.uid === GATEWAY_UID && (info.mode & 0o002) === 0) return { socketPath };
   } catch {}
-  return { port };
+  return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };
+}
+function terminalGate(req, res, port) {
+  if (!authed(req)) return denyHtml(res);
+  const upstream = terminalUpstream(port);
+  if (upstream.unavailable) {
+    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "2" });
+    return res.end("The terminal is restarting. It reconnects in a moment.");
+  }
+  return proxyHttp(req, res, upstream);
 }
 // Which upstream this gateway would use for each terminal right now. The guest
 // updater and the installer read it (bearer only) with a proxied request, so a
 // terminal the gateway would refuse to reach over its socket fails readiness
 // instead of being checked around the gateway.
 function terminalTransports() {
-  return {
-    terminal: terminalUpstream(7681).socketPath ? "socket" : "port",
-    boxTerminal: terminalUpstream(7682).socketPath ? "socket" : "port",
+  const transport = (port) => {
+    const upstream = terminalUpstream(port);
+    return upstream.socketPath ? "socket" : upstream.unavailable ? "restarting" : "port";
   };
+  return { terminal: transport(7681), boxTerminal: transport(7682) };
 }
 
 // ---- attached agents (design 5.4) -------------------------------------------
@@ -3436,7 +3514,7 @@ const server = http.createServer((req, res) => {
     // no-store: bootId (the sign-in epoch) and nativeReady describe the live
     // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
-    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
@@ -3500,6 +3578,11 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/cookies/import") return authed(req) ? readBodyLarge(req, (b) => handleCookieImport(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "GET" && u === "/api/browser/status") return authed(req) ? handleBrowserStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/browser/toggle") return authed(req) ? readBody(req, (b) => handleBrowserToggle(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  // Optional Claude app on Ubuntu Desktop computers.
+  if (u === "/api/claude-app/status" && req.method === "GET") return authed(req) ? handleClaudeAppStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/install" && req.method === "POST") return authed(req) ? handleClaudeAppInstall(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/mode" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppMode(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/remove" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppRemove(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Proxied surfaces — token-gated (was: open to anyone with the URL = a free shell).
   // The dedicated remote-desktop broker performs its own one-time PKCE exchange,
   // continuous session introspection and input lifecycle fencing. Preserve the
@@ -3507,8 +3590,8 @@ const server = http.createServer((req, res) => {
   if (u === "/desktop" || u.startsWith("/desktop/")) {
     return proxyHttp(req, res, REMOTE_DESKTOP_BROKER_PORT, null, true);
   }
-  if (u === "/terminal" || u.startsWith("/terminal/")) return gateProxy(req, res, terminalUpstream(7681));
-  if (u === "/box-terminal" || u.startsWith("/box-terminal/")) return gateProxy(req, res, terminalUpstream(7682));
+  if (u === "/terminal" || u.startsWith("/terminal/")) return terminalGate(req, res, 7681);
+  if (u === "/box-terminal" || u.startsWith("/box-terminal/")) return terminalGate(req, res, 7682);
   // Live browser view: noVNC/websockify serves at root, so mount it under /vnc.
   if (u === "/vnc" || u.startsWith("/vnc/")) return gateProxy(req, res, 6080, "/vnc");
   // Aeon dashboard (Next.js). NO strip: Aeon is configured with basePath=/aeon
@@ -3558,7 +3641,13 @@ server.on("upgrade", (req, socket, head) => {
   const a0Ws = port === AGENT_ZERO_PORT;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
-  const terminalSocket = (port === 7681 || port === 7682) ? terminalUpstream(port).socketPath : null;
+  const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
+  if (terminalUp && terminalUp.unavailable) {
+    try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 2\r\n\r\n"); } catch (e) {}
+    socket.destroy();
+    return;
+  }
+  const terminalSocket = terminalUp && terminalUp.socketPath ? terminalUp.socketPath : null;
   const onProxyConnect = () => {
     let hdr = req.method + " " + fwdUrl + " HTTP/1.1\r\n";
     for (const [k, raw] of Object.entries(req.headers)) {

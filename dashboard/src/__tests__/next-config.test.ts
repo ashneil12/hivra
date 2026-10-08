@@ -1,4 +1,97 @@
+import { buildCustomRoute } from 'next/dist/lib/build-custom-route';
+import { checkCustomRoutes, type Header, type Rewrite } from 'next/dist/lib/load-custom-routes';
+import { modifyRouteRegex } from 'next/dist/lib/redirect-status';
+import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match';
+import { prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination';
+import { HTML_LIMITED_BOT_UA_RE } from 'next/dist/shared/lib/router/utils/html-bots';
+import { shouldServeStreamingMetadata } from 'next/dist/server/lib/streaming-metadata';
+import { AI_CRAWLER_USER_AGENTS } from '@/lib/ai-crawlers';
+import { clerkAssetScriptUrls } from '@/lib/clerk-assets';
 import nextConfig, { scrubHostedEnvironmentForSelfHost } from '../../next.config';
+
+async function listRewrites(): Promise<Rewrite[]> {
+  const rewrites = await nextConfig.rewrites?.();
+  if (!rewrites) return [];
+  if (Array.isArray(rewrites)) return rewrites;
+  return [...(rewrites.beforeFiles ?? []), ...(rewrites.afterFiles ?? []), ...(rewrites.fallback ?? [])];
+}
+
+// Resolves a request path the way Next's router does: filesystem.ts builds
+// each rewrite matcher with these options and resolve-routes.ts turns a match
+// into the destination with prepareDestination. It also checks that the
+// routes-manifest regex (what Vercel's edge matches on) agrees on every rule.
+async function resolveRewrite(pathname: string): Promise<string | null> {
+  for (const rule of await listRewrites()) {
+    const params = getPathMatch(rule.source, {
+      strict: true,
+      removeUnnamedParams: true,
+      regexModifier: (regex: string) => modifyRouteRegex(regex),
+    })(pathname);
+    const manifestRegex = new RegExp(buildCustomRoute('rewrite', rule).regex, 'i');
+    expect(manifestRegex.test(pathname)).toBe(Boolean(params));
+    if (!params) continue;
+    const { parsedDestination } = prepareDestination({
+      appendParamsToQuery: true,
+      destination: rule.destination,
+      params,
+      query: {},
+    });
+    const { protocol, hostname, port, pathname: destinationPath } = parsedDestination;
+    return `${protocol}//${hostname}${port ? `:${port}` : ''}${destinationPath}`;
+  }
+  return null;
+}
+
+// Collects the response headers Next's router sets for a path. When two rules
+// set the same key, the later rule wins (resolve-routes.ts assigns in order).
+async function resolveHeaders(pathname: string): Promise<Record<string, string>> {
+  const resolved: Record<string, string> = {};
+  for (const rule of (await nextConfig.headers?.()) ?? []) {
+    const matched = getPathMatch(rule.source, {
+      strict: true,
+      removeUnnamedParams: true,
+      regexModifier: (regex: string) => modifyRouteRegex(regex),
+    })(pathname);
+    if (!matched) continue;
+    for (const header of rule.headers) resolved[header.key.toLowerCase()] = header.value;
+  }
+  return resolved;
+}
+
+const CLERK_ASSET_PATHS_THE_APP_LOADS = [
+  // The two entry bundles AuthClerkProviderClient hands to ClerkProvider.
+  '/clerk-assets/@clerk/clerk-js@6.8.0/dist/clerk.browser.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/ui.browser.js',
+  // Lazy chunks both bundles load from their own dist/ directory at runtime.
+  '/clerk-assets/@clerk/clerk-js@6.8.0/dist/vendors_clerk.browser_999ac2_6.8.0.js',
+  '/clerk-assets/@clerk/clerk-js@6.8.0/dist/coinbase-wallet-sdk_clerk.browser_999ac2_6.8.0.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/vendors_ui_1adcfa_1.7.0.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/userbutton_ui_1adcfa_1.7.0.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/framework_ui_1adcfa_1.7.0.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/606_ui_1adcfa_1.7.0.js',
+];
+
+const CLERK_ASSET_PATHS_TO_REFUSE = [
+  // Any other npm package, including markup that runs script same-origin.
+  '/clerk-assets/some-other-package@1/x.js',
+  '/clerk-assets/evil-pkg@1.0.0/x.svg',
+  '/clerk-assets/evil-pkg@1.0.0/index.html',
+  '/clerk-assets/@clerk/not-clerk-js@6.8.0/dist/clerk.browser.js',
+  // The Clerk packages at a version the app does not pin.
+  '/clerk-assets/@clerk/clerk-js@6.7.0/dist/clerk.browser.js',
+  '/clerk-assets/@clerk/ui@latest/dist/ui.browser.js',
+  '/clerk-assets/@clerk/ui@1/dist/ui.browser.js',
+  // Pinned packages, but not a runtime script in dist/.
+  '/clerk-assets/@clerk/ui@1.7.0/package.json',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/themes/shadcn.css',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/x.svg',
+  '/clerk-assets/@clerk/clerk-js@6.8.0/dist/types/core/clerk.d.ts',
+  // Traversal out of the pinned dist/ directory, raw and percent-encoded.
+  '/clerk-assets/@clerk/ui@1.7.0/dist/../../evil-pkg@1.0.0/x.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/..%2f..%2f..%2fevil-pkg@1.0.0%2fx.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/%2e%2e%2f%2e%2e%2fevil-pkg@1.0.0%2fx.js',
+  '/clerk-assets/@clerk/ui@1.7.0/dist/..js',
+];
 
 describe('next config', () => {
   it('keeps operator-owned Cloudflare tunnel credentials in self-host mode while removing hosted secrets', () => {
@@ -85,14 +178,185 @@ describe('next config', () => {
     expect(connectSrc).toContain('https://*.fpjs.io');
   });
 
-  it('proxies Clerk npm assets same-origin via /clerk-assets so a jsdelivr outage cannot take down sign-in', async () => {
-    // Clerk resolves its lazy UI chunks relative to the ui.browser.js URL, so
-    // the rewrite must cover the entire /npm/* dist path, not single files.
-    const rewrites = await nextConfig.rewrites?.();
-    const list = Array.isArray(rewrites) ? rewrites : [];
-    const clerkAssets = list.find((rule) => rule.source === '/clerk-assets/:path*');
+  describe('htmlLimitedBots', () => {
+    // Real user-agent shapes from each vendor's documentation.
+    const AI_CRAWLER_UAS: Record<string, string> = {
+      GPTBot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.3; +https://openai.com/gptbot',
+      'OAI-SearchBot': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; OAI-SearchBot/1.3; +https://openai.com/searchbot',
+      'ChatGPT-User': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot',
+      ClaudeBot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)',
+      'Claude-SearchBot': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-SearchBot/1.0; +Claude-SearchBot@anthropic.com)',
+      'Claude-User': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com)',
+      PerplexityBot: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)',
+      'Perplexity-User': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)',
+      CCBot: 'CCBot/2.0 (https://commoncrawl.org/faq/)',
+    };
 
-    expect(clerkAssets?.destination).toBe('https://cdn.jsdelivr.net/npm/:path*');
+    // What Next does with the option: the RegExp is serialised to its source and
+    // compiled case-insensitively (build/index.js loadConfig, streaming-metadata.js).
+    const servedStreaming = (ua: string) =>
+      shouldServeStreamingMetadata(ua, (nextConfig.htmlLimitedBots as RegExp).source);
+
+    it('is a RegExp, which is the only shape Next accepts', () => {
+      expect(nextConfig.htmlLimitedBots).toBeInstanceOf(RegExp);
+    });
+
+    it('lists the eight AI crawlers the SEO checklist names, plus Perplexity-User', () => {
+      expect([...AI_CRAWLER_USER_AGENTS]).toEqual([
+        'GPTBot',
+        'OAI-SearchBot',
+        'ChatGPT-User',
+        'ClaudeBot',
+        'Claude-SearchBot',
+        'Claude-User',
+        'PerplexityBot',
+        'Perplexity-User',
+        'CCBot',
+      ]);
+      expect(Object.keys(AI_CRAWLER_UAS)).toEqual([...AI_CRAWLER_USER_AGENTS]);
+    });
+
+    it.each(Object.entries(AI_CRAWLER_UAS))('gives %s blocking metadata in <head>', (_name, ua) => {
+      expect(servedStreaming(ua)).toBe(false);
+    });
+
+    it("keeps Next's default bots: replacing the list would otherwise drop them", () => {
+      const defaults = [
+        'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (Applebot/0.1; +http://www.apple.com/go/applebot)',
+        'Mozilla/5.0 (compatible; Google-InspectionTool/1.0)',
+        'Mozilla/5.0 (compatible; AdsBot-Google; +http://www.google.com/adsbot.html)',
+        'Twitterbot/1.0',
+        'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)',
+        'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        'LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)',
+      ];
+      for (const ua of defaults) {
+        expect({ ua, matchedByNext: HTML_LIMITED_BOT_UA_RE.test(ua) }).toEqual({ ua, matchedByNext: true });
+        expect({ ua, streaming: servedStreaming(ua) }).toEqual({ ua, streaming: false });
+      }
+      // The config is exactly Next's default with the AI crawlers appended.
+      expect((nextConfig.htmlLimitedBots as RegExp).source.startsWith(HTML_LIMITED_BOT_UA_RE.source)).toBe(true);
+    });
+
+    it('still streams metadata to browsers and to Googlebot, which renders JavaScript', () => {
+      for (const ua of [
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+      ]) {
+        expect({ ua, streaming: servedStreaming(ua) }).toEqual({ ua, streaming: true });
+      }
+    });
+  });
+
+  describe('/clerk-assets same-origin Clerk proxy', () => {
+    const originalClerkJsVersion = process.env.NEXT_PUBLIC_CLERK_JS_VERSION;
+    const originalClerkUiVersion = process.env.NEXT_PUBLIC_CLERK_UI_VERSION;
+
+    afterEach(() => {
+      if (originalClerkJsVersion == null) delete process.env.NEXT_PUBLIC_CLERK_JS_VERSION;
+      else process.env.NEXT_PUBLIC_CLERK_JS_VERSION = originalClerkJsVersion;
+      if (originalClerkUiVersion == null) delete process.env.NEXT_PUBLIC_CLERK_UI_VERSION;
+      else process.env.NEXT_PUBLIC_CLERK_UI_VERSION = originalClerkUiVersion;
+    });
+
+    it.each(CLERK_ASSET_PATHS_THE_APP_LOADS)(
+      'still proxies %s to the same jsDelivr file so sign-in keeps working',
+      async (pathname) => {
+        await expect(resolveRewrite(pathname)).resolves.toBe(
+          `https://cdn.jsdelivr.net/npm${pathname.slice('/clerk-assets'.length)}`,
+        );
+      },
+    );
+
+    it.each(CLERK_ASSET_PATHS_TO_REFUSE)('refuses %s', async (pathname) => {
+      await expect(resolveRewrite(pathname)).resolves.toBeNull();
+    });
+
+    it('proxies the exact entry URLs the Clerk provider loads, including after a version override', async () => {
+      const defaults = clerkAssetScriptUrls();
+      await expect(resolveRewrite(defaults.clerkJS)).resolves.toBe(
+        'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6.8.0/dist/clerk.browser.js',
+      );
+      await expect(resolveRewrite(defaults.clerkUI)).resolves.toBe(
+        'https://cdn.jsdelivr.net/npm/@clerk/ui@1.7.0/dist/ui.browser.js',
+      );
+
+      process.env.NEXT_PUBLIC_CLERK_JS_VERSION = '6.9.1';
+      await expect(resolveRewrite(clerkAssetScriptUrls().clerkJS)).resolves.toBe(
+        'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6.9.1/dist/clerk.browser.js',
+      );
+    });
+
+    it('never forwards a request to jsDelivr outside the pinned Clerk dist directories', async () => {
+      const jsdelivrRules = (await listRewrites()).filter((rule) =>
+        rule.destination.startsWith('https://cdn.jsdelivr.net/'),
+      );
+
+      expect(jsdelivrRules.map((rule) => rule.destination.replace(/:file$/, ''))).toEqual([
+        'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6.8.0/dist/',
+        'https://cdn.jsdelivr.net/npm/@clerk/ui@1.7.0/dist/',
+      ]);
+    });
+
+    it('follows an exact NEXT_PUBLIC_CLERK_*_VERSION override and refuses the old pin', async () => {
+      process.env.NEXT_PUBLIC_CLERK_JS_VERSION = '6.9.1';
+      process.env.NEXT_PUBLIC_CLERK_UI_VERSION = '1.8.0-snapshot.1';
+
+      await expect(resolveRewrite('/clerk-assets/@clerk/clerk-js@6.9.1/dist/clerk.browser.js')).resolves.toBe(
+        'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6.9.1/dist/clerk.browser.js',
+      );
+      await expect(resolveRewrite('/clerk-assets/@clerk/ui@1.8.0-snapshot.1/dist/ui.browser.js')).resolves.toBe(
+        'https://cdn.jsdelivr.net/npm/@clerk/ui@1.8.0-snapshot.1/dist/ui.browser.js',
+      );
+      await expect(resolveRewrite('/clerk-assets/@clerk/ui@1.7.0/dist/ui.browser.js')).resolves.toBeNull();
+    });
+
+    it.each(['1', '6.x', 'latest', '6.8.0/../../evil-pkg@1', '^6.8.0'])(
+      'fails the build for a non-exact Clerk version override (%s)',
+      async (version) => {
+        // Clerk's bundles load their lazy chunks from the exact version they
+        // were built as, so a range would load the entry file and then break.
+        process.env.NEXT_PUBLIC_CLERK_UI_VERSION = version;
+
+        await expect(Promise.resolve().then(() => nextConfig.rewrites?.())).rejects.toThrow(
+          /NEXT_PUBLIC_CLERK_UI_VERSION must be an exact npm version/,
+        );
+      },
+    );
+
+    it.each([
+      '/clerk-assets/@clerk/ui@1.7.0/dist/ui.browser.js',
+      '/clerk-assets/evil-pkg@1.0.0/x.svg',
+    ])('sends an enforced sandbox CSP and nosniff on %s', async (pathname) => {
+      const headers = await resolveHeaders(pathname);
+      const csp = headers['content-security-policy'] ?? '';
+      const directives = csp.split(';').map((directive) => directive.trim());
+
+      expect(directives).toEqual(expect.arrayContaining(["default-src 'none'", 'sandbox']));
+      expect(headers['x-content-type-options']).toBe('nosniff');
+    });
+
+    it('keeps the rewrites and headers valid for next build', async () => {
+      const rewrites = await listRewrites();
+      const headers: Header[] = (await nextConfig.headers?.()) ?? [];
+
+      // next build runs this same validation; it logs each invalid route and
+      // exits the process.
+      const exit = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code})`);
+      }) as never);
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        expect(() => checkCustomRoutes(rewrites, 'rewrite')).not.toThrow();
+        expect(() => checkCustomRoutes(headers, 'header')).not.toThrow();
+        expect(consoleError).not.toHaveBeenCalled();
+      } finally {
+        exit.mockRestore();
+        consoleError.mockRestore();
+      }
+    });
   });
 
   it("allows 'unsafe-eval' so the Next.js framework chunk that runs raw eval() in production doesn't fire CSP report-uri storms", async () => {

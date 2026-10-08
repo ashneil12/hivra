@@ -186,7 +186,7 @@ describe("activePlanPriceLine", () => {
 
 describe("plan card labels", () => {
   it("uses each plan's own tagline as its eyebrow (the Free card never reads 'Power')", () => {
-    expect(planCardEyebrow("free")).toBe("start without a bill");
+    expect(planCardEyebrow("free")).toBe("free to use. bring your own computer");
     expect(planCardEyebrow("free")).not.toMatch(/power/i);
     const eyebrows = (["free", "operator", "fleet", "command"] as const).map(planCardEyebrow);
     expect(new Set(eyebrows).size).toBe(eyebrows.length);
@@ -252,7 +252,7 @@ describe("planCardCta", () => {
     });
     expect(planCardCta({ ...base, planKey: "free", currentPlanKey: null })).toEqual({
       kind: "start_free",
-      label: "Start free",
+      label: "Use the free account",
     });
   });
 
@@ -376,7 +376,7 @@ describe("plansSoldAtCheckout", () => {
   it("lists only the cards that start a checkout", () => {
     expect(
       plansSoldAtCheckout([
-        { planKey: "free", cta: { kind: "start_free", label: "Start free" } },
+        { planKey: "free", cta: { kind: "start_free", label: "Use the free account" } },
         { planKey: "operator", cta: { kind: "subscribe", label: "Subscribe · $9.99/mo" } },
         { planKey: "fleet", cta: { kind: "upgrade", label: "Upgrade to Power" } },
         { planKey: "command", cta: { kind: "current", label: "Current plan" } },

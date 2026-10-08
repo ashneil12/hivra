@@ -4,6 +4,7 @@ jest.mock("server-only", () => ({}));
 
 import { utils as ssh2Utils } from "ssh2";
 
+import { generateVerifiedEd25519SshKeyPair } from "../ed25519-ssh-key";
 import { SshPrivateKeyError, unlockSshPrivateKey } from "../ssh-private-key";
 
 // INF-14: the advanced wizard's key passphrase. The key is unlocked once and
@@ -41,9 +42,9 @@ describe("unlockSshPrivateKey", () => {
   });
 
   it("keeps an unencrypted key exactly as pasted, whatever passphrase came with it", () => {
-    const pair = ssh2Utils.generateKeyPairSync("ed25519");
-    expect(unlockSshPrivateKey(pair.private)).toBe(pair.private);
-    expect(unlockSshPrivateKey(pair.private, "not needed")).toBe(pair.private);
+    const { privateKeyOpenSsh } = generateVerifiedEd25519SshKeyPair("ssh-private-key-test");
+    expect(unlockSshPrivateKey(privateKeyOpenSsh)).toBe(privateKeyOpenSsh);
+    expect(unlockSshPrivateKey(privateKeyOpenSsh, "not needed")).toBe(privateKeyOpenSsh);
   });
 
   it("stores a key it can't read as today, but refuses to guess with a passphrase", () => {

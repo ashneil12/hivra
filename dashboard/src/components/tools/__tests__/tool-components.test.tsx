@@ -24,7 +24,19 @@ jest.mock("next/link", () => {
   return MockLink;
 });
 
-const TOOL_FILES = ["PlanCalculatorTool.tsx", "AgentSurvivalCheckTool.tsx", "HostingCostCalculatorTool.tsx", "LimitResetCalculatorTool.tsx"];
+const TOOL_FILES = [
+  "PlanCalculatorTool.tsx",
+  "AgentSurvivalCheckTool.tsx",
+  "HostingCostCalculatorTool.tsx",
+  "LimitResetCalculatorTool.tsx",
+  // The keep-awake builder, the tmux cheat sheet and the pieces they share.
+  "KeepMacAwakeTool.tsx",
+  "TmuxCheatSheetTool.tsx",
+  "TmuxAgentBuilder.tsx",
+  "CopyButton.tsx",
+  "CiteBlock.tsx",
+  "ToolRadioGroup.tsx",
+];
 
 function expectNoBannedClaims(container: HTMLElement) {
   expect(findBannedClaims(container.textContent ?? "")).toEqual([]);
@@ -57,7 +69,7 @@ describe("tool components carry no retired claims", () => {
 });
 
 describe("PlanCalculatorTool", () => {
-  it("scales Pro's observed limit by Anthropic's published multiples and prices the API side", () => {
+  it("scales Pro's observed limit by Anthropic's published multiples and prices the API side as an estimate", () => {
     const { container } = render(<PlanCalculatorTool />);
 
     // Default schedule: 5 days x 3 hours = 15 active hours per week.
@@ -65,20 +77,40 @@ describe("PlanCalculatorTool", () => {
     for (const label of ["Pro", "Max 5x", "Max 20x"]) expect(screen.getByText(label)).toBeInTheDocument();
     for (const price of ["$20/mo", "$100/mo", "$200/mo"]) expect(screen.getByText(price)).toBeInTheDocument();
 
-    // Pro stops the visitor 2 hours in; a 3 hour day needs Max 5x. API: 64.95h x
-    // (0.5M in, 0.05M out) at 80% Sonnet 5 ($2/$10) and 20% Opus 5.5 ($4/$20).
+    // Opus 5.5 is Claude Code's default model, so the mix starts at 100% Opus.
+    expect(screen.getByText("Model mix: 100% Opus 5.5 / 0% Sonnet 5.5")).toBeInTheDocument();
+    expect(screen.getByText(/Opus 5\.5 has been Claude Code's default model on Pro and Max since 2026-09-22/)).toBeInTheDocument();
+
+    // No Pro reading yet: Anthropic publishes none, so nothing is rated and the
+    // page says so instead of resting a verdict on an invented reading.
+    expect((container.querySelector("#pc-pro-hit") as HTMLSelectElement).value).toBe("unknown");
     expect(screen.getByTestId("pc-verdict")).toHaveTextContent(
-      "Max 5x at $100/month is the cheapest plan that fits. The same usage at API rates: about $117/month."
+      "Anthropic does not publish Pro's cap, so tell the calculator where Pro stops you to rate each plan. At API list price this schedule is an estimated $376/month."
     );
+    expect(screen.queryByText("Fits with headroom")).not.toBeInTheDocument();
+    expect(screen.getAllByText("5x Pro's usage per session")).toHaveLength(1);
+
+    // Pro stops the visitor 2 hours in; a 3 hour day needs Max 5x. API: 64.95h x
+    // the cache-aware Opus 5.5 hour ($5.7952) is an estimated $376 a month, and
+    // Anthropic's own $13 per active day across 21.65 active days is $281.
+    fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "2" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(
+      "Max 5x at $100/month is the cheapest plan that fits. The same usage at API list price is an estimated $376/month."
+    );
+    expect(screen.getByText("$376/mo")).toBeInTheDocument();
+    expect(screen.getByText("$281/mo")).toBeInTheDocument();
+    // The $13 is an average across enterprise deployments, and the label says so.
+    expect(screen.getByText("Anthropic's enterprise average ($13 per active day)")).toBeInTheDocument();
 
     // Pro never stopping you means Pro is the answer.
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "never" } });
     expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/^Pro at \$20\/month is the cheapest plan that fits/);
 
-    // One short session a week costs less at API rates than any plan.
+    // One short Sonnet session a week costs a little less at API list price than Pro.
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "1" } });
     fireEvent.change(container.querySelector("#pc-hours") as HTMLInputElement, { target: { value: "1" } });
-    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/plain API billing is cheaper: about \$7\.79\/month/);
+    fireEvent.change(container.querySelector("#pc-opus") as HTMLInputElement, { target: { value: "0" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/API billing is estimated cheaper: about \$19\.42\/month/);
 
     // Without a Pro reading the tool refuses to guess a cap.
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "unknown" } });
@@ -89,7 +121,7 @@ describe("PlanCalculatorTool", () => {
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "7" } });
     expect(screen.getByText("7h")).toBeInTheDocument();
 
-    expect(screen.getByText(/last verified 2026-09-24/)).toBeInTheDocument();
+    expect(container).toHaveTextContent(/Prices and plan facts as of September 2026, from Anthropic/);
     // The button promises Claude Code, so it preselects the runtime.
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
@@ -98,6 +130,46 @@ describe("PlanCalculatorTool", () => {
     expect(screen.getByText(/start long runs inside tmux or from Telegram/)).toBeInTheDocument();
     expectKeepRunningClaimsQualified(container);
     expectNoBannedClaims(container);
+  });
+
+  it("says the weekly limit cannot be rated, because Anthropic publishes no weekly multiple for Max", () => {
+    const { container } = render(<PlanCalculatorTool />);
+
+    // A weekly stop on Pro is a separate limit. Anthropic publishes no weekly
+    // multiple for Max, so the verdict says the ratings cover five-hour windows only.
+    expect(screen.getByTestId("pc-verdict")).not.toHaveTextContent(/weekly limit is a separate limit/);
+    fireEvent.change(container.querySelector("#pc-pro-weekly") as HTMLSelectElement, { target: { value: "yes" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/Your weekly limit is a separate limit/);
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/publishes no weekly multiple/);
+
+    // Even a 30-minute Pro reading leaves Max 20x covering a whole five-hour
+    // window, so the verdict still names a plan, and still carries the weekly note.
+    fireEvent.change(container.querySelector("#pc-hours") as HTMLInputElement, { target: { value: "12" } });
+    fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "0.5" } });
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/^Max 20x at \$200\/month is the cheapest plan that fits/);
+    expectNoBannedClaims(container);
+  });
+
+  it("labels every dollar figure an estimate and states the assumptions that are not Anthropic's", () => {
+    const { container } = render(<PlanCalculatorTool />);
+    expect(screen.getByText("API list price, estimated")).toBeInTheDocument();
+    expect(container.textContent).toMatch(/Every number here is an estimate, not a quote/);
+    expect(container.textContent).toMatch(/about 50K\s+output tokens in a normal hour \(100K in a heavy one\), and 98%\s+of input read from the prompt cache/);
+    // The retired unsourced throughput claim is gone.
+    expect(container.textContent).not.toMatch(/0\.5M input|2M input/);
+  });
+
+  it("tells the visitor the Pro reading is their own, that nothing is rated until they choose one, and how old a reading may be", () => {
+    const { container } = render(<PlanCalculatorTool />);
+    const hint = screen.getByText(/Anthropic publishes no figure for where Pro stops you/);
+    expect(hint).toHaveTextContent(
+      "Anthropic publishes no figure for where Pro stops you, so this is your own reading, and until you choose one the plans are not rated. Use a reading from after 2026-09-22, when Anthropic raised five-hour limits.",
+    );
+    // The first option is the unrated default, and the old "example" wording is gone.
+    const select = container.querySelector("#pc-pro-hit") as HTMLSelectElement;
+    expect(select.options[0].value).toBe("unknown");
+    expect(select.options[0].textContent).toBe("Not sure, or I have not used Pro");
+    expect(container.textContent).not.toMatch(/The one shown is an example/);
   });
 });
 
@@ -117,7 +189,7 @@ describe("AgentSurvivalCheckTool", () => {
     const updatedScore = Number((updated.getAttribute("aria-label") ?? "").match(/\d+/)?.[0]);
     expect(updatedScore).toBeGreaterThan(initialScore);
 
-    expect(screen.getByText(/last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/last checked September 2026/)).toBeInTheDocument();
     expect(screen.getByText(/The \$9\.99 a month plan gives it 2 vCPU and 4 GB/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /skip the server upkeep/i })).toHaveAttribute("href", TOOLS_CTA.primaryHref);
     expectKeepRunningClaimsQualified(container);
@@ -188,7 +260,7 @@ describe("HostingCostCalculatorTool", () => {
     fireEvent.change(container.querySelector("#hc-vps") as HTMLSelectElement, { target: { value: "vultr1gb" } });
     expect(screen.getByText(/Smaller than Hivra's 2 vCPU, 4 GB computer/)).toBeInTheDocument();
 
-    expect(screen.getByText(/Prices last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/Prices as of September 2026/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /start on the \$9\.99 plan/i })).toHaveAttribute("href", "/get-started?plan=operator");
     // The two sizes checkout sells are stated here, not left to another page.
     expect(screen.getByText(/\$9\.99 a month for 2 vCPU and 4 GB, or \$19\.99 a month for 4 vCPU and 8 GB/)).toBeInTheDocument();
@@ -219,7 +291,7 @@ describe("LimitResetCalculatorTool", () => {
 
     // The first-message anchor is labelled as an assumption, not a documented fact.
     expect(screen.getByText(/does\s+not document what opens it/)).toBeInTheDocument();
-    expect(screen.getByText(/Facts\s+last verified 2026-09-24/)).toBeInTheDocument();
+    expect(screen.getByText(/Facts\s+as of September 2026/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
       "/sign-up?agentType=claude-code",

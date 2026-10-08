@@ -9,6 +9,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { getPlan } from "@/lib/subscription";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, isFreeAccountEntitlement } from "@/lib/billing/hosted-compute";
 import { BASE_FLOOR, BROWSER_ADD, isPoolExempt } from "@/lib/hivra/agent-catalog";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 
@@ -117,11 +118,19 @@ export function attachPlanAgentLimitMessage(planName: string, maxAgents: number,
  * pass it to the database (insert_hivra_managed_agent, the v3 launch-model
  * reservation, the attach claim). Null when the owner has no plan access.
  */
-export async function resolvePlanAgentSlots(userId: string): Promise<{ agentLimit: number; planName: string } | null> {
+export async function resolvePlanAgentSlots(
+  userId: string,
+): Promise<{ agentLimit: number; planName: string; freeAccount: boolean } | null> {
   const sub = await resolveEffectiveSubscription(userId);
   if (!sub) return null;
   const plan = getPlan(sub.plan);
-  return { agentLimit: Number(sub.instance_limit) || plan.maxAgents, planName: plan.name };
+  return {
+    agentLimit: Number(sub.instance_limit) || plan.maxAgents,
+    planName: plan.name,
+    // A Free account has slots but never a Hivra-hosted computer; writers that
+    // create hosted compute refuse on this (the launch gate does it earlier).
+    freeAccount: isFreeAccountEntitlement(sub),
+  };
 }
 
 export interface ValidateResourcesInput {
@@ -166,6 +175,21 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
 
   const plan = getPlan(sub.plan);
   const isFreePlan = sub.plan === "free" || sub.source === "free";
+
+  // A Free account never launches a Hivra-hosted computer. This gate only
+  // runs for hivra-managed launches (self-managed, bring-your-own computers
+  // skip subscription checks), so refusing here keeps the free account free to
+  // use and connect your own box without giving it hosted compute. Resize and
+  // attach keep working for boxes an account already has.
+  if (params.mode === "launch" && isFreeAccountEntitlement(sub)) {
+    log.warn("hivra resource gate: a Free account cannot launch Hivra-hosted compute", {
+      source: "hivra/resource-gate",
+      failureType: "hivra_agent_free_account_hosted_compute_denied",
+      userId: params.userId,
+      agentType: params.type,
+    });
+    return { ok: false, status: 403, message: HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE };
+  }
   const usage = await loadCurrentComputeUsage(
     params.userId,
     params.mode === "resize" ? { excludeHivraAgentId: params.excludeAgentId } : undefined,

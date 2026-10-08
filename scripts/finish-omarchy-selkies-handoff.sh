@@ -8,12 +8,13 @@
 # Every step is idempotent: the migrations rewrite function bodies only when the
 # old gate is still present, and the tracking insert uses ON CONFLICT DO NOTHING.
 #
-# Requires network access to api.supabase.com. Read-only until the apply step;
+# Requires CANARY_REF (the Canary Supabase project ref; it has no default here) and
+# network access to api.supabase.com. Read-only until the apply step;
 # set DRY_RUN=1 to print what would be applied without changing anything.
 
 set -euo pipefail
 
-CANARY_REF="${CANARY_REF:-srrwbdvxlqvqjuexitaf}"
+CANARY_REF="${CANARY_REF:?set CANARY_REF to the Canary Supabase project ref}"
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.supabase/access-token}"
 MIGRATION_DIR="dashboard/supabase/migrations"
 MIGRATIONS=(

@@ -122,7 +122,8 @@ function runHelper(options: {
     }
     for (const asset of RUNTIME_ASSETS) copyFileSync(path.join(bundleRoot, "hivra-chat", asset), path.join(bundle, "hivra-chat", asset));
     for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
-      "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
+      "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json",
+      "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
       copyFileSync(path.join(bundleRoot, file), path.join(bundle, file));
     }
     // The real helper, with only its fixed root paths moved under the sandbox.
@@ -271,7 +272,45 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     expect(guest.indexOf("agent_cli_report || true")).toBeLessThan(guest.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
     // Every terminal unit must keep the vendor self-updater off, or the update rolls back.
     expect(guest).toContain("grep -Fxq DISABLE_AUTOUPDATER=1");
-    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\)/);
+    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\n\s+hivra-claude-app\.py hivra-claude-app\.service claude-desktop-pin\.json\)/);
+  });
+
+  // The idle check decides whether a terminal restart could end someone's
+  // shell. It runs the real function from the updater against a fake ss.
+  describe("terminal idle check", () => {
+    const fn = block(UPDATE_SOURCE, /^terminal_idle\(\) \{[\s\S]*?\n\}\n/m);
+    function idle(opts: { tcp?: string; unix?: string; ssFails?: "tcp" | "unix"; socket?: boolean }) {
+      const dir = mkdtempSync(path.join(tmpdir(), "hivra-terminal-idle-"));
+      try {
+        const socket = path.join(dir, "ttyd.sock");
+        if (opts.socket !== false) writeFileSync(socket, "");
+        writeFileSync(path.join(dir, "ss"), `#!/bin/sh
+case "$1" in
+  -Htn) [ "${opts.ssFails ?? ""}" = tcp ] && exit 1; printf '%s' "${opts.tcp ?? ""}" ;;
+  -Hx) [ "${opts.ssFails ?? ""}" = unix ] && exit 1; [ "$5" = "${socket}" ] || exit 3; printf '%s' "${opts.unix ?? ""}" ;;
+  *) exit 2 ;;
+esac
+`);
+        chmodSync(path.join(dir, "ss"), 0o755);
+        return spawnSync("/bin/bash", ["-c", `${fn}terminal_idle 7681 ${socket} && echo IDLE || echo BUSY`], {
+          encoding: "utf8", env: { PATH: `${dir}:/usr/bin:/bin`, NODE_ENV: "test" },
+        }).stdout.trim();
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    }
+    it("reads idle only when neither the loopback port nor the unix socket has a client", () => {
+      expect(idle({})).toBe("IDLE");
+      expect(idle({ socket: false })).toBe("IDLE");
+    });
+    it("counts a client on the owner-only socket (units from the socket release)", () => {
+      expect(idle({ unix: "u_str ESTAB 0 0 /run/hivra-terminal/ttyd.sock 1234 * 5678\n" })).toBe("BUSY");
+    });
+    it("counts a client on the loopback port (units from before the socket release)", () => {
+      expect(idle({ tcp: "ESTAB 0 0 127.0.0.1:7681 127.0.0.1:50000\n", socket: false })).toBe("BUSY");
+    });
+    it("counts a check that cannot run as busy", () => {
+      expect(idle({ ssFails: "tcp" })).toBe("BUSY");
+      expect(idle({ ssFails: "unix" })).toBe("BUSY");
+    });
   });
 
   it("prints only the receipt for a computer without a staged credential", () => {

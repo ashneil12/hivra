@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { POST } from "../route";
+import { POST, maxDuration } from "../route";
 import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings";
@@ -216,6 +216,22 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     process.env = ORIGINAL_ENV;
   });
 
+  it("refreshes holdings on its own lane within a budget that leaves room for the tier scan", async () => {
+    mockSupabase({ instances: [], snapshots: [], subscriptions: [], qualifications: [] });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith(
+      expect.objectContaining({ lane: "token_tiers", timeBudgetMs: 150_000 })
+    );
+    // A snapshot-only lane: every definitive read counts as judged.
+    expect(refreshVerifiedHermesTokenHoldings).toHaveBeenCalledWith(
+      expect.not.objectContaining({ judgePage: expect.anything() })
+    );
+    expect(maxDuration).toBe(300);
+  });
+
   it("upgrades a Power-qualified token holder from token_base to fleet", async () => {
     mockSupabase({
       instances: [
@@ -361,6 +377,88 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     // Snapshots are read for the live platform tokens only: $HermesOS while
     // $HIVRA is dormant.
     expect(snapshotsBuilder.in).toHaveBeenCalledWith("token_address", [HERMESOS_CONTRACT]);
+  });
+
+  // The holdings crons now re-read every account on a cursor, so a holder's
+  // latest snapshot is always recent. The downgrade grace must run from when
+  // the balance was first seen below the base threshold, not from the latest
+  // snapshot, or a below-threshold holder keeps a token tier forever.
+  describe("downgrade grace for holders below the base threshold", () => {
+    const HOUR_MS = 60 * 60 * 1000;
+    const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+    const snapshot = (user_id: string, balance_raw: string, msAgo: number): SnapshotFixture => ({
+      user_id,
+      balance_raw,
+      qualifies_base_tier: balance_raw !== "0",
+      checked_at: at(msAgo),
+    });
+
+    it("drops a holder who has been below the threshold for longer than the grace, however fresh the latest read", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_sold", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        // Newest first, as the route reads them: re-read every 6h since selling 3 days ago.
+        snapshots: [
+          snapshot("user_sold", "0", 1 * HOUR_MS),
+          snapshot("user_sold", "0", 7 * HOUR_MS),
+          snapshot("user_sold", "0", 31 * HOUR_MS),
+          snapshot("user_sold", "0", 55 * HOUR_MS),
+          snapshot("user_sold", "5000000000000000000000000", 3 * DAY_MS),
+        ],
+        subscriptions: [],
+        // Its Power qualification was already breached by refresh-token-holdings.
+        qualifications: [],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_sold", newTier: "credit_base" })
+      );
+    });
+
+    it("keeps the tier while the drop is still inside the grace", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_dipped", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [
+          snapshot("user_dipped", "0", 1 * HOUR_MS),
+          snapshot("user_dipped", "0", 20 * HOUR_MS),
+          snapshot("user_dipped", "5000000000000000000000000", 26 * HOUR_MS),
+        ],
+        subscriptions: [],
+        qualifications: [],
+      });
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).not.toHaveBeenCalled();
+    });
+
+    it("drops an account whose standing lost its verification wallet once the zero read is past the grace", async () => {
+      mockSupabase({
+        instances: [
+          { user_id: "user_unbacked", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        ],
+        // The zero-balance snapshot written when no verification wallet was found.
+        snapshots: [
+          snapshot("user_unbacked", "0", 50 * HOUR_MS),
+          snapshot("user_unbacked", "2000000000000000000", 4 * DAY_MS),
+        ],
+        subscriptions: [],
+        qualifications: [],
+      });
+      (applyTierChange as jest.Mock).mockResolvedValue({});
+
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "user_unbacked", newTier: "credit_base" })
+      );
+    });
   });
 
   it("does not re-apply for a steady paid Stripe user when tier and caps are unchanged", async () => {

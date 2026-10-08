@@ -529,6 +529,62 @@ function safeCapabilityFailureCode(result: HostScriptResult, marker = MARKER): s
   return "capability_marker_invalid";
 }
 
+// Owner-facing outcomes of lifecycle readiness. Each stays under the 300
+// characters release_hivra_agent_operation keeps, and names a next step.
+export const DESKTOP_START_UNVERIFIED_MESSAGE = "This computer turned on, but Hivra couldn’t confirm its desktop is safe to open, so it isn’t ready. Nothing on it was changed. Choose Restart in Manage to try again, and contact support if it happens again.";
+export const DESKTOP_START_OUTDATED_MESSAGE = "This computer turned on, but its desktop was set up by a version of Hivra too old to open safely. Nothing on it was changed. Stop it in Manage and contact support so we can update it for you.";
+export const DESKTOP_PROVISION_UNVERIFIED_MESSAGE = "Your new computer turned on, but its desktop didn’t finish setting up. Delete it in Manage and launch a new one, and contact support if it happens again.";
+
+export type DesktopReadinessVerdict =
+  | { ok: true; receipt: RemoteDesktopCapabilityReceipt }
+  | { ok: false; failureCode: string; observedRevision: string | null; ownerMessage: string };
+
+function markerRevision(stdout: string): string | null {
+  const line = stdout.split("\n").find(candidate => candidate.startsWith(MARKER));
+  if (!line) return null;
+  try {
+    const revision = (JSON.parse(line.slice(MARKER.length)) as { observedRevision?: unknown }).observedRevision;
+    return typeof revision === "string" && REVISION.test(revision) ? revision : null;
+  } catch { return null; }
+}
+
+/**
+ * Decides whether an Ubuntu Desktop lifecycle operation (provision, start,
+ * restart, resize) may converge to `running`.
+ *
+ * A fresh provision just installed the current release, so it must prove that
+ * exact release. Start, restart and resize install nothing: they must prove the
+ * same sealed, pinned, identity-bound runtime the Desktop tab's own inspection
+ * accepts (any release Hivra still recognises), with a fresh boot-bound
+ * receipt for this exact computer and broker. Whether that release may carry a
+ * session is decided separately at session issuance, which sends an older
+ * release to the Desktop tab's "Update desktop" flow. Requiring the newest
+ * release here instead turned every desktop made before it into an error on
+ * its next Start, with no way to reach that update.
+ */
+export function verifyDesktopReadinessReceipt(
+  result: HostScriptResult,
+  expected: { computerId: string; brokerOrigin: string; operationKind: string },
+): DesktopReadinessVerdict {
+  const normalized = { ...result, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  const freshInstall = expected.operationKind === "provision";
+  const observedRevision = markerRevision(normalized.stdout);
+  const receipt = normalized.ok
+    ? parseRemoteDesktopCapabilityReceipt(normalized.stdout, { allowKnownPredecessor: !freshInstall })
+    : null;
+  if (receipt && receipt.computerId === expected.computerId && receipt.brokerOrigin === expected.brokerOrigin) {
+    return { ok: true, receipt };
+  }
+  const failureCode = receipt ? "identity_mismatch"
+    : freshInstall && observedRevision && observedRevision !== REMOTE_DESKTOP_BUNDLE_REVISION && knownDesktopRevision(observedRevision)
+      ? "desktop_release_not_current"
+      : safeCapabilityFailureCode(normalized);
+  const ownerMessage = freshInstall ? DESKTOP_PROVISION_UNVERIFIED_MESSAGE
+    : failureCode === "guest_desktop_upgrade_required" ? DESKTOP_START_OUTDATED_MESSAGE
+      : DESKTOP_START_UNVERIFIED_MESSAGE;
+  return { ok: false, failureCode, observedRevision, ownerMessage };
+}
+
 export async function inspectRemoteDesktopCapability(
   agentId: string,
   dependencies: Partial<Dependencies> = {},

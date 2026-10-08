@@ -9,7 +9,7 @@ import { ATTACHED_AGENTS_PROTOCOL, readAttachedGatewayProtocol } from "../attach
 const meta = (body: unknown, status = 200) => jest.fn().mockResolvedValue(new Response(JSON.stringify(body), { status }));
 const COMPUTER_META = { agentKind: "claude", surfaceAuth: "post-cookie-v1", resourceKind: "computer", chatAvailable: false };
 
-it("reads a gateway from 2026.09.24.3 on as current, and one from before it as needing Update & restart", async () => {
+it("reads a gateway from 2026.09.24.3 on as current, and one from before it as needing Update connection service", async () => {
   const current = meta({ ...COMPUTER_META, attachedAgents: ATTACHED_AGENTS_PROTOCOL });
   expect(await readAttachedGatewayProtocol("https://desk.example.test/", current)).toBe("current");
   expect(current).toHaveBeenCalledWith("https://desk.example.test/api/meta", expect.objectContaining({

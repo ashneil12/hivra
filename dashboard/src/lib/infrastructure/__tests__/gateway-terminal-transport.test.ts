@@ -26,11 +26,24 @@ describe("gateway terminal transport", () => {
   let home: string;
   let run: string;
   const closers: Array<() => Promise<void>> = [];
+  // Loopback terminal connections the gateway opened (host, port).
+  const portConnects: unknown[] = [];
 
   const mapped = (value: unknown) => typeof value === "string" && value.startsWith("/run/hivra-")
     ? path.join(run, value.slice("/run/".length)) : value;
 
-  function boot(uid = UID): Promise<number> {
+  // The installed terminal units, as the gateway reads them.
+  function units(agent: string, box: string) {
+    const dir = fs.mkdtempSync(path.join(home, "units-"));
+    fs.writeFileSync(path.join(dir, "agent.conf"), agent);
+    fs.writeFileSync(path.join(dir, "box.service"), box);
+    return { HIVRA_TTYD_UNIT_FILE_AGENT: path.join(dir, "agent.conf"), HIVRA_TTYD_UNIT_FILE_BOX: path.join(dir, "box.service") };
+  }
+  const SOCKET_UNITS = () => units(
+    "[Service]\nExecStart=\nExecStart=/usr/local/bin/ttyd -i /run/hivra-terminal/ttyd.sock -b /terminal -a -W /usr/local/bin/hivra-agent-shell --agent-terminal\n",
+    "[Service]\nExecStart=/usr/local/bin/ttyd -i /run/hivra-box-terminal/ttyd.sock -b /box-terminal -a -W /usr/local/bin/hivra-agent-shell --box-terminal\n");
+
+  function boot(uid = UID, unitEnv: Record<string, string> = {}): Promise<number> {
     fs.mkdirSync(path.join(home, ".hivra"), { recursive: true });
     fs.writeFileSync(path.join(home, ".hivra", "api-token"), TOKEN);
     fs.writeFileSync(path.join(home, ".hivra", "agent-kind"), "linux-desktop\n");
@@ -51,8 +64,11 @@ describe("gateway terminal transport", () => {
     };
     const fakeNet = {
       ...net,
-      connect: (first: unknown, ...rest: unknown[]) => (net.connect as (...a: unknown[]) => net.Socket)(
-        first && typeof first === "object" && "path" in first ? { ...first, path: mapped((first as { path: string }).path) } : first, ...rest),
+      connect: (first: unknown, ...rest: unknown[]) => {
+        if (typeof first === "number") portConnects.push(first);
+        return (net.connect as (...a: unknown[]) => net.Socket)(
+          first && typeof first === "object" && "path" in first ? { ...first, path: mapped((first as { path: string }).path) } : first, ...rest);
+      },
     };
     vm.runInNewContext(SERVER_SOURCE, {
       require: (name: string) => {
@@ -63,7 +79,7 @@ describe("gateway terminal transport", () => {
         if (["path", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
-      process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "linux-desktop" }, once: () => undefined, getuid: () => uid },
+      process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "linux-desktop", ...unitEnv }, once: () => undefined, getuid: () => uid },
       __dirname: path.dirname(SERVER_PATH),
       console: { log: () => undefined, warn: () => undefined, error: () => undefined },
       Buffer, URL, URLSearchParams, setTimeout, clearTimeout, setImmediate,
@@ -127,6 +143,7 @@ describe("gateway terminal transport", () => {
     JSON.parse((await request(port, "/api/meta", headers)).body) as { terminals?: Record<string, string> };
 
   beforeEach(() => {
+    portConnects.length = 0;
     home = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-terminal-home-"));
     // A short folder keeps socket paths under the unix path length limit.
     run = fs.mkdtempSync(path.join("/tmp", "hvt-"));
@@ -188,6 +205,36 @@ describe("gateway terminal transport", () => {
     // Nothing listens on the old loopback port, so the owner's Terminal fails:
     // exactly what a readiness check through the gateway must catch.
     expect((await request(port, "/terminal/", { Authorization: `Bearer ${TOKEN}` })).status).not.toBe(200);
+  });
+
+  it("never falls back to the loopback port once the installed unit is the socket release, even while ttyd restarts", async () => {
+    // The restart window: the unit names its socket, but ttyd has not made it
+    // yet. Any local process could have bound 7681/7682 by then.
+    fs.mkdirSync(path.join(run, "hivra-terminal"), { mode: 0o700 });
+    await ttyd("hivra-box-terminal", "BOX");
+    const port = await boot(UID, SOCKET_UNITS());
+    expect((await meta(port)).terminals).toEqual({ terminal: "restarting", boxTerminal: "socket" });
+    expect(await request(port, "/terminal/", { Authorization: `Bearer ${TOKEN}` }))
+      .toEqual({ status: 503, body: "The terminal is restarting. It reconnects in a moment." });
+    expect(await upgrade(port, "/terminal/ws")).toMatch(/^HTTP\/1\.1 503 /);
+    expect(portConnects).toEqual([]);
+    // Still only to its owner: an anonymous caller learns nothing.
+    expect((await request(port, "/terminal/")).status).toBe(401);
+    // Once ttyd is back on its socket the same gateway uses it again.
+    fs.rmdirSync(path.join(run, "hivra-terminal"));
+    await ttyd("hivra-terminal", "AGENT");
+    expect(await request(port, "/terminal/", { Authorization: `Bearer ${TOKEN}` })).toEqual({ status: 200, body: "AGENT /terminal/" });
+  });
+
+  it("keeps the loopback port for a unit from before the socket release", async () => {
+    const port = await boot(UID, units(
+      "[Service]\nExecStart=\nExecStart=/usr/local/bin/ttyd -i lo -p 7681 -b /terminal -W /usr/local/bin/hivra-agent-shell\n",
+      "[Service]\nExecStart=/usr/local/bin/ttyd -i lo -p 7682 -b /box-terminal -W /usr/local/bin/hivra-agent-shell --box-terminal\n"));
+    expect((await meta(port)).terminals).toEqual({ terminal: "port", boxTerminal: "port" });
+    await request(port, "/terminal/", { Authorization: `Bearer ${TOKEN}` });
+    expect(portConnects).toEqual([]); // HTTP goes through proxyHttp, not net.connect
+    await upgrade(port, "/box-terminal/ws");
+    expect(portConnects).toEqual([7682]);
   });
 
   it("refuses sockets owned by another user, as when the gateway runs as a different account", async () => {

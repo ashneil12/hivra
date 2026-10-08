@@ -459,6 +459,48 @@ export function extractStorageObjectPath(url: string | null | undefined, bucket:
   }
 }
 
+/**
+ * Erasure that only a database function may do: the service role has no DELETE
+ * on these tables, by design (the agent-network audit log is append-only, and
+ * policy history is immutable). The function erases the user's organization of
+ * one with its policy history and audit log, and nothing in a team they belong to.
+ */
+export interface AccountDeletionFunction {
+  rpc: string;
+  /** Name of the function's single argument, which receives the user id. */
+  userArgument: string;
+  reason: string;
+  optionalIfMissing?: boolean;
+}
+
+export const ACCOUNT_DELETION_FUNCTIONS: AccountDeletionFunction[] = [
+  {
+    rpc: "hivra_net_erase_personal_org",
+    userArgument: "p_user_id",
+    reason: "agent-network organization of one: members, agents, policy history and audit log",
+    // Newer than the other tables; a database without it has nothing to erase.
+    optionalIfMissing: true,
+  },
+];
+
+export function isMissingOptionalAccountDeletionFunctionError(
+  spec: AccountDeletionFunction,
+  error: { code?: string; details?: string; hint?: string; message?: string } | null | undefined
+): boolean {
+  if (!spec.optionalIfMissing || !error) return false;
+  const text = [error.code, error.message, error.details, error.hint]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  if (!text.includes(spec.rpc.toLowerCase())) return false;
+  return (
+    error.code === "PGRST202" ||
+    error.code === "42883" ||
+    text.includes("could not find the function") ||
+    (text.includes("function") && text.includes("does not exist"))
+  );
+}
+
 export function isMissingOptionalAccountDeletionTableError(
   spec: AccountDeletionTable,
   error: { code?: string; details?: string; hint?: string; message?: string } | null | undefined

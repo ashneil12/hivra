@@ -46,6 +46,10 @@ import { isCodexAuthProvider } from "@/lib/provider-auth";
 import { isOperatorosAgentImage } from "@/lib/operatoros-flavor";
 import { resolvePersonaSoulFromSystemPrompt } from "@/lib/persona-souls-accessor";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  resolveVmidReferencePlane,
+  type VmidReferenceLedger,
+} from "@/lib/proxmox/vmid-reference-ledger";
 // Proxmox script generation and output parsing live in dedicated modules
 // (./proxmox/script-builders, ./proxmox/output-parsers). Everything this
 // module used to export is re-exported below, so existing importers keep
@@ -65,6 +69,7 @@ import {
   buildProxmoxStatusBatchScript,
   buildProxmoxStatusScript,
   buildProxmoxTemplateAvailabilityScript,
+  buildProxmoxVmIdentityGuardScript,
   buildProxmoxVmidAvailabilityScript,
   resolveProxmoxBalloonFloorMb,
   shQuote,
@@ -91,6 +96,7 @@ import {
 
 export {
   DEFAULT_PROXMOX_VM_DISK_GB,
+  PROXMOX_VM_IDENTITY_MISMATCH_MARKER,
   PROXMOX_VM_MISSING_MARKER,
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxCaddySiteCleanupScript,
@@ -1038,9 +1044,36 @@ export async function getReservedProxmoxVmidsForNode(params: {
   proxmoxNode: string;
   excludeInstanceId: string;
 }): Promise<number[]> {
-  if (!supabaseAdmin) return [];
+  return (await lookupReservedProxmoxVmidsForNode(params)) ?? [];
+}
+
+/**
+ * This control plane's VMID references on one host, for the cross-plane host
+ * ledger. Unlike the picker's reservation (which degrades to []), a failed
+ * lookup is null so the allocator never publishes an empty list over a good one.
+ */
+export async function buildProxmoxVmidReferenceLedger(params: {
+  proxmoxNode: string;
+  excludeInstanceId: string;
+  lane: VmidReferenceLedger["lane"];
+  references?: readonly number[];
+}): Promise<{ reservedVmids: number[]; vmidLedger: VmidReferenceLedger }> {
+  const references = params.references
+    ? [...params.references]
+    : await lookupReservedProxmoxVmidsForNode(params);
+  return {
+    reservedVmids: references ?? [],
+    vmidLedger: { plane: resolveVmidReferencePlane(process.env), lane: params.lane, references },
+  };
+}
+
+async function lookupReservedProxmoxVmidsForNode(params: {
+  proxmoxNode: string;
+  excludeInstanceId: string;
+}): Promise<number[] | null> {
+  if (!supabaseAdmin) return null;
   const node = params.proxmoxNode.trim();
-  if (!node) return [];
+  if (!node) return null;
   // `hermes_instances.id` is a uuid. The vmid-availability preflight calls this
   // with a sentinel string (`__vmid_availability_preflight__`) — there's no row
   // to exclude — and comparing that to a uuid column throws "invalid input
@@ -1082,7 +1115,7 @@ export async function getReservedProxmoxVmidsForNode(params: {
       legacyError: legacyError ? redactSensitiveCommandOutput(legacyError.message ?? "", 400) : null,
       hivraError: hivraError ? redactSensitiveCommandOutput(hivraError.message ?? "", 400) : null,
     });
-    return [];
+    return null;
   }
   const seen = new Set<number>();
   for (const row of legacyRows ?? []) {
@@ -1196,8 +1229,15 @@ export async function getProxmoxVmidAvailability(
     };
   }
 
+  const { reservedVmids, vmidLedger } = targetId
+    ? await buildProxmoxVmidReferenceLedger({
+        proxmoxNode: targetId,
+        excludeInstanceId: "__vmid_availability_preflight__",
+        lane: "hermes",
+      })
+    : { reservedVmids: [] as number[], vmidLedger: null };
   const runner = deps.runHostScript ?? ((script: string) => runProxmoxHostScript(script, env));
-  const result = await runner(buildProxmoxVmidAvailabilityScript({ vmidStart, vmidEnd }));
+  const result = await runner(buildProxmoxVmidAvailabilityScript({ vmidStart, vmidEnd, vmidLedger }));
   if (!result.ok) {
     return {
       ok: false,
@@ -1212,12 +1252,6 @@ export async function getProxmoxVmidAvailability(
   }
 
   const parsed = parseProxmoxVmidAvailabilityOutput(result.stdout);
-  const reservedVmids = targetId
-    ? await getReservedProxmoxVmidsForNode({
-        proxmoxNode: targetId,
-        excludeInstanceId: "__vmid_availability_preflight__",
-      })
-    : [];
   const occupiedSet = new Set(parsed.occupiedVmids);
   for (const vmid of reservedVmids) {
     if (vmid >= vmidStart && vmid <= vmidEnd) occupiedSet.add(vmid);
@@ -1897,6 +1931,12 @@ export async function runProxmoxHostScriptWithStdin(
   }
   const encoded = Buffer.from(script, "utf8").toString("base64");
   const command = `/bin/bash -c "$(printf '%s' '${encoded}' | /usr/bin/base64 --decode)"`;
+  // A root login runs this command as one argument to its shell, and Linux
+  // refuses any one argument of 128 KiB or more: a script near 96 KiB would
+  // fail on the host as "Argument list too long".
+  if (Buffer.byteLength(command) > 128 * 1024 - 1) {
+    return { ok: false, stdout: "", stderr: "", error: "Invalid Proxmox host script or stdin" };
+  }
   return runProxmoxHostInvocation(
     { loginCommand: command, loginInput: stdin, script, stdin },
     env,
@@ -2277,14 +2317,16 @@ export async function provisionProxmoxInstance(params: {
   // value stored in `proxmox_node` by buildPostProvisionMetadataPayload
   // — see instance-service.ts:~2417. Empty slug short-circuits to [] so
   // single-host deployments without a slug keep working.
-  const reservedVmidLookup =
-    deps.getReservedVmidsForNode ?? getReservedProxmoxVmidsForNode;
-  const reservedVmids = inferredHostSlug
-    ? await reservedVmidLookup({
+  const { reservedVmids, vmidLedger } = inferredHostSlug
+    ? await buildProxmoxVmidReferenceLedger({
         proxmoxNode: inferredHostSlug,
         excludeInstanceId: params.instanceId,
+        lane: "hermes",
+        references: deps.getReservedVmidsForNode
+          ? await deps.getReservedVmidsForNode({ proxmoxNode: inferredHostSlug, excludeInstanceId: params.instanceId })
+          : undefined,
       })
-    : [];
+    : { reservedVmids: [] as number[], vmidLedger: null };
   const script = buildProxmoxProvisionScript({
     instanceId: params.instanceId,
     vmName: sanitizeVmName(`hermes-${params.name}-${params.instanceId.slice(0, 8)}`),
@@ -2292,6 +2334,7 @@ export async function provisionProxmoxInstance(params: {
     vmidStart,
     vmidEnd,
     reservedVmids,
+    vmidLedger,
     ipLastOctetStart: envInt(env, "PROXMOX_IP_LAST_OCTET_START", 50),
     privateSubnetPrefix: envValue(env, "PROXMOX_PRIVATE_SUBNET_PREFIX", "10.250.20"),
     privateCidr: envInt(env, "PROXMOX_PRIVATE_CIDR", 24),
@@ -2527,17 +2570,20 @@ export async function deleteProxmoxInstance(
 export async function shutdownProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   deps: ProxmoxHostAwareDeps & {
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
     shutdownTimeoutSeconds?: number;
     /** Pass 0 when pausing for inactivity/capacity so a host reboot doesn't
      * auto-start the paused VM. Undefined leaves onboot untouched. */
     setOnboot?: 0 | 1;
-  } = {}
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "shutdown",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
     setOnboot: deps.setOnboot,
@@ -2549,17 +2595,20 @@ export async function shutdownProxmoxInstance(
 export async function startProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   deps: ProxmoxHostAwareDeps & {
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
     /** Pass 1 when resuming an agent so it survives host reboots while active
      * (the inverse of the inactivity-pause onboot:0). Undefined leaves onboot
      * untouched. */
     setOnboot?: 0 | 1;
-  } = {}
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "start",
     setOnboot: deps.setOnboot,
   });
@@ -2569,13 +2618,14 @@ export async function startProxmoxInstance(
 
 export async function rebootProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
-  deps: ProxmoxHostAwareDeps & { shutdownTimeoutSeconds?: number } = {}
+  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string; shutdownTimeoutSeconds?: number }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxPowerScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     action: "reboot",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
   });
@@ -2587,13 +2637,14 @@ export async function rebootProxmoxInstance(
 export async function resizeProxmoxInstance(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
   resources: { cpuLimit: number; ramLimit: number },
-  deps: ProxmoxHostAwareDeps = {}
+  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
     : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
   const script = buildProxmoxResizeScript({
     vmid: infrastructure.vmid,
+    expectedInstanceId: deps.expectedInstanceId,
     cores: resources.cpuLimit,
     memoryMb: resources.ramLimit,
     balloonFloorMb: envInt(env, "PROXMOX_VM_BALLOON_FLOOR_MB", 0) || undefined,
@@ -2713,7 +2764,15 @@ echo "[resize] container cgroup reapply: $updated container(s) set to \${MEM_MB}
  * to a running VM with no chat interruption.
  */
 export async function resizeProxmoxVm(
-  params: { vmid: number; node?: string; cpuLimit: number; memoryMb: number; cpuUnits?: number },
+  params: {
+    vmid: number;
+    /** The row's instance id; the host refuses a VMID holding another VM. */
+    expectedInstanceId: string;
+    node?: string;
+    cpuLimit: number;
+    memoryMb: number;
+    cpuUnits?: number;
+  },
   deps: ProxmoxHostAwareDeps = {}
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
@@ -2779,7 +2838,7 @@ if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "VM $VMID not found" >&2
   exit 1
 fi
-
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}
 # Same ipconfig0 parse the metrics script uses — the guest's private IP is the
 # only route from the Proxmox host into the VM.
 PRIVATE_IP="$(qm config "$VMID" 2>/dev/null | sed -n 's/^ipconfig0: .*ip=\\([^,\\/]*\\).*/\\1/p' | head -n1)"

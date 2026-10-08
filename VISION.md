@@ -126,6 +126,8 @@ The intended public platform includes provisioning, lifecycle, runtime and provi
 
 The repository must not be described as open source until an OSI-approved license and third-party distribution review are committed.
 
+> Update, 2026-09-30: the owner decided that copy may call Hivra open source and self-hostable and link the repository (see `AGENTS.md`), and a root `LICENSE` is committed. That decision does not record the outcome of the third-party distribution review, and an open Hivra adapter or installer still does not make a third-party runtime open source.
+
 ### One platform, not another lane
 
 The existing Hermes, Hivra-agent, and Workspace Cloud paths must converge through compatibility adapters and explicit migrations. New work must not create a fourth independent lifecycle or execution system.

@@ -254,7 +254,9 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
         typeof j?.code === "string" ? j.code : null,
       );
     }
-    if (r.status >= 400 && r.status < 500) {
+    // Refused before anything was created (no host could take it right now):
+    // back to Review with the reason, never "couldn't confirm".
+    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable") {
       throw new HivraLaunchCorrectableError(
         message,
         r.status,
@@ -1051,6 +1053,78 @@ export async function browserToggle(boxUrl: string, enabled: boolean, token?: st
     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; enabled?: boolean; error?: string };
     if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
     return { ok: true, enabled: j.enabled, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// ---- Claude app on Ubuntu Desktop computers (optional, owner-initiated) -----
+// The computer's gateway asks a narrow root helper to report, add, update, switch
+// the view of, or remove Anthropic's own Claude app inside the contained desktop.
+// The owner signs in to the app themselves; nothing here handles that sign-in.
+export type ClaudeAppView = "app" | "desktop";
+export type ClaudeAppStatus = {
+  enabled: boolean;
+  desktopRunning: boolean;
+  installedVersion: string | null;
+  pinnedVersion: string | null;
+  updateAvailable: boolean;
+  appRunning: boolean;
+  mode: ClaudeAppView;
+  profileSaved: boolean;
+  installing: boolean;
+  lastError: string | null;
+};
+const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
+function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
+  const v = value as Record<string, unknown> | null;
+  if (!v || typeof v !== "object" || v.protocol !== CLAUDE_APP_PROTOCOL) return null;
+  const version = (x: unknown) => typeof x === "string" && /^[0-9.]{1,32}$/.test(x) ? x : null;
+  return {
+    enabled: v.enabled === true,
+    desktopRunning: v.desktopRunning === true,
+    installedVersion: version(v.installedVersion),
+    pinnedVersion: version(v.pinnedVersion),
+    updateAvailable: v.updateAvailable === true,
+    appRunning: v.appRunning === true,
+    mode: v.mode === "desktop" ? "desktop" : "app",
+    profileSaved: v.profileSaved === true,
+    installing: v.installing === true,
+    lastError: typeof v.lastError === "string" && v.lastError ? v.lastError.slice(0, 200) : null,
+  };
+}
+/** `available: false` means this computer does not offer the Claude app at all
+ * (an older gateway, another computer kind); the screen then shows nothing. */
+export async function claudeAppStatus(boxUrl: string, token?: string | null): Promise<{ available: boolean; status: ClaudeAppStatus | null; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/status`, { cache: "no-store", headers: boxHeaders(token) });
+    if (r.status === 404) return { available: false, status: null, error: null };
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { available: true, status: null, error: (j as { error?: string }).error || `HTTP ${r.status}` };
+    const status = parseClaudeAppStatus(j);
+    return status ? { available: true, status, error: null } : { available: true, status: null, error: "The Claude app status was not understood." };
+  } catch (e) { return { available: true, status: null, error: (e as Error).message }; }
+}
+export async function claudeAppInstall(boxUrl: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/install`, { method: "POST", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function claudeAppSetView(boxUrl: string, mode: ClaudeAppView, token?: string | null): Promise<{ ok: boolean; applied?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/mode`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ mode }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; applied?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, applied: j.applied === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function claudeAppRemove(boxUrl: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/remove`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ confirm: true }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 

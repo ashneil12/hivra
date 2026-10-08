@@ -1,5 +1,6 @@
 import {
   UnsupportedVeniceModelError,
+  VENICE_CHAT_MODEL_PRICES,
   VENICE_CHAT_PRICING_CATALOG_MAX_AGE_DAYS,
   VENICE_CHAT_PRICING_CATALOG_UPDATED_AT,
   calculateVeniceTokenCostMicroUsd,
@@ -61,6 +62,33 @@ describe("Venice chat pricing catalog", () => {
       inputMicroUsdPerMillion: 12_000_000,
       outputMicroUsdPerMillion: 60_000_000,
     });
+  });
+
+  // Review of #166: the catalog said 24,000 output tokens for GLM 5.1 while
+  // Venice allowed 80,000. These rows are what the proxy holds for while live
+  // pricing is down, so their limits must be Venice's. Sourced from Venice's
+  // live GET /api/v1/models?type=text on 2026-09-25.
+  it.each([
+    [
+      "zai-org-glm-5-1",
+      { inputMicroUsdPerMillion: 1_540_000, outputMicroUsdPerMillion: 4_840_000, cacheReadMicroUsdPerMillion: 286_000, contextWindow: 200_000, maxOutputTokens: 80_000 },
+    ],
+    [
+      "qwen3-5-35b-a3b",
+      { contextWindow: 256_000, maxOutputTokens: 16_384 },
+    ],
+    [
+      "qwen3-vl-235b-a22b",
+      { inputMicroUsdPerMillion: 210_000, outputMicroUsdPerMillion: 1_900_000, cacheReadMicroUsdPerMillion: 100_000, contextWindow: 128_000, maxOutputTokens: 16_384 },
+    ],
+  ])("%s matches Venice's 2026-09-25 limits and rates", (modelId, expected) => {
+    expect(getVeniceChatModelPrice(modelId)).toMatchObject(expected);
+  });
+
+  it("never presents a catalog output maximum as one Venice confirmed", () => {
+    for (const row of VENICE_CHAT_MODEL_PRICES) {
+      expect(row.maxOutputTokensSource).toBe("catalog");
+    }
   });
 
   it("reports the catalog as stale past the configured threshold", () => {

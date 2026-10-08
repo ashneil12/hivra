@@ -285,6 +285,10 @@ describe("agent SEO catalog", () => {
       "Claude Code and Codex runs started in the browser chat or agent terminal stop when that tab closes.",
       // The opposite promise: false on computers without the runtime update.
       "A run you start in the browser chat keeps going after you close the tab.",
+      // Invented setup time (2026-09-30 copy audit, F-15).
+      "A DIY setup costs a VPS bill plus the weekend you spend configuring it.",
+      "Setting it up yourself takes 4-8 hours.",
+      "Budget 1-2 hours per month for upkeep.",
     ]) {
       expect({ claim, banned: banned(claim) }).toEqual({ claim, banned: true });
     }
@@ -292,6 +296,7 @@ describe("agent SEO catalog", () => {
       "Start long work inside tmux in the computer's Terminal tab and it keeps going after you log off.",
       "Hermes is useful because it doesn't stop when you close a browser tab.",
       "On Hivra it lives on a private virtual machine that stays on, so nothing resets when you close the tab.",
+      "A DIY setup costs a VPS bill plus the time you spend configuring and updating it.",
     ]) {
       expect({ claim, banned: banned(claim) }).toEqual({ claim, banned: false });
     }

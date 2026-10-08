@@ -2,6 +2,8 @@
 import {
   PLATFORM_PRICE_MAX_DEVIATION_BPS,
   PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES,
+  PLATFORM_PRICE_MIN_HISTORY_MINUTES,
+  PLATFORM_PRICE_MIN_TRADED_CANDLES,
   PlatformTokenPriceGateError,
   _resetPlatformPriceReferenceCacheForTests,
   fetchPlatformTokenPriceCrossCheck,
@@ -33,11 +35,23 @@ function pair(pairAddress: string, priceUsd: string, liquidityUsd: number, usdPe
   };
 }
 
+/** Traded candles a mature pool has before the listed ones (enough for the history gate). */
+const MATURE_HISTORY_CANDLES = 30;
+
 /**
- * `closes` are one per 5-minute candle, newest first; `candles` are explicit
- * [ageMinutes, close] pairs for pools that do not trade every 5 minutes.
+ * `closes` are one per 5-minute candle, newest first (the first, age 0, is
+ * still in progress); `candles` are explicit [ageMinutes, close] pairs for
+ * pools that do not trade every 5 minutes. A pool is mature unless `young`:
+ * MATURE_HISTORY_CANDLES traded candles at the oldest listed close, all older
+ * than the median window and the listed candles, come first.
  */
-function fakeFetch(opts: { pairs: unknown[]; closes?: number[]; candles?: [number, number][]; geckoStatus?: number }) {
+function fakeFetch(opts: {
+  pairs: unknown[];
+  closes?: number[];
+  candles?: [number, number][];
+  geckoStatus?: number;
+  young?: boolean;
+}) {
   return jest.fn(async (url: string) => {
     if (url.includes("dexscreener")) {
       return { ok: true, status: 200, json: async () => ({ pairs: opts.pairs }) } as unknown as Response;
@@ -45,7 +59,16 @@ function fakeFetch(opts: { pairs: unknown[]; closes?: number[]; candles?: [numbe
     if (opts.geckoStatus && opts.geckoStatus !== 200) {
       return { ok: false, status: opts.geckoStatus, json: async () => ({}) } as unknown as Response;
     }
-    const candles = opts.candles ?? (opts.closes ?? []).map((close, i): [number, number] => [i * 5, close]);
+    const listed = opts.candles ?? (opts.closes ?? []).map((close, i): [number, number] => [i * 5, close]);
+    const oldest = listed.reduce<[number, number] | null>((found, candle) => (!found || candle[0] > found[0] ? candle : found), null);
+    const history: [number, number][] =
+      opts.young || !oldest
+        ? []
+        : Array.from({ length: MATURE_HISTORY_CANDLES }, (_, i): [number, number] => [
+            Math.max(oldest[0], PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES) + 5 * (i + 1),
+            oldest[1],
+          ]);
+    const candles = [...listed, ...history];
     const list = candles.map(([ageMinutes, close]) => [nowSec() - ageMinutes * 60, close, close, close, close, 1]);
     return { ok: true, status: 200, json: async () => ({ data: { attributes: { ohlcv_list: list } } }) } as unknown as Response;
   });
@@ -175,7 +198,8 @@ describe("platform token price gates", () => {
   });
 
   it("weighs wall-clock time, not trade count: a burst of pumped trades cannot move the median", async () => {
-    const burst = Array.from({ length: 40 }, (_, i): [number, number] => [i * 0.1, 0.0000013]); // 40 trades in 4 minutes
+    // 40 trades in 4 completed minutes.
+    const burst = Array.from({ length: 40 }, (_, i): [number, number] => [5 + i * 0.1, 0.0000013]);
     const fetchImpl = fakeFetch({
       pairs: [pair(HERMESOS_POOL_ID, "0.0000013", 80_000)],
       candles: [...burst, [3 * 60, 0.000001]],
@@ -200,6 +224,59 @@ describe("platform token price gates", () => {
     await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
       gate: "pool_missing",
     });
+  });
+
+  it("refuses a young pool's pumped price even when its few candles agree with the spot", async () => {
+    // The pool first traded 10 minutes ago and every trade since has been at
+    // five times the launch price: the median of its own candles is the pump.
+    const fetchImpl = fakeFetch({
+      pairs: [pair(HERMESOS_POOL_ID, "0.000005", 80_000)],
+      candles: [[0, 0.000005], [5, 0.000005], [10, 0.000005]],
+      young: true,
+    });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      name: "PlatformTokenPriceGateError",
+      gate: "history",
+      reason: "insufficient_history",
+    });
+  });
+
+  it("refuses until the pool has a full median window of history, however busy it is", async () => {
+    // Traded in every 5-minute period for three hours: plenty of candles, but
+    // under the four-hour window.
+    const candles = Array.from({ length: 36 }, (_, i): [number, number] => [5 + i * 5, 0.0000011]);
+    const fetchImpl = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], candles, young: true });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "history",
+    });
+  });
+
+  it("refuses an old pool that has traded in too few periods, and does not count the in-progress one", async () => {
+    // First traded five hours ago, in one completed period short of the
+    // minimum; the in-progress candle would make up the difference.
+    const completed = Array.from(
+      { length: PLATFORM_PRICE_MIN_TRADED_CANDLES - 1 },
+      (_, i): [number, number] => [5 * 60 - i * 5, 0.0000011]
+    );
+    const fetchImpl = fakeFetch({
+      pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)],
+      candles: [[0, 0.0000011], ...completed],
+      young: true,
+    });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "history",
+      observed: { tradedCandles: PLATFORM_PRICE_MIN_TRADED_CANDLES - 1 },
+    });
+  });
+
+  it("trusts the median once the pool has the full window and enough traded periods", async () => {
+    const candles = Array.from(
+      { length: PLATFORM_PRICE_MIN_TRADED_CANDLES },
+      (_, i): [number, number] => [PLATFORM_PRICE_MIN_HISTORY_MINUTES + 5 - i * 5, 0.0000011]
+    );
+    const fetchImpl = fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)], candles, young: true });
+    const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    expect(Number(quote.priceUsd)).toBeCloseTo(0.0000011, 12);
   });
 
   it("offers the median as a cross-check quote in plain decimal form", async () => {
@@ -245,6 +322,26 @@ describe("price gate refusals name the token, the reason and what was observed",
       poolId: HERMESOS_POOL_ID,
     });
     expect(Number(error.observed.aboveMedianBps)).toBeGreaterThan(PLATFORM_PRICE_MAX_DEVIATION_BPS);
+  });
+
+  it("insufficient_history: how old the pool is and how often it has traded, against the minimums", async () => {
+    const error = await refusal(
+      fakeFetch({ pairs: [pair(HERMESOS_POOL_ID, "0.000005", 80_000)], candles: [[5, 0.000005], [30, 0.000001]], young: true })
+    );
+    expect(error.refusal).toEqual({
+      assetKey: "hermesos",
+      asset: "$HermesOS",
+      reason: "insufficient_history",
+      gate: "history",
+      observed: {
+        stage: "reference",
+        poolId: HERMESOS_POOL_ID,
+        historyMinutes: 30,
+        minHistoryMinutes: PLATFORM_PRICE_MIN_HISTORY_MINUTES,
+        tradedCandles: 2,
+        minTradedCandles: PLATFORM_PRICE_MIN_TRADED_CANDLES,
+      },
+    });
   });
 
   it("no_candle: a pool the median source has never seen trade (still a reference outage)", async () => {

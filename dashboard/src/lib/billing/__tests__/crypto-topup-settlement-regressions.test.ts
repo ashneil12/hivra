@@ -1,7 +1,7 @@
 /**
  * Regression tests for the USDC top-up reconciliation audit (2026-09-22,
  * findings CT-1 … CT-6) and the production incident it explains: a user paid
- * 50 USDC twice (2026-09-11 and 2026-09-12) and was credited nothing.
+ * 50 USDC twice and was credited nothing.
  *
  * Every test drives the real reconciler/settlement (and, for CT-4, the real
  * bearer settle route) against an in-memory database with production unique
@@ -284,17 +284,20 @@ describe("CT-2: session expiry must not fail a paid-but-unreconciled intent", ()
     ]);
   });
 
-  it("prod 2026-09-12: recovers both 50 USDC payments, including the one the old session expiry failed", async () => {
+  it("recovers both 50 USDC payments, including the one the old session expiry failed", async () => {
     const now = "2026-09-22T14:00:00.000Z";
-    const address = "0xf53f6db364da210c7bd873b71ccce299ea9813a3";
-    const aCreated = "2026-09-11T19:57:40.939Z";
-    const bCreated = "2026-09-12T04:55:20.219Z";
+    // Synthetic values only. The shape is what the incident had: two intents for
+    // one deposit address, the first closed by the old session expiry when the
+    // second was created, and a payment for each.
+    const address = depositAddress();
+    const aCreated = "2026-09-11T10:15:30.000Z";
+    const bCreated = "2026-09-12T03:45:10.000Z";
     const { memory, rpc } = setup({
       now,
       intents: [
         intentRow({
-          ref: "bankr_crypto_topup:4639bbce",
-          userId: "user_prod",
+          ref: "bankr_crypto_topup:expired-first",
+          userId: "user_repeat_payer",
           address,
           createdAt: aCreated,
           packageCredits: 5000,
@@ -305,34 +308,34 @@ describe("CT-2: session expiry must not fail a paid-but-unreconciled intent", ()
             expiredAt: bCreated,
           },
         }),
-        intentRow({ ref: "bankr_crypto_topup:73ca2602", userId: "user_prod", address, createdAt: bCreated, packageCredits: 5000 }),
+        intentRow({ ref: "bankr_crypto_topup:second", userId: "user_repeat_payer", address, createdAt: bCreated, packageCredits: 5000 }),
         // An unpaid intent the old code expired: closed, never credited.
         intentRow({
           ref: "bankr_crypto_topup:unpaid",
           userId: "user_other",
           address: depositAddress(),
-          createdAt: "2026-08-11T11:22:15.224Z",
+          createdAt: "2026-08-11T09:00:00.000Z",
           packageCredits: 500,
           status: "failed",
           metadata: { creditGrantStatus: "expired", failureType: "crypto_payment_session_expired" },
         }),
       ],
     });
-    pay(rpc, { to: address, at: "2026-09-11T19:58:17.000Z", amountMinor: 50 * USDC, tx: "0x4ea29fcd", logIndex: 417 });
-    pay(rpc, { to: address, at: "2026-09-12T04:55:45.000Z", amountMinor: 50 * USDC, tx: "0x6531f19f", logIndex: 78 });
+    pay(rpc, { to: address, at: addMs(aCreated, 40_000), amountMinor: 50 * USDC, tx: "0xfirst-payment", logIndex: 11 });
+    pay(rpc, { to: address, at: addMs(bCreated, 25_000), amountMinor: 50 * USDC, tx: "0xsecond-payment", logIndex: 12 });
 
     const result = await reconcile(memory, rpc, now);
 
     expect(result.failed).toBe(0);
-    expect(payment(memory, "bankr_crypto_topup:4639bbce").status).toBe("succeeded");
-    expect(payment(memory, "bankr_crypto_topup:73ca2602").status).toBe("succeeded");
-    expect(receiptFor(memory, "bankr_crypto_topup:4639bbce")).toEqual(
-      expect.objectContaining({ tx_hash: "0x4ea29fcd", log_index: 417, status: "settled" })
+    expect(payment(memory, "bankr_crypto_topup:expired-first").status).toBe("succeeded");
+    expect(payment(memory, "bankr_crypto_topup:second").status).toBe("succeeded");
+    expect(receiptFor(memory, "bankr_crypto_topup:expired-first")).toEqual(
+      expect.objectContaining({ tx_hash: "0xfirst-payment", log_index: 11, status: "settled" })
     );
-    expect(receiptFor(memory, "bankr_crypto_topup:73ca2602")).toEqual(
-      expect.objectContaining({ tx_hash: "0x6531f19f", log_index: 78, status: "settled" })
+    expect(receiptFor(memory, "bankr_crypto_topup:second")).toEqual(
+      expect.objectContaining({ tx_hash: "0xsecond-payment", log_index: 12, status: "settled" })
     );
-    expect(ledgerFor(memory, "user_prod").map((entry) => entry.amount_credits)).toEqual([5000, 5000]);
+    expect(ledgerFor(memory, "user_repeat_payer").map((entry) => entry.amount_credits)).toEqual([5000, 5000]);
 
     const unpaid = payment(memory, "bankr_crypto_topup:unpaid");
     expect(unpaid.status).toBe("failed");

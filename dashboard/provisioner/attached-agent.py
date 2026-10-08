@@ -409,6 +409,14 @@ def run(args, timeout=60, check=True, stdin=None):
     return result
 
 
+def probe(args, timeout=60):
+    """A read-only command whose absence means there is nothing for it to report."""
+    try:
+        return run(args, timeout=timeout, check=False)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, "", "")
+
+
 def systemctl(*args, check=True, timeout=90):
     return run(["systemctl", *args], timeout=timeout, check=check)
 
@@ -1050,6 +1058,10 @@ def remove(packet, helpers):
         user = None
     if user and (user.pw_dir != HOMES + "/" + installation or user.pw_uid == 0):
         raise ValueError("unexpected agent account")
+    # Activation writes this registry before any unit exists. Without it the
+    # agent never ran here: only staging and the pinned `codex --version`
+    # wrote to its home, and the gateway drop-in folder may never have been made.
+    registered = os.path.isdir(ATTACHMENTS + "/" + installation)
     # 1. Stop everything and lock the account; no process of its uid may remain.
     stop_agent(installation)
     systemctl("stop", name + "-watchdog.timer", name + "-watchdog.service", name + "-probe.service", check=False)
@@ -1078,14 +1090,18 @@ def remove(packet, helpers):
     systemctl("stop", name + "-dns.socket", name + "-dns.service", name + "-network.service", check=False)
     if os.path.exists(HELPERS + "/attached-network") and os.path.isdir(ATTACHMENTS + "/" + installation):
         run([HELPERS + "/attached-network", "down", installation], check=False)
-    network = run(["ip", "netns", "list"], check=False).stdout
-    table = run(["nft", "list", "table", "inet", "hivra_attached_" + hexid[:12]], check=False).returncode == 0
+    # A computer without ip or nft has no namespace or table to remove.
+    network = probe(["ip", "netns", "list"]).stdout
+    table = probe(["nft", "list", "table", "inet", "hivra_attached_" + hexid[:12]]).returncode == 0
     receipt["networkRemoved"] = ("hivra-" + hexid[:12]) not in network and not table
     # 4. Units and the gateway drop-in.
     units, _, _ = render_units(installation, account, HOMES + "/" + installation, INSTALLS + "/" + installation + "/codex", False, 512)
     systemctl("disable", *[unit for unit, _, _ in units if not unit.startswith("bux-")], check=False)
     for _, path, _ in units:
-        parent = open_root_dir(os.path.dirname(path))
+        try:
+            parent = open_root_dir(os.path.dirname(path))
+        except FileNotFoundError:
+            continue  # Its folder was never made, so neither was the unit.
         try:
             unlink_quiet(parent, os.path.basename(path))
         finally:
@@ -1095,10 +1111,22 @@ def remove(packet, helpers):
     receipt["unitsRemoved"] = not any(os.path.exists(path) for _, path, _ in units)
     restart_gateway()
     # 5. The private home, with the no-follow, no-cross-mount walker.
-    if user and os.path.isdir(ATTACHMENTS + "/" + installation):
+    if user and registered:
         home = run([HELPERS + "/attached-workspace", "remove-home", installation], check=False)
         if home.returncode != 0:
             return dict(receipt, state="unresolved", reason="home_not_removed")
+    elif not registered:
+        # Never activated: the helper has no binding to work from. The same
+        # no-follow, no-cross-mount walk removes what staging left.
+        try:
+            homes = open_root_dir(HOMES)
+        except FileNotFoundError:
+            homes = None
+        if homes is not None:
+            try:
+                remove_tree(homes, installation)
+            finally:
+                os.close(homes)
     receipt["homeRemoved"] = not os.path.lexists(HOMES + "/" + installation)
     # 6. Installation, registry, starting folder.
     for parent_path, entry in ((INSTALLS, installation), (ATTACHMENTS, installation), (VIEWS, installation)):

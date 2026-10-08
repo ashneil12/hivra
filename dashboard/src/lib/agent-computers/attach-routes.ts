@@ -1,3 +1,4 @@
+import { ATTACH_UPDATE_RUNTIME_COPY } from "./attach-copy";
 import "server-only";
 
 import { createHash } from "node:crypto";
@@ -47,7 +48,7 @@ export type AttachReason = "unsupported_computer" | "agent_present" | "computer_
   | "computer_update_required" | "plan_agent_limit" | "plan_required";
 
 /** Where the owner updates a computer's Hivra service (Manage → Power). */
-export const ATTACH_UPDATE_RUNTIME_COPY = "This computer's Hivra service is older than Codex needs. In Manage, choose Update & restart, then add Codex.";
+export { ATTACH_UPDATE_RUNTIME_COPY };
 
 /** One sentence per refusal; nothing is bought or upgraded automatically. */
 export function attachReasonCopy(reason: AttachReason, planMessage?: string): string {

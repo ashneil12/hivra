@@ -406,7 +406,7 @@ function ActivatePageContent() {
 
               <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
                 {planKey === "free"
-                  ? "Turning on your Free plan. Launch opens next, where you choose your first agent or computer."
+                  ? "Setting up your free account. Launch opens next, where you can connect your own computer or choose a plan."
                   : "Preparing secure checkout. You'll choose what to launch once your plan is active."}
               </p>
             </>

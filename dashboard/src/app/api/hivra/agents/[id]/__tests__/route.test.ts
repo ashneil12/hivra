@@ -5,7 +5,12 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 
 import { DELETE, GET } from "../route";
-import { REMOTE_DESKTOP_BUNDLE_REVISION } from "@/lib/remote-computers/capability-inspection";
+import {
+  DESKTOP_PROVISION_UNVERIFIED_MESSAGE,
+  DESKTOP_START_OUTDATED_MESSAGE,
+  DESKTOP_START_UNVERIFIED_MESSAGE,
+  REMOTE_DESKTOP_BUNDLE_REVISION,
+} from "@/lib/remote-computers/capability-inspection";
 
 const mockAuth = jest.fn();
 const mockSupabaseFrom = jest.fn();
@@ -901,6 +906,162 @@ describe("GET /api/hivra/agents/[id]", () => {
     expect(mockSupabaseRpc.mock.calls.some(([name]) => name === "release_hivra_agent_operation")).toBe(false);
   });
 
+  describe("Ubuntu Desktop made before the current desktop release", () => {
+    // Reproduced on Canary 2026-09-25: 1c8d40ce (release 2026.09.08.3, 8bc933…)
+    // went provisioning → error on every Start once 2026.09.21.1 became current.
+    const computerId = "00000000-0000-4000-8000-000000001041";
+    const operationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const PREDECESSOR = "8bc933b88594073475ac54dba45abdf25ed9ff4e1acb816217905a2713f76d8c";
+    const receipt = (observedRevision: string) => ({
+      protocol: "hivra-remote-desktop-capability-v1",
+      computerKind: "hivra-agent",
+      computerId,
+      capabilityGeneration: "00000000-0000-4000-8000-000000001044",
+      observedRevision,
+      compositor: "x11",
+      installedTransports: ["selkies-websocket"],
+      privateNetworkReachable: false,
+      supportsInputTakeover: true,
+      brokerOrigin: "https://box.example.com",
+      bootIdentitySha256: "d".repeat(64),
+      observedAt: new Date().toISOString(),
+    });
+    const lifecycle = (operationKind: string) => {
+      mockAgentRow = {
+        ...mockAgentRow,
+        id: computerId,
+        type: "linux-desktop",
+        operation_id: operationId,
+        operation_kind: operationKind,
+        operation_payload: null,
+        infrastructure_binding_token_enforced: true,
+      };
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `{"vmid":1090,"ready":true,"chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}\nHIVRA_OPERATION_RECEIPT ${operationId}\n`,
+        stderr: "",
+      });
+    };
+    const poll = () => GET(makeGetRequest() as never, { params: Promise.resolve({ id: computerId }) });
+    const completed = () => mockSupabaseRpc.mock.calls.some(([name]) => name === "complete_hivra_agent_running");
+    const releasedWith = (error: string) => expect(mockSupabaseRpc).toHaveBeenCalledWith(
+      "release_hivra_agent_operation",
+      expect.objectContaining({ p_agent_id: computerId, p_mark_error: true, p_error: error }),
+    );
+
+    it.each(["start", "restart", "resize"])("returns to running after %s on a release Hivra still recognises", async (kind) => {
+      lifecycle(kind);
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(receipt(PREDECESSOR))}\n`,
+        stderr: "",
+      });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(completed()).toBe(true);
+      expect(mockSupabaseRpc.mock.calls.some(([name]) => name === "release_hivra_agent_operation")).toBe(false);
+    });
+
+    it("still requires a fresh provision to prove the current release", async () => {
+      mockAgentRow = {
+        ...mockAgentRow,
+        id: computerId,
+        type: "linux-desktop",
+        allocation_operation_id: operationId,
+        infrastructure_binding_token_enforced: true,
+      };
+      mockRunProxmoxHostScript
+        .mockResolvedValueOnce({
+          ok: true,
+          stdout: `{"vmid":1090,"ready":true,"agent_kind":"linux-desktop","chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}\nHIVRA_PROVIDER_OWNERSHIP ${operationId}\n`,
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(receipt(PREDECESSOR))}\n`,
+          stderr: "",
+        });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_PROVISION_UNVERIFIED_MESSAGE);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "linux desktop readiness capability is unavailable",
+        expect.objectContaining({ capabilityFailureCode: "desktop_release_not_current", observedRevision: PREDECESSOR }),
+      );
+    });
+
+    it("rejects a release Hivra does not recognise", async () => {
+      lifecycle("start");
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(receipt("e".repeat(64)))}\n`,
+        stderr: "",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_UNVERIFIED_MESSAGE);
+    });
+
+    it("rejects a receipt for another computer's broker", async () => {
+      lifecycle("start");
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify({ ...receipt(PREDECESSOR), brokerOrigin: "https://other.example.com" })}\n`,
+        stderr: "",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_UNVERIFIED_MESSAGE);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "linux desktop readiness capability is unavailable",
+        expect.objectContaining({ capabilityFailureCode: "identity_mismatch" }),
+      );
+    });
+
+    it("rejects a receipt without its boot identity", async () => {
+      lifecycle("start");
+      const unbound: Partial<ReturnType<typeof receipt>> = receipt(PREDECESSOR);
+      delete unbound.bootIdentitySha256;
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(unbound)}\n`,
+        stderr: "",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_UNVERIFIED_MESSAGE);
+    });
+
+    it("tells the owner plainly when the guest predates identity-bound desktops", async () => {
+      lifecycle("start");
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "HIVRA_CAPABILITY_FAILURE desktop_upgrade_required\n",
+        error: "Remote bash exited with code 1",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_OUTDATED_MESSAGE);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "linux desktop readiness capability is unavailable",
+        expect.objectContaining({ capabilityCommandOk: false, capabilityFailureCode: "guest_desktop_upgrade_required" }),
+      );
+    });
+  });
+
   it("fails Ubuntu Desktop provisioning when capability evidence is absent", async () => {
     const computerId = "00000000-0000-4000-8000-000000001041";
     mockAgentRow = {
@@ -929,7 +1090,7 @@ describe("GET /api/hivra/agents/[id]", () => {
       expect.objectContaining({
         p_agent_id: computerId,
         p_mark_error: true,
-        p_error: "Ubuntu Desktop did not publish its exact remote-desktop capability receipt.",
+        p_error: DESKTOP_PROVISION_UNVERIFIED_MESSAGE,
       }),
     );
     expect(mockCaptureHivraAgentComputerReady).not.toHaveBeenCalled();

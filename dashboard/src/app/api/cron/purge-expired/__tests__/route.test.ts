@@ -166,7 +166,7 @@ describe("GET /api/cron/purge-expired", () => {
               data: [
                 {
                   id: "inst-123",
-                  user_id: "user-123",
+                  user_id: "user_123",
                   name: "Atlas",
                   hetzner_server_id: 42,
                 },
@@ -220,7 +220,7 @@ describe("GET /api/cron/purge-expired", () => {
       .mockImplementationOnce((table: string) => {
         if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
         return scheduledFetch([
-          { id: "inst-orphan", user_id: "user-x", name: "Orphan", hetzner_server_id: 77 },
+          { id: "inst-orphan", user_id: "user_x", name: "Orphan", hetzner_server_id: 77 },
         ]);
       })
       .mockImplementationOnce((table: string) => {
@@ -708,5 +708,181 @@ describe("GET /api/cron/purge-expired", () => {
         updated_at: expect.any(String),
       })
     );
+  });
+
+  describe("owner must be a platform account", () => {
+    // Pre-launch review H5: a row written with a Supabase Auth JWT carries the
+    // JWT's `sub` (a UUID) as user_id, never a Clerk user id. Such a row did
+    // not come from any application path, so the purge must not act on the
+    // server or VM it names.
+    const FOREIGN_OWNER = "00000000-0000-4000-8000-0000000000a1";
+    const originalAuthMode = process.env.HIVRA_AUTH_MODE;
+
+    afterEach(() => {
+      if (originalAuthMode === undefined) delete process.env.HIVRA_AUTH_MODE;
+      else process.env.HIVRA_AUTH_MODE = originalAuthMode;
+    });
+
+    function cronRequest() {
+      return new NextRequest("http://localhost/api/cron/purge-expired", {
+        method: "GET",
+        headers: { authorization: "Bearer expected-secret" },
+      });
+    }
+
+    it("refuses to destroy the Hetzner server named by a scheduled row whose owner is not a platform account", async () => {
+      process.env.CRON_SECRET = "expected-secret";
+      // The archive insert and mark-deleted update would succeed, so the only
+      // thing between this row and deleteServer(4242) is the owner check.
+      const archiveInsert = jest.fn().mockResolvedValue({ error: null });
+      const updateMock = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      });
+      mockedSupabaseAdmin.from
+        .mockImplementationOnce(() =>
+          scheduledFetch([
+            {
+              id: "forged-1",
+              user_id: FOREIGN_OWNER,
+              name: "Forged",
+              hetzner_server_id: 4242,
+              host_id: null,
+              status: "scheduled_for_deletion",
+              lifecycle_state: "running",
+              config: null,
+            },
+          ])
+        )
+        .mockImplementationOnce(() => strandedDeletedFetch([]))
+        .mockImplementation((table: string) => {
+          if (table === "instance_deletion_archives") return { insert: archiveInsert };
+          if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+          return { update: updateMock };
+        });
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedDeleteServer).not.toHaveBeenCalled();
+      expect(mockedDeleteProxmoxInstance).not.toHaveBeenCalled();
+      // No archive row, no mark-deleted write: the row is left for a human.
+      expect(archiveInsert).not.toHaveBeenCalled();
+      expect(updateMock).not.toHaveBeenCalled();
+      expect(body.data.purged).toBe(0);
+      expect(body.data.results).toEqual([
+        {
+          id: "forged-1",
+          name: "Forged",
+          success: false,
+          error: "skipped: owner is not a known account",
+        },
+      ]);
+      expect(reportOpsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "instance.purge_blocked_unknown_owner",
+          severity: "error",
+          instanceId: "forged-1",
+          metadata: expect.objectContaining({
+            owner_user_id: FOREIGN_OWNER,
+            hetzner_server_id: 4242,
+          }),
+        })
+      );
+    });
+
+    it("refuses to reap a stranded-deleted Proxmox row whose owner is not a platform account", async () => {
+      process.env.CRON_SECRET = "expected-secret";
+      mockedResolveProxmoxLifecycleTarget.mockReturnValue({
+        provider: "proxmox" as const,
+        vmid: 311,
+        privateIpv4: "10.250.20.61",
+        gatewayHost: "forged.example.com",
+      });
+      mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
+      mockedDeleteProxmoxInstance.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+      const archiveInsert = jest.fn().mockResolvedValue({ error: null });
+      const updateMock = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      });
+      mockedSupabaseAdmin.from
+        .mockImplementationOnce(() => scheduledFetch([]))
+        .mockImplementationOnce(() =>
+          strandedDeletedFetch([
+            {
+              id: "forged-2",
+              user_id: FOREIGN_OWNER,
+              name: "Forged zombie",
+              hetzner_server_id: null,
+              host_id: null,
+              status: "deleted",
+              lifecycle_state: "running",
+              proxmox_vmid: 311,
+              config: { infrastructure: { provider: "proxmox", vmid: 311 } },
+            },
+          ])
+        )
+        .mockImplementationOnce((table: string) => {
+          if (table !== "hermes_subscriptions") throw new Error(`Unexpected table ${table}`);
+          return subsFetch([]);
+        })
+        .mockImplementation((table: string) => {
+          if (table === "instance_deletion_archives") return { insert: archiveInsert };
+          if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+          return { update: updateMock };
+        });
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedDeleteProxmoxInstance).not.toHaveBeenCalled();
+      expect(mockedDeleteServer).not.toHaveBeenCalled();
+      expect(updateMock).not.toHaveBeenCalled();
+      expect(body.data.results).toEqual([
+        expect.objectContaining({
+          id: "forged-2",
+          success: false,
+          error: "skipped: owner is not a known account",
+        }),
+      ]);
+    });
+
+    it("still purges the self-host operator's rows in local auth mode", async () => {
+      process.env.CRON_SECRET = "expected-secret";
+      process.env.HIVRA_AUTH_MODE = "local";
+      const updateEq = jest.fn().mockResolvedValue({ error: null });
+      const updateMock = jest.fn().mockReturnValue({ eq: updateEq });
+      mockedSupabaseAdmin.from
+        .mockImplementationOnce(() =>
+          scheduledFetch([
+            {
+              id: "local-1",
+              user_id: "hivra-local-operator",
+              name: "Local",
+              hetzner_server_id: 55,
+              host_id: null,
+              status: "scheduled_for_deletion",
+              config: null,
+            },
+          ])
+        )
+        .mockImplementationOnce(() => strandedDeletedFetch([]))
+        .mockImplementation((table: string) => {
+          if (table === "instance_deletion_archives") {
+            return { insert: jest.fn().mockResolvedValue({ error: null }) };
+          }
+          if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+          return { update: updateMock };
+        });
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedDeleteServer).toHaveBeenCalledWith(55);
+      expect(body.data.purged).toBe(1);
+      expect(updateEq).toHaveBeenCalledWith("id", "local-1");
+    });
   });
 });

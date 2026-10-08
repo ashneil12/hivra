@@ -82,7 +82,7 @@ describe("/why-hivra page", () => {
     );
     expect(markdown).toHaveTextContent("# Why I'm building Hivra");
     expect(markdown).toHaveTextContent("I run agents every day.");
-    expect(markdown).toHaveTextContent("The platform is Apache 2.0.");
+    expect(markdown).toHaveTextContent("The platform is open source.");
     expect(markdown).toHaveTextContent("Self-hosting needs no token and no account");
     expect(markdown).toHaveTextContent("Hivra is the practical part of that.");
     expect(markdown).not.toHaveTextContent("What happens to $HermesOS?");

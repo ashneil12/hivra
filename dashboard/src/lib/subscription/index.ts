@@ -4,9 +4,8 @@ export {
   PLAN_ORDER,
   ACTIVE_PLAN_KEYS,
   BACKUP_ADDON,
-  TRIAL_GRACE_HOURS,
+  PAYMENT_GRACE_HOURS,
   getPlan,
-  getTrialDays,
   getStripePriceId,
   isPlanUpgrade,
   isPaidPlanDowngrade,
@@ -17,15 +16,3 @@ export {
   type Cadence,
   type PlanKey,
 } from "./plans";
-
-export {
-  HACKATHON_PROMO_CTA,
-  HACKATHON_PROMO_END_LABEL,
-  HACKATHON_PROMO_END_FULL_LABEL,
-  HACKATHON_PROMO_NAME,
-  HACKATHON_PROMO_TRIAL_DAYS,
-  getHackathonCountdownParts,
-  getHackathonPromoTrialDays,
-  isHackathonPromoActive,
-  isHackathonPromoPlan,
-} from "./hackathon";

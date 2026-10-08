@@ -126,7 +126,8 @@ for asset in "${ASSETS[@]}"; do
 done
 # Terminal entrypoint and units, plus the agent CLI pins and their helpers.
 TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service
-  agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply)
+  agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply
+  hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json)
 for asset in "${TERMINAL_ASSETS[@]}"; do
   [ -f "$PROVISIONER_DIR/$asset" ] && [ ! -L "$PROVISIONER_DIR/$asset" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
@@ -160,6 +161,15 @@ KIND=/home/bux/.hivra/agent-kind
 AGENT_SHELL=/usr/local/bin/hivra-agent-shell
 # Root-owned; bux may run it only through /etc/sudoers.d/hivra-tg (unchanged here).
 TG_APPLY=/usr/local/bin/hivra-tg-apply
+# Optional Claude app on Ubuntu Desktop computers: the root helper, its inert
+# supervisor unit, the vetted package pin and the four exact sudo commands the
+# gateway may run. Installing them starts nothing; a running app is never
+# restarted by this update.
+CLAUDE_APP=/usr/local/bin/hivra-claude-app
+CLAUDE_APP_UNIT=/etc/systemd/system/hivra-claude-app.service
+CLAUDE_APP_PIN_DIR=/usr/local/share/hivra
+CLAUDE_APP_PIN=$CLAUDE_APP_PIN_DIR/claude-desktop-pin.json
+CLAUDE_APP_SUDOERS=/etc/sudoers.d/hivra-claude-app
 # Chat turns run in detached runners; a gateway restart must leave them alone.
 DROPIN_DIR=/etc/systemd/system/bux-hivra-chat.service.d
 DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
@@ -221,6 +231,17 @@ for asset in bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.jso
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
+for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json; do
+  [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
+    || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+done
+if [ "$KIND_BEFORE" = linux-desktop ]; then
+  for pair in "$CLAUDE_APP:hivra-claude-app" "$CLAUDE_APP_UNIT:hivra-claude-app.service" "$CLAUDE_APP_PIN:claude-desktop-pin.json" "$CLAUDE_APP_SUDOERS:hivra-claude-app.sudoers"; do
+    target="${pair%%:*}"; name="${pair##*:}"
+    if [ -f "$target" ] && [ ! -L "$target" ]; then install -o root -g root -m 0600 "$target" "$BACKUP/$name"
+    else : > "$BACKUP/$name.absent"; fi
+  done
+fi
 # Linux computers keep their terminals in the shared Hivra workspace.
 if [ "$KIND_BEFORE" = linux-desktop ]; then
   sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' "$WORK/bux-ttyd-base-path.conf" "$WORK/bux-box-ttyd.service"
@@ -232,14 +253,23 @@ else : > "$BACKUP/bux-box-ttyd.service.absent"; fi
 # A ttyd restart ends every plain shell it serves, so restart a terminal only
 # when nobody is connected to it; otherwise its new settings apply on its next
 # start. Decide before the gateway restart below drops proxied connections.
+# The running terminal is either an older unit on its loopback port or a unit
+# from the socket release on its owner-only unix socket (the gateway connects
+# to whichever is live), so a client on either counts. A check that cannot run
+# counts as busy.
 terminal_idle() {
-  local out
-  out="$(ss -Htn state established "( sport = :$1 )" 2>/dev/null)" || return 1
-  [ -z "$out" ]
+  local port="$1" socket="$2" out
+  out="$(ss -Htn state established "( sport = :$port )" 2>/dev/null)" || return 1
+  [ -z "$out" ] || return 1
+  if [ -e "$socket" ]; then
+    out="$(ss -Hx state established src "$socket" 2>/dev/null)" || return 1
+    [ -z "$out" ] || return 1
+  fi
+  return 0
 }
 RESTART_AGENT_TTYD=0; RESTART_BOX_TTYD=0; TTYD_RESTARTED=0
-terminal_idle 7681 && RESTART_AGENT_TTYD=1
-terminal_idle 7682 && RESTART_BOX_TTYD=1
+terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1
+terminal_idle 7682 /run/hivra-box-terminal/ttyd.sock && RESTART_BOX_TTYD=1
 
 node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null
@@ -249,6 +279,8 @@ node --check "$WORK/chat-runs.cjs" >/dev/null
 bash -n "$WORK/hivra-agent-shell"
 bash -n "$WORK/hivra-agent-cli-update.sh"
 bash -n "$WORK/hivra-tg-apply"
+python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-claude-app.py"
+python3 -I -B -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$WORK/claude-desktop-pin.json"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -268,6 +300,14 @@ rollback() {
   elif [ -f "$BACKUP/hivra-tg-apply.absent" ]; then rm -f -- "$TG_APPLY"; fi
   if [ -f "$BACKUP/detached-runs.conf" ]; then install -o root -g root -m 0644 "$BACKUP/detached-runs.conf" "$DROPIN"
   elif [ -f "$BACKUP/detached-runs.conf.absent" ]; then rm -f -- "$DROPIN"; fi
+  if [ "$KIND_BEFORE" = linux-desktop ]; then
+    for pair in "$CLAUDE_APP:hivra-claude-app:0755" "$CLAUDE_APP_UNIT:hivra-claude-app.service:0644" "$CLAUDE_APP_PIN:claude-desktop-pin.json:0644" "$CLAUDE_APP_SUDOERS:hivra-claude-app.sudoers:0440"; do
+      target="${pair%%:*}"; rest="${pair#*:}"; name="${rest%%:*}"; mode="${rest##*:}"
+      rm -f -- "$target.next"
+      if [ -f "$BACKUP/$name" ]; then install -o root -g root -m "$mode" "$BACKUP/$name" "$target"
+      elif [ -f "$BACKUP/$name.absent" ]; then rm -f -- "$target"; fi
+    done
+  fi
   rm -f -- "$AGENT_TTYD_CONF.next" "$BOX_TTYD_UNIT.next"
   if [ -f "$BACKUP/bux-ttyd-base-path.conf" ]; then install -o root -g root -m 0644 "$BACKUP/bux-ttyd-base-path.conf" "$AGENT_TTYD_CONF"
   elif [ -f "$BACKUP/bux-ttyd-base-path.conf.absent" ]; then rm -f -- "$AGENT_TTYD_CONF"; fi
@@ -288,6 +328,21 @@ mv -f -- "$AGENT_SHELL.next" "$AGENT_SHELL"
 # The gateway runs this per Telegram connect, so no service needs a restart.
 install -o root -g root -m 0755 "$WORK/hivra-tg-apply" "$TG_APPLY.next"
 mv -f -- "$TG_APPLY.next" "$TG_APPLY"
+if [ "$KIND_BEFORE" = linux-desktop ]; then
+  install -d -o root -g root -m 0755 "$CLAUDE_APP_PIN_DIR"
+  install -o root -g root -m 0755 "$WORK/hivra-claude-app.py" "$CLAUDE_APP.next"
+  install -o root -g root -m 0644 "$WORK/hivra-claude-app.service" "$CLAUDE_APP_UNIT.next"
+  install -o root -g root -m 0644 "$WORK/claude-desktop-pin.json" "$CLAUDE_APP_PIN.next"
+  printf '%s\n' \
+    'bux ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove' \
+    > "$CLAUDE_APP_SUDOERS.next"
+  chmod 0440 "$CLAUDE_APP_SUDOERS.next"
+  if ! visudo -cf "$CLAUDE_APP_SUDOERS.next" >/dev/null 2>&1; then rollback; echo "the Claude app sudoers rule is invalid" >&2; exit 1; fi
+  mv -f -- "$CLAUDE_APP_PIN.next" "$CLAUDE_APP_PIN"
+  mv -f -- "$CLAUDE_APP_UNIT.next" "$CLAUDE_APP_UNIT"
+  mv -f -- "$CLAUDE_APP.next" "$CLAUDE_APP"
+  mv -f -- "$CLAUDE_APP_SUDOERS.next" "$CLAUDE_APP_SUDOERS"
+fi
 case "$KIND_BEFORE" in
   claude|codex|generic)
     install -d -o root -g root -m 0755 "$DROPIN_DIR"
