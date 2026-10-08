@@ -154,6 +154,8 @@ system exists or that every current integration has been audited.
   names, storage box addresses, wallet addresses, database project references and
   customer ids out of it. CI scans the files of a pull request with the same
   rules. It does not read the text of the pull request, so this step is manual.
+- To run the same tree scan before every local commit, enable the hook once per clone:
+  `git config core.hooksPath .githooks`. CI runs the scan regardless of the hook.
 - Live Instance Smoke is manual-only, runs only from `main` and uses the `managed-live-smoke`
   environment. That environment permits only main, requires owner approval, and
   disallows administrator bypass. Put any future smoke credentials there, scoped
