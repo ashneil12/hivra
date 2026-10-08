@@ -86,6 +86,19 @@ function readMicroUsd(value: unknown): number | null {
   return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/**
+ * What the options a hold was made for (web search, scraping, X search) are
+ * charged when Venice answered but nothing says what they cost: their
+ * published rates, recorded on the hold when it was made
+ * (chat-surcharges.ts). 0 for a hold with none, which is every hold made
+ * while MANAGED_VENICE_CHAT_SURCHARGES_ENABLED is off.
+ */
+export function heldSurchargeEstimateMicroUsd(meta: Record<string, unknown>): number {
+  const surcharge = meta.surcharge;
+  if (!surcharge || typeof surcharge !== "object") return 0;
+  return readMicroUsd((surcharge as Record<string, unknown>).estimateMicroUsd) ?? 0;
+}
+
 export function readObservedOutputTokens(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
@@ -106,7 +119,7 @@ export function observedOutputCostMicroUsd(
   const input = readMicroUsd(meta.inputEstimateMicroUsd);
   const perMillion = readMicroUsd(meta.outputMicroUsdPerMillion);
   if (input === null || perMillion === null) return null;
-  return input + calculateVeniceTokenCostMicroUsd(observedOutputTokens, perMillion);
+  return input + calculateVeniceTokenCostMicroUsd(observedOutputTokens, perMillion) + heldSurchargeEstimateMicroUsd(meta);
 }
 
 /**

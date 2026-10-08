@@ -7,6 +7,7 @@ import {
   releaseManagedVeniceChatReservationOrFile,
 } from "@/lib/venice/proxy-settlement";
 import { assertManagedVeniceInternalSecret } from "@/lib/venice/internal-secret";
+import { parseSurchargeEvidence } from "@/lib/venice/chat-surcharges";
 import { settleManagedVeniceChatUsage } from "@/lib/venice/proxy-chat-core";
 
 export const runtime = "nodejs";
@@ -100,6 +101,10 @@ export async function POST(req: NextRequest) {
       ? payload.observedOutputTokens
       : null;
   const cause = typeof payload.cause === "string" ? payload.cause.slice(0, 64) : null;
+  // What Venice's response said about web search / scraping / X search (its
+  // `cost`, the citation count). Optional: without it a held surcharge is
+  // charged at Venice's published rates from the plan on the reservation.
+  const surchargeEvidence = "surchargeEvidence" in payload ? parseSurchargeEvidence(payload.surchargeEvidence) : null;
 
   if (!userId || !proxyKeyId || !referenceId || !model) {
     return apiError("Missing settlement fields.", 400, {
@@ -119,6 +124,7 @@ export async function POST(req: NextRequest) {
     // stream ended); an older Worker sends neither.
     ...(observedOutputTokens !== null ? { observedOutputTokens } : {}),
     ...(cause !== null ? { cause } : {}),
+    ...(surchargeEvidence ? { surchargeEvidence } : {}),
   });
 
   return Response.json({ ok: true, ...result });

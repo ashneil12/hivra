@@ -185,6 +185,47 @@ describe("GET /api/cron/managed-venice-reconciliation", () => {
     );
   });
 
+  it("does not refund the web search / scraping / X search surcharge as a token overcharge", async () => {
+    // Tokens cost 4_000; web search added 10_000 (chat-surcharges.ts). Re-costing
+    // the tokens alone would call the 14_000 charge a 10_000 overcharge and
+    // refund the surcharge Venice billed Hivra for.
+    usageRowsForRun = [
+      usage({
+        id: "ue_surcharge",
+        reference_id: "ref_surcharge",
+        actual_cost_micro_usd: 14_000,
+        charged_micro_usd: 14_000,
+        metadata: { surchargeMicroUsd: 10_000, surchargeSource: "published_rates", tokenCostMicroUsd: 4_000 },
+      }),
+    ];
+    mockCalculateActualChatCost.mockReturnValue({ actualCostMicroUsd: 4_000 });
+
+    const response = await GET(req());
+    const body = (await response.json()) as { data: { refundedCount: number; totalOverchargeMicroUsd: number } };
+
+    expect(response.status).toBe(200);
+    expect(body.data.refundedCount).toBe(0);
+    expect(body.data.totalOverchargeMicroUsd).toBe(0);
+    expect(mockRefund).not.toHaveBeenCalled();
+  });
+
+  it("still refunds a token overcharge on a row that also carries a surcharge", async () => {
+    usageRowsForRun = [
+      usage({
+        id: "ue_surcharge_drift",
+        reference_id: "ref_surcharge_drift",
+        charged_micro_usd: 15_000,
+        metadata: { surchargeMicroUsd: 10_000 },
+      }),
+    ];
+    mockCalculateActualChatCost.mockReturnValue({ actualCostMicroUsd: 4_000 });
+    mockRefund.mockResolvedValue({ alreadyRefunded: false });
+
+    await GET(req());
+
+    expect(mockRefund).toHaveBeenCalledWith(expect.objectContaining({ amountMicroUsd: 1_000, referenceId: "ref_surcharge_drift" }));
+  });
+
   it("absorbs undercharges silently (no extra debit) and counts toward the total", async () => {
     usageRowsForRun = [
       usage({

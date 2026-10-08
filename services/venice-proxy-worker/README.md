@@ -19,7 +19,12 @@ box → Worker /v1/chat/completions
         3. forward Venice's bytes to the box, counting the output and keeping the usage frame
            (after a disconnect: keep reading, without forwarding, to the usage frame)
         4. POST {VERCEL_BASE_URL}/api/managed-venice/internal/settle
-             {outcome:"settle", referenceId, usage, observedOutputTokens, cause, ...}
+             {outcome:"settle", referenceId, usage, observedOutputTokens, cause, surchargeEvidence?, ...}
+             surchargeEvidence = Venice's per-request `cost` and web-search citation count, sent only
+             when the response carried either (web search / scraping / X search), so a plain chat's
+             settle is unchanged. Optional: without it settle charges published rates from the plan
+             held on the reservation (a plan exists only if MANAGED_VENICE_CHAT_SURCHARGES_ENABLED
+             was on at authorize)
              (or {outcome:"release", referenceId, cause} on any failure after authorize)
 
 box → Worker /v1/embeddings (and all other /v1/*)  →  reverse-proxied to Vercel verbatim

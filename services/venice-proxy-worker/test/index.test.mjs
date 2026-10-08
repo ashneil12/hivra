@@ -134,6 +134,39 @@ test('non-stream chat returns model output and sends exact usage and reservation
   assert.deepEqual(harness.calls.map((call) => call.url), [authorize, auth.upstreamUrl, settle]);
 });
 
+test('non-stream chat forwards Venice cost and web search citations for surcharge settlement', async (t) => {
+  const completion = {
+    choices: [{ message: { content: 'hello' } }], usage,
+    cost: { usd: 0.0102, diem: 0.0001 },
+    venice_parameters: { enable_web_search: 'auto', web_search_citations: [{ url: 'https://a.test' }, { url: 'https://b.test' }] },
+  };
+  const harness = await create(t, chatUpstream(() => json(completion)));
+  await (await chat(harness.mf)).json();
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.deepEqual(settlement.surchargeEvidence, { veniceCostMicroUsd: 10_300, webSearchCitations: 2 });
+});
+
+test('stream chat forwards citations from the first chunk and cost from the usage chunk', async (t) => {
+  const streamBody = { ...body, stream: true };
+  const first = { choices: [{ delta: { content: '' } }], venice_parameters: { web_search_citations: [{ url: 'https://a.test' }] } };
+  const sse = `data: ${JSON.stringify(first)}\n\ndata: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: ${JSON.stringify({ usage, cost: { usd: 0.01, diem: 0 } })}\n\ndata: [DONE]\n\n`;
+  const harness = await create(t, chatUpstream(() => new Response(sse, {
+    headers: { 'content-type': 'text/event-stream' },
+  }), streamBody));
+  const response = await chat(harness.mf, streamBody);
+  assert.equal(await response.text(), sse);
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.deepEqual(settlement.usage, usage);
+  assert.deepEqual(settlement.surchargeEvidence, { veniceCostMicroUsd: 10_000, webSearchCitations: 1 });
+});
+
+test('a chat response with no cost or citations settles with no surchargeEvidence field at all', async (t) => {
+  const harness = await create(t, chatUpstream(() => json({ choices: [{ message: { content: 'hello' } }], usage })));
+  await (await chat(harness.mf)).json();
+  const settlement = JSON.parse((await harness.waitForCall((call) => call.url === settle)).body);
+  assert.equal('surchargeEvidence' in settlement, false);
+});
+
 test('stream chat preserves SSE bytes, requests usage and settles the final usage frame', async (t) => {
   const streamBody = { ...body, stream: true, stream_options: { include_usage: false, custom: true } };
   const sse = `data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: ${JSON.stringify({ usage })}\n\ndata: [DONE]\n\n`;

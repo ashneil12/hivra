@@ -66,6 +66,7 @@ interface ReservationRow {
   reference_id: string;
   reserved_micro_usd: number;
   captured_micro_usd?: number | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 /** One wallet's balance: everything in it, what active holds take, and the rest. */

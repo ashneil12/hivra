@@ -23,8 +23,15 @@ import {
   managedVeniceChatEstimateBody,
   reserveManagedVeniceChatWithinBalance,
   unbilledVeniceChatOption,
+  unpricedVeniceChatFallbacks,
   type ManagedVeniceOutputCapPatch,
 } from "@/lib/venice/chat-output-budget";
+import {
+  isManagedVeniceChatSurchargesEnabled,
+  planManagedChatSurcharges,
+  type ManagedChatSurchargeEvidence,
+  type ManagedChatSurchargePlan,
+} from "@/lib/venice/chat-surcharges";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
@@ -97,6 +104,12 @@ interface AuthorizedManagedVeniceChat {
    * false. Every forwarder MUST apply it.
    */
   bodyPatch: ManagedVeniceOutputCapPatch;
+  /**
+   * The billed options (web search, scraping, X search) this request was held
+   * for, or null: always null with MANAGED_VENICE_CHAT_SURCHARGES_ENABLED off.
+   * When set, the forwarder passes Venice's cost evidence to settlement.
+   */
+  surcharge?: ManagedChatSurchargePlan | null;
 }
 
 export type AuthorizeManagedVeniceChatResult =
@@ -177,7 +190,35 @@ export async function authorizeManagedVeniceChat(params: {
 
   // Options Venice bills outside token usage cannot be covered by a token
   // hold. (The Responses allowlist already refuses every one of them.)
-  const unbilled = protocol === "chat" ? unbilledVeniceChatOption(body) : null;
+  //
+  // With MANAGED_VENICE_CHAT_SURCHARGES_ENABLED (default OFF) web search,
+  // scraping and X search are priced instead: held on top of the token hold
+  // and charged at settlement (chat-surcharges.ts). Whatever cannot be priced
+  // (model fallbacks, an unreviewed venice_parameters option, an unknown tool
+  // type) is still refused here, before any hold: the Worker forwards its own
+  // copy of the body, so this is the only control on that path.
+  let surcharge: ManagedChatSurchargePlan | null = null;
+  let unbilled: string | null = null;
+  if (protocol === "chat" && isManagedVeniceChatSurchargesEnabled()) {
+    unbilled = unpricedVeniceChatFallbacks(body);
+    if (!unbilled) {
+      const planned = planManagedChatSurcharges(body);
+      if (!planned.ok) {
+        return {
+          ok: false,
+          response: openAiCompatibleError({
+            status: 400,
+            code: "managed_venice_unpriced_option",
+            type: "invalid_request_error",
+            message: planned.error,
+          }),
+        };
+      }
+      surcharge = planned.plan;
+    }
+  } else if (protocol === "chat") {
+    unbilled = unbilledVeniceChatOption(body);
+  }
   if (unbilled) {
     return {
       ok: false,
@@ -289,6 +330,7 @@ export async function authorizeManagedVeniceChat(params: {
       body,
       pricingMap,
       allowBodyRewrite: params.allowBodyRewrite !== false,
+      ...(surcharge ? { surcharge } : {}),
       route: protocol === "responses" ? "/api/managed-venice/v1/responses" : "/api/managed-venice/v1/chat/completions",
     });
   } catch (error) {
@@ -389,6 +431,7 @@ export async function authorizeManagedVeniceChat(params: {
       pricingSource: livePricing.source,
       liveModelCount: livePricing.liveModelCount,
       bodyPatch: budgeted.bodyPatch,
+      surcharge,
     },
   };
 }
@@ -426,6 +469,8 @@ export async function settleManagedVeniceChatUsage(params: {
   observedOutputTokens?: number | null;
   cause?: string | null;
   pricingMap?: VenicePricingMap;
+  /** Venice's `cost` and web-search citations, for billed options (chat-surcharges.ts). */
+  surchargeEvidence?: ManagedChatSurchargeEvidence;
 }): Promise<{ settled: boolean; reconciled: boolean }> {
   const pricingMap =
     params.pricingMap ?? (await getVenicePricingMap()).map;
@@ -442,6 +487,7 @@ export async function settleManagedVeniceChatUsage(params: {
         upstreamStatus: params.upstreamStatus,
         usage: params.usage,
         pricingMap,
+        ...(params.surchargeEvidence ? { surchargeEvidence: params.surchargeEvidence } : {}),
       });
       return { settled: true, reconciled: false };
     } catch (error) {

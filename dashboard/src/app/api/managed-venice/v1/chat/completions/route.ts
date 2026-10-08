@@ -27,6 +27,7 @@ import {
 // Cloudflare Worker (internal/{authorize,settle}) from drifting on billing
 // semantics. See docs/PRODUCT-ARCHITECTURE.md.
 import { authorizeManagedVeniceChat } from "@/lib/venice/proxy-chat-core";
+import { readSurchargeEvidence } from "@/lib/venice/chat-surcharges";
 
 const ROUTE = "/api/managed-venice/v1/chat/completions";
 
@@ -65,6 +66,8 @@ function createSettlingStream(params: {
   upstreamStatus: number;
   pricingMap: VenicePricingMap;
   deadline: AbortSignal;
+  /** The request was held for billed options: settle with Venice's cost evidence. */
+  collectSurchargeEvidence: boolean;
 }): { stream: ReadableStream<Uint8Array>; settled: Promise<void> } {
   const decoder = new TextDecoder();
   const reader = params.upstream.getReader();
@@ -90,6 +93,7 @@ function createSettlingStream(params: {
     pricingMap: params.pricingMap,
     source: "managed-venice-chat",
     route: ROUTE,
+    collectSurchargeEvidence: params.collectSurchargeEvidence,
     reasons: {
       usageMissing: (outcome) =>
         outcome === "client_cancelled"
@@ -110,6 +114,7 @@ function createSettlingStream(params: {
     buffer = frames.pop() ?? "";
     for (const frame of frames) {
       settlement.observeUsage(settlement.meter.observeChatSseFrame(frame));
+      settlement.observeSurchargeFrame(frame);
     }
   }
 
@@ -165,7 +170,10 @@ function createSettlingStream(params: {
         }
         buffer += decoder.decode();
         // A usage frame that arrived without its trailing blank line still counts.
-        if (buffer) settlement.observeUsage(settlement.meter.observeChatSseFrame(buffer));
+        if (buffer) {
+          settlement.observeUsage(settlement.meter.observeChatSseFrame(buffer));
+          settlement.observeSurchargeFrame(buffer);
+        }
         buffer = "";
       } catch (error) {
         upstreamError = error;
@@ -240,6 +248,7 @@ export async function POST(req: NextRequest) {
     pricingSource,
     liveModelCount,
     bodyPatch,
+    surcharge,
   } = auth.value;
   const verifiedKey = { id: proxyKeyId, userId };
 
@@ -335,6 +344,7 @@ export async function POST(req: NextRequest) {
       upstreamStatus: upstreamResponse.status,
       pricingMap,
       deadline,
+      collectSurchargeEvidence: Boolean(surcharge),
     });
     // Settlement can outlast the response: a client that disconnects leaves
     // the route reading Venice to its usage frame.
@@ -393,6 +403,8 @@ export async function POST(req: NextRequest) {
       upstreamStatus: upstreamResponse.status,
       usage,
       pricingMap,
+      // Venice's own cost for the billed options (chat-surcharges.ts).
+      ...(surcharge ? { surchargeEvidence: readSurchargeEvidence(upstreamJson) } : {}),
     });
   } catch (error) {
     if (!(error instanceof MissingVeniceUsageError)) {

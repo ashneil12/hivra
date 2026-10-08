@@ -11,6 +11,7 @@ import {
   MANAGED_VENICE_SWEEP_CAPTURE_POLICY,
   MEDIA_CAPTURE_FAILED_RECONCILIATION_REASON,
   MEDIA_RELEASE_FAILED_RECONCILIATION_REASON,
+  heldSurchargeEstimateMicroUsd,
   holdEstimateMicroUsd,
   observedOutputCostMicroUsd,
   readObservedOutputTokens,
@@ -291,7 +292,11 @@ function captureAmount(
   }
   const usageCost = readMicroUsd(itemMeta.usageCostMicroUsd);
   if (usageCost !== null) {
-    return { costMicroUsd: usageCost, listMicroUsd: usageCost, basis: "reported_usage" };
+    // Venice's reported usage is tokens only. The options a hold was made for
+    // (web search, scraping, X search) were billed on top: their published-rate
+    // estimate recorded on the hold. 0 for every hold without them.
+    const withOptions = usageCost + heldSurchargeEstimateMicroUsd(holdMeta);
+    return { costMicroUsd: withOptions, listMicroUsd: withOptions, basis: "reported_usage" };
   }
   const observedTokens = readObservedOutputTokens(itemMeta.observedOutputTokens);
   const observed = observedTokens === null ? null : observedOutputCostMicroUsd(hold, observedTokens);
