@@ -105,6 +105,23 @@ test('developer-local paths and deployed instance hostnames fail globally', (t) 
   ]);
 });
 
+test('other Clerk identifiers and live publishable keys fail, placeholders pass', (t) => {
+  const f = fixture(t);
+  const tail = '3BrimH80SPnn3OXBqVOhRQa6uDV';
+  f.write('fixtures/org.txt', `${['org_', tail].join('')}\n`);
+  f.write('fixtures/session.txt', `${['sess_', tail].join('')}\n`);
+  f.write('fixtures/instance.txt', `${['ins_', tail].join('')}\n`);
+  f.write('fixtures/key.txt', `${['pk_live_', 'Y2xlcmsuZXhhbXBsZS5oaXZyYS5jbG91ZCQ'].join('')}\n`);
+  f.write('fixtures/placeholders.txt', 'org_fixture\nsess_fixture_one\nuser_configuration\n');
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'hosted-account-identity', path: 'fixtures/instance.txt' },
+    { category: 'hosted-account-identity', path: 'fixtures/key.txt' },
+    { category: 'hosted-account-identity', path: 'fixtures/org.txt' },
+    { category: 'hosted-account-identity', path: 'fixtures/session.txt' },
+  ]);
+});
+
 test('hosted identities, live fleet pairs, and public infrastructure addresses fail globally', (t) => {
   const f = fixture(t);
   const hostedId = ['user_', '3BrimH80SPnn3OXBqVOhRQa6uDV'].join('');
