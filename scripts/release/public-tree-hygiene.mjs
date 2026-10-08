@@ -67,7 +67,8 @@ const ipv4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const developerHome = /\/Users\/([^/\s"'`]+)/g;
 const developerTemp = /\/private\/tmp(?:\/|\b)/;
 const deployedInstanceHostname = /\b(?!0{20}\b)[0-9a-f]{20,}\.(?:agents\.)?(?:[a-z0-9-]+\.)*(?:hermesos|hivra)\.cloud\b/i;
-const hostedAccountId = /\buser_[A-Za-z0-9]{20,}\b/;
+// Clerk identifiers: user, organisation, session and instance ids, plus live publishable keys.
+const hostedAccountId = /\b(?:user|org|sess|ins)_[A-Za-z0-9]{20,}\b|\bpk_live_[A-Za-z0-9]{20,}/;
 const knownPersonalEmail = /\b(?:ash(?:jeff|eff)\d*|hmotto\d*)@(?:gmail|hotmail|outlook|icloud)\.com\b/i;
 const liveFleetIdentityPair = /\bpve\d+\s*\/\s*vm\d+\b/i;
 const sslipIpv4 = /\b((?:\d{1,3}-){3}\d{1,3})\.sslip\.io\b/gi;

@@ -879,12 +879,12 @@ describe("GET /api/instances", () => {
     expect(createInstanceSpy).not.toHaveBeenCalled();
   });
 
-  it("returns card_required and skips provisioning when the free-tier abuse gate requires a card", async () => {
+  it("returns plan_required and skips provisioning when the abuse gate wants more than a free account", async () => {
     (checkProvisioningGate as jest.Mock).mockResolvedValueOnce({
       allow: false,
       status: 402,
-      message: "Card on file required to deploy on the free tier. No charge will be made.",
-      reason: "card_required",
+      message: "A Hivra-hosted computer needs a paid plan.",
+      reason: "plan_required",
     });
     const createInstanceSpy = jest.spyOn(InstanceService, "createInstance");
 
@@ -910,8 +910,8 @@ describe("GET /api/instances", () => {
     expect(json).toEqual(
       expect.objectContaining({
         success: false,
-        error: "Card on file required to deploy on the free tier. No charge will be made.",
-        reason: "card_required",
+        error: "A Hivra-hosted computer needs a paid plan.",
+        reason: "plan_required",
       })
     );
     expect(checkProvisioningGate).toHaveBeenCalledWith({

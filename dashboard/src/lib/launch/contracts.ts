@@ -133,7 +133,6 @@ export type LaunchDraftTemplate = { id: string; name: string | null };
 
 /** A next step a correctable launch error can offer beside its message. */
 export type LaunchErrorAction =
-  | { kind: "verify-card" }
   | { kind: "open"; label: string; href: string };
 
 export type LaunchDraft = {
