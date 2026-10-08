@@ -211,7 +211,10 @@ Proposed shape, after rehearsal:
    one record-only row.
 3. **Never in this release**: `dashboard/supabase/_pending_destructive_migrations/`.
 
-### 4.5 Rehearsal (not done)
+### 4.5 Rehearsal (harness built, real run not done)
+
+A repeatable harness now exists: [PROD-CHAIN-REHEARSAL.md](PROD-CHAIN-REHEARSAL.md). It has been
+run only on a SYNTHETIC schema, which does not satisfy this step.
 
 No one has run the full chain against a copy of production's schema. Cheapest honest path:
 schema-only dump of production into a local Postgres (docker is installed), plus the rows
@@ -406,7 +409,7 @@ Rolling the code back (Promote the recorded rollback target) restores the old bu
 | Item | Risk | Rollback |
 |---|---|---|
 | Additive tables, columns, functions, indexes (about 120 files) | Low | Leave in place. The old build ignores them. |
-| `hivra_agents` validated constraints and guard triggers (16 files) | **High** | The old build may fail writes while they exist. No down-plan exists. Write and rehearse one before the window if the old build must ever run again. |
+| `hivra_agents` validated constraints and guard triggers (16 files) | **High** | The old build may fail writes while they exist. A down plan and a re-arm script are prepared ([HIVRA-AGENTS-GUARDS-DOWN-PLAN.sql](HIVRA-AGENTS-GUARDS-DOWN-PLAN.sql), [HIVRA-AGENTS-GUARDS-REARM.sql](HIVRA-AGENTS-GUARDS-REARM.sql)) and rehearsed on a synthetic schema only; owner-run, never automatic. |
 | Token CHECK widening, `token_entitlement_configs` primary key | Medium | Old definitions saved in the private pre-image. Reverting the primary key fails once a `hivra` row exists. |
 | Function replacements (9 differing functions) | Medium | Old bodies saved in the private pre-image. |
 | API role revokes (section 3.1) | Medium | Re-grant from the pre-image if a live read path was missed. |

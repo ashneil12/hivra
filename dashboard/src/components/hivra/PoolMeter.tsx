@@ -8,7 +8,7 @@
 export interface PoolMetric {
   /** CPU/RAM already used by the user's OTHER active agents. */
   othersUsed: number;
-  /** This box's selected (or current) allocation. */
+  /** This computer's selected (or current) allocation. */
   selected: number;
   /** The plan's total pool for this metric. */
   total: number;
@@ -63,7 +63,7 @@ export function PoolMeter({
         <span style={{ flex: 1 }} />
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--gold-leaf)", display: "inline-block" }} />
-          <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.78 }}>This box</span>
+          <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.78 }}>This computer</span>
         </span>
         {hasOthers ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
