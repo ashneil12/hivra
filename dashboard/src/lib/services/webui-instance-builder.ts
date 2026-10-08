@@ -60,7 +60,14 @@ import { ONBOARDING_RITUAL } from "@/lib/onboarding-ritual";
 import {
   isOperatorosAgentImage,
   OPERATOROS_AUTONOMY_SOUL_IMAGE_PATH,
+  resolveAgentImageForStoredConfig,
 } from "@/lib/operatoros-flavor";
+import { imageRepoOf } from "@/lib/hermes-releases/policy";
+import {
+  buildUpdateSafetyPrelude,
+  UPDATE_STACK_TOUCHED,
+  UPDATE_VERIFY_CALL,
+} from "@/lib/services/box-update-safety";
 import { FACTORY_OR_RITUAL_SOUL_HEAD_PATTERN } from "@/lib/webui/soul-guard";
 import { createHash } from "crypto";
 import {
@@ -75,6 +82,11 @@ import {
   WEBUI_SESSION_RETENTION_RECORD_ENV,
   WEBUI_SESSION_RETENTION_RECORD_SEED_SH,
 } from "@/lib/services/webui-session-retention";
+import {
+  buildWebUITerminalCwdConfigYaml,
+  buildWebUITerminalCwdRepairCommand,
+  WEBUI_TERMINAL_CWD_BACKUP_INFIX,
+} from "@/lib/services/webui-terminal-cwd";
 
 // Username for the official-dashboard's bundled "basic" password provider. The
 // June-2026 agent-image hardening gates every non-loopback dashboard bind and
@@ -426,6 +438,26 @@ function resolveWebUIAgentImage(
   }
 
   return resolved;
+}
+
+/**
+ * The image repository (no tag or digest) an UPDATE of this stored instance
+ * config runs: the stored pinned image, else the deployment's update image.
+ * Null when the row names a runtime that has no resolvable image (a legacy
+ * Operator OS row without its pinned image), which no release applies to.
+ * The release registry matches releases to boxes by this repository.
+ */
+export function resolveInstanceAgentImageRepo(
+  config: Record<string, unknown> | null | undefined
+): string | null {
+  let stored: string | undefined;
+  try {
+    stored = resolveAgentImageForStoredConfig(config);
+  } catch {
+    return null;
+  }
+  const image = resolveWebUIAgentImage({ agentImage: stored } as WebUIDeployParams, "update");
+  return imageRepoOf(image);
 }
 
 function shellSingleQuote(value: string): string {
@@ -2972,7 +3004,12 @@ ${slidingTuning}`
     : "";
   // Upstream terminal_tool bridges this key over TERMINAL_ENV. Fresh configs
   // and preserved configs on settings apply must agree with the env choice.
-  const terminalBlock = `terminal:\n  backend: "${resolveWebUITerminalBackend(p)}"\n`;
+  // terminal.cwd points the dashboard file tree and terminal at the workspace
+  // volume: upstream reads it before TERMINAL_CWD and its "." default opens the
+  // agent's install directory. Existing boxes get it from the update-mode repair
+  // (buildWebUITerminalCwdRepairCommand). See webui-terminal-cwd.ts.
+  const terminalBackend = resolveWebUITerminalBackend(p);
+  const terminalBlock = `terminal:\n  backend: "${terminalBackend}"\n${buildWebUITerminalCwdConfigYaml(terminalBackend)}`;
   // Keep a web-chat turn running after its tab closes instead of letting the
   // agent's 20 s WS-orphan reap interrupt it, and cap how many parked sessions
   // stay in memory for this computer's RAM tier. Orthogonal to provider config,
@@ -2992,6 +3029,10 @@ ${bankrSectionYaml}
 }
 
 // ── Provisioning bootstrap script (writes files, runs compose) ─────────
+export type UpdateImagePolicy =
+  | { kind: "pinned"; ref: string; digest: string }
+  | { kind: "keep" };
+
 export interface WebUIBootstrapScriptOptions {
   /**
    * "provision" — first-boot path. Skips pull when the image is already
@@ -3006,6 +3047,16 @@ export interface WebUIBootstrapScriptOptions {
    * update images don't accumulate between disk-cleanup timer fires.
    */
   mode?: "provision" | "update";
+  /**
+   * Update mode only: which agent image this update runs, as chosen by the
+   * dashboard's release registry. Absent means the registry does not govern
+   * this box and the update follows its floating tag exactly as before.
+   *  - pinned: pull this exact repo@sha256 reference (a failed pull fails the
+   *    update: it must never quietly keep the old image), point the local alias
+   *    the compose file runs at it, and never pull the floating tag.
+   *  - keep: leave the local image the box already runs in place (no pull).
+   */
+  imagePolicy?: UpdateImagePolicy;
   /**
    * Only an explicit terminal/access settings apply may update the owner's
    * saved terminal.backend. Routine image updates preserve native config edits.
@@ -3409,10 +3460,45 @@ seed_onboarding_soul() {
 }
 `;
   const seedOnboardingSoulCall = "seed_onboarding_soul";
+  // Reseeds the persistent agent source volume from the agent image. One copy,
+  // used by the forward path and by the update rollback.
+  const agentSourceSeedCommand = `docker run --rm \\
+  -v ${p.containerName}_agent-source:/target \\
+  --entrypoint sh \\
+  ${agentImage} -lc 'set -e; test -f /opt/hermes/pyproject.toml; find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /opt/hermes/. /target/; if [ -d /target/.venv ]; then find /target/.venv -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -print 2>/dev/null | while IFS= read -r script; do sed -i "s|/opt/hermes|${WEBUI_HERMES_AGENT_DIR}|g" "$script"; done; fi; chown -R 1024:1024 /target'`;
+  const UPDATE_STACK_TOUCHED_LINE = isUpdate ? `${UPDATE_STACK_TOUCHED}\n` : "";
+  const imagePolicy = isUpdate ? opts.imagePolicy : undefined;
+  const updateSafetyPrelude = isUpdate
+    ? buildUpdateSafetyPrelude({
+        instanceId: p.instanceId,
+        containerName: p.containerName,
+        agentImage,
+        repo: imageRepoOf(agentImage),
+        agentSourceSeedCommand,
+        fqdn: p.fqdn,
+      })
+    : "";
+  const updateVerifyCall = isUpdate ? `${UPDATE_VERIFY_CALL}\n` : "";
   const forceWebUIImagePull = !isUpdate && opts.forceWebUIImagePull === true;
   const forceAgentImagePull = !isUpdate && opts.forceAgentImagePull === true;
   const agentPullCmd = isUpdate
-    ? `docker pull ${agentImage}`
+    ? imagePolicy?.kind === "pinned"
+      ? `# Pinned release: pull this exact digest. A failed pull fails the update; it
+# must never quietly keep the old image and report a successful update.
+echo "[agent-image] pulling pinned release ${imagePolicy.ref}"
+HERMES_PINNED_DIGEST="${imagePolicy.digest}"
+if ! docker pull ${imagePolicy.ref}; then
+  echo "[agent-image] FATAL: cannot pull the release image ${imagePolicy.ref}" >&2
+  HERMES_FAIL_REASON="cannot pull the release image"
+  exit 1
+fi
+docker tag ${imagePolicy.ref} ${agentImage}
+docker image inspect ${agentImage} --format '[agent-image] using pinned release image id={{.Id}} repo_digests={{json .RepoDigests}}' || true`
+      : imagePolicy?.kind === "keep"
+        ? `# The registry governs this box and offers it nothing newer: keep the image
+# it already runs. Pull only if the local copy is gone.
+docker image inspect ${agentImage} >/dev/null 2>&1 || docker pull ${agentImage}`
+        : `docker pull ${agentImage}`
     : forceAgentImagePull
       ? `echo "[agent-image] Force-pulling Hermes Agent seed image for fresh provision: ${agentImage}"
 if ! docker pull ${agentImage}; then
@@ -3433,7 +3519,14 @@ docker image inspect ${agentImage} --format '[agent-image] using image id={{.Id}
   // the stack updates successfully — better than silent across-the-board
   // failure on an unrelated image hiccup.
   const webuiPullCmd = isUpdate
-    ? `docker compose pull --ignore-pull-failures`
+    ? imagePolicy
+      ? `# The agent services run the pinned local image: pull every OTHER service
+# only. A bare \`compose pull\` would re-pull the floating tag over the pin.
+hermes_other_services="$(docker compose config --services 2>/dev/null | grep -vx -e gateway -e official-dashboard || true)"
+if [ -n "$hermes_other_services" ]; then
+  docker compose pull --ignore-pull-failures $hermes_other_services || true
+fi`
+      : `docker compose pull --ignore-pull-failures`
     : forceWebUIImagePull
       ? `echo "[webui-image] Force-pulling WebUI image for fresh provision: ${image}"
 if ! docker pull ${image}; then
@@ -3677,7 +3770,7 @@ ${bankrOwnershipDecision}
 # paths only, never values. The temp file starts as a mode-preserving copy so the
 # rewrite never widens the file's permissions (it also holds the model API key).
 if [ "$bankr_strip_config" = 1 ]; then
-  for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX}; do
+  for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX} /state/config.yaml${WEBUI_TERMINAL_CWD_BACKUP_INFIX}*; do
     [ -f "$bankr_cfg" ] || continue
     grep -q '^bankr:' "$bankr_cfg" || continue
     bankr_cfg_tmp="$bankr_cfg.bankr-strip.$$"
@@ -4053,6 +4146,12 @@ HERMES_TERMINAL_CONFIG_PY
   // cap) are repaired in here. Runs after the agent image pull (it uses that
   // image's Python) and before compose recreates official-dashboard, which reads
   // the reap grace once at start.
+  const terminalCwdRepairCommand = isUpdate
+    ? buildWebUITerminalCwdRepairCommand({
+        containerName: p.containerName,
+        agentImage,
+      })
+    : "";
   const sessionRetentionRepairCommand = isUpdate
     ? buildWebUISessionRetentionRepairCommand({
         containerName: p.containerName,
@@ -4082,7 +4181,7 @@ cd "$INSTANCE_DIR"
 ${hostTimeSyncRepairScript}
 ${buildHermesMemoryGuardProvisioningScript()}
 ${buildHermesAptQuiesceScript()}
-
+${updateSafetyPrelude}
 ${heredoc("docker-compose.yml", composeYaml)}
 ${heredoc("Caddyfile", artifacts.caddyfile)}
 ${heredoc("sidecar_server.js", artifacts.sidecarServerFile)}
@@ -4110,10 +4209,7 @@ ${buildWebUIPersistentStatePermissionRepairCommand(p.containerName)}
 
 ${dockerCleanupFunctions}${taggedImageCleanupFunctions}${volumeSafeUpdateCleanupFunctions}${prePullCleanup}${agentPullCmd}
 ${runtimePasswdCommand}
-${terminalConfigSyncCommand}${sessionRetentionRepairCommand}docker run --rm \\
-  -v ${p.containerName}_agent-source:/target \\
-  --entrypoint sh \\
-  ${agentImage} -lc 'set -e; test -f /opt/hermes/pyproject.toml; find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /opt/hermes/. /target/; if [ -d /target/.venv ]; then find /target/.venv -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -print 2>/dev/null | while IFS= read -r script; do sed -i "s|/opt/hermes|${WEBUI_HERMES_AGENT_DIR}|g" "$script"; done; fi; chown -R 1024:1024 /target'
+${terminalConfigSyncCommand}${terminalCwdRepairCommand}${sessionRetentionRepairCommand}${UPDATE_STACK_TOUCHED_LINE}${agentSourceSeedCommand}
 
 # HermesOS rich chat (webui-free surface): the baked bundle's web-shim reads
 # #iframe_token natively (no injection). The Caddyfile webfreeBlock points / and
@@ -4207,7 +4303,7 @@ for i in $(seq 1 180); do
   if webui_free_stack_healthy && webui_free_surface_ready; then
     echo "[webui-bootstrap] WebUI-free stack healthy + dashboard surface serving"
     ${seedOnboardingSoulCall}
-    echo "WebUI healthy"
+    ${updateVerifyCall}echo "WebUI healthy"
 ${postUpdateCleanup}${postProvisionCleanup}    exit 0
   fi
   if docker inspect --format='{{.State.Running}}' ${p.containerName} 2>/dev/null | grep -qx true \
@@ -4223,7 +4319,7 @@ ${postUpdateCleanup}${postProvisionCleanup}    exit 0
     docker exec --user 1024 ${p.containerName} sh -lc 'export HOME=/home/hermes; export HERMES_HOME="/home/hermes/.hermes"; test -x "$(command -v hermes)" && test -x "$(command -v hermes-cli)"'
     ${seedOnboardingSoulCall}
     if webui_free_surface_ready; then
-      echo "WebUI healthy"
+      ${updateVerifyCall}echo "WebUI healthy"
 ${postUpdateCleanup}${postProvisionCleanup}      exit 0
     fi
   fi

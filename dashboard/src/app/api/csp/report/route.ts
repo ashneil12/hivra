@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { documentHostname, shapeCspEvent } from "@/lib/csp-report-events";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 
 // SCRIPTURE_ANCHOR: csp-shield | Psalm 5:12 | Verse: For you will bless the righteous. Yahweh, you will surround him with favor as with a shield.
 /**
@@ -28,6 +30,16 @@ import { reportOpsEvent } from "@/lib/ops-events";
  * reportOpsEvent's existing redaction + length caps protect the DB.
  * Body parsing is best-effort — malformed payloads silently 204 so
  * a noisy attacker can't fill our logs with parse errors.
+ *
+ * Flood limits, all answered with the same 204 so a caller learns nothing:
+ *   - a per-address request limit;
+ *   - a cap on events per minute for the whole instance;
+ *   - reports whose document is not on this host are dropped (a browser
+ *     reports to the same origin as the page, so a foreign host is a forgery);
+ *   - the event text keeps only a directive, a blocked host and a short path
+ *     (lib/csp-report-events.ts), and a budget of distinct fingerprints per
+ *     hour folds the rest into one overflow row.
+ * The counters are per server instance, like the rest of lib/rate-limit.ts.
  */
 export const dynamic = "force-dynamic";
 
@@ -35,6 +47,14 @@ export const dynamic = "force-dynamic";
 // single POST. Public, unauthed endpoint — without this, an attacker
 // posting a giant batched array drives one DB write per element.
 const MAX_REPORTS_PER_REQUEST = 16;
+
+// Requests one address may send per minute. A page that trips several
+// directives sends a handful of reports, so this leaves room for real use
+// behind a shared office address.
+const REQUESTS_PER_ADDRESS_PER_MINUTE = 30;
+// Events the whole instance writes per minute, however many addresses send.
+const EVENTS_PER_INSTANCE_PER_MINUTE = 240;
+const WINDOW_MS = 60_000;
 
 interface CspReportFields {
   blockedUri?: string;
@@ -84,13 +104,21 @@ function normalize(report: unknown): CspReportFields | null {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Same reply whether we stored the reports or not: a browser ignores it, and
+  // an attacker learns nothing about which limit they hit.
+  const accepted = () => new NextResponse(null, { status: 204 });
+
+  if (!enforceRateLimit(`csp-report:${getIP(request)}`, { limit: REQUESTS_PER_ADDRESS_PER_MINUTE, windowMs: WINDOW_MS }).success) {
+    return accepted();
+  }
+
   let body: unknown;
   try {
     body = await request.json();
   } catch {
     // Malformed payload — silently accept so attackers can't blow up
     // logs by spamming garbage. Real browsers always send valid JSON.
-    return new NextResponse(null, { status: 204 });
+    return accepted();
   }
 
   // Two shapes supported. Newer Reporting API sends an array of
@@ -110,36 +138,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     candidates.push(body);
   }
 
+  // A browser posts the report to the origin of the page it came from
+  // (`report-uri` is a relative path), so a document on another host did not
+  // come from a real browser tripping our policy.
+  const ownHostname = request.nextUrl.hostname.toLowerCase();
+
   for (const candidate of candidates) {
     const fields = normalize(candidate);
     if (!fields) continue;
+    if (documentHostname(fields.documentUri) !== ownHostname) continue;
+    if (!enforceRateLimit("csp-report:instance", { limit: EVENTS_PER_INSTANCE_PER_MINUTE, windowMs: WINDOW_MS }).success) {
+      break;
+    }
 
-    // The directive name is the most useful single signal — `connect-src`,
-    // `script-src`, etc. — for what TYPE of resource was blocked. The
-    // blocked-uri tells us WHICH resource. Both flow into the title for
-    // quick scanning in the ops view.
-    const directive = fields.effectiveDirective || fields.violatedDirective || "<unknown>";
-    const blocked = fields.blockedUri || "<inline>";
+    // The directive name is the most useful single signal (`connect-src`,
+    // `script-src`, ...) for what TYPE of resource was blocked, and the blocked
+    // host says WHICH one. Both flow into the title and message for quick
+    // scanning in the ops view. The full URLs stay in metadata, without their
+    // query strings.
+    const event = shapeCspEvent(fields);
 
     await reportOpsEvent({
       source: "csp-report",
-      severity: fields.disposition === "enforce" ? "error" : "warn",
-      title: `CSP ${fields.disposition || "report"}: ${directive}`,
-      message: `Blocked ${blocked} on ${fields.documentUri || "<unknown>"}`,
-      route: fields.documentUri,
+      severity: event.disposition === "enforce" ? "error" : "warn",
+      title: event.title,
+      message: event.message,
+      route: event.route,
       metadata: {
-        directive,
-        blockedUri: fields.blockedUri,
-        documentUri: fields.documentUri,
-        sourceFile: fields.sourceFile,
+        directive: event.directive,
+        blockedUri: event.blockedUri,
+        documentUri: event.documentUri,
+        sourceFile: event.sourceFile,
         lineNumber: fields.lineNumber,
         columnNumber: fields.columnNumber,
-        disposition: fields.disposition,
+        disposition: event.disposition,
       },
     });
   }
 
   // Browsers don't act on the response body and we don't want to leak
   // anything either way; 204 is the canonical reply to a CSP report.
-  return new NextResponse(null, { status: 204 });
+  return accepted();
 }

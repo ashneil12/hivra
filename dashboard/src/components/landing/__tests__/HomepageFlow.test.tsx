@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import LandingPage from "@/app/page";
 import DownloadPage from "@/app/download/page";
-import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, HOME_AGENTS } from "@/components/landing/home/content";
+import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, HOME_AGENTS, REACH } from "@/components/landing/home/content";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: null }) }));
 jest.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }), headers: async () => ({ get: () => null }) }));
@@ -17,13 +17,24 @@ async function renderHome() {
 test("the first screen says what it is, who it is for, what it costs, and asks once", async () => {
   await renderHome();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your agent needs a computer. It doesn't need yours.");
-  expect(screen.getByText(/Run Claude Code, Codex, Hermes and more on a private cloud computer of their own\..*From \$9\.99 a month\./)).toBeInTheDocument();
+  expect(screen.getByText((_, element) => element?.tagName === "P" && /Claude Code, Codex and the other agents you already use get a private computer in the cloud\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
-  expect(screen.getByRole("link", { name: /Hermes OS is now Hivra/ })).toHaveAttribute("href", "/why-hivra/evolution");
+  // The hero makes no price or guarantee claim, and no longer carries the rename link.
+  expect(screen.queryByRole("link", { name: /Hermes OS is now Hivra/ })).not.toBeInTheDocument();
+  expect(document.querySelector("#home-title")?.closest("section")).not.toHaveTextContent(/\$9\.99|money-back/);
   expect(screen.getAllByText("7-day money-back guarantee on card payments.").length).toBeGreaterThan(0);
   // The old page's app download and tab switcher are gone.
   expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+});
+
+test("the reach picture describes the same things its labels show", async () => {
+  await renderHome();
+  const picture = document.querySelector('svg[role="img"][aria-label^="Illustration: an agent on your laptop"]');
+  expect(picture).not.toBeNull();
+  const description = picture?.getAttribute("aria-label") ?? "";
+  for (const { label } of REACH.items) expect(description.toLowerCase()).toContain(label.toLowerCase());
+  expect(description).not.toMatch(/\bsession\b/i);
 });
 
 test("every section the header and footer link to is still on the page", async () => {
@@ -54,7 +65,7 @@ test("pricing shows only what can be bought today and links straight to checkout
   expect(pricing.getByRole("link", { name: /Connect your server/ })).toHaveAttribute("href", "/sign-up");
   expect(pricing.getByRole("link", { name: /View on GitHub/ })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   expect(pricing.getByText("Start here")).toBeInTheDocument();
-  expect(pricing.getByText("Need more room? $19.99 a month for 4 vCPU and 8 GB of RAM.")).toBeInTheDocument();
+  expect(pricing.getByText((_, element) => element?.tagName === "P" && element.textContent === "Need more room? $19.99 a month for 4 vCPU and 8 GB of RAM.")).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/Most popular|not yet available as shown|two months free|\$49|\$99/);
   expect(document.querySelector('a[href^="/dashboard/infrastructure"]')).toBeNull();
 });

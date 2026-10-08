@@ -27,6 +27,7 @@
   --faint:#898e93;
   --line:#33373c;
   --accent:#fb5148;
+  --safe:#63d6ae;
   --accent-ink:#101113;
   --content:1440px;
   --mono:'IBM Plex Mono',monospace;
@@ -43,6 +44,7 @@
   --faint:#666d73;
   --line:#c5c0b8;
   --accent:#b8322c;
+  --safe:#16775a;
   --accent-ink:#fff
 }
 * {
@@ -596,7 +598,8 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .hero-caption-mark {
   font:22px var(--mono);
   color:var(--accent);
-  margin-right:auto
+  margin-right:auto;
+  white-space:nowrap
 }
 .hero-scroll {
   display:flex;
@@ -701,7 +704,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 }
 .boundary-lab {
   --lab-ease:.9s var(--ease);
-  height:440px;
+  --zt:26%;
+  --zh:68%;
+  height:560px;
   position:relative;
   background:var(--surface);
   border:1px solid var(--line);
@@ -752,9 +757,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .personal-zone {
   position:absolute;
   left:4%;
-  top:17%;
+  top:var(--zt);
   width:92%;
-  height:76%;
+  height:var(--zh);
   border:1px solid var(--faint);
   transition:width var(--lab-ease)
 }
@@ -770,9 +775,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .agent-zone {
   position:absolute;
   left:56%;
-  top:17%;
+  top:var(--zt);
   width:40%;
-  height:76%;
+  height:var(--zh);
   border:1px solid var(--accent);
   opacity:0;
   transform:scale(.92);
@@ -784,9 +789,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .boundary-gate {
   position:absolute;
   left:52.5%;
-  top:17%;
-  width:1px;
-  height:76%;
+  top:var(--zt);
+  width:2px;
+  height:var(--zh);
   background:var(--accent);
   opacity:0;
   transform:scaleY(0);
@@ -796,7 +801,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .agent-core {
   position:absolute;
   left:50%;
-  top:55%;
+  top:calc(var(--zt) + var(--zh) * .5);
   translate:-50% -50%;
   display:grid;
   justify-items:center;
@@ -817,7 +822,7 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 .lab-item {
   position:absolute;
   left:var(--x);
-  top:var(--y);
+  top:calc(var(--zt) + var(--zh) * var(--p));
   translate:-50% -50%;
   z-index:2;
   padding:9px 12px;
@@ -855,23 +860,23 @@ a[target=_blank]:not(.brand):hover .action-arrow {
 }
 .lab-item[data-resource=files] {
   --x:19%;
-  --y:32%
+  --p:.2
 }
 .lab-item[data-resource=sessions] {
   --x:81%;
-  --y:32%
+  --p:.2
 }
 .lab-item[data-resource=keys] {
   --x:19%;
-  --y:79%
+  --p:.8
 }
 .lab-item[data-resource=life] {
   --x:81%;
-  --y:79%
+  --p:.8
 }
 .lab-item[data-resource=project] {
   --x:50%;
-  --y:83%
+  --p:.88
 }
 .boundary-lab:not([data-mode=shared]) .personal-zone {
   width:45%
@@ -895,19 +900,19 @@ a[target=_blank]:not(.brand):hover .action-arrow {
   transform:scale(0)
 }
 .boundary-lab:not([data-mode=shared]) [data-resource=files] {
-  --y:30%
+  --p:.16
 }
 .boundary-lab:not([data-mode=shared]) [data-resource=sessions] {
-  --y:43%
+  --p:.34
 }
 .boundary-lab:not([data-mode=shared]) [data-resource=keys] {
-  --y:56%
+  --p:.52
 }
 .boundary-lab:not([data-mode=shared]) [data-resource=life] {
-  --y:69%
+  --p:.7
 }
 .boundary-lab:not([data-mode=shared]) [data-resource=project] {
-  --y:82%
+  --p:.88
 }
 /* One folder crosses to the boundary; the gate opens only around it. */
 .boundary-lab[data-mode=project] [data-resource=project] {
@@ -2237,7 +2242,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     grid-template-columns:1fr 1fr
   }
   .boundary-lab {
-    height:390px
+    --zt:30%;
+    --zh:64%;
+    height:540px
   }
   .lab-caption {
     left:20px
@@ -2630,7 +2637,9 @@ a[target=_blank]:not(.brand):hover .action-arrow {
     width:100%
   }
   .boundary-lab {
-    height:380px
+    --zt:35%;
+    --zh:59%;
+    height:620px
   }
   .boundary-actions button {
     font-size:10px;
@@ -3745,7 +3754,7 @@ picture {
 html:has(body.motion-paused),html:has(body.reading-mode) {
   scroll-behavior:auto!important
 }
-html:not(.js-enhanced) .reader-tools,html:not(.js-enhanced) .boundary-actions,html:not(.js-enhanced) .interaction-invitation,html:not(.js-enhanced) .atlas-header,html:not(.js-enhanced) .atlas-map,html:not(.js-enhanced) .product-pagination,html:not(.js-enhanced) .back-to-atlas,html:not(.js-enhanced) .related,html:not(.js-enhanced) .related-invitation,html:not(.js-enhanced) .reading-toggle {
+html:not(.js-enhanced) .reader-tools,html:not(.js-enhanced) .boundary-actions,html:not(.js-enhanced) .lab-replay,html:not(.js-enhanced) .interaction-invitation,html:not(.js-enhanced) .atlas-header,html:not(.js-enhanced) .atlas-map,html:not(.js-enhanced) .product-pagination,html:not(.js-enhanced) .back-to-atlas,html:not(.js-enhanced) .related,html:not(.js-enhanced) .related-invitation,html:not(.js-enhanced) .reading-toggle {
   display:none!important
 }
 html:not(.js-enhanced) .atlas-layout {
@@ -4138,5 +4147,387 @@ html:not(.js-enhanced) .atlas-layout {
   }
   .reading-room,.site-footer {
     break-inside:avoid
+  }
+}
+
+/* Plain-English tooltips. The definition is in data-tip; build.py adds the span
+   and litepaper.js draws one shared bubble on <body>, so no card can clip it. */
+.gloss {
+  cursor:help;
+  border-bottom:1px dotted var(--faint);
+  outline-offset:2px
+}
+.gloss:hover,
+.gloss:focus {
+  border-bottom-color:var(--accent)
+}
+.gloss-tip {
+  position:fixed;
+  top:0;
+  left:0;
+  z-index:40;
+  padding:10px 12px;
+  background:var(--surface-raised);
+  color:var(--text);
+  border:1px solid var(--line);
+  border-radius:4px;
+  box-shadow:0 10px 30px rgb(0 0 0 / .35);
+  font:400 14px/1.45 Manrope,'Helvetica Neue',Arial,sans-serif;
+  letter-spacing:0;
+  text-align:left;
+  text-transform:none;
+  white-space:normal
+}
+.gloss-tip[hidden] {
+  display:none
+}
+/* A strip across the gap to the word, so the pointer can cross onto the bubble. */
+.gloss-tip:before {
+  content:'';
+  position:absolute;
+  left:0;
+  right:0;
+  height:10px
+}
+.gloss-tip[data-side=above]:before {
+  top:100%
+}
+.gloss-tip[data-side=below]:before {
+  bottom:100%
+}
+@media print {
+  .gloss-tip {
+    display:none
+  }
+}
+/* Without JavaScript there is no bubble to draw, so the word keeps a plain hover and focus tooltip. */
+html:not(.js-enhanced) .gloss {
+  position:relative
+}
+html:not(.js-enhanced) .gloss:hover::after,
+html:not(.js-enhanced) .gloss:focus::after {
+  content:attr(data-tip);
+  position:absolute;
+  z-index:40;
+  left:0;
+  bottom:calc(100% + 10px);
+  width:280px;
+  max-width:calc(100vw - 32px);
+  padding:10px 12px;
+  background:var(--surface-raised);
+  color:var(--text);
+  border:1px solid var(--line);
+  border-radius:4px;
+  font:400 14px/1.45 Manrope,'Helvetica Neue',Arial,sans-serif;
+  letter-spacing:0;
+  text-align:left;
+  text-transform:none;
+  white-space:normal;
+  pointer-events:none
+}
+
+/* The boundary lab, dramatised: a hidden order arrives, probes fire at everything
+   the agent could reach, and the result is stamped on each resource. */
+.lab-meter {
+  position:absolute;
+  top:20px;
+  right:24px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font:10px var(--mono);
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.04em
+}
+.meter-cells {
+  display:flex;
+  gap:4px
+}
+.meter-cells i {
+  width:14px;
+  height:14px;
+  border:1px solid var(--line);
+  background:transparent;
+  transition:background .25s,border-color .25s,box-shadow .25s
+}
+.meter-cells i.on {
+  background:var(--accent);
+  border-color:var(--accent);
+  box-shadow:0 0 12px #fb514888
+}
+.meter-count {
+  min-width:3.4em;
+  text-align:right;
+  font:600 13px var(--mono);
+  color:var(--text)
+}
+.lab-attack {
+  position:absolute;
+  left:24px;
+  right:24px;
+  top:54px;
+  display:grid;
+  gap:8px;
+  padding:12px 14px;
+  background:var(--surface-raised);
+  border:1px solid var(--line);
+  border-left:3px solid var(--accent);
+  opacity:0;
+  transform:translateY(-10px);
+  transition:opacity .4s,transform .5s var(--ease);
+  z-index:3
+}
+.lab-attack.is-on {
+  opacity:1;
+  transform:none
+}
+.attack-line {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:4px 12px
+}
+.attack-tag {
+  font:9px var(--mono);
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  color:var(--accent);
+  white-space:nowrap
+}
+.attack-text {
+  font:12px/1.5 var(--mono);
+  color:var(--text)
+}
+.attack-text.is-typing:after {
+  content:'';
+  display:inline-block;
+  width:7px;
+  height:12px;
+  margin-left:2px;
+  vertical-align:-2px;
+  background:var(--accent);
+  animation:caret .7s steps(1) infinite
+}
+@keyframes caret {
+  50% {
+    opacity:0
+  }
+}
+.attack-verdict {
+  margin:0;
+  font:600 13px/1.4 Manrope,sans-serif;
+  color:var(--text);
+  opacity:0;
+  transform:translateY(4px);
+  transition:opacity .45s,transform .45s var(--ease)
+}
+.attack-verdict.is-on {
+  opacity:1;
+  transform:none
+}
+.boundary-lab[data-state=breach] .attack-verdict {
+  color:var(--accent)
+}
+.boundary-lab[data-state=held] .attack-verdict,.boundary-lab[data-state=scoped] .attack-verdict {
+  color:var(--safe)
+}
+.lab-replay {
+  position:absolute;
+  right:24px;
+  bottom:12px;
+  z-index:3;
+  padding:5px 9px;
+  background:transparent;
+  border:1px solid var(--line);
+  color:var(--muted);
+  font:9px var(--mono);
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  transition:color .2s,border-color .2s
+}
+.lab-replay:not([aria-disabled=true]):hover,.lab-replay:focus-visible {
+  color:var(--text);
+  border-color:var(--accent)
+}
+.lab-replay[aria-disabled=true] {
+  opacity:.4;
+  cursor:default
+}
+.reach-map .probe {
+  fill:var(--accent);
+  filter:drop-shadow(0 0 5px var(--accent))
+}
+.reach-map .probe.ghost {
+  opacity:.45
+}
+.reach-map .spark {
+  fill:var(--safe);
+  filter:drop-shadow(0 0 4px var(--safe))
+}
+.item-stamp {
+  position:absolute;
+  top:calc(100% + 6px);
+  left:50%;
+  translate:-50% 0;
+  padding:2px 6px;
+  font:700 8px var(--mono);
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  white-space:nowrap;
+  opacity:0;
+  scale:.6;
+  transition:opacity .25s,scale .35s var(--ease);
+  pointer-events:none
+}
+.lab-item[data-state] .item-stamp {
+  opacity:1;
+  scale:1
+}
+.lab-item[data-state=breached] {
+  border-color:var(--accent);
+  color:var(--text);
+  background:color-mix(in srgb,var(--accent) 22%,var(--surface-raised));
+  animation:glitch .5s steps(2) 2
+}
+.lab-item[data-state=breached] .item-stamp {
+  background:var(--accent);
+  color:var(--accent-ink)
+}
+.lab-item[data-state=held] {
+  border-color:var(--safe)
+}
+.lab-item[data-state=held]:before {
+  background:var(--safe)
+}
+.lab-item[data-state=held] .item-stamp {
+  background:var(--safe);
+  color:var(--accent-ink)
+}
+.lab-item[data-state=shared] {
+  border-color:var(--accent)
+}
+.lab-item[data-state=shared] .item-stamp {
+  background:var(--text);
+  color:var(--bg)
+}
+@keyframes glitch {
+  0% {
+    translate:calc(-50% - 3px) -50%
+  }
+  50% {
+    translate:calc(-50% + 3px) calc(-50% + 1px)
+  }
+  100% {
+    translate:-50% -50%
+  }
+}
+.boundary-lab[data-state=alarm] .core-mark,.boundary-lab[data-state=breach] .core-mark {
+  box-shadow:0 0 70px #fb5148cc,0 0 18px #fb5148;
+  animation:core-alarm .5s ease-in-out infinite alternate
+}
+.boundary-lab[data-state=held] .core-mark,.boundary-lab[data-state=scoped] .core-mark {
+  border-color:var(--safe);
+  background:linear-gradient(135deg,var(--safe),#16775a30);
+  box-shadow:0 0 40px color-mix(in srgb,var(--safe) 40%,transparent)
+}
+@keyframes core-alarm {
+  from {
+    transform:rotate(-9deg) scale(1)
+  }
+  to {
+    transform:rotate(-5deg) scale(1.14)
+  }
+}
+.boundary-lab[data-state=breach] .personal-zone {
+  border-color:var(--accent);
+  box-shadow:inset 0 0 80px #fb514830;
+  animation:zone-flash .7s steps(2) 3
+}
+@keyframes zone-flash {
+  50% {
+    background:#fb514818
+  }
+}
+.boundary-lab.is-shaking {
+  animation:lab-shake .45s linear
+}
+@keyframes lab-shake {
+  20% {
+    translate:-4px 1px
+  }
+  40% {
+    translate:4px -2px
+  }
+  60% {
+    translate:-3px 2px
+  }
+  80% {
+    translate:2px -1px
+  }
+}
+.boundary-gate.is-hit {
+  animation:gate-hit .5s ease-out
+}
+@keyframes gate-hit {
+  0% {
+    box-shadow:0 0 0 var(--safe)
+  }
+  30% {
+    box-shadow:0 0 22px 3px var(--safe);
+    background:var(--safe)
+  }
+  100% {
+    box-shadow:0 0 0 var(--safe)
+  }
+}
+.boundary-lab[data-state=held] .boundary-gate,.boundary-lab[data-state=scoped] .boundary-gate {
+  background:var(--safe)
+}
+@media(max-width:680px) {
+  .lab-caption {
+    display:none
+  }
+  .lab-meter {
+    right:16px;
+    top:16px
+  }
+  .lab-attack {
+    left:14px;
+    right:14px;
+    top:48px
+  }
+  .attack-text {
+    font-size:11px
+  }
+  .lab-replay {
+    right:14px
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  .lab-item[data-state=breached],.boundary-lab.is-shaking,.boundary-lab[data-state=breach] .personal-zone,.boundary-lab[data-state=alarm] .core-mark,.boundary-lab[data-state=breach] .core-mark {
+    animation:none
+  }
+}
+
+.hero-links {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px
+}
+.hero-links .hero-open {
+  margin-top:26px
+}
+.hero-open.hero-token {
+  border-color:var(--accent);
+  color:var(--text)
+}
+.hero-open.hero-token:hover {
+  background:var(--accent);
+  color:var(--accent-ink)
+}
+@media(max-width:680px) {
+  .hero-links .hero-open {
+    margin-top:20px
   }
 }

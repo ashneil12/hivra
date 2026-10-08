@@ -766,9 +766,9 @@ describe("BillingPage", () => {
     it("says how each plan differs from yours in words, not as a bare signed number", async () => {
       render(<BillingPage />);
       fireEvent.click(await screen.findByRole("tab", { name: "Plans" }));
+      // The free account shows no compute rows, so it has nothing to compare.
       const free = (await screen.findByRole("heading", { name: "Free" })).closest("article") as HTMLElement;
-      expect(within(free).getByText("(−3.5 vs yours)")).toBeInTheDocument();
-      expect(within(free).getByText("(−7 GB vs yours)")).toBeInTheDocument();
+      expect(within(free).queryByText(/vs yours/)).not.toBeInTheDocument();
       const pro = screen.getByRole("heading", { name: "Pro" }).closest("article") as HTMLElement;
       expect(within(pro).getByText("(−4 GB vs yours)")).toBeInTheDocument();
     });
@@ -2170,10 +2170,28 @@ describe("BillingPage", () => {
     render(<BillingPage />);
 
     const free = await screen.findByRole("article", { name: "Free" });
-    expect(free).toHaveTextContent("start without a bill");
+    expect(free).toHaveTextContent("free to use. bring your own computer");
+    expect(free).not.toHaveTextContent(/vCPU|Memory|Sleeps after/);
     expect(free).not.toHaveTextContent(/Power/);
-    expect(within(free).getByRole("button", { name: "Start free" })).toBeInTheDocument();
+    expect(within(free).getByRole("button", { name: "Use the free account" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Power" })).toHaveTextContent("Most popular");
+  });
+
+  it("shows an account-only Free plate with no hardware or idle-sleep rule when it holds no computer", async () => {
+    usageData = {
+      subscribed: true,
+      plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
+      usage: { agentCount: 0, maxAgents: 1, usedCpu: 0, totalCpu: 0.5, usedRam: 0, totalRam: 1024, instances: [] },
+      credits: { balance: 0, monthlyGrant: 0, unit: "100 credits = $1" },
+    };
+
+    render(<BillingPage />);
+
+    const plate = await screen.findByRole("region", { name: "Free" });
+    expect(within(plate).getByText("Your own")).toBeInTheDocument();
+    expect(within(plate).getByText("Run by Hivra")).toBeInTheDocument();
+    expect(plate).not.toHaveTextContent(/vCPU|Memory|Sleeps after|idle|0\.5/i);
+    expect(within(plate).queryByRole("meter")).not.toBeInTheDocument();
   });
 
   it("switches card prices to yearly with computed savings and checks out yearly", async () => {

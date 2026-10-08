@@ -16,6 +16,7 @@ import {
 } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { BLOG_ARTICLES } from "@/lib/blog-data";
+import { glossify } from "@/components/gloss/glossify";
 
 // The root layout's title template appends " | Hivra".
 const PAGE_TITLE = "Deploy AI Agents: Claude Code, Codex, Hermes and More";
@@ -37,11 +38,11 @@ export const metadata: Metadata = {
 const SUMMARY = [
   {
     title: "Your own sign-ins",
-    body: "Claude Code uses your Anthropic account. Codex uses your ChatGPT account or OpenAI key. Hermes runs on the model key you already pay for.",
+    body: "Claude Code uses your Anthropic account. Codex uses your ChatGPT account or OpenAI key. Hermes runs on the AI key you already pay for.",
   },
   {
     title: "Stays on when you log off",
-    body: "Every agent gets a private cloud VM of its own, and paid plans are never paused for inactivity. Hermes, OpenClaw and Agent Zero run on that computer, and Aeon's tasks run on your own GitHub Actions, so none of them needs an open browser. A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop.",
+    body: "Every agent gets its own private computer in the cloud, and paid plans are never paused for inactivity. Hermes, OpenClaw and Agent Zero run on that computer, and Aeon's tasks run on your own GitHub Actions, so none of them needs an open browser. A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop.",
   },
   {
     title: "From $9.99 a month",
@@ -49,7 +50,7 @@ const SUMMARY = [
   },
   {
     title: "Public source",
-    body: "Hivra is open source, and you can self-host it.",
+    body: "Hivra is open source, and you can run it yourself.",
   },
 ] as const;
 
@@ -93,8 +94,8 @@ export default function AgentsIndexPage() {
           <span className={styles.eyebrow}>Agents on Hivra</span>
           <h1>Agents you can deploy <strong>today.</strong></h1>
           <p>
-            Every agent below runs on a private cloud VM of its own. You sign in with your own accounts, and Hivra
-            handles the provisioning. On a paid plan the machine stays on after you log off.
+            Every agent below runs on a private computer of its own in the cloud. You sign in with your own
+            accounts, and Hivra sets the computer up. On a paid plan it stays on after you log off.
           </p>
         </header>
 
@@ -102,7 +103,7 @@ export default function AgentsIndexPage() {
           {SUMMARY.map(({ title, body }) => (
             <div key={title}>
               <h2>{title}</h2>
-              <p>{body}</p>
+              <p>{glossify(body)}</p>
             </div>
           ))}
         </div>

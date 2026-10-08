@@ -61,12 +61,15 @@ function renderPage(page: () => unknown) {
 
 afterEach(() => setPhase("dormant"));
 
+/** Matches a paragraph by its whole text, since glossary tooltips split it into spans. */
+const whole = (text: string) => (_: string, element: Element | null) => element?.tagName === "P" && element.textContent === text;
+
 describe("dormant $HIVRA: the copy from before", () => {
   const copy = TOKEN_PHASE_COPY.dormant;
 
-  it("/token keeps its title, hero and proposals", () => {
+  it("/token keeps its title, hero and proposals", async () => {
     setPhase("dormant");
-    expect(tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
+    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
     renderPage(TokenVerificationPage);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HermesOS and Hivra\.$/);
     expect(screen.getByText(copy.tokenPage.heroLead)).toBeInTheDocument();
@@ -75,12 +78,12 @@ describe("dormant $HIVRA: the copy from before", () => {
     for (const paragraph of copy.tokenPage.migrationParagraphs) expect(screen.getByText(paragraph)).toBeInTheDocument();
   });
 
-  it("/tokenomics keeps its title, header and migration paragraphs", () => {
+  it("/tokenomics keeps its title, header and migration paragraphs", async () => {
     setPhase("dormant");
-    expect(tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: copy.tokenomics.metadataDescription });
+    expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: copy.tokenomics.metadataDescription });
     renderPage(TokenomicsPage);
     expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(paragraph)).toBeInTheDocument();
+    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
   });
 
   it("/why-hivra/evolution keeps its $HIVRA lines", () => {
@@ -90,6 +93,17 @@ describe("dormant $HIVRA: the copy from before", () => {
     for (const line of copy.evolution.hivraDetails) expect(screen.getByText(line)).toBeInTheDocument();
     expect(container.textContent).toContain("Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the token page.");
     expect(screen.getByText("$HermesOS is the live token today. $HIVRA is the proposed next one.")).toBeInTheDocument();
+  });
+
+  it("/why-hivra/evolution markup never names Hermes Agent OS or Hermes Cloud (Nous Research's names)", () => {
+    setPhase("dormant");
+    const { container } = renderPage(WhyHivraEvolutionPage);
+    const jsonLd = [...container.querySelectorAll('script[type="application/ld+json"]')].map(node => node.textContent ?? "");
+    expect(jsonLd.length).toBeGreaterThan(0);
+    for (const block of jsonLd) {
+      expect(block).toContain('"HermesOS"');
+      expect(block).not.toMatch(/Hermes Agent OS|Hermes Cloud/i);
+    }
   });
 
   it("/llms.txt keeps its $HIVRA sentences", () => {
@@ -103,9 +117,9 @@ describe("dormant $HIVRA: the copy from before", () => {
 describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
   const copy = TOKEN_PHASE_COPY[phase];
 
-  it("/token lists the contract and says it is live, with no proposal copy", () => {
+  it("/token lists the contract and says it is live, with no proposal copy", async () => {
     setPhase(phase);
-    expect(tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
+    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
     const { container } = renderPage(TokenVerificationPage);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(copy.tokenPage.heroTitle);
     expect(screen.getByText(copy.tokenPage.heroLead)).toBeInTheDocument();
@@ -116,12 +130,12 @@ describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
     expect(container.textContent).not.toMatch(/\$HIVRA has not launched|There is no \$HIVRA contract yet|proposed \$HIVRA token/);
   });
 
-  it("/tokenomics and /why-hivra/evolution say $HIVRA is live on Base", () => {
+  it("/tokenomics and /why-hivra/evolution say $HIVRA is live on Base", async () => {
     setPhase(phase);
-    expect(tokenomicsMetadata()).toMatchObject({ title: "$HIVRA tokenomics" });
+    expect(await tokenomicsMetadata()).toMatchObject({ title: "$HIVRA tokenomics" });
     renderPage(TokenomicsPage);
     expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    expect(screen.getByText(copy.tokenomics.migrationParagraphs[0])).toBeInTheDocument();
+    expect(screen.getByText(whole(copy.tokenomics.migrationParagraphs[0]))).toBeInTheDocument();
     const { container } = renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(copy.evolution.hivraStatus)).toBeInTheDocument();
     expect(screen.getByText(copy.evolution.relationship)).toBeInTheDocument();

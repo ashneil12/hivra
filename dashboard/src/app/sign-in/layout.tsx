@@ -5,7 +5,7 @@ import { AuthRuntimeNotice } from "@/components/auth/AuthRuntimeNotice";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
 export const metadata: Metadata = {
-  title: "Sign In | Hivra",
+  title: "Sign In",
   robots: {
     index: false,
     follow: false,

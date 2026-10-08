@@ -8,8 +8,11 @@ import editorial from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
 import AgentSurvivalCheckTool from "@/components/tools/AgentSurvivalCheckTool";
 import HostingCostCalculatorTool from "@/components/tools/HostingCostCalculatorTool";
+import { withInlineCode } from "@/components/tools/InlineCode";
+import KeepMacAwakeTool from "@/components/tools/KeepMacAwakeTool";
 import LimitResetCalculatorTool from "@/components/tools/LimitResetCalculatorTool";
 import PlanCalculatorTool from "@/components/tools/PlanCalculatorTool";
+import TmuxCheatSheetTool from "@/components/tools/TmuxCheatSheetTool";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import {
@@ -21,6 +24,7 @@ import {
   toolPath,
   type ToolComponentKey,
 } from "@/lib/tools/tool-catalog";
+import ToolMethodSection from "../ToolMethodSection";
 import ToolsCta from "../ToolsCta";
 import styles from "../tools.module.css";
 
@@ -31,6 +35,8 @@ const TOOL_COMPONENTS: Record<ToolComponentKey, ComponentType> = {
   "agent-survival-check": AgentSurvivalCheckTool,
   "hosting-cost-calculator": HostingCostCalculatorTool,
   "limit-reset-calculator": LimitResetCalculatorTool,
+  "keep-mac-awake": KeepMacAwakeTool,
+  "tmux-cheat-sheet": TmuxCheatSheetTool,
 };
 
 interface ToolPageParams {
@@ -122,7 +128,7 @@ export default async function ToolPage({ params }: ToolPageParams) {
 
         <div className={styles.intro}>
           {entry.longIntro.map((paragraph) => (
-            <p key={paragraph}>{paragraph}</p>
+            <p key={paragraph}>{entry.method ? withInlineCode(paragraph) : paragraph}</p>
           ))}
         </div>
 
@@ -130,7 +136,10 @@ export default async function ToolPage({ params }: ToolPageParams) {
           <ToolComponent />
         </section>
 
-        <div className={styles.narrow}>
+        <ToolMethodSection entry={entry} />
+
+        {/* Tools that quote commands keep ligatures off in the FAQ, where flags are plain text. */}
+        <div className={[styles.narrow, entry.method ? styles.noLigatures : null].filter(Boolean).join(" ")}>
           <EditorialQuestions questions={entry.faqs} />
         </div>
 

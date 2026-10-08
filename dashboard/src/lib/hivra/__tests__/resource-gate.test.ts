@@ -192,7 +192,9 @@ describe("attach admission", () => {
 
   it("resolves the limit exactly as the gate does", async () => {
     (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "operator", source: "stripe", instance_limit: 7 });
-    await expect(resolvePlanAgentSlots("user_x")).resolves.toEqual({ agentLimit: 7, planName: expect.any(String) });
+    await expect(resolvePlanAgentSlots("user_x")).resolves.toEqual({ agentLimit: 7, planName: expect.any(String), freeAccount: false });
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "free", source: "free", instance_limit: 1 });
+    await expect(resolvePlanAgentSlots("user_x")).resolves.toMatchObject({ freeAccount: true });
   });
 
   it("keeps the existing launch copy for a database refusal", () => {
@@ -227,8 +229,9 @@ describe("fixed managed dashboard admission", () => {
 describe("managed resource envelope admission", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Pro (operator): 2 CPU / 4 GB per agent and in total.
     (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({
-      plan: "free", source: "free", total_cpu_budget: 0.5, total_ram_budget: 1024, instance_limit: 1,
+      plan: "operator", source: "stripe", total_cpu_budget: 2, total_ram_budget: 4096, instance_limit: 3,
     });
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       if (table === "hivra_agents" || table === "hermes_instances") return buildTableStub([]).stub;
@@ -239,17 +242,66 @@ describe("managed resource envelope admission", () => {
   it("charges the guarantee to the pool but rejects a ceiling above the plan cap", async () => {
     await expect(validateAgentResources({
       userId: "user_x", type: "codex", browser: false, mode: "launch",
-      cpu: 0.5, ram: 1, maximumCpu: 1, maximumRam: 2,
+      cpu: 0.5, ram: 1, maximumCpu: 3, maximumRam: 6,
     })).resolves.toEqual({
       ok: false,
       status: 403,
-      message: "Your Free plan allows up to 0.5 CPU / 1 GB per agent.",
+      message: "Your Pro plan allows up to 2 CPU / 4 GB per agent.",
     });
   });
 
   it("keeps a legacy request pinned when ceilings are omitted", async () => {
     await expect(validateAgentResources({
       userId: "user_x", type: "codex", browser: false, mode: "launch", cpu: 0.5, ram: 1,
+    })).resolves.toEqual({ ok: true });
+  });
+});
+
+describe("Free account and Hivra-hosted compute", () => {
+  const freeEntitlement = {
+    plan: "free", source: "free", total_cpu_budget: 0.5, total_ram_budget: 1024, instance_limit: 1,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hivra_agents" || table === "hermes_instances") return buildTableStub([]).stub;
+      throw new Error(`Unexpected table ${table}`);
+    });
+  });
+
+  it("refuses a hosted launch for a Free account, even the smallest box", async () => {
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(freeEntitlement);
+    const result = await validateAgentResources({
+      userId: "user_free", type: "claude-code", browser: false, mode: "launch", cpu: 0.5, ram: 1,
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      message: expect.stringMatching(/paid plan.*connect one, or choose a plan/i),
+    });
+  });
+
+  it("does not refuse a paid account, a token-holding entitlement, or a Free-sized request on a paid plan", async () => {
+    for (const entitlement of [
+      { plan: "operator", source: "stripe", total_cpu_budget: 2, total_ram_budget: 4096, instance_limit: 3 },
+      { plan: "operator", source: "token_holding", total_cpu_budget: 2, total_ram_budget: 4096, instance_limit: 3 },
+      { plan: "fleet", source: "apple_iap", total_cpu_budget: 4, total_ram_budget: 8192, instance_limit: 5 },
+    ]) {
+      (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(entitlement);
+      await expect(validateAgentResources({
+        userId: "user_paid", type: "claude-code", browser: false, mode: "launch", cpu: 0.5, ram: 1,
+      })).resolves.toEqual({ ok: true });
+    }
+  });
+
+  it("keeps resize and attach working for boxes a Free account already has", async () => {
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(freeEntitlement);
+    await expect(validateAgentResources({
+      userId: "user_free", type: "claude-code", browser: false, mode: "attach", cpu: 0.5, ram: 1,
+    })).resolves.toEqual({ ok: true });
+    await expect(validateAgentResources({
+      userId: "user_free", type: "claude-code", browser: false, mode: "resize", excludeAgentId: "a1", cpu: 0.5, ram: 1,
     })).resolves.toEqual({ ok: true });
   });
 });

@@ -24,7 +24,6 @@ describe("Static copy safety", () => {
       path.join(__dirname, "..", "..", "components", "landing", "home", "Hero.tsx"),
       path.join(__dirname, "..", "..", "components", "landing", "home", "Closing.tsx"),
       path.join(__dirname, "..", "..", "components", "layout", "LandingHeader.tsx"),
-      path.join(__dirname, "..", "..", "components", "reserve", "ReserveForm.tsx"),
     ];
 
     for (const file of files) {
@@ -98,5 +97,18 @@ describe("Static copy safety", () => {
     const footer = fs.readFileSync(path.join(__dirname, "..", "..", "components", "landing", "Footer.tsx"), "utf8");
     expect(footer).toContain("mailto:info@hivra.cloud");
     expect(footer).not.toContain("info@hermesos.cloud");
+  });
+
+  it("keeps the site-wide meta keywords free of speed claims and Nous Research names", () => {
+    const layout = fs.readFileSync(path.join(__dirname, "..", "layout.tsx"), "utf8");
+    const block = layout.match(/keywords:\s*\[([\s\S]*?)\]/)?.[1] ?? "";
+    const keywords = [...block.matchAll(/"([^"]+)"/g)].map(match => match[1]);
+    expect(keywords.length).toBeGreaterThanOrEqual(5);
+    expect(keywords).toContain("hivra");
+    for (const keyword of keywords) {
+      // "one click" is an unmeasured speed claim. "nous" and "hermes agent os"
+      // are Nous Research's names, which Hivra must not use as its own.
+      expect(keyword).not.toMatch(/one[- ]click|nous|hermes agent os|hermes cloud/i);
+    }
   });
 });

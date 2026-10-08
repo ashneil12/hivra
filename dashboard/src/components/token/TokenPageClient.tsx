@@ -7,7 +7,7 @@ import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
-import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import {
   formatLaunchInstantUtc,
   tokenPhaseFromEntries,
@@ -85,13 +85,17 @@ export default function TokenPageClient({
   geoNotice?: string | null;
 }) {
   const phase = tokenPhaseFromEntries(entries);
-  const copy = getTokenPhaseCopy(phase).tokenPage;
+  const phaseCopy = getTokenPhaseCopy(phase).tokenPage;
+  // A blocked viewer reads the contracts and the access they already have, not the
+  // status, proposal or qualify-for-compute lines (RESTRICTED_TOKEN_PAGE_COPY).
+  const restricted = geoNotice ? RESTRICTED_TOKEN_PAGE_COPY : null;
+  const copy = { ...phaseCopy, heroTitle: restricted?.heroTitle ?? phaseCopy.heroTitle, heroLead: restricted?.heroLead ?? phaseCopy.heroLead };
   const { officialAccounts, noTelegram, lookalikeWarning, riskLine } = tokenVerificationContent;
   return <PublicSite>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
       <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>
-        <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>OPTIONAL TOKEN</p>
+        <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>{restricted ? restricted.eyebrow : "OPTIONAL TOKEN"}</p>
         <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>{copy.heroTitle}</h1>
         <p style={{ fontSize: "1.2rem", color: "var(--public-muted)" }}>{copy.heroLead}</p>
         <p data-testid="token-risk-line" style={{ color: "var(--public-muted)" }}>{riskLine}</p>
@@ -143,7 +147,9 @@ export default function TokenPageClient({
       <section id="live-now" aria-labelledby="access-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
         <p className="mono" style={{ fontSize: 11 }}>CURRENT ACCESS</p>
         <h2 id="access-title">Existing holder access</h2>
-        <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>
+        {restricted
+          ? <p>{restricted.accessParagraph}</p>
+          : <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>}
         <p>Open Billing to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>

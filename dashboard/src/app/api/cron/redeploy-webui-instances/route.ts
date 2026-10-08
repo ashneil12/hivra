@@ -24,10 +24,13 @@ import {
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
 import {
+  isSystemLiveUpdate,
   OPERATOR_LIVE_UPDATE,
   systemLiveUpdate,
   type LiveUpdateInitiator,
 } from "@/lib/services/live-update-initiator";
+import { loadBoxRelease } from "@/lib/hermes-releases/box";
+import { isRegistryMissingError } from "@/lib/hermes-releases/live-update";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWebfreeBackend, WEBFREE_BACKENDS } from "@/lib/types/instance";
 
@@ -240,6 +243,33 @@ function skippedResult(
   return { id, name, success: false, skipped: true, error };
 }
 
+/**
+ * Why the scheduled sweep should leave a governed box alone, or null to go on.
+ * A failed lookup never skips: applyLiveUpdate resolves the release again and
+ * fails loudly if it cannot.
+ */
+async function releaseSweepVerdict(instanceId: string): Promise<string | null> {
+  try {
+    const state = await loadBoxRelease(supabaseAdmin!, instanceId);
+    if (!state || !state.governed) return null;
+    const { decision } = state;
+    if (!decision.target) return "No release is offered to this box";
+    if (decision.direction === "none") return "Already on its target release";
+    if (!decision.autoMove) return "Release registry does not move this box automatically";
+    return null;
+  } catch (err) {
+    if (!isRegistryMissingError(err)) {
+      log.warn("fleet-sync release lookup failed; proceeding without the skip check", {
+        source: SOURCE,
+        route: ROUTE,
+        instanceId,
+        failureType: "fleet_sync_release_lookup_failed",
+      });
+    }
+    return null;
+  }
+}
+
 async function redeployOne(
   instance: RedeployInstanceRow,
   getGlobalSettings: (userId: string) => Promise<Record<string, unknown>>,
@@ -288,6 +318,21 @@ async function redeployOne(
     );
   }
 
+  // The scheduled sweep only recreates a box the release registry wants moved.
+  // A box already on its target (or offered nothing) is left alone, and counts
+  // as synced: that is the honest "this box is current" signal. Boxes the
+  // registry does not govern fall through to the old behaviour.
+  if (isSystemLiveUpdate(initiator)) {
+    const verdict = await releaseSweepVerdict(instance.id);
+    if (verdict) {
+      await supabaseAdmin!
+        .from("hermes_instances")
+        .update({ last_synced_at: new Date().toISOString() })
+        .eq("id", instance.id);
+      return skippedResult(instance.id, name, verdict);
+    }
+  }
+
   let ipv4 = "";
   try {
     ipv4 = await resolveInstanceIpv4(instance, supabaseAdmin!);
@@ -317,7 +362,11 @@ async function redeployOne(
   }
 
   const globalSettings = await getGlobalSettings(instance.user_id);
-  const update = await applyLiveUpdate(instance, ipv4, globalSettings, supabaseAdmin!, { initiator });
+  const update = await applyLiveUpdate(instance, ipv4, globalSettings, supabaseAdmin!, {
+    initiator,
+    // The sweep and the operator redeploy bring a box onto its release.
+    imageIntent: "release",
+  });
   if (update.deferred) {
     // Worded from the gate's verdict: an unverified deferral (the box could not
     // confirm it is idle) may be a failing gateway, not a running turn.

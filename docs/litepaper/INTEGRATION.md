@@ -2,8 +2,8 @@
 
 The approved litepaper is `LITEPAPER.md`, pinned by `APPROVED_SOURCE_SHA256` in
 `dashboard/scripts/stage-litepaper.mjs` at SHA-256
-`27d7d582d04e91865e4aad5eb73dc10ccd326bd3ef9757c89fb6c2305f70cfe0`
-(v2.4, approved 28 September 2026). v2.4 opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
+`6c4b5015fcdc7e529e285e53015262be7a4606258f21291e097f6ccd04cdc2b9`
+(v2.6, plain-English pass with a rewritten token section and a Tokenomics button in the hero, 30 September 2026; the token wording still needs UK financial-promotion and legal review before it is published). v2.5 rewrites the hard words outside the founder letter for a 12-year-old reader: it defines "AI agent", "model", the cloud, open source, snapshots, virtual machines and containers where they first appear, and swaps jargon (terminals, repositories, SSH keys, credentials, tenants, MCP servers) for plain words. v2.4 (28 September 2026) opens with the real risk: a harder problem section, a new "This is not a future problem" evidence chapter, the full-computer and computer-use case in the positioning, a rewritten founder letter from Ash's draft (his scripture passage kept word for word; THOUGHTS.md keeps the fuller original with its references), and "Keeping a mistake from reaching everything" renamed "The boundary lives outside the model". v2.3 rewrote the page in plainer, shorter
 language, treats every surface it names as live (no preview labels, at Ash's
 direction), adds Windows desktops to the positioning, simplifies "Keeping a
 mistake from reaching everything", trims the 15 product stories and drops the token section's closing line.
@@ -16,19 +16,35 @@ references as a standalone document.
 
 ## Build and public files
 
-`dashboard/scripts/stage-litepaper.mjs` copies 19 explicitly named HTML, CSS,
-JavaScript, font, image, library and Markdown files into `dashboard/public`.
-It runs before the existing `predev` and `prebuild` hooks. Generated copies are
-ignored by Git; source files remain under this directory and the repository root.
+`dashboard/scripts/stage-litepaper.mjs` stages explicitly named files in two
+places. It runs before the existing `predev` and `prebuild` hooks. Generated
+copies are ignored by Git; source files remain under this directory and the
+repository root.
+
+- `dashboard/public` gets the files that carry no token text: the stylesheet,
+  scripts, images, fonts, library files, `THOUGHTS.md`, and the token-free copies
+  (`restricted.html` and `restricted/*.md`).
+- `dashboard/.generated/litepaper/{full,restricted}` gets the four documents that
+  do carry token text (`LITEPAPER.md`, `WHITEPAPER.md`, `TOKENOMICS.md` and the
+  litepaper page), each beside its token-free copy. They are not public files.
+  Route handlers at `/LITEPAPER.md`, `/WHITEPAPER.md`, `/TOKENOMICS.md` and
+  `/docs/litepaper/index.html` read them and pick one by the viewer's country
+  (`dashboard/src/lib/compliance/token-geo-documents.ts`), so no spelling of the
+  address can reach a full document as a static file. `next.config.ts` carries
+  them into each handler's function (`outputFileTracingIncludes`). See
+  `docs/token/TOKEN-GEO-POLICY.md`.
+
 The script does not copy source scripts, ZIPs, environment
 files or other repository content. It rejects symlinks, unexpected files in the
-generated litepaper directory, missing inputs and source wording that differs
-from the approved SHA-256 pinned in the staging script.
+generated litepaper directories, missing inputs and source wording that differs
+from the approved SHA-256 pinned in the staging script. It removes a full token
+document that an earlier release left in `dashboard/public`, and `--check`
+fails if one is there.
 
 The site redirects `/docs/litepaper` to `/docs/litepaper/index.html` so the
 document's relative assets resolve correctly. With `trailingSlash: false`,
 `/docs/litepaper/` first normalizes to the path without the ending slash.
-The full static document is served outside the React page layout. Its CSS and
+The litepaper page is served outside the React page layout. Its CSS and
 animations cannot alter the main site's components.
 
 After an authorized source or renderer update, run from the repository root:
@@ -43,8 +59,9 @@ node dashboard/scripts/stage-litepaper.mjs --check
 node --test dashboard/scripts/stage-litepaper.test.mjs
 ```
 
-The Node stage step copies the committed generated HTML; it does not require
-Python in the deployment build environment. Renderer freshness and wording
+The Node stage step copies the committed generated HTML and the committed
+token-free copies; it does not require Python in the deployment build
+environment. Renderer freshness and wording
 coverage are checked by the Python commands above.
 
 ## Vercel source packaging

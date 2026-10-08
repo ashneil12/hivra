@@ -6,14 +6,16 @@ export const article: BlogArticle = {
   title: "Agent Zero vs OpenClaw hosting: requirements, costs, and which to run",
   metaTitle: "Agent Zero vs OpenClaw hosting: specs and costs",
   metaDescription:
-    "Agent Zero and OpenClaw make different demands on a server. Real hosting requirements, security exposure, and monthly costs, with honest DIY numbers.",
+    "Agent Zero recommends 2 vCPU and 4 GB of RAM, and OpenClaw's daemon needs less. What each costs to host, and the security risks of exposing them.",
   publishedDate: "2026-07-16",
-  lastModified: "2026-09-24",
+  lastModified: "2026-09-30",
   readingTimeMin: 9,
   author: "Hivra team",
-  tagline: "One agent lives in a dashboard. The other lives in your messages. Both need a box.",
+  tagline: "One agent lives in a dashboard. The other lives in your messages. Both need a server.",
   intro:
-    "Agent Zero and OpenClaw are two of the most popular open-source agents you can self-host, and they are built for different jobs. This comparison focuses on the part most write-ups skip: what each one actually demands from a server, what hosting costs, and what can go wrong when you expose them to the internet.",
+    "Agent Zero and OpenClaw are two of the most popular open-source agents you can self-host. They're built for different jobs. They ask different things of a server and cost different amounts to host, and either one needs protecting once it's exposed to the internet.",
+  shortAnswer:
+    "Agent Zero is heavier: its project recommends 2 vCPU and 4 GB of RAM. OpenClaw's daemon starts at 1 vCPU and 2 GB on Hivra, and only grows if you switch on its browser. DIY hosting costs about $5 to $24 a month, plus model usage. Pick OpenClaw for messaging and routines, Agent Zero for goals you hand over.",
   sections: [
     {
       heading: "Two different agents, one hosting problem",
@@ -66,7 +68,8 @@ export const article: BlogArticle = {
       heading: "Running both, and the fastest way to try either one",
       paragraphs: [
         "Plenty of people end up wanting both: OpenClaw as the standing assistant, Agent Zero for hand-off projects. DIY, that is one 4 vCPU, 8 GB VPS, from €8.49 a month at Hetzner (excluding VAT) to $40-48 at Vultr or DigitalOcean, running the two side by side.",
-        `On Hivra, one plan detail matters before you pick. A plan's compute is a pool shared across everything you run, and the ${ENTRY_PLAN_PRICE} plan's pool is ${ENTRY_PLAN_SIZE}. Both fit on the ${ENTRY_PLAN_PRICE} plan at their minimum size, with OpenClaw's browser off: Agent Zero at 1 vCPU and 2 GB plus OpenClaw at 1 vCPU and 2 GB fill that pool exactly. For OpenClaw with its browser on, or for more headroom (Agent Zero's own recommendation is 2 vCPU and 4 GB), take the [${LARGER_PLAN_PRICE} plan](/pricing), whose pool of ${LARGER_PLAN_SIZE} fits Agent Zero plus OpenClaw with its browser on. A stopped computer still counts against the pool; deleting it is what frees its share, so switching between agents is a delete and a relaunch, not a support ticket.`,
+        `On Hivra, one plan detail matters before you pick. A plan's compute is a pool shared across everything you run, and the ${ENTRY_PLAN_PRICE} plan's pool is ${ENTRY_PLAN_SIZE}. Both fit on the ${ENTRY_PLAN_PRICE} plan at their minimum size, with OpenClaw's browser off: Agent Zero at 1 vCPU and 2 GB plus OpenClaw at 1 vCPU and 2 GB fill that pool exactly.`,
+        `For OpenClaw with its browser on, or for more headroom (Agent Zero's own recommendation is 2 vCPU and 4 GB), take the [${LARGER_PLAN_PRICE} plan](/pricing), whose pool of ${LARGER_PLAN_SIZE} fits Agent Zero plus OpenClaw with its browser on. A stopped computer still counts against the pool; deleting it is what frees its share, so switching between agents is a delete and a relaunch, not a support ticket.`,
         `If you want to skip the setup entirely, either agent launches on Hivra from its page ([OpenClaw](/agents/openclaw) or [Agent Zero](/agents/agent-zero)): name the agent, pick a model in the agent's own UI, and hand it work. If the agent does not earn its keep, delete its computer. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
       ],
     },
@@ -97,8 +100,8 @@ export const article: BlogArticle = {
       a: "It can be, if you do the security work. Bitsight researchers counted more than 30,000 OpenClaw instances exposed to the internet in early 2026, and CVE-2026-25253, a one-click remote code execution flaw, was patched in v2026.1.29. Both agents' web UIs control software that can run code on your server, so a correctly configured reverse proxy, authentication, and prompt patching are non-negotiable.",
     },
     {
-      q: "Are the hosted versions of Agent Zero and OpenClaw modified?",
-      a: "No. Hivra runs both open-source projects unmodified on private VMs: Agent Zero as the container the project ships, OpenClaw with its Control UI exactly as the project ships it. Hivra is an independent hosting service and is not affiliated with or endorsed by either project.",
+      q: "Is this the real Agent Zero and OpenClaw?",
+      a: "Yes. Hivra hosts the open-source projects themselves on private VMs: Agent Zero as the container the project ships, and OpenClaw with its own Control UI. Hivra is an independent hosting service and is not affiliated with or endorsed by either project.",
     },
   ],
   relatedArticles: [

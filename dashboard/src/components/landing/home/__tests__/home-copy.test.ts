@@ -27,6 +27,7 @@ import {
 } from "@/lib/blog/plan-facts";
 import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING, falseCliRunClaims } from "@/lib/blog/runtime-facts";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
+import { unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 
 const REPO_ROOT = path.resolve(__dirname, "../../../../../..");
 const litepaper = readFileSync(path.join(REPO_ROOT, "LITEPAPER.md"), "utf8");
@@ -62,6 +63,36 @@ describe("homepage copy", () => {
     expect(VISIBLE_COPY.flatMap(falseCliRunClaims)).toEqual([]);
   });
 
+  // F-17. The hero once said "It keeps working when you close your laptop".
+  // Only a run started in tmux, or a Claude Code run sent through Telegram, is
+  // certain to keep going on every computer (lib/blog/runtime-facts.ts), so the
+  // first screen says what holds everywhere: a paid computer stays on.
+  it("promises only that a paid computer stays on when the laptop closes, never that work keeps going", () => {
+    expect(HERO.subhead).toContain("On a paid plan it stays on when you close your laptop");
+    // The REACH and FOUNDER lines are the litepaper's own words about agents in
+    // general. OPEN_SOURCE is left out because "keep going without us" there
+    // is about the reader continuing the project, not an agent's run.
+    const ownWords = [HERO, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, HOW, PRICING, HOMEPAGE_FAQ, CLOSING, STICKY, GUARANTEE_LINE].flatMap(strings);
+    expect(ownWords.flatMap(text => unqualifiedKeepRunningClaims(text))).toEqual([]);
+  });
+
+  // The guard that scans the homepage must flag the exact sentence it replaced,
+  // so a repeat of the old wording fails here and not in review.
+  it("flags the retired hero sentence", () => {
+    const retired =
+      "Hivra gives each one a private computer in the cloud. It keeps working when you close your laptop, and you decide what it can reach.";
+    expect(unqualifiedKeepRunningClaims(retired)).toEqual([
+      "It keeps working when you close your laptop, and you decide what it can reach.",
+    ]);
+  });
+
+  // F-15. No page states how long setting up a server takes.
+  it("states no invented time for renting and setting up a server", () => {
+    const rentAServer = HOMEPAGE_FAQ.find(({ q }) => q === "Why not just rent a server?");
+    expect(rentAServer?.a).toMatch(/set it up and keep it running yourself/);
+    expect(VISIBLE_COPY.filter(text => /\b(?:weekend|afternoon)\b|\b(?:an|one|\d+) hours?\b/i.test(text))).toEqual([]);
+  });
+
   it("labels nothing as a preview and names no licence", () => {
     expect(VISIBLE_COPY.filter(text => /preview|Apache/i.test(text))).toEqual([]);
     expect(COMPUTERS.body).toContain("Windows");
@@ -74,7 +105,6 @@ describe("homepage copy", () => {
     expect(PRICING.cloud.href).toBe("/get-started?plan=operator");
     expect(PRICING.cloud.moreHref).toBe("/get-started?plan=fleet");
     expect(GUARANTEE_LINE).toBe(`${MONEY_BACK_GUARANTEE}.`);
-    expect(HERO.subhead).toContain(`From ${ENTRY_PLAN_PRICE} a month.`);
     expect(CLOSING.body).toContain(MONEY_BACK_GUARANTEE);
     expect(STICKY.note).toBe(`From ${ENTRY_PLAN_PRICE} a month`);
   });

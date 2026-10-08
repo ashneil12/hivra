@@ -231,3 +231,32 @@ it("offers retry and a way back when the instance fails to load", async () => {
   expect((fetch as jest.Mock).mock.calls.map(([url]) => url)).toContain("/api/instances/narrow-fixture");
   expect(screen.getByTestId("instance-chat-toolbar")).toBeInTheDocument();
 });
+
+it("shows the update notice on the agent page and confirms the update inline", async () => {
+  setViewport(true);
+  const releaseStatus = {
+    currentVersion: "2026.9.1",
+    updateAvailable: true,
+    direction: "upgrade",
+    target: { version: "2026.10.2", digest: "sha256:new" },
+    updateHealth: "ok",
+  };
+  (global.fetch as jest.Mock).mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === "/api/instances/narrow-fixture/release-status") {
+      return { ok: true, json: async () => ({ success: true, data: releaseStatus }) };
+    }
+    if (init?.method === "POST") return { ok: true, json: async () => ({ success: true }) };
+    return { ok: true, json: async () => ({ success: true, data: { ...fixture } }) };
+  });
+  const { container } = await renderPage();
+
+  const banner = await screen.findByTestId("update-available-banner");
+  expect(banner).toHaveTextContent("Hermes 2026.10.2 is ready. This agent runs 2026.9.1.");
+  expect(container.querySelector(".instance-chat-banner-stack")).toContainElement(banner);
+
+  fireEvent.click(within(banner).getByRole("button", { name: "Update" }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Update now" })); });
+
+  const post = (fetch as jest.Mock).mock.calls.find(([, init]) => init?.method === "POST" && init?.body === JSON.stringify({ action: "update" }));
+  expect(post?.[0]).toBe("/api/instances/narrow-fixture");
+});

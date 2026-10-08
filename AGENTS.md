@@ -16,7 +16,7 @@ Documents marked historical or superseded must not override the canonical vision
 
 Keep current and target behavior visibly distinct. Do not claim that a runtime, provider, access surface, task, fleet state, security control, self-host flow, or open-source release exists until its implementation and acceptance evidence exist. Never fabricate progress percentages, queued execution, subagents, completion, or success.
 
-Do not describe the repository as open source until an OSI-approved root license and the Phase 0 public-release gates are committed.
+Owner decision (2026-09-30): copy may call Hivra open source and self-hostable and link the repository (https://github.com/ashneil12/hivra). The licence file in the repository is authoritative. Never say "public domain". Do not name the licence in marketing copy.
 
 - Commit each successfully confirmed fix, feature, or milestone.
 - Work on a branch and use a pull request unless the repository owner has explicitly selected another contribution flow.

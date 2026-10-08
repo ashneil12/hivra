@@ -149,6 +149,16 @@ describe("/agents hub", () => {
     expect(graph.some((node) => node["@type"] === "BreadcrumbList")).toBe(true);
   });
 
+  // F-21: the intro said "private cloud VM" and "the provisioning" while the
+  // summary under it says "private computer". One word for the thing, and no
+  // builder's jargon.
+  it("calls the thing an agent runs on a computer in its intro, with no VM or provisioning", () => {
+    const { container } = render(<AgentsIndexPage />);
+    const intro = container.querySelector("header p")?.textContent ?? "";
+    expect(intro).toContain("private computer of its own in the cloud");
+    expect(intro).not.toMatch(/\bVM\b|provisioning|\bthe machine\b/i);
+  });
+
   it("links every agent page, sends signed-out visitors to sign-up and offers /pricing", () => {
     const { container } = render(<AgentsIndexPage />);
     const main = container.querySelector("main")!;

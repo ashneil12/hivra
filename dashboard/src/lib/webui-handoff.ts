@@ -42,10 +42,12 @@ function normalizeBaseUrlForHash(gatewayUrl: string): string {
  * initial static shell load without auth; static assets were already public.
  *
  * Security note: the bearer here IS the per-instance apiServerKey, which is
- * a long-lived secret. Anyone who can read the iframe URL (e.g. Vercel logs,
- * browser history before the shim strips it, screen recordings) can extract
- * it. Acceptable for canary; harden later by issuing a short-lived JWT and
- * having Caddy validate via forward_auth.
+ * a long-lived secret. Anyone who can read the iframe URL (e.g. browser
+ * history before the shim strips it, screen recordings) can extract it.
+ * createCookieBackedWebuiIframeUrl keeps it out of the request line by carrying
+ * it in the login URL's fragment. Harden further by issuing a short-lived JWT
+ * and having Caddy validate via forward_auth; that needs a matching change on
+ * every box.
  */
 function createWebuiIframeHashUrl(params: {
   gatewayUrl: string;
@@ -67,6 +69,27 @@ function createWebuiIframeHashUrl(params: {
   return { url };
 }
 
+/**
+ * Handoff URL for webfree boxes (backend "webui" and "gateway").
+ *
+ * The sidecar's /_sidecar/webui-login checks the signature, sets the session
+ * cookie and answers 302 to `next`. The box page then reads the per-instance
+ * apiServerKey from `#iframe_token=<key>`.
+ *
+ * The key goes in the FRAGMENT OF THE LOGIN URL, not inside `next`. It used to
+ * be inside `next`, which is a query parameter, so the long-lived key was part
+ * of the request line: it landed in the box's access log, in anything between
+ * the browser and the box, and again in the sidecar's 302 Location header. A
+ * fragment is never sent to a server. The browser keeps the fragment across the
+ * redirect when the Location has none (RFC 9110 section 10.2.2, the Fetch
+ * standard's HTTP-redirect fetch), so the iframe and the new tab still land on
+ * /webchat#iframe_token=<key> exactly as before. Nothing changes on the box,
+ * and boxes still running the older sidecar work without an update, because
+ * `next` is now a plain path that every sidecar version already accepts.
+ *
+ * The signature covers `next` as the sidecar will see it, which is the path
+ * with no fragment.
+ */
 export function createCookieBackedWebuiIframeUrl(params: {
   gatewayUrl: string;
   apiServerKey: string;
@@ -75,13 +98,16 @@ export function createCookieBackedWebuiIframeUrl(params: {
   now?: number;
 }): { url: string; expiresAt: number; nonce: string } {
   const iframeUrl = new URL(createWebuiIframeHashUrl(params).url);
-  const nextPath = `${iframeUrl.pathname}${iframeUrl.search}${iframeUrl.hash}`;
-  return createWebuiLoginUrl({
+  const nextPath = `${iframeUrl.pathname}${iframeUrl.search}`;
+  const login = createWebuiLoginUrl({
     gatewayUrl: params.gatewayUrl,
     apiServerKey: params.apiServerKey,
     nextPath,
     now: params.now,
   });
+  const loginUrl = new URL(login.url);
+  loginUrl.hash = iframeUrl.hash;
+  return { ...login, url: loginUrl.toString() };
 }
 
 /**

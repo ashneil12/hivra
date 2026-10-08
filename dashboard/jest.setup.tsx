@@ -10,6 +10,16 @@ if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
   process.env.NEXT_PUBLIC_POSTHOG_KEY = 'phc_test_token_not_a_real_project';
 }
 
+// The real token geo list (lib/compliance/token-geo-list.ts) blocks the UK. Most
+// suites test token screens and routes as any other country sees them, so they
+// run against an empty list. A suite that tests the gate itself opts back in with
+// its own `jest.mock('@/lib/compliance/token-geo-list', () =>
+// jest.requireActual('@/lib/compliance/token-geo-list'))` (the *real-list* suites
+// and the geo route and page suites do), so the committed list is proven to reach
+// the policy, the routes, the pages and the rewrites. With the empty list those
+// checks cannot fail.
+jest.mock('@/lib/compliance/token-geo-list', () => ({ BLOCKED_COUNTRIES: [] }));
+
 const mockClerk = {
   ClerkProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   useUser: () => ({

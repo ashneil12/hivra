@@ -292,6 +292,16 @@ export async function createCryptoTopUpIntent(params: {
   const admin = requireDb(params.db ?? supabaseAdmin);
   const depositAddress = normalizeEvmAddress(params.depositWallet.address);
   const now = params.now ?? new Date();
+  // Known limit: this check and the upsert below are two statements, so
+  // concurrent requests from one user can each pass the check and each insert a
+  // pending intent. No money is at risk (one transfer funds at most one
+  // intent), only extra rows for the reconciler to scan, and the route's
+  // per-user rate limit caps a burst. A database guard needs a migration: an
+  // expired intent stays 'pending' until the reconciler closes it, so a plain
+  // unique index on (user_id) where status = 'pending' would block a retry made
+  // after the 20-minute window. The guard has to be expiry-aware, for example a
+  // SECURITY DEFINER function that takes pg_advisory_xact_lock on the user and
+  // runs the check and the insert in one transaction.
   await assertNoActiveCryptoPaymentSession({
     userId: params.userId,
     db: admin,

@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   LEGACY_STRIPE_PRICE_IDS,
   PLANS,
-  TRIAL_GRACE_HOURS,
+  PAYMENT_GRACE_HOURS,
   type PlanKey,
 } from "@/lib/subscription";
 import { getStripe } from "@/lib/stripe";
@@ -343,33 +343,6 @@ export class StripeWebhookService {
           stripeEventType: "checkout.session.completed",
         });
 
-        const userId = session.metadata?.user_id || subscription.metadata?.user_id || null;
-        const checkoutIp =
-          session.metadata?.checkout_ip || subscription.metadata?.checkout_ip || null;
-
-        if (userId) {
-          // Awaited so the insert actually runs to completion before
-          // the serverless function returns. The previous fire-and-
-          // forget pattern could lose the row if the response was sent
-          // before the insert resolved — undermining the trial-abuse
-          // gate. 23505 (unique violation) is treated as an idempotent
-          // success: a redelivered webhook may fire this twice.
-          const { error: trialInsertErr } = await supabaseAdmin
-            .from("hermes_trial_usage")
-            .insert({
-              user_id: userId,
-              ip_address: checkoutIp && checkoutIp !== 'unknown' ? checkoutIp : null,
-            });
-          if (trialInsertErr && trialInsertErr.code !== '23505') {
-            log.error("failed to record trial usage", trialInsertErr, {
-              source: LOG_SOURCE,
-              failureType: "trial_usage_insert_failed",
-              errorCode: trialInsertErr.code,
-              userId,
-            });
-          }
-        }
-        
         await this.captureCheckoutPaymentCompleted({
           session,
           subscription,
@@ -1376,7 +1349,7 @@ export class StripeWebhookService {
     const { shutdownServer } = await import("@/lib/hetzner/client");
 
     const scheduledDeletionAt = new Date(
-      Date.now() + TRIAL_GRACE_HOURS * 60 * 60 * 1000
+      Date.now() + PAYMENT_GRACE_HOURS * 60 * 60 * 1000
     ).toISOString();
     const updatedAt = new Date().toISOString();
 
@@ -1908,7 +1881,7 @@ export class StripeWebhookService {
 
     const gracePeriodEnd = alreadyAnchored
       ? existingSub.grace_period_ends_at!
-      : new Date(Date.now() + TRIAL_GRACE_HOURS * 60 * 60 * 1000).toISOString();
+      : new Date(Date.now() + PAYMENT_GRACE_HOURS * 60 * 60 * 1000).toISOString();
 
     await supabaseAdmin
       .from("hermes_subscriptions")

@@ -17,7 +17,7 @@ export default function ToolsCta({ title }: { title: ReactNode }) {
         <h2>{title}</h2>
         <p>
           From $9.99/mo for 2 vCPU and 4 GB, not paused for inactivity. Your own Claude or ChatGPT login, or your own
-          model key. 7-day money-back guarantee on card payments.
+          AI key. 7-day money-back guarantee on card payments.
         </p>
       </div>
       <div className={styles.actions}>

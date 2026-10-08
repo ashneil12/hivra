@@ -42,8 +42,8 @@ export interface RoadmapUtilityCard {
 interface RoadmapPhaseSection {
   heading: string;
   intro?: string;
-  paragraphs?: string[];
-  bullets?: string[];
+  paragraphs?: readonly string[];
+  bullets?: readonly string[];
   callout?: string;
 }
 
@@ -53,14 +53,19 @@ export interface RoadmapPhase {
   name: string;
   timeline: string;
   descriptor: string;
-  sections: RoadmapPhaseSection[];
+  sections: readonly RoadmapPhaseSection[];
 }
 
 export const roadmapContent = {
+  // The chapter links under the progress bar.
+  navLinks: [{ label: "Token verification", href: "/token" }],
   metadata: {
-    title: "Hivra Roadmap April 2026",
+    // People searching "hermes agent roadmap" land here. The title and description
+    // say whose roadmap this is (Hivra, formerly HermesOS) and what it is not, so
+    // nobody mistakes it for the roadmap of Nous Research's Hermes Agent.
+    title: "Hivra Roadmap: the April 2026 Plan and What Is Live",
     description:
-      "Hivra's April 2026 roadmap, kept for the record, with what is live today. The current plan is in the Hivra litepaper.",
+      "The Hivra roadmap (hivra.cloud, formerly HermesOS): the April 2026 plan, kept for the record, and what is live today. Not the Hermes Agent roadmap.",
     canonicalPath: "/roadmap",
   },
   hero: {
@@ -68,7 +73,7 @@ export const roadmapContent = {
     title: "Hivra Product Roadmap 2026",
     subtitle: "The operating system for autonomous agents.",
     note:
-      "This is Hivra's April 2026 roadmap, kept for the record. Hivra has since become agent computers, and parts of this plan have changed. What is live today is kept current below. The current plan is in the litepaper and on the ecosystem page. Anything here that is not live is a plan or a proposal, not a commitment. This is not a financial document and makes no investment claims about $HermesOS or any other asset.",
+      "This is Hivra's April 2026 roadmap, kept for the record. Hivra has since become agent computers, and parts of this plan have changed. What is live today is kept current below. The current plan is in the litepaper and on the ecosystem page. Anything here that is not live is a plan or a proposal, not a commitment. This is the roadmap for Hivra (hivra.cloud, formerly HermesOS), not for Hermes Agent, which is a Nous Research project. This is not a financial document and makes no investment claims about $HermesOS or any other asset.",
     scrollLabel: "Scroll to explore",
   },
   whatIsHermesOS: {
@@ -412,10 +417,10 @@ export const roadmapContent = {
           {
             heading: "Operator Marketplace",
             bullets: [
-              "Browse, install, and deploy community-built operator packs in one click.",
+              "Browse, install, and deploy community-built operator packs.",
               "Verified publisher programme for trusted creators with accountability and track records.",
               "Flexible publishing options: release packs with open access, attach a price for individual purchase, or offer revenue share. Creators choose their own model.",
-              "Community templates: free packs contributed by the community, instantly deployable.",
+              "Community templates: free packs contributed by the community, ready to deploy.",
               "Private company packs: organisations maintain their own internal operator libraries, never publicly visible.",
               "Proposed: token-based marketplace access, where token holdings determine which community packs and skills are available without individual purchase.",
               "Proposed: Users can build and publish their own operators and agents. Creators earn from usage and can withdraw through supported payout options, including token-based settlement. Additional payout methods will be introduced over time.",
@@ -525,3 +530,130 @@ export const roadmapContent = {
       "This document describes planned product direction. Timelines are targets, not guarantees. Features are subject to change. Nothing here constitutes financial advice, a financial promotion, or an invitation to purchase any asset. For official token information, use hivra.cloud/token only.",
   },
 } as const;
+
+type Widen<T> = T extends string
+  ? string
+  : T extends readonly (infer U)[]
+    ? readonly Widen<U>[]
+    : T extends object
+      ? { -readonly [K in keyof T]: Widen<T[K]> }
+      : T;
+
+type FullRoadmapContent = Widen<typeof roadmapContent>;
+
+/**
+ * What the roadmap page renders: the whole April 2026 plan, or the restricted
+ * copy for a viewer the token geo-policy blocks, which has no `token` section.
+ * The client component takes this as a prop and imports only types from this
+ * file, so a blocked viewer's browser is never sent the token copy.
+ */
+export type RoadmapPageContent = Omit<FullRoadmapContent, "token" | "roadmap"> & {
+  token:
+    | (Omit<FullRoadmapContent["token"], "utilities"> & { utilities: readonly RoadmapUtilityCard[] })
+    | null;
+  roadmap: Omit<FullRoadmapContent["roadmap"], "phases"> & { phases: readonly RoadmapPhase[] };
+};
+
+/**
+ * The words that make a line token copy. The restricted roadmap leaves out any
+ * list item, card, row or heading that has one of them, so a token line added
+ * to the full roadmap later is kept off the restricted page without anyone
+ * having to remember it. docs/litepaper/restrict.py uses the same idea for the
+ * static documents; this adds the wallet and payment-rail words the roadmap uses.
+ */
+const ROADMAP_TOKEN_TERMS = /\$HIVRA|\$HermesOS|\btokens?\b|tokenomics|Bankr|wallets?|x402|on-chain/i;
+
+/**
+ * Exact phrases cut or reworded for the restricted page. Each one only removes
+ * a token mention from a line that is otherwise true for everyone, or renumbers
+ * the sections the removal leaves. A phrase that is not found is skipped, and
+ * roadmap-content.test.ts fails if any token word is left anywhere.
+ */
+const RESTRICTED_REWRITES: ReadonlyArray<readonly [string, string]> = [
+  [" This is not a financial document and makes no investment claims about $HermesOS or any other asset.", ""],
+  [" with no Hivra account and no token.", " with no Hivra account."],
+  [" No wallet required, no crypto knowledge needed.", ""],
+  ["Card users never need a wallet or a token. Self-hosting needs neither a token nor a Hivra account.", "Self-hosting needs no Hivra account."],
+  ["The platform is moving in three directions simultaneously:", "The platform is moving in two directions simultaneously:"],
+  ["shared token layer", "shared intelligence layer"],
+  ["06 · ROADMAP", "05 · ROADMAP"],
+  ["07 · OUT OF SCOPE", "06 · OUT OF SCOPE"],
+  ["08 · WHERE THIS IS HEADING", "07 · WHERE THIS IS HEADING"],
+  ["Ship flagship operators, Bankr integration, token-gated compute, and subscription-backed compute rails.", "Ship flagship operators and subscription-backed compute rails."],
+  ["Compute access comes from an active subscription or verified token holding.", "Compute access comes from an active subscription."],
+  ["If your subscription or token holding falls out of eligibility", "If your subscription falls out of eligibility"],
+  [" + Deeper Token Integration", ""],
+  ["Add team features, agent wallets, expanded token utility, and an expanded operator pack library.", "Add team features and an expanded operator pack library."],
+  [", including token-based settlement", ""],
+  [": open access, token-gated, or per-call pricing", ": open access or per-call pricing"],
+  ["Full Agent Economy", "Hive Mind Full Release"],
+  [" and token-based access.", "."],
+  [" Nothing here constitutes financial advice, a financial promotion, or an invitation to purchase any asset. For official token information, use hivra.cloud/token only.", ""],
+];
+
+function rewriteRestricted<T>(value: T): T {
+  if (typeof value === "string") {
+    let text: string = value;
+    for (const [from, to] of RESTRICTED_REWRITES) text = text.split(from).join(to);
+    return text as T;
+  }
+  if (Array.isArray(value)) return value.map(rewriteRestricted) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, rewriteRestricted(entry)])) as T;
+  }
+  return value;
+}
+
+const isClean = (...texts: Array<string | undefined>) => texts.every((text) => !text || !ROADMAP_TOKEN_TERMS.test(text));
+
+/**
+ * The roadmap for a viewer the token geo-policy blocks: the same April 2026
+ * plan without the token section, the token-access cards, bullets and phase
+ * sections, the token links and the token disclaimer. Everything else is the
+ * full roadmap's text, so the two never drift apart.
+ */
+export function restrictedRoadmapContent(): RoadmapPageContent {
+  const base = rewriteRestricted(JSON.parse(JSON.stringify(roadmapContent)) as RoadmapPageContent);
+
+  const cards = base.audience.cards.filter((card) => isClean(card.title, card.body));
+  const phases = base.roadmap.phases.map((phase) => ({
+    ...phase,
+    sections: phase.sections
+      .filter((section) => isClean(section.heading))
+      .map((section) => ({
+        ...section,
+        ...(section.intro !== undefined && isClean(section.intro) ? {} : { intro: undefined }),
+        ...(section.callout !== undefined && isClean(section.callout) ? {} : { callout: undefined }),
+        ...(section.paragraphs ? { paragraphs: section.paragraphs.filter((text) => isClean(text)) } : {}),
+        ...(section.bullets ? { bullets: section.bullets.filter((text) => isClean(text)) } : {}),
+      }))
+      .filter((section) => section.intro || section.callout || section.paragraphs?.length || section.bullets?.length),
+  }));
+
+  return {
+    ...base,
+    navLinks: base.navLinks.filter((link) => isClean(link.label, link.href)),
+    audience: {
+      ...base.audience,
+      // One way in is left, so the "two directions" lead and the "both paths" summary go.
+      paragraphs: base.audience.paragraphs.slice(0, 1),
+      cards,
+      summary: cards.length > 1 ? base.audience.summary : "",
+    },
+    liveToday: {
+      ...base.liveToday,
+      features: base.liveToday.features.filter((feature) => isClean(feature.name, feature.description)),
+    },
+    visionDirection: {
+      ...base.visionDirection,
+      rows: base.visionDirection.rows.filter((row) => isClean(row.title, row.body)),
+    },
+    token: null,
+    roadmap: { ...base.roadmap, phases },
+    closing: {
+      ...base.closing,
+      paragraphs: base.closing.paragraphs.filter((text) => isClean(text)),
+      metadata: base.closing.metadata.filter((item) => isClean(item.label, item.value, item.href)),
+    },
+  };
+}

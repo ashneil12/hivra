@@ -17,14 +17,6 @@ it("turns an agent-key custody guard rejection into safe clear/replace guidance"
   expect(query.eq).toHaveBeenCalledWith("user_id", "owner");
 });
 
-// The starter-credit grant reaches for the risk-assessment repository (its abuse
-// gate) through the module-level supabaseAdmin, not the injected db. Mock it so
-// the wallet-binding tests below exercise the grant without a real client.
-const getRiskAssessment = jest.fn();
-jest.mock("@/lib/abuse/repository", () => ({
-  getRiskAssessment: (...args: unknown[]) => getRiskAssessment(...args),
-}));
-
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 type Row = Record<string, unknown>;
@@ -123,8 +115,7 @@ function createMemoryDb(options: { failBalanceRead?: boolean } = {}) {
   const tables: Record<string, Row[]> = {
     managed_venice_wallet_accounts: [],
     managed_venice_proxy_keys: [],
-    // Read by getManagedVeniceWalletSummary to resolve the funded wallet, and
-    // written by the starter-credit grant.
+    // Read by getManagedVeniceWalletSummary to resolve the funded wallet.
     managed_venice_token_lots: [],
     managed_venice_card_ledger_entries: [],
     managed_venice_reservations: [],
@@ -213,7 +204,7 @@ function seedHermesosLot(
   });
 }
 
-/** A positive card-ledger entry — the wallet the starter credit lands in. */
+/** A positive card-ledger entry — a funded card wallet. */
 function seedCardBalance(
   seed: (name: string, row: Row) => Row,
   userId: string,
@@ -364,28 +355,19 @@ describe("managed Venice proxy keys", () => {
  * cross-wallet fallback). Binding it to an empty wallet is a permanent 402.
  */
 describe("managed Venice proxy key wallet binding", () => {
-  const STARTER_FLAG = "HERMES_MANAGED_VENICE_STARTER_CREDIT_ENABLED";
-
-  beforeEach(() => {
-    getRiskAssessment.mockReset();
-    // No risk row ⇒ the grant's abuse gate fails open, matching the deploy gate.
-    getRiskAssessment.mockResolvedValue(null);
-    delete process.env[STARTER_FLAG];
-  });
+  const RETIRED_STARTER_FLAG = "HERMES_MANAGED_VENICE_STARTER_CREDIT_ENABLED";
 
   afterEach(() => {
-    delete process.env[STARTER_FLAG];
+    delete process.env[RETIRED_STARTER_FLAG];
   });
 
-  it("binds a brand-new free user's key to the CARD wallet the starter credit just funded", async () => {
-    process.env[STARTER_FLAG] = "1";
+  it("never grants a starter credit, even with the retired flag set: a virgin user's mint writes no money and stays on hermesos", async () => {
+    process.env[RETIRED_STARTER_FLAG] = "1";
     const { db, tables } = createMemoryDb();
 
-    // A virgin free user: no token lots, no card entries. The deploy card
-    // therefore submits its 'hermesos' default.
     const created = await createManagedVeniceProxyKey(
       {
-        userId: "user_free",
+        userId: "user_virgin",
         randomBytes: fixedRandomBytes,
         env,
         defaultWalletType: "hermesos",
@@ -394,31 +376,32 @@ describe("managed Venice proxy key wallet binding", () => {
       db
     );
 
-    // The grant landed in the card ledger...
-    expect(tables.managed_venice_card_ledger_entries).toEqual([
-      expect.objectContaining({
-        user_id: "user_free",
-        amount_micro_usd: 500_000,
-        reference_id: "managed_venice_starter:user_free",
-      }),
-    ]);
+    expect(tables.managed_venice_card_ledger_entries).toHaveLength(0);
+    expect(tables.managed_venice_financial_events).toHaveLength(0);
+    expect(tables.managed_venice_token_lots).toHaveLength(0);
+    expect(created.defaultWalletType).toBe("hermesos");
+  });
 
-    // ...and, crucially, it landed BEFORE the key was minted, so the key is
-    // bound to card. If the grant still ran after the insert (the bug), the
-    // balance read would have seen an empty card wallet and bound hermesos.
-    expect(walletTypeOf(tables)).toBe("card");
-    expect(created.defaultWalletType).toBe("card");
+  it("binds to the CARD wallet when the user funded it after the deploy card loaded", async () => {
+    const { db, tables, seed } = createMemoryDb();
+    seedCardBalance(seed, "user_card_funded", 500_000);
 
-    // What the chat proxy will read on the user's very first message.
-    const verified = await verifyManagedVeniceProxyKey(
-      { plaintextKey: created.plaintextKey, env },
+    const created = await createManagedVeniceProxyKey(
+      {
+        userId: "user_card_funded",
+        randomBytes: fixedRandomBytes,
+        env,
+        defaultWalletType: "hermesos",
+        autoSelectFundedWallet: true,
+      },
       db
     );
-    expect(verified?.defaultWalletType).toBe("card");
+
+    expect(walletTypeOf(tables)).toBe("card");
+    expect(created.defaultWalletType).toBe("card");
   });
 
   it("leaves a token holder on hermesos — their lots are never bypassed for card", async () => {
-    process.env[STARTER_FLAG] = "1";
     const { db, tables, seed } = createMemoryDb();
     seedHermesosLot(seed, "user_token", 2_000_000);
     // Even with card money sitting there, a funded hermesos request wins.
@@ -536,83 +519,6 @@ describe("managed Venice proxy key wallet binding", () => {
     expect(created.defaultWalletType).toBe("hermesos");
   });
 
-  it("grants exactly once per user and never double-credits across mints", async () => {
-    process.env[STARTER_FLAG] = "1";
-    const { db, tables } = createMemoryDb();
-
-    await createManagedVeniceProxyKey(
-      {
-        userId: "user_twice",
-        randomBytes: fixedRandomBytes,
-        env,
-        defaultWalletType: "hermesos",
-        autoSelectFundedWallet: true,
-      },
-      db
-    );
-    const second = await createManagedVeniceProxyKey(
-      {
-        userId: "user_twice",
-        randomBytes: fixedRandomBytes,
-        env,
-        defaultWalletType: "hermesos",
-        autoSelectFundedWallet: true,
-      },
-      db
-    );
-
-    // One grant row, one financial event — the second mint saw "already_granted".
-    const grants = tables.managed_venice_card_ledger_entries.filter(
-      (row) => row.reference_id === "managed_venice_starter:user_twice"
-    );
-    expect(grants).toHaveLength(1);
-    expect(tables.managed_venice_financial_events).toHaveLength(1);
-    // ...and the second key still binds to the (still-funded) card wallet.
-    expect(second.defaultWalletType).toBe("card");
-  });
-
-  it("still mints when the starter grant fails — the deploy never throws", async () => {
-    process.env[STARTER_FLAG] = "1";
-    const { db, tables } = createMemoryDb();
-    getRiskAssessment.mockRejectedValue(new Error("risk repo down"));
-
-    const created = await createManagedVeniceProxyKey(
-      {
-        userId: "user_grant_fail",
-        randomBytes: fixedRandomBytes,
-        env,
-        defaultWalletType: "hermesos",
-        autoSelectFundedWallet: true,
-      },
-      db
-    );
-
-    expect(created.plaintextKey).toMatch(/^hven_live_/);
-    expect(tables.managed_venice_card_ledger_entries).toHaveLength(0);
-    // No funds anywhere ⇒ nothing to switch to; the request stands.
-    expect(created.defaultWalletType).toBe("hermesos");
-  });
-
-  it("refuses the grant (and stays on hermesos) when the abuse gate blocks", async () => {
-    process.env[STARTER_FLAG] = "1";
-    const { db, tables } = createMemoryDb();
-    getRiskAssessment.mockResolvedValue({ decision: "block", card_satisfied_at: null });
-
-    const created = await createManagedVeniceProxyKey(
-      {
-        userId: "user_blocked",
-        randomBytes: fixedRandomBytes,
-        env,
-        defaultWalletType: "hermesos",
-        autoSelectFundedWallet: true,
-      },
-      db
-    );
-
-    expect(tables.managed_venice_card_ledger_entries).toHaveLength(0);
-    expect(created.defaultWalletType).toBe("hermesos");
-  });
-
   it("degrades to the requested wallet when the balance read fails", async () => {
     const { db, seed } = createMemoryDb({ failBalanceRead: true });
     seedCardBalance(seed, "user_db_flaky", 500_000);
@@ -633,7 +539,7 @@ describe("managed Venice proxy key wallet binding", () => {
     expect(created.defaultWalletType).toBe("hermesos");
   });
 
-  it("leaves a wholly unfunded user on hermesos when the starter flag is off", async () => {
+  it("leaves a wholly unfunded user on hermesos", async () => {
     const { db, tables } = createMemoryDb();
 
     const created = await createManagedVeniceProxyKey(

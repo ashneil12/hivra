@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+
 import { metadata as homeMetadata } from '../page';
 import { metadata as downloadMetadata } from '../download/page';
 import { generateMetadata as generateTokenomicsMetadata } from '../tokenomics/page';
@@ -11,8 +13,12 @@ import { generateMetadata as generateFeatureMetadata } from '../features/[slug]/
 import { generateMetadata as generateCompareMetadata } from '../compare/[slug]/page';
 
 // Both token pages generate their metadata from the $HIVRA phase; dormant here.
-const tokenomicsMetadata = generateTokenomicsMetadata();
-const tokenMetadata = generateTokenMetadata();
+let tokenomicsMetadata: Metadata;
+let tokenMetadata: Metadata;
+beforeAll(async () => {
+  tokenomicsMetadata = await generateTokenomicsMetadata();
+  tokenMetadata = await generateTokenMetadata();
+});
 
 function getObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') return null;

@@ -19,9 +19,8 @@ export const PLANS = {
     yearlyPrice: 0,
     stripePriceId: "",
     stripeYearlyPriceId: "",
-    description: "Launch 1 active agent with guarded starter compute",
-    tagline: "start without a bill.",
-    trialDays: 0,
+    description: "A free account: use Hivra with your own computer. Hivra-run computers need a paid plan.",
+    tagline: "free to use. bring your own computer.",
     maxAgents: AGENT_SLOTS.free,
     priority: SCHEDULING_PRIORITY.free,
     maxCpuPerAgent: 0.5,
@@ -29,16 +28,15 @@ export const PLANS = {
     totalCpu: 0.5,
     totalRam: 1024,
     features: [
-      "One starter agent — sleeps after 4 idle days",
-      "Hermes Agent pre-configured",
+      "Sign in and use Hivra free",
+      "Connect your own computer or server",
       "BYO AI key — zero markup",
-      "Anti-abuse safeguards",
-      "Upgrade when you need more compute",
+      "Choose a plan when you want Hivra to run the computer",
     ],
     specs: {
-      cpu: "0.5 vCPU total",
-      ram: "1GB total",
-      agents: "1 active",
+      cpu: "Your own computer",
+      ram: "No Hivra-run computer",
+      agents: "Run on your computer",
     },
   },
   operator: {
@@ -55,7 +53,6 @@ export const PLANS = {
     stripeYearlyPriceId: process.env.STRIPE_OPERATOR_YEARLY_PRICE_ID || "",
     description: "Run up to 3 active agents with enough compute for real workloads",
     tagline: "prove it works.",
-    trialDays: 0,
     maxAgents: AGENT_SLOTS.operator,
     priority: SCHEDULING_PRIORITY.operator,
     maxCpuPerAgent: 2,
@@ -88,7 +85,6 @@ export const PLANS = {
     description: "Run up to 5 active agents with more compute and fleet controls",
     tagline: "this is where it scales.",
     popular: true,
-    trialDays: 0,
     maxAgents: AGENT_SLOTS.fleet,
     priority: SCHEDULING_PRIORITY.fleet,
     maxCpuPerAgent: 4,
@@ -98,7 +94,7 @@ export const PLANS = {
     features: [
       "Everything in Pro",
       "Burst CPU when capacity allows",
-      "Priority over free tier",
+      "Priority scheduling",
       "Future marketplace access",
       "Email support (48 hr)",
     ],
@@ -114,7 +110,6 @@ export const PLANS = {
     stripePriceId: process.env.STRIPE_COMMAND_PRICE_ID || "",
     description: "Full-scale fleet operations — maximum hardware, priority everything",
     tagline: "fleet-scale operations.",
-    trialDays: 0,
     maxAgents: AGENT_SLOTS.command,
     priority: SCHEDULING_PRIORITY.command,
     maxCpuPerAgent: 8,
@@ -277,7 +272,7 @@ export const BACKUP_ADDON = {
  * the server is scheduled for deletion. Kept short because we're running
  * real Hetzner infrastructure that costs money every hour.
  */
-export const TRIAL_GRACE_HOURS = 48;
+export const PAYMENT_GRACE_HOURS = 48;
 
 /**
  * Returns true if `targetPlan` is a higher tier than `currentPlan`.
@@ -315,14 +310,6 @@ export function isPaidPlanDowngrade(currentPlan: PlanKey, targetPlan: PlanKey): 
   if (fromRank < 0 || toRank < 0) return false;
   // Both endpoints must be real paid tiers; target must be strictly lower.
   return fromRank >= lowestPaidRank && toRank >= lowestPaidRank && toRank < fromRank;
-}
-
-/**
- * Returns the number of free trial days for a plan.
- */
-export function getTrialDays(planKey: string): number {
-  const plan = getPlan(planKey);
-  return plan.trialDays ?? 0;
 }
 
 /**

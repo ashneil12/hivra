@@ -37,7 +37,7 @@
  *
  * The probe therefore:
  *   1. `GET /api/instances/[id]/webui-login-url` → the signed handoff, and pulls
- *      the apiServerKey out of its `next=…#iframe_token=<key>` fragment.
+ *      the apiServerKey out of its `#iframe_token=<key>` fragment.
  *   2. Navigates a page to the handoff → lands on the BOX ORIGIN.
  *   3. Opens `wss://<box>/desktop/api/ws?token=<apiServerKey>` (the Desktop Web
  *      adapter's exact route), waits for `gateway.ready`, then
@@ -137,9 +137,11 @@ function isTerminalReason(reason: string | undefined): boolean {
 /**
  * Mint a fresh signed handoff and pull the apiServerKey out of it.
  *
- * The handoff's `next` fragment carries `#iframe_token=<apiServerKey>` — the
- * exact bearer the box's iframe-shim uses for the WS `?token=`. Extracting it
- * here is how the probe authenticates the socket the way the iframe does.
+ * The handoff URL's fragment carries `#iframe_token=<apiServerKey>` — the exact
+ * bearer the box's iframe-shim uses for the WS `?token=`. Extracting it here is
+ * how the probe authenticates the socket the way the iframe does. A dashboard
+ * that has not shipped the fragment form yet put the same fragment inside the
+ * signed `next` parameter, so that spelling is still read as a fallback.
  */
 async function mintHandoff(
   request: APIRequestContext,
@@ -161,9 +163,10 @@ async function mintHandoff(
   let apiServerKey: string | null = null;
   let entry = '?';
   try {
-    const next = decodeURIComponent(new URL(body.url).searchParams.get('next') ?? '');
+    const handoffUrl = new URL(body.url);
+    const next = decodeURIComponent(handoffUrl.searchParams.get('next') ?? '');
     entry = next.split('#')[0].split('?')[0] || '?';
-    const m = next.match(/iframe_token=([^&]+)/);
+    const m = handoffUrl.hash.match(/iframe_token=([^&]+)/) ?? next.match(/iframe_token=([^&]+)/);
     if (m) apiServerKey = decodeURIComponent(m[1]);
   } catch {
     apiServerKey = null;

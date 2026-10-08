@@ -46,12 +46,14 @@ free: weekly or last-known-good config-only backup, not daily full VM backup
 Verified from this runtime:
 
 ```txt
-host: u594993.your-storagebox.de
-user: u594993
+host: <storage-box-host>   (HERMES_COLD_STORAGE_HOST)
+user: <storage-box-user>   (HERMES_COLD_STORAGE_USER)
 ssh port: 23
 rsync over SSH: works
 round-trip checksum probe: passed
 ```
+
+The real host and account name are not recorded in this repository.
 
 The password is stored locally outside the repo under:
 

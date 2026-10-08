@@ -107,6 +107,7 @@ import { isRealVeniceByokKey } from "@/lib/venice/byok-classification";
 import { normalizeWelcomeLaunchCapture } from "@/lib/welcome-personalization";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { scheduleSoulSeedReconcileAfterResponse } from "@/lib/recovery/soul-seed-reconcile";
+import { removeBackupAddonBilling } from "@/lib/billing/backup-addon-billing";
 import { backupsIncludedWithInstance } from "@/lib/billing/backup-coverage";
 // Gateway-restart shell builders live in ./gateway-restart-command so this
 // route file stays focused on request handling. Re-exported/imported below;
@@ -2004,6 +2005,40 @@ export async function PATCH(
          const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).eq("user_id", userId).single();
          if (host?.hetzner_server_id) serverIdToBackup = host.hetzner_server_id;
       }
+      // The backup add-on is a paid Stripe line item, and backups_enabled is
+      // the flag that blocks buying it again. Turning backups off has to undo
+      // all three (the line item, the Hetzner backups and the flag), in an
+      // order where a failure never leaves the customer billed for backups
+      // that are not running: stop billing first, then stop the backups, then
+      // clear the flag. Every step is safe to repeat, so a failed request can
+      // be sent again.
+      if (updated.backups_enabled) {
+        try {
+          let instanceIds = [id];
+          if (serverIdToBackup) {
+            const { data: peers } = await supabaseAdmin!
+              .from("hermes_instances")
+              .select("id")
+              .eq("hetzner_server_id", serverIdToBackup)
+              .eq("user_id", userId);
+            instanceIds = Array.from(
+              new Set([id, ...((peers ?? []) as Array<{ id: string }>).map((peer) => peer.id)]),
+            );
+          }
+          await removeBackupAddonBilling({ userId, instanceIds });
+        } catch (error) {
+          log.error("failed to remove the backup add-on from the subscription", error, {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "PATCH",
+            instanceId: id,
+            failureType: "backup_addon_billing_remove_failed",
+          });
+          return apiError("Could not turn backups off right now. Backups are still on and billed. Please try again shortly.", 502, {
+            failureType: "backup_addon_billing_remove_failed",
+          });
+        }
+      }
       if (serverIdToBackup) {
           try {
               const { disableServerBackup } = await import("@/lib/hetzner/client");
@@ -2022,6 +2057,26 @@ export async function PATCH(
                failureType: "backup_toggle_failed",
              });
           }
+      }
+      if (updated.backups_enabled) {
+        // POST /api/billing/backup-addon flags every instance on the server,
+        // so clear the flag the same way.
+        const flagFilter = serverIdToBackup
+          ? supabaseAdmin!.from("hermes_instances").update({ backups_enabled: false }).eq("hetzner_server_id", serverIdToBackup).eq("user_id", userId)
+          : supabaseAdmin!.from("hermes_instances").update({ backups_enabled: false }).eq("id", id).eq("user_id", userId);
+        const { error: flagError } = await flagFilter;
+        if (flagError) {
+          log.error("failed to clear backups_enabled after turning backups off", flagError, {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "PATCH",
+            instanceId: id,
+            failureType: "backup_flag_clear_failed",
+          });
+          return apiError("Backups were turned off but the setting could not be saved. Please try again.", 500, {
+            failureType: "backup_flag_clear_failed",
+          });
+        }
       }
     }
 
@@ -3241,6 +3296,8 @@ export async function POST(
         hostIpForOps = ipv4;
         const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!, {
           initiator: USER_LIVE_UPDATE,
+          // UPDATE NOW brings the box onto the release the registry offers it.
+          imageIntent: "release",
         });
         if (!result.applied) {
           const retryableSshMessage = normalizeRetryableInstanceActionError(result.error);

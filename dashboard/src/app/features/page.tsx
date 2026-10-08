@@ -25,30 +25,30 @@ const features = [
   {
     slug: "persistent-memory",
     title: "Persistent Memory",
-    tagline: "Your agent remembers. Every session. Forever.",
+    tagline: "Your agent remembers from one session to the next.",
     description:
-      "Unlike tools that reset on every conversation, Hermes agents retain full context across sessions. Projects, preferences, lessons — all compound over time.",
+      "Most AI tools forget everything when a chat ends. Hermes agents keep their context from one session to the next: your projects, your preferences and what they have learned, all building up over time.",
   },
   {
     slug: "browser-automation",
     title: "Browser Automation",
     tagline: "Your agent can actually browse the web.",
     description:
-      "Browser automation comes pre-configured on paid plans. Your agent can research, fill forms, extract data, and interact with websites autonomously.",
+      "Browsing comes set up on paid plans. Your agent can research, fill in forms, pull out data and use websites on its own.",
   },
   {
     slug: "multi-agent",
     title: "Multiple Agents",
-    tagline: "Multiple agents. One compute pool.",
+    tagline: "Several agents. One pool of computing power.",
     description:
-      "Run specialized agents side by side from one account, sharing one compute pool instead of paying per seat. Each keeps its own memory and tools.",
+      "Run specialized agents side by side from one account, sharing one pool of computing power instead of paying per seat. Each keeps its own memory and tools.",
   },
   {
     slug: "no-docker-hosting",
     title: "No Docker Required",
-    tagline: "Deployed without touching a terminal.",
+    tagline: "Set up without typing a single command.",
     description:
-      "Hivra handles the entire infrastructure layer. No VPS provisioning, no Docker configs, no Nginx/Caddy setup. Just add your AI key or login and go.",
+      "Hivra handles all the server setup for you: no renting a server, no Docker files, no web-server settings. Just add your AI key or login and go.",
   },
   {
     slug: "openclaw-alternative",
@@ -62,7 +62,7 @@ const features = [
     title: "Scheduled Tasks & Cron Jobs",
     tagline: "Your agent works while you sleep.",
     description:
-      "Define recurring tasks that run on a schedule — email triage, competitive monitoring, data sync, API calls. Cron support comes pre-configured for Hermes agents.",
+      "Set up jobs that repeat on a schedule, like sorting your email, watching competitors or syncing data. The scheduler (called cron) comes set up for Hermes agents.",
   },
 ];
 
@@ -78,15 +78,15 @@ const breadcrumbSchema = {
 const quickSummary = [
   {
     title: "Persistent memory",
-    body: "Your agent keeps context across sessions, projects, and follow-up work without a manual reset loop.",
+    body: "Your agent remembers what you told it from one session to the next, so you never have to start over.",
   },
   {
     title: "Browser automation",
-    body: "Research, forms, data extraction, and website interaction come set up on paid plans.",
+    body: "Research, filling in forms, pulling out data and using websites all come set up on paid plans.",
   },
   {
     title: "Scheduled tasks",
-    body: "Recurring jobs and cron-style runs are already built in, so agents keep working when you're away.",
+    body: "Repeat jobs are already built in, so agents keep working when you're away.",
   },
   {
     title: "Multiple agents",
@@ -95,7 +95,7 @@ const quickSummary = [
 ] as const;
 
 export default function FeaturesPage() {
-  return (<PublicSite className={styles.page} data-page="features"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Features" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Platform Features</span><h1>Everything pre-configured. <strong>Nothing to set up.</strong></h1><p>Hivra runs Hermes, OpenClaw, Claude Code, Codex and other agents. For Hermes on paid plans, memory, browsing and schedules come set up. No plugins, no config files, no docs to read first.</p></header><div className={styles.indexHead}><h2>What you get on day one</h2><Link href="/pricing">See Pricing</Link></div><div className={styles.introGrid}>{quickSummary.map(({ title, body }) => <div key={title}><h2>{title}</h2><p>{body}</p></div>)}</div><p className={styles.directoryAction}><Link href={PUBLIC_START_HREF} className={styles.button}>Start Deploying <ArrowUpRight size={20} aria-hidden="true" /></Link></p>
+  return (<PublicSite className={styles.page} data-page="features"><StructuredData schema={breadcrumbSchema} /><main className={styles.main} id="main-content"><Breadcrumbs items={[{ label: "Features" }]} /><header className={styles.masthead}><span className={styles.eyebrow}>Platform Features</span><h1>Launch, add your AI key or login, <strong>and start.</strong></h1><p>Hivra runs Hermes, OpenClaw, Claude Code, Codex and other agents. For Hermes on paid plans, memory, browsing and schedules come set up. No plug-ins, no settings files, no manual to read first.</p></header><div className={styles.indexHead}><h2>What you get on day one</h2><Link href="/pricing">See Pricing</Link></div><div className={styles.introGrid}>{quickSummary.map(({ title, body }) => <div key={title}><h2>{title}</h2><p>{body}</p></div>)}</div><p className={styles.directoryAction}><Link href={PUBLIC_START_HREF} className={styles.button}>Start Deploying <ArrowUpRight size={20} aria-hidden="true" /></Link></p>
   <div className={styles.directory}>{features.map(({ slug, title, tagline, description }, index) => <Link key={slug} href={`/features/${slug}`}><span>{String(index + 1).padStart(2, "0")}</span><h2>{title}</h2><div><h3>{tagline}</h3><p>{description}</p><span className={styles.readLink}>Learn more<ArrowUpRight size={20} aria-hidden="true" /></span></div></Link>)}</div>
   <section className={styles.cta}><p>From $9.99/mo for 2 vCPU and 4 GB. 7-day money-back guarantee on card payments.</p><Link href={PUBLIC_START_HREF} className={styles.button}>Deploy My Agent<ArrowUpRight size={20} aria-hidden="true" /></Link></section><EditorialRelated title="See also:" links={[{ label: "Pricing", href: "/pricing" }, { label: "Hivra vs alternatives", href: "/compare" }]} /></main></PublicSite>);
 }

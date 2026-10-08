@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 import { decryptApiKey } from "@/lib/crypto";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { DIGEST_PATTERN } from "@/lib/hermes-releases/policy";
+import { recordBoxOutcome, type BoxOutcome } from "@/lib/hermes-releases/store";
+import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -37,6 +40,21 @@ const NON_RESURRECTABLE_STATUS_FILTER = `(${[...NON_RESURRECTABLE_STATUSES]
   .map((status) => `"${status}"`)
   .join(",")})`;
 
+type ReleaseReportKind = BoxOutcome["kind"];
+
+const RELEASE_REPORT_KINDS: readonly string[] = ["updated", "failed", "rolled_back", "paused"];
+
+/** What the box's update stack adds about the image it runs (all optional). */
+interface ReleaseReport {
+  /** Digest running on the box after this operation. */
+  digest?: string;
+  /** Digest the operation was moving the box to (the release being judged). */
+  targetDigest?: string;
+  kind?: ReleaseReportKind;
+  /** Version of the box-side update stack that sent the report. */
+  stackVersion?: number;
+}
+
 interface NormalizedUpdateReport {
   status: UpdateStatus;
   runType: UpdateRunType;
@@ -44,6 +62,102 @@ interface NormalizedUpdateReport {
   detail?: string;
   occurredAt?: string;
 }
+
+function parseReleaseReport(raw: {
+  digest?: unknown;
+  targetDigest?: unknown;
+  kind?: unknown;
+  stackVersion?: unknown;
+}): ReleaseReport {
+  const digest = normalizeOptionalString(raw.digest);
+  const targetDigest = normalizeOptionalString(raw.targetDigest);
+  const kind = normalizeOptionalString(raw.kind);
+  const stackVersion = Number(normalizeOptionalString(String(raw.stackVersion ?? "")));
+  return {
+    ...(digest && DIGEST_PATTERN.test(digest) ? { digest } : {}),
+    ...(targetDigest && DIGEST_PATTERN.test(targetDigest) ? { targetDigest } : {}),
+    ...(kind && RELEASE_REPORT_KINDS.includes(kind) ? { kind: kind as ReleaseReportKind } : {}),
+    ...(Number.isInteger(stackVersion) && stackVersion >= 1 && stackVersion <= 99 ? { stackVersion } : {}),
+  };
+}
+
+const HEALTH_BY_KIND: Record<ReleaseReportKind, string> = {
+  updated: "ok",
+  failed: "failed",
+  rolled_back: "rolled_back",
+  paused: "paused",
+};
+
+/**
+ * Record what the box says it runs and how its update stack is doing, then
+ * judge the release (a release that enough boxes fail halts itself). Best
+ * effort: a failure here never fails the status callback itself.
+ */
+async function recordReleaseReport(
+  instance: { id: string; user_id: string },
+  report: NormalizedUpdateReport,
+  release: ReleaseReport
+): Promise<void> {
+  if (!supabaseAdmin) return;
+  const kind: ReleaseReportKind | undefined =
+    release.kind ?? (release.digest || release.targetDigest ? (report.status === "succeeded" ? "updated" : "failed") : undefined);
+  if (!kind && !release.digest && !release.stackVersion) return;
+
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {};
+  if (release.stackVersion) patch.update_stack_version = release.stackVersion;
+  if (release.digest) {
+    const { data: known } = await supabaseAdmin
+      .from("hermes_releases")
+      .select("id, version")
+      .eq("digest", release.digest)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string; version: string }>();
+    patch.agent_image_digest = release.digest;
+    patch.agent_release_id = known?.id ?? null;
+    patch.agent_version = known?.version ?? null;
+    patch.agent_image_reported_at = now;
+  }
+  if (kind) {
+    patch.update_health = HEALTH_BY_KIND[kind];
+    patch.update_health_detail = kind === "updated" ? null : (report.reason ?? report.detail ?? null)?.slice(0, 500) ?? null;
+    patch.update_health_at = now;
+  }
+  const { error } = await supabaseAdmin.from("hermes_instances").update(patch).eq("id", instance.id);
+  if (error) {
+    log.error("release report write failed", new Error("release_report_write_failed"), {
+      source: "instance-update-status",
+      failureType: "release_report_write_failed",
+      instanceId: instance.id,
+    });
+  }
+  if (kind) {
+    try {
+      await recordBoxOutcome(supabaseAdmin, {
+        instanceId: instance.id,
+        userId: instance.user_id,
+        kind,
+        // The release to judge. After a success the digest the box runs is the
+        // target. After a failure it is NOT: the box is back on the old image,
+        // so only an explicit target may be blamed.
+        targetDigest: kind === "updated" ? (release.targetDigest ?? release.digest ?? null) : (release.targetDigest ?? null),
+        detail: report.reason ?? report.detail ?? null,
+      });
+    } catch (err) {
+      log.error("release outcome record failed", err instanceof Error ? err : new Error(String(err)), {
+        source: "instance-update-status",
+        failureType: "release_outcome_record_failed",
+        instanceId: instance.id,
+      });
+    }
+  }
+}
+
+const RELEASE_KIND_LABEL: Partial<Record<ReleaseReportKind, string>> = {
+  paused: "Auto-update paused",
+  rolled_back: "Update rolled back",
+};
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -69,6 +183,7 @@ async function recordUpdateReport(params: {
     detail?: string;
     occurredAt?: string;
   };
+  release?: ReleaseReport;
 }) {
   if (!supabaseAdmin) return apiError("Database not configured", 500);
 
@@ -116,6 +231,8 @@ async function recordUpdateReport(params: {
     detail: normalized.detail,
     occurredAt: normalized.occurredAt,
   };
+  const releaseReport = params.release ?? {};
+  const kindLabel = releaseReport.kind ? RELEASE_KIND_LABEL[releaseReport.kind] : undefined;
   const updateLabel = report.runType === "scheduled" ? "Auto-update" : "Manual update";
   // Only resurrect to "running" when the row is live and not in a terminal/cold
   // lifecycle state — a replayed/late callback must not revive a soft-deleted,
@@ -141,13 +258,15 @@ async function recordUpdateReport(params: {
     }
   }
 
+  await recordReleaseReport(instance, report, releaseReport);
+
   await reportOpsEvent({
     source: "instance-update-status",
     severity: report.status === "failed" ? "error" : "info",
-    title: `${updateLabel} ${report.status === "failed" ? "failed" : "succeeded"}`,
+    title: kindLabel ?? `${updateLabel} ${report.status === "failed" ? "failed" : "succeeded"}`,
     message:
       report.status === "failed"
-        ? `${updateLabel} reported a host-side failure.`
+        ? `${kindLabel ?? updateLabel} reported a host-side failure.`
         : `${updateLabel} completed successfully.`,
     route: "/api/instances/[id]/update-report",
     userId: instance.user_id,
@@ -155,6 +274,9 @@ async function recordUpdateReport(params: {
     metadata: {
       status: report.status,
       runType: report.runType,
+      ...(releaseReport.kind ? { kind: releaseReport.kind } : {}),
+      ...(releaseReport.digest ? { digest: releaseReport.digest } : {}),
+      ...(releaseReport.targetDigest ? { targetDigest: releaseReport.targetDigest } : {}),
       ...(report.status === "failed"
         ? {
             failureOwner: "hermes",
@@ -189,6 +311,12 @@ export async function GET(
         reason: searchParams.get("r") ?? undefined,
         occurredAt: searchParams.get("o") ?? undefined,
       },
+      release: parseReleaseReport({
+        digest: searchParams.get("i"),
+        targetDigest: searchParams.get("ti"),
+        kind: searchParams.get("k"),
+        stackVersion: searchParams.get("sv"),
+      }),
     });
   } catch (err) {
     return handleApiError(err);
@@ -213,6 +341,12 @@ export async function POST(
         detail: body?.detail,
         occurredAt: body?.occurredAt,
       },
+      release: parseReleaseReport({
+        digest: body?.digest,
+        targetDigest: body?.targetDigest,
+        kind: body?.kind,
+        stackVersion: body?.stackVersion,
+      }),
     });
   } catch (err) {
     return handleApiError(err);

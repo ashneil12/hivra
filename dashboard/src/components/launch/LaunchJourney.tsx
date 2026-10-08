@@ -35,7 +35,6 @@ import {
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
 import { useHermesWorkspaceReadiness } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
-import { FreeTierCardVerification } from "@/components/billing/FreeTierCardVerification";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
@@ -65,8 +64,6 @@ import {
   type PlanInfo,
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
-import { requestSubscriptionCheckout } from "@/lib/billing/client";
-import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
@@ -172,6 +169,8 @@ import { ModelAccessControl } from "./ModelAccessControl";
 
 function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"], poolExempt = false): boolean {
   if (!plan?.usage) return false;
+  // A Free account holds no Hivra Cloud computer: hosted compute is bought.
+  if (!isPaidPlan(plan)) return false;
   return plan.maxCpuPerAgent >= (resources.maximumCpu ?? resources.cpu)
     && plan.maxRamPerAgent >= (resources.maximumRam ?? resources.ram)
     // A pool-exempt agent (Aeon) uses an agent slot, not the CPU and memory pool.
@@ -670,15 +669,6 @@ export function LaunchJourney() {
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [planChecked, setPlanChecked] = useState(false);
   const [planCheckRevision, setPlanCheckRevision] = useState(0);
-  // Turning the Free plan on from the launch: its own button, never implied.
-  // "paid-plan-found": billing refused Free because a paid plan holds the
-  // account; the plan is read again to show which, and how to settle it.
-  const [freeActivation, setFreeActivation] = useState<
-    { state: "idle" | "activating" | "activated" | "paid-plan-found" } | { state: "failed"; message: string }
-  >({ state: "idle" });
-  // The first-run funnel's "activation page" is Launch for an account with
-  // no plan; recorded once per visit.
-  const activationViewRecordedRef = useRef(false);
   const [existingNames, setExistingNames] = useState<string[] | null>(null);
   const [whereExpanded, setWhereExpanded] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -715,7 +705,6 @@ export function LaunchJourney() {
   // written to the draft, and it belongs to the launch it was typed for.
   const [pastedKey, setPastedKey] = useState<{ launchRequestId: string; value: string } | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
-  const [cardCheckOpen, setCardCheckOpen] = useState(false);
   const [observation, setObservation] = useState<LaunchObservation | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [reconciling, setReconciling] = useState(false);
@@ -1056,12 +1045,6 @@ export function LaunchJourney() {
     return () => { active = false; };
   }, [planCheckRevision]);
 
-  useEffect(() => {
-    if (selfHosted || !planChecked || !plan?.needsActivation || activationViewRecordedRef.current) return;
-    activationViewRecordedRef.current = true;
-    captureLaunchEvent("activation_page_viewed", { plan: "free", authState: "signed_in" });
-  }, [plan, planChecked, selfHosted]);
-
   // Hivra credits pay for models; the balance decides whether Hermes starts on
   // them and whether the credits choice can be picked at all.
   useEffect(() => {
@@ -1204,56 +1187,12 @@ export function LaunchJourney() {
     setPlanCheckRevision(value => value + 1);
   };
 
-  // A new account turns the Free plan on here, with its own button. Nothing
-  // is bought; the plan is read again afterwards and only then counts.
-  const activateFree = async () => {
-    if (freeActivation.state === "activating") return;
-    setFreeActivation({ state: "activating" });
-    captureLaunchEvent("activation_started", { plan: "free", authState: "signed_in" });
-    const result = await requestSubscriptionCheckout("free");
-    if (result.ok) {
-      captureLaunchEvent("activation_dashboard_reached", { plan: "free", destination: "/dashboard/launch", outcome: "free_plan_activated" });
-      setFreeActivation({ state: "activated" });
-      recheckPlan();
-      return;
-    }
-    if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
-      // A paid plan holds the account, so Free isn't turned on over it. Read
-      // the plan again: it shows as active, or as on hold with the way to
-      // settle it. Nothing here says Free is on.
-      captureLaunchEvent("activation_dashboard_reached", { plan: "free", destination: "/dashboard/launch", outcome: "active_subscription" });
-      setFreeActivation({ state: "paid-plan-found" });
-      recheckPlan();
-      return;
-    }
-    captureLaunchEvent("activation_failed", {
-      plan: "free",
-      stage: "free_plan_activation",
-      failureType: result.reason ?? "subscribe_request_failed",
-      errorCategory: result.status >= 500 || result.status === 0 ? "server" : "request",
-      status: result.status,
-      recoverable: true,
-    });
-    // Launch's own words: this step takes no payment, whatever the billing
-    // client calls a request it couldn't complete.
-    setFreeActivation({ state: "failed", message: "Couldn't turn on the Free plan. Nothing was charged. Try again in a moment." });
-  };
-  // Said once the plan read back shows it, never from the click alone.
-  const planActiveAfterActivation = (freeActivation.state === "activated" || freeActivation.state === "paid-plan-found")
-    && planChecked && plan && !plan.needsActivation && !plan.onHold;
-  const freeActiveNotice = planActiveAfterActivation ? (
-    <div className={styles.notice} role="status">
-      <Check size={16} aria-hidden />
-      <span>{`${plan.name} is active.`}</span>
-    </div>
-  ) : null;
   // A paid plan holds the account without granting anything: billing said
-  // so, or turning Free on found one billing didn't describe. Hivra Cloud
-  // waits until it is settled in Billing; the owner's servers don't.
+  // so. Hivra Cloud waits until it is settled in Billing; the owner's servers
+  // don't.
   const planHold: PlanHold | null = selfHosted || !planChecked || !plan ? null
     : plan.onHold ? { reason: plan.onHold.reason, planName: plan.onHold.name }
-      : plan.needsActivation && freeActivation.state === "paid-plan-found" ? { reason: "unconfirmed" }
-        : null;
+      : null;
   const billingSettleHref = (launchRequestId: string) =>
     `/dashboard/billing?tab=overview&returnTo=${encodeURIComponent(launchReturnPath(launchRequestId))}`;
 
@@ -1423,7 +1362,7 @@ export function LaunchJourney() {
 
   let capacityBlocker: string | null = null;
   // The real next steps a managed blocker can offer.
-  let blockerRemedy: "check-plan" | "managed-plan" | "activate-free" | "settle-plan" | null = null;
+  let blockerRemedy: "check-plan" | "managed-plan" | "settle-plan" | null = null;
   // Which paywall a managed-plan blocker is, for the upgrade funnel.
   let paywall: "paid_profile" | "agent_limit" | "capacity" | "browser" | null = null;
   let offerBrowserOff = false;
@@ -1478,16 +1417,18 @@ export function LaunchJourney() {
   else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !plan?.usage) {
     capacityBlocker = "Managed capacity could not be verified.";
     blockerRemedy = "check-plan";
+  } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !isPaidPlan(plan)) {
+    // A Free account is the platform, not a computer: it works with the
+    // owner's own computer. Hivra-hosted compute is bought.
+    capacityBlocker = `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.`;
+    blockerRemedy = "managed-plan";
+    paywall = "paid_profile";
   } else if (destination.mode === "hivra-managed" && !managedPlanAllowed) {
     capacityBlocker = `${currentProfile?.name ?? "This launch"} needs a paid plan on Hivra Cloud, or a server you connected.`;
     blockerRemedy = "managed-plan";
     paywall = "paid_profile";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && atSlotLimit) {
-    // An account without a plan yet is told what Free would hold, from what
-    // it already runs there, instead of about a plan it doesn't have.
-    capacityBlocker = plan?.needsActivation && plan.usage
-      ? `The Free plan runs ${plan.maxAgents === 1 ? "one agent or computer" : `${plan.maxAgents} agents or computers`} on Hivra Cloud, and your account already has ${plan.usage.agentCount} there.`
-      : "Your current plan has no open agent slots.";
+    capacityBlocker = "Your current plan has no open agent slots.";
     blockerRemedy = "managed-plan";
     paywall = "agent_limit";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !managedFits && plan?.usage) {
@@ -1501,17 +1442,8 @@ export function LaunchJourney() {
     paywall = "capacity";
     offerBrowserOff = browserOn && planCanFit(plan, resourcesWithBrowser(false), poolExempt);
     offerFittingPreset = true;
-  } else if (destination.mode === "hivra-managed" && browserOn && !isPaidPlan(plan)) {
-    capacityBlocker = `${currentProfile?.name ?? "This agent"} with a browser needs a paid plan on Hivra Cloud.`;
-    blockerRemedy = "managed-plan";
-    paywall = "browser";
-    offerBrowserOff = true;
-  } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && plan?.needsActivation) {
-    // It fits Free. Free is turned on by the owner, with its own button.
-    capacityBlocker = `Turn on the Free plan to run ${currentProfile?.name ?? "it"} on Hivra Cloud. Free includes ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} for one ${draft.resourceKind ?? "agent"} and costs nothing.`;
-    blockerRemedy = "activate-free";
   }
-  const recordUpgradeClick = (via: "plan_blocker" | "free_activation") => {
+  const recordUpgradeClick = (via: "plan_blocker") => {
     captureLaunchEvent("upgrade_clicked", {
       ...launchEventContext(draft),
       via,
@@ -1530,13 +1462,6 @@ export function LaunchJourney() {
         event="paywall_viewed"
         properties={{ ...launchEventContext(draft), paywall, from_plan: plan?.needsActivation ? null : plan?.key ?? null, to_plan: upgrade?.key ?? null }}
       />
-      {paywall === "agent_limit" && !isPaidPlan(plan) ? (
-        <FunnelMoment
-          momentKey={`free_limit:${draft.launchRequestId}`}
-          event="free_limit_hit"
-          properties={{ ...launchEventContext(draft), limit_type: "agents", from_plan: "free", to_plan: upgrade?.key ?? null }}
-        />
-      ) : null}
     </>
   ) : null;
 
@@ -1835,9 +1760,8 @@ export function LaunchJourney() {
   // known yet, so it is reported as uncertain.
   const recordLaunchFailure = (submitting: LaunchDraft, context: Record<string, unknown>, error: unknown) => {
     const stage = launchFailureStage(submitting);
-    if (error instanceof LaunchCorrectableError && error.action?.kind === "verify-card") {
-      captureLaunchEvent("activation_card_required", context);
-      captureLaunchEvent("paywall_viewed", { ...context, paywall: "card_required" });
+    if (error instanceof LaunchCorrectableError && error.code === "hosted_compute_requires_plan") {
+      captureLaunchEvent("paywall_viewed", { ...context, paywall: "plan_required" });
       return;
     }
     if (error instanceof HivraLaunchCorrectableError) {
@@ -1953,7 +1877,6 @@ export function LaunchJourney() {
         });
         writeLaunchDraft(correctable, storageOwner);
         setDraft(correctable);
-        if (correctable.errorAction?.kind === "verify-card") setCardCheckOpen(true);
       } else {
         const uncertain = withSavedKey({
           ...submitting,
@@ -2011,12 +1934,6 @@ export function LaunchJourney() {
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
           <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
-          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
-        </> : blockerRemedy === "activate-free" ? <>
-          <button type="button" onClick={() => void activateFree()} disabled={freeActivation.state === "activating"}>
-            {freeActivation.state === "activating" ? "Turning on Free…" : "Turn on Free"}
-          </button>
-          <Link href={upgradeHref} onClick={() => recordUpgradeClick("free_activation")}>See paid plans</Link>
           <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
         </> : blockerRemedy === "settle-plan" && planHold ? <>
           <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
@@ -2114,9 +2031,8 @@ export function LaunchJourney() {
   const whereDetail = digitalOceanLane
     ? "A sandbox on your own DigitalOcean team. DigitalOcean bills it."
     : destination.mode === "hivra-managed" && !selfHosted
-    ? planHold?.reason === "unconfirmed" ? "Paid plan · not active"
-      : plan?.onHold ? `${plan.onHold.name} plan · on hold`
-        : plan ? plan.needsActivation ? `${plan.name} plan · not turned on yet` : `${plan.name} plan` : null
+    ? plan?.onHold ? `${plan.onHold.name} plan · on hold`
+      : plan ? isPaidPlan(plan) ? `${plan.name} plan` : "Free account · needs a paid plan" : null
     : destination.selectedTarget ? (selfHosted ? selfHostedTargetLabel : ownCapacityLabel(substrate)) : null;
   const sizeSummary = currentProfile?.sizing === "fixed"
     ? `${draft.resources.cpu} CPU / ${draft.resources.ram} GB · fixed size`
@@ -2136,8 +2052,7 @@ export function LaunchJourney() {
     substrate,
     planName: plan?.name ?? null,
     modelNote: modelCostNote(draft.profileId, draft.modelAccess),
-    planPending: Boolean(plan?.needsActivation) && !planHold,
-    planOnHold: planHold ? planHold.reason === "unconfirmed" ? "paid" : planHold.planName : null,
+    planOnHold: planHold ? planHold.planName : null,
   }) : "";
   const whatItCanUse = draft.profileId ? capabilitySummary(draft.profileId, { browser: browserOn }) : "";
   const launchLabel = draft.profileId === "windows" ? "Start Windows setup"
@@ -2284,7 +2199,6 @@ export function LaunchJourney() {
             <p>Pick an agent or a computer. Hivra suggests where it runs and how big it is, and you review everything before anything starts.</p>
           </div>
           {upgradeNotice}
-          {freeActiveNotice}
           {templateProblem ? (
             <div className={styles.blocker} role="alert">
               <AlertTriangle size={16} aria-hidden />
@@ -2306,10 +2220,10 @@ export function LaunchJourney() {
                 </span>
               </span>
             </div>
-          ) : planChecked && plan?.needsActivation && !selfHosted ? (
+          ) : planChecked && plan?.usage && !isPaidPlan(plan) && !selfHosted ? (
             <div className={styles.notice} role="status">
               <Cloud size={16} aria-hidden />
-              <span>{`The Free plan runs one agent or computer with ${formatLaunchSize(plan.maxCpuPerAgent, plan.maxRamPerAgent)} on Hivra Cloud at no cost. You turn it on when you launch there; your own cloud or server doesn't need it.`}</span>
+              <span>Hivra is free to use with your own computer. Connect a computer or server to launch on it, or choose a plan to run on Hivra Cloud.</span>
             </div>
           ) : null}
           {planChecked && !plan?.usage && !selfHosted ? (
@@ -2340,7 +2254,6 @@ export function LaunchJourney() {
                 : "Hivra picked where it runs and how big it is. Change anything, then review before anything starts."}</p>
           </div>
           {upgradeNotice}
-          {freeActiveNotice}
           {draft.template ? (
             <div className={styles.notice} role="status">
               <Check size={16} aria-hidden />
@@ -2595,12 +2508,6 @@ export function LaunchJourney() {
               {paywallMoments}
             </div>
           ) : null}
-          {freeActivation.state === "failed" && plan?.needsActivation ? (
-            <div className={styles.blocker} role="alert">
-              <AlertTriangle size={16} aria-hidden />
-              <span><strong>{freeActivation.message}</strong></span>
-            </div>
-          ) : null}
           {footer(primary("Review launch", () => advanceTo("review", {
             // A DigitalOcean team is its own choice; the host destination only
             // speaks for Hivra Cloud and the owner's servers.
@@ -2694,9 +2601,7 @@ export function LaunchJourney() {
           </span></div> : null}
           {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{draft.error}</strong>
             {draft.errorAction ? <span className={styles.blockerActions}>
-              {draft.errorAction.kind === "verify-card"
-                ? <button type="button" onClick={() => setCardCheckOpen(true)}>Add a card to continue</button>
-                : <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>}
+              <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>
             </span> : null}
           </span></div> : null}
           {draft.result?.status === "error" ? <div className={styles.blocker}>
@@ -2824,15 +2729,6 @@ export function LaunchJourney() {
           onRefreshSummary={() => setCreditsRevision(value => value + 1)}
         />
       ) : null}
-      <FreeTierCardVerification
-        open={cardCheckOpen}
-        message={draft.errorAction?.kind === "verify-card" ? draft.error : null}
-        onClose={() => setCardCheckOpen(false)}
-        onVerified={async () => {
-          setCardCheckOpen(false);
-          await submit();
-        }}
-      />
       {capacitySheetOpen ? (
         <LaunchCapacitySheet
           launchResourceId={capacityResourceFor(draft.profileId)}

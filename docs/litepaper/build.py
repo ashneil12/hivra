@@ -10,6 +10,7 @@ are separate assets and are never rewritten by this script.
 import argparse
 import html
 import hashlib
+import json
 import math
 import re
 import struct
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from link_policy import enhance_links
+import restrict
 
 REPO = Path(__file__).resolve().parents[2]
 OUTPUT = REPO / "docs/litepaper/index.html"
@@ -85,8 +87,8 @@ def render(png, attributes, sizes):
 SITE_URL = "https://hivra.cloud"
 PAGE_URL = SITE_URL + "/docs/litepaper/index.html"
 PAGE_TITLE = "Hivra · Somewhere better to work"
-PAGE_DESCRIPTION = ("Your agent needs a computer. It doesn't need yours. Explore Hivra's vision for "
-                    "independent agent computers and an ecosystem with boundaries outside the agent.")
+PAGE_DESCRIPTION = ("Your agent needs a computer. It doesn't need yours. See how Hivra gives AI agents "
+                    "computers of their own, with limits the agent can't talk its way past.")
 SHARE_IMAGE = "assets/boundary-monolith-v5.png"
 SHARE_IMAGE_ALT = "Architectural illustration of a bounded computer."
 PRODUCT_GROUPS = {
@@ -181,6 +183,51 @@ def table(block):
     return '<div class="fit-table" role="region" aria-label="Where each option stands" tabindex="0"><table><thead><tr>{}</tr></thead><tbody>{}</tbody></table></div>'.format(head, rows_html)
 
 
+GLOSSARY = json.loads((REPO / "dashboard/src/lib/glossary.json").read_text(encoding="utf-8"))
+# Token-facing tooltips are part of the token copy and wait for its review.
+GLOSS_TOKEN_TERMS = True
+GLOSS_SKIP = {"a", "button", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "code"}
+
+
+def glossify(markup, seen):
+    """Wrap the first use of each glossary term in a hover and focus tooltip.
+
+    The definition lives in data-tip, so it is never reader text: the approved
+    wording is unchanged, and the Markdown file stays plain. Links and headings
+    are skipped. `seen` holds the terms already explained in this stretch of copy."""
+    entries = [(entry, re.compile(r"\b(?:" + entry["pattern"] + r")\b",
+                                  0 if entry.get("caseSensitive") else re.IGNORECASE))
+               for entry in GLOSSARY if GLOSS_TOKEN_TERMS or not entry.get("token")]
+    parts, depth = re.split(r"(<[^>]+>)", markup), 0
+    for index, part in enumerate(parts):
+        if part.startswith("<"):
+            tag = re.match(r"</?([a-zA-Z0-9]+)", part)
+            if tag and tag[1].lower() in GLOSS_SKIP and not part.endswith("/>"):
+                depth += -1 if part.startswith("</") else 1
+            continue
+        if depth > 0 or not part.strip():
+            continue
+        hits = []
+        for entry, pattern in entries:
+            if entry["key"] in seen:
+                continue
+            match = pattern.search(part)
+            if match and not any(match.start() < end and start < match.end() for start, end, _, _ in hits):
+                hits.append((match.start(), match.end(), entry, match[0]))
+        if not hits:
+            continue
+        out, cursor = [], 0
+        for start, end, entry, text in sorted(hits, key=lambda hit: hit[0]):
+            seen.add(entry["key"])
+            out.append(part[cursor:start])
+            out.append('<span class="gloss" tabindex="0" aria-description="{0}" data-tip="{0}">{1}</span>'.format(
+                escape(entry["tip"], quote=True), text))
+            cursor = end
+        out.append(part[cursor:])
+        parts[index] = "".join(out)
+    return "".join(parts)
+
+
 def blocks(value):
     rendered = []
     for block in re.split(r"\n\s*\n", value.strip()):
@@ -199,7 +246,7 @@ def blocks(value):
             rendered.append("<pre>" + escape(block.strip("`\n")) + "</pre>")
         else:
             rendered.append("<p>" + inline(block) + "</p>")
-    return "\n".join(rendered)
+    return glossify("\n".join(rendered), set())
 
 
 def split_sub(value):
@@ -322,7 +369,7 @@ def build_page():
     roadmap_intro, stages = split_sub(sections["What we're building around it"])
     economy, econ_sub = split_sub(sections["The economy"])
     feature_names = ["Come back to it", "Settle in", "Follow the work", "Know what has access"]
-    feature_big = ['STAYS.', 'CLOSE.', 'VISIBLE.', 'BOUNDED.']
+    feature_big = ['STAYS.', 'SETTLE.', 'VISIBLE.', 'BOUNDED.']
     feature_images = ['agent-computer-opportunity-v2.png', 'boundary-monolith-v5.png', 'observable-run-v2.png', 'agent-computer-hero-v2.png']
     feature_alts = ['One workspace connects to a laptop, tablet and phone.', SHARE_IMAGE_ALT, 'Concept illustration connecting a request, observed actions and result.', 'Personal device beside a separate agent computer.']
     features = ''
@@ -423,8 +470,8 @@ def build_page():
 <main id="main">
 <section class="hero" id="beginning" data-chapter="The beginning">
 <div class="hero-art" aria-hidden="true"><div class="hero-object-stage"><div class="hero-object">{monolith('alt="" width="1672" height="940" fetchpriority="high"', HERO_SIZES)}<div class="hero-object-edge"></div></div><div class="hero-coordinate coordinate-top">HIVRA / AGENT COMPUTERS</div><div class="hero-coordinate coordinate-bottom">A place of its own.</div></div><div class="hero-shade"></div><canvas id="field-canvas"></canvas></div><div class="hero-watermark" aria-hidden="true">HIVRA</div>
-<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><a class="hero-open" href="https://github.com/ashneil12/hivra">{GITHUB_MARK}Open source · Run it yourself</a></div>
-<div class="hero-caption"><span class="hero-caption-mark" aria-hidden="true">H—</span>{hero_caption}<span class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE<span></span></span></div>
+<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><div class="hero-links"><a class="hero-open" href="https://github.com/ashneil12/hivra">{GITHUB_MARK}Open source · Run it yourself</a><a class="hero-open hero-token" href="#economy">Tokenomics<span aria-hidden="true">&rarr;</span></a></div></div>
+<div class="hero-caption"><span class="hero-caption-mark" aria-hidden="true">H / 00</span>{hero_caption}<span class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE<span></span></span></div>
 <div class="hero-transition" aria-hidden="true">Give it room<br>to work.</div>
 </section>
 <section class="problem chapter shell" id="opportunity" data-chapter="The problem">
@@ -437,15 +484,15 @@ def build_page():
 <section class="founder chapter shell" id="founder" data-chapter="Why I’m building it"><div class="founder-heading"><span class="founder-rule" aria-hidden="true"></span><h2>Why I'm<br>building it</h2></div><div class="prose founder-copy">{blocks(sections["Why I'm building it"])}</div></section>
 <section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{''.join('<i></i>' for _ in range(8))}</div><p><span class="passage-room">Give it room to work.</span><br><span class="passage-decide">Decide what it can reach.</span></p></section>
 <section class="doors-section chapter shell" id="experience" data-chapter="Agent or computer"><div class="chapter-heading"><h2>Start with an agent.<br>Or a computer.</h2><div class="intro-copy">{blocks(doors)}</div></div><div class="doors"><article class="door door-agent scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol">&gt;_</span></div><h3>Launch an agent</h3>{blocks(doors_sub['Launch an agent'])}</article><article class="door door-computer scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol"><svg viewBox="0 0 80 70"><rect x="7" y="5" width="66" height="44" rx="3"/><path d="M40 50v12M24 64h32"/></svg></span></div><h3>Launch a computer</h3>{blocks(doors_sub['Launch a computer'])}</article></div><div class="two-column-copy"><div><h3>Keep several running</h3>{blocks(doors_sub['Keep several running'])}</div><div id="operation"><h3>Choose who runs it</h3>{blocks(launch_body)}</div></div><div class="launch-journey"><p>The launch:</p>{blocks(launch_list)}</div></section>
-<section class="qualities chapter" id="observability" data-chapter="The product bar"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
-<section class="constitution chapter shell" id="security" data-chapter="The constitution"><div class="chapter-heading"><h2>The boundary lives<br>outside the model</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The constitution</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
+<section class="qualities chapter" id="observability" data-chapter="What you get"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
+<section class="constitution chapter shell" id="security" data-chapter="The rule"><div class="chapter-heading"><h2>The boundary lives<br>outside the model</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The rule</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
 <section class="roadmap chapter" id="future" data-chapter="The ecosystem"><div class="shell chapter-heading"><h2>What we're building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div><div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers · Available now</h3>{blocks(stages['Agent Computers · Available now'])}</div></div><div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div><div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div><div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg><div class="atlas-core" aria-hidden="true">{BRAND_MARK}<strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren't implemented connections.</p></div><div class="product-panels">{panel_html}</div></div><div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>
 <section class="economy chapter shell" id="economy" data-chapter="The economy"><div class="chapter-heading"><h2>The economy</h2></div><div class="economy-intro prose">{blocks(economy)}</div><div class="economy-visual scene-reveal" aria-hidden="true"><span class="economy-wordmark">HIVRA</span><div class="economy-token">{BRAND_MARK}</div><div class="economy-visual-caption"><span>COMPUTE · TOOLS · WORK · KNOWLEDGE</span><span>ONE CONNECTED ECONOMY</span></div></div>{economy_html}</section>
 <section class="reading-room chapter shell" id="reading-room" data-chapter="Read further"><h2>Read further</h2><div class="prose">{blocks(reading_copy)}</div><div class="reading-actions"><p class="source-links">{source_reading_links}</p><button class="text-link reading-toggle" aria-pressed="false">Continuous reading <span aria-hidden="true">↗</span></button></div></section>
 <section class="finale chapter" id="somewhere-better" data-chapter="Somewhere better"><div class="finale-art" aria-hidden="true">{monolith('alt="" width="1672" height="940" loading="lazy" decoding="async"', '100vw')}</div><div class="shell"><h2>Somewhere<br><span>better to work</span></h2><div class="prose finale-copy">{blocks(finale_copy)}</div><div class="finale-actions"><a class="finale-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><a class="finale-computer" href="{COMPUTER_LAUNCH}">Start with a computer {explore_arrow}</a></div><div class="finale-links source-links">{source_finale_links}</div></div></section>
 </main>
 <footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper {explore_arrow}</a></div></footer>
-<nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#fit" aria-label="Where it fits">Where it fits</a><a href="#platform" aria-label="Open source">Open source</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The constitution">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><a class="dock-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><div class="reading-progress" aria-hidden="true"></div></nav>
+<nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#fit" aria-label="Where it fits">Where it fits</a><a href="#platform" aria-label="Open source">Open source</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The boundary">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><a class="dock-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><div class="reading-progress" aria-hidden="true"></div></nav>
 </body></html>'''
     # Chapter markers are navigational metadata; the approved narrative stays intact.
     markers = iter(('The problem', 'Not a future problem', 'Where it fits', 'The computer', 'The experience', 'The boundary', 'The ecosystem', 'The economy'))
@@ -474,9 +521,15 @@ def main():
     parser.add_argument("--check", action="store_true", help="Fail if the page or tokenomics download needs regeneration")
     args = parser.parse_args()
     try:
+        page = build_page()
         outputs = {
-            OUTPUT: build_page().encode("utf-8"),
+            OUTPUT: page.encode("utf-8"),
             REPO / "TOKENOMICS.md": build_tokenomics().encode("utf-8"),
+            # Token-free copies, served by country (dashboard/next.config.ts).
+            OUTPUT.parent / "restricted.html": restrict.litepaper_html(page).encode("utf-8"),
+            OUTPUT.parent / "restricted/LITEPAPER.md": restrict.litepaper_md((REPO / "LITEPAPER.md").read_text(encoding="utf-8")).encode("utf-8"),
+            OUTPUT.parent / "restricted/WHITEPAPER.md": restrict.whitepaper_md((REPO / "WHITEPAPER.md").read_text(encoding="utf-8")).encode("utf-8"),
+            OUTPUT.parent / "restricted/TOKENOMICS.md": restrict.tokenomics_md().encode("utf-8"),
         }
         if args.check:
             stale = [str(path.relative_to(REPO)) for path, content in outputs.items()
@@ -487,6 +540,7 @@ def main():
             print("Current: page and tokenomics download (15 products, {} token uses)".format(len(UTILITY_NAMES)))
         else:
             for path, content in outputs.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
                 print("Built {}: {} bytes".format(path.relative_to(REPO), len(content)))
     except (OSError, ValueError, KeyError, IndexError) as error:

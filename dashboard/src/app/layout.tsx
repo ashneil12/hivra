@@ -75,18 +75,19 @@ export const metadata: Metadata = {
     template: "%s | Hivra",
   },
   description:
-    "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own model key.",
+    "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own AI key.",
+  // Search engines ignore this tag, so it only needs to stay true: no speed
+  // claims ("one click"), and no Nous Research names or marks ("hermes nous
+  // research", "hermes agent os"). Former name and agent names only.
   keywords: [
     "hivra",
     "hermesos",
     "hermes os",
-    "hermes agent os",
     "hermes agent hosting",
     "managed ai agent",
     "deploy hermes agent",
     "persistent ai agent cloud",
     "ai agent hosting",
-    "hermes nous research",
     "openclaw alternative",
     "ai agent without docker",
     "autonomous ai agent hosting",
@@ -94,7 +95,6 @@ export const metadata: Metadata = {
     "how to self host openclaw",
     "ai agent vps hosting",
     "hermes agent telegram",
-    "one click ai agent deploy",
   ],
   authors: [{ name: "Hivra", url: SITE_URL }],
   creator: "Hivra",
@@ -118,7 +118,7 @@ export const metadata: Metadata = {
     siteName: "Hivra",
     title: "Hivra | A computer for you and your agents",
     description:
-      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own model key.",
+      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own AI key.",
     images: [
       {
         url: `${SITE_URL}${OG_IMAGE.home.url}`,
@@ -135,7 +135,7 @@ export const metadata: Metadata = {
     creator: "@HivraOS",
     title: "Hivra | A computer for you and your agents",
     description:
-      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own model key.",
+      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own AI key.",
     images: [`${SITE_URL}${OG_IMAGE.home.url}`],
   },
   robots: {

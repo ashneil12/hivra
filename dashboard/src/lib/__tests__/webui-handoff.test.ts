@@ -199,7 +199,7 @@ describe("webui handoff", () => {
   });
 
   describe("createCookieBackedWebuiIframeUrl", () => {
-    it("sets up a sidecar cookie handoff that redirects to the hash-token iframe URL", () => {
+    it("sets up a sidecar cookie handoff that lands on the hash-token iframe URL", () => {
       const { url } = createCookieBackedWebuiIframeUrl({
         gatewayUrl: "https://agent.example.com",
         apiServerKey,
@@ -209,8 +209,51 @@ describe("webui handoff", () => {
       const parsed = new URL(url);
       expect(parsed.origin).toBe("https://agent.example.com");
       expect(parsed.pathname).toBe("/_sidecar/webui-login");
-      expect(parsed.searchParams.get("next")).toMatch(/^\/webchat#iframe_token=/);
+      // The sidecar redirects to `next`, and the browser carries the login
+      // URL's fragment across that redirect, so the box page still opens as
+      // /webchat#iframe_token=<key>.
+      expect(parsed.searchParams.get("next")).toBe("/webchat");
+      expect(parsed.hash).toBe(`#iframe_token=${apiServerKey}`);
       expect(parsed.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    // The long-lived key used to ride inside `next`, which is part of the
+    // request line: it reached the box's access log, the proxy in front of it,
+    // and the sidecar's 302 Location header. A fragment is never sent to a
+    // server, so now none of those can see it.
+    it("keeps the apiServerKey out of everything a server receives", () => {
+      const { url } = createCookieBackedWebuiIframeUrl({
+        gatewayUrl: "https://agent.example.com",
+        apiServerKey,
+        locale: "zh-CN",
+        appearance: { theme: "hermesos-light", skin: "hivra", colorScheme: "light" },
+        now: 1_700_000_000_000,
+      });
+
+      const sentToServer = url.split("#")[0];
+      expect(sentToServer).not.toContain(apiServerKey);
+      expect(decodeURIComponent(sentToServer)).not.toContain(apiServerKey);
+      expect(sentToServer).not.toContain("iframe_token");
+      expect(new URL(url).searchParams.get("next")).not.toContain("#");
+    });
+
+    it("signs the redirect target the sidecar will see, which has no fragment", () => {
+      const { url, expiresAt, nonce } = createCookieBackedWebuiIframeUrl({
+        gatewayUrl: "https://agent.example.com",
+        apiServerKey,
+        now: 1_700_000_000_000,
+      });
+      const parsed = new URL(url);
+
+      expect(
+        verifyWebuiHandoffSignature({
+          apiServerKey,
+          expiresAt,
+          nonce,
+          nextPath: parsed.searchParams.get("next") ?? "",
+          signature: parsed.searchParams.get("sig") ?? "",
+        }),
+      ).toBe(true);
     });
 
     it("preserves locale and appearance inside the signed redirect target", () => {
@@ -231,7 +274,19 @@ describe("webui handoff", () => {
       expect(next).toContain("lang=zh-CN");
       expect(next).toContain("theme=hermesos-light");
       expect(next).toContain("skin=hivra");
-      expect(next).toContain("#iframe_token=");
+      expect(next).not.toContain("iframe_token");
+      expect(parsed.hash).toBe(`#iframe_token=${apiServerKey}`);
+    });
+
+    it("percent-encodes a key that has characters a fragment cannot carry raw", () => {
+      const odd = "key with space&amp;#plus+";
+      const { url } = createCookieBackedWebuiIframeUrl({
+        gatewayUrl: "https://agent.example.com",
+        apiServerKey: odd,
+      });
+
+      expect(new URL(url).hash).toBe(`#iframe_token=${encodeURIComponent(odd)}`);
+      expect(url.split("#")[0]).not.toContain("space");
     });
   });
 

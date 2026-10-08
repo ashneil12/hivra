@@ -20,7 +20,6 @@ const stubs = new Map([
   ['@/lib/ssrf-safe-fetch', { ssrfSafeFetch: unavailable }],
   ['@/lib/billing/managed-venice-wallets', { ensureManagedVeniceWalletAccount: unavailable }],
   ['@/lib/venice/proxy-keys', { generateManagedVenicePlaintextKey: unavailable, hashManagedVeniceProxyKey: unavailable }],
-  ['@/lib/venice/managed-venice-starter-credit', { grantManagedVeniceStarterCredit: unavailable, isManagedVeniceStarterCreditEnabled: unavailable }],
   ['@/lib/venice/managed-endpoints', { getManagedVeniceProxyBaseUrl: unavailable }],
   ['@/lib/logger', { log: { warn: unavailable } }],
 ]);

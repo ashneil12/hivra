@@ -277,12 +277,13 @@ describe("launch draft storage", () => {
     });
   });
 
-  it("keeps a next step only when it opens a dashboard page or the card check", () => {
+  it("keeps a next step only when it opens a dashboard page", () => {
     const draft = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "hermes" as const, name: "Hermes 1" };
     write({ ...draft, errorAction: { kind: "open", label: "Open your agent", href: "/dashboard/instances/77777777-7777-4777-8777-777777777777" } });
     expect(read()?.errorAction).toEqual({ kind: "open", label: "Open your agent", href: "/dashboard/instances/77777777-7777-4777-8777-777777777777" });
-    write({ ...draft, errorAction: { kind: "verify-card" } });
-    expect(read()?.errorAction).toEqual({ kind: "verify-card" });
+    // The card check is gone: an old saved draft that still names it keeps no next step.
+    write({ ...draft, errorAction: { kind: "verify-card" } } as unknown as typeof draft);
+    expect(read()?.errorAction).toBeNull();
   });
 
   it("treats only a chosen, not yet launched draft as unfinished", () => {
