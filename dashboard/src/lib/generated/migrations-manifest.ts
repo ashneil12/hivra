@@ -383,4 +383,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20260930140000", name: "lock_down_api_role_grants" },
   { version: "20261007120000", name: "hermes_releases" },
   { version: "20261007130000", name: "provider_release_admission_2026_10_07_1" },
+  { version: "20261008100000", name: "agent_network_identity_policy" },
 ];

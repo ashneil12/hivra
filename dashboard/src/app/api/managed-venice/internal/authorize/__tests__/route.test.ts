@@ -37,6 +37,7 @@ const okValue = {
   pricingMap: new Map(),
   pricingSource: "fallback",
   liveModelCount: 0,
+  bodyPatch: {},
 };
 
 describe("/api/managed-venice/internal/authorize", () => {
@@ -102,12 +103,41 @@ describe("/api/managed-venice/internal/authorize", () => {
       userId: "user_1",
       proxyKeyId: "key_1",
       model: "venice-uncensored-1-2",
+      bodyPatch: {},
     });
     expect(payload).not.toHaveProperty("pricingMap");
+    // A Worker that does not say it applies bodyPatch forwards its own copy of
+    // the body, so it must never be given a lower output cap to apply.
     expect(mockAuthorize).toHaveBeenCalledWith({
       plaintextKey: "hven_live_x",
       body: { model: "venice-uncensored-1-2" },
+      allowBodyRewrite: false,
     });
+  });
+
+  it.each([
+    [true, true],
+    ["true", false],
+    [1, false],
+  ])("acceptsBodyPatch=%p allows a body rewrite: %p", async (flag, allowed) => {
+    await POST(
+      makeReq({ plaintextKey: "hven_live_x", body: { model: "m" }, acceptsBodyPatch: flag })
+    );
+    expect(mockAuthorize).toHaveBeenCalledWith(
+      expect.objectContaining({ allowBodyRewrite: allowed })
+    );
+  });
+
+  it("relays the output-cap patch the Worker must apply", async () => {
+    mockAuthorize.mockResolvedValueOnce({
+      ok: true,
+      value: { ...okValue, bodyPatch: { max_completion_tokens: 30_000 } },
+    });
+    const res = await POST(
+      makeReq({ plaintextKey: "hven_live_x", body: { model: "m" }, acceptsBodyPatch: true })
+    );
+    const payload = await res.json();
+    expect(payload.bodyPatch).toEqual({ max_completion_tokens: 30_000 });
   });
 
   it("relays an authorize error response verbatim (402 billing)", async () => {

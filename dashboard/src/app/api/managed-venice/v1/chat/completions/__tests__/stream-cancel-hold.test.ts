@@ -252,9 +252,12 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     expect(upstream.wasCancelled()).toBe(true);
   });
 
-  // #167 second review probe (HIGH): Opus with no output cap holds 4,096
+  // #167 second review probe (HIGH): Opus with no output cap held 4,096
   // output tokens. 10,000 tokens streamed without a usage frame were charged
-  // exactly the hold; nothing past it was ever debited.
+  // exactly the hold; nothing past it was ever debited. Since #166 an uncapped
+  // request holds the model maximum (next test), so the stream here overruns
+  // an explicit 2,000-token cap instead: the observed output past the hold is
+  // still debited as an overage.
   it("charges output streamed past the hold as an overage when the usage frame never arrives", async () => {
     const FRAMES = 10_000;
     mockFetch.mockResolvedValueOnce(
@@ -263,10 +266,8 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
         headers: { "Content-Type": "text/event-stream" },
       })
     );
-    const uncappedBody: Record<string, unknown> = { ...requestBody };
-    delete uncappedBody.max_completion_tokens;
 
-    const response = await POST(makeReq({ ...uncappedBody, model: "claude-opus-4-8" }));
+    const response = await POST(makeReq({ ...requestBody, model: "claude-opus-4-8", max_completion_tokens: 2_000 }));
     await response.text();
 
     const row = reservation();
@@ -283,11 +284,59 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
 
+  // #166 + #167: with no output cap, the hold covers the model maximum
+  // (128,000 tokens on claude-opus-4-8) and, priced from the static catalog,
+  // that cap is written into the forwarded request. The same 10,000 tokens
+  // streamed without a usage frame now fall inside the hold: the request
+  // charges the input estimate plus the observed output, with no overage, and
+  // gives the rest of the worst-case hold back at once. The wallet holds $10,
+  // so the $4.22 worst case is within the half of it one hold may take.
+  it("an uncapped request holds the model maximum, and a usage-less stream is charged its observed output inside that hold", async () => {
+    const WALLET = 10_000_000;
+    mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = WALLET;
+    const FRAMES = 10_000;
+    mockFetch.mockResolvedValueOnce(
+      new Response(closedUpstreamStream(Array.from({ length: FRAMES }, () => contentFrame("abcd"))), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    );
+    const uncappedBody: Record<string, unknown> = { ...requestBody };
+    delete uncappedBody.max_completion_tokens;
+
+    const response = await POST(makeReq({ ...uncappedBody, model: "claude-opus-4-8" }));
+    await response.text();
+
+    const forwarded = JSON.parse(String((mockFetch.mock.calls[0][1] as RequestInit).body));
+    expect(forwarded.max_completion_tokens).toBe(128_000);
+    const row = reservation();
+    const held = Number(row.reserved_micro_usd);
+    const meta = row.metadata as Record<string, number>;
+    expect(held).toBeGreaterThanOrEqual(128_000 * OPUS_OUTPUT_MICRO_USD_PER_TOKEN);
+    const cost = meta.inputEstimateMicroUsd + FRAMES * OPUS_OUTPUT_MICRO_USD_PER_TOKEN;
+    expect(cost).toBeLessThan(held);
+    expect(row).toMatchObject({ status: "captured", captured_micro_usd: cost });
+    const summary = await getManagedVeniceWalletSummary(USER_ID, mockMemory.db);
+    expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: WALLET - cost, reservedMicroUsd: 0 });
+    expect(mockMemory.tables.managed_venice_usage_events).toEqual([
+      expect.objectContaining({ charged_micro_usd: cost }),
+    ]);
+    expect(
+      mockMemory.tables.managed_venice_financial_events.filter((event) => event.event_type === "usage_capture")
+    ).toEqual([expect.objectContaining({ amount_micro_usd: cost })]);
+    expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(0);
+    expect(mockMemory.tables.managed_venice_proxy_keys[0].status).toBe("active");
+  });
+
   // #167 review probe: $2 wallet on Opus, one Stop press. $1.99997 stayed held
   // until the daily sweep, and the next request got a 402. The hold now goes
-  // back as soon as Venice finishes the answer the client left.
+  // back as soon as Venice finishes the answer the client left. (Since the
+  // #166 review one hold takes at most half the wallet above the 4,096-token
+  // floor, so the lock shows on a $0.20 wallet: its floor hold, about $0.135,
+  // leaves too little for a second.)
   it("gives the rest of the hold back once Venice finishes, so one Stop press does not lock a small wallet", async () => {
-    mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = 2_000_000;
+    const WALLET = 200_000;
+    mockMemory.tables.managed_venice_token_lots[0].remaining_value_micro_usd = WALLET;
     const bigRequest = { ...requestBody, model: "claude-opus-4-8", max_completion_tokens: 60_000 };
     const first = pacedUpstreamStream([
       contentFrame("Once"),
@@ -300,7 +349,9 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     );
 
     const response = await POST(makeReq(bigRequest));
-    expect(Number(reservation().reserved_micro_usd)).toBeGreaterThan(1_900_000);
+    const held = Number(reservation().reserved_micro_usd);
+    // What is left could not hold a second request of the same size.
+    expect(WALLET - held).toBeLessThan(held);
     const client = response.body!.getReader();
     await client.read();
     await client.cancel();
