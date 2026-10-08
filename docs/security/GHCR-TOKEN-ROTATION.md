@@ -19,13 +19,13 @@ Do not revoke before every box has run the scrub. GHCR answers "denied" to a sto
 ## Steps
 
 1. Find every copy that is yours to change.
-   - Vercel: `hermesos` and `hermesos-canary`, Settings, Environment Variables, look for `GHCR_TOKEN`. Ask the lead agent to do nothing here: any Vercel env change is Ash only.
+   - Vercel: `hermesos` and `hermesos-canary`, Settings, Environment Variables, look for `GHCR_TOKEN`. Any Vercel env change is Ash only; agents do not touch it.
    - `builderbox-1`: `docker logout ghcr.io` state and any env file used by `release-builder.ts`.
    - GitHub Actions secrets in `ashneil12/hivra` (Settings, Secrets and variables, Actions) that mention GHCR. The default `GITHUB_TOKEN` is not this token and needs no rotation.
 2. Confirm images pull without a login. From a machine with no ghcr login (`docker logout ghcr.io` first), run `docker pull ghcr.io/ashneil12/hermes-webui:stable` and `docker pull ghcr.io/ashneil12/vanilla-hermes-agent:stable`. Both must succeed. Also check each package shows "Public" at https://github.com/users/ashneil12/packages. If one is private, make it public or keep a read-only token (below) and plan for it.
 3. Confirm the scrub reached the fleet. For each running box, as root: `grep -c ghcr.io /root/.docker/config.json` must fail (file gone) or show no `ghcr.io` entry for `__token__`. Boxes that still have it need a dashboard update or redeploy first. This is a fleet roll, so it is Ash's call per box (see `hivra-vm-side-rollout`).
 4. Create the replacement only if something still needs one.
-   - Pushing images (builderbox): fine-grained or classic token, https://github.com/settings/tokens (classic: `write:packages`) . Keep it on builderbox only, never in Vercel env, never on a tenant box.
+   - Pushing images (builderbox): fine-grained or classic token, https://github.com/settings/tokens (classic: `write:packages`). Keep it on builderbox only, never in Vercel env, never on a tenant box.
    - Pulling private images (only if step 2 found one): a separate token with `read:packages` only.
    - If nothing needs a token, create none and delete `GHCR_TOKEN` from Vercel env.
 5. Put the new value where it is needed, then revoke the old token at https://github.com/settings/tokens (Delete). Revoking also invalidates the copies in old `user_data` and backups.
