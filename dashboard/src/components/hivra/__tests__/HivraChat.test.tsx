@@ -958,6 +958,106 @@ describe("HivraChat", () => {
     }
   });
 
+  describe("autoscroll while streaming", () => {
+    const setup = async () => {
+      const frames: FrameRequestCallback[] = [];
+      const request = jest.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      const cancel = jest.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+      const view = render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const pane = screen.getByRole("region", { name: "Conversation" });
+      let scrollHeight = 1500;
+      Object.defineProperties(pane, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, value: 500 },
+        scrollTop: { configurable: true, writable: true, value: 1000 },
+      });
+      // Pinned at the bottom (max scrollTop is 1000), following the stream.
+      fireEvent.scroll(pane);
+      const flush = () => act(() => frames.splice(0).forEach((frame) => frame(0)));
+      return {
+        pane, flush, setScrollHeight: (h: number) => { scrollHeight = h; },
+        cleanup: () => { view.unmount(); request.mockRestore(); cancel.mockRestore(); },
+      };
+    };
+
+    it("a small scroll-up with no wheel, touch or key input is not undone by the next token", async () => {
+      const { pane, flush, cleanup } = await setup();
+      try {
+        // Browser Find or a screen-reader cursor: 50px up, well inside the old 80px band.
+        pane.scrollTop = 950;
+        fireEvent.scroll(pane);
+        expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+        // The next streamed token asks for a pin.
+        flush();
+        expect(pane.scrollTop).toBe(950);
+      } finally { cleanup(); }
+    });
+
+    it("a large scroll-up with no input stays put", async () => {
+      const { pane, flush, cleanup } = await setup();
+      try {
+        pane.scrollTop = 300;
+        fireEvent.scroll(pane);
+        flush();
+        expect(pane.scrollTop).toBe(300);
+        expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+      } finally { cleanup(); }
+    });
+
+    it("scrolling back to the bottom resumes following", async () => {
+      const { pane, cleanup } = await setup();
+      try {
+        pane.scrollTop = 950;
+        fireEvent.scroll(pane);
+        expect(screen.getByRole("button", { name: "Return to latest" })).toBeVisible();
+        pane.scrollTop = 1000;
+        fireEvent.scroll(pane);
+        expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      } finally { cleanup(); }
+    });
+
+    it("the browser clamping scrollTop when content shrinks is not a scroll-up", async () => {
+      const { pane, setScrollHeight, cleanup } = await setup();
+      try {
+        setScrollHeight(1400);
+        pane.scrollTop = 900; // clamped to the new max
+        fireEvent.scroll(pane);
+        expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+      } finally { cleanup(); }
+    });
+
+    it("Return to latest moves keyboard focus to the conversation instead of dropping it", async () => {
+      const { pane, cleanup } = await setup();
+      try {
+        pane.scrollTop = 300;
+        fireEvent.scroll(pane);
+        const button = screen.getByRole("button", { name: "Return to latest" });
+        button.focus();
+        fireEvent.click(button);
+        expect(screen.queryByRole("button", { name: "Return to latest" })).not.toBeInTheDocument();
+        expect(pane).toHaveFocus();
+      } finally { cleanup(); }
+    });
+
+    it("the conversation is a focusable scroll region and session rows are real buttons", async () => {
+      const { pane, cleanup } = await setup();
+      try {
+        expect(pane).toHaveAttribute("tabindex", "0");
+        fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+        const rows = screen.getAllByRole("button").filter((el) => el.hasAttribute("aria-current"));
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+          expect(row.tagName).toBe("BUTTON");
+          expect(row).not.toHaveAttribute("tabindex", "-1");
+        }
+      } finally { cleanup(); }
+    });
+  });
+
   it("keeps an empty chat at the top instead of pinning its greeting out of view", async () => {
     window.localStorage.setItem("hivra:first-welcome:empty-scroll", "1");
     const frames: FrameRequestCallback[] = [];
