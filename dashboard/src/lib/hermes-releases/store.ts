@@ -120,7 +120,18 @@ export async function registerRelease(
     })
     .select(RELEASE_COLUMNS)
     .single();
-  if (error || !data) throw new ReleaseStoreError("Failed to register release", 500);
+  if (error?.code === "23505") {
+    // Two registrations of one image raced (a re-run workflow, two operators):
+    // the other insert won, so return its row rather than failing this one.
+    const winner = await db
+      .from("hermes_releases")
+      .select(RELEASE_COLUMNS)
+      .eq("image_repo", input.imageRepo)
+      .eq("digest", input.digest)
+      .maybeSingle();
+    if (winner.data) return { release: winner.data as unknown as HermesRelease, created: false };
+  }
+  if (error || !data) throw new ReleaseStoreError("Failed to register release", 500, error?.code);
   const release = data as unknown as HermesRelease;
   await recordEvent(db, {
     releaseId: release.id,
@@ -130,6 +141,18 @@ export async function registerRelease(
     actor: input.actor,
   });
   return { release, created: true };
+}
+
+/** Tell ops a release was registered. Shared by the console route and the CI route. */
+export async function reportReleaseRegistered(release: HermesRelease, actor: string): Promise<void> {
+  await reportOpsEvent({
+    source: "hermes-release",
+    severity: "info",
+    title: `Hermes release ${release.version} registered`,
+    message: `Registered ${release.image_repo} ${release.version} as a release (by ${actor}). It is not offered to any box until promoted to the canary stage.`,
+    route: "/api/ops/hermes-releases",
+    metadata: { releaseId: release.id, version: release.version, actor },
+  });
 }
 
 /**

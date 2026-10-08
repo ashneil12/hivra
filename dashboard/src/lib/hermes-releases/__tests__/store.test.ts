@@ -25,6 +25,27 @@ async function register(db: SupabaseClient, digest = DIGEST, version = "1.0.0") 
   return (await registerRelease(db, { imageRepo: REPO, version, digest, actor: "ops:test" })).release;
 }
 
+describe("registerRelease race", () => {
+  it("returns the winner when a concurrent registration took the unique slot first", async () => {
+    const { db, memory } = setup();
+    // The existence check sees nothing, then the insert loses to a registration
+    // that landed in between: the failure rule plants that winner as it fires.
+    const winner = { id: "99999999-9999-4999-8999-999999999999", image_repo: REPO, digest: DIGEST, version: "1.0.0", channel: "canary", rollout_percent: 0, pilot_instance_ids: [], halted: false, promoted_at: null };
+    memory.failNext({
+      table: "hermes_releases",
+      op: "insert",
+      error: { code: "23505", message: "duplicate key" },
+      match: () => {
+        memory.tables.hermes_releases.push(winner);
+        return true;
+      },
+    });
+    const result = await registerRelease(db, { imageRepo: REPO, version: "1.0.0", digest: DIGEST, actor: "ci" });
+    expect(result).toMatchObject({ created: false, release: { id: winner.id } });
+    expect(memory.tables.hermes_release_events).toHaveLength(0);
+  });
+});
+
 describe("registerRelease", () => {
   it("registers once, not offered to anyone yet", async () => {
     const { db, memory } = setup();

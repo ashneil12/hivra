@@ -10,8 +10,8 @@ import {
   loadReleases,
   registerRelease,
   ReleaseStoreError,
+  reportReleaseRegistered,
 } from "@/lib/hermes-releases/store";
-import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -156,16 +156,7 @@ export async function POST(request: NextRequest) {
       actor: admin.actor,
       notes: body.notes,
     });
-    if (created) {
-      await reportOpsEvent({
-        source: "hermes-release",
-        severity: "info",
-        title: `Hermes release ${release.version} registered`,
-        message: `Registered ${release.image_repo} ${release.version} as a release. It is not offered to any box until promoted to the canary stage.`,
-        route: "/api/ops/hermes-releases",
-        metadata: { releaseId: release.id, version: release.version },
-      });
-    }
+    if (created) await reportReleaseRegistered(release, admin.actor);
     return apiSuccess({ release: { ...release, stage: releaseStage(release) }, created }, created ? 201 : 200);
   } catch (err) {
     if (err instanceof ReleaseStoreError) return apiError(err.message, err.status);

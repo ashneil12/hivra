@@ -56,6 +56,46 @@ Ops admins use `/dashboard/ops/releases`. The same actions exist as API calls un
 5. To stop a release, halt it. Boxes on it move back to the newest release that is not
    halted. Unhalt to offer it again.
 
+## Registering from CI
+
+The agent fork's workflow can register the image it just built and proved, so ops start
+at step 3 above instead of pasting a tag. It calls one route:
+
+`POST /api/ops/hermes-releases/ci` with `Authorization: Bearer <token>` and a JSON body
+`{ "imageRepo": "ghcr.io/ashneil12/vanilla-hermes-agent-canary", "tag": "<upstream tag>-<sha7>", "digest": "sha256:..." }`.
+`digest` is optional and only cross-checks: the dashboard always resolves the digest
+from GHCR itself, and refuses (409) if the registry holds a different one.
+
+What the token can and cannot do:
+
+- It can register one immutable build of an allowlisted repository
+  (`CI_ALLOWED_IMAGE_REPOS` in `dashboard/src/lib/hermes-releases/ci-auth.ts`). The tag
+  must end in `-<7 hex commit>`; `stable`, `latest` and branch names are refused.
+- The release lands at "Registered": canary channel, 0% rollout, never promoted, offered
+  to nobody. The route has no field for a stage, channel, halt or rollout, and a request
+  that carries one is refused. Promoting, setting stable, halting and unhalting stay with
+  a signed-in ops admin.
+- Registering an image that is already registered changes nothing (promoted and halted
+  releases included) and returns the existing release, so a re-run workflow is safe.
+- The registration is recorded as a `registered` event and `created_by` of `ci`, and
+  reported to ops.
+- Limits: 20 requests a minute per address (token guesses count), and at most 10 new
+  releases from CI per hour.
+
+Setting the token (owner action, once per Vercel project that should accept CI):
+
+1. Generate a secret of at least 32 characters, for example `openssl rand -base64 48`.
+2. Add it to the Vercel project as `HERMES_RELEASE_CI_TOKEN` (Canary: `hermesos-canary`,
+   Production environment, which is the environment Canary builds in). Mark it sensitive.
+3. Add the same value to the agent fork as the repository secret
+   `HERMES_RELEASE_CI_TOKEN`.
+4. The next Canary build picks it up; an env change does not reach a running deployment.
+
+While the variable is unset, or shorter than 32 characters, the route answers 503 and
+registers nothing. To revoke, delete the variable and redeploy through the normal Git
+build. Production has its own registry; it accepts CI registration only after it is
+promoted and given its own token.
+
 ## What a box does on an update
 
 The roller and the update script share the same safety:
