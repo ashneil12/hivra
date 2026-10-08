@@ -75,3 +75,54 @@ C. Rollout, handed to the fleet SRE lane after approval, per `hivra-vm-side-roll
 - Why PR 186 merged with the required check red.
 - Whether boxes carry the new roll script (`update_stack_version`); the production
   database has no such column, so the answer today is no.
+
+## Canary registry acceptance: status 2026-10-08 (night)
+
+Canary only. Prod untouched (PROD HOLD).
+
+Done:
+- CI registration route (`HERMES_RELEASE_CI_TOKEN`, PR 249) is served on Canary; an
+  unauthenticated call returns 401.
+- First immutable image built and proven in the Canary image repository:
+  `v2026.9.24-a440677` (hermes-agent 0.21.5, `sha256:e975...2e98`). `:stable` and
+  `:latest` were not moved.
+- Baseline release row registered by hand for the old `:stable` image
+  (`sha256:2c44e99e...`), notes "Baseline ... Test only". It is at Registered (offered
+  to nobody). Registering it made the Canary image repository governed: boxes there
+  hold their current image instead of following `:stable`.
+- A disposable fixture box (owned by the first-run audit identity, named in the
+  private ops notes) is running on the stable channel with no release reported yet. The three QA banner boxes
+  and the other stable boxes were not touched.
+
+Not done (blocked, not failed):
+- The console steps (promote the baseline to the Canary stage, enrol only the fixture
+  box in the canary channel, register the new tag, promote it) need a signed-in ops
+  admin browser. The computer-use driver would not start this run (daemon never became
+  ready), and no other signed-in session exists. No credential was minted or borrowed.
+- So the box has not reported a version, and no update was observed. Update acceptance
+  through the real agent path is UNVERIFIED.
+- Rollback acceptance needs a deliberately broken image, which needs a registry token
+  with package write scope. Not available.
+
+Console steps for whoever runs it (`/dashboard/ops/releases` on Canary):
+1. Promote the baseline row to Canary.
+2. Move only the fixture box to the canary channel.
+3. After the next :07 tick, check the box reports the old version (the
+   `agent_version` and `agent_image_digest` columns fill in).
+4. Register `ghcr.io/ashneil12/vanilla-hermes-agent-canary` tag `v2026.9.24-a440677`
+   in the same form (this works without the fork's CI workflow), promote it to Canary,
+   then press UPDATE NOW on the fixture box or wait for the next idle roll.
+5. Confirm the box reports 0.21.5 and the new digest, and answer an authenticated
+   `/api/sessions` call.
+6. Cleanup: halt the baseline row, move the fixture box back to stable, delete the
+   fixture through the product's delete path.
+
+Learnings for the no-fork plan:
+- The registry only needs an immutable tag in a package repository. It does not need
+  the fork's CI workflow: manual registration through the console works, so the
+  register-on-CI job (fork PR 190) is optional convenience, not a dependency.
+- Whatever builds the image must still publish immutable tags with a revision label
+  and never move `:stable`. That requirement moves with the build, wherever it lives.
+- The first registered release flips a whole repository from "follow `:stable`" to
+  "hold unless offered". Register the baseline before or together with the first real
+  release, never alone on a shared environment.
