@@ -79,7 +79,7 @@ export function NativeWorkspaceProvider({ enabled, pathname, ownerKey, children 
       if (!nativeWorkspaceHandler()) return;
       const detail: unknown = (event as CustomEvent<unknown>).detail;
       if (!detail || typeof detail !== "object") return;
-      const href = nativeDashboardHref((detail as { href?: unknown }).href, window.location.origin);
+      const href = nativeDashboardHref((detail as { href?: unknown }).href);
       if (href) {
         // The native caller dispatches a cancelable event: cancellation confirms
         // that React accepted it; an absent listener permits a normal URL load.
