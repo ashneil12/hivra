@@ -15,7 +15,8 @@ import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib
 import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
-import { getApiErrorMessage, getCardRequiredMessage, isCardRequiredResponse } from "@/lib/billing/card-required";
+import { getApiErrorMessage } from "@/lib/billing/card-required";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_CODE } from "@/lib/billing/hosted-compute";
 import { buildPostDeployDestination } from "@/lib/welcome-deploy";
 import {
   DEFAULT_MODEL_ACCESS,
@@ -354,8 +355,14 @@ async function submitHermes(draft: LaunchDraft, options: LaunchSubmitOptions): P
   if (payload?.success === true && typeof data?.id === "string") {
     return { id: data.id, name: typeof data.name === "string" ? data.name : draft.name.trim(), status: typeof data.status === "string" ? data.status : "provisioning" };
   }
-  if (isCardRequiredResponse(payload)) {
-    throw new LaunchCorrectableError(getCardRequiredMessage(payload), response.status, "card_required", { kind: "verify-card" });
+  if (payload?.reason === "plan_required" || payload?.failureType === HOSTED_COMPUTE_REQUIRES_PLAN_CODE) {
+    // A Hivra-run computer needs a plan. There is no card check to offer.
+    throw new LaunchCorrectableError(
+      getApiErrorMessage(payload, "A Hivra-hosted computer needs a paid plan."),
+      response.status,
+      HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
+      { kind: "open", label: "Choose a plan", href: "/dashboard/billing?tab=plans" },
+    );
   }
   const message = getApiErrorMessage(payload, `Launch failed (${response.status})`);
   if (response.status >= 400 && response.status < 500) {

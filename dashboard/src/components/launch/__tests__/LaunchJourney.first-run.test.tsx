@@ -49,7 +49,6 @@ jest.mock("@/lib/telemetry/posthog-client", () => ({
 }));
 
 jest.mock("@/lib/abuse/client-fingerprint", () => ({ getFingerprintRequestId: async () => null }));
-jest.mock("@/components/billing/FreeTierCardVerification", () => ({ FreeTierCardVerification: () => null }));
 jest.mock("@/hooks/useTokenGeoAccess", () => ({ useTokenGeoAccess: () => ({ status: "allowed", notice: null }) }));
 jest.mock("@/components/billing/ManagedVeniceDepositModal", () => ({ ManagedVeniceDepositModal: () => null }));
 
@@ -271,9 +270,9 @@ describe("the first-run funnel", () => {
     expect(events("launch_request_accepted")).toHaveLength(0);
   });
 
-  it("records Hermes' card check and its readiness step the way the welcome flow did", async () => {
+  it("records Hermes' plan-required answer and its readiness step the way the welcome flow did", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
-    let hermesResponse: unknown = { success: false, reason: "card_required", error: "A quick card check first." };
+    let hermesResponse: unknown = { success: false, reason: "plan_required", error: "A Hivra-hosted computer needs a paid plan." };
     const baseFetch = global.fetch as jest.Mock;
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/instances" && init?.method === "POST") {
@@ -288,10 +287,12 @@ describe("the first-run funnel", () => {
     await waitFor(() => expect(reviewButton()).toBeEnabled());
     fireEvent.click(reviewButton());
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
-    await waitFor(() => expect(events("activation_card_required")).toHaveLength(1));
+    await waitFor(() => expect(events("paywall_viewed")).toHaveLength(1));
 
-    expect(events("activation_card_required")[0]).toMatchObject({ profile: "hermes", agentType: "hermes" });
-    expect(events("paywall_viewed")).toEqual(expect.arrayContaining([expect.objectContaining({ paywall: "card_required" })]));
+    expect(events("paywall_viewed")[0]).toMatchObject({ paywall: "plan_required" });
+    expect(events("activation_card_required")).toHaveLength(0);
+    expect(screen.getByRole("link", { name: "Choose a plan" })).toHaveAttribute("href", "/dashboard/billing?tab=plans");
+    expect(screen.queryByText(/card/i)).toBeNull();
     expect(events("activation_failed")).toHaveLength(0);
 
     hermesResponse = { success: true, data: { id: AGENT_ID, name: "Hermes 1", status: "provisioning" } };
