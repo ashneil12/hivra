@@ -82,7 +82,11 @@ What the token can and cannot do:
 - Limits: 20 requests a minute per address (token guesses count), and at most 10 new
   releases from CI per hour.
 
-Setting the token (owner action, once per Vercel project that should accept CI):
+On the fork side, `register-hivra-release.yml` (in `ashneil12/vanilla-hermes-agent-canary`)
+makes this call. `upstream-sync-followup.yml` runs it after a proven build, and it can be
+dispatched by hand with an existing image tag.
+
+Setting the token (once per Vercel project that should accept CI):
 
 1. Generate a secret of at least 32 characters, for example `openssl rand -base64 48`.
 2. Add it to the Vercel project as `HERMES_RELEASE_CI_TOKEN` (Canary: `hermesos-canary`,
