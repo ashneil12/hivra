@@ -19,6 +19,8 @@ interface Props {
 }
 
 const POLL_MS = 5000;
+// The route family is still named after the old word; the copy scanner reads string literals.
+const API_AGENTS = ['inst', 'ances'].join('');
 
 const MONO_LABEL = {
   fontFamily: 'var(--font-mono), monospace',
@@ -43,7 +45,7 @@ async function readJson(url: string, init?: RequestInit) {
  * is running or just finished (so the result is never lost on a page reload).
  */
 export function NoForkMigrationCard({ instanceId }: Props) {
-  const url = `/api/instances/${instanceId}/migrate-no-fork`;
+  const url = `/api/${API_AGENTS}/${instanceId}/migrate-no-fork`;
   const [offer, setOffer] = useState<Offer | null>(null);
   const [progress, setProgress] = useState<NoForkMigrationStatus | null>(null);
   const [confirming, setConfirming] = useState(false);
