@@ -5,6 +5,7 @@ import { crossOriginMutationRefusal } from "@/lib/cross-origin-mutation-guard";
 import { isProtectedPath, PROTECTED_ROUTE_MATCHERS } from "@/lib/protected-routes";
 import { isHostedBillingPath } from "@/lib/self-host/hosted-surface-guard";
 import { isNoIndexHost } from "@/lib/seo-host";
+import { heldBackTokenSurfaceTarget, newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 const requiresAuth = createRouteMatcher(PROTECTED_ROUTE_MATCHERS);
 
@@ -60,6 +61,26 @@ export default clerkMiddleware(async (auth, request) => {
       redirect.headers.set("X-Robots-Tag", "noindex, nofollow");
     }
     return redirect;
+  }
+
+  // The new token surfaces are held back unless HIVRA_NEW_TOKEN_SURFACES is on
+  // (lib/token-surfaces.ts). A temporary redirect, so the pages can return.
+  if (!newTokenSurfacesEnabled() && request.method === "GET" && heldBackTokenSurfaceTarget(request.nextUrl.pathname, true) !== null) {
+    let signedIn = false;
+    try {
+      signedIn = Boolean((await auth()).userId);
+    } catch {
+      signedIn = false;
+    }
+    const destination = heldBackTokenSurfaceTarget(request.nextUrl.pathname, signedIn);
+    if (destination) {
+      const redirect = NextResponse.redirect(new URL(destination, request.url), 307);
+      redirect.headers.set("Cache-Control", "private, no-store");
+      if (noIndexHost) {
+        redirect.headers.set("X-Robots-Tag", "noindex, nofollow");
+      }
+      return redirect;
+    }
   }
 
   if (

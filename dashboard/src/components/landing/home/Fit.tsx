@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { ArrowRight } from "lucide-react";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 import { FIT } from "./content";
 import styles from "./home.module.css";
 
@@ -55,7 +56,7 @@ export default function Fit() {
       </div>
       <div className={styles.fitFoot}>
         <p className={styles.fitVerdict}>{FIT.verdict}</p>
-        <a href={FIT.moreHref} className={styles.textCta} data-cta="fit-compare">
+        <a href={newTokenSurfacesEnabled() ? FIT.moreHref : "/compare"} className={styles.textCta} data-cta="fit-compare">
           {FIT.more}
           <ArrowRight size={16} aria-hidden="true" />
         </a>

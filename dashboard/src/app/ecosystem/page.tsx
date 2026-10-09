@@ -1,3 +1,4 @@
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 import type { Metadata } from "next";
 import Link from "next/link";
 import PublicSite from "@/components/public-site/PublicSite";
@@ -18,6 +19,7 @@ const MAP = [
 ] as const;
 
 export default function EcosystemPage() {
+  const showTokenSurfaces = newTokenSurfacesEnabled();
   return <PublicSite>
     <main id="main-content" style={{ maxWidth: 1180, margin: "0 auto", padding: "clamp(4rem, 10vw, 9rem) var(--public-gutter)" }}>
       <header style={{ maxWidth: 760, marginBottom: "clamp(3rem, 8vw, 6rem)" }}>
@@ -34,8 +36,8 @@ export default function EcosystemPage() {
       </div>
       <p style={{ marginTop: "2rem", color: "var(--public-muted)", lineHeight: 1.7 }}>Next and Then describe intended order, not release dates or available features. Hivra Orchestrator, macOS and custom images are also planned additions to Agent Computers. Available operating systems and runtimes are shown when you <Link href="/dashboard/launch" style={{ textDecoration: "underline", textUnderlineOffset: 4 }}>launch a computer</Link>.</p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem 2rem", marginTop: "3rem" }}>
-        <Link href="/token" style={{ color: "var(--public-text)", textDecoration: "underline", textUnderlineOffset: 5 }}>Token: current access and proposals</Link>
-        <a href="/docs/litepaper/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--public-text)", textDecoration: "underline", textUnderlineOffset: 5 }}>Read the full litepaper map</a>
+        {showTokenSurfaces && <Link href="/token" style={{ color: "var(--public-text)", textDecoration: "underline", textUnderlineOffset: 5 }}>Token: current access and proposals</Link>}
+        {showTokenSurfaces && <a href="/docs/litepaper/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--public-text)", textDecoration: "underline", textUnderlineOffset: 5 }}>Read the full litepaper map</a>}
       </div>
     </main>
   </PublicSite>;

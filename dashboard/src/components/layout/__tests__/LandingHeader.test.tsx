@@ -71,12 +71,12 @@ describe("LandingHeader", () => {
   // ── Brand ─────────────────────────────────────────────────────────────────
 
   it("renders the site brand name", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.getByRole("link", { name: "Hivra, back to homepage" })).toHaveTextContent("Hivra");
   });
 
   it("renders the project-authored Hivra mark beside the site name", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.getByTestId("hivra-mark")).toBeInTheDocument();
     expect(document.querySelector('img[src="/favicon-brand.png"]')).not.toBeInTheDocument();
   });
@@ -84,32 +84,32 @@ describe("LandingHeader", () => {
   // ── Nav links ─────────────────────────────────────────────────────────────
 
   it("includes the Pricing anchor in the public navigation", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     const links = screen.getAllByRole("link", { name: "Pricing" });
     expect(links[0]).toHaveAttribute("href", "/#pricing");
   });
 
   it("makes computers and open source first-class navigation choices", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
     expect(screen.queryByRole("link", { name: "Open source" })).not.toBeInTheDocument();
   });
 
   it("includes an Agents link in the public navigation", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     const links = screen.getAllByRole("link", { name: "Agents" });
     expect(links[0]).toHaveAttribute("href", "/#agents");
   });
 
   it("includes a Register link in the public navigation", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     const links = screen.getAllByRole("link", { name: "Register" });
     // FTUE-16: sign-up, then Launch; no plan page first.
     expect(links[0]).toHaveAttribute("href", "/sign-up");
   });
 
   it("keeps ecosystem discoverable without a primary token pitch", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.queryByRole("link", { name: /how it works/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /use cases/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /features/i })).not.toBeInTheDocument();
@@ -127,7 +127,7 @@ describe("LandingHeader", () => {
   // ── Auth-aware CTAs ───────────────────────────────────────────────────────
 
   it("signed-out users (default) see Log in + Register CTA", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
 
     expect(screen.getAllByRole("link", { name: /log in/i })[0]).toHaveAttribute(
       "href",
@@ -170,7 +170,7 @@ describe("LandingHeader", () => {
 
   it("opens the mobile dialog, traps both tab directions, and restores focus on Escape", () => {
     mockPhoneWidth(true);
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     const toggle = screen.getByRole("button", { name: "Open menu" });
     toggle.focus();
     fireEvent.click(toggle);
@@ -193,7 +193,7 @@ describe("LandingHeader", () => {
 
   it("closes on navigation and restores the previous scroll-lock state", () => {
     document.body.style.overflow = "auto";
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     expect(document.body.style.overflow).toBe("hidden");
     const dialog = screen.getByRole("dialog", { name: "Open menu" });
@@ -205,7 +205,7 @@ describe("LandingHeader", () => {
 
   it("puts the account actions straight under the menu header on phones, before the page links", () => {
     mockPhoneWidth(true);
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     const dialog = screen.getByRole("dialog", { name: "Open menu" });
     const register = within(dialog).getByRole("link", { name: "Register" });
@@ -216,8 +216,13 @@ describe("LandingHeader", () => {
     expect(within(dialog).getByTestId("theme-toggle")).toBeInTheDocument();
   });
 
-  it("keeps the tablet menu order: page links, extras with the litepaper, then account actions", () => {
+  it("shows no litepaper link while the new token surfaces are off", () => {
     render(<LandingHeader />);
+    expect(screen.queryAllByRole("link", { name: /litepaper/i })).toHaveLength(0);
+  });
+
+  it("keeps the tablet menu order: page links, extras with the litepaper, then account actions", () => {
+    render(<LandingHeader tokenSurfaces />);
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     const dialog = screen.getByRole("dialog", { name: "Open menu" });
     const register = within(dialog).getByRole("link", { name: "Register" });
@@ -230,7 +235,7 @@ describe("LandingHeader", () => {
 
   it("closes only the in-menu language list on Escape, then the menu on a second Escape", () => {
     mockPhoneWidth(true);
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     const dialog = screen.getByRole("dialog", { name: "Open menu" });
     const language = within(dialog).getByRole("button", { name: "Language" });
@@ -249,7 +254,7 @@ describe("LandingHeader", () => {
   });
 
   it("keeps a phone-width login link in the header row, beside the icon menu button", () => {
-    const { container } = render(<LandingHeader />);
+    const { container } = render(<LandingHeader tokenSurfaces />);
     const row = container.querySelector("header > div")!;
     const login = within(row as HTMLElement).getAllByRole("link", { name: "Log in" }).at(-1)!;
     expect(login).toHaveAttribute("href", "/sign-in");
@@ -258,7 +263,7 @@ describe("LandingHeader", () => {
 
   it("reads Clerk's session hint when the page does not pass auth state", () => {
     document.cookie = "__client_uat=1758000000; path=/";
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.getAllByRole("link", { name: "Open Dashboard" })[0]).toHaveAttribute("href", "/dashboard");
     expect(screen.queryByRole("link", { name: /log in/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
@@ -267,7 +272,7 @@ describe("LandingHeader", () => {
   it("treats a zero or suffixed-zero session hint as signed out", () => {
     document.cookie = "__client_uat=1758000000; path=/";
     document.cookie = "__client_uat_Abc123=0; path=/";
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.getAllByRole("link", { name: "Register" })[0]).toHaveAttribute("href", "/sign-up");
     expect(screen.queryByRole("link", { name: "Open Dashboard" })).not.toBeInTheDocument();
   });
@@ -315,7 +320,7 @@ describe("LandingHeader", () => {
   });
 
   it("keeps ordinary navigation in the same tab", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     within(screen.getByRole("navigation", { name: "Primary navigation" })).getAllByRole("link").forEach((link) => {
       expect(link).not.toHaveAttribute("target", "_blank");
     });
@@ -324,7 +329,7 @@ describe("LandingHeader", () => {
   // ── Accessibility ─────────────────────────────────────────────────────────
 
   it("nav element is rendered as a semantic nav", () => {
-    render(<LandingHeader />);
+    render(<LandingHeader tokenSurfaces />);
     expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeInTheDocument();
   });
 

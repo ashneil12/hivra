@@ -1,6 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
 import { GitHubMark } from "@/components/public-site/SourceLink";
 import RepoCard from "./RepoCard";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 import { OPEN_SOURCE, SELF_HOST_SOURCE_URL } from "./content";
 import styles from "./home.module.css";
 import { glossify } from "@/components/gloss/glossify";
@@ -20,9 +21,11 @@ export default function OpenSource() {
             {OPEN_SOURCE.github}
             <ArrowUpRight size={16} aria-hidden="true" />
           </a>
-          <a href={OPEN_SOURCE.commitmentHref} className={styles.textCta}>
-            {OPEN_SOURCE.commitment}
-          </a>
+          {newTokenSurfacesEnabled() && (
+            <a href={OPEN_SOURCE.commitmentHref} className={styles.textCta}>
+              {OPEN_SOURCE.commitment}
+            </a>
+          )}
         </div>
       </div>
       <RepoCard owner={OPEN_SOURCE.repoOwner} name={OPEN_SOURCE.repoName} clone={OPEN_SOURCE.clone} />

@@ -341,13 +341,13 @@ function PhaseBlock({ phase, index }: { phase: RoadmapPhase; index: number }) {
   );
 }
 
-export default function RoadmapPageClient({ content }: { content: RoadmapPageContent }) {
+export default function RoadmapPageClient({ content, tokenSurfaces = false }: { content: RoadmapPageContent; tokenSurfaces?: boolean }) {
   const { scrollYProgress } = useScroll();
   // Null in the restricted copy for a viewer the token geo-policy blocks.
   const { token } = content;
 
   return (
-    <PublicSite className={styles.page} data-page="roadmap">
+    <PublicSite className={styles.page} data-page="roadmap" tokenSurfaces={tokenSurfaces}>
       <motion.div className={styles.progressBar} aria-hidden="true">
         <motion.div
           className={styles.progressFill}

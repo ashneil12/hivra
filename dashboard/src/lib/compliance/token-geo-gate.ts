@@ -32,6 +32,7 @@
 import { log } from "@/lib/logger";
 import { isOpsAdminEmailConfigured, isOpsAdminUser } from "@/lib/ops-access";
 import { supabaseAdmin } from "@/lib/supabase";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 import {
   TOKEN_GEO_POLICY,
@@ -252,6 +253,9 @@ export async function resolveTokenGeoBlock(
 ): Promise<TokenGeoDecision> {
   const policy = options.policy ?? TOKEN_GEO_POLICY;
   if (!isTokenGeoPolicyActive(policy)) return TOKEN_GEO_NOT_BLOCKED;
+  // The country list applies to the new token surfaces only. While
+  // HIVRA_NEW_TOKEN_SURFACES is off it is inert, so no $HermesOS user is blocked.
+  if (!options.policy && !newTokenSurfacesEnabled()) return TOKEN_GEO_NOT_BLOCKED;
 
   const userId = user?.userId;
   let decision: TokenGeoDecision = TOKEN_GEO_NOT_BLOCKED;
@@ -285,6 +289,7 @@ export async function isNewTokenQualificationRefused(
 ): Promise<boolean> {
   const policy = options.policy ?? TOKEN_GEO_POLICY;
   if (!isTokenGeoPolicyActive(policy)) return false;
+  if (!options.policy && !newTokenSurfacesEnabled()) return false;
   if (decision) return decision.blocked;
 
   let blockedBy: { country: string; signal: TokenGeoSignal | "session_country" } | null = null;

@@ -39,7 +39,7 @@ export const PUBLIC_REPOSITORY_URL = "https://github.com/ashneil12/hivra";
  */
 export function llmsTxtSections(
   phase: HivraTokenPhase = getHivraTokenPhase(),
-  { restricted = false }: { restricted?: boolean } = {}
+  { restricted = false, tokenSurfaces = true }: { restricted?: boolean; tokenSurfaces?: boolean } = {}
 ): readonly LlmsTxtSection[] {
   const { tokenomicsNote } = getTokenPhaseCopy(phase).llmsTxt;
   return [
@@ -59,7 +59,7 @@ export function llmsTxtSections(
         { label: "Compare", path: "/compare", note: "Hivra vs Agent 37, Hostinger, xCloud, Nous Hermes Cloud, self-hosting, Railway and Render, with a dated price table" },
       ],
     },
-    {
+    ...(tokenSurfaces ? [    {
       heading: "Papers",
       links: [
         { label: "Litepaper", path: "/LITEPAPER.md", note: "The short version of what Hivra is building and why" },
@@ -71,7 +71,7 @@ export function llmsTxtSections(
               { label: "Token", path: "/token", note: "The canonical contract page. Check token addresses here and nowhere else" },
             ]),
       ],
-    },
+    }] : []),
     {
       heading: "Source and self-hosting",
       links: [
@@ -118,10 +118,13 @@ export function buildLlmsTxt({
   siteUrl,
   phase = getHivraTokenPhase(),
   restricted = false,
+  tokenSurfaces = true,
 }: {
   siteUrl: string;
   phase?: HivraTokenPhase;
   restricted?: boolean;
+  /** False while HIVRA_NEW_TOKEN_SURFACES is off: no papers section, no token sentence. */
+  tokenSurfaces?: boolean;
 }): string {
   const lines: string[] = [];
 
@@ -134,13 +137,13 @@ export function buildLlmsTxt({
   );
   lines.push("");
   lines.push(
-    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images.${restricted ? "" : ` ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`}`
+    `Also available: Windows (on your own Proxmox host, from your own licensed ISO) and Omarchy. In preview: DeepSeek. Coming next: Hivra Orchestrator, macOS computers and custom images.${restricted || !tokenSurfaces ? "" : ` ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`}`
   );
   lines.push("");
   lines.push(NON_AFFILIATION_LINE);
   lines.push("");
 
-  for (const section of llmsTxtSections(phase, { restricted })) {
+  for (const section of llmsTxtSections(phase, { restricted, tokenSurfaces })) {
     lines.push(`## ${section.heading}`);
     lines.push("");
     for (const link of section.links) {

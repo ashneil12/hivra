@@ -7,6 +7,7 @@ import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { buildLlmsTxt } from "@/lib/llms-txt";
 import { SITE_URL } from "@/lib/seo-urls";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 // The link map is in-source, but the body depends on the viewer's country once
 // the token geo-policy lists one: a listed country gets the copy with no token
@@ -22,10 +23,12 @@ const SAME_FOR_EVERYONE = "public, max-age=0, s-maxage=3600, stale-while-revalid
 const PER_VIEWER = "private, no-store";
 
 export async function GET(request?: Request) {
-  const countryListed = isTokenGeoPolicyActive();
+  const tokenSurfaces = newTokenSurfacesEnabled();
+  // The country list is inert while the token surfaces are held back.
+  const countryListed = tokenSurfaces && isTokenGeoPolicyActive();
   // A crawler is signed out, so the request's IP country is the only signal.
   const restricted = countryListed && (await resolveTokenGeoBlock(request, null)).blocked;
-  const body = buildLlmsTxt({ siteUrl: SITE_URL, restricted });
+  const body = buildLlmsTxt({ siteUrl: SITE_URL, restricted, tokenSurfaces });
 
   return new Response(body, {
     status: 200,
