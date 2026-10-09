@@ -75,7 +75,9 @@ describe("comparison page claims", () => {
     const render_ = await comparisonText("vs-render");
     expect(render_).toMatch(/Starter compute plan \(\$7\/month\) has 512 MB RAM/);
     expect(render_).toMatch(/Standard compute plan at \$25\/month gives 1 CPU and 2 GB RAM/);
-    expect(render_).toMatch(/Pro compute plan at \$85\/month gives 2 CPU and 4 GB RAM/);
+    expect(render_).toMatch(/2 CPU and 4 GB plan is \$85\/month/);
+    expect(render_).toMatch(/one-click Hermes template/);
+    expect(render_).toMatch(/5 GB persistent disk/);
     expect(render_).toMatch(/\$0\.25\/GB\/month/);
     expect(render_).toMatch(/after 15 minutes without inbound traffic/);
 
