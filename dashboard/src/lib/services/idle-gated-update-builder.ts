@@ -198,7 +198,7 @@ IMG=${REPO}:stable
 LOG=/var/log/hermes-refresh.log
 ts(){ date -u -Iseconds; }
 cd "$DIR" 2>/dev/null || { echo "$(ts) no inst dir"; exit 1; }
-if [ -e "/var/lib/hermes-release-governed-$INST" ]; then
+if [ -e "/var/lib/hermes-release-governed-$INST" ] || [ -e "/var/lib/hermes-upstream-direct-$INST" ]; then
   # The dashboard pins this box to an exact release: extract the static
   # surfaces from the image the gateway runs, and never pull a floating tag.
   IMG="$(docker inspect "agent-$INST-gateway" -f '{{.Image}}' 2>/dev/null)"
@@ -254,6 +254,11 @@ ENV_DIR="$DIR"
 REPORTED="/var/lib/hermes-reported-digest-\${INST}"
 PAUSE_REPORTED="/var/lib/hermes-roll-pause-reported-\${INST}"
 GOVERNED="/var/lib/hermes-release-governed-\${INST}"
+# Set by the no-fork migration: this box follows stock upstream Hermes by itself. The Hivra
+# overlay (add-only files) lives in $OVERLAY_DIR and is laid over every fresh agent source.
+DIRECT="/var/lib/hermes-upstream-direct-\${INST}"
+UPSTREAM_SOAK_H=24
+OVERLAY_DIR="\${DIR}/overlay"
 ${buildReleaseClientShell({ instanceId: INST })}
 ${buildSessionSurvivalShell()}
 # Best-effort report to the dashboard: never changes what the roll does.
@@ -310,6 +315,10 @@ import tempfile
 compose_path = pathlib.Path(sys.argv[1])
 backup_path = pathlib.Path(sys.argv[2])
 original = compose_path.read_bytes()
+if b"def managed_gateway_command(" in original:
+    # Current-generation compose: the supervisor already runs the existing venv without syncing,
+    # so there is no old uv command to rewrite.
+    raise SystemExit(0)
 pairs = (
     (
         b'status_cmd = ["uv", "run", "--extra", "messaging", "hermes", "gateway", "status"]',
@@ -425,17 +434,36 @@ assert_agent_source_quiesced() {
     return 1
   }
 }
+# Lay the box's overlay tools (uv, gh, hermes) over a stock upstream image, locally, with no Hivra build.
+assemble_local_image() {
+  stock="$1"; tag="$2"
+  [ -d "$OVERLAY_DIR/bin" ] || { docker tag "$stock" "$tag"; return $?; }
+  cid="$(docker create "$stock" 2>>"$LOG")" || return 1
+  asm_ok=1
+  for b in "$OVERLAY_DIR"/bin/*; do
+    [ -f "$b" ] || continue
+    docker cp "$b" "$cid:/usr/local/bin/$(basename "$b")" >>"$LOG" 2>&1 || asm_ok=0
+  done
+  if [ "$asm_ok" = 1 ]; then
+    docker commit -c "LABEL io.hivra.assembled=local" -c "LABEL io.hivra.upstream.image=$stock" "$cid" "$tag" >/dev/null 2>>"$LOG" || asm_ok=0
+  fi
+  docker rm "$cid" >/dev/null 2>&1
+  [ "$asm_ok" = 1 ]
+}
 reseed_agent_source() {
   ref="$1"
   source_image_id="$(docker image inspect "$ref" -f '{{.Id}}' 2>/dev/null)"
   [ -n "$source_image_id" ] || { log "cannot resolve source image id for $ref"; return 1; }
-  docker run --rm --user root -v "$SOURCE_VOLUME:$SOURCE_RUNTIME_DIR" --entrypoint sh "$ref" -lc '
+  overlay_args=""
+  [ -d "$OVERLAY_DIR/files" ] && overlay_args="-v $OVERLAY_DIR:/overlay:ro"
+  docker run --rm --user root -v "$SOURCE_VOLUME:$SOURCE_RUNTIME_DIR" $overlay_args --entrypoint sh "$ref" -lc '
     set -e
     target="$1"
     source_image_id="$2"
     test -f /opt/hermes/pyproject.toml
     find "$target" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     cp -a /opt/hermes/. "$target/"
+    if [ -d /overlay/files ]; then cp -a /overlay/files/. "$target/"; fi
     assert_relocated_venv() {
       if find "$target/.venv" -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -exec grep -IlF /opt/hermes {} + 2>/dev/null | grep -q .; then
         echo "source reseed relocation left embedded /opt/hermes paths" >&2
@@ -498,15 +526,48 @@ SOURCE_IMAGE="$(docker exec "$G" cat "$SOURCE_STAMP" 2>/dev/null || true)"
 # digest, nothing to do, nothing offered (hold), or "legacy" while the registry
 # has no release of this repository (then the floating :stable tag is followed
 # exactly as before). A lookup that fails never falls back to a floating tag.
-REPLY="$(hermes_release_get "$REPO" "$CUR_DIGEST" 2>>"$LOG")" || { log "release lookup failed (dashboard unreachable or no credentials) - skip"; exit 0; }
+if ! REPLY="$(hermes_release_get "$REPO" "$CUR_DIGEST" 2>>"$LOG")"; then
+  if [ -e "$DIRECT" ]; then
+    # A box that follows upstream by itself never waits for the control plane.
+    log "release lookup failed (dashboard unreachable or no credentials) - following upstream directly"
+    REPLY="action=legacy"
+  else
+    log "release lookup failed (dashboard unreachable or no credentials) - skip"
+    exit 0
+  fi
+fi
 ACTION="$(hermes_reply_field "$REPLY" action)"
 TARGET_REF=""
 TARGET_DIGEST=""
 case "$ACTION" in
   legacy)
     rm -f "$GOVERNED"
-    docker compose pull official-dashboard gateway >/dev/null 2>>"$LOG" || docker pull "$IMG" >/dev/null 2>>"$LOG" || { log "pull failed"; exit 0; }
-    LATEST="$(docker image inspect "$IMG" -f '{{.Id}}' 2>/dev/null)"
+    if [ -e "$DIRECT" ]; then
+      # Follow stock upstream Hermes by ourselves: pull the official image (Docker verifies the content
+      # against its digest), let a new one soak, then add the box's own overlay tools on top locally.
+      # Nothing here asks Hivra for an image.
+      UP_REF="$(cat "$DIR/upstream.ref" 2>/dev/null)"
+      case "$UP_REF" in nousresearch/hermes-agent:*|nousresearch/hermes-agent@sha256:*) ;; *) UP_REF="nousresearch/hermes-agent:stable" ;; esac
+      docker pull -q "$UP_REF" >/dev/null 2>>"$LOG" || { log "upstream pull failed for $UP_REF - skip"; exit 0; }
+      UP_DIGEST="$(docker image inspect "$UP_REF" -f '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null | grep -m1 '^nousresearch/hermes-agent@sha256:')"
+      [ -n "$UP_DIGEST" ] || { log "upstream image has no registry digest - skip"; exit 0; }
+      CUR_UP="$(docker image inspect "$IMG" -f '{{index .Config.Labels "io.hivra.upstream.image"}}' 2>/dev/null)"
+      if [ "$CUR_UP" = "$UP_DIGEST" ] && [ "$(docker image inspect "$IMG" -f '{{.Id}}' 2>/dev/null)" = "$RUNNING" ]; then
+        log "already on the latest upstream image \${UP_DIGEST#*@} - no roll"
+        exit 0
+      fi
+      # A new upstream image waits UPSTREAM_SOAK_H hours, so a bad release can be pulled upstream first.
+      SEEN="/var/lib/hermes-upstream-seen-\${INST}-\${UP_DIGEST#*@sha256:}"
+      [ -e "$SEEN" ] || { date +%s > "$SEEN"; log "new upstream image \${UP_DIGEST#*@} first seen - soaking \${UPSTREAM_SOAK_H}h"; }
+      seen_h=$(( ( $(date +%s) - $(stat -c %Y "$SEEN") ) / 3600 ))
+      [ "$seen_h" -lt "$UPSTREAM_SOAK_H" ] && { log "upstream image \${UP_DIGEST#*@} seen \${seen_h}h ago (<\${UPSTREAM_SOAK_H}h) - skip"; exit 0; }
+      TARGET_REF="\${REPO}:upstream-next"
+      assemble_local_image "$UP_DIGEST" "$TARGET_REF" || { log "could not add the box's overlay tools to $UP_DIGEST - skip"; exit 0; }
+      LATEST="$(docker image inspect "$TARGET_REF" -f '{{.Id}}' 2>/dev/null)"
+    else
+      docker compose pull official-dashboard gateway >/dev/null 2>>"$LOG" || docker pull "$IMG" >/dev/null 2>>"$LOG" || { log "pull failed"; exit 0; }
+      LATEST="$(docker image inspect "$IMG" -f '{{.Id}}' 2>/dev/null)"
+    fi
     ;;
   roll|none)
     : > "$GOVERNED"

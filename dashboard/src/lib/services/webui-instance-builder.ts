@@ -3462,10 +3462,13 @@ seed_onboarding_soul() {
   const seedOnboardingSoulCall = "seed_onboarding_soul";
   // Reseeds the persistent agent source volume from the agent image. One copy,
   // used by the forward path and by the update rollback.
+  // A box that follows upstream Hermes keeps its Hivra overlay (add-only files) next to its compose
+  // file; it is laid over every fresh agent source (the \`-v ...:/overlay\` argument is only there then).
   const agentSourceSeedCommand = `docker run --rm \\
   -v ${p.containerName}_agent-source:/target \\
+  $([ -d /opt/hermes/instances/${p.instanceId}/overlay/files ] && echo "-v /opt/hermes/instances/${p.instanceId}/overlay:/overlay:ro") \\
   --entrypoint sh \\
-  ${agentImage} -lc 'set -e; test -f /opt/hermes/pyproject.toml; find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /opt/hermes/. /target/; if [ -d /target/.venv ]; then find /target/.venv -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -print 2>/dev/null | while IFS= read -r script; do sed -i "s|/opt/hermes|${WEBUI_HERMES_AGENT_DIR}|g" "$script"; done; fi; chown -R 1024:1024 /target'`;
+  ${agentImage} -lc 'set -e; test -f /opt/hermes/pyproject.toml; find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /opt/hermes/. /target/; if [ -d /overlay/files ]; then cp -a /overlay/files/. /target/; fi; if [ -d /target/.venv ]; then find /target/.venv -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -print 2>/dev/null | while IFS= read -r script; do sed -i "s|/opt/hermes|${WEBUI_HERMES_AGENT_DIR}|g" "$script"; done; fi; chown -R 1024:1024 /target'`;
   const UPDATE_STACK_TOUCHED_LINE = isUpdate ? `${UPDATE_STACK_TOUCHED}\n` : "";
   const imagePolicy = isUpdate ? opts.imagePolicy : undefined;
   const updateSafetyPrelude = isUpdate

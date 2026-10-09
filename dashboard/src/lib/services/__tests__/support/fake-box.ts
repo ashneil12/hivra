@@ -28,6 +28,10 @@ def resolve(ref):
         return state["refs"][ref]
     if ref in state["images"]:
         return ref
+    if "@sha256:" in ref:
+        for image_id, meta in state["images"].items():
+            if ref in meta.get("digests", []):
+                return image_id
     return None
 
 def fmt_value(args):
@@ -102,6 +106,30 @@ elif cmd == "exec":
         if stamp is None:
             done(1)
         out(stamp + "\n")
+    done(0)
+
+elif cmd == "create":
+    ref = positional(rest)
+    image_id = resolve(ref)
+    if image_id is None:
+        done(1)
+    cid = "cid%d" % (len(state.setdefault("created", {})) + 1)
+    state["created"][cid] = image_id
+    out(cid + "\n")
+    done(0)
+
+elif cmd == "commit":
+    cid, tag = rest[-2], rest[-1]
+    base = state.get("created", {}).get(cid)
+    if base is None:
+        done(1)
+    new_id = "sha256:asm-" + base.replace("sha256:", "")
+    state["images"][new_id] = dict(state["images"][base], digests=[])
+    state["refs"][tag] = new_id
+    done(0)
+
+elif cmd == "cp":
+    state.setdefault("copied", []).append(rest[0] + " -> " + rest[1])
     done(0)
 
 elif cmd == "pull":
