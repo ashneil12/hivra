@@ -68,9 +68,9 @@ const comparisons = [
   {
     slug: "vs-render",
     title: "Hivra vs Render",
-    tagline: "Another generic platform that wasn't built for agents.",
+    tagline: "Hermes on Render's one-click template, or on a Hivra computer.",
     description:
-      "Render is a solid general-purpose host, and \"deploy Hermes to Render\" means writing your own Docker setup file, setting up the network and running without tools made for agents. Hivra is already configured.",
+      "Render has a one-click Hermes template that runs on its $25 Standard plan, with no login in front of the dashboard. Hivra starts at $9.99 for 2 vCPU and 4 GB with Hermes installed.",
   },
   {
     slug: "openclaw-to-hermes",

@@ -14,7 +14,8 @@ import { COMPETITOR_FACTS_CHECKED, formatCheckedMonth } from "@/lib/compare/comp
 
 // Competitor prices below were re-checked on the vendors' own pages on
 // 2026-09-24: hetzner.com price adjustment (15 June 2026), digitalocean.com
-// droplet pricing, railway.com pricing and docs, render.com pricing and docs.
+// droplet pricing, railway.com pricing and docs. The Render page was re-read
+// on 2026-10-09 against render.com pricing, its docs and its Hermes template.
 // Hermes' own OpenClaw migration guide (`hermes claw migrate`); Hivra has no
 // OpenClaw import of its own.
 const HERMES_OPENCLAW_MIGRATION_GUIDE = "https://hermes-agent.nousresearch.com/docs/guides/migrate-from-openclaw";
@@ -194,69 +195,91 @@ const BASE_COMPARISONS: Record<string, ComparisonData> = {
   },
 
   "vs-render": {
-    title: "Hivra vs Render: Which is Better for AI Agent Hosting?",
-    h1: "Render is a web host. Hivra is built around agents.",
+    title: "Hermes Agent on Render vs Hivra: cost and setup",
+    h1: "Running Hermes on Render: what it takes and what it costs",
     metaDescription:
-      "Comparing Hivra vs Render for hosting a Hermes AI agent. Render is a solid general host but lacks agent-specific tooling. Here's the honest breakdown.",
-    tagline: "Render vs Hivra for persistent AI agent hosting.",
+      "Render's one-click Hermes template needs its $25 Standard plan. See what it sets up, what stays with you, and how Hivra's $9.99 computer compares.",
+    tagline: "Hermes Agent on Render versus a Hivra computer.",
     intro: [
-      "Render is a reliable, developer-friendly platform for web apps and APIs. It is not built for AI agents, and that gap shows in practice.",
-      "Deploying Hermes on Render means writing a Dockerfile from scratch, figuring out the persistent storage configuration for agent memory, setting up your own monitoring, and building without any agent dashboard or multi-agent tooling.",
+      "Yes, you can run Hermes Agent on Render. Render publishes a one-click Hermes template that runs it as a Docker web service on the Standard plan ($25 a month for 1 CPU and 2 GB of RAM), with a 5 GB persistent disk that adds $1.25. That is about $26 a month before model usage.",
+      "Hivra is the other route: a computer with Hermes already installed, from $9.99 a month for 2 vCPU and 4 GB. Render's template handles the install, and you look after the dashboard login, the browser memory and the upgrades.",
     ],
     sections: [
       {
-        heading: "Render's strengths and the limits for agents",
+        heading: "What does Render's Hermes template set up?",
         paragraphs: [
-          "Render excels at three things: simple static site hosting, background worker processes, and managed PostgreSQL/Redis databases. For web apps where you want to avoid the complexity of AWS or GCP, Render is an attractive middle ground between raw VPS and a full platform-as-a-service like Heroku.",
-          "The issue with Hermes Agent is that it does not fit neatly into any of Render's service types. It is not a web service (it does not listen for HTTP requests). It is not a standard background worker (it has complex startup dependencies). And its storage needs are more specialized than a standard database volume.",
-          "Render's free tier spins down web services after 15 minutes without inbound traffic, and free services cannot use a persistent disk. Hermes Agent cannot be cold-started. It needs to be always on to run scheduled tasks, maintain browser sessions, and serve the dashboard. Free tier is unusable for any real agent deployment on Render.",
+          "Render's template deploys Hermes as one Docker web service. It pins a Hermes release, runs the gateway and the Hermes dashboard in the same container, and mounts a 5 GB persistent disk so skills, sessions, memories and keys survive a redeploy. After it deploys, you add a model provider key in the dashboard and connect Telegram, Discord or Slack.",
+          "Render says the Free plan cannot run the image and asks for at least the Standard plan. You do not need to write your own Dockerfile for Hermes on Render any more, because the template already has one.",
+          "The template also registers Render's own MCP server and skill bundle with the agent, so Hermes can read your Render services and logs if you give it a Render API key. Render warns that a key like that can expose every workspace linked to your account, so use a low-privilege user.",
         ],
       },
       {
-        heading: "The Dockerfile you would have to write",
+        heading: "What do you still look after on Render?",
         paragraphs: [
-          "Getting Hermes running on Render requires a multi-stage Dockerfile that installs all Chromium dependencies (a list of about 15 system libraries), sets up the correct user permissions for the browser process, configures the memory volume mount, and sets the startup command correctly.",
-          "The steps are public in Hermes's own docs, and you still have to test them. The Chromium dependency list in particular changes between minor versions of the agent, meaning container rebuilds can fail in non-obvious ways.",
-          "Once running, you have no dashboard beyond Render's log viewer. Monitoring, scheduled task management, and memory inspection all require building your own tooling or accessing the agent's internal API directly.",
+          "The template puts no login in front of the Hermes dashboard. Render's own README says anyone who reaches the URL can read your provider keys, change settings and chat with the agent, and it tells you to add an auth gateway or a private network path. That part is yours to build.",
+          "Browser work is yours too. The README says the template does not configure browser automation settings, and that those need a plan with more RAM. Nous's Docker guide adds that Hermes browser tools need extra shared memory.",
+          "Upgrades are a choice you make. The template pins one Hermes release, so a newer release means changing that pin and redeploying. Render also says adding a disk stops zero-downtime deploys, so each redeploy leaves the service down for a few seconds.",
         ],
       },
       {
-        heading: "Cost comparison",
+        heading: "What does Hermes cost on Render?",
         paragraphs: [
-          "Render's Starter compute plan ($7/month) has 512 MB RAM, which is far too little for Hermes. The Standard compute plan at $25/month gives 1 CPU and 2 GB RAM, which is workable for light use but will hit memory pressure during browser automation tasks. The Pro compute plan at $85/month gives 2 CPU and 4 GB RAM, which is the realistic minimum for reliable browser use.",
-          "Add a Render Disk for persistent memory storage: $0.25/GB/month. Add RAM overhead when you factor in the Chromium process during browser tasks. On those prices, a Hermes agent with a browser costs at least $85/month on Render, before the disk and any extra services.",
-          "Hivra: from $9.99/month for 2 vCPU and 4 GB RAM, the same CPU and memory figures as Render's $85 Pro compute plan, with the browser pre-configured. The cost comparison is not close when you look at equivalent specs.",
+          "Render's Starter compute plan ($7/month) has 512 MB RAM, which is below the plan Render's own Hermes template asks for. The Standard compute plan at $25/month gives 1 CPU and 2 GB RAM, and that is the template's starting point. A 2 CPU and 4 GB plan is $85/month, which is the size to look at if the agent drives a browser.",
+          "The template's disk costs $0.25/GB/month, so its 5 GB is $1.25 on top. That makes Hermes about $26 a month on the Standard plan, or about $86 a month on the 2 CPU and 4 GB plan, before model usage.",
+          "Hivra starts at $9.99/month for 2 vCPU and 4 GB RAM, the same CPU and memory as Render's $85 plan, with Hermes already installed. The $19.99 size gives 4 vCPU and 8 GB. Both prices leave out model usage.",
+        ],
+      },
+      {
+        heading: "When is Render the better pick?",
+        paragraphs: [
+          "Pick Render when your team already runs services there and you want the agent next to a Render database or web service. Pick it too if you want the Render MCP tools wired into the agent from the first boot, since Hivra does not include them. Render also hosts static sites for free, which Hivra does not do.",
+          "Pick Hivra when the agent is the whole job. You launch a computer with Hermes on it, there is no Docker setup to keep current, and the same dashboard can run Claude Code or Codex on their own computers later.",
         ],
       },
     ],
     vsTable: [
-      { criterion: "Pre-configured for Hermes", hermesOs: "Yes, fully", other: "No. You build it yourself", hermosWins: true },
-      { criterion: "Persistent memory storage", hermesOs: "Pre-configured, on the agent's own disk", other: "Manual disk/volume setup", hermosWins: true },
-      { criterion: "Agent dashboard", hermesOs: "Built-in dashboard", other: "None", hermosWins: true },
-      { criterion: "Browser automation environment", hermesOs: "Pre-installed", other: "Complex Docker setup required", hermosWins: true },
-      { criterion: "Scheduled tasks", hermesOs: "Native agent scheduling", other: "Render Cron Jobs (a separate service)", hermosWins: true },
-      { criterion: "Always-on (no sleep)", hermesOs: "Paid plans are never paused for inactivity", other: "Free sleeps after 15 idle minutes; always-on paid only", hermosWins: true },
+      { criterion: "Hermes setup", hermesOs: "Installed when you launch the computer", other: "One-click template, then add a model key in the dashboard", hermosWins: true },
+      { criterion: "Cheapest size Render's Hermes template runs on", hermesOs: "$9.99/mo (2 vCPU, 4 GB)", other: "$25/mo (1 CPU, 2 GB) plus disk", hermosWins: true },
       { criterion: "Monthly cost for 4 GB RAM", hermesOs: "$9.99/mo (2 vCPU, 4 GB)", other: "$85/mo (2 CPU, 4 GB) plus disk", hermosWins: true },
-      { criterion: "Static site hosting", hermesOs: "Not supported", other: "Excellent and free", hermosWins: false },
+      { criterion: "Always-on (no sleep)", hermesOs: "Paid plans are never paused for inactivity", other: "Free sleeps after 15 idle minutes; paid plans stay up", hermosWins: true },
+      { criterion: "Other agents", hermesOs: "Hermes, OpenClaw, Agent Zero, Claude Code and Codex, each on its own computer", other: "Anything you can put in a container, set up by you", hermosWins: true },
+      { criterion: "Render MCP tools in the agent", hermesOs: "Not included", other: "Included in the template", hermosWins: false },
+      { criterion: "Static site hosting", hermesOs: "Not supported", other: "Free static sites", hermosWins: false },
     ],
     verdict:
-      "For running a persistent Hermes AI agent, Hivra wins on setup work, agent tooling, and cost at equivalent specs. Render makes more sense for web apps and APIs than for agent workloads that need persistent processes and browser access.",
+      "For running Hermes on its own, Hivra costs less at the same memory and has Hermes installed when you launch. Render's template is a fair way to run Hermes there, and it is the better pick when the agent should sit next to services you already run on Render. Wherever it runs, put a login in front of any Hermes dashboard that faces the internet.",
+    factSources: [
+      { label: "Render pricing", href: "https://render.com/pricing" },
+      { label: "Render's Hermes template", href: "https://render.com/templates/hermes-on-render" },
+      { label: "Render's Hermes template README on GitHub", href: "https://github.com/render-examples/hermes-render" },
+      { label: "Render free instance limits", href: "https://render.com/docs/free" },
+      { label: "Render persistent disks", href: "https://render.com/docs/disks" },
+      { label: "Hermes Docker setup (Nous Research)", href: "https://hermes-agent.nousresearch.com/docs/user-guide/docker" },
+    ],
     faqs: [
       {
+        q: "Can I run Hermes Agent on Render?",
+        a: "Yes. Render publishes a one-click Hermes template that runs Hermes as a Docker web service with a 5 GB persistent disk. Render asks for at least the Standard plan, which is $25 a month for 1 CPU and 2 GB of RAM.",
+      },
+      {
         q: "Does Render's free tier work for Hermes?",
-        a: "No. Free web services spin down after 15 minutes without inbound traffic and cannot use a persistent disk, which Hermes needs for scheduled tasks and persistent memory. You need at minimum Render's Standard compute plan ($25/month, 1 CPU, 2 GB RAM).",
+        a: "No. Render says its Hermes template cannot run on the Free plan. Free web services also spin down after 15 minutes without inbound traffic and cannot attach a persistent disk, so the agent would lose its files and stop answering.",
       },
       {
-        q: "Is Render faster to set up than a raw VPS for Hermes?",
-        a: "Slightly, because you skip OS-level setup. But you still need to configure everything at the application layer including the Chromium dependencies, memory volumes, and monitoring. Hivra still needs far less setup.",
+        q: "How much does Hermes cost to run on Render?",
+        a: "About $26 a month on the Standard plan with the template's 5 GB disk ($25 plus $1.25), before model usage. The 2 CPU and 4 GB plan is $85 a month plus the disk.",
       },
       {
-        q: "What does Render lack that Hivra provides?",
-        a: "Agent dashboard, several agents managed in one place, pre-configured browser automation, Hermes-specific memory persistence, scheduled task management, and a choice of agents including Hermes, OpenClaw, Claude Code and Codex.",
+        q: "Is the Hermes dashboard on Render password protected?",
+        a: "Not by the template. Render's README says the Hermes dashboard has no login of its own and that anyone who reaches the URL can read your provider keys, so put an auth gateway or a private network in front of it.",
       },
       {
         q: "Can I run Hermes on Render's cheapest plan with 512 MB RAM?",
-        a: "We do not recommend it. 512 MB leaves little room for Hermes and none for a browser; plan on at least 1-2 GB, and 4 GB if the agent browses.",
+        a: "We do not recommend it. Render's Hermes template asks for the Standard plan, so the $7 plan with 512 MB is below what Render itself suggests. If the agent browses, plan for more memory than that.",
+      },
+      {
+        q: "What does Hivra add over Render's template?",
+        a: "Hermes installed on a computer from $9.99 a month, the same 2 vCPU and 4 GB as Render's $85 plan, one dashboard for several agents, and a choice of agents including Hermes, OpenClaw, Claude Code and Codex. Hivra does not offer Render's MCP tools or static site hosting.",
       },
     ],
     relatedComparisons: [
