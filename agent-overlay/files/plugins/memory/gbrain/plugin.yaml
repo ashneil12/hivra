@@ -1,0 +1,8 @@
+name: gbrain
+version: 1.0.0
+description: "GBrain - shared org-brain memory over a loopback Streamable-HTTP MCP server (fat-markdown pages, hybrid search, hot facts)."
+pip_dependencies:
+  - requests
+requires_env:
+  - GBRAIN_BASE_URL
+  - GBRAIN_MCP_TOKEN

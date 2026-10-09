@@ -100,6 +100,76 @@
       "path": "contracts/test/",
       "category": "not-in-ci",
       "reason": "Foundry test for the payment router; needs forge plus the forge-std and OpenZeppelin libraries, which no workflow installs yet."
+    },
+    {
+      "path": "agent-overlay/tests/cron/test_runtime_governor.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/gateway/test_held_lock.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/gateway/test_runtime_governor.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/hermes_cli/test_bankr_prompt.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/hermes_cli/test_fork_providers.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/plugins/test_hivra_approval_relay.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/plugins/transcription/test_venice_stt_plugin.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/plugins/tts/test_venice_tts_plugin.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/plugins/video_gen/test_venice_plugin.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/test_seams.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/tools/test_image_edit_managed_upload.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/tools/test_image_edit_model_resolution.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/tools/test_media_generation_wiring.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/tools/test_video_image_input.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
     }
   ]
 }

@@ -1,0 +1,5 @@
+name: hivra-core
+version: 1.0.0
+description: "Hivra fork: Bankr wallet and hosted-media system-prompt guidance. Inert without a provisioned wallet / media tools."
+author: Hivra
+kind: backend

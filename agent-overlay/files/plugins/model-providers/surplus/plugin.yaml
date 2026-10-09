@@ -1,0 +1,5 @@
+name: surplus-intelligence-provider
+kind: model-provider
+version: 1.0.0
+description: Surplus Intelligence (open market for AI inference)
+author: Nous Research

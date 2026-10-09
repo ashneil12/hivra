@@ -1,0 +1,7 @@
+{
+  "name": "hermes-egress",
+  "label": "Egress Health",
+  "description": "HermesOS synthetic outbound DNS+TCP egress probe for the Hermesdeploy fleet egress-sweep. API-only (no dashboard tab).",
+  "version": "1.0.0",
+  "api": "plugin_api.py"
+}
