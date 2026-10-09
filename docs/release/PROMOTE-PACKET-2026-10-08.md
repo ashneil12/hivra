@@ -241,7 +241,7 @@ side). Differences:
 | `dunning-sweep` | daily | **removed** | The past-due email sweep stops. 7 subscriptions are past due today. The webhook lane and grace enforcement stay. Decide (section 9). |
 | `trial-expiry` | hourly | **removed** | No trials exist in the candidate. |
 | `reservation-claim-expiry` | every 2h | **removed** | Waitlist retired. |
-| `seo/gsc-pull`, `seo/index-coverage`, `seo/inventory-check` | daily/weekly | **removed** | The SEO engine stops writing. Data stays. |
+| `seo/gsc-pull`, `seo/index-coverage`, `seo/inventory-check` | daily/weekly | kept (ported back into the candidate) | Same schedules. They read Search Console with `GSC_SA_KEY` (already set on production) and write the existing `seo_*` tables. |
 | `managed-venice-hold-sweep` | none | hourly | New. Settles stale managed-Venice wallet holds (capture or release); it used to run inside the daily reconcile. Production has 24 active holds, the oldest from mid-May, so the first run moves user balances. Read the counts in the logs. |
 | `prune-hivra-activity` | none | daily | Dry run unless `ACTIVITY_RETENTION_ENABLED=true` (section 6.2). |
 | `progress-agent-attachments` | none | every minute | New. |
@@ -340,9 +340,10 @@ cookie consent, canonical and sitemap host handling in `seo-host.ts` and `seo-ur
 the agent SEO catalog, tool catalog and new blog articles. Around 55 other PRs are SEO
 and site copy. What changes on production:
 
-- The live SEO engine (`gsc-pull`, `index-coverage`, `inventory-check` crons and the
-  `seo_*` tables) has no counterpart in the candidate. Rows stay, jobs stop. Search Console
-  data for the cutover would have to be read in Search Console itself.
+- The live SEO engine (`gsc-pull`, `index-coverage`, `inventory-check`, `analyst-brief`,
+  `actions` routes, `lib/seo`, and the two `seo_*` migrations) is ported back into the
+  candidate, so SEO keeps collecting data after Promote. Both migrations already have
+  ledger rows on production; the files are the same text.
 - GA4 sign-up tracking is consent-gated, so no new tracking without consent.
 - Canary is noindex; production is not. Check `robots` and canonical on the real hostname
   after Promote (`/robots.txt`, `/sitemap.xml`, one blog page, one tool page).
@@ -369,7 +370,7 @@ what production has set is **not done**. From code alone:
 - The live build reads these the candidate does not, so that behaviour ends at Promote:
   the card trial flags (`HERMES_CARD_*`), `HERMES_DUNNING_SWEEP_*`, `HERMES_TRIAL_*`,
   `HERMES_MANAGED_VENICE_STARTER_CREDIT_*`, `MAX_FREE_INSTANCES`,
-  `STRIPE_TRIAL_OFFER_COUPON_ID`, `RESERVATION_AUTO_INVITE_ENABLED`, `GSC_SA_KEY`,
+  `STRIPE_TRIAL_OFFER_COUPON_ID`, `RESERVATION_AUTO_INVITE_ENABLED`,
   `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. Matches the removal of trials and starter credit.
 - `NEXT_PUBLIC_HIVRA_AGENTS` must be `1` on production or every launch except Hermes fails
   (PROD-CUTOVER-PACKET.md section 4). Value needs the owner's confirmation.
@@ -400,7 +401,7 @@ what production has set is **not done**. From code alone:
 3. `ACTIVITY_RETENTION_ENABLED`: leave unset at Promote. Recommend yes.
 4. Dunning sweep email lane removed with the trial code: confirm intended, or restore a
    past-due lane before Promote (7 past-due subscriptions today).
-5. SEO jobs removed: confirm Search Console is read in the console, not by the app.
+5. SEO jobs: resolved. The jobs are kept, nothing to confirm except that `GSC_SA_KEY` stays set.
 6. Daily instance backups drop from 4 to 1 a day: confirm intended.
 7. Run the rehearsal (needs a temporary production login for a schema dump).
 

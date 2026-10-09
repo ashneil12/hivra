@@ -1,6 +1,18 @@
 {
   "crons": [
     {
+      "path": "/api/cron/seo/gsc-pull",
+      "schedule": "10 6 * * *"
+    },
+    {
+      "path": "/api/cron/seo/inventory-check",
+      "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/cron/seo/index-coverage",
+      "schedule": "30 7 * * 1"
+    },
+    {
       "path": "/api/cron/purge-expired",
       "schedule": "0 0 * * *"
     },
