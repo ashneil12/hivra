@@ -18,6 +18,8 @@ interface LandingHeaderProps {
    * Left undefined, the header falls back to Clerk's readable session hint.
    */
   isSignedIn?: boolean;
+  /** Show the litepaper links (HIVRA_NEW_TOKEN_SURFACES, decided on the server). */
+  tokenSurfaces?: boolean;
 }
 
 const CLERK_CLIENT_UAT = "__client_uat";
@@ -79,7 +81,7 @@ export function FunnelHeader({ trailing, homeHref }: { trailing?: ReactNode; hom
   );
 }
 
-export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHeaderProps = {}) {
+export default function LandingHeader({ isSignedIn: isSignedInProp, tokenSurfaces = false }: LandingHeaderProps = {}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -95,7 +97,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
     { label: copy.nav.pricing, href: "/#pricing" },
     { label: "Blog", href: "/blog" },
     { label: "Ecosystem", href: "/ecosystem" },
-    { label: "Litepaper", href: LITEPAPER_HREF },
+    ...(tokenSurfaces ? [{ label: "Litepaper", href: LITEPAPER_HREF }] : []),
   ];
 
   useEffect(() => {
@@ -181,7 +183,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp }: LandingHea
         <div className={styles.mobileExtras}>
           <Link href="/#founder" onClick={() => setMenuOpen(false)}>Why I’m building Hivra</Link>
           {/* Phones already list the litepaper in the menu links above. */}
-          {!phoneMenu && <PublicLink href={LITEPAPER_HREF} onClick={() => setMenuOpen(false)}>Read the litepaper</PublicLink>}
+          {tokenSurfaces && !phoneMenu && <PublicLink href={LITEPAPER_HREF} onClick={() => setMenuOpen(false)}>Read the litepaper</PublicLink>}
           {PUBLIC_PROJECT_LINKS.repository.status === "published" && <SourceLink />}
           <div className={styles.menuTools}>
             <div className={styles.themeControl}><ThemeToggle /></div>

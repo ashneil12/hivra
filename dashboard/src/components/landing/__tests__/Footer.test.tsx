@@ -34,7 +34,7 @@ describe("Footer", () => {
   });
 
   it("links the product, token, status, and stats entries and credits HermesOS", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Ecosystem" })).toHaveAttribute("href", "/ecosystem");
     expect(screen.getByRole("link", { name: "Token" })).toHaveAttribute("href", "/token");
@@ -45,7 +45,7 @@ describe("Footer", () => {
   });
 
   it("links the trust pages from the Company column: About and Security", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
     const company = screen.getByRole("navigation", { name: "Company" });
 
     expect(within(company).getByRole("link", { name: "About" })).toHaveAttribute("href", "/about");
@@ -56,27 +56,27 @@ describe("Footer", () => {
   });
 
   it("links the status page next to the changelog entry", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute("href", "/changelog");
   });
 
   it("includes a roadmap link in the footer", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Roadmap" })).toHaveAttribute("href", "/roadmap");
   });
 
   it("exposes computer, hosting and download routes without a dead GitHub link", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
     expect(screen.getByRole("link", { name: "Hosting & self-hosting" })).toHaveAttribute("href", "/#hosting");
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
   it("links the official X account in a new tab", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
     const x = screen.getByRole("link", { name: "X (@HivraOS)" });
     expect(x).toHaveAttribute("href", "https://x.com/HivraOS");
     expect(x).toHaveAttribute("target", "_blank");
@@ -84,7 +84,7 @@ describe("Footer", () => {
   });
 
   it("links the changelog next to the roadmap entry", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute("href", "/changelog");
   });
@@ -100,13 +100,13 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
   });
   it("links the restored hubs sitewide so they are never orphaned", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
     expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
     expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("href", "/pricing");
     expect(screen.getByRole("link", { name: "Free tools" })).toHaveAttribute("href", "/tools");
   });
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
     // The litepaper is a static file: a plain link, so no Server Components prefetch 404s.
     expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
     expect(screen.getByRole("link", { name: "Litepaper" })).not.toHaveAttribute("data-next-link");

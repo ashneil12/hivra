@@ -26,6 +26,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { log } from "@/lib/logger";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 import { resolveTokenGeoBlock, type TokenGeoOptions, type TokenGeoRequest } from "./token-geo-gate";
 
@@ -53,6 +54,8 @@ export interface TokenGeoDocumentOptions {
   geo?: TokenGeoOptions;
   /** Test seam; the dashboard root that holds GEO_DOCUMENTS_DIRECTORY. Defaults to process.cwd(). */
   dashboardRoot?: string;
+  /** Test seam; defaults to the HIVRA_NEW_TOKEN_SURFACES switch. */
+  surfacesEnabled?: boolean;
 }
 
 function noStoreHeaders(contentType: string) {
@@ -69,6 +72,10 @@ export async function serveTokenGeoDocument(
   options: TokenGeoDocumentOptions = {}
 ): Promise<Response> {
   const document = TOKEN_GEO_DOCUMENTS[name];
+  // Switch off: these documents are held back and the address goes to the homepage.
+  if (!(options.surfacesEnabled ?? newTokenSurfacesEnabled())) {
+    return new Response(null, { status: 307, headers: { Location: "/", "Cache-Control": TOKEN_GEO_DOCUMENT_CACHE_CONTROL } });
+  }
   const decision = await resolveTokenGeoBlock(request, null, options.geo);
   const variant: TokenGeoDocumentVariant = decision.blocked ? "restricted" : "full";
   const file = path.join(options.dashboardRoot ?? process.cwd(), GEO_DOCUMENTS_DIRECTORY, variant, name);

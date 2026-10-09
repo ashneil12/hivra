@@ -35,7 +35,7 @@ function newestArticleDate(): Date {
   }, new Date(0));
 }
 
-export function getSiteUrls(): MetadataRoute.Sitemap {
+export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean } = {}): MetadataRoute.Sitemap {
   // Core public pages. The changelog RSS feed is deliberately not listed: a
   // feed is not a page, and it is discovered from /changelog.
   const corePages: MetadataRoute.Sitemap = [
@@ -64,12 +64,16 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 0.8,
     },
-    {
-      url: `${SITE_URL}/token`,
-      lastModified: dayToDate(PAGE_LAST_MODIFIED.token),
-      changeFrequency: "monthly",
-      priority: 0.2,
-    },
+    ...(tokenSurfaces
+      ? [
+          {
+            url: `${SITE_URL}/token`,
+            lastModified: dayToDate(PAGE_LAST_MODIFIED.token),
+            changeFrequency: "monthly" as const,
+            priority: 0.2,
+          },
+        ]
+      : []),
     {
       url: `${SITE_URL}/why-hivra`,
       lastModified: dayToDate(PAGE_LAST_MODIFIED.whyHivra),

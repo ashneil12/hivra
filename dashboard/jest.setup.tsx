@@ -18,6 +18,9 @@ if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
 // and the geo route and page suites do), so the committed list is proven to reach
 // the policy, the routes, the pages and the rewrites. With the empty list those
 // checks cannot fail.
+// HIVRA_NEW_TOKEN_SURFACES is OFF in production; the suite runs with the surfaces ON so the
+// existing token tests keep covering them. token-surfaces tests set it per case.
+process.env.HIVRA_NEW_TOKEN_SURFACES = process.env.HIVRA_NEW_TOKEN_SURFACES ?? 'true';
 jest.mock('@/lib/compliance/token-geo-list', () => ({ BLOCKED_COUNTRIES: [] }));
 
 const mockClerk = {

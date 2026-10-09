@@ -374,6 +374,8 @@ what production has set is **not done**. From code alone:
 - `NEXT_PUBLIC_HIVRA_AGENTS` must be `1` on production or every launch except Hermes fails
   (PROD-CUTOVER-PACKET.md section 4). Value needs the owner's confirmation.
 - `ACTIVITY_RETENTION_ENABLED`: leave unset (section 6.2).
+- `HIVRA_NEW_TOKEN_SURFACES`: leave UNSET on production. Unset holds back the new token pages, the litepaper and the UK list
+  while every $HermesOS feature keeps working (docs/token/NEW-TOKEN-SURFACES-SWITCH.md). It needs no value and no NEXT_PUBLIC twin.
 - Compare the production environment name list against this by hand in the Vercel
   dashboard before merging the release PR.
 

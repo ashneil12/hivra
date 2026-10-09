@@ -18,12 +18,12 @@ const COLUMNS = [
     { label: "Open source", href: "/#open-source" },
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
-    { label: "Litepaper", href: LITEPAPER_HREF },
+    { label: "Litepaper", href: LITEPAPER_HREF, tokenSurface: true },
     { label: "Blog", href: "/blog" },
     { label: "Free tools", href: "/tools" },
     { label: "Download the app", href: "/download" },
     { label: "Ecosystem", href: "/ecosystem" },
-    { label: "Token", href: "/token" },
+    { label: "Token", href: "/token", tokenSurface: true },
   ] },
   { title: "Company", links: [
     { label: "About", href: "/about" },
@@ -36,12 +36,12 @@ const COLUMNS = [
   ] },
 ];
 
-export default function Footer() {
+export default function Footer({ tokenSurfaces = false }: { tokenSurfaces?: boolean } = {}) {
   return (
     <footer className={styles.footer} data-public-footer>
       <div className={`${styles.footerTop} ${styles.footerCompact}`}>
         <div className={styles.footerColumns}>
-          {COLUMNS.map((column) => (
+          {COLUMNS.map((column) => ({ ...column, links: column.links.filter((link) => tokenSurfaces || !("tokenSurface" in link)) })).map((column) => (
             <nav key={column.title} aria-label={column.title}>
               <h2>{column.title}</h2>
               {column.links.map(({ label, href }) => (
@@ -56,7 +56,7 @@ export default function Footer() {
       <Link href="/" className={styles.footerWordmark} aria-label="Hivra, back to homepage">Hivra<span aria-hidden="true">.</span></Link>
       <div className={styles.footerBottom}>
         <p>Powered by Hivra</p>
-        <Link href="/why-hivra/evolution">Formerly HermesOS<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" /></Link>
+        {tokenSurfaces ? <Link href="/why-hivra/evolution">Formerly HermesOS<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" /></Link> : <p>Formerly HermesOS</p>}
         <p>© Hivra</p>
       </div>
     </footer>
