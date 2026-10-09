@@ -45,7 +45,7 @@ repository on ghcr.io that this profile cannot create (no write credential); and
 | Seams apply to stock v0.21.6 | 6 of 6 applied. Also 6 of 6 on the next upstream, `rc.3-v0.21.7` | PROVEN |
 | Overlay tests inside the image against the upstream test tree | **275 passed** (governor, providers, media tools, plugins, approval relay, seams) | PROVEN |
 | Web bundles built from stock source plus patches | `/webchat` (46 MB) and `/dash` (3.3 MB) build; 133 of 133 renderer tests pass (15 files) | PROVEN |
-| Real box (canary fixture `firstrun-audit-e0a26c4d`, pve12 VM 1233) on stock + overlay | both containers healthy; gateway reports "Hermes Agent v0.21.6 (2026.9.24) upstream 818c13be", install dir = the agent-source volume | PROVEN |
+| Real box (the canary fixture box `firstrun-audit-e0a26c4d`) on stock + overlay | both containers healthy; gateway reports "Hermes Agent v0.21.6 (2026.9.24) upstream 818c13be", install dir = the agent-source volume | PROVEN |
 | Box doctor (`webfree-box-doctor.sh --auth`) on the stock+overlay box | every route, bearer, and `WS /desktop/api/ws -> 101` PASS. Only FAIL was the roll pause I set on purpose | PROVEN |
 | Agent tool loop through the gateway API (`/v1/chat/completions`, test model) | cwd `/workspace`; write then read back; `gh`, `uv`, `git` present; `hermes --version` works; 5 of 5 turns admitted and finished by the metering seams | PROVEN with a stub model |
 | `hermes update` on stock | direct run: refused, exit 2, prints `docker pull nousresearch/hermes-agent` steps. Through the agent tool: blocked as dangerous on an unattended platform | PROVEN |

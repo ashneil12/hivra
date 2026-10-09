@@ -44,30 +44,7 @@ apps/desktop/src/plugins/hivra/dashboard-bridge.ts	A	119	0	D	Hivra browser bridg
 apps/desktop/src/plugins/hivra/plugin.tsx	A	226	0	D	Hivra browser bridge and UI (add-only files). Kept as web/patches/0001, built on stock upstream source into the /webchat and /dash bundles.
 apps/desktop/src/plugins/hivra/themes.ts	A	79	0	D	Hivra browser bridge and UI (add-only files). Kept as web/patches/0001, built on stock upstream source into the /webchat and /dash bundles.
 apps/desktop/src/plugins/hivra/web.css	A	29	0	D	Hivra browser bridge and UI (add-only files). Kept as web/patches/0001, built on stock upstream source into the /webchat and /dash bundles.
-contributors/emails/Cosmiclady@yandex.ru	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/Kame696@users.noreply.github.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/aeon@hermesos.cloud	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/ashjeff33@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/daresan21@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/doresaweb3@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/evan-bradford@users.noreply.github.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/heartbeat@operator.local	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/konrad.mamsc@icloud.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/kosa.zoltan.ebc@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/kvnloo@users.noreply.github.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/lgy10271416@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/mrchen0709@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/o_xkenshin@icloud.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/ops@hermesos.cloud	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/peyton.lu@users.noreply.github.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/rahlquist@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/rau@Omers-MacBook-Pro.local	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/squevo@users.noreply.github.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/stiraspo@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/thekingxzero@hotmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/witcheer.eth@gmail.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/yagna@users.noreply.github.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
-contributors/emails/youssef@example.com	A	2	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
+contributors/emails/* (24 files)	A	48	0	A	Fork CI author-identity files for upstream-release-sync. Dies with the sync workflows.
 cron/scheduler.py	M	4	0	D	Runtime governor (metering) and its five decorator seams. Overlay applies the seams at plugin load, only when HERMES_RUNTIME_GOVERNOR_ENABLED/REQUIRED is set. Dormant today: nothing in this repo sets those variables or serves the sidecar API.
 gateway/fork_status_guard.py	A	43	0	D	Held-lock guard (keeps gateway.pid/lock while another container holds the lock). Needed: stock v0.21.6 fails 2 of 4 cases without it. Overlay seam; candidate upstream PR (E).
 gateway/platforms/api_server.py	M	4	0	D	Runtime governor (metering) and its five decorator seams. Overlay applies the seams at plugin load, only when HERMES_RUNTIME_GOVERNOR_ENABLED/REQUIRED is set. Dormant today: nothing in this repo sets those variables or serves the sidecar API.
