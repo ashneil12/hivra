@@ -68,4 +68,16 @@ describe("resolveUpdateImagePolicy", () => {
     expect(isRegistryMissingError({ code: "42P01" })).toBe(true);
     expect(isRegistryMissingError({ code: "57P01" })).toBe(false);
   });
+
+  it("never pulls or moves the image of a box that follows upstream Hermes by itself", async () => {
+    const memory = createSupabaseMemoryDb({
+      tables: ["hermes_instances", "hermes_releases"],
+      seed: {
+        hermes_instances: [{ id: BOX, config: { webuiAgentImage: "hivra-local/hermes:stable" }, release_channel: "stable", agent_image_digest: null, agent_version: null, update_health: null }],
+        hermes_releases: [release(1), release(2)],
+      },
+    });
+    const { policy } = await resolveUpdateImagePolicy(memory.db as unknown as SupabaseClient, BOX, "release");
+    expect(policy).toEqual({ kind: "keep" });
+  });
 });

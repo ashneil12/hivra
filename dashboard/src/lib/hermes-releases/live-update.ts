@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { log } from "@/lib/logger";
 import type { UpdateImagePolicy } from "@/lib/services/webui-instance-builder";
 
+import { NOFORK_LOCAL_REPO } from "@/lib/services/no-fork-migration-builder";
+
 import { loadBoxRelease, type BoxReleaseState } from "./box";
 import { releaseImageRef } from "./policy";
 
@@ -49,6 +51,9 @@ export async function resolveUpdateImagePolicy(
     if (isRegistryMissingError(err)) return { policy: undefined, state: null };
     throw err;
   }
+  // A box that follows upstream Hermes by itself owns its image (stock upstream plus its own
+  // overlay tools, tagged locally). The control plane never pulls or moves it.
+  if (state?.imageRepo === NOFORK_LOCAL_REPO) return { policy: { kind: "keep" }, state };
   if (!state || !state.governed) return { policy: undefined, state };
 
   const target = state.decision.target;

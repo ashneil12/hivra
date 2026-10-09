@@ -31,8 +31,16 @@ COPY web-prebuilt/ /out/
 
 FROM web_${WEB_MODE} AS web
 
+# ---- the list of overlay files (the migration and the box's self-update re-apply exactly these) ----
+FROM busybox:1.37 AS overlay_manifest
+COPY files/ /files/
+RUN cd /files && find . -type f | sed 's|^\./||' | sort > /FILES.txt
+
 # ---- runtime: stock upstream + overlay --------------------------------------------------------
 FROM ${UPSTREAM_IMAGE}
+# Re-declared: a global ARG is not visible inside the stage unless it is declared again, and the
+# label below would silently come out empty (found when the box migration read it).
+ARG UPSTREAM_IMAGE
 ARG UPSTREAM_TAG=unknown
 ARG OVERLAY_VERSION=dev
 ARG VCS_REF=unknown
@@ -56,6 +64,9 @@ RUN install -d -m 0755 /etc/apt/keyrings \
 # hivra_overlay/ package. Every path is new relative to the upstream tree (scripts/check-overlay.sh
 # fails if a file would overwrite an upstream file).
 COPY files/ /opt/hermes/
+# Exactly which paths are the overlay's. A box that follows upstream by itself copies these onto
+# every new stock image; nothing else from this image is carried over.
+COPY --from=overlay_manifest /FILES.txt /opt/hermes/hivra_overlay/FILES.txt
 # The static bundles the box's Caddy extracts (/webchat and /dash). Same location the retired fork used.
 COPY --from=web /out/ /opt/hermes/hermes_cli/
 RUN chmod -R a+rX /opt/hermes/hivra_overlay /opt/hermes/plugins /opt/hermes/tools /opt/hermes/skills /opt/hermes/gateway /opt/hermes/hermes_cli/webchat_dist /opt/hermes/hermes_cli/web_dist_dash

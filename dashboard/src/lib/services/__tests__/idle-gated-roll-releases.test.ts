@@ -1,4 +1,5 @@
-import { rmSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync } from "fs";
+import { join } from "path";
 
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 
@@ -241,5 +242,97 @@ describe("hourly roll against the release registry", () => {
     expect(box.run().status).toBe(1);
     expect(box.log).toContain("failed to stop services cleanly");
     expect(box.state.refs[`${REPO}:stable`]).toBe(ID_OLD);
+  });
+});
+
+describe("current-generation compose (managed gateway command)", () => {
+  it("rolls instead of pausing on a compose that has no old uv command to rewrite", () => {
+    const box = make({ releaseReply: reply("roll", D_NEW) });
+    writeFileSync(
+      join(box.instanceDir, "docker-compose.yml"),
+      `services:\n  gateway:\n    image: ${REPO}:stable\n    command:\n      - |\n          def managed_gateway_command(action):\n              return ["/usr/local/bin/uv", "run", "--project", "x", "hermes", "gateway", action]\n          status_cmd = managed_gateway_command("status")\n          run_cmd = managed_gateway_command("run")\n`
+    );
+    expect(box.run().status).toBe(0);
+    expect(box.log).not.toContain("compose migration mismatch");
+    expect(box.log).toContain("roll complete + healthy");
+    expect(box.exists(`var/lib/hermes-roll-paused-${INST}`)).toBe(false);
+  });
+});
+
+describe("a box that follows upstream by itself (no-fork)", () => {
+  const UP_REPO = "nousresearch/hermes-agent";
+  const UP_DIGEST = `sha256:${"d".repeat(64)}`;
+  const UP_BAD_DIGEST = `sha256:${"e".repeat(64)}`;
+  const UP_IMAGES: BoxImage[] = [
+    ...IMAGES,
+    { id: "sha256:4444up", digests: [`${UP_REPO}@${UP_DIGEST}`] },
+    { id: "sha256:5555upbad", digests: [`${UP_REPO}@${UP_BAD_DIGEST}`], health: "unhealthy" },
+  ];
+  const direct = (box: FakeBox) => writeFileSync(join(box.root, `var/lib/hermes-upstream-direct-${INST}`), "1\n");
+  const withOverlay = (box: FakeBox) => {
+    mkdirSync(join(box.instanceDir, "overlay/bin"), { recursive: true });
+    writeFileSync(join(box.instanceDir, "overlay/bin/uv"), "uv\n");
+  };
+  const seenFiles = (box: FakeBox) => readdirSync(join(box.root, "var/lib")).filter((f) => f.startsWith(`hermes-upstream-seen-${INST}`));
+  const backdateSeen = (box: FakeBox, hours: number) => {
+    const when = new Date(Date.now() - hours * 3600 * 1000);
+    for (const f of seenFiles(box)) utimesSync(join(box.root, "var/lib", f), when, when);
+  };
+  const upBox = (registryId = "sha256:4444up", extra: Partial<ConstructorParameters<typeof FakeBox>[0]> = {}) =>
+    make({ images: UP_IMAGES, releaseDown: true, registry: { [`${UP_REPO}:stable`]: registryId }, ...extra });
+
+  it("keeps waiting for the dashboard when it is not marked as following upstream", () => {
+    const box = upBox();
+    expect(box.run().status).toBe(0);
+    expect(box.state.containers[`agent-${INST}-gateway`].image).toBe(ID_OLD);
+    expect(box.state.calls.some((c: string) => c.startsWith("pull"))).toBe(false);
+  });
+
+  it("does not move onto a brand-new upstream image until it has soaked", () => {
+    const box = upBox();
+    direct(box);
+    expect(box.run().status).toBe(0);
+    expect(box.log).toContain("following upstream directly");
+    expect(box.log).toContain("soaking 24h");
+    expect(box.state.containers[`agent-${INST}-gateway`].image).toBe(ID_OLD);
+    expect(seenFiles(box)).toHaveLength(1);
+  });
+
+  it("moves onto the upstream image after the soak, with the control plane unreachable, never asking Hivra for an image", () => {
+    const box = upBox();
+    direct(box);
+    withOverlay(box);
+    expect(box.run().status).toBe(0);
+    backdateSeen(box, 25);
+    expect(box.run().status).toBe(0);
+    expect(box.log).toContain("roll complete + healthy");
+    // the running image is the official one with the box's own overlay tools added locally
+    expect(box.state.containers[`agent-${INST}-gateway`].image).toBe("sha256:asm-4444up");
+    expect((box.state.copied as string[]).some((c) => c.includes("overlay/bin/uv"))).toBe(true);
+    const pulls: string[] = box.state.calls.filter((c: string) => c.startsWith("pull"));
+    expect(pulls.every((c) => c.includes(UP_REPO))).toBe(true);
+    expect(box.state.calls.some((c: string) => c.startsWith("compose pull"))).toBe(false);
+    expect(box.exists(`var/lib/hermes-release-governed-${INST}`)).toBe(false);
+  });
+
+  it("still rolls an unhealthy upstream image back and pauses", () => {
+    const box = upBox("sha256:5555upbad");
+    direct(box);
+    box.run();
+    backdateSeen(box, 25);
+    expect(box.run().status).toBe(1);
+    expect(box.state.containers[`agent-${INST}-gateway`].image).toBe(ID_OLD);
+    expect(box.exists(`var/lib/hermes-roll-paused-${INST}`)).toBe(true);
+  });
+
+  it("lays the box's overlay over every fresh agent source, and only when one exists", () => {
+    const withFiles = make({ releaseReply: reply("roll", D_NEW) });
+    mkdirSync(join(withFiles.instanceDir, "overlay/files"), { recursive: true });
+    expect(withFiles.run().status).toBe(0);
+    expect(withFiles.state.calls.some((c: string) => c.startsWith("run ") && c.includes(":/overlay:ro"))).toBe(true);
+
+    const without = make({ releaseReply: reply("roll", D_NEW) });
+    expect(without.run().status).toBe(0);
+    expect(without.state.calls.some((c: string) => c.includes(":/overlay:ro"))).toBe(false);
   });
 });

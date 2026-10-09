@@ -23,3 +23,7 @@ upstream bump, fix the seam or the patch, do not weaken the check.
 
 Bumping upstream: `scripts/build-overlay.sh vX.Y.Z <overlay-version> <upstream checkout at vX.Y.Z>`.
 If the web patch no longer applies, re-port the failing hunk and add it to a new patch file.
+
+Moving a running box onto this image, and how a moved box follows upstream by itself:
+`docs/release/NO-FORK-MIGRATION.md`. `hivra_overlay/FILES.txt` (written by the Dockerfile) lists exactly
+which paths are overlay files; the move copies those and nothing else out of the image.
