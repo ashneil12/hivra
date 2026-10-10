@@ -11,8 +11,8 @@ conclusions. Custody and regulatory treatment are under legal review.
 - **Source:** this repository (`ashneil12/hivra`), branch `canary` at
   `f6737a2`, plus the change set that adds this file.
 - **Row counts:** read-only aggregate queries on 2026-09-23 against the
-  production database (Supabase project `prvdajgvxnkunvpmitbt`) and the
-  Canary database (`srrwbdvxlqvqjuexitaf`). No personal data was read.
+  production database (Supabase project; the ref is kept in the private ops notes) and the
+  Canary database (ref kept in the private ops notes). No personal data was read.
 - **Bankr behaviour:** Bankr's public documentation at docs.bankr.bot, read on
   2026-09-23 (pages cited inline).
 - **Not verified:** deployed environment-variable values (the reviewer had no
