@@ -93,11 +93,9 @@ const knownProjectRefDigests = new Set([
 ]);
 // Files that may still name a project ref. Each entry needs a reason and must stay live: the test
 // fails when the ref is gone from the file, so the list cannot rot.
-export const projectRefAllowlist = new Map([
-  ['docs/security/KEY-CUSTODY-INVENTORY.md', 'Security review document; the owner decides whether docs/security stays public (PT-01, PT-02).'],
-  ['docs/security/PRE-LAUNCH-REVIEW-2026-09-HANDOFF.md', 'Security review document; the owner decides whether docs/security stays public (PT-01, PT-02).'],
-  ['docs/security/PRE-LAUNCH-REVIEW-2026-09.md', 'Security review document; the owner decides whether docs/security stays public (PT-01, PT-02).'],
-]);
+// Empty since 2026-10-10: the three security docs that used to be allowed now point at the private
+// ops notes instead, so no tracked file names a database project ref.
+export const projectRefAllowlist = new Map();
 
 // EVM addresses. A raw address in a fixture is either a published contract, an obviously made-up
 // value, or a real wallet that should not be in a public tree. Real wallets are what this rule is
