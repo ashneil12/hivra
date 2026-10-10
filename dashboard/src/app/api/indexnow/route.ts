@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-response";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { getSiteUrls, SITE_URL } from "@/lib/seo-urls";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 // SCRIPTURE_ANCHOR: indexnow-declare | Isaiah 52:7 | Verse: How beautiful on the mountains are the feet of him who brings good news.
 function timingSafeStringEqual(received: string, expected: string): boolean {
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
 
   try {
     // Generate all latest URLs
-    const sitemapData = getSiteUrls();
+    const sitemapData = getSiteUrls({ tokenSurfaces: newTokenSurfacesEnabled() });
     const urlList = sitemapData.map((sitemapObj) => sitemapObj.url);
 
     // Prepare payload for IndexNow

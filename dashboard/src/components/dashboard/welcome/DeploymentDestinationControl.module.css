@@ -257,6 +257,7 @@
 
 @container launch-destination (max-width: 400px) {
   .facts { grid-template-columns: 1fr; }
+  .fact span { font-size: 11px; }
   .fact { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
   .fact strong { text-align: right; margin-top: 0; }
   .targetPanel { padding: 0.75rem; }

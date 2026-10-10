@@ -17,17 +17,26 @@ import { OG_IMAGE } from "@/lib/og-meta";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import "./globals.css";
 
+// These faces are not used by the public site shell (it ships its own
+// "Hivra Manrope"/"Hivra Plex Mono"), but next/font preloads every font declared
+// in the root layout on every route, which puts ~130 KB of woff2 on the same
+// constrained link as the render-blocking CSS. `preload: false` keeps the
+// @font-face rules and CSS variables, so routes that do render these faces
+// (dashboard, sign-in, get-started, cookie banner) fetch them on demand.
 const outfit = Outfit({
+  preload: false,
   subsets: ["latin"],
   variable: "--font-outfit",
 });
 
 const playfair = Playfair_Display({
+  preload: false,
   subsets: ["latin"],
   variable: "--font-playfair",
 });
 
 const spaceMono = Space_Mono({
+  preload: false,
   weight: ["400", "700"],
   subsets: ["latin"],
   variable: "--font-mono",
@@ -35,6 +44,7 @@ const spaceMono = Space_Mono({
 
 // Hivra brand display typeface — technical, gridded, used for landing headlines.
 const spaceGrotesk = Space_Grotesk({
+  preload: false,
   weight: ["400", "500", "700"],
   subsets: ["latin"],
   variable: "--font-grotesk",
@@ -61,22 +71,23 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   applicationName: "Hivra",
   title: {
-    default: "Hivra (formerly HermesOS) — Deploy Any AI Agent in One Click",
+    default: "Hivra | A computer for you and your agents",
     template: "%s | Hivra",
   },
   description:
-    "Hivra (formerly HermesOS) — one-click managed cloud hosting for Hermes Agent, Claude Code, and more. No VPS, no Docker, no config. Bring your own AI key. Zero markup on API calls. Persistent memory, 24/7 uptime.",
+    "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own AI key.",
+  // Search engines ignore this tag, so it only needs to stay true: no speed
+  // claims ("one click"), and no Nous Research names or marks ("hermes nous
+  // research", "hermes agent os"). Former name and agent names only.
   keywords: [
     "hivra",
     "hermesos",
     "hermes os",
-    "hermes agent os",
     "hermes agent hosting",
     "managed ai agent",
     "deploy hermes agent",
     "persistent ai agent cloud",
     "ai agent hosting",
-    "hermes nous research",
     "openclaw alternative",
     "ai agent without docker",
     "autonomous ai agent hosting",
@@ -84,7 +95,6 @@ export const metadata: Metadata = {
     "how to self host openclaw",
     "ai agent vps hosting",
     "hermes agent telegram",
-    "one click ai agent deploy",
   ],
   authors: [{ name: "Hivra", url: SITE_URL }],
   creator: "Hivra",
@@ -97,22 +107,24 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     title: "Hivra",
-    statusBarStyle: "black-translucent",
+    // Opaque bar with theme-appropriate glyphs. black-translucent drew white
+    // glyphs over the light header, unreadable in the installed app.
+    statusBarStyle: "default",
   },
   openGraph: {
     type: "website",
     locale: "en_US",
     url: SITE_URL,
     siteName: "Hivra",
-    title: "Hivra (formerly HermesOS) — Deploy Any AI Agent in One Click",
+    title: "Hivra | A computer for you and your agents",
     description:
-      "Hivra (formerly HermesOS) — one-click managed cloud hosting for Hermes Agent, Claude Code, and more. No VPS, no Docker, no config. BYO AI key, zero markup. Persistent memory, 24/7 uptime.",
+      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own AI key.",
     images: [
       {
         url: `${SITE_URL}${OG_IMAGE.home.url}`,
         width: 1200,
         height: 630,
-        alt: "Hivra — Deploy any AI agent in one click.",
+        alt: "Hivra: a computer for you and your agents.",
         type: "image/png",
       },
     ],
@@ -121,9 +133,9 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     site: "@HivraOS",
     creator: "@HivraOS",
-    title: "Hivra (formerly HermesOS) — Deploy Any AI Agent in One Click",
+    title: "Hivra | A computer for you and your agents",
     description:
-      "Deploy any AI agent in one click. Formerly HermesOS. BYO key, zero markup. Persistent memory, 24/7 uptime.",
+      "Launch an agent on a computer of its own, or start with a computer and use it yourself. Use Hivra Cloud, your own infrastructure or self-hosting, with your own AI key.",
     images: [`${SITE_URL}${OG_IMAGE.home.url}`],
   },
   robots: {

@@ -1,9 +1,6 @@
 import { loadEnvConfig } from "@next/env";
 
-import {
-  getBankrWalletForInstance,
-  provisionBankrWalletForInstance,
-} from "../src/lib/billing/bankr-instance-wallets";
+import { getBankrWalletForInstance } from "../src/lib/billing/bankr-instance-wallets";
 import { preinstallBankrSuiteForInstance } from "../src/lib/services/instance-service";
 import { supabaseAdmin } from "../src/lib/supabase";
 import { planInstanceBankrBackfill } from "./bankr-backfill-plan";
@@ -74,8 +71,8 @@ function printUsage(): void {
     [
       "Usage: backfill:instance-bankr-wallets [options]",
       "",
-      "Provisions per-instance Bankr wallets for existing Hermes instances.",
-      "Idempotent: existing pending rows are retried; active running agents also get the Bankr suite seeded.",
+      "Seeds the Bankr skills onto running Hermes instances that already have an active agent wallet.",
+      "It never creates or retries a wallet: Hivra no longer provisions agent wallets (users connect their own Bankr account).",
       "",
       "Options:",
       "  --dry-run         List instances without writing to DB or calling Bankr",
@@ -119,11 +116,8 @@ async function main(): Promise<void> {
 
   let processed = 0;
   let skipped = 0;
-  let provisioned = 0;
-  let pending = 0;
   let seeded = 0;
   let seedErrors = 0;
-  let errors = 0;
   let offset = 0;
 
   while (true) {
@@ -148,59 +142,21 @@ async function main(): Promise<void> {
       }
 
       if (args.dryRun) {
-        const label =
-          action === "seed_skills"
-            ? "WOULD_SEED_SKILLS"
-            : action === "retry_provision"
-              ? "WOULD_RETRY_PROVISION"
-              : "WOULD_PROVISION";
-        process.stdout.write(`[backfill-instance-bankr-wallets] ${label} instance=${row.id} user=${row.user_id}\n`);
+        process.stdout.write(`[backfill-instance-bankr-wallets] WOULD_SEED_SKILLS instance=${row.id} user=${row.user_id}\n`);
         continue;
       }
 
       try {
-        if (action === "seed_skills") {
-          const seedResult = await preinstallBankrSuiteForInstance({
-            instanceId: row.id,
-            userId: row.user_id,
-          });
-          seeded += 1;
-          process.stdout.write(
-            `[backfill-instance-bankr-wallets] SEEDED_SKILLS instance=${row.id} count=${seedResult.count}\n`
-          );
-        } else {
-          const result = await provisionBankrWalletForInstance({
-            instanceId: row.id,
-            userId: row.user_id,
-          });
-          if (result.status === "provisioned" || result.status === "existing") {
-            provisioned += 1;
-          } else {
-            pending += 1;
-          }
-          process.stdout.write(`[backfill-instance-bankr-wallets] ${result.status.toUpperCase()} instance=${row.id}\n`);
-
-          if (
-            row.status === "running" &&
-            result.record?.status === "active" &&
-            result.record.metadata.bankrSuiteSeeded !== true
-          ) {
-            const seedResult = await preinstallBankrSuiteForInstance({
-              instanceId: row.id,
-              userId: row.user_id,
-            });
-            seeded += 1;
-            process.stdout.write(
-              `[backfill-instance-bankr-wallets] SEEDED_SKILLS instance=${row.id} count=${seedResult.count}\n`
-            );
-          }
-        }
+        const seedResult = await preinstallBankrSuiteForInstance({
+          instanceId: row.id,
+          userId: row.user_id,
+        });
+        seeded += 1;
+        process.stdout.write(
+          `[backfill-instance-bankr-wallets] SEEDED_SKILLS instance=${row.id} count=${seedResult.count}\n`
+        );
       } catch (err) {
-        if (action === "seed_skills") {
-          seedErrors += 1;
-        } else {
-          errors += 1;
-        }
+        seedErrors += 1;
         process.stdout.write(
           `[backfill-instance-bankr-wallets] ERROR instance=${row.id}: ${err instanceof Error ? err.message : String(err)}\n`
         );
@@ -214,9 +170,9 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(
-    `[backfill-instance-bankr-wallets] done processed=${processed} skipped=${skipped} provisioned=${provisioned} pending=${pending} seeded=${seeded} seedErrors=${seedErrors} errors=${errors}\n`
+    `[backfill-instance-bankr-wallets] done processed=${processed} skipped=${skipped} seeded=${seeded} seedErrors=${seedErrors}\n`
   );
-  if (errors > 0 || seedErrors > 0) process.exitCode = 1;
+  if (seedErrors > 0) process.exitCode = 1;
 }
 
 main().catch((err) => {

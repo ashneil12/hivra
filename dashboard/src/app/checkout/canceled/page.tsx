@@ -7,19 +7,29 @@ import { ArrowRight, CreditCard, Loader2 } from "lucide-react";
 
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
+import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
+import { LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
 import InteractiveBackground from "@/components/InteractiveBackground";
+import funnelStyles from "@/components/public-site/public-site.module.css";
 import { ACTIVE_PLAN_KEYS, PLANS, formatPrice, type PlanKey } from "@/lib/subscription";
 
 const PLAN_GUIDE: Record<PlanKey, string> = {
-  free: "Free is best for trying Hermes with one guarded agent before you need paid compute.",
+  free: "Free is best for trying one small agent before you need paid compute.",
   operator: "Pro is best for solo work, hackathon builds, and your first live agent.",
   fleet: "Power is best for multi-agent workflows, heavier browsing, and more shared compute.",
   command: "Command is best for the biggest jobs, faster scaling, and maximum compute headroom.",
 };
 
+/** Billing's Plans tab, keeping the way back to where checkout started. */
+function differentPlanHref(returnTo: string | null): string {
+  const query = new URLSearchParams({ tab: "plans" });
+  if (returnTo) query.set("returnTo", returnTo);
+  return `/dashboard/billing?${query.toString()}`;
+}
+
 function CheckoutCanceledFallback() {
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+    <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
       <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
     </div>
   );
@@ -35,6 +45,9 @@ function CheckoutCanceledContent() {
       ? (planParam as PlanKey)
       : "fleet";
   const plan = PLANS[planKey];
+  // Checkout started from a launch (or another dashboard page) goes back
+  // there. Only a same-origin dashboard path is ever followed.
+  const returnTo = safeReturnPath(searchParams?.get("returnTo"));
 
   const [status, setStatus] = useState<"idle" | "subscribing" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -43,11 +56,11 @@ function CheckoutCanceledContent() {
     setStatus("subscribing");
     setError(null);
 
-    const result = await requestSubscriptionCheckout(planKey);
+    const result = await requestSubscriptionCheckout(planKey, "monthly", { returnTo });
 
     if (result.ok) {
       if (result.activated) {
-        window.location.href = "/dashboard/welcome?step=agent-type";
+        window.location.href = withReturnParams(returnTo ?? LAUNCH_ROUTE, planReturnParams(planKey));
         return;
       }
 
@@ -75,7 +88,7 @@ function CheckoutCanceledContent() {
 
   if (!isSignedIn) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: 420 }}>
           <p style={{ fontSize: 14, marginBottom: "1rem" }}>Please sign in to restart checkout.</p>
           <a
@@ -106,8 +119,9 @@ function CheckoutCanceledContent() {
     <>
       <InteractiveBackground />
       <div
+        className={funnelStyles.funnelPage}
         style={{
-          minHeight: "100vh",
+          minHeight: "100dvh",
           display: "grid",
           placeItems: "center",
           padding: "2rem",
@@ -116,6 +130,7 @@ function CheckoutCanceledContent() {
         }}
       >
         <div
+          className={funnelStyles.funnelCard}
           style={{
             border: "1px solid var(--etched-border)",
             background: "var(--bg-surface)",
@@ -234,9 +249,17 @@ function CheckoutCanceledContent() {
                 {PLAN_GUIDE[planKey]}
               </p>
             </div>
+            {returnTo ? (
+              <a
+                href={returnTo}
+                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-secondary)", textDecoration: "none" }}
+              >
+                {returnTo.startsWith("/dashboard/launch") ? "← Back to your launch" : "← Back"}
+              </a>
+            ) : null}
             <a
-              href={`/dashboard/welcome?plan=${planKey}`}
-              style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
+              href={differentPlanHref(returnTo)}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
             >
               Choose a different plan →
             </a>

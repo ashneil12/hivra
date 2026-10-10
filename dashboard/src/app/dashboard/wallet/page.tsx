@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { CheckCircle2, Copy, AlertTriangle, ArrowDownToLine } from 'lucide-react';
+import { CheckCircle2, Copy, AlertTriangle, ArrowDownToLine, ExternalLink } from 'lucide-react';
+import touch from '@/components/tools/touch.module.css';
 import { useLocale } from '@/components/i18n/LocaleProvider';
+import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
+import { tokenFeaturesShown, useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
+import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
+import { LAUNCH_ROUTE } from '@/lib/hivra/launch-navigation';
+import { planReturnParams, withReturnParams } from '@/lib/safe-return-path';
 import {
   describeMissingWalletEnvironment,
   describeWalletProviderError,
@@ -120,14 +126,55 @@ interface WithdrawAddressPayload {
   normalizedAddress?: string | null;
   setAt?: string;
   updatedAt?: string;
+  /** When a newly saved address can first receive a withdrawal; null once it can. */
+  availableAt?: string | null;
 }
 
+
+function hasCoarsePointer(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+}
+
+/** Wallet-app deep links that reopen this page inside the wallet's own browser. */
+function walletAppLinks(href: string): { metamask: string; coinbase: string } | null {
+  try {
+    const url = new URL(href);
+    return {
+      metamask: `https://metamask.app.link/dapp/${url.host}${url.pathname}${url.search}`,
+      coinbase: `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(url.href)}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const walletLinkButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 6,
+  minHeight: 44,
+  padding: '10px 14px',
+  border: '1px solid var(--ink-black)',
+  background: 'var(--ink-black)',
+  color: 'var(--bg-surface)',
+  textDecoration: 'none',
+  fontFamily: 'var(--font-mono), monospace',
+  fontSize: 11,
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.1em',
+};
 
 /**
  * Always-mounted wallet-environment notice. Solves two failure modes that
  * previously left the verify/unlock buttons feeling inert:
  *  - In an in-app browser (Discord etc.) there is no injected wallet, so the
- *    flow can't work — we proactively explain that and offer a copyable link.
+ *    flow can't work — we proactively explain that and offer wallet-app deep
+ *    links plus a copyable link. Plain mobile browsers get the same notice only
+ *    when a visible action needs a wallet: self-custody verification, or Unlock
+ *    now before any wallet is verified. Legacy custody otherwise locks by deposit.
  *  - walletConnectError used to render ONLY inside SelfCustodyVerificationPanel,
  *    so legacy-custody users (who never see that panel) got no feedback at all.
  *    We surface connect error/success here whenever that panel isn't shown.
@@ -135,6 +182,9 @@ interface WithdrawAddressPayload {
 function WalletEnvironmentNotice({
   inApp,
   hasProvider,
+  coarsePointer,
+  walletAction,
+  pageHref,
   connectError,
   connectSuccess,
   showConnectMessages,
@@ -143,13 +193,19 @@ function WalletEnvironmentNotice({
 }: {
   inApp: { isInApp: boolean; appName: string | null };
   hasProvider: boolean;
+  /** Touch devices: plain mobile Safari/Chrome have no injected wallet either. */
+  coarsePointer: boolean;
+  /** 'verify': self-custody Connect/Verify/Unlock; 'unlock': only Unlock now needs a wallet. */
+  walletAction: 'verify' | 'unlock' | null;
+  pageHref: string | null;
   connectError: string | null;
   connectSuccess: string | null;
   showConnectMessages: boolean;
   onCopyLink: () => void;
   linkCopied: boolean;
 }) {
-  const showInAppBanner = inApp.isInApp && !hasProvider;
+  const showInAppBanner = !hasProvider && (inApp.isInApp || (coarsePointer && walletAction !== null));
+  const deepLinks = pageHref ? walletAppLinks(pageHref) : null;
   const showError = showConnectMessages && Boolean(connectError);
   const showSuccess = showConnectMessages && Boolean(connectSuccess) && !showError;
   if (!showInAppBanner && !showError && !showSuccess) return null;
@@ -159,6 +215,7 @@ function WalletEnvironmentNotice({
     <button
       type="button"
       onClick={onCopyLink}
+      className={touch.touchButton}
       style={{
         alignSelf: 'flex-start',
         display: 'inline-flex',
@@ -197,13 +254,38 @@ function WalletEnvironmentNotice({
         >
           <AlertTriangle size={15} style={{ color: 'var(--gold-leaf)', flexShrink: 0, marginTop: 2 }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
-              You&apos;re viewing this in {appLabel ? `${appLabel} browser` : 'an in-app browser'}, which
-              can&apos;t connect a crypto wallet — so the verify buttons won&apos;t do anything here. Open
-              the dashboard in your wallet app&apos;s built-in browser, or in Chrome/Safari with a
-              Base-compatible wallet, then verify again. Refreshing this page won&apos;t help.
-            </p>
-            {copyButton}
+            {inApp.isInApp ? (
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
+                You&apos;re viewing this in {appLabel ? `${appLabel} browser` : 'an in-app browser'}, which
+                can&apos;t connect a crypto wallet — so the verify buttons won&apos;t do anything here. Open
+                the dashboard in your wallet app&apos;s built-in browser, or in Chrome/Safari with a
+                Base-compatible wallet, then verify again. Refreshing this page won&apos;t help.
+              </p>
+            ) : walletAction === 'unlock' ? (
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
+                This browser has no crypto wallet, so Unlock now can&apos;t verify your holdings here.
+                Locking a tier by deposit still works. To unlock, open this page in your wallet app&apos;s
+                built-in browser.
+              </p>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
+                This browser has no crypto wallet, so Connect, Verify and Unlock can&apos;t work here. Open
+                this page in your wallet app&apos;s built-in browser, then verify again.
+              </p>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8 }}>
+              {deepLinks && (
+                <>
+                  <a href={deepLinks.metamask} rel="noopener noreferrer" style={walletLinkButtonStyle}>
+                    Open in MetaMask <ExternalLink size={12} aria-hidden="true" />
+                  </a>
+                  <a href={deepLinks.coinbase} rel="noopener noreferrer" style={walletLinkButtonStyle}>
+                    Open in Coinbase Wallet <ExternalLink size={12} aria-hidden="true" />
+                  </a>
+                </>
+              )}
+              {copyButton}
+            </div>
           </div>
         </div>
       )}
@@ -240,6 +322,11 @@ export default function WalletPage() {
   const searchParams = useSearchParams();
   const { copy } = useLocale();
   const walletCopy = copy.dashboard.wallet;
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenGeo = useTokenGeoAccess();
+  // Verifying a different wallet can change where a lock-wallet move sends
+  // funds, so the server may ask the user to confirm it's them first.
+  const stepUpRequest = useStepUpJsonRequest();
   const fromWelcome = searchParams?.get('from') === 'welcome';
   const welcomeRedirectFiredRef = useRef(false);
   const [data, setData] = useState<WalletApiPayload | null>(null);
@@ -254,6 +341,8 @@ export default function WalletPage() {
   const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
   const [walletConnectSuccess, setWalletConnectSuccess] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState<string | null>(null);
+  // When a newly saved withdraw address can first receive a withdrawal.
+  const [withdrawAvailableAt, setWithdrawAvailableAt] = useState<string | null>(null);
   const [withdrawAddressLoading, setWithdrawAddressLoading] = useState(true);
   const [withdrawAddressFormOpen, setWithdrawAddressFormOpen] = useState(false);
   const [quotes, setQuotes] = useState<QuotesResponse>({ pro: null, power: null });
@@ -271,6 +360,8 @@ export default function WalletPage() {
   const [walletEnv, setWalletEnv] = useState<{
     hasProvider: boolean;
     inApp: { isInApp: boolean; appName: string | null };
+    coarsePointer: boolean;
+    pageHref: string;
   } | null>(null);
   const [dashboardLinkCopied, setDashboardLinkCopied] = useState(false);
 
@@ -329,13 +420,16 @@ export default function WalletPage() {
         // 404 → billing v2 disabled; 401 → not signed in. Treat as "no
         // address set" and let the rest of the page render.
         setWithdrawAddress(null);
+        setWithdrawAvailableAt(null);
         return;
       }
       const body = await response.json().catch(() => ({}));
-      const addr = (body?.data as WithdrawAddressPayload | undefined)?.address ?? null;
-      setWithdrawAddress(addr);
+      const payload = body?.data as WithdrawAddressPayload | undefined;
+      setWithdrawAddress(payload?.address ?? null);
+      setWithdrawAvailableAt(payload?.availableAt ?? null);
     } catch {
       setWithdrawAddress(null);
+      setWithdrawAvailableAt(null);
     } finally {
       setWithdrawAddressLoading(false);
     }
@@ -490,7 +584,7 @@ export default function WalletPage() {
         return;
       }
 
-      const verifyResponse = await fetch('/api/billing/wallet/verify', {
+      const verifyResult = await stepUpRequest('/api/billing/wallet/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -498,7 +592,11 @@ export default function WalletPage() {
           signature,
         }),
       });
-      const verifyPayload = await readApiPayload(verifyResponse);
+      if (!verifyResult) {
+        setWalletConnectError(STEP_UP_CANCELLED_VERIFY_MESSAGE);
+        return;
+      }
+      const verifyPayload = isRecord(verifyResult.body) ? verifyResult.body : null;
       const verifyData = apiSuccessData(verifyPayload);
       if (!verifyData) {
         setWalletConnectError(apiPayloadError(verifyPayload, 'Wallet verification failed.'));
@@ -524,7 +622,7 @@ export default function WalletPage() {
     } finally {
       setWalletConnecting(false);
     }
-  }, [load, walletCopy.verification.verifiedSuffix]);
+  }, [load, stepUpRequest, walletCopy.verification.verifiedSuffix]);
 
   const handleLockPrice = useCallback(async () => {
     setWalletLockingPrice(true);
@@ -646,6 +744,8 @@ export default function WalletPage() {
     setWalletEnv({
       hasProvider: Boolean(getBrowserWalletProvider()),
       inApp: detectInAppBrowser(),
+      coarsePointer: hasCoarsePointer(),
+      pageHref: window.location.href,
     });
   }, []);
 
@@ -663,12 +763,23 @@ export default function WalletPage() {
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
   const isLegacyCustody = Boolean(data?.custodyMode === 'legacy_custody' || data?.tokenLockWallet);
   const isSelfCustody = Boolean(data?.custodyMode === 'self_custody' || (status === 'ready' && !isLegacyCustody));
+  // Token geo-policy: the panels that invite a NEW token action (verify a wallet to
+  // qualify, lock a price, tier thresholds, the hold-to-unlock prompt, deposit) are
+  // for a viewer the server allows and for a blocked user who already holds token
+  // access, who keeps verifying, unlocking and withdrawing. A blocked user with no
+  // holding, or a viewer the server has not answered for, sees the notice and the
+  // agent wallets only. The server refuses every new token action whatever shows here.
+  const tokenPanels = tokenFeaturesShown(tokenGeo) || (tokenGeo.status === 'blocked' && tokenGeo.existingAccess);
   const snapshotWalletAddress = walletAddressFromEligibility(eligibility);
   const connectedSelfCustodyAddress = verifiedWalletAddress ?? snapshotWalletAddress;
   const eligibleTier = highestEligibleTier(eligibility);
   const lockedAmountDisplay = lockedQuantityForTier(eligibility, eligibleTier);
   const selfCustodyLockTier = nextSelfCustodyLockTier(eligibility);
   const selfCustodyLockQuote = activeQuoteForTier(quotes, selfCustodyLockTier);
+  // Unlock now must connect and verify a wallet first while none is verified.
+  const walletAction: 'verify' | 'unlock' | null = isSelfCustody
+    ? 'verify'
+    : eligibility && !verifiedWalletAddress ? 'unlock' : null;
 
   // Which (if any) prominent unlock prompt to surface. Venice prompt shows
   // once you're on a $HERMESOS tier but don't yet hold the VVV; the holding
@@ -722,17 +833,17 @@ export default function WalletPage() {
     return () => window.clearInterval(handle);
   }, [connectedSelfCustodyAddress, isLegacyCustody, load, loadQuotes]);
 
-  // When the user arrived from /dashboard/welcome to deposit, drop them
-  // back into the welcome flow's deploy step the moment a qualifying
-  // balance is detected. The ref guards against double-firing if the
-  // wallet is later refetched while still on this page.
+  // An older first-run link sent the owner here to qualify for a plan by
+  // holding tokens (?from=welcome). Once a qualifying balance is detected,
+  // Launch opens and says whether the plan shows yet. The ref guards
+  // against double-firing if the wallet is later refetched on this page.
   useEffect(() => {
     if (!fromWelcome || welcomeRedirectFiredRef.current || !eligibility) return;
     const proOk = Boolean(eligibility.tiers?.pro?.currentlyEligible);
     const powerOk = Boolean(eligibility.tiers?.power?.currentlyEligible);
     if (proOk || powerOk) {
       welcomeRedirectFiredRef.current = true;
-      router.replace('/dashboard/welcome?step=deploy');
+      router.replace(withReturnParams(LAUNCH_ROUTE, planReturnParams(null)));
     }
   }, [eligibility, fromWelcome, router]);
 
@@ -758,7 +869,7 @@ export default function WalletPage() {
         maxWidth: 'min(960px, 100%)',
         margin: '1rem auto 5rem',
         padding: 'clamp(1.5rem, 5vw, 3rem)',
-        paddingTop: 'calc(env(safe-area-inset-top, 0px) + clamp(1.5rem, 5vw, 3rem))',
+        paddingTop: 'calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + clamp(1.5rem, 5vw, 3rem))',
       }}
     >
       <header style={{ marginBottom: '2.25rem' }}>
@@ -789,7 +900,7 @@ export default function WalletPage() {
               boxShadow: '0 0 10px var(--gold-leaf)',
             }}
           />
-          {isLegacyCustody ? walletCopy.eyebrowLegacy : walletCopy.eyebrowSelfCustody}
+          {!tokenPanels ? walletCopy.restricted.eyebrow : isLegacyCustody ? walletCopy.eyebrowLegacy : walletCopy.eyebrowSelfCustody}
         </span>
         <h1
           className="serif"
@@ -801,10 +912,18 @@ export default function WalletPage() {
             letterSpacing: '-0.01em',
           }}
         >
-          {walletCopy.titlePrefix}{walletCopy.titleSeparator}<em>{walletCopy.titleEmphasis}</em>{walletCopy.titleSuffix}
+          {tokenPanels ? (
+            <>
+              {walletCopy.titlePrefix}{walletCopy.titleSeparator}<em>{walletCopy.titleEmphasis}</em>{walletCopy.titleSuffix}
+            </>
+          ) : (
+            walletCopy.restricted.title
+          )}
         </h1>
         <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6, maxWidth: 580 }}>
-          {isLegacyCustody ? (
+          {!tokenPanels ? (
+            walletCopy.restricted.intro
+          ) : isLegacyCustody ? (
             <>
               <strong>{walletCopy.legacyIntroStrong}</strong> — {walletCopy.legacyIntroBody}
             </>
@@ -816,7 +935,7 @@ export default function WalletPage() {
         </p>
       </header>
 
-      {isLegacyCustody && (
+      {tokenPanels && isLegacyCustody && (
         <div
           style={{
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
@@ -830,19 +949,26 @@ export default function WalletPage() {
         >
           <CheckCircle2 size={14} style={{ color: 'var(--gold-leaf)', flexShrink: 0, marginTop: 2 }} />
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
-            You don&apos;t need to connect an external wallet. Below, click <strong>Lock</strong> on
+            You don&apos;t need to connect an external wallet. Below, select <strong>Lock</strong> on
             your chosen tier to mint a quote — that gives you the exact $HERMESOS amount and the
             deposit address to send it to.
           </p>
         </div>
       )}
 
-      <BuyTokenCard />
+      {/* Token geo-policy: no buy-token card for a viewer it blocks (or while
+          it is still checking); a blocked viewer sees the notice instead.
+          Existing holdings, withdrawals and tiers below are unchanged. */}
+      {tokenGeo.status === 'allowed' ? <BuyTokenCard /> : null}
+      {tokenGeo.notice ? <TokenGeoNotice notice={tokenGeo.notice} /> : null}
 
-      {walletEnv && (
+      {walletEnv && tokenPanels && (
         <WalletEnvironmentNotice
           inApp={walletEnv.inApp}
           hasProvider={walletEnv.hasProvider}
+          coarsePointer={walletEnv.coarsePointer}
+          walletAction={walletAction}
+          pageHref={walletEnv.pageHref}
           connectError={walletConnectError}
           connectSuccess={walletConnectSuccess}
           showConnectMessages={!isSelfCustody}
@@ -851,7 +977,7 @@ export default function WalletPage() {
         />
       )}
 
-      {isSelfCustody && (
+      {tokenPanels && isSelfCustody && (
         <SelfCustodyVerificationPanel
           connecting={walletConnecting}
           locking={walletLockingPrice}
@@ -871,7 +997,7 @@ export default function WalletPage() {
         />
       )}
 
-      {isReady && isLegacyCustody && (
+      {tokenPanels && isReady && isLegacyCustody && (
         <QuotePanel
           proQuote={quotes.pro}
           powerQuote={quotes.power}
@@ -884,13 +1010,13 @@ export default function WalletPage() {
         />
       )}
 
-      {quoteError && (
+      {tokenPanels && quoteError && (
         <p style={{ fontSize: 12, color: '#dc2626', marginTop: '-0.5rem', marginBottom: '1rem' }}>
           {quoteError}
         </p>
       )}
 
-      {!eligibility && priceUnavailable && (
+      {tokenPanels && !eligibility && priceUnavailable && (
         <div
           role="status"
           aria-live="polite"
@@ -911,7 +1037,7 @@ export default function WalletPage() {
         </div>
       )}
 
-      {unlockPromptMode && (
+      {tokenPanels && unlockPromptMode && (
         <UnlockPromptCard
           mode={unlockPromptMode}
           unlocking={unlocking}
@@ -920,7 +1046,7 @@ export default function WalletPage() {
         />
       )}
 
-      {unlockMsg && (
+      {tokenPanels && unlockMsg && (
         <p
           role="status"
           aria-live="polite"
@@ -930,7 +1056,7 @@ export default function WalletPage() {
         </p>
       )}
 
-      {eligibility && (
+      {tokenPanels && eligibility && (
         <EligibilityPanel
           eligibility={eligibility}
           selfCustody={!isLegacyCustody}
@@ -957,18 +1083,22 @@ export default function WalletPage() {
         <section aria-label="Wallet actions" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.5rem' }}>
           <WithdrawDestinationCard
             address={withdrawAddress}
+            availableAt={withdrawAvailableAt}
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
-          <ActionRow
-            icon={<ArrowDownToLine size={14} />}
-            label="Deposit"
-            description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
-          />
+          {tokenPanels && (
+            <ActionRow
+              icon={<ArrowDownToLine size={14} />}
+              label="Deposit"
+              description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
+            />
+          )}
           <WithdrawSection
             tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
             balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
             withdrawAddress={withdrawAddress}
+            withdrawAvailableAt={withdrawAvailableAt}
             onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
             onWithdrew={() => {
               // Refresh once now (the post-withdraw eligibility re-check
@@ -988,8 +1118,9 @@ export default function WalletPage() {
         <WithdrawAddressForm
           initialAddress={withdrawAddress}
           onCancel={() => setWithdrawAddressFormOpen(false)}
-          onSaved={(addr) => {
+          onSaved={(addr, availableAt) => {
             setWithdrawAddress(addr);
+            setWithdrawAvailableAt(availableAt);
             setWithdrawAddressFormOpen(false);
           }}
         />

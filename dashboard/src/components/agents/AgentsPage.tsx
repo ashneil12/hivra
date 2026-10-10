@@ -1,20 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bot, Plus } from "lucide-react";
+import { ArrowRight, Bot, ChevronDown, Plus } from "lucide-react";
 
 import {
   HivraAgentsPanel,
   type HermesInstanceLite,
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { AGENTS, getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
+import { buildLaunchHref, launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
 import { getHivraPreview } from "@/lib/hivra/preview-catalog";
+import { AttachedAgentsList } from "./AttachedAgentsList";
 import styles from "./AgentsPage.module.css";
 
 const deepSeekHarness = getCatalogAgent("deepseek-harness");
 const deepSeekPreview = getHivraPreview("deepseek-harness");
+/** Every agent Launch can start, each opening its own plan there. */
+const LAUNCHABLE_AGENTS = AGENTS.flatMap((agent) => {
+  const profile = agent.available && agent.resourceKind !== "computer"
+    ? launchProfileForAgentType(agent.id)
+    : null;
+  return profile ? [{ agent, href: buildLaunchHref({ start: true, profile }) }] : [];
+});
+// Height of the opened catalog that must already show before it is scrolled to.
+const CATALOG_PEEK = 120;
 
 type InstanceSummary = {
   id: string;
@@ -31,6 +42,7 @@ export function AgentsPage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const catalogBodyRef = useRef<HTMLDivElement>(null);
 
   const loadHermesInstances = useCallback(async () => {
     setLoading(true);
@@ -108,44 +120,56 @@ export function AgentsPage() {
           router.push(`/dashboard/instances/${encodeURIComponent(id)}/console`)
         }
       />
-      <details className={styles.catalog}>
+      <AttachedAgentsList />
+      <details
+        className={styles.catalog}
+        onToggle={(event) => {
+          const details = event.currentTarget;
+          const body = catalogBodyRef.current;
+          if (!details.open || !body) return;
+          // On phones the body can open below the fold (or behind the bottom
+          // navigation, its scroll margin). Bring the section heading to the
+          // top so the tap visibly did something and collapse stays in reach.
+          const reserved =
+            Number.parseFloat(getComputedStyle(body).scrollMarginBlockEnd) || 0;
+          if (
+            body.getBoundingClientRect().top + CATALOG_PEEK >
+            window.innerHeight - reserved
+          )
+            details.scrollIntoView?.({ block: "start" });
+        }}
+      >
         <summary>
           <span>
-            <strong>Browse agent runtimes</strong>
+            <strong>Browse agents you can launch</strong>
             <small>
-              Explore the catalog when you’re ready to add an agent.
+              Pick one to see its plan: where it runs, its size and what it costs.
             </small>
           </span>
-          <ArrowRight size={15} aria-hidden />
+          <ChevronDown size={15} className={styles.disclosureIcon} aria-hidden />
         </summary>
-        <div className={styles.catalogBody}>
+        <div ref={catalogBodyRef} className={styles.catalogBody}>
           <ul className={styles.runtimeList}>
-            {AGENTS.filter((agent) => agent.resourceKind !== "computer").map(
-              (agent) => (
-                <li key={agent.id}>
+            {LAUNCHABLE_AGENTS.map(({ agent, href }) => (
+              <li key={agent.id}>
+                <Link href={href} aria-label={`Launch ${agent.name}`}>
                   <strong>{agent.name}</strong>
                   <span>{agent.tagline}</span>
                   <small>
-                    {agent.available ? "Available to configure" : "Unavailable"}
+                    Launch <ArrowRight size={12} aria-hidden />
                   </small>
-                </li>
-              ),
-            )}
+                </Link>
+              </li>
+            ))}
           </ul>
           <article id="deepseek-harness" className={styles.previewRuntime}>
             <span className={styles.kicker}>Private preview</span>
             <h2>{deepSeekHarness?.name || "DeepSeek Harness"}</h2>
-            <p>{deepSeekPreview?.summary || deepSeekHarness?.tagline}</p>
+            <p>{deepSeekPreview?.summary}</p>
             <Link href="/dashboard/runtimes/deepseek-harness">
-              Inspect runtime <ArrowRight size={13} aria-hidden />
+              Learn more <ArrowRight size={13} aria-hidden />
             </Link>
           </article>
-          <Link
-            className={styles.catalogLink}
-            href="/dashboard/welcome?step=agent-type"
-          >
-            Open full runtime catalog <ArrowRight size={13} aria-hidden />
-          </Link>
         </div>
       </details>
     </main>

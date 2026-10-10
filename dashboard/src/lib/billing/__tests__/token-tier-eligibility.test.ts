@@ -621,7 +621,7 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
     expect(proRow.last_balance_seen).toBe("250000"); // refreshed
   });
 
-  it("skips evaluation and writes nothing when the live price feed is unreachable", async () => {
+  function loadModuleWithPriceOutage() {
     jest.resetModules();
     jest.doMock("../live-thresholds", () => {
       class LivePriceUnavailableError extends Error {
@@ -633,12 +633,19 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
       return {
         LivePriceUnavailableError,
         getLiveActiveThresholds: async () => {
-          throw new LivePriceUnavailableError("CoinGecko 503");
+          throw new LivePriceUnavailableError("DEXScreener 503");
         },
       };
     });
-    const mod = jest.requireActual<typeof import("../token-tier-eligibility")>("../token-tier-eligibility");
+    jest.doMock("../deposit-quotes", () => ({
+      getActiveDepositQuotes: async () => [],
+      consumeDepositQuote: async () => undefined,
+    }));
+    return jest.requireActual<typeof import("../token-tier-eligibility")>("../token-tier-eligibility");
+  }
 
+  it("records no NEW qualification when the live price feed is unreachable", async () => {
+    const mod = loadModuleWithPriceOutage();
     const db = new FakeDb();
     const result = await mod.evaluateAndRecordTokenTierEligibility({
       userId: "user_z",
@@ -647,14 +654,42 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
       now: NOW_DURING_LAUNCH,
     });
 
-    // Evaluator deliberately skips on price-feed failure rather than
-    // serving a wrong threshold. Existing holders are unaffected because
-    // qualifying_quantity is already snapshotted on their rows.
-    expect(result.configured).toBe(false);
-    expect(result.pro).toBeNull();
-    expect(result.power).toBeNull();
+    // A first qualification needs a live threshold; without one nothing is
+    // written rather than serving a wrong number.
+    expect(result.pro?.transition).toBe("unchanged");
+    expect(result.pro?.threshold).toBeNull();
+    expect(result.power?.transition).toBe("unchanged");
     expect(db.rows).toHaveLength(0);
-    expect(result.warnings.join("\n")).toMatch(/Live \$HERMESOS price unavailable/);
+    expect(result.warnings.join("\n")).toMatch(/Live \$HermesOS price unavailable/);
+  });
+
+  it("still records a breach, and a suspension after grace, while the price feed is down", async () => {
+    // Breach and grace compare the balance with the row's fixed
+    // qualifying_quantity: no price is involved, so an outage must not
+    // freeze them (a holder who sold would otherwise keep the tier).
+    const mod = loadModuleWithPriceOutage();
+    const db = new FakeDb();
+    db.rows.push(makeRow({ user_id: "user_seller", qualifying_quantity: PRO_LAUNCH.toString() }));
+
+    const breach = await mod.evaluateAndRecordTokenTierEligibility({
+      userId: "user_seller",
+      currentBalance: 1n,
+      db: db as unknown as DbCast,
+      now: NOW_AFTER_LAUNCH,
+    });
+    expect(breach.pro?.transition).toBe("breached");
+    expect(db.rows[0].last_breach_at).toBe(NOW_AFTER_LAUNCH.toISOString());
+
+    const later = new Date(NOW_AFTER_LAUNCH.getTime() + 49 * HOUR_MS);
+    const suspended = await mod.evaluateAndRecordTokenTierEligibility({
+      userId: "user_seller",
+      currentBalance: 1n,
+      db: db as unknown as DbCast,
+      now: later,
+    });
+    expect(suspended.pro?.transition).toBe("suspended");
+    expect(db.rows[0].currently_eligible).toBe(false);
+    expect(db.rows[0].last_suspend_at).toBe(later.toISOString());
   });
 
   it("self-heals an orphaned active deposit quote for a still-eligible holder (Case h)", async () => {

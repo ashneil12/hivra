@@ -2,9 +2,13 @@ import { metadataRecord, requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  HERMESOS_TOKEN_DECIMALS,
-  HERMESOS_TOKEN_SYMBOL,
-} from "./token-holdings";
+  HERMESOS_TOKEN,
+  platformTokenForRow,
+  requirePlatformToken,
+  type PlatformToken,
+  type PlatformTokenKey,
+} from "./token-registry";
+import { TokenNotAllowedError, resolveUserTokenAccess, type UserTokenAccess } from "./token-access";
 import { ensureManagedVeniceWalletAccount } from "./managed-venice-wallets";
 import {
   MANAGED_VENICE_HIDDEN_USER_BONUS_CAP_MICRO_USD,
@@ -15,11 +19,14 @@ import {
   type ManagedVeniceTopUpQuoteMicroUsd,
 } from "@/lib/venice/managed-credit-topup";
 import {
+  PlatformTokenPriceGateError,
   fetchHermesPriceCrossCheck,
-  fetchHermesPriceUsd,
+  fetchPlatformTokenPriceUsd,
   isHermesPriceFresh,
+  priceGateRefusalFromError,
   type HermesPriceCrossCheck,
   type HermesPriceQuote,
+  type PriceGateRefusal,
 } from "./price-feed";
 
 export const MANAGED_VENICE_QUOTE_LIFETIME_MS = 20 * 60_000;
@@ -84,6 +91,10 @@ export const MANAGED_VENICE_TOKEN_DEPOSIT_REASONS = {
   // values: nothing says what to credit, so it goes to review instead of
   // failing every reconcile.
   claimUnrecoverable: "managed_venice_token_deposit_claim_unrecoverable",
+  // A transfer of a DIFFERENT platform token than the quote's reached the
+  // quote's deposit address in its range. Never credited; an operator returns
+  // or converts it. The item's token_address records the token that was sent.
+  wrongToken: "managed_venice_token_deposit_wrong_token",
 } as const;
 
 export type ManagedVeniceTokenDepositReason =
@@ -134,6 +145,8 @@ interface TokenQuoteRow {
   id: string;
   account_id: string;
   user_id: string;
+  token_key?: PlatformTokenKey | null;
+  token_address?: string | null;
   token_amount_raw: string | number | bigint;
   snapshot_price_usd: string;
   locked_value_micro_usd: number;
@@ -157,6 +170,9 @@ export interface ManagedVeniceTokenQuote {
   accountId: string;
   userId: string;
   tokenAmountRaw: string;
+  /** The platform token this quote must be paid in. Settlement credits only this token. */
+  tokenKey: PlatformTokenKey;
+  tokenAddress: string;
   tokenSymbol: string;
   tokenDecimals: number;
   snapshotPriceUsd: string;
@@ -214,17 +230,36 @@ export interface ManagedVeniceTokenSettlementClaim {
 }
 
 const SELECT_COLUMNS =
-  "id, account_id, user_id, token_amount_raw::text, snapshot_price_usd, " +
+  "id, account_id, user_id, token_key, token_address, token_amount_raw::text, snapshot_price_usd, " +
   "locked_value_micro_usd, deposit_address, quoted_at, expires_at, status, " +
   "source, cross_check_source, cross_check_price_usd, price_last_updated_at, " +
   "cross_check_last_updated_at, transaction_hash, settled_at, " +
   "transfer_surfacing_pending, metadata";
 
+/**
+ * Deposits are paused because a price gate refused. `priceGateRefusal` names
+ * the gate (price-feed.ts), for the route's log and ops alert; `cause` is the
+ * underlying price error when there is one.
+ */
 export class ManagedVeniceTokenQuotePriceError extends Error {
-  constructor(message: string) {
+  readonly priceGateRefusal?: PriceGateRefusal;
+  readonly cause?: unknown;
+
+  constructor(message: string, details: { cause?: unknown; priceGateRefusal?: PriceGateRefusal } = {}) {
     super(message);
     this.name = "ManagedVeniceTokenQuotePriceError";
+    this.cause = details.cause;
+    this.priceGateRefusal = details.priceGateRefusal ?? priceGateRefusalFromError(details.cause) ?? undefined;
   }
+}
+
+/** A deposit-only gate (stale price, cross-check band) refusing a quote for `token`. */
+function depositGateRefusal(
+  token: PlatformToken,
+  reason: PriceGateRefusal["reason"],
+  observed: PriceGateRefusal["observed"]
+): PriceGateRefusal {
+  return { assetKey: token.key, asset: token.displayUnit, reason, gate: "unknown", observed };
 }
 
 // Thrown by the quote-creation flow when a deposit's projected bonus
@@ -301,7 +336,7 @@ function decimalToScale(parsed: { integer: bigint; scale: number }, scale: numbe
   return parsed.integer * 10n ** BigInt(scale - parsed.scale);
 }
 
-function pricesDisagreeAboveBps(
+function priceExceedsCrossCheckAboveBps(
   primaryPriceUsd: string,
   crossCheckPriceUsd: string,
   maxDisagreementBps: number
@@ -311,12 +346,11 @@ function pricesDisagreeAboveBps(
   const scale = Math.max(primary.scale, crossCheck.scale);
   const primaryScaled = decimalToScale(primary, scale);
   const crossCheckScaled = decimalToScale(crossCheck, scale);
-  const diff =
-    primaryScaled > crossCheckScaled
-      ? primaryScaled - crossCheckScaled
-      : crossCheckScaled - primaryScaled;
-
-  return diff * 10_000n > primaryScaled * BigInt(maxDisagreementBps);
+  // One-sided: only a primary price ABOVE the cross-check is refused. A
+  // higher price credits more per token (the user's gain); a lower one is the
+  // conservative side, so a real drop keeps deposits open.
+  if (primaryScaled <= crossCheckScaled) return false;
+  return (primaryScaled - crossCheckScaled) * 10_000n > primaryScaled * BigInt(maxDisagreementBps);
 }
 
 function isoFromUnixSeconds(value: number | null | undefined) {
@@ -346,14 +380,17 @@ function asQuote(row: TokenQuoteRow): ManagedVeniceTokenQuote {
   const bonusValueMicroUsd = numberOrDefault(topUp.bonusValueMicroUsd, 0);
   const launchBonusMicroUsd = numberOrDefault(topUp.launchBonusMicroUsd, 0);
   const standardBonusMicroUsd = numberOrDefault(topUp.standardBonusMicroUsd, 0);
+  const token = platformTokenForRow(row);
 
   return {
     id: row.id,
     accountId: row.account_id,
     userId: row.user_id,
     tokenAmountRaw: String(row.token_amount_raw),
-    tokenSymbol: HERMESOS_TOKEN_SYMBOL,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenKey: token.key,
+    tokenAddress: token.address,
+    tokenSymbol: token.symbol,
+    tokenDecimals: token.decimals,
     snapshotPriceUsd: row.snapshot_price_usd,
     lockedValueMicroUsd: row.locked_value_micro_usd,
     depositAddress: row.deposit_address,
@@ -432,7 +469,7 @@ export function calculateManagedVeniceLockedValueMicroUsd(params: {
   tokenDecimals?: number;
 }): number {
   const tokenAmountRaw = requireTokenAmountRaw(params.tokenAmountRaw);
-  const tokenDecimals = params.tokenDecimals ?? HERMESOS_TOKEN_DECIMALS;
+  const tokenDecimals = params.tokenDecimals ?? HERMESOS_TOKEN.decimals;
   if (!Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 36) {
     throw new Error("tokenDecimals out of range");
   }
@@ -458,7 +495,7 @@ export function calculateManagedVeniceTokenAmountRawForUsd(params: {
   tokenDecimals?: number;
 }): string {
   requirePositiveMicroUsd(params.targetMicroUsd, "managed Venice token quote USD target");
-  const tokenDecimals = params.tokenDecimals ?? HERMESOS_TOKEN_DECIMALS;
+  const tokenDecimals = params.tokenDecimals ?? HERMESOS_TOKEN.decimals;
   if (!Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 36) {
     throw new Error("tokenDecimals out of range");
   }
@@ -549,11 +586,13 @@ async function loadManagedVeniceTopUpSubsidyState(
   };
 }
 
-function topUpMetadata(quote: ManagedVeniceTopUpQuoteMicroUsd) {
+function topUpMetadata(quote: ManagedVeniceTopUpQuoteMicroUsd, tokenKey: PlatformTokenKey) {
   return {
     managedVeniceTopUp: {
       policy: "deposit_bonus_v1",
+      // The token-funded wallet; tokenKey names the token that funded it.
       walletType: "hermesos",
+      tokenKey,
       paidValueMicroUsd: quote.paidMicroUsd,
       creditValueMicroUsd: quote.totalCreditsMicroUsd,
       bonusValueMicroUsd: quote.bonusMicroUsd,
@@ -661,6 +700,13 @@ function asDepositLot(row: DepositLotRow): ManagedVeniceTokenDepositLot {
   };
 }
 
+// Lots created by a token deposit settlement, in either platform token.
+const TOKEN_DEPOSIT_LOT_SOURCES = ["hermesos_deposit", "hivra_deposit"];
+
+function depositLotSource(token: Pick<PlatformToken, "key">) {
+  return token.key === "hivra" ? "hivra_deposit" : "hermesos_deposit";
+}
+
 async function loadDepositLot(
   db: SupabaseLike,
   quoteId: string
@@ -668,7 +714,7 @@ async function loadDepositLot(
   const { data, error } = await table(db, "managed_venice_token_lots")
     .select("id, transaction_hash, token_amount_raw::text, original_value_micro_usd, metadata")
     .eq("quote_id", quoteId)
-    .eq("source", "hermesos_deposit")
+    .in("source", TOKEN_DEPOSIT_LOT_SOURCES)
     .maybeSingle();
 
   if (error) {
@@ -914,6 +960,8 @@ interface ObservedTransfer {
   // The log index to key the item by: null (the default) for the tx's first
   // Transfer log to the deposit address, the log's own index for a later one.
   dedupeLogIndex?: number | null;
+  // Contract of the token sent, when it is not the quote's (a wrong-token item).
+  tokenAddress?: string | null;
 }
 
 async function insertTransferItem(
@@ -933,6 +981,7 @@ async function insertTransferItem(
     status: "open",
     reason,
     dedupe_key: dedupeKey,
+    token_address: transfer.tokenAddress ?? quote.tokenAddress,
     metadata: {
       quoteId: quote.id,
       depositAddress: quote.depositAddress,
@@ -941,6 +990,8 @@ async function insertTransferItem(
       observedTokenAmountRaw: transfer.tokenAmountRaw,
       expectedTokenAmountRaw: quote.tokenAmountRaw,
       observedAt: transfer.observedAt,
+      quoteTokenAddress: quote.tokenAddress,
+      ...(transfer.tokenAddress ? { transferTokenAddress: transfer.tokenAddress } : {}),
     },
   });
 
@@ -964,6 +1015,8 @@ export async function surfaceManagedVeniceTokenTransfer(
     tokenAmountRaw: string | null;
     observedAt: string;
     reason: ManagedVeniceTokenDepositReason;
+    /** Contract of the token sent, when it is not the quote's. */
+    tokenAddress?: string | null;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
@@ -976,6 +1029,7 @@ export async function surfaceManagedVeniceTokenTransfer(
       dedupeLogIndex: normalizeLogIndex(params.dedupeLogIndex),
       tokenAmountRaw: params.tokenAmountRaw,
       observedAt: params.observedAt,
+      tokenAddress: params.tokenAddress ?? null,
     },
     params.reason
   );
@@ -1031,11 +1085,46 @@ export async function surfaceManagedVeniceTokenReviewTrigger(
   return { status: await insertTransferItem(requireDb(db), params.quote, item.transfer, item.reason) };
 }
 
+/**
+ * The platform token a managed Venice deposit is paid in: `token`, else the
+ * user's payment token. Refused server-side when the user may not pay in it
+ * (a new user and $HermesOS once $HIVRA is active).
+ */
+async function resolveDepositToken(params: {
+  userId: string;
+  token?: PlatformTokenKey;
+  access?: UserTokenAccess;
+  now: Date;
+}): Promise<PlatformToken> {
+  const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now: params.now }));
+  const tokenKey = params.token ?? access.paymentToken;
+  if (!access.allowedTokens.includes(tokenKey)) throw new TokenNotAllowedError(tokenKey, access.allowedTokens);
+  return requirePlatformToken(tokenKey);
+}
+
+/** Live price for a deposit quote; a failed price gate disables deposits for now. */
+async function gatedDepositPrice(token: PlatformToken) {
+  try {
+    return await fetchPlatformTokenPriceUsd(token);
+  } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) {
+      throw new ManagedVeniceTokenQuotePriceError(
+        `Managed Venice token deposits are temporarily disabled: ${error.message}`,
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+}
+
 export async function createManagedVeniceTokenQuote(
   params: {
     userId: string;
     tokenAmountRaw: string | bigint;
     depositAddress: string;
+    /** Platform token to pay in; defaults to the user's payment token. */
+    token?: PlatformTokenKey;
+    access?: UserTokenAccess;
     now?: Date;
     priceQuote?: HermesPriceQuote;
     crossCheckQuote?: HermesPriceCrossCheck | null;
@@ -1048,36 +1137,74 @@ export async function createManagedVeniceTokenQuote(
   const tokenAmountRaw = requireTokenAmountRaw(params.tokenAmountRaw);
   const client = requireDb(db);
   const now = params.now ?? new Date();
+  const token = await resolveDepositToken({ userId: params.userId, token: params.token, access: params.access, now });
 
-  const priceQuote = params.priceQuote ?? (await fetchHermesPriceUsd());
+  const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   if (!isHermesPriceFresh(priceQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the Hivra price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token price is stale",
+      {
+        priceGateRefusal: depositGateRefusal(token, "feed_error", {
+          stage: "spot_stale",
+          priceAgeMs: now.getTime() - priceQuote.lastUpdatedAt * 1000,
+          maxAgeMs: MANAGED_VENICE_PRICE_MAX_AGE_MS,
+        }),
+      }
     );
   }
 
+  // The cross-check is the pool's recent median (the reference the gated
+  // price was already checked against), not an independent source. The gated
+  // price is already min(spot, median), so this only bites for an injected
+  // price quote that sits more than MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
+  // above the median.
   const crossCheckQuote =
     params.crossCheckQuote === undefined
-      ? await fetchHermesPriceCrossCheck()
+      ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {
+          throw new ManagedVeniceTokenQuotePriceError(
+            `Managed Venice token deposits are temporarily disabled: ${error instanceof Error ? error.message : String(error)}`,
+            {
+              cause: error,
+              ...(priceGateRefusalFromError(error)
+                ? {}
+                : { priceGateRefusal: depositGateRefusal(token, "feed_error", { stage: "cross_check" }) }),
+            }
+          );
+        })
       : params.crossCheckQuote;
   if (
     crossCheckQuote &&
     !isHermesPriceFresh(crossCheckQuote, now, MANAGED_VENICE_PRICE_MAX_AGE_MS)
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because the Hivra cross-check price is stale"
+      "Managed Venice token deposits are temporarily disabled because the token cross-check price is stale",
+      {
+        priceGateRefusal: depositGateRefusal(token, "feed_error", {
+          stage: "cross_check_stale",
+          priceAgeMs: now.getTime() - crossCheckQuote.lastUpdatedAt * 1000,
+          maxAgeMs: MANAGED_VENICE_PRICE_MAX_AGE_MS,
+        }),
+      }
     );
   }
   if (
     crossCheckQuote &&
-    pricesDisagreeAboveBps(
+    priceExceedsCrossCheckAboveBps(
       priceQuote.priceUsd,
       crossCheckQuote.priceUsd,
       MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
     )
   ) {
     throw new ManagedVeniceTokenQuotePriceError(
-      "Managed Venice token deposits are temporarily disabled because Hivra price sources disagree"
+      "Managed Venice token deposits are temporarily disabled because the token price is above its recent median",
+      {
+        priceGateRefusal: depositGateRefusal(token, "median_deviation", {
+          stage: "cross_check",
+          priceUsd: priceQuote.priceUsd,
+          medianUsd: crossCheckQuote.priceUsd,
+          maxDeviationBps: MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS,
+        }),
+      }
     );
   }
 
@@ -1085,7 +1212,7 @@ export async function createManagedVeniceTokenQuote(
   const lockedValueMicroUsd = calculateManagedVeniceLockedValueMicroUsd({
     tokenAmountRaw,
     priceUsdPerToken: priceQuote.priceUsd,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenDecimals: token.decimals,
   });
   const expiresAt = new Date(now.getTime() + MANAGED_VENICE_QUOTE_LIFETIME_MS);
 
@@ -1093,6 +1220,8 @@ export async function createManagedVeniceTokenQuote(
     .insert({
       account_id: account.id,
       user_id: params.userId,
+      token_key: token.key,
+      token_address: token.address,
       token_amount_raw: tokenAmountRaw.toString(),
       snapshot_price_usd: priceQuote.priceUsd,
       locked_value_micro_usd: lockedValueMicroUsd,
@@ -1125,6 +1254,9 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
     userId: string;
     targetMicroUsd: number;
     depositAddress: string;
+    /** Platform token to pay in; defaults to the user's payment token. */
+    token?: PlatformTokenKey;
+    access?: UserTokenAccess;
     now?: Date;
     priceQuote?: HermesPriceQuote;
     crossCheckQuote?: HermesPriceCrossCheck | null;
@@ -1133,7 +1265,9 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
 ): Promise<ManagedVeniceTokenQuote> {
   requirePositiveMicroUsd(params.targetMicroUsd, "managed Venice token quote USD target");
   const now = params.now ?? new Date();
-  const priceQuote = params.priceQuote ?? (await fetchHermesPriceUsd());
+  const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now }));
+  const token = await resolveDepositToken({ userId: params.userId, token: params.token, access, now });
+  const priceQuote = params.priceQuote ?? (await gatedDepositPrice(token));
   const client = requireDb(db);
   const subsidyState = await loadManagedVeniceTopUpSubsidyState(
     client,
@@ -1184,18 +1318,22 @@ export async function createManagedVeniceTokenQuoteForUsdTarget(
   const tokenAmountRaw = calculateManagedVeniceTokenAmountRawForUsd({
     targetMicroUsd: params.targetMicroUsd,
     priceUsdPerToken: priceQuote.priceUsd,
-    tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+    tokenDecimals: token.decimals,
   });
 
+  // The deposit bonus (launch/standard bps and the hidden cap above) is the
+  // same for either token.
   return createManagedVeniceTokenQuote(
     {
       userId: params.userId,
       tokenAmountRaw,
       depositAddress: params.depositAddress,
+      token: token.key,
+      access,
       now,
       priceQuote,
       crossCheckQuote: params.crossCheckQuote,
-      metadata: topUpMetadata(topUpQuote),
+      metadata: topUpMetadata(topUpQuote, token.key),
     },
     client
   );
@@ -1873,7 +2011,9 @@ async function completeClaimedSettlement(
       account_id: quote.accountId,
       user_id: quote.userId,
       quote_id: quote.id,
-      source: "hermesos_deposit",
+      source: depositLotSource({ key: quote.tokenKey }),
+      token_key: quote.tokenKey,
+      token_address: quote.tokenAddress,
       token_amount_raw: claim.tokenAmountRaw,
       remaining_token_amount_raw: claim.tokenAmountRaw,
       snapshot_price_usd: quote.snapshotPriceUsd,
@@ -1910,7 +2050,8 @@ async function completeClaimedSettlement(
   const { error: eventError } = await table(db, "managed_venice_financial_events").insert({
     user_id: quote.userId,
     account_id: quote.accountId,
-    wallet_type: "hermesos",
+    // The token that funded the deposit ('hermesos' | 'hivra').
+    wallet_type: quote.tokenKey,
     event_type: "token_deposit",
     reference_id: quote.id,
     idempotency_key: `managed_venice_token_deposit:${quote.id}:${claim.transactionHash}`,
@@ -1943,7 +2084,7 @@ async function completeClaimedSettlement(
     const { error: subsidyEventError } = await table(db, "managed_venice_financial_events").insert({
       user_id: quote.userId,
       account_id: quote.accountId,
-      wallet_type: "hermesos",
+      wallet_type: quote.tokenKey,
       event_type: "subsidy_applied",
       reference_id: quote.id,
       idempotency_key: `managed_venice_token_bonus:${quote.id}:${claim.transactionHash}`,
@@ -1985,6 +2126,7 @@ async function completeClaimedSettlement(
           ...existingTopUp,
           policy: "deposit_bonus_v1",
           walletType: "hermesos",
+          tokenKey: quote.tokenKey,
           paidValueMicroUsd: claim.paidValueMicroUsd,
           creditValueMicroUsd: claim.creditValueMicroUsd,
           bonusValueMicroUsd: claim.bonusValueMicroUsd,

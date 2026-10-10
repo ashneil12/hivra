@@ -190,28 +190,146 @@ it("preserves the previous snapshot with a freshness warning when refresh fails"
   expect(screen.getByRole("button", { name: /Agent started/ })).toBeVisible();
 });
 
-it("brings selected evidence into view on a narrow screen", async () => {
-  const scroll = jest.fn();
-  const originalMedia = window.matchMedia;
-  const originalScroll = HTMLElement.prototype.scrollIntoView;
-  window.matchMedia = jest.fn().mockReturnValue({ matches: true });
-  HTMLElement.prototype.scrollIntoView = scroll;
-  try {
+function withNarrowScreen(run: (scroll: jest.Mock) => Promise<void>) {
+  return async () => {
+    const scroll = jest.fn();
+    const originalMedia = window.matchMedia;
+    const originalScroll = HTMLElement.prototype.scrollIntoView;
+    window.matchMedia = jest.fn().mockReturnValue({ matches: true });
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      await run(scroll);
+    } finally {
+      window.matchMedia = originalMedia;
+      HTMLElement.prototype.scrollIntoView = originalScroll;
+    }
+  };
+}
+
+it(
+  "opens the tapped record in place on a narrow screen and keeps it in view",
+  withNarrowScreen(async (scroll) => {
     render(<ActivityObservatory />);
-    await screen.findByRole("button", { name: /Agent started/ });
+    const started = await screen.findByRole("button", { name: /Agent started/ });
+    // No record is opened for the user; the list comes first.
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
     expect(scroll).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: /Agent action reported/ }),
-    );
+    const action = screen.getByRole("button", {
+      name: /Agent action reported/,
+    });
+    fireEvent.click(action);
+    const inspector = screen.getByRole("complementary", {
+      name: "Event inspector",
+    });
+    // Inline, directly under the tapped record, and the only inspector.
+    expect(action.nextElementSibling).toBe(inspector);
+    expect(screen.getAllByRole("complementary")).toHaveLength(1);
+    expect(action).toHaveAttribute("aria-expanded", "true");
+    expect(started).toHaveAttribute("aria-expanded", "false");
     expect(scroll).toHaveBeenCalledWith({
       block: "nearest",
       behavior: "instant",
     });
-  } finally {
-    window.matchMedia = originalMedia;
-    HTMLElement.prototype.scrollIntoView = originalScroll;
-  }
-});
+    expect(scroll.mock.instances.at(-1)).toBe(action);
+    fireEvent.click(started);
+    expect(started.nextElementSibling).toBe(
+      screen.getByRole("complementary", { name: "Event inspector" }),
+    );
+    expect(action.nextElementSibling).not.toBe(
+      screen.getByRole("complementary"),
+    );
+    fireEvent.click(started);
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    expect(started).toHaveAttribute("aria-expanded", "false");
+  }),
+);
+
+it(
+  "brings a tapped record to the top when its detail would open below the fold",
+  withNarrowScreen(async (scroll) => {
+    render(<ActivityObservatory />);
+    const started = await screen.findByRole("button", { name: /Agent started/ });
+    const rect = jest
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const inspector = this.tagName === "ASIDE";
+        return {
+          top: inspector ? 591 : 468,
+          bottom: inspector ? window.innerHeight + 400 : 591,
+          left: 0,
+          right: 375,
+          width: 375,
+          height: inspector ? 459 : 123,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      });
+    try {
+      fireEvent.click(started);
+      expect(scroll).toHaveBeenLastCalledWith({
+        block: "start",
+        behavior: "instant",
+      });
+      expect(scroll.mock.instances.at(-1)).toBe(started);
+    } finally {
+      rect.mockRestore();
+    }
+  }),
+);
+
+it(
+  "scrolls only for a tap, not when an open record returns after a view or search change",
+  withNarrowScreen(async (scroll) => {
+    render(<ActivityObservatory />);
+    const started = await screen.findByRole("button", { name: /Agent started/ });
+    fireEvent.click(started);
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    // The open record leaves the list and comes back with its detail still
+    // open; the page stays where the user is working.
+    fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(
+      screen.getByRole("button", { name: /Agent started/ }).nextElementSibling,
+    ).toBe(screen.getByRole("complementary", { name: "Event inspector" }));
+
+    const search = screen.getByRole("searchbox", {
+      name: "Search recorded events",
+    });
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+    expect(screen.getByRole("complementary")).toBeInTheDocument();
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    // A new tap still brings its record into view.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Agent action reported/ }),
+    );
+    expect(scroll).toHaveBeenCalledTimes(2);
+  }),
+);
+
+it(
+  "folds view guidance into a collapsed disclosure on a narrow screen",
+  withNarrowScreen(async () => {
+    render(<ActivityObservatory />);
+    await screen.findByRole("button", { name: /Agent started/ });
+    const help = screen.getByText(/This is your saved history/);
+    expect(help).not.toBeVisible();
+    fireEvent.click(screen.getByText("About this view"));
+    expect(help).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+    expect(screen.getByText(/not an audit of the computer/)).toBeVisible();
+    expect(
+      within(screen.getByRole("region", { name: "Agent runs" })).queryByText(
+        /not an audit of the computer/,
+      ),
+    ).not.toBeInTheDocument();
+  }),
+);
 
 it("appends older events once, preserves selection and coverage, and refresh resets history", async () => {
   respond({

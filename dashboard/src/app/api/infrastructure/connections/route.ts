@@ -14,6 +14,7 @@ import { InfrastructureConnectionCreateSchema } from "@/lib/infrastructure/contr
 import {
   connectHetznerCloudProject,
   HetznerCloudConnectionError,
+  HetznerCloudTokenCheckError,
 } from "@/lib/infrastructure/hetzner-cloud";
 import { connectDigitalOcean, ManagedSessionError } from "@/lib/hivra/do-managed-sessions";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
@@ -22,6 +23,7 @@ import {
   InfrastructureConnectionStoreError,
   listInfrastructureConnections,
 } from "@/lib/infrastructure/connection-store";
+import { withCredentialExpiry } from "@/lib/infrastructure/credential-expiry-store";
 import {
   hasStrictJsonContentType,
   isSameOriginMutationRequest,
@@ -44,6 +46,11 @@ function storeFailure(error: unknown, method: "GET" | "POST"): Response {
     }
     if (error.code === "provider_unavailable") return noStore(apiError(error.message, 502));
   }
+  if (error instanceof HetznerCloudTokenCheckError) {
+    // Read-only or unconfirmed write check: fixable on the same screen by
+    // pasting another token. Nothing was saved.
+    return noStore(apiError(error.message, 422, undefined, { code: error.code }));
+  }
   if (error instanceof HetznerCloudConnectionError) {
     if (error.code === "invalid_credentials") {
       return noStore(apiError("Hetzner Cloud rejected this project API token.", 422));
@@ -53,6 +60,14 @@ function storeFailure(error: unknown, method: "GET" | "POST"): Response {
   if (error instanceof InfrastructureConnectionStoreError) {
     if (error.code === "conflict") {
       return noStore(apiError("An infrastructure connection with this name already exists.", 409));
+    }
+    if (error.code === "key_passphrase_required") {
+      return noStore(apiError("This key has a passphrase. Enter it below the key.", 422, undefined,
+        { code: "key_passphrase_required" }));
+    }
+    if (error.code === "key_passphrase_incorrect") {
+      return noStore(apiError("That passphrase didn't unlock this key.", 422, undefined,
+        { code: "key_passphrase_incorrect" }));
     }
     if (error.code === "invalid_request") {
       return noStore(apiError("Invalid infrastructure connection.", 400));
@@ -89,7 +104,7 @@ export async function GET() {
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
 
-    const connections = await listInfrastructureConnections(userId);
+    const connections = await withCredentialExpiry(userId, await listInfrastructureConnections(userId));
     return noStore(apiSuccess({ connections }));
   } catch (error) {
     return storeFailure(error, "GET");
@@ -152,6 +167,7 @@ export async function POST(request: NextRequest) {
       const result = await connectDigitalOcean(userId, {
         name: parsed.data.name,
         apiToken: parsed.data.credentials.apiToken,
+        tokenExpiry: parsed.data.tokenExpiry,
       });
       return noStore(apiSuccess(result, 201));
     }

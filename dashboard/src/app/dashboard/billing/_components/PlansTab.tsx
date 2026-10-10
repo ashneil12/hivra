@@ -26,6 +26,7 @@ import { plannedHostedMachines } from "@/lib/subscription/hosted-ladder";
 import type { BillingController } from "../useBillingController";
 import { ChoiceGroup } from "./ChoiceGroup";
 import styles from "../Billing.module.css";
+import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
 
 export const PLANS_INTRO =
   "Every plan runs your agents and computers on Hivra's servers. Bring your own model key and we add nothing to what you spend.";
@@ -39,15 +40,14 @@ export const PLANS_INTRO =
 export const IN_PLACE_CHANGE_NOTE =
   "Plan changes apply right away and move your subscription to monthly billing. On a monthly plan, the price difference for the rest of this billing period is added to your next invoice. A yearly plan is invoiced today instead, with credit for its unused time.";
 
+/** How a plan's figure differs from the owner's plan. Said in words: a bare
+ * "0.5 −7.5" beside the figure read as a range. */
 function Delta({ value, unit = "" }: { value: number; unit?: string }) {
   if (!value) return null;
   const up = value > 0;
   return (
     <span className={`${styles.delta} ${up ? styles.deltaUp : styles.deltaDown}`}>
-      {up ? "+" : "−"}
-      {Math.abs(value)}
-      {unit}
-      <span className={styles.srOnly}> compared with your plan</span>
+      ({up ? "+" : "−"}{Math.abs(value)}{unit} vs yours)
     </span>
   );
 }
@@ -153,7 +153,7 @@ export function MachineCard({
 }) {
   const plan = PLANS[planKey];
   const badge = planCardBadge(planKey, currentPlanKey);
-  const price = planPriceDisplay(planKey, { path, cadence, tokenMode });
+  const price = planPriceDisplay(planKey, { path, cadence, tokenMode, holdAmounts: c.holdAmounts });
   const diff = currentPlanKey && currentPlanKey !== planKey ? getPlanDiff(currentPlanKey, planKey) : null;
   const isPopular = "popular" in plan && plan.popular === true;
   const isCurrent = planKey === currentPlanKey;
@@ -183,6 +183,20 @@ export function MachineCard({
       </p>
       <p className={styles.machineSub}>{price.subline ?? " "}</p>
 
+      {planKey === "free" ? (
+        // The free account holds no Hivra-run computer, so the compute rows
+        // would only show numbers it never gets.
+        <dl className={styles.machineSpecs}>
+          <div>
+            <dt>Computer</dt>
+            <dd>Your own</dd>
+          </div>
+          <div>
+            <dt>Run by Hivra</dt>
+            <dd>No</dd>
+          </div>
+        </dl>
+      ) : (
       <dl className={styles.machineSpecs}>
         <div>
           <dt>vCPU</dt>
@@ -210,6 +224,7 @@ export function MachineCard({
           <dd>{planIdlePolicy(planKey)}</dd>
         </div>
       </dl>
+      )}
 
       <ul className={styles.features}>
         {planCardFeatures(planKey).map((feature) => (
@@ -253,9 +268,11 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
   const isApple = source === "apple_iap";
 
   // $HermesOS plan payment is offered only to people who don't already pay
-  // for a plan by card or through Apple.
+  // for a plan by card or through Apple, and only where the token geo-policy
+  // allows token features (this hides the chip and the token path with it).
   const canPayWithToken =
     c.flags.cryptoBillingEnabled &&
+    c.tokenGeo.status === "allowed" &&
     !hasPaidCardOrAppleSubscription({ planKey: currentPlanKey, source });
   const path: PlanPaymentPath = canPayWithToken && c.paidPath === "crypto" ? "token" : "card";
   const tokenMode: TokenPlanMode = c.cryptoMode === "permanent" ? "hold" : "yearly";
@@ -393,12 +410,12 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
       <ul className={styles.footnotes}>
         <li>
           <ShieldCheck size={13} aria-hidden="true" />
-          Card payments: 48-hour refund.
+          Card payments: 7-day money-back guarantee.
         </li>
         {path === "token" && (
           <li>
             <Coins size={13} aria-hidden="true" />
-            $HermesOS payments are final and can&apos;t be refunded.
+            {TOKEN_PAYMENT_FINALITY}
           </li>
         )}
       </ul>

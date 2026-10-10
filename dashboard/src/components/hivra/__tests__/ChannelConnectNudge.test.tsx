@@ -6,12 +6,6 @@ import posthog from "posthog-js";
 import { ChannelConnectNudge } from "../ChannelConnectNudge";
 import { telegramStatus } from "@/lib/hivra/agent-api";
 
-const mockSearchGet = jest.fn();
-
-jest.mock("next/navigation", () => ({
-  useSearchParams: () => ({ get: mockSearchGet }),
-}));
-
 jest.mock("posthog-js", () => ({
   __esModule: true,
   default: {
@@ -25,11 +19,12 @@ jest.mock("@/lib/hivra/agent-api", () => ({
 
 const NUDGE_COPY = /your agent can reach you when work is done/i;
 
-function renderNudge(onConnect = jest.fn()) {
+function renderNudge(onConnect = jest.fn(), welcome = true) {
   return {
     onConnect,
     ...render(
       <ChannelConnectNudge
+        welcome={welcome}
         boxUrl="https://box.example.com"
         token="box-token"
         boxId="box-1"
@@ -43,7 +38,6 @@ describe("ChannelConnectNudge", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     window.localStorage.clear();
-    mockSearchGet.mockImplementation((key: string) => (key === "welcome" ? "1" : null));
     (telegramStatus as jest.Mock).mockResolvedValue({ connected: false, active: false, ownerId: null });
   });
 
@@ -59,10 +53,17 @@ describe("ChannelConnectNudge", () => {
     });
   });
 
-  it("does not render (or probe) without the welcome param", async () => {
-    mockSearchGet.mockReturnValue(null);
-
+  it("keeps the whole nudge readable on a phone instead of truncating it", async () => {
     renderNudge();
+
+    const copy = await screen.findByText(NUDGE_COPY);
+    expect(copy).toHaveStyle({ whiteSpace: "normal" });
+    expect(copy).not.toHaveStyle({ textOverflow: "ellipsis" });
+    expect(screen.getByTestId("channel-connect-nudge")).toHaveStyle({ flexWrap: "wrap" });
+  });
+
+  it("does not render (or probe) outside a welcome visit", async () => {
+    renderNudge(jest.fn(), false);
 
     await waitFor(() => expect(telegramStatus).not.toHaveBeenCalled());
     expect(screen.queryByText(NUDGE_COPY)).not.toBeInTheDocument();
@@ -82,7 +83,7 @@ describe("ChannelConnectNudge", () => {
   it("routes the connect click to the Telegram tab and captures it", async () => {
     const { onConnect } = renderNudge();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^connect$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^connect telegram$/i }));
 
     expect(onConnect).toHaveBeenCalledTimes(1);
     expect(posthog.capture).toHaveBeenCalledWith("channel_connect_nudge_clicked", {

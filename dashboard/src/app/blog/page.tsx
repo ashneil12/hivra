@@ -8,13 +8,15 @@ import StructuredData from "@/components/StructuredData";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { BLOG_TOPICS, topicAnchor } from "@/lib/blog/topics";
 
 // SCRIPTURE_ANCHOR: blog-proclaim | Psalm 96:3 | Verse: Declare his glory among the nations, his marvelous works among all the peoples.
 
 export const metadata: Metadata = {
-  title: "Blog — AI agent guides and deep dives",
+  title: "Blog: AI agent guides and deep dives",
   description:
-    "Practical guides to running AI agents: how persistent memory works, self-hosting vs managed hosting, real automation examples, and more from the Hivra team.",
+    "Guides to running AI agents: how persistent memory works, self-hosting vs managed hosting, and what agents can automate. From the team that builds Hivra.",
   ...buildWebsiteMetadata({
     path: "/blog",
     title: "Blog | Hivra",
@@ -61,7 +63,7 @@ export default function BlogIndexPage() {
     ],
   };
 
-  const [featured, ...articles] = BLOG_ARTICLES_LIST;
+  const [featured] = BLOG_ARTICLES_LIST;
   return (
     <PublicSite className={styles.page} data-page="blog">
       <StructuredData schema={schema} />
@@ -70,7 +72,7 @@ export default function BlogIndexPage() {
         <header className={styles.masthead}>
           <span className={styles.eyebrow}>From the Hivra team</span>
           <h1>Guides for people who run AI agents.</h1>
-          <p>Persistent memory, real automation examples, cost breakdowns, honest comparisons — written by the team that builds Hivra.</p>
+          <p>How persistent memory works, what you can automate, what an agent costs to run, and how the tools and hosts compare. Written by the team that builds Hivra.</p>
         </header>
         {featured && <Link href={`/blog/${featured.slug}`} className={styles.featured}>
           <EditorialArt number="01" label={featured.tagline} />
@@ -80,16 +82,26 @@ export default function BlogIndexPage() {
             <span className={styles.readLink}>Read the article <ArrowUpRight size={22} aria-hidden="true" /></span>
           </div>
         </Link>}
-        <div className={styles.indexHead}><h2>All articles</h2><span>{BLOG_ARTICLES_LIST.length} articles</span></div>
-        <div className={styles.rows}>
-          {articles.map((article, index) => <Link key={article.slug} href={`/blog/${article.slug}`} className={styles.row}>
-            <span className={styles.rowNumber}>{String(index + 2).padStart(2, "0")}</span>
-            <article><h2>{article.title}</h2><p>{article.intro}</p></article>
-            <div className={styles.metadata}><time dateTime={article.publishedDate}>{formatDate(article.publishedDate)}</time><span>{article.readingTimeMin} min read</span></div>
-            <ArrowUpRight className={styles.rowArrow} size={24} aria-hidden="true" />
-          </Link>)}
-        </div>
-        <EditorialRelated title="Explore Hivra" links={[{ label: "All Features", href: "/features" }, { label: "Compare Alternatives", href: "/compare" }, { label: "Deploy Now", href: "/get-started?plan=operator" }]} />
+        <nav className={styles.topicNav} aria-label="Blog topics">
+          <span>Browse by topic</span>
+          {BLOG_TOPICS.map((topic) => <a key={topic.slug} href={`#${topicAnchor(topic)}`}>{topic.title}</a>)}
+        </nav>
+        {BLOG_TOPICS.map((topic) => {
+          const inTopic = topic.articles.map((slug) => BLOG_ARTICLES_LIST.find((article) => article.slug === slug)).filter((article): article is (typeof BLOG_ARTICLES_LIST)[number] => Boolean(article));
+          return <section key={topic.slug} id={topicAnchor(topic)} className={styles.topicSection} aria-labelledby={`${topicAnchor(topic)}-heading`}>
+            <div className={styles.indexHead}><h2 id={`${topicAnchor(topic)}-heading`}>{topic.title}</h2><span>{inTopic.length} articles</span></div>
+            <p className={styles.topicBlurb}>{topic.blurb}</p>
+            <div className={styles.rows}>
+              {inTopic.map((article, index) => <Link key={article.slug} href={`/blog/${article.slug}`} className={styles.row}>
+                <span className={styles.rowNumber}>{String(index + 1).padStart(2, "0")}</span>
+                <article><h3>{article.title}</h3><p>{article.intro}</p></article>
+                <div className={styles.metadata}><time dateTime={article.publishedDate}>{formatDate(article.publishedDate)}</time><span>{article.readingTimeMin} min read</span></div>
+                <ArrowUpRight className={styles.rowArrow} size={24} aria-hidden="true" />
+              </Link>)}
+            </div>
+          </section>;
+        })}
+        <EditorialRelated title="Explore Hivra" links={[{ label: "All Features", href: "/features" }, { label: "Compare Alternatives", href: "/compare" }, { label: "Deploy Now", href: PUBLIC_START_HREF }]} />
       </main>
     </PublicSite>
   );

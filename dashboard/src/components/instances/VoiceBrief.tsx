@@ -94,6 +94,7 @@ export function VoiceBrief({ text }: { text: string }) {
         aria-label={speaking ? 'Stop reading your brief' : 'Listen to your brief'}
         aria-pressed={speaking}
         data-testid="voice-brief-toggle"
+        className="cmdp-icon-btn"
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -113,7 +114,7 @@ export function VoiceBrief({ text }: { text: string }) {
 
       <div style={{ display: 'grid', gap: 3, flex: '1 1 auto', minWidth: 0 }}>
         <span
-          className="mono"
+          className="mono cmdp-small"
           style={{
             fontSize: 10,
             textTransform: 'uppercase',
@@ -134,7 +135,7 @@ export function VoiceBrief({ text }: { text: string }) {
         onClick={cycleSpeed}
         aria-label={`Playback speed ${SPEEDS[speedIdx]}×`}
         data-testid="voice-brief-speed"
-        className="mono"
+        className="mono cmdp-icon-btn"
         style={{
           flexShrink: 0,
           border: '1px solid var(--etched-border)',

@@ -53,6 +53,18 @@ jest.mock("@/lib/supabase", () => ({
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
+// The long-lived key rides in the fragment of the login URL. A fragment is never
+// sent to a server, so the sidecar's request line, its 302 Location header and
+// any access log in front of it never carry the key; the browser keeps the
+// fragment across the redirect, so the box page still opens with
+// #iframe_token=<key>.
+const HANDOFF_KEY = "server-key-deadbeef-deadbeef-deadbeef";
+function expectKeyOnlyInFragment(parsed: URL) {
+  expect(parsed.searchParams.get("next")).toBe("/webchat");
+  expect(parsed.hash).toBe(`#iframe_token=${HANDOFF_KEY}`);
+  expect(parsed.href.split("#")[0]).not.toContain(HANDOFF_KEY);
+}
+
 describe("GET /api/instances/[id]/webui-login-url", () => {
   type SecureUserInstanceResult = Awaited<ReturnType<typeof getSecureUserInstance>>;
   type SecureUserInstanceSuccess = Extract<SecureUserInstanceResult, { error: null }>;
@@ -165,7 +177,7 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
     expect(parsed.searchParams.get("exp")).toMatch(/^\d+$/);
     expect(parsed.searchParams.get("nonce")).toMatch(/^[a-f0-9]{32}$/);
     expect(parsed.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
-    expect(parsed.searchParams.get("next")).toMatch(/^\/webchat#iframe_token=/);
+    expectKeyOnlyInFragment(parsed);
     expect(typeof body.expiresAt).toBe("number");
     expect(body.expiresAt).toBeGreaterThan(Date.now());
   });
@@ -188,8 +200,7 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
     const parsed = new URL(body.url);
     expect(parsed.pathname).toBe("/_sidecar/webui-login");
     expect(parsed.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
-    const next = parsed.searchParams.get("next") ?? "";
-    expect(next).toMatch(/^\/webchat#iframe_token=/);
+    expectKeyOnlyInFragment(parsed);
   });
 
   it("records opening the WebUI as deliberate instance activity", async () => {
@@ -643,7 +654,7 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
     expect(response.status).toBe(200);
     const parsed = new URL(body.url);
     expect(parsed.pathname).toBe("/_sidecar/webui-login");
-    expect(parsed.searchParams.get("next")).toMatch(/^\/webchat#iframe_token=/);
+    expectKeyOnlyInFragment(parsed);
     expect(mockedSshExec).toHaveBeenCalled();
     expect(mockedLogWarn).toHaveBeenCalledWith(
       "webui handoff SPA shell still failing after Caddy reconciliation; continuing with root shell handoff",
@@ -715,7 +726,7 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
     expect(typeof body.url).toBe("string");
     const parsed = new URL(body.url);
     expect(parsed.pathname).toBe("/_sidecar/webui-login");
-    expect(parsed.searchParams.get("next")).toMatch(/^\/webchat#iframe_token=/);
+    expectKeyOnlyInFragment(parsed);
     expect(mockedSshExec).toHaveBeenCalled();
     expect(mockedLogWarn).toHaveBeenCalledWith(
       "webui handoff SPA shell still failing after Caddy reconciliation; continuing with root shell handoff",
@@ -785,7 +796,8 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
 
     expect(next).toContain("locale=zh-CN");
     expect(next).toContain("lang=zh-CN");
-    expect(next).toContain("#iframe_token=");
+    expect(next).not.toContain("iframe_token");
+    expect(parsed.hash).toMatch(/^#iframe_token=/);
   });
 
   it("scopes the WebUI handoff URL to the dashboard appearance when requested", async () => {
@@ -797,7 +809,8 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
     expect(response.status).toBe(200);
     expect(next).toContain("theme=hermesos-light");
     expect(next).toContain("skin=hivra");
-    expect(next).toContain("#iframe_token=");
+    expect(next).not.toContain("iframe_token");
+    expect(parsed.hash).toMatch(/^#iframe_token=/);
   });
 
   it("still accepts the legacy HermesOS appearance skin for old handoff URLs", async () => {

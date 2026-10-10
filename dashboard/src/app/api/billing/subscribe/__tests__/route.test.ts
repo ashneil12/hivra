@@ -469,6 +469,87 @@ describe("POST /api/billing/subscribe", () => {
     expect(mockStripeSessionsCreate).toHaveBeenCalled();
   });
 
+  describe("returning to where checkout started", () => {
+    const LAUNCH_RETURN = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+
+    function pendingCheckout() {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+        data: { status: "pending", updated_at: new Date().toISOString(), stripe_customer_id: mockCustomerStripeId },
+        error: null,
+      });
+    }
+
+    it("sends Stripe's success and cancel pages back to a same-origin launch path", async () => {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator", returnTo: LAUNCH_RETURN }));
+      expect(res.status).toBe(200);
+
+      const [params, options] = mockStripeSessionsCreate.mock.calls[0];
+      const encoded = encodeURIComponent(LAUNCH_RETURN);
+      expect(new URL(params.success_url).pathname + new URL(params.success_url).search)
+        .toBe(`/dashboard/billing?subscription=success&session_id={CHECKOUT_SESSION_ID}&returnTo=${encoded}`);
+      expect(new URL(params.cancel_url).searchParams.get("returnTo")).toBe(LAUNCH_RETURN);
+      expect(new URL(params.cancel_url).pathname).toBe("/checkout/canceled");
+      expect(params.metadata).toEqual(expect.objectContaining({ plan: "operator", return_to: LAUNCH_RETURN }));
+      // Subscription metadata stays about the subscription.
+      expect(params.subscription_data.metadata).not.toHaveProperty("return_to");
+      expect(options.idempotencyKey).toMatch(/^checkout_np_user_123_operator_monthly_r[0-9a-f]{16}_\d+$/);
+    });
+
+    it.each([
+      ["an absolute URL", "https://evil.example/dashboard/launch"],
+      ["a protocol-relative URL", "//evil.example/dashboard"],
+      ["a path outside the dashboard", "/api/billing/subscribe"],
+      ["a non-string", { path: "/dashboard" }],
+    ])("drops %s and checks out without a return path", async (_label, returnTo) => {
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator", returnTo }));
+      expect(res.status).toBe(200);
+
+      const [params, options] = mockStripeSessionsCreate.mock.calls[0];
+      expect(params.success_url).toMatch(/session_id=\{CHECKOUT_SESSION_ID\}$/);
+      expect(params.cancel_url).toMatch(/\/checkout\/canceled\?plan=operator$/);
+      expect(params.metadata).not.toHaveProperty("return_to");
+      expect(options.idempotencyKey).toMatch(/^checkout_np_user_123_operator_monthly_\d+$/);
+    });
+
+    it("resumes an open session only when it returns to the same place", async () => {
+      pendingCheckout();
+      mockStripeSessionsList.mockResolvedValueOnce({
+        data: [
+          { id: "cs_plain", status: "open", url: "https://stripe.test/plain", metadata: { user_id: mockUserId, plan: "operator" } },
+          { id: "cs_launch", status: "open", url: "https://stripe.test/launch", metadata: { user_id: mockUserId, plan: "operator", return_to: LAUNCH_RETURN } },
+        ],
+      });
+
+      const res = await POST(createRequest({ plan: "operator", returnTo: LAUNCH_RETURN }));
+      const body = await res.json();
+
+      expect(body.data).toEqual({ url: "https://stripe.test/launch", resumed: true });
+      expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
+    });
+
+    it("never reuses the idempotency key of a session it just expired", async () => {
+      // Plain checkout, then one from Launch (which expires the plain one),
+      // then plain again: the third must not replay the first, expired
+      // session's saved response.
+      pendingCheckout();
+      mockStripeSessionsList.mockResolvedValueOnce({
+        data: [{ id: "cs_launch", status: "open", url: "https://stripe.test/launch", metadata: { user_id: mockUserId, plan: "operator", return_to: LAUNCH_RETURN } }],
+      });
+
+      const res = await POST(createRequest({ plan: "operator" }));
+      expect(res.status).toBe(200);
+
+      expect(mockStripeSessionsExpire).toHaveBeenCalledWith("cs_launch");
+      const [params, options] = mockStripeSessionsCreate.mock.calls[0];
+      expect(params.metadata).not.toHaveProperty("return_to");
+      expect(options.idempotencyKey).toMatch(/^checkout_np_user_123_operator_monthly_x[0-9a-f]{16}_\d+$/);
+    });
+  });
+
   it("keeps recreated checkout sessions as direct payment with no trial", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
       data: {
@@ -720,7 +801,7 @@ describe("POST /api/billing/subscribe", () => {
     const res = await POST(
       createRequest(
         { plan: "fleet" },
-        { "cf-connecting-ip": "198.51.100.7,or(status.eq.active)" }
+        { "x-forwarded-for": "or(status.eq.active), 198.51.100.7" }
       )
     );
 
@@ -738,7 +819,7 @@ describe("POST /api/billing/subscribe", () => {
     const res = await POST(
       createRequest(
         { plan: "fleet" },
-        { "cf-connecting-ip": "2001:db8::1" }
+        { "x-forwarded-for": "2001:db8::1" }
       )
     );
 
@@ -760,7 +841,7 @@ describe("POST /api/billing/subscribe", () => {
     const res = await POST(
       createRequest(
         { plan: "fleet" },
-        { "cf-connecting-ip": "198.51.100.7" }
+        { "x-forwarded-for": "198.51.100.7" }
       )
     );
 
@@ -772,7 +853,7 @@ describe("POST /api/billing/subscribe", () => {
     ]);
   });
 
-  it("does not grant hackathon trials; paid checkout is direct payment", async () => {
+  it("does not grant promo trials in any window; paid checkout is direct payment", async () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-04-18T12:00:00.000Z"));
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
@@ -810,7 +891,7 @@ describe("POST /api/billing/subscribe", () => {
     expect(callArgs.subscription_data.metadata.checkout_ip).toBe("203.0.113.1");
   });
 
-  it("should use the first X-Forwarded-For entry when X-Real-IP is absent", async () => {
+  it("should use the rightmost X-Forwarded-For hop, not a client-prepended entry", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
     
     const req = createRequest({ plan: "fleet" }, { "x-forwarded-for": "1.1.1.1, 198.51.100.1" });
@@ -818,8 +899,8 @@ describe("POST /api/billing/subscribe", () => {
     
     expect(res.status).toBe(200);
     const callArgs = mockStripeSessionsCreate.mock.calls[0][0];
-    expect(callArgs.metadata.checkout_ip).toBe("1.1.1.1");
-    expect(callArgs.subscription_data.metadata.checkout_ip).toBe("1.1.1.1");
+    expect(callArgs.metadata.checkout_ip).toBe("198.51.100.1");
+    expect(callArgs.subscription_data.metadata.checkout_ip).toBe("198.51.100.1");
   });
 
   it("does not leak raw database errors when the new customer record cannot be persisted", async () => {
@@ -1089,106 +1170,49 @@ describe("POST /api/billing/subscribe", () => {
     expect(upsertCall![0].signup_attribution).toEqual({ utm_source: "twitter" });
   });
 
-  // ── 7-day Pro trial experiment (default-off A/B) ─────────────────────────
-  describe("trial experiment wiring", () => {
+  // ── No trials: Checkout is direct payment (owner decision 2026-10-07) ─────
+  describe("checkout never offers a trial", () => {
     const ORIGINAL_ENV = process.env;
 
     beforeEach(() => {
       process.env = { ...ORIGINAL_ENV };
-      delete process.env.TRIAL_EXPERIMENT_ENABLED;
-      delete process.env.TRIAL_EXPERIMENT_PERCENT;
-      posthogFlushMock.mockResolvedValue(undefined);
     });
 
     afterAll(() => {
       process.env = ORIGINAL_ENV;
     });
 
-    function sessionCreateParams() {
-      expect(mockStripeSessionsCreate).toHaveBeenCalledTimes(1);
-      return mockStripeSessionsCreate.mock.calls[0][0];
-    }
-
-    it("default-off: paid checkout has NO trial_period_days and no assignment event", async () => {
+    it("checkout never lets the buyer enter a promotion code", async () => {
       mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
-      const res = await POST(createRequest({ plan: "fleet" }));
+      const res = await POST(createRequest({ plan: "operator" }));
       expect(res.status).toBe(200);
 
-      const params = sessionCreateParams();
-      expect(params.subscription_data.trial_period_days).toBeUndefined();
-      expect(params.metadata.trial_days).toBeUndefined();
-      expect(posthogCaptureMock).not.toHaveBeenCalled();
+      const params = mockStripeSessionsCreate.mock.calls[0][0];
+      expect(params.allow_promotion_codes).not.toBe(true);
+      expect(params).not.toHaveProperty("discounts");
     });
 
-    it("enabled + 100% (trial bucket): checkout carries trial_period_days=7 and captures the assignment", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    it.each(["operator", "fleet", "command"] as const)(
+      "%s checkout never sends trial_period_days, trial_end or trial metadata, even with the retired trial env set",
+      async (plan) => {
+        // The retired experiment env must have no effect any more.
+        process.env.TRIAL_EXPERIMENT_ENABLED = "true";
+        process.env.TRIAL_EXPERIMENT_PERCENT = "100";
+        mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
+        const res = await POST(createRequest({ plan }));
+        expect(res.status).toBe(200);
 
-      const params = sessionCreateParams();
-      expect(params.subscription_data.trial_period_days).toBe(7);
-      expect(params.subscription_data.metadata.trial_days).toBe("7");
-      expect(params.metadata.trial_days).toBe("7");
-
-      expect(posthogCaptureMock).toHaveBeenCalledWith({
-        distinctId: mockUserId,
-        event: "trial_experiment_assigned",
-        properties: expect.objectContaining({
-          bucket: "trial",
-          plan: "fleet",
-          trial_days: 7,
-          $insert_id: `trial_experiment_assigned_${mockUserId}`,
-        }),
-      });
-      expect(posthogFlushMock).toHaveBeenCalled();
-    });
-
-    it("enabled + 0% (control bucket): no trial days, but the assignment event still fires with bucket=control", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "0";
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
-
-      const params = sessionCreateParams();
-      expect(params.subscription_data.trial_period_days).toBeUndefined();
-
-      expect(posthogCaptureMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          event: "trial_experiment_assigned",
-          properties: expect.objectContaining({ bucket: "control", trial_days: 0 }),
-        })
-      );
-    });
-
-    it("enabled: free-plan activation never assigns or trials (no checkout reached)", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-      mockSupabaseQuery.upsert.mockResolvedValueOnce({ error: null });
-
-      const res = await POST(createRequest({ plan: "free" }));
-      expect(res.status).toBe(200);
-
-      expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
-      expect(posthogCaptureMock).not.toHaveBeenCalled();
-    });
-
-    it("a PostHog flush failure never breaks checkout", async () => {
-      process.env.TRIAL_EXPERIMENT_ENABLED = "true";
-      process.env.TRIAL_EXPERIMENT_PERCENT = "100";
-      posthogFlushMock.mockRejectedValueOnce(new Error("posthog down"));
-      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-
-      const res = await POST(createRequest({ plan: "fleet" }));
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.data.url).toBe("https://stripe.test/checkout/123");
-    });
+        expect(mockStripeSessionsCreate).toHaveBeenCalledTimes(1);
+        const params = mockStripeSessionsCreate.mock.calls[0][0];
+        expect(params.subscription_data).not.toHaveProperty("trial_period_days");
+        expect(params.subscription_data).not.toHaveProperty("trial_end");
+        expect(params.subscription_data).not.toHaveProperty("trial_settings");
+        expect(params.subscription_data.metadata).not.toHaveProperty("trial_days");
+        expect(params.metadata).not.toHaveProperty("trial_days");
+        expect(posthogCaptureMock).not.toHaveBeenCalled();
+      }
+    );
   });
 });

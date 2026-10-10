@@ -9,17 +9,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle, Check, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Info, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
 
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { computerContractDisplayText } from "@/lib/agent-computers/computer-contract";
 import {
   answerManagedSessionApproval,
   changeManagedSession,
   getManagedSession,
+  isManagedSessionCredentialProblem,
   managedSessionEventsUrl,
   parseManagedSessionStreamEvent,
   readManagedSessionHistory,
   sendManagedSessionMessage,
+  type ManagedSessionApiError,
 } from "@/lib/hivra/managed-session-client";
 import {
   DIGITALOCEAN_HARNESS_LABELS,
@@ -56,19 +59,44 @@ function statusCopy(session: ManagedSessionDto, transcript: ManagedTranscript): 
   return { label: "Ready", dot: styles.dotReady };
 }
 
+/**
+ * Hivra's setup note, exactly as sent, as a Hivra card rather than as a
+ * message the owner typed. Collapsed: it is context, not the conversation.
+ */
+function HivraSetupNote({ text, agentName }: { text: string; agentName: string }) {
+  return (
+    <details className={styles.setupNote}>
+      <summary>
+        <Info size={13} aria-hidden />
+        <span className={styles.setupTitle}>Hivra setup</span>
+        <span className={styles.setupSummary}>Hivra told {agentName} where it runs and how you see its work.</span>
+      </summary>
+      <div className={styles.setupBody}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{computerContractDisplayText(text)}</ReactMarkdown>
+      </div>
+    </details>
+  );
+}
+
 function RunView({
   run,
+  agentName,
   submitting,
   onAnswer,
 }: {
   run: ManagedTranscriptRun;
+  agentName: string;
   submitting: Record<string, "approve" | "reject">;
   onAnswer: (requestId: string, outcome: "approve" | "reject") => void;
 }) {
   const hasOutput = run.text || run.tools.length || run.approvals.length || run.reasoning;
   return (
     <>
-      {run.prompt ? <div className={styles.userBubble}>{run.prompt}</div> : null}
+      {run.prompt
+        ? run.promptSource === "hivra-setup"
+          ? <HivraSetupNote text={run.prompt} agentName={agentName} />
+          : <div className={styles.userBubble}>{run.prompt}</div>
+        : null}
       <div className={styles.assistant}>
         {run.reasoning ? (
           <details className={styles.reasoning}>
@@ -134,13 +162,44 @@ function RunView({
 
 export function ManagedSessionChat({
   initialSession,
+  session: observedSession,
+  onSessionChange,
   onDeleted,
+  onCredentialProblem,
+  firstTask,
+  historyVersion = 0,
 }: {
   initialSession: ManagedSessionDto;
+  /** The workspace's latest view of this session, e.g. after Manage paused or renamed it. */
+  session?: ManagedSessionDto;
+  /** Called with each new view of the session this chat learns about, so Manage shows it too. */
+  onSessionChange?: (session: ManagedSessionDto) => void;
   onDeleted?: () => void;
+  /** Called when a request fails because Hivra's DigitalOcean token cannot manage this agent. */
+  onCredentialProblem?: (error: ManagedSessionApiError) => void;
+  /**
+   * The task chosen at launch. When the stored conversation holds no message
+   * from the owner, it goes back in the message box, unsent, so a launch that
+   * couldn't deliver it never loses it.
+   */
+  firstTask?: string | null;
+  /** Changing it reloads the stored conversation, for example after Hivra sent its setup note. */
+  historyVersion?: number;
 }) {
   const agentId = initialSession.agentId;
-  const [session, setSession] = useState(initialSession);
+  const [session, setOwnSession] = useState(initialSession);
+  // Adopt a newer view from the workspace (Manage), without echoing it back.
+  const [seenObserved, setSeenObserved] = useState(observedSession);
+  if (observedSession && observedSession !== seenObserved) {
+    setSeenObserved(observedSession);
+    setOwnSession(observedSession);
+  }
+  const onSessionChangeRef = useRef(onSessionChange);
+  useEffect(() => { onSessionChangeRef.current = onSessionChange; }, [onSessionChange]);
+  const setSession = useCallback((next: ManagedSessionDto) => {
+    setOwnSession(next);
+    onSessionChangeRef.current?.(next);
+  }, []);
   const [transcript, setTranscript] = useState<ManagedTranscript>(emptyManagedTranscript);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [streamState, setStreamState] = useState<StreamState>("idle");
@@ -155,7 +214,24 @@ export function ManagedSessionChat({
   const lastEventIdRef = useRef<string | null>(null);
   const onDeletedRef = useRef(onDeleted);
   useEffect(() => { onDeletedRef.current = onDeleted; }, [onDeleted]);
+  const onCredentialProblemRef = useRef(onCredentialProblem);
+  useEffect(() => { onCredentialProblemRef.current = onCredentialProblem; }, [onCredentialProblem]);
+  const noteFailure = useCallback((error: unknown) => {
+    if (isManagedSessionCredentialProblem(error)) onCredentialProblemRef.current?.(error);
+  }, []);
   const streamable = Boolean(session.sessionId) && session.status !== "deleted" && session.status !== "deleting";
+  const firstTaskRef = useRef(firstTask);
+  useEffect(() => { firstTaskRef.current = firstTask; }, [firstTask]);
+  const nameRef = useRef(session.name);
+  useEffect(() => { nameRef.current = session.name; }, [session.name]);
+  const firstTaskOfferedRef = useRef(false);
+  // Reload the stored conversation when asked, the same way Reconnect does.
+  const [seenHistoryVersion, setSeenHistoryVersion] = useState(historyVersion);
+  if (seenHistoryVersion !== historyVersion) {
+    setSeenHistoryVersion(historyVersion);
+    setHistoryLoaded(false);
+    setStreamState("idle");
+  }
 
   useEffect(() => { lastEventIdRef.current = transcript.lastEventId; }, [transcript.lastEventId]);
 
@@ -172,7 +248,7 @@ export function ManagedSessionChat({
         .catch(() => undefined);
     }, 2_500);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [agentId, session.status]);
+  }, [agentId, session.status, setSession]);
 
   // Stored history first, then the live tail from the last event it held.
   useEffect(() => {
@@ -182,17 +258,28 @@ export function ManagedSessionChat({
       .then(({ events, prompts }) => {
         let next = emptyManagedTranscript();
         for (const event of events) next = applyManagedSessionEvent(next, event);
-        for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text);
+        for (const prompt of prompts) next = addManagedPrompt(next, prompt.runId, prompt.text, prompt.source);
         setTranscript(next);
         setHistoryLoaded(true);
+        // Once per visit: a launch task with no trace in the conversation was
+        // never sent. Offer it back; only the owner's Send sends it.
+        const task = (firstTaskRef.current ?? "").trim();
+        if (!firstTaskOfferedRef.current && task && !next.runs.some((run) => run.promptSource !== "hivra-setup")) {
+          setDraft((current) => current || task);
+          // Only the conversation's absence is observed: the send may have
+          // reached the computer without being recorded, so don't claim it wasn't.
+          setNotice({ tone: "info", text: `Hivra can't find your first task in this conversation with ${nameRef.current}. It's in the message box; check the conversation, then send it if it's missing.` });
+        }
+        firstTaskOfferedRef.current = true;
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
+        noteFailure(error);
         setNotice({ tone: "error", text: error instanceof Error ? error.message : "The conversation history could not be loaded." });
         setHistoryLoaded(true);
       });
     return () => controller.abort();
-  }, [agentId, historyLoaded, streamable]);
+  }, [agentId, historyLoaded, noteFailure, streamable]);
 
   useEffect(() => {
     if (!streamable || !historyLoaded) return;
@@ -239,13 +326,14 @@ export function ManagedSessionChat({
       setDraft("");
       if (runId) setTranscript((current) => addManagedPrompt(current, runId, text));
       else setOrphanPrompts((current) => [...current, text]);
-      if (session.status === "paused") setSession((current) => ({ ...current, status: "ready" }));
+      if (session.status === "paused") setSession({ ...session, status: "ready" });
     } catch (error) {
+      noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : "The message was not delivered." });
     } finally {
       setSending(false);
     }
-  }, [agentId, draft, sending, session.status]);
+  }, [agentId, draft, noteFailure, sending, session, setSession]);
 
   const answer = useCallback(async (requestId: string, outcome: "approve" | "reject") => {
     setSubmitting((current) => ({ ...current, [requestId]: outcome }));
@@ -257,9 +345,10 @@ export function ManagedSessionChat({
         delete next[requestId];
         return next;
       });
+      noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : "The decision was not delivered." });
     }
-  }, [agentId]);
+  }, [agentId, noteFailure]);
 
   const lifecycle = useCallback(async (action: "pause" | "resume" | "delete") => {
     setLifecycleBusy(action);
@@ -269,12 +358,13 @@ export function ManagedSessionChat({
       setSession(next);
       if (next.status === "deleted") onDeletedRef.current?.();
     } catch (error) {
+      noteFailure(error);
       setNotice({ tone: "error", text: error instanceof Error ? error.message : `The ${action} was not confirmed.` });
     } finally {
       setLifecycleBusy(null);
       setConfirmDelete(false);
     }
-  }, [agentId]);
+  }, [agentId, noteFailure, setSession]);
 
   const status = statusCopy(session, transcript);
   const paused = status.label === "Paused";
@@ -348,7 +438,7 @@ export function ManagedSessionChat({
             </div>
           ) : null}
           {transcript.runs.map((run) => (
-            <RunView key={run.runId} run={run} submitting={submitting} onAnswer={(id, outcome) => void answer(id, outcome)} />
+            <RunView key={run.runId} run={run} agentName={session.name} submitting={submitting} onAnswer={(id, outcome) => void answer(id, outcome)} />
           ))}
           {orphanPrompts.map((prompt, index) => <div key={`orphan-${index}`} className={styles.userBubble}>{prompt}</div>)}
         </div>

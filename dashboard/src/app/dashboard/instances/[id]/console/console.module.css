@@ -1,0 +1,145 @@
+/* Legacy instance console. Desktop keeps the inline ops row and tab strip;
+   phones collapse ops into one Actions disclosure below the tabs. */
+
+.header { margin-bottom: 3rem; }
+
+.opsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.tabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  margin-bottom: 2.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--etched-border);
+  overflow-x: auto;
+}
+
+.tab {
+  gap: 8px;
+  padding: 8px 20px;
+  font-size: 10px;
+}
+
+.failureMeta { font-size: 10px; }
+.failureMeta > span { min-width: 0; overflow-wrap: anywhere; }
+
+.actions {
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-surface);
+}
+
+.actionsSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 14px;
+  cursor: pointer;
+  list-style: none;
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-black);
+}
+.actionsSummary::-webkit-details-marker { display: none; }
+.actionsSummary::after { content: "+"; font-size: 16px; line-height: 1; }
+.actions[open] > .actionsSummary { border-bottom: 1px solid var(--etched-border); }
+.actions[open] > .actionsSummary::after { content: "\2212"; }
+
+.actionsList {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.actionsGroupLabel {
+  margin: 8px 0 0;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.confirmActions > button { min-height: 44px; }
+
+/* Destructive prompt text: the dark red fails contrast on the dark card. */
+.dangerText { color: #8a3c2e; }
+:global(.dark) .dangerText { color: var(--hivra-red); }
+
+.backupsIcon { width: 48px; height: 48px; }
+.upgradeLink { min-height: 36px; }
+
+/* Settings fields and touch targets. */
+.field { padding: 0.5rem; font-size: 13px; max-width: 280px; }
+.fieldWide { max-width: 420px; }
+
+@media (pointer: coarse) {
+  .touchTarget { min-height: 44px; }
+  .choiceTarget { min-height: 44px; min-width: 64px; }
+  .linkTarget { min-height: 44px; padding: 0 8px; }
+}
+
+@media (max-width: 767px) {
+  /* Inline 9-10px mono labels floor at 11px on phones. */
+  .microLabel { font-size: 11px !important; }
+  .field,
+  .fieldWide {
+    width: 100%;
+    max-width: none;
+    min-height: 44px;
+  }
+  .saveButton { min-height: 44px; }
+}
+
+@media (max-width: 640px) {
+  .header { margin-bottom: 1.5rem; }
+  .opsRow { display: none; }
+
+  .tabs {
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    scroll-snap-type: x proximity;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
+  .tabs::after { content: ""; flex: 0 0 20px; }
+  .tab {
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 11px;
+    scroll-snap-align: start;
+  }
+  .failureMeta { font-size: 11px; }
+
+  /* Destructive or primary last action spans the row. */
+  .stackLast > :last-child { flex: 1 1 100%; justify-content: center; }
+  .upgradeLink { width: 100%; min-height: 44px; justify-content: center; }
+
+  .backupsIcon { width: 36px; height: 36px; }
+  .restoreConfirm { flex: 1 1 100%; }
+  .restoreConfirm > div:last-child { flex: 1 1 100%; }
+  .restoreConfirm > div:last-child > button { flex: 1 1 0; }
+}
+
+@media (max-width: 480px) {
+  /* The page renders the primary action first at this width. */
+  .confirmActions { flex-direction: column; }
+  .confirmActions > button { width: 100%; justify-content: center; }
+}

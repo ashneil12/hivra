@@ -76,7 +76,7 @@ describe("POST /api/instances/[id]/oauth/codex/start", () => {
     const readyCommand = (sshExec as jest.Mock).mock.calls[0][1];
     const readyOptions = (sshExec as jest.Mock).mock.calls[0][2];
     expect(readyCommand).toBe("true");
-    expect(readyOptions).toEqual({ timeoutMs: 8_000 });
+    expect(readyOptions).toEqual({ timeoutMs: 8_000, proxmoxHostConfig: null });
 
     const command = (sshExec as jest.Mock).mock.calls[1][1];
     const options = (sshExec as jest.Mock).mock.calls[1][2];
@@ -87,7 +87,7 @@ describe("POST /api/instances/[id]/oauth/codex/start", () => {
     expect(command).toContain(".codex_device_flow.json");
     expect(command).toContain("deviceauth/usercode");
     expect(command).not.toContain("codex login --device-auth");
-    expect(options).toEqual({ timeoutMs: 30_000 });
+    expect(options).toEqual({ timeoutMs: 30_000, proxmoxHostConfig: null });
   });
 
   it("targets the selected profile home when a Codex profile is chosen", async () => {
@@ -292,6 +292,41 @@ describe("POST /api/instances/[id]/oauth/codex/start", () => {
     expect(apiError).toHaveBeenCalledWith(
       "Instance is still provisioning SSH access. Try again in a moment.",
       409
+    );
+  });
+
+  /**
+   * Regression: with the guest agent down, `qm guest exec` prints "QEMU guest
+   * agent is not running" before the host refuses to SSH, and the "is not
+   * running" match told the user their runtime was stopped.
+   */
+  it("reports a refused guest identity check as that, not as a stopped runtime", async () => {
+    (sshExec as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr:
+          "QEMU guest agent is not running\n" +
+          "VMID-bound SSH refused: the SSH host key could not be read through QEMU Guest Agent; nothing was sent to the guest\n",
+        error: "Command exited with code 1",
+      });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/codex/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(json.error).toMatch(/couldn't confirm which VM is your agent's, so nothing was sent/);
+    expect(json.error).not.toMatch(/not running/);
+    expect(apiError).toHaveBeenCalledWith(
+      expect.any(String),
+      503,
+      expect.objectContaining({ failureCategory: "guest_identity_refused" }),
+      undefined,
+      expect.anything()
     );
   });
 

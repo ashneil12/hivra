@@ -17,6 +17,8 @@ import {
 import {
   buildWebUIBootstrapScript,
   buildWebUIProvisioningArtifacts,
+  resolveInstanceAgentImageRepo,
+  type WebUIDeployParams,
 } from "@/lib/services/webui-instance-builder";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { deriveDnsDomainFromGatewayUrl } from "@/lib/services/cloudflare-dns";
@@ -33,9 +35,13 @@ import {
   resolveProviderDeploymentSecret,
 } from "@/lib/provider-deployment-auth";
 import {
+  bankrRuntimeWalletAddressHistory,
   buildInstanceBankrAgentConfig,
   getBankrWalletForInstance,
+  isRevokedUserConnectedWallet,
+  isUserConnectedWalletRecord,
   type InstanceBankrAgentConfig,
+  type InstanceBankrWalletRecord,
 } from "@/lib/billing/bankr-instance-wallets";
 import {
   getRuntimeAgentSettings,
@@ -54,6 +60,13 @@ import { isWebfreeBackend } from "@/lib/types/instance";
 import { validateProviderApiKey } from "@/lib/services/provider-validation";
 import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { isIpv4Literal } from "@/lib/network-address";
+import {
+  GUEST_SSH_REFUSED_MARKER,
+  buildHermesVmidBoundGuestSshPrelude,
+  isHermesInstanceId,
+  buildPinnedGuestSshReadinessWait,
+  isValidGuestSshUser,
+} from "@/lib/proxmox/hermes-guest-ssh";
 import { buildInstanceUpdateReporterShell } from "@/lib/services/update-status-reporting";
 import {
   BROWSER_SIDECAR_DEPLOY_ENABLED_ENV,
@@ -62,6 +75,25 @@ import {
 } from "@/lib/browser-sidecar/deployment-gate";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { log } from "@/lib/logger";
+import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
+import { buildUpdateResultExtrasShell } from "@/lib/services/box-update-safety";
+import { resolveUpdateImagePolicy, type UpdateImageIntent } from "@/lib/hermes-releases/live-update";
+import {
+  INFLIGHT_UPDATE_GATE_BUDGET_SECONDS,
+  buildClearUpdateDeferralsCommand,
+  buildInFlightUpdateGateScript,
+  describeInFlightDeferral,
+  gatedLaunchTimeoutMs,
+  inFlightGateLogFields,
+  missingInFlightUpdateGateReport,
+  parseInFlightUpdateGateReport,
+  type InFlightDeferralReason,
+  type InFlightUpdateGateReport,
+} from "@/lib/services/inflight-update-gate";
+import {
+  isSystemLiveUpdate,
+  type LiveUpdateInitiator,
+} from "@/lib/services/live-update-initiator";
 
 const LOG_SOURCE = "instance-orchestrator";
 
@@ -188,23 +220,161 @@ export async function resolveInstanceIpv4(
   return "";
 }
 
-async function resolveBankrAgentConfigForUpdate(
+/**
+ * What a live update does with the box's BANKR_* runtime env.
+ *
+ * - `upsert`: write the wallet's values (the only case with a config).
+ *   `userConnected` marks a key from the user's own Bankr account, whose
+ *   update also strips config.yaml's stale `bankr:` block and drops BANKR_*
+ *   from cloned profile .env files holding any of `walletAddresses`, so each
+ *   profile picks up the key this run delivers.
+ * - `preserve`: leave whatever the box has. Covers no wallet row, a row with
+ *   nothing to deliver (pending, failed, a revoked Hivra-provisioned row) and
+ *   any lookup or decrypt failure, so a transient error never wipes live
+ *   wallet credentials.
+ * - `clear`: remove the disconnected wallet's BANKR_* and the `bankr:` block.
+ *   Only for a row the lookup definitively resolved to a user-connected wallet
+ *   the user disconnected.
+ *
+ * `walletAddresses` is every address the row has delivered
+ * (bankrRuntimeWalletAddressHistory: the current one, which a disconnect
+ * keeps, each earlier wallet a reconnect replaced and a replaced Hivra-created
+ * wallet), lower-cased. A connect or disconnect can skip the restart, so the
+ * box may still hold any of them. The update script matches each file's
+ * BANKR_AGENT_WALLET_ADDRESS against this set and never touches a file
+ * holding any other address. A revoked row without one valid address is
+ * preserved instead.
+ */
+export type BankrRuntimeEnvPlan =
+  | { action: "upsert"; config: InstanceBankrAgentConfig; userConnected: false }
+  | { action: "upsert"; config: InstanceBankrAgentConfig; userConnected: true; walletAddresses: string[] }
+  | {
+      action: "preserve";
+      reason: "no_wallet" | "not_deliverable" | "lookup_failed" | "disconnected_address_unknown";
+    }
+  | { action: "clear"; reason: "user_disconnected"; walletAddresses: string[] };
+
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+function warnBankrAgentConfigUnavailable(instanceId: string, err: unknown): void {
+  log.warn("bankr agent config unavailable during live update", {
+    source: LOG_SOURCE,
+    failureType: "bankr_agent_config_update_unavailable",
+    instanceId,
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+export async function resolveBankrRuntimeEnvPlanForUpdate(
   instanceId: string,
   supabaseAdmin: SupabaseClient
-): Promise<InstanceBankrAgentConfig | null> {
+): Promise<BankrRuntimeEnvPlan> {
+  let record: InstanceBankrWalletRecord | null;
   try {
-    return await buildInstanceBankrAgentConfig(
-      await getBankrWalletForInstance({ instanceId, db: supabaseAdmin })
-    );
+    record = await getBankrWalletForInstance({ instanceId, db: supabaseAdmin });
   } catch (err) {
-    log.warn("bankr agent config unavailable during live update", {
-      source: LOG_SOURCE,
-      failureType: "bankr_agent_config_update_unavailable",
-      instanceId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+    warnBankrAgentConfigUnavailable(instanceId, err);
+    return { action: "preserve", reason: "lookup_failed" };
   }
+  if (!record) return { action: "preserve", reason: "no_wallet" };
+
+  if (isRevokedUserConnectedWallet(record)) {
+    const walletAddresses = bankrRuntimeWalletAddressHistory(record);
+    if (walletAddresses.length === 0) {
+      log.warn("bankr runtime env left in place: disconnected user wallet has no address", {
+        source: LOG_SOURCE,
+        failureType: "bankr_runtime_env_clear_without_address",
+        instanceId,
+        walletRowId: record.id,
+      });
+      return { action: "preserve", reason: "disconnected_address_unknown" };
+    }
+    log.info("bankr runtime env cleared for a disconnected user wallet", {
+      source: LOG_SOURCE,
+      instanceId,
+      walletRowId: record.id,
+      bankrRuntimeEnv: "clear",
+      walletAddressCount: walletAddresses.length,
+    });
+    return { action: "clear", reason: "user_disconnected", walletAddresses };
+  }
+
+  let config: InstanceBankrAgentConfig | null;
+  try {
+    config = await buildInstanceBankrAgentConfig(record);
+  } catch (err) {
+    warnBankrAgentConfigUnavailable(instanceId, err);
+    return { action: "preserve", reason: "lookup_failed" };
+  }
+  if (!config) return { action: "preserve", reason: "not_deliverable" };
+  if (!isUserConnectedWalletRecord(record)) return { action: "upsert", config, userConnected: false };
+  // The delivered address is in the set too: a new key for the same wallet
+  // must replace every profile copy of the old one.
+  const delivered = config.walletAddress.trim();
+  const walletAddresses = [
+    ...(EVM_ADDRESS_PATTERN.test(delivered) ? [delivered.toLowerCase()] : []),
+    ...bankrRuntimeWalletAddressHistory(record),
+  ].filter((address, index, all) => all.indexOf(address) === index);
+  return { action: "upsert", config, userConnected: true, walletAddresses };
+}
+
+export interface LiveUpdateOptions {
+  /**
+   * Who asked for this update. Required so every caller decides: a system
+   * initiator (scheduled automation) passes the in-flight turn gate and may be
+   * deferred; user and operator initiators recreate immediately. See
+   * live-update-initiator.ts.
+   */
+  initiator: LiveUpdateInitiator;
+  applyTerminalBackend?: boolean;
+  /**
+   * Whether this update should move the box onto its release ("release": the
+   * UPDATE NOW button and the fleet-sync sweep) or leave the image it runs
+   * alone ("current", the default: config redeploys, resizes, recovery). Only
+   * matters for a box the release registry governs.
+   */
+  imageIntent?: UpdateImageIntent;
+}
+
+/**
+ * - applied: the update was launched on the box. `inFlightGate` is the gate's
+ *   report for a system update (null for user/operator updates, which skip it).
+ * - deferred: a system update did NOT launch because an agent turn is in flight
+ *   (`deferred_busy`) or the box could not confirm that none is running
+ *   (`deferred_unverified`); nothing on the box or in the row changed. The
+ *   caller retries on its next tick. `error` carries a readable reason for
+ *   callers that only log it.
+ * - otherwise: the launch failed (`error`).
+ */
+export type LiveUpdateResult =
+  | {
+      applied: true;
+      deferred?: undefined;
+      initiator: LiveUpdateInitiator;
+      inFlightGate: InFlightUpdateGateReport | null;
+    }
+  | {
+      applied: false;
+      deferred: true;
+      reason: InFlightDeferralReason;
+      error: string;
+      initiator: LiveUpdateInitiator;
+      inFlightGate: InFlightUpdateGateReport;
+    }
+  | {
+      applied: false;
+      deferred?: undefined;
+      error: string;
+      initiator: LiveUpdateInitiator;
+    };
+
+/** Last line of the launch output that isn't the gate's report: the background pid. */
+function launchedPid(stdout: string): string {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("HERMES_INFLIGHT_GATE "));
+  return lines[lines.length - 1] ?? "";
 }
 
 export async function applyLiveUpdate(
@@ -212,14 +382,15 @@ export async function applyLiveUpdate(
   ipv4: string,
   globalSettings: Record<string, unknown>,
   supabaseAdmin: SupabaseClient,
-  options: { applyTerminalBackend?: boolean } = {}
-) {
+  options: LiveUpdateOptions
+): Promise<LiveUpdateResult> {
+  const { initiator } = options;
   const proxmoxInfrastructure = getProxmoxInfrastructure(instance.config);
   if (!proxmoxInfrastructure && !instance.host_id && !instance.hetzner_server_id) {
-    return { applied: false as const, error: "No host attached" };
+    return { applied: false as const, error: "No host attached", initiator };
   }
   if (!proxmoxInfrastructure && !ipv4) {
-    return { applied: false as const, error: "Host has no IPv4 address" };
+    return { applied: false as const, error: "Host has no IPv4 address", initiator };
   }
 
   const decryptedSecret = decryptApiKey(instance.api_key_encrypted);
@@ -253,7 +424,18 @@ export async function applyLiveUpdate(
   const resolvedAgentImage = resolveAgentImageForStoredConfig(instance.config);
   const isOperatorosFlavor = isOperatorosFlavorConfig(instance.config);
   const runtimeAgentSettings = getRuntimeAgentSettings(instance.config);
-  const bankrAgentConfig = await resolveBankrAgentConfigForUpdate(instance.id, supabaseAdmin);
+  const bankrRuntimeEnvPlan = await resolveBankrRuntimeEnvPlanForUpdate(instance.id, supabaseAdmin);
+  const bankrAgentConfig = bankrRuntimeEnvPlan.action === "upsert" ? bankrRuntimeEnvPlan.config : null;
+  // Only a user-connected wallet changes the webfree script: a disconnect
+  // clears BANKR_* belonging to any wallet the row delivered, a connect
+  // replaces them, drops config.yaml's `bankr:` block and refreshes profile
+  // copies. Every other plan leaves the script exactly as it was.
+  const bankrRuntimeReconcile: WebUIDeployParams["bankrRuntimeReconcile"] =
+    bankrRuntimeEnvPlan.action === "clear"
+      ? { action: "clear_user_disconnected", walletAddresses: bankrRuntimeEnvPlan.walletAddresses }
+      : bankrRuntimeEnvPlan.action === "upsert" && bankrRuntimeEnvPlan.userConnected
+        ? { action: "replace_user_connected", walletAddresses: bankrRuntimeEnvPlan.walletAddresses }
+        : undefined;
 
   // Validate API key against provider before deploying
   if (apiKey) {
@@ -434,6 +616,7 @@ export async function applyLiveUpdate(
           ? (providerDeploymentSecret.authBundle as CodexVaultBundle | undefined)
           : undefined,
       bankr: bankrAgentConfig,
+      ...(bankrRuntimeReconcile ? { bankrRuntimeReconcile } : {}),
       browserSidecarEnabled,
       // Docker-socket access is root-equivalent. A persisted Proxmox guest or
       // a direct, non-host-attached Hetzner server proves this runtime is in a
@@ -474,14 +657,51 @@ export async function applyLiveUpdate(
       defaultModel: model,
       mode: "update",
     });
+    // The release registry decides which agent image this update runs. A box it
+    // does not govern (no release registered for its image repository) follows
+    // its floating tag exactly as before.
+    let imageResolution: Awaited<ReturnType<typeof resolveUpdateImagePolicy>>;
+    try {
+      imageResolution = isOperatorosFlavor
+        ? { policy: undefined, state: null }
+        : await resolveUpdateImagePolicy(supabaseAdmin, instance.id, options.imageIntent ?? "current");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error("release lookup failed before update", err instanceof Error ? err : new Error(message), {
+        source: LOG_SOURCE,
+        failureType: "update_release_lookup_failed",
+        instanceId: instance.id,
+        userId: instance.user_id,
+      });
+      return { applied: false as const, error: "Could not look up the release for this update", initiator };
+    }
     const artifacts = isOperatorosFlavor
       ? buildWebUIProvisioningArtifacts(webUIParams, "update")
       : buildWebUIProvisioningArtifacts(webUIParams);
+    // Refresh the box-local idle-gated update stack (idle sampler + hourly roll +
+    // static refresh) where the box already runs it, so fixes to it (such as the
+    // sampler counting web-chat turns) reach existing boxes instead of only new
+    // provisions. Boxes that never had the stack are not enrolled here. Same
+    // builder call as the Proxmox provision path, plus the row's pinned image so
+    // the roll follows the image this compose runs.
+    const rollExecutable = `/usr/local/bin/hermes-roll-${instance.id}`;
+    const rollerImageRepo = resolveInstanceAgentImageRepo(instance.config);
+    const idleGatedStackRefresh = `# Refresh the idle-gated update stack only where it is already installed.
+if [ -x ${shQuote(rollExecutable)} ]; then
+${buildIdleGatedUpdateProvisioningScript({
+  instanceId: instance.id,
+  backend: "gateway",
+  // The roll follows the image repository this compose actually runs.
+  ...(rollerImageRepo ?? resolvedAgentImage ? { agentImage: (rollerImageRepo ?? resolvedAgentImage) as string } : {}),
+})}fi
+`;
     agentScript = buildWebUIBootstrapScript(artifacts, webUIParams, {
       mode: "update",
+      ...(imageResolution.policy ? { imagePolicy: imageResolution.policy } : {}),
       // Normal updates/recovery must retain backend changes made in the native
       // Hermes config; only the terminal/access Save & Apply flow overrides it.
       ...(options.applyTerminalBackend === true ? { applyTerminalBackend: true } : {}),
+      additionalProvisioningScript: idleGatedStackRefresh,
     });
   } else {
     agentScript = buildAgentDeployScript({
@@ -549,19 +769,53 @@ ${buildInstanceUpdateReporterShell({
   runType: "manual",
 })}
 ${singleTenantGuard}
+${buildUpdateResultExtrasShell(instance.id)}
 mkdir -p /opt/hermes/instances/${instance.id}
 cd /opt/hermes/instances/${instance.id}
 
 if bash ${scriptPath} > ${logPath} 2>&1; then
-  ru "succeeded" "completed" || true
+  ru "succeeded" "completed" "" "$(hermes_result_extras)" || true
 else
   status=$?
-  ru "failed" "exit_status_\${status}" "${logPath}" || true
+  reason="$(hermes_result_reason)"
+  ru "failed" "\${reason:-exit_status_\${status}}" "${logPath}" "$(hermes_result_extras)" || true
   exit "$status"
 fi
 `;
 
+  // In-flight turn gate. A system-initiated update (nobody asked for this
+  // restart) first asks the box whether an agent turn is running (a web-chat
+  // turn in official-dashboard, or a messaging/cron/scheduled-task turn in the
+  // gateway) and, while one is, prints a defer report and exits before anything
+  // is written or launched; the gate caps how long that can go on per caller
+  // (inflight-update-gate.ts). User and operator updates skip the check. Every
+  // launched update ends every caller's deferral streak for the box.
+  //
+  // The gate's probe is bounded by gateBudgetSeconds, and the lane's launch
+  // timeout grows by that budget (plus slack) below, so a slow Docker on the box
+  // cannot push a system update past its SSH timeout into a failed launch.
+  const gatePath = `/tmp/hermes-update-gate-${instance.id}.sh`;
+  const gateBudgetSeconds = INFLIGHT_UPDATE_GATE_BUDGET_SECONDS;
+  const gateLines = isSystemLiveUpdate(initiator)
+    ? [
+        `printf '%s' '${Buffer.from(
+          buildInFlightUpdateGateScript({
+            instanceId: instance.id,
+            trigger: initiator.trigger,
+            budgetSeconds: gateBudgetSeconds,
+          })
+        ).toString("base64")}' | base64 -d > ${gatePath}`,
+        `hermes_update_gate_report="$(bash ${gatePath} </dev/null 2>/dev/null)" || true`,
+        `rm -f ${gatePath}`,
+        `printf '%s\\n' "$hermes_update_gate_report"`,
+        `case "$hermes_update_gate_report" in *"action=defer"*) exit 0 ;; esac`,
+      ]
+    : [];
+  const launchTimeoutMs = (baseTimeoutMs: number) =>
+    isSystemLiveUpdate(initiator) ? gatedLaunchTimeoutMs(baseTimeoutMs, gateBudgetSeconds) : baseTimeoutMs;
   const innerScript = [
+    ...gateLines,
+    buildClearUpdateDeferralsCommand(instance.id),
     `printf '%s' '${Buffer.from(agentScript).toString("base64")}' | base64 -d > ${scriptPath}`,
     `chmod +x ${scriptPath}`,
     `printf '%s' '${Buffer.from(wrapperScript).toString("base64")}' | base64 -d > ${wrapperPath}`,
@@ -608,66 +862,89 @@ fi
       hostId: proxmoxHostConfig?.hostId ?? null,
       redactedMessage: redactSensitiveCommandOutput(message, 600),
     });
-    return { applied: false as const, error: message };
+    return { applied: false as const, error: message, initiator };
   }
 
-  const launchResult = proxmoxInfrastructure
-    ? await runProxmoxHostScript(
-        [
-          `#!/usr/bin/env bash`,
-          `set -euo pipefail`,
-          ...(gatewayDockerAccess ? [buildProxmoxTenantIsolationGuard()] : []),
-          `VMID=${shQuote(proxmoxInfrastructure.vmid)}`,
-          `PRIVATE_IP=${shQuote(proxmoxInfrastructure.privateIpv4)}`,
-          `VM_SSH_USER=${shQuote(proxmoxScriptEnv.PROXMOX_VM_SSH_USER || "hermes")}`,
-          `VM_SSH_KEY_PATH=${shQuote(proxmoxScriptEnv.PROXMOX_VM_SSH_KEY_PATH || "/etc/hivra/keys/vm-orchestrator")}`,
-          `SSH_KNOWN_HOSTS_FILE="/tmp/hermes-proxmox-known-hosts-update-$VMID"`,
-          `rm -f "$SSH_KNOWN_HOSTS_FILE"`,
-          `GUEST_SSH_OPTS=(-i "$VM_SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE")`,
-          // The readiness wait MUST fit inside the runProxmoxHostScript cap below,
-          // or the "not reachable over SSH" diagnostic underneath is dead code. A
-          // powered-off VM drops packets rather than sending RST, so every attempt
-          // burns the full ConnectTimeout: the old `seq 1 12` cost 12*(5s connect +
-          // 5s sleep) = 120s and the 90s cap always fired first, reporting the
-          // useless "Proxmox SSH operation timed out after 90000ms" instead of
-          // naming the VM and IP. That mis-attribution cost hours on 2026-07-16,
-          // when the inactivity sweep's 42703 (#593) left VMs powered off under
-          // active rows and the fleet-sync redeploy walked into them.
-          // 8 attempts with no trailing sleep = 8*5s connect + 7*5s sleep = 75s
-          // worst case, leaving ~15s of headroom under the cap. A booting VM
-          // answers well inside that; a healthy one answers on the first attempt.
-          `SSH_READY_ATTEMPTS=8`,
-          `ssh_ready=0`,
-          `for _attempt in $(seq 1 "$SSH_READY_ATTEMPTS"); do`,
-          `  if ssh -n "\${GUEST_SSH_OPTS[@]}" -o ConnectTimeout=5 "$VM_SSH_USER@$PRIVATE_IP" "sudo -n true" >/dev/null 2>&1; then`,
-          `    ssh_ready=1`,
-          `    break`,
-          `  fi`,
-          // Explicit `if` rather than `[ … ] && sleep 5`: under `set -e` a false
-          // test as the loop body's last command makes the body exit non-zero.
-          `  if [ "$_attempt" -lt "$SSH_READY_ATTEMPTS" ]; then sleep 5; fi`,
-          `done`,
-          `if [ "$ssh_ready" != "1" ]; then`,
-          `  echo "VM $VMID is not reachable over SSH at $PRIVATE_IP" >&2`,
-          `  exit 1`,
-          `fi`,
-          `printf '%s' '${Buffer.from(innerScript).toString("base64")}' | base64 -d | ssh "\${GUEST_SSH_OPTS[@]}" "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -s"`,
-        ].join("\n"),
-        proxmoxScriptEnv,
-        90_000
-      )
+  // The update stream carries the box's secrets (LLM key, WebUI bearer, Bankr
+  // wallet key), so it only goes to the guest the host can prove is this VMID:
+  // see hermes-guest-ssh.ts. A target that can't be expressed safely never
+  // reaches the host.
+  let proxmoxLaunchScript: string | null = null;
+  if (proxmoxInfrastructure) {
+    const guestSshUser = (proxmoxScriptEnv.PROXMOX_VM_SSH_USER || "hermes").trim();
+    const guestSshKeyPath = (proxmoxScriptEnv.PROXMOX_VM_SSH_KEY_PATH || "/etc/hivra/keys/vm-orchestrator").trim();
+    const invalidTarget =
+      !Number.isSafeInteger(proxmoxInfrastructure.vmid) || proxmoxInfrastructure.vmid < 100
+        ? "stored vmid is not a Proxmox VMID"
+        : !isHermesInstanceId(instance.id)
+          ? "instance id is not a UUID"
+        : !isIpv4Literal(proxmoxInfrastructure.privateIpv4)
+          ? "stored guest ip is not an IPv4 address"
+          : !isValidGuestSshUser(guestSshUser)
+            ? "guest ssh user is not a plain login name"
+            : !guestSshKeyPath.startsWith("/")
+              ? "guest ssh key path is not absolute"
+              : null;
+    if (invalidTarget) {
+      log.error("update guest target invalid", new Error("update_guest_target_invalid"), {
+        source: LOG_SOURCE,
+        failureType: "update_guest_target_invalid",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        reason: invalidTarget,
+      });
+      return { applied: false as const, error: `Refusing to update: ${invalidTarget}`, initiator };
+    }
+    proxmoxLaunchScript = [
+      `#!/usr/bin/env bash`,
+      `set -euo pipefail`,
+      ...(gatewayDockerAccess ? [buildProxmoxTenantIsolationGuard()] : []),
+      `VMID=${shQuote(proxmoxInfrastructure.vmid)}`,
+      `PRIVATE_IP=${shQuote(proxmoxInfrastructure.privateIpv4)}`,
+      `VM_SSH_KEY_PATH=${shQuote(guestSshKeyPath)}`,
+      // The waits below MUST fit inside the runProxmoxHostScript cap, or the
+      // "not reachable over SSH" diagnostic is dead code. A powered-off VM drops
+      // packets rather than sending RST, so every SSH attempt burns the full
+      // ConnectTimeout: the old `seq 1 12` cost 12*(5s connect + 5s sleep) =
+      // 120s and the 90s cap always fired first, reporting the useless "Proxmox
+      // SSH operation timed out after 90000ms" instead of naming the VM and IP.
+      // That mis-attribution cost hours on 2026-07-16, when the inactivity
+      // sweep's 42703 (#593) left VMs powered off under active rows and the
+      // fleet-sync redeploy walked into them.
+      // Worst case: guest agent 5*(5s ping) + 4*5s sleep = 45s, then SSH
+      // 3*5s connect + 2*5s sleep = 25s; 70s plus a few seconds of qm calls,
+      // under the 90s cap. A booting VM's agent answers inside the first wait
+      // and sshd with it; a healthy one answers both on the first attempt.
+      // The stored VMID can be recycled to another instance's VM after a
+      // delete; the VM name must still be this instance's.
+      buildHermesVmidBoundGuestSshPrelude({
+        sshUser: guestSshUser,
+        agentAttempts: 5,
+        connectTimeoutSeconds: 5,
+        expectedInstanceId: instance.id,
+      }),
+      buildPinnedGuestSshReadinessWait({ attempts: 3, sleepSeconds: 5 }),
+      `printf '%s' '${Buffer.from(innerScript).toString("base64")}' | base64 -d | "\${GUEST_SSH[@]}" "sudo bash -s"`,
+    ].join("\n");
+  }
+
+  const launchResult = proxmoxLaunchScript
+    ? await runProxmoxHostScript(proxmoxLaunchScript, proxmoxScriptEnv, launchTimeoutMs(90_000))
     : await sshExec(ipv4, "bash -s", {
-      timeoutMs: 30_000,
+      timeoutMs: launchTimeoutMs(30_000),
       stdin: innerScript,
     });
 
   if (!launchResult.ok) {
+    const launchFailure = launchResult.stderr || launchResult.error || "";
     log.error("update launch failed", new Error("update launch failed"), {
       source: LOG_SOURCE,
-      failureType: "update_launch_failed",
+      failureType: launchFailure.includes(GUEST_SSH_REFUSED_MARKER)
+        ? "update_guest_identity_refused"
+        : "update_launch_failed",
       instanceId: instance.id,
       userId: instance.user_id,
-      redactedMessage: redactSensitiveCommandOutput(launchResult.stderr || launchResult.error || "", 600),
+      redactedMessage: redactSensitiveCommandOutput(launchFailure, 600),
     });
     // Stamp lifecycle_state='failed' so recover-stuck-instances (which selects
     // lifecycle_state IN ('failed','provisioning')) re-drives this row. Without
@@ -682,7 +959,70 @@ fi
     return {
       applied: false as const,
       error: launchResult.stderr || launchResult.error || "Failed to start update process on server",
+      initiator,
     };
+  }
+
+  let inFlightGate: InFlightUpdateGateReport | null = null;
+  if (isSystemLiveUpdate(initiator)) {
+    inFlightGate = parseInFlightUpdateGateReport(launchResult.stdout);
+    if (inFlightGate?.action === "defer") {
+      // Nothing was written or launched on the box, so the row keeps its
+      // status and last_synced_at; the caller's next tick retries. A turn in
+      // flight is routine; a box that cannot confirm it is idle (gateway state
+      // stale or unreadable while it runs) may have a failing gateway, so that
+      // one is loud.
+      const deferral = describeInFlightDeferral(inFlightGate);
+      const context = {
+        source: LOG_SOURCE,
+        failureType: `live_update_${deferral.reason}`,
+        instanceId: instance.id,
+        userId: instance.user_id,
+        trigger: initiator.trigger,
+        ...inFlightGateLogFields(inFlightGate),
+      };
+      if (deferral.kind === "busy") {
+        log.info(`system live update deferred: ${deferral.summary}`, context);
+      } else {
+        log.warn(`system live update deferred: ${deferral.summary}`, context);
+      }
+      return {
+        applied: false as const,
+        deferred: true as const,
+        reason: deferral.reason,
+        error: `Deferred: ${deferral.clause} (deferral ${inFlightGate.deferrals}); the next run retries`,
+        initiator,
+        inFlightGate,
+      };
+    }
+    if (!inFlightGate) {
+      // The gate printed nothing usable (crashed, or the box shell ate its
+      // output). The launch still went ahead, so say so rather than guess.
+      inFlightGate = missingInFlightUpdateGateReport();
+      log.warn("system live update launched without an in-flight gate report", {
+        source: LOG_SOURCE,
+        failureType: "live_update_gate_report_missing",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        trigger: initiator.trigger,
+      });
+    } else if (inFlightGate.verdict !== "idle") {
+      // Proceeding while a turn may be running: the caller's deferral cap was
+      // reached, the streak could not be recorded, or unhealthy-box recovery
+      // went ahead on an unknown verdict. Loud, because it can interrupt a turn.
+      log.warn("system live update proceeding past the in-flight gate", {
+        source: LOG_SOURCE,
+        failureType:
+          inFlightGate.reason === "deferral_cap" ? "live_update_gate_cap_reached" : "live_update_gate_unverified",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        trigger: initiator.trigger,
+        verdict: inFlightGate.verdict,
+        gateReason: inFlightGate.reason,
+        deferrals: inFlightGate.deferrals,
+        streakSeconds: inFlightGate.streakSeconds,
+      });
+    }
   }
 
   // Mark as redeploying immediately so the UI shows progress. We MUST go
@@ -715,7 +1055,10 @@ fi
     source: LOG_SOURCE,
     instanceId: instance.id,
     userId: instance.user_id,
-    pid: launchResult.stdout.trim(),
+    pid: launchedPid(launchResult.stdout),
+    initiator: initiator.kind,
+    ...(isSystemLiveUpdate(initiator) ? { trigger: initiator.trigger } : {}),
+    ...(inFlightGate ? { gateReason: inFlightGate.reason } : {}),
   });
-  return { applied: true as const };
+  return { applied: true as const, initiator, inFlightGate };
 }

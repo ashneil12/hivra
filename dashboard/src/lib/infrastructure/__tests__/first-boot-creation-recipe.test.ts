@@ -1,4 +1,4 @@
-import { createFirstBootChallenge, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
+import { createFirstBootChallenge, FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION } from "../first-boot-enrollment";
 import { resolveFirstBootCreationRecipe } from "../first-boot-creation-recipe";
 import { FIRST_BOOT_PREPARATION_CONFIRMATION, type StoredFirstBootEnrollment } from "../first-boot-store";
 
@@ -12,7 +12,7 @@ const input={...scope,confirmation:FIRST_BOOT_PREPARATION_CONFIRMATION,callbackO
 function fixture() {
   const proof=createFirstBootChallenge({...scope.binding,attemptId:attempt},now);
   const record:StoredFirstBootEnrollment={challenge:proof.challenge,phase:"staged",capacityIdempotencyKey:scope.capacityIdempotencyKey,
-    providerServerId:null,enrolledHostPublicKey:null,hostFingerprintSha256:null};
+    providerServerId:null,enrolledHostPublicKey:null,hostFingerprintSha256:null,armedAt:null,armedExpiresAt:null};
   const deps={now:()=>now,newAttemptId:jest.fn(()=>attempt),load:jest.fn().mockResolvedValue(record),
     delivery:jest.fn().mockResolvedValue(proof),stage:jest.fn(),render:jest.fn().mockResolvedValue("fixture-user-data")};
   return {proof,record,deps};
@@ -27,10 +27,25 @@ describe("confirmed original first-boot creation recipe",()=>{
     expect(f.deps.stage).toHaveBeenCalledTimes(1);expect(f.deps.delivery).not.toHaveBeenCalled();
     expect(f.deps.stage).toHaveBeenCalledWith(expect.objectContaining({binding:{...scope.binding,attemptId:attempt},
       confirmation:FIRST_BOOT_PREPARATION_CONFIRMATION,capacityIdempotencyKey:scope.capacityIdempotencyKey}));
-    expect(result).toEqual({userData:"fixture-user-data",enrollmentExpiresAt:f.record.challenge.expiresAt,
+    // The delivery deadline bounds only the server request; enrollment opens at Start setup.
+    expect(result).toEqual({userData:"fixture-user-data",deliveryExpiresAt:f.record.challenge.expiresAt,
       expectedEnrollment:{attemptId:attempt,recipeVersion:FIRST_BOOT_RECIPE_VERSION,
         verifierSha256:f.deps.stage.mock.calls[0][0].challenge.verifierSha256}});
     expect(JSON.stringify(result.expectedEnrollment)).not.toContain(f.deps.stage.mock.calls[0][0].token);
+  });
+  it("looks up and renders only the current recipe; an attempt staged under the legacy one fails closed",async()=>{
+    const f=fixture();await resolveFirstBootCreationRecipe(input,f.deps);
+    expect(f.deps.load.mock.calls[0][0].binding.recipeVersion).toBe(FIRST_BOOT_RECIPE_VERSION);
+    const legacy=fixture();
+    legacy.record.challenge.binding.recipeVersion=FIRST_BOOT_LEGACY_RECIPE_VERSION;
+    await expect(resolveFirstBootCreationRecipe(input,legacy.deps)).rejects.toMatchObject({code:"invalid_record"});
+    expect(legacy.deps.render).not.toHaveBeenCalled();expect(legacy.deps.stage).not.toHaveBeenCalled();
+  });
+  it("refuses to create with any recipe but the current one, before loading anything",async()=>{
+    const f=fixture();
+    await expect(resolveFirstBootCreationRecipe({...input,binding:{...scope.binding,recipeVersion:FIRST_BOOT_LEGACY_RECIPE_VERSION}} as never,f.deps))
+      .rejects.toMatchObject({code:"invalid_record"});
+    expect(f.deps.load).not.toHaveBeenCalled();expect(f.deps.stage).not.toHaveBeenCalled();
   });
   it("reuses the original staged capability without generating or staging a replacement",async()=>{
     const f=fixture();await resolveFirstBootCreationRecipe(input,f.deps);

@@ -1,9 +1,7 @@
-// Welcome agent catalog — first-run choices shown after plan activation.
-//
-// Pure data/logic so signup, checkout recovery, landing links, and the welcome
-// flow can preserve the same agent intent without importing React components.
-
-export const WELCOME_AGENT_TYPE_STORAGE_KEY = "hermes:welcome_agent_type";
+// Agent catalog of the retired welcome flow. Its keys still name an agent in
+// sign-up, activation and landing links (`agentType=`), which Launch maps to
+// its own profiles (launchProfileForAgentType), and the mobile launch reads the
+// general agent's system prompt from here.
 
 export type WelcomeAgentTypeKey = "general" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero";
 type WelcomeAgentIconKey = "bot" | "code" | "terminal" | "infinity" | "messages" | "orbit";
@@ -107,16 +105,16 @@ export const WELCOME_AGENT_TYPES: WelcomeAgentTypeDefinition[] = [
     eyebrow: "Autonomous framework",
     tagline: "Set-and-forget autonomous agent that runs on your own GitHub.",
     description:
-      "Aeon runs recurring tasks — monitoring, code review, research digests, security scans — unattended on your own GitHub Actions. Hivra hosts its dashboard; you connect with a GitHub token after launch.",
+      "Aeon runs recurring tasks such as monitoring, code review, research digests and security scans, unattended on your own GitHub Actions. Hivra hosts its dashboard; you connect with a GitHub token after launch.",
     defaultName: "AEON_AGENT",
     recommendedTier: "Free",
-    features: ["Runs on your own GitHub Actions", "Near-zero compute — never touches your pool", "Connect with a GitHub token after launch"],
+    features: ["Runs on your own GitHub Actions", "Near-zero compute, never touches your pool", "Connect with a GitHub token after launch"],
     icon: "infinity",
     deployCard: {
       eyebrow: "Aeon deploy card",
       title: "Launch Aeon.",
       summary:
-        "This hosts the Aeon dashboard on a tiny managed box. Name it and launch — then connect your GitHub and configure skills inside Aeon's own dashboard.",
+        "This hosts the Aeon dashboard on a tiny managed box. Name it and launch, then connect your GitHub and configure skills inside Aeon's own dashboard.",
       included: ["Hosted Aeon dashboard", "GitHub sign-in happens inside the box", "Tasks run on your GitHub Actions, not the box"],
       starterTasks: ["Schedule a daily research digest", "Auto-review pull requests on your repos", "Run recurring security or market scans"],
       guardrails: ["You use your own GitHub account", "Managed-host administrators retain infrastructure access", "Runs the Aeon project unmodified"],
@@ -127,7 +125,7 @@ export const WELCOME_AGENT_TYPES: WelcomeAgentTypeDefinition[] = [
     key: "openclaw",
     name: "OpenClaw",
     eyebrow: "Always-on agent",
-    tagline: "A personal agent you message like a contact — it runs unattended.",
+    tagline: "A personal agent you message like a contact. It runs unattended.",
     description:
       "OpenClaw runs a persistent agent on your box, wired to your messaging apps with a heartbeat scheduler. Hivra hosts its Control UI; you set your model and channels inside it after launch.",
     defaultName: "OPENCLAW_AGENT",
@@ -138,7 +136,7 @@ export const WELCOME_AGENT_TYPES: WelcomeAgentTypeDefinition[] = [
       eyebrow: "OpenClaw deploy card",
       title: "Launch OpenClaw.",
       summary:
-        "This hosts the OpenClaw Control UI on a managed box. Name it and launch — then connect your model provider and messaging channels inside OpenClaw's own dashboard.",
+        "This hosts the OpenClaw Control UI on a managed box. Name it and launch, then connect your model provider and messaging channels inside OpenClaw's own dashboard.",
       included: ["Hosted OpenClaw Control UI", "Persistent agent daemon + heartbeat scheduler", "Model and channel setup inside the dashboard"],
       starterTasks: ["Wire it to Telegram or WhatsApp and chat from your phone", "Set a heartbeat to run a daily routine", "Add skills from the OpenClaw skill registry"],
       guardrails: ["You configure your own model credentials", "Managed-host administrators retain infrastructure access", "Runs the OpenClaw project unmodified"],
@@ -149,7 +147,7 @@ export const WELCOME_AGENT_TYPES: WelcomeAgentTypeDefinition[] = [
     key: "agent-zero",
     name: "Agent Zero",
     eyebrow: "Autonomous agent",
-    tagline: "Give it a goal and it plans, browses, codes, and runs — from its own dashboard.",
+    tagline: "Give it a goal and it plans, browses, codes, and runs, from its own dashboard.",
     description:
       "Agent Zero is a general-purpose autonomous agent with its own web dashboard, browser, and computer. Hivra hosts it on an isolated computer. Choose model access during setup or configure your own provider in Agent Zero's Settings before giving it tasks.",
     defaultName: "AGENT_ZERO",

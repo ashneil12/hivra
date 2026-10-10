@@ -9,7 +9,7 @@ import { OpsHandoffCopyButton } from '@/components/ops/OpsHandoffCopyButton';
 import { OpsRowActions } from '@/components/ops/OpsRowActions';
 import { OpsSourceGroup } from '@/components/ops/OpsSourceGroup';
 import { DashboardPageShell } from '@/components/layout/DashboardPageShell';
-import { isOpsAdminUser } from '@/lib/ops-access';
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from '@/lib/ops-access';
 import { classifyOpsEvent, type OpsEventBucket } from '@/lib/ops-event-classification';
 import { extractOpsEventHostIp, resolveOpsEventHostIpMap } from '@/lib/ops-event-hosts';
 import { buildOpsEventHandoffPrompt } from '@/lib/ops-event-handoff';
@@ -74,6 +74,11 @@ const bucketStyles: Record<OpsEventBucket, { bg: string; border: string; text: s
   other: { bg: 'rgba(107,114,128,0.08)', border: 'rgba(107,114,128,0.22)', text: '#374151', label: 'Other' },
 };
 const UNARCHIVED_FETCH_CAP = 2000;
+
+// Filter chips stay on one scrollable row on phones so the first incident is
+// not pushed several screens down; they wrap as before from md up.
+const OPS_CHIP_ROW = 'flex flex-nowrap gap-2 overflow-x-auto overscroll-x-contain md:flex-wrap md:overflow-x-visible';
+const OPS_CHIP = 'inline-flex shrink-0 items-center whitespace-nowrap pointer-coarse:min-h-[44px]';
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat('en-GB', {
@@ -154,7 +159,7 @@ export default async function OpsPage(props: {
   const { userId } = await auth();
   await auth.protect();
   const user = await currentUser();
-  const userEmail = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || null;
+  const userEmail = verifiedPrimaryEmailOf(user);
   const isOpsAdmin = isOpsAdminUser({ userId: userId || user?.id || null, email: userEmail });
 
   if (!isOpsAdmin) {
@@ -293,6 +298,13 @@ export default async function OpsPage(props: {
             >
               Refresh Feed
             </Link>
+            <Link
+              href="/dashboard/ops/releases"
+              className="action-button"
+              style={{ padding: '10px 20px', fontSize: 10, letterSpacing: '0.1em', textDecoration: 'none' }}
+            >
+              Releases
+            </Link>
           </div>
         </div>
 
@@ -311,7 +323,7 @@ export default async function OpsPage(props: {
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6" style={{ marginBottom: '1.5rem' }}>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 xl:grid-cols-6" style={{ marginBottom: '1.5rem' }}>
           {[
             { label: 'Tracked Events', value: summary.total },
             { label: 'Fatal', value: summary.fatal },
@@ -336,7 +348,7 @@ export default async function OpsPage(props: {
           ))}
         </div>
 
-        <div className="flex flex-wrap gap-2" style={{ marginBottom: '1.5rem' }}>
+        <div className={OPS_CHIP_ROW} style={{ marginBottom: '1.5rem' }}>
           {FILTERS.map((filter) => {
             const isActive = severityFilter === filter;
             const params = new URLSearchParams({ limit: String(limit) });
@@ -349,6 +361,7 @@ export default async function OpsPage(props: {
               <Link
                 key={filter}
                 href={href}
+                className={OPS_CHIP}
                 style={{
                   padding: '8px 12px',
                   border: '1px solid var(--etched-border)',
@@ -367,7 +380,7 @@ export default async function OpsPage(props: {
           })}
         </div>
 
-        <div className="flex flex-wrap gap-2" style={{ marginBottom: '1rem' }}>
+        <div className={OPS_CHIP_ROW} style={{ marginBottom: '1rem' }}>
           {BUCKET_FILTERS.map((filter) => {
             const isActive = bucketFilter === filter;
             const params = new URLSearchParams({ limit: String(limit) });
@@ -380,6 +393,7 @@ export default async function OpsPage(props: {
               <Link
                 key={filter}
                 href={href}
+                className={OPS_CHIP}
                 style={{
                   padding: '8px 12px',
                   border: '1px solid var(--etched-border)',
@@ -397,7 +411,7 @@ export default async function OpsPage(props: {
           })}
         </div>
 
-        <div className="flex flex-wrap gap-2" style={{ marginBottom: '1.5rem' }}>
+        <div className={OPS_CHIP_ROW} style={{ marginBottom: '1.5rem' }}>
           {sourceOptions.map((source) => {
             const isActive = sourceFilter === source;
             const params = new URLSearchParams({ limit: String(limit) });
@@ -410,6 +424,7 @@ export default async function OpsPage(props: {
               <Link
                 key={source}
                 href={href}
+                className={OPS_CHIP}
                 style={{
                   padding: '8px 12px',
                   border: '1px solid var(--etched-border)',
@@ -513,10 +528,10 @@ export default async function OpsPage(props: {
                                 seen {formatTime(event.last_seen_at)}
                               </span>
                             </div>
-                            <h3 className="serif" style={{ fontSize: '1.45rem', marginTop: '0.9rem', color: 'var(--ink-black)' }}>
+                            <h3 className="serif" style={{ fontSize: '1.45rem', marginTop: '0.9rem', color: 'var(--ink-black)', overflowWrap: 'anywhere', minWidth: 0 }}>
                               {event.title}
                             </h3>
-                            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: '0.6rem', whiteSpace: 'pre-wrap' }}>
+                            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: '0.6rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                               {event.message}
                             </p>
                           </div>
@@ -532,7 +547,7 @@ export default async function OpsPage(props: {
                           </div>
                         </div>
 
-                        <div className="mt-4 flex flex-wrap gap-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        <div className="mt-4 flex flex-wrap gap-3 text-sm" style={{ color: 'var(--text-secondary)', overflowWrap: 'anywhere', minWidth: 0 }}>
                           {event.route && <span><strong style={{ color: 'var(--ink-black)' }}>Route:</strong> {event.route}</span>}
                           {isOpsAdmin && event.user_id && <span><strong style={{ color: 'var(--ink-black)' }}>User:</strong> {event.user_id}</span>}
                           {event.instance_id && <span><strong style={{ color: 'var(--ink-black)' }}>Instance:</strong> {event.instance_id}</span>}

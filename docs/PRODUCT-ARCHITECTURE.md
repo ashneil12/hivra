@@ -46,11 +46,24 @@ decoder/input session. This does not yet prove optical latency, a native client,
 Sunshine/Moonlight, Omarchy capture or regional daily-driver performance.
 An owner preparation checkpoint
 adds the missing in-product install action for current identity-bound Proxmox
-computers. The Desktop surface first attempts one owner-scoped, read-only
-capability refresh and issues a fresh session when the guest is already ready;
-only an explicit owner action may install missing capability. Legacy unbound
-computers fail closed with a current-launch message; the path does not silently
-rebind or mutate them. An exchanged Selkies controller now uses rolling
+computers. The Desktop surface asks for a session first. When the eight-minute
+capability proof has lapsed, it gets one owner-scoped, read-only refresh and
+asks again. A tab never runs two refreshes of one computer at once: Desktop
+joins the agent page's refresh while that is still running, or uses its result
+when it succeeded while the session request was on its way; otherwise it runs
+its own (Desktop opened minutes after the page loaded, or the workspace
+desktop surface, which starts no refresh of its own). Current behaviour: an
+open that is not a reconnect of a desktop already shown runs desktop
+preparation on its own, once per page, when its refresh still cannot verify
+the desktop or when it ends unavailable (on the workspace desktop surface, for
+any unavailable outcome), and preparation can install or repair the desktop;
+Retry after a failed preparation runs it again without asking. Reconnect after
+a stream drop, the automatic reconnect and Try again after it never install
+anything, and Update runtime, Update desktop and Repair desktop ask first.
+Target behaviour, pending the owner's decision on automatic preparation: only
+an explicit owner action installs missing capability. Legacy unbound computers
+fail closed with a current-launch message; the path does not silently rebind
+or mutate them. An exchanged Selkies controller now uses rolling
 server-side leases: the guest-held bearer is renewed in four-minute increments,
 the browser keeps the owner/capability proof current, and every renewal rechecks
 the exact owner, computer, capability generation, transport and controller
@@ -436,6 +449,80 @@ This is managed-guest update evidence only: provider computers, self-managed
 targets, other catalog runtimes and the full 20-run reliability campaign remain
 unaccepted.
 
+**Target: in-place runtime update (2026-09-24, not yet accepted).** The code on
+this branch changes `update_runtime` from update-then-reboot to an in-place
+update: the same restart-kind operation lease, FD8 held only for the host-side
+checks, the guest updater restarts only the chat gateway, the reporter
+credential is re-issued and the agent-run reporter reinstalled without a boot
+when it fits the request deadline, and the operation completes as `running` on
+the updater's `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt instead of
+passing through `provisioning`. The page that ran the update signs its open
+terminals in again; DeepSeek computers are refused before any lease. The
+2026-08-29 evidence above covers the reboot flow only; this change has no live
+Canary evidence yet.
+
+**Manage in sections (2026-09-25, code on this branch, not yet accepted
+live).** Every computer and agent page's Manage is one sectioned settings page
+(`ManageLayout`): Overview, Agents, Model & tools, Resources, Recovery, Private
+network, Updates, Run a command (Linux Sandbox) and Advanced, as a side nav when
+the pane is at least 760px wide and a sticky strip below that. Sections stay
+mounted, so drafts survive switching; Manage itself stays mounted after it is
+first opened. Deep links use `?tab=manage&section=<id>`; the older anchors
+(`#resources`, `#model-settings`, `#private-access`, `#danger`) and `?tools=1`
+open their section. Which sections and controls appear comes from a
+server-computed capability map (`lib/hivra/manage-capabilities.ts`, sent as
+`manage` by `GET /api/hivra/agents/[id]` for every kind of computer). It shares
+its predicates with the lifecycle route (`lib/hivra/lifecycle-support.ts`), and
+a parity test holds the two together: what the map calls unavailable the route
+refuses, with the reason shown in Manage (and listed under Advanced › Not
+available) instead of a control that fails. Placement is shown as Hivra Cloud,
+My server or My cloud, never a region; a Hivra Cloud computer's private host
+address is never shown. Advanced lists public details, the last 20 lifecycle
+events (`GET /api/hivra/agents/[id]/events`, labels only; a failure's label
+comes from its recorded reason, which is never sent) and the danger zone,
+which needs the typed name for every kind. Manage stays reachable while a
+computer is being set up: its tab, Open Manage on the setup progress, or a link
+to a section (the launch's Open it to delete) opens it, while a launch's own
+landing (`?welcome=1`, a Linux Sandbox's `?tab=manage`) keeps the setup
+progress and opens Manage once the computer is ready. While another operation
+holds a computer, the page reads it again every 5 s so the controls it blocks
+come back when it ends. Not built: the Agents section's attach panel (its
+extension point is empty until attach lands), the agent-software version and
+automatic updates in Updates, disk grow, Hetzner power-off, and power or resize
+for Windows on My server.
+
+**Live usage, Force off and a truthful Stop (2026-09-25, code on this branch,
+not yet accepted live; the cache migration is not applied anywhere).**
+Overview shows a Proxmox computer's power state, uptime, CPU, memory and disk
+(`GET /api/hivra/agents/[id]/usage`). One read-only host script runs
+`qm config`, `pvesh get /cluster/resources` and the guest agent's
+`get-fsinfo`; it takes no lock and no lease, checks the computer's binding tag
+(an older unbound Hivra Cloud computer: its exact VM name; a prepared computer:
+its claim marker) before printing anything, and a Perl filter on the host keeps
+one whitelisted line for that VM only. Memory is the host's figure and includes
+the guest's file cache, and the page says so. Reads are cached in
+`hivra_computer_usage` (migration `20260925130000`): at most one host read per
+computer per 20 s across server instances (a claim on the database clock), the
+last read is kept when the host can't be reached, a failed read is retried after
+20 s without being shown as a read in progress, and a read made before the
+computer's last state change is read again rather than reported as a mismatch.
+A computer's row is deleted when the computer is deleted, and account deletion
+removes the rest by user.
+My cloud, Linux Sandbox and DigitalOcean computers show why live usage isn't
+available (no new provider calls). Advanced offers Force off and Force restart
+for Proxmox and prepared computers (`qm stop --overrule-shutdown`, falling back
+to a plain `qm stop` on hosts older than PVE 8.1), behind a confirmation that
+unsaved work is lost; they reuse the Stop and Restart leases and receipts, so an
+operation in progress (an in-place update, say) makes them wait instead of
+breaking its lease. A My cloud computer is sent to its provider's console. Stop
+and Restart now report when the computer didn't shut down and Hivra switched it
+off, with the wait measured on the host (a shutdown that failed sooner than its
+wait is reported without a number), and Manage and History say so. Only
+computers whose Stop does this (Proxmox and prepared) are told it will; My
+cloud's Stop only asks Hetzner to shut the computer down. Verified by tests only
+(including the host script run against captured Proxmox VE 9.2 output); not
+yet run against a live host from this code.
+
 The current portable code can inspect a generic Linux host, inventory an owner's
 Hetzner Cloud project, create a policy-bounded provider VM after explicit billing
 confirmation, prepare it and admit supported agents through the existing flow.
@@ -467,7 +554,7 @@ acceptance are not yet one implementation. The Ubuntu Computer path still uses
 the Hivra-agent storage lane, and attaching an agent to an existing Computer is
 target behavior rather than a completed current path.
 
-Hivra guest terminal, browser, and native-dashboard surfaces now probe the selected HTTPS origin's public `/api/meta` without credentials and require `surfaceAuth: "post-cookie-v1"` before sending the bearer in a POST body to `/auth/bootstrap`. The guest returns an opaque HttpOnly cookie and a clean local redirect; the dashboard no longer falls back to bearer-bearing URLs. Older guests without the capability show an explicit connection-update notice with support/admin guidance, and unreachable metadata produces a retry state. Header-authenticated APIs are unchanged. This transport fix is not the target access-grant model: current guest sessions last 12 hours and are box-wide, and the separate legacy Hermes WebUI handoff still needs bearer-URL hardening. Surface/user/audience binding, short expiry, revocation, and the full access-isolation matrix remain release gates.
+Hivra guest terminal, browser, and native-dashboard surfaces now probe the selected HTTPS origin's public `/api/meta` without credentials and require `surfaceAuth: "post-cookie-v1"` before sending the bearer in a POST body to `/auth/bootstrap`. The guest returns an opaque HttpOnly cookie and a clean local redirect; the dashboard no longer falls back to bearer-bearing URLs. Older guests without the capability show an explicit connection-update notice with support/admin guidance, and unreachable metadata produces a retry state that also recovers by itself once a later check succeeds (failures are logged once per reason as a client diagnostic). Gateways built from this bundle save each guest sign-in (a SHA-256 of the session secret and its expiry, bound to the computer's API token) in an owner-only file under `~/.hivra`, so an ordinary gateway restart (runtime update, crash, reboot) keeps every surface's cookie valid; rotating the API token signs every surface out. They advertise the saved store's random epoch as `bootId` in `/api/meta`, which changes only when sign-ins were actually lost (first start with a store, token rotation, an untrusted or corrupt store, or one that cannot be kept current). While a surface is on screen and active, the dashboard re-checks the metadata on window focus, `online`, the page becoming visible and every 30 seconds; when the `bootId` changes, appears or disappears it signs in again by posting the bootstrap into a newly mounted frame, so lost sign-ins do not leave the surface on a dead session and no browser history entry is added. An unchanged `bootId`, a failed check, or a gateway that never advertised one never reloads a loaded surface. Existing computers keep sign-ins in memory only, and lose them on every gateway restart, until their gateway is replaced (DeepSeek computers only through a fresh DeepSeek install, because Update & restart refuses DeepSeek). The restart behaviour is covered by tests that run the real gateway process; it has not yet been verified on a live computer. A DeepSeek native surface waits for `nativeReady: true` before it signs in and whenever a loaded one reports it false; that wait is bounded to 3 minutes (20 seconds if the gateway itself is unreachable), after which the dashboard says DeepSeek has not started and offers Try again. Header-authenticated APIs are unchanged. This transport fix is not the target access-grant model: current guest sessions last 12 hours and are box-wide, and the separate legacy Hermes WebUI handoff still needs bearer-URL hardening. Surface/user/audience binding, short expiry, revocation, and the full access-isolation matrix remain release gates.
 
 ### Current presentation unification
 
@@ -676,5 +763,6 @@ The runtime used for this acceptance test does not become the product's preferre
 - [Approved platform design](superpowers/specs/2026-08-24-hivra-agent-computers-design.md)
 - [Open-source boundary](OPEN-SOURCE-BOUNDARY.md)
 - [Security model](SECURITY-MODEL.md)
+- [Shared brain and agent network design](superpowers/specs/2026-10-07-shared-brain-and-agent-network.md) (target, not built)
 - [`../ROADMAP.md`](../ROADMAP.md)
 - [Core experience direction](CORE-EXPERIENCE.md)

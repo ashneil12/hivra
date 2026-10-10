@@ -10,10 +10,15 @@
 // The access dance is the box's `surfaceAuth: post-cookie-v1` handshake: probe
 // `/api/meta` for protocol support (never send a bearer to an unverified
 // runtime), then POST the token to `/auth/bootstrap` inside a hidden form whose
-// target is the iframe, so the credential never lands in a URL.
+// target is the iframe, so the credential never lands in a URL. The shared
+// hook also signs in again when the box gateway lost its sign-ins (a new
+// bootId; an ordinary restart keeps them), into a new frame keyed on its
+// generation so no history entry is added, and waits, for a bounded time, for
+// a native runtime (DeepSeek) to be ready before opening it.
 
 import { ExternalLink, Loader2 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef } from "react";
+import { useSurfaceBootstrap } from "@/components/hivra/useSurfaceBootstrap";
 
 export interface RuntimeSurfaceFrameProps {
   /** Clean HTTPS base URL of the box runtime. */
@@ -39,84 +44,17 @@ export function RuntimeSurfaceFrame({
   onManage,
 }: RuntimeSurfaceFrameProps) {
   const frameName = `hivra-runtime-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
-  const formRef = useRef<HTMLFormElement>(null);
   const newTabFormRef = useRef<HTMLFormElement>(null);
-  const [probeVersion, setProbeVersion] = useState(0);
-  const [access, setAccess] = useState<{
-    key: string;
-    token: string;
-    status: "ready" | "upgrade-required" | "unavailable";
-  } | null>(null);
-
-  let bootstrapUrl = "";
-  let metadataUrl = "";
-  let destination = "";
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.username ||
-      parsed.password ||
-      parsed.searchParams.has("token") ||
-      /[\s;*'"]/.test(parsed.origin)
-    ) {
-      throw new Error("A clean HTTPS surface endpoint is required.");
-    }
-    bootstrapUrl = `${parsed.origin}/auth/bootstrap`;
-    metadataUrl = `${parsed.origin}/api/meta`;
-    destination = `${parsed.pathname}${parsed.search}`;
-  } catch {
-    // A malformed stored surface URL must fail closed instead of navigating.
-  }
-
-  const probeKey = `${metadataUrl}:${probeVersion}`;
-  const accessStatus =
-    !metadataUrl || !token
-      ? "unavailable"
-      : access?.key === probeKey && access.token === token
-        ? access.status
-        : "checking";
-
-  useEffect(() => {
-    if (!metadataUrl || !token) return;
-    const controller = new AbortController();
-    let cancelled = false;
-    const timeout = window.setTimeout(() => controller.abort(), 10_000);
-    void fetch(metadataUrl, {
-      cache: "no-store",
-      credentials: "omit",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Runtime metadata is unavailable.");
-        const metadata: unknown = await response.json();
-        if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-          throw new Error("Runtime metadata is invalid.");
-        }
-        const record = metadata as Record<string, unknown>;
-        const status =
-          record.surfaceAuth === "post-cookie-v1"
-            ? "ready"
-            : typeof record.agentKind === "string"
-              ? "upgrade-required"
-              : "unavailable";
-        if (!cancelled) setAccess({ key: probeKey, token, status });
-      })
-      .catch(() => {
-        if (!cancelled) setAccess({ key: probeKey, token, status: "unavailable" });
-      })
-      .finally(() => window.clearTimeout(timeout));
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [metadataUrl, probeKey, token]);
-
-  useEffect(() => {
-    if (accessStatus !== "ready" || !bootstrapUrl || !destination || !token) return;
-    formRef.current?.requestSubmit();
-  }, [accessStatus, bootstrapUrl, destination, token]);
+  const {
+    status: accessStatus,
+    generation,
+    starting,
+    stalled,
+    bootstrapUrl,
+    destination,
+    formRef,
+    retry,
+  } = useSurfaceBootstrap({ url, token });
 
   const openInNewTab = () => {
     const form = newTabFormRef.current;
@@ -185,13 +123,14 @@ export function RuntimeSurfaceFrame({
 
       {accessStatus === "ready" ? (
         <iframe
+          key={generation}
           name={frameName}
           title={label}
           style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }}
         />
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-          {accessStatus === "checking" ? (
+          {accessStatus === "checking" || accessStatus === "starting" ? (
             <Loader2
               size={20}
               className="animate-spin text-[var(--text-muted)]"
@@ -201,16 +140,24 @@ export function RuntimeSurfaceFrame({
           <p className="serif text-[20px] text-[var(--ink-black)]">
             {accessStatus === "checking"
               ? "Connecting securely…"
-              : accessStatus === "upgrade-required"
-                ? "Connection update needed"
-                : "Couldn’t verify secure access"}
+              : accessStatus === "starting"
+                ? starting.title
+                : accessStatus === "stalled"
+                  ? stalled.title
+                  : accessStatus === "upgrade-required"
+                    ? "Connection update needed"
+                    : "Couldn’t verify secure access"}
           </p>
           <p className="max-w-[460px] text-[13px] leading-[1.6] text-[var(--text-secondary)]">
             {accessStatus === "checking"
               ? "Checking this computer’s connection service."
-              : accessStatus === "upgrade-required"
-                ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
-                : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
+              : accessStatus === "starting"
+                ? starting.detail
+                : accessStatus === "stalled"
+                  ? stalled.detail
+                  : accessStatus === "upgrade-required"
+                    ? "This computer uses an older connection service. It needs a runtime update before this surface can be opened securely. Your computer and its data are unchanged."
+                    : "The computer’s connection service isn’t reachable yet. Check its status in Manage, then try again."}
           </p>
           {accessStatus !== "checking" ? (
             <div className="flex flex-wrap justify-center gap-2.5">
@@ -223,13 +170,15 @@ export function RuntimeSurfaceFrame({
                   Open Manage
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => setProbeVersion((version) => version + 1)}
-                className="mono border border-[var(--etched-border)] px-3.5 py-2 text-[11px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)]"
-              >
-                {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
-              </button>
+              {accessStatus === "starting" ? null : (
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="mono border border-[var(--etched-border)] px-3.5 py-2 text-[11px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)]"
+                >
+                  {accessStatus === "upgrade-required" ? "Check again" : "Try again"}
+                </button>
+              )}
             </div>
           ) : null}
         </div>

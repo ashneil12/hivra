@@ -8,7 +8,11 @@ import {
   withdrawBaseTokenForInstance,
   withdrawHermesTokensForInstance,
 } from "@/lib/billing/bankr-instance-withdraw";
+import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { log } from "@/lib/logger";
+
+// Public Base token contracts, named so the secret scan reads them as addresses.
+const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
@@ -20,6 +24,10 @@ jest.mock("@/lib/billing/bankr-instance-withdraw", () => ({
   withdrawBaseEthForInstance: jest.fn(),
   withdrawBaseTokenForInstance: jest.fn(),
   withdrawHermesTokensForInstance: jest.fn(),
+}));
+
+jest.mock("@/lib/billing/bankr-instance-wallets", () => ({
+  isUserConnectedBankrWallet: jest.fn(),
 }));
 
 jest.mock("@/lib/rate-limit", () => ({
@@ -44,6 +52,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
   const mockedWithdrawBaseToken = withdrawBaseTokenForInstance as jest.MockedFunction<typeof withdrawBaseTokenForInstance>;
   const mockedWithdraw = withdrawHermesTokensForInstance as jest.MockedFunction<typeof withdrawHermesTokensForInstance>;
   const mockedLogError = log.error as jest.MockedFunction<typeof log.error>;
+  const mockedIsUserConnected = isUserConnectedBankrWallet as jest.MockedFunction<typeof isUserConnectedBankrWallet>;
 
   function mockOwnedInstance(owner: boolean) {
     mockedFrom.mockReturnValue({
@@ -60,6 +69,7 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
     jest.clearAllMocks();
     mockedAuth.mockResolvedValue({ userId: "user_123" } as Awaited<ReturnType<typeof auth>>);
     mockOwnedInstance(true);
+    mockedIsUserConnected.mockResolvedValue(false);
     mockedWithdraw.mockResolvedValue({
       status: "submitted",
       txHash: "0xwithdraw",
@@ -71,7 +81,11 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         bankrWalletId: "wlt_instance",
         status: "active",
         withdrawalDestinationEvm: "0x1111111111111111111111111111111111111111",
+        withdrawalDestinationAvailableAt: null,
         apiKeyStatus: "active",
+        custody: "hivra_provisioned" as const,
+        apiKeyPreview: null,
+        connectedAt: null,
       },
     });
     mockedWithdrawEth.mockResolvedValue({
@@ -85,7 +99,11 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         bankrWalletId: "wlt_instance",
         status: "active",
         withdrawalDestinationEvm: "0x1111111111111111111111111111111111111111",
+        withdrawalDestinationAvailableAt: null,
         apiKeyStatus: "active",
+        custody: "hivra_provisioned" as const,
+        apiKeyPreview: null,
+        connectedAt: null,
       },
     });
     mockedWithdrawBaseToken.mockResolvedValue({
@@ -99,7 +117,11 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
         bankrWalletId: "wlt_instance",
         status: "active",
         withdrawalDestinationEvm: "0x2222222222222222222222222222222222222222",
+        withdrawalDestinationAvailableAt: null,
         apiKeyStatus: "active",
+        custody: "hivra_provisioned" as const,
+        apiKeyPreview: null,
+        connectedAt: null,
       },
     });
   });
@@ -120,6 +142,22 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
 
     expect(response.status).toBe(404);
     expect(mockedWithdraw).not.toHaveBeenCalled();
+  });
+
+  it("refuses to move funds from a user's own connected Bankr account", async () => {
+    mockedIsUserConnected.mockResolvedValueOnce(true);
+
+    const response = await POST(makeReq({ expectedRecipient: "0x1111111111111111111111111111111111111111", amount: "1" }), {
+      params: Promise.resolve({ id: "inst_123" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/your own Bankr account/i);
+    expect(mockedIsUserConnected).toHaveBeenCalledWith({ owner: { instanceId: "inst_123" } });
+    expect(mockedWithdraw).not.toHaveBeenCalled();
+    expect(mockedWithdrawEth).not.toHaveBeenCalled();
+    expect(mockedWithdrawBaseToken).not.toHaveBeenCalled();
   });
 
   it("submits a withdrawal for the owned agent wallet without exposing API keys", async () => {
@@ -183,11 +221,13 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
     const recipientAddress = "0x2222222222222222222222222222222222222222";
     const token = {
       symbol: "USDC",
-      tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      tokenAddress: USDC_CONTRACT,
       decimals: 6,
       chain: "Base",
     };
 
+    // An older client may still send setPrimaryRecipient: it is ignored, a
+    // withdrawal never changes the saved destination.
     const response = await POST(makeReq({
       recipientAddress,
       amount: "2.5",
@@ -206,10 +246,9 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
       amountDisplay: "2.5",
       token: {
         symbol: "USDC",
-        tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        tokenAddress: USDC_CONTRACT,
         decimals: 6,
       },
-      setPrimaryRecipient: true,
     });
     expect(mockedWithdraw).not.toHaveBeenCalled();
     expect(mockedWithdrawEth).not.toHaveBeenCalled();
@@ -230,6 +269,43 @@ describe("POST /api/instances/[id]/bankr-wallet/withdraw", () => {
 
     expect(response.status).toBe(422);
     expect(body.error).toMatch(/withdrawal destination/i);
+  });
+
+  it("returns 423 with the unlock time while the saved destination is in its cooldown", async () => {
+    const availableAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    mockedWithdraw.mockResolvedValueOnce({
+      status: "destination_cooling_down",
+      availableAt,
+      errorMessage: "This withdrawal destination was saved less than 24 hours ago.",
+    } as never);
+
+    const response = await POST(makeReq({ amount: "25" }), { params: Promise.resolve({ id: "inst_123" }) });
+    const body = await response.json();
+
+    expect(response.status).toBe(423);
+    expect(body.error).toMatch(/less than 24 hours ago/);
+    expect(body).toMatchObject({
+      failureType: "agent_wallet_withdraw_destination_cooling_down",
+      availableAt,
+    });
+  });
+
+  it("returns 422 when a token withdrawal names a recipient other than the saved destination", async () => {
+    mockedWithdrawBaseToken.mockResolvedValueOnce({
+      status: "recipient_not_destination",
+      errorMessage: "Withdrawals go only to this wallet's saved withdrawal destination.",
+    } as never);
+
+    const response = await POST(makeReq({
+      recipientAddress: "0x3333333333333333333333333333333333333333",
+      amount: "2.5",
+      token: { symbol: "USDC", tokenAddress: USDC_CONTRACT, decimals: 6, chain: "Base" },
+    }), { params: Promise.resolve({ id: "inst_123" }) });
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.error).toMatch(/saved withdrawal destination/);
+    expect(body).toMatchObject({ failureType: "agent_wallet_withdraw_recipient_not_destination" });
   });
 
   it("requires an amount before dispatching to the withdraw helper", async () => {

@@ -29,6 +29,7 @@ import {
   buildSslipPlaceholderResolutionScript,
 } from "@/lib/services/hetzner-instance-builders";
 import { SIDECAR_SERVER_CODE, WEBUI_HANDOFF_APPENDAGE } from "@/lib/services/sidecar-script";
+import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
 import {
   buildWebUISignalDaemonScript,
   WEBUI_SIGNAL_DAEMON_CONTAINER_PATH,
@@ -48,6 +49,7 @@ import {
   buildWebUIUsrLocalHermesShimCommand,
   WEBUI_HERMES_AGENT_DIR,
   WEBUI_HERMES_WRITE_SAFE_ROOTS,
+  WEBUI_BANKR_RUNTIME_ENV_KEYS,
   WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
   WEBUI_MANAGED_RUNTIME_ENV_KEYS,
   WEBUI_PERSISTENT_INSTALL_ENV_KEYS,
@@ -58,13 +60,33 @@ import { ONBOARDING_RITUAL } from "@/lib/onboarding-ritual";
 import {
   isOperatorosAgentImage,
   OPERATOROS_AUTONOMY_SOUL_IMAGE_PATH,
+  resolveAgentImageForStoredConfig,
 } from "@/lib/operatoros-flavor";
+import { imageRepoOf } from "@/lib/hermes-releases/policy";
+import {
+  buildUpdateSafetyPrelude,
+  UPDATE_STACK_TOUCHED,
+  UPDATE_VERIFY_CALL,
+} from "@/lib/services/box-update-safety";
 import { FACTORY_OR_RITUAL_SOUL_HEAD_PATTERN } from "@/lib/webui/soul-guard";
 import { createHash } from "crypto";
 import {
   resolveWebUITerminalBackend,
   WEBUI_TERMINAL_CONFIG_SYNC_PYTHON,
 } from "@/lib/services/webui-terminal-config";
+import {
+  buildWebUISessionRetentionConfigYaml,
+  buildWebUISessionRetentionRecordJson,
+  buildWebUISessionRetentionRepairCommand,
+  WEBUI_SESSION_RETENTION_BACKUP_SUFFIX,
+  WEBUI_SESSION_RETENTION_RECORD_ENV,
+  WEBUI_SESSION_RETENTION_RECORD_SEED_SH,
+} from "@/lib/services/webui-session-retention";
+import {
+  buildWebUITerminalCwdConfigYaml,
+  buildWebUITerminalCwdRepairCommand,
+  WEBUI_TERMINAL_CWD_BACKUP_INFIX,
+} from "@/lib/services/webui-terminal-cwd";
 
 // Username for the official-dashboard's bundled "basic" password provider. The
 // June-2026 agent-image hardening gates every non-loopback dashboard bind and
@@ -182,6 +204,8 @@ const AGENT_CDP_PORT = 9223;
 // Chrome binds 127.0.0.1 only + rejects non-localhost Host headers, so the agent
 // (a sibling container) reaches CDP through a Host-rewriting proxy on this port.
 const AGENT_CDP_PROXY_PORT = 9224;
+// A BANKR_AGENT_WALLET_ADDRESS value the update script may compare against.
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 function agentBrowserCdpEnabled(): boolean {
   // Default ON. The sidecar's entrypoint runtime-gates the Chrome supervisor on
   // AGENT_CDP_ENABLED, so this only does anything where the sidecar is itself
@@ -314,6 +338,37 @@ export interface WebUIDeployParams {
   /** Per-agent Bankr wallet, written transiently into VM config/env only. */
   bankr?: InstanceBankrAgentConfig | null;
   /**
+   * Update mode only. Set by the orchestrator only when the wallet lookup
+   * definitively resolved to a user-connected wallet. `walletAddresses` is
+   * every wallet address that row has delivered: the current one, each
+   * earlier wallet from the user's own Bankr account a reconnect replaced, and
+   * a Hivra-created wallet a switch replaced. A connect or disconnect can skip
+   * the restart, so the box may still hold any of them. The script changes a
+   * file's BANKR_* only when the file's BANKR_AGENT_WALLET_ADDRESS is in this
+   * set, and never touches a file holding any other address (it may be the
+   * user's own configuration).
+   * - "clear_user_disconnected" (with `bankr` null): the user disconnected the
+   *   wallet. /state/.env's BANKR_* and config.yaml's `bankr:` blocks go only
+   *   when /state/.env holds an address in the set, and each cloned profile
+   *   .env holding one loses its BANKR_* lines. The first clear removes the
+   *   address lines, so every later run while the row stays revoked changes
+   *   nothing, including BANKR_* values the user sets afterwards for their
+   *   own use.
+   * - "replace_user_connected" (with `bankr` set): BANKR_* is upserted into
+   *   /state/.env, any BANKR_* key the new wallet doesn't set (a replaced
+   *   wallet's withdrawal destination) is dropped, the `bankr:` block is
+   *   stripped (the agent copies it over BANKR_* on every config load and it
+   *   can hold an older key), and each cloned profile .env holding an address
+   *   in the set (the delivered one included: a new key for the same wallet
+   *   replaces the old one) loses its BANKR_* lines, so the profile falls
+   *   back to the container env this run delivers.
+   * Absent (every Hivra-provisioned wallet, no wallet, a failed lookup) the
+   * script is unchanged.
+   */
+  bankrRuntimeReconcile?:
+    | { action: "clear_user_disconnected"; walletAddresses: readonly string[] }
+    | { action: "replace_user_connected"; walletAddresses: readonly string[] };
+  /**
    * Pro-tier-gated. If true, the docker-compose includes a `browser-sidecar`
    * service running the deterministic Playwright HTTP API. Caller is
    * responsible for verifying the user's tier qualifies — this builder does
@@ -383,6 +438,26 @@ function resolveWebUIAgentImage(
   }
 
   return resolved;
+}
+
+/**
+ * The image repository (no tag or digest) an UPDATE of this stored instance
+ * config runs: the stored pinned image, else the deployment's update image.
+ * Null when the row names a runtime that has no resolvable image (a legacy
+ * Operator OS row without its pinned image), which no release applies to.
+ * The release registry matches releases to boxes by this repository.
+ */
+export function resolveInstanceAgentImageRepo(
+  config: Record<string, unknown> | null | undefined
+): string | null {
+  let stored: string | undefined;
+  try {
+    stored = resolveAgentImageForStoredConfig(config);
+  } catch {
+    return null;
+  }
+  const image = resolveWebUIAgentImage({ agentImage: stored } as WebUIDeployParams, "update");
+  return imageRepoOf(image);
 }
 
 function shellSingleQuote(value: string): string {
@@ -2929,9 +3004,21 @@ ${slidingTuning}`
     : "";
   // Upstream terminal_tool bridges this key over TERMINAL_ENV. Fresh configs
   // and preserved configs on settings apply must agree with the env choice.
-  const terminalBlock = `terminal:\n  backend: "${resolveWebUITerminalBackend(p)}"\n`;
+  // terminal.cwd points the dashboard file tree and terminal at the workspace
+  // volume: upstream reads it before TERMINAL_CWD and its "." default opens the
+  // agent's install directory. Existing boxes get it from the update-mode repair
+  // (buildWebUITerminalCwdRepairCommand). See webui-terminal-cwd.ts.
+  const terminalBackend = resolveWebUITerminalBackend(p);
+  const terminalBlock = `terminal:\n  backend: "${terminalBackend}"\n${buildWebUITerminalCwdConfigYaml(terminalBackend)}`;
+  // Keep a web-chat turn running after its tab closes instead of letting the
+  // agent's 20 s WS-orphan reap interrupt it, and cap how many parked sessions
+  // stay in memory for this computer's RAM tier. Orthogonal to provider config,
+  // so emitted on clean-slate boxes too. Existing boxes get both from the
+  // update-mode repair (buildWebUISessionRetentionRepairCommand). See
+  // webui-session-retention.ts.
+  const dashboardBlock = buildWebUISessionRetentionConfigYaml(p.ramLimit);
   return `# Generated by Hermes Deploy — model + provider injected from dashboard settings.
-${modelBlock}${auxiliaryBlock}${contextBlock}${webBlock}${missionBlock}${delegationBlock}${budgetBlock}${outboxBlock}${compressionBlock}${toolOutputBlock}${contextFileBlock}${approvalsBlock}${pluginsBlock}${terminalBlock}toolsets:
+${modelBlock}${auxiliaryBlock}${contextBlock}${webBlock}${missionBlock}${delegationBlock}${budgetBlock}${outboxBlock}${compressionBlock}${toolOutputBlock}${contextFileBlock}${approvalsBlock}${pluginsBlock}${dashboardBlock}${terminalBlock}toolsets:
   - hermes-cli${nativeMediaToolsetLine}${browserSidecarToolsetLine}
 agent:
   max_turns: 999${agentOperatorosFlags}
@@ -2942,6 +3029,10 @@ ${bankrSectionYaml}
 }
 
 // ── Provisioning bootstrap script (writes files, runs compose) ─────────
+export type UpdateImagePolicy =
+  | { kind: "pinned"; ref: string; digest: string }
+  | { kind: "keep" };
+
 export interface WebUIBootstrapScriptOptions {
   /**
    * "provision" — first-boot path. Skips pull when the image is already
@@ -2956,6 +3047,16 @@ export interface WebUIBootstrapScriptOptions {
    * update images don't accumulate between disk-cleanup timer fires.
    */
   mode?: "provision" | "update";
+  /**
+   * Update mode only: which agent image this update runs, as chosen by the
+   * dashboard's release registry. Absent means the registry does not govern
+   * this box and the update follows its floating tag exactly as before.
+   *  - pinned: pull this exact repo@sha256 reference (a failed pull fails the
+   *    update: it must never quietly keep the old image), point the local alias
+   *    the compose file runs at it, and never pull the floating tag.
+   *  - keep: leave the local image the box already runs in place (no pull).
+   */
+  imagePolicy?: UpdateImagePolicy;
   /**
    * Only an explicit terminal/access settings apply may update the owner's
    * saved terminal.backend. Routine image updates preserve native config edits.
@@ -3359,10 +3460,48 @@ seed_onboarding_soul() {
 }
 `;
   const seedOnboardingSoulCall = "seed_onboarding_soul";
+  // Reseeds the persistent agent source volume from the agent image. One copy,
+  // used by the forward path and by the update rollback.
+  // A box that follows upstream Hermes keeps its Hivra overlay (add-only files) next to its compose
+  // file; it is laid over every fresh agent source (the \`-v ...:/overlay\` argument is only there then).
+  const agentSourceSeedCommand = `docker run --rm \\
+  -v ${p.containerName}_agent-source:/target \\
+  $([ -d /opt/hermes/instances/${p.instanceId}/overlay/files ] && echo "-v /opt/hermes/instances/${p.instanceId}/overlay:/overlay:ro") \\
+  --entrypoint sh \\
+  ${agentImage} -lc 'set -e; test -f /opt/hermes/pyproject.toml; find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /opt/hermes/. /target/; if [ -d /overlay/files ]; then cp -a /overlay/files/. /target/; fi; if [ -d /target/.venv ]; then find /target/.venv -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -print 2>/dev/null | while IFS= read -r script; do sed -i "s|/opt/hermes|${WEBUI_HERMES_AGENT_DIR}|g" "$script"; done; fi; chown -R 1024:1024 /target'`;
+  const UPDATE_STACK_TOUCHED_LINE = isUpdate ? `${UPDATE_STACK_TOUCHED}\n` : "";
+  const imagePolicy = isUpdate ? opts.imagePolicy : undefined;
+  const updateSafetyPrelude = isUpdate
+    ? buildUpdateSafetyPrelude({
+        instanceId: p.instanceId,
+        containerName: p.containerName,
+        agentImage,
+        repo: imageRepoOf(agentImage),
+        agentSourceSeedCommand,
+        fqdn: p.fqdn,
+      })
+    : "";
+  const updateVerifyCall = isUpdate ? `${UPDATE_VERIFY_CALL}\n` : "";
   const forceWebUIImagePull = !isUpdate && opts.forceWebUIImagePull === true;
   const forceAgentImagePull = !isUpdate && opts.forceAgentImagePull === true;
   const agentPullCmd = isUpdate
-    ? `docker pull ${agentImage}`
+    ? imagePolicy?.kind === "pinned"
+      ? `# Pinned release: pull this exact digest. A failed pull fails the update; it
+# must never quietly keep the old image and report a successful update.
+echo "[agent-image] pulling pinned release ${imagePolicy.ref}"
+HERMES_PINNED_DIGEST="${imagePolicy.digest}"
+if ! docker pull ${imagePolicy.ref}; then
+  echo "[agent-image] FATAL: cannot pull the release image ${imagePolicy.ref}" >&2
+  HERMES_FAIL_REASON="cannot pull the release image"
+  exit 1
+fi
+docker tag ${imagePolicy.ref} ${agentImage}
+docker image inspect ${agentImage} --format '[agent-image] using pinned release image id={{.Id}} repo_digests={{json .RepoDigests}}' || true`
+      : imagePolicy?.kind === "keep"
+        ? `# The registry governs this box and offers it nothing newer: keep the image
+# it already runs. Pull only if the local copy is gone.
+docker image inspect ${agentImage} >/dev/null 2>&1 || docker pull ${agentImage}`
+        : `docker pull ${agentImage}`
     : forceAgentImagePull
       ? `echo "[agent-image] Force-pulling Hermes Agent seed image for fresh provision: ${agentImage}"
 if ! docker pull ${agentImage}; then
@@ -3383,7 +3522,14 @@ docker image inspect ${agentImage} --format '[agent-image] using image id={{.Id}
   // the stack updates successfully — better than silent across-the-board
   // failure on an unrelated image hiccup.
   const webuiPullCmd = isUpdate
-    ? `docker compose pull --ignore-pull-failures`
+    ? imagePolicy
+      ? `# The agent services run the pinned local image: pull every OTHER service
+# only. A bare \`compose pull\` would re-pull the floating tag over the pin.
+hermes_other_services="$(docker compose config --services 2>/dev/null | grep -vx -e gateway -e official-dashboard || true)"
+if [ -n "$hermes_other_services" ]; then
+  docker compose pull --ignore-pull-failures $hermes_other_services || true
+fi`
+      : `docker compose pull --ignore-pull-failures`
     : forceWebUIImagePull
       ? `echo "[webui-image] Force-pulling WebUI image for fresh provision: ${image}"
 if ! docker pull ${image}; then
@@ -3519,7 +3665,146 @@ echo "[webui-update] image convergence verified (gateway+official-dashboard=$age
     ...WEBUI_PERSISTENT_INSTALL_ENV_KEYS,
     ...WEBUI_MANAGED_RUNTIME_ENV_KEYS,
   ].join(" ");
-  const clearableEnvKeys = WEBUI_CLEARABLE_RUNTIME_ENV_KEYS.join(" ");
+  // BANKR_* reconcile for a wallet from the user's own Bankr account (see
+  // bankrRuntimeReconcile and the clearable list's comment). Without the flag
+  // every piece below is empty, so the script stays byte-for-byte what it was.
+  // A set `bankr` wins over a clear: never clear keys this same run delivers.
+  // A clear without one valid wallet address clears nothing: an address is what
+  // proves a file's BANKR_* lines are the row's. Only validated, lower-cased
+  // addresses reach the script.
+  const bankrReconcile = isUpdate ? p.bankrRuntimeReconcile : undefined;
+  const bankrReconcileWalletAddresses = (candidates: readonly unknown[]): string[] => {
+    const addresses: string[] = [];
+    for (const candidate of candidates) {
+      const address = typeof candidate === "string" ? candidate.trim().toLowerCase() : "";
+      if (EVM_ADDRESS_PATTERN.test(address) && !addresses.includes(address)) addresses.push(address);
+    }
+    return addresses;
+  };
+  const bankrReconcileAddressInput: unknown = bankrReconcile?.walletAddresses;
+  const requestedBankrWalletAddresses: readonly unknown[] = Array.isArray(bankrReconcileAddressInput)
+    ? bankrReconcileAddressInput
+    : [];
+  const disconnectedBankrWalletAddresses =
+    bankrReconcile?.action === "clear_user_disconnected" && !p.bankr
+      ? bankrReconcileWalletAddresses(requestedBankrWalletAddresses)
+      : [];
+  const clearBankr = disconnectedBankrWalletAddresses.length > 0;
+  const replaceBankr = bankrReconcile?.action === "replace_user_connected" && !!p.bankr;
+  // The delivered wallet is always in a replace run's set.
+  const bankrReconcileSet = clearBankr
+    ? disconnectedBankrWalletAddresses
+    : replaceBankr
+      ? bankrReconcileWalletAddresses([p.bankr!.walletAddress, ...requestedBankrWalletAddresses])
+      : [];
+  // A replace run lists BANKR_* statically: the clear pass skips every key the
+  // generated env delivers, so only keys the new wallet doesn't set go. A clear
+  // run appends them in the shell, and only when /state/.env holds one of the
+  // row's wallets.
+  const clearableEnvKeys = [
+    ...WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
+    ...(replaceBankr ? WEBUI_BANKR_RUNTIME_ENV_KEYS : []),
+  ].join(" ");
+  const clearBankrComment = replaceBankr
+    ? `
+# Except on this run: it delivers a wallet from the user's own Bankr account, so
+# BANKR_* is listed too. The loop skips every key that wallet sets, so only a
+# BANKR_* key it doesn't set (such as a replaced wallet's withdrawal destination)
+# is dropped.`
+    : clearBankr
+      ? `
+# Except on this run: the user disconnected a wallet from their own Bankr account,
+# so BANKR_* is appended below, but only when /state/.env holds one of the wallets
+# that agent's row delivered (bankr_clear_state, set before config.yaml is copied).`
+      : "";
+  const clearBankrKeysScript = clearBankr
+    ? `
+if [ "$bankr_clear_state" = 1 ]; then
+  clearable_env_keys="$clearable_env_keys ${WEBUI_BANKR_RUNTIME_ENV_KEYS.join(" ")}"
+fi`
+    : "";
+  const bankrOwnershipDecision = clearBankr
+    ? `if bankr_wallet_address_in_set "$(bankr_env_wallet_address /state/.env)"; then
+  bankr_clear_state=1
+  echo "[webui-update] /state/.env holds a disconnected Bankr wallet: clearing its BANKR_* and config.yaml bankr: blocks"
+else
+  bankr_clear_state=0
+  echo "[webui-update] /state/.env holds no disconnected Bankr wallet: leaving its BANKR_* and config.yaml bankr: blocks alone"
+fi
+bankr_strip_config="$bankr_clear_state"`
+    : "bankr_strip_config=1";
+  const bankrReconcileStateScript =
+    clearBankr || replaceBankr
+      ? `
+# BANKR_* reconcile for a wallet from the user's own Bankr account. Hivra writes
+# BANKR_AGENT_WALLET_ADDRESS with every BANKR_* delivery, so that line says which
+# wallet a file's BANKR_* lines belong to. bankr_reconcile_wallet_addresses holds
+# every wallet this agent's row has delivered: the current one, each earlier
+# wallet a reconnect replaced and a replaced Hivra-created wallet. A connect or
+# disconnect can skip the restart, so the box may still hold any of them. Only a
+# file holding one of these addresses is changed; any other address may be the
+# user's own configuration. A disconnect's first clear removes the address lines,
+# so later runs change nothing, including BANKR_* the user sets for their own
+# use. Only addresses are read into variables; key values never are, and nothing
+# here logs a value.
+bankr_reconcile_wallet_addresses=${shellSingleQuote(bankrReconcileSet.join(" "))}
+bankr_env_wallet_address() {
+  [ -f "$1" ] || return 0
+  awk '/^BANKR_AGENT_WALLET_ADDRESS=/ { v = $0; sub(/^BANKR_AGENT_WALLET_ADDRESS=/, "", v); gsub(/[\\"\\047[:space:]]/, "", v); print tolower(v); exit }' "$1" || true
+}
+bankr_wallet_address_in_set() {
+  [ -n "$1" ] || return 1
+  for bankr_set_wallet_address in $bankr_reconcile_wallet_addresses; do
+    if [ "$1" = "$bankr_set_wallet_address" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+${bankrOwnershipDecision}
+
+# The wallet is delivered only as BANKR_* in /state/.env. Provisioning with a
+# Hivra-created wallet also wrote a top-level \`bankr:\` block (holding that key)
+# into config.yaml, and the agent copies the block over its BANKR_* env on every
+# config load, so a stale block would keep an old or disconnected key live. Strip
+# it from the base config, every profile config and the managed-Venice and
+# session-retention repair backups (which copy it) before update mode copies config.yaml
+# into /seed. Logs
+# paths only, never values. The temp file starts as a mode-preserving copy so the
+# rewrite never widens the file's permissions (it also holds the model API key).
+if [ "$bankr_strip_config" = 1 ]; then
+  for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml /state/config.yaml.pre-managed-venice-repair.* /state/config.yaml${WEBUI_SESSION_RETENTION_BACKUP_SUFFIX} /state/config.yaml${WEBUI_TERMINAL_CWD_BACKUP_INFIX}*; do
+    [ -f "$bankr_cfg" ] || continue
+    grep -q '^bankr:' "$bankr_cfg" || continue
+    bankr_cfg_tmp="$bankr_cfg.bankr-strip.$$"
+    if cp -p "$bankr_cfg" "$bankr_cfg_tmp" && awk 'skip && /^[^[:space:]#]/{skip=0} /^bankr:/{skip=1;next} !skip{print}' "$bankr_cfg" > "$bankr_cfg_tmp" && mv -f "$bankr_cfg_tmp" "$bankr_cfg"; then
+      echo "[webui-update] stripped bankr: block from $bankr_cfg"
+    else
+      rm -f "$bankr_cfg_tmp"
+      echo "[webui-update] WARNING: could not strip bankr: block from $bankr_cfg" >&2
+    fi
+  done
+fi
+
+# A Hermes profile clone copies the base .env, BANKR_* included, and a profile's
+# .env is loaded over the container env. Remove the BANKR_* lines from each
+# profile .env holding one of the row's wallets, and from no other. After a
+# disconnect nothing replaces them; after a connect the profile falls back to the
+# container env this run delivers, which also replaces an older key for the same
+# wallet. Same mode-preserving temp-file-then-mv rewrite; logs paths only.
+for bankr_profile_env in /state/profiles/*/.env; do
+  [ -f "$bankr_profile_env" ] || continue
+  bankr_wallet_address_in_set "$(bankr_env_wallet_address "$bankr_profile_env")" || continue
+  bankr_profile_env_tmp="$bankr_profile_env.bankr-clear.$$"
+  if cp -p "$bankr_profile_env" "$bankr_profile_env_tmp" && awk '!/^(${WEBUI_BANKR_RUNTIME_ENV_KEYS.join("|")})=/' "$bankr_profile_env" > "$bankr_profile_env_tmp" && mv -f "$bankr_profile_env_tmp" "$bankr_profile_env"; then
+    echo "[webui-update] removed BANKR_* from $bankr_profile_env"
+  else
+    rm -f "$bankr_profile_env_tmp"
+    echo "[webui-update] WARNING: could not remove BANKR_* from $bankr_profile_env" >&2
+  fi
+done
+`
+      : "";
   const retiredEnvKeys = ["HERMES_WEBUI_PASSWORD"].join(" ");
   const canaryProbeEnvKeys = ["TELEGRAM_BOT_TOKEN"].join(" ");
   // Stale provisioning-time model pins. The official-dashboard's _resolve_model()
@@ -3645,7 +3930,7 @@ docker run --rm -i \\
   busybox sh <<'SH'
 set -e
 mkdir -p /state
-${managedVeniceConfigRepairScript}
+${managedVeniceConfigRepairScript}${bankrReconcileStateScript}
 if [ -f /state/config.yaml ]; then
   cp /state/config.yaml /seed/config.yaml
 fi
@@ -3702,8 +3987,8 @@ done
 # they just removed. Only WEBUI_CLEARABLE_RUNTIME_ENV_KEYS gets this treatment —
 # absence is only safe to read as "the user cleared it" for keys whose value is a
 # pure read of the instance row. See the list's comment for why BANKR_* must not
-# be cleared here (absent can mean "the wallet lookup threw").
-clearable_env_keys='${clearableEnvKeys}'
+# be cleared here (absent can mean "the wallet lookup threw").${clearBankrComment}
+clearable_env_keys='${clearableEnvKeys}'${clearBankrKeysScript}
 echo "[webui-update] Clear dashboard-managed runtime env keys the user removed"
 for clearable_env_key in $clearable_env_keys; do
   if grep -q "^\${clearable_env_key}=" /tmp/hermes-generated.env; then
@@ -3838,11 +4123,14 @@ done
 chown -R 1024:1024 /state 2>/dev/null || true
 SH`
     : `# Seed config.yaml + .env into the named volume on first start so the agent
-# inside the container picks them up at /home/hermes/.hermes/.
+# inside the container picks them up at /home/hermes/.hermes/. Also record that
+# Hivra wrote config.yaml's session retention settings, so a later update can
+# tell them from an owner's identical value (webui-session-retention.ts).
 docker run --rm \\
   -v ${p.containerName}_webui-state:/state \\
   -v "$INSTANCE_DIR":/seed:ro \\
-  busybox sh -c 'mkdir -p /state && cp /seed/config.yaml /state/config.yaml && cp /seed/hermes.env /state/.env && chmod 600 /state/.env && if [ -f /seed/auth.json.inject ]; then cp /seed/auth.json.inject /state/auth.json && touch /state/auth.lock && chmod 600 /state/auth.json /state/auth.lock; fi && chown -R 1024:1024 /state'`;
+  -e ${WEBUI_SESSION_RETENTION_RECORD_ENV}=${shellSingleQuote(buildWebUISessionRetentionRecordJson(p.ramLimit))} \\
+  busybox sh -c 'mkdir -p /state && cp /seed/config.yaml /state/config.yaml && ${WEBUI_SESSION_RETENTION_RECORD_SEED_SH} && cp /seed/hermes.env /state/.env && chmod 600 /state/.env && if [ -f /seed/auth.json.inject ]; then cp /seed/auth.json.inject /state/auth.json && touch /state/auth.lock && chmod 600 /state/auth.json /state/auth.lock; fi && chown -R 1024:1024 /state'`;
   const terminalConfigSyncCommand = !isUpdate || opts.applyTerminalBackend === true
     ? `# Match the explicitly selected env backend in saved YAML before either
 # agent service starts. Native config-to-env bridging otherwise restores a
@@ -3855,6 +4143,24 @@ docker run --rm -i --network none --user 0:0 \\
 ${WEBUI_TERMINAL_CONFIG_SYNC_PYTHON}
 HERMES_TERMINAL_CONFIG_PY
 `
+    : "";
+  // Update mode keeps the box's config.yaml, so the session-retention pins a
+  // fresh provision gets from buildWebUIConfigYaml (reap grace and live-session
+  // cap) are repaired in here. Runs after the agent image pull (it uses that
+  // image's Python) and before compose recreates official-dashboard, which reads
+  // the reap grace once at start.
+  const terminalCwdRepairCommand = isUpdate
+    ? buildWebUITerminalCwdRepairCommand({
+        containerName: p.containerName,
+        agentImage,
+      })
+    : "";
+  const sessionRetentionRepairCommand = isUpdate
+    ? buildWebUISessionRetentionRepairCommand({
+        containerName: p.containerName,
+        agentImage,
+        ramLimitMb: p.ramLimit,
+      })
     : "";
   const heredoc = (name: string, body: string) => {
     // Fail-loud guard: any user-controlled string that flows into `body`
@@ -3878,7 +4184,7 @@ cd "$INSTANCE_DIR"
 ${hostTimeSyncRepairScript}
 ${buildHermesMemoryGuardProvisioningScript()}
 ${buildHermesAptQuiesceScript()}
-
+${updateSafetyPrelude}
 ${heredoc("docker-compose.yml", composeYaml)}
 ${heredoc("Caddyfile", artifacts.caddyfile)}
 ${heredoc("sidecar_server.js", artifacts.sidecarServerFile)}
@@ -3889,11 +4195,7 @@ ${heredoc("hermes.env", artifacts.hermesEnvFile)}
 ${artifacts.authStoreFile ? heredoc("auth.json.inject", artifacts.authStoreFile) : "rm -f auth.json.inject\n"}
 ${gatewayDockerSocketPreparation}
 
-GHCR_TOKEN="${process.env.GHCR_TOKEN || ""}"
-if [ -n "$GHCR_TOKEN" ]; then
-echo "$GHCR_TOKEN" | docker login ghcr.io -u __token__ --password-stdin 2>/dev/null || true
-fi
-
+${buildPlatformRegistryCredentialScrubScript()}
 ${buildSslipPlaceholderResolutionScript(p.fqdn)}
 
 docker network create hermes_net >/dev/null 2>&1 || true
@@ -3910,10 +4212,7 @@ ${buildWebUIPersistentStatePermissionRepairCommand(p.containerName)}
 
 ${dockerCleanupFunctions}${taggedImageCleanupFunctions}${volumeSafeUpdateCleanupFunctions}${prePullCleanup}${agentPullCmd}
 ${runtimePasswdCommand}
-${terminalConfigSyncCommand}docker run --rm \\
-  -v ${p.containerName}_agent-source:/target \\
-  --entrypoint sh \\
-  ${agentImage} -lc 'set -e; test -f /opt/hermes/pyproject.toml; find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cp -a /opt/hermes/. /target/; if [ -d /target/.venv ]; then find /target/.venv -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -print 2>/dev/null | while IFS= read -r script; do sed -i "s|/opt/hermes|${WEBUI_HERMES_AGENT_DIR}|g" "$script"; done; fi; chown -R 1024:1024 /target'
+${terminalConfigSyncCommand}${terminalCwdRepairCommand}${sessionRetentionRepairCommand}${UPDATE_STACK_TOUCHED_LINE}${agentSourceSeedCommand}
 
 # HermesOS rich chat (webui-free surface): the baked bundle's web-shim reads
 # #iframe_token natively (no injection). The Caddyfile webfreeBlock points / and
@@ -4007,7 +4306,7 @@ for i in $(seq 1 180); do
   if webui_free_stack_healthy && webui_free_surface_ready; then
     echo "[webui-bootstrap] WebUI-free stack healthy + dashboard surface serving"
     ${seedOnboardingSoulCall}
-    echo "WebUI healthy"
+    ${updateVerifyCall}echo "WebUI healthy"
 ${postUpdateCleanup}${postProvisionCleanup}    exit 0
   fi
   if docker inspect --format='{{.State.Running}}' ${p.containerName} 2>/dev/null | grep -qx true \
@@ -4023,7 +4322,7 @@ ${postUpdateCleanup}${postProvisionCleanup}    exit 0
     docker exec --user 1024 ${p.containerName} sh -lc 'export HOME=/home/hermes; export HERMES_HOME="/home/hermes/.hermes"; test -x "$(command -v hermes)" && test -x "$(command -v hermes-cli)"'
     ${seedOnboardingSoulCall}
     if webui_free_surface_ready; then
-      echo "WebUI healthy"
+      ${updateVerifyCall}echo "WebUI healthy"
 ${postUpdateCleanup}${postProvisionCleanup}      exit 0
     fi
   fi

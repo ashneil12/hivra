@@ -27,7 +27,13 @@ import {
   activeCryptoPaymentSessionResponse,
 } from "@/lib/billing/crypto-payment-sessions";
 import { getTokenVerificationWallet } from "@/lib/billing/token-holdings";
+import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
+import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
+import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
+import { hasExistingTokenTierRow, resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 
 function isValidTier(value: unknown): value is TierKey {
   return value === "pro" || value === "power";
@@ -43,6 +49,8 @@ function serializeQuote(quote: DepositQuote) {
     priceUsdAtQuote: quote.priceUsdAtQuote,
     tokensRequiredRaw: quote.tokensRequiredRaw.toString(),
     tokensRequiredDisplay: quote.tokensRequiredDisplay,
+    tokenKey: quote.tokenKey,
+    tokenAddress: quote.tokenAddress,
     tokenSymbol: quote.tokenSymbol,
     tokenDecimals: quote.tokenDecimals,
     quotedAt: quote.quotedAt,
@@ -106,6 +114,8 @@ export async function GET(req: NextRequest) {
 
 interface PostBody {
   tier?: unknown;
+  /** Optional platform token ("hermesos" | "hivra"); defaults per account. */
+  token?: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -131,14 +141,70 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (body.token !== undefined && !isPlatformTokenKey(body.token)) {
+      return apiError("Invalid token — must be 'hermesos' or 'hivra'.", 400, {
+        failureType: "deposit_quote_bad_token",
+      });
+    }
+
+    // Token geo-policy: a deposit quote locks the price of a NEW token tier.
+    // A holder who already has a row for this tier keeps it: a suspended row
+    // re-qualifies against an active quote.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked && !(await hasExistingTokenTierRow(userId, body.tier))) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
+        userId,
+      });
+    }
+
     if (!(await hasVerifiedTokenWallet(userId))) {
       return verifiedTokenWalletRequiredError();
     }
 
-    const quote = await createDepositQuote({ userId, tier: body.tier });
+    const quote = await createDepositQuote({
+      userId,
+      tier: body.tier,
+      ...(body.token !== undefined ? { token: body.token } : {}),
+    });
 
     return apiSuccess(serializeQuote(quote));
   } catch (error) {
+    if (error instanceof PlatformTokenPriceGateError) {
+      // The rate-limited gate log and ops alert are the signal; the per-request
+      // line stays at info so a gate that holds for hours cannot flood the logs.
+      await reportPriceGateRefusal(error, {
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
+      });
+      return apiError(
+        "Token price unavailable — please try again later.",
+        503,
+        {
+          failureType: "deposit_quote_price_unavailable",
+          gate: error.gate,
+          gateReason: error.reason,
+        },
+        undefined,
+        {
+          source: "billing/wallet-quote",
+          route: "/api/billing/wallet/quote",
+          method: "POST",
+          failureType: "deposit_quote_price_unavailable",
+          logLevel: "info",
+        }
+      );
+    }
+    if (error instanceof TokenNotAllowedError) {
+      return apiError(error.message, 403, {
+        failureType: "token_not_allowed",
+        token: error.tokenKey,
+        allowedTokens: error.allowedTokens,
+      });
+    }
     if (error instanceof ActiveCryptoPaymentSessionError) {
       return apiError(
         "Another crypto payment is already active. Finish it or wait for it to expire before starting a new one.",

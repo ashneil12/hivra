@@ -4,7 +4,10 @@ import StructuredData from "@/components/StructuredData";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import RoadmapPageClient from "@/components/roadmap/RoadmapPageClient";
-import { roadmapContent } from "@/lib/roadmap-content";
+import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
+import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
+import { restrictedRoadmapContent, roadmapContent, type RoadmapPageContent } from "@/lib/roadmap-content";
 
 const ROADMAP_URL = `${SITE_URL}${roadmapContent.metadata.canonicalPath}`;
 
@@ -41,10 +44,27 @@ const roadmapSchema = {
 };
 
 export default function RoadmapPage() {
+  // No country is listed (the list is empty, so the policy is dormant): render
+  // the whole roadmap, without reading the request country.
+  // Switch off: the roadmap without the token section and token links, for everyone.
+  if (!newTokenSurfacesEnabled()) return <RoadmapView content={restrictedRoadmapContent()} tokenSurfaces={false} />;
+  if (!isTokenGeoPolicyActive()) return <RoadmapView content={roadmapContent} tokenSurfaces />;
+  // A country is listed (GB today): render per request. A blocked viewer gets
+  // the same plan without the token section, the token-access lines and the
+  // token links. The page is already rendered per request, so nothing is lost.
+  return renderForViewer();
+}
+
+async function renderForViewer() {
+  const geo = await resolveTokenGeoBlockForPage();
+  return <RoadmapView content={geo.blocked ? restrictedRoadmapContent() : roadmapContent} tokenSurfaces />;
+}
+
+function RoadmapView({ content, tokenSurfaces }: { content: RoadmapPageContent; tokenSurfaces: boolean }) {
   return (
     <>
       <StructuredData schema={roadmapSchema} />
-      <RoadmapPageClient />
+      <RoadmapPageClient content={content} tokenSurfaces={tokenSurfaces} />
     </>
   );
 }

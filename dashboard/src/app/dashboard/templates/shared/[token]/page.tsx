@@ -11,6 +11,7 @@ import { Loader2, Rocket, ArrowLeft } from "lucide-react";
 
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { clientLog } from "@/lib/client/logger";
+import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 
 interface SharedTemplate {
   id: string;
@@ -55,16 +56,17 @@ export default function SharedTemplatePage({ params }: { params: Promise<{ token
 
   const useTemplate = useCallback(() => {
     if (!template) return;
-    // Fork on launch: the welcome/deploy flow reads templateId and the launch
-    // POST resolves it (visibility-checked, context already stripped here).
-    router.push(`/dashboard/welcome?step=agent-type&templateId=${encodeURIComponent(template.id)}`);
-  }, [router, template]);
+    // Fork on launch: Launch reads the template and the launch request names
+    // it (the server checks it may be used; context is already stripped).
+    // The token lets Launch show this shared template to a non-owner.
+    router.push(buildLaunchHref({ start: true, template: template.id, templateToken: token }));
+  }, [router, template, token]);
 
   return (
     <DashboardPageShell maxWidth={640}>
       <button
         onClick={() => router.push("/dashboard/templates")}
-        style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", marginBottom: "2rem", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5 }}
+        style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 2px", background: "none", border: "none", cursor: "pointer", marginBottom: "1.25rem", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5 }}
       >
         <ArrowLeft size={12} /> Templates
       </button>
@@ -78,28 +80,28 @@ export default function SharedTemplatePage({ params }: { params: Promise<{ token
           This template link is no longer available.
         </div>
       ) : (
-        <div style={{ border: "1px solid var(--ink-black)", background: "var(--bg-surface)", padding: "2rem", boxShadow: "6px 6px 0px rgba(0,0,0,0.08)" }}>
-          <div className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5, marginBottom: "1.5rem" }}>
+        <div style={{ border: "1px solid var(--ink-black)", background: "var(--bg-surface)", padding: "clamp(1.25rem, 5vw, 2rem)", boxShadow: "6px 6px 0px rgba(0,0,0,0.08)" }}>
+          <div className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5, marginBottom: "1.5rem" }}>
             Shared agent template
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1.5rem" }}>
             <span style={{ fontSize: 40 }}>{template.emoji || "🤖"}</span>
             <div>
               <h2 className="serif" style={{ fontSize: "2rem", fontWeight: 300, lineHeight: 1.1 }}>{template.name || "Untitled agent"}</h2>
-              <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, marginTop: 4 }}>{template.type}</div>
+              <div className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, marginTop: 4 }}>{template.type}</div>
             </div>
           </div>
 
           <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.5rem 1.5rem", marginBottom: "2rem", fontSize: 13 }}>
             {template.goal && (
               <>
-                <dt className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, alignSelf: "center" }}>Goal</dt>
+                <dt className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, alignSelf: "center" }}>Goal</dt>
                 <dd style={{ margin: 0 }}>{template.goal}</dd>
               </>
             )}
             {template.personality && (
               <>
-                <dt className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, alignSelf: "center" }}>Personality</dt>
+                <dt className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, alignSelf: "center" }}>Personality</dt>
                 <dd style={{ margin: 0 }}>{template.personality}</dd>
               </>
             )}
@@ -107,7 +109,7 @@ export default function SharedTemplatePage({ params }: { params: Promise<{ token
 
           <button
             onClick={useTemplate}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "12px", background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", minHeight: 44, padding: "12px", background: "var(--btn-bg)", color: "var(--btn-text)", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}
           >
             <Rocket size={14} /> Use this template
           </button>

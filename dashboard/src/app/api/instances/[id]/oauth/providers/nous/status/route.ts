@@ -179,6 +179,7 @@ export async function GET(
         const syncResult = await syncNousRuntimeAuthStore(
           access.id,
           access.hostIp,
+          access.proxmoxHostConfig ?? null,
           reusableBundle,
           hermesHomeDir
         );
@@ -199,7 +200,8 @@ export async function GET(
 
     const result = await sshExec(
       hostIp,
-      buildNousStatusCommand(instanceId, hermesExecUser, hermesHomeDir)
+      buildNousStatusCommand(instanceId, hermesExecUser, hermesHomeDir),
+      { proxmoxHostConfig: access.proxmoxHostConfig ?? null }
     );
 
     if (

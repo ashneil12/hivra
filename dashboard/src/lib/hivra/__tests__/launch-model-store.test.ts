@@ -7,8 +7,8 @@ jest.mock("@/lib/crypto", () => ({
 }));
 
 import { encryptSecret } from "@/lib/crypto";
-import { createLaunchModelStore, launchModelFingerprints, LaunchModelIntentSchema, matchesLaunchModelRequest,
-  type LaunchModelRequest } from "../launch-model-store";
+import { createLaunchModelStore, launchModelFingerprints, LaunchModelIntentSchema, LaunchPlanAgentLimitError,
+  matchesLaunchModelRequest, type LaunchModelRequest } from "../launch-model-store";
 import { ModelKeyStoreError } from "../model-key-store";
 
 const requestId = "11111111-1111-4111-8111-111111111111", agentId = "22222222-2222-4222-8222-222222222222";
@@ -30,7 +30,8 @@ function fixture() {
   query.select.mockReturnValue(query); query.eq.mockReturnValue(query);
   const db = { from: jest.fn().mockReturnValue(query), rpc: jest.fn().mockResolvedValue({ data: { status: "reserved", agentId, phase: "waiting" }, error: null }) };
   const store = createLaunchModelStore(db as never);
-  const input = { userId: "owner", requestId, modelOperationId: modelId, fingerprints: fingerprint, agent: reservation, llm: intent.llm };
+  const input = { userId: "owner", requestId, modelOperationId: modelId, fingerprints: fingerprint, agent: reservation, llm: intent.llm,
+    agentLimit: 3 };
   return { db, query, store, input };
 }
 
@@ -88,7 +89,9 @@ describe("private launch custody store", () => {
     expect(await store.reserve(input)).toEqual({ created: true, agentId, phase: "waiting" });
     expect(db.rpc).toHaveBeenCalledTimes(1);
     const [name, args] = db.rpc.mock.calls[0];
-    expect(name).toBe("reserve_hivra_launch_model_request_v2");
+    // v3 counts the owner's plan slots under the slot lock before it inserts (T35).
+    expect(name).toBe("reserve_hivra_launch_model_request_v3");
+    expect(args.p_agent_limit).toBe(3);
     expect(args.p_selection).toEqual(row.selection);
     expect(args.p_agent).toEqual(reservation);
     expect(JSON.stringify(args)).not.toContain("synthetic-launch-key");
@@ -143,6 +146,18 @@ describe("private launch custody store", () => {
       const { db, store, input } = fixture(); db.rpc.mockResolvedValue({ data: reply, error: null });
       await expect(store.reserve(input)).rejects.toThrow(ModelKeyStoreError);
     });
+  it("reports the database's plan-limit refusal without treating it as a lost reservation", async () => {
+    const { db, query, store, input } = fixture();
+    db.rpc.mockResolvedValue({ data: { status: "plan_agent_limit", activeCount: 1, limit: 1 }, error: null });
+    await expect(store.reserve(input)).rejects.toEqual(new LaunchPlanAgentLimitError(1, 1));
+    await expect(store.reserve(input)).rejects.toMatchObject({ activeCount: 1, limit: 1 });
+    expect(query.maybeSingle).not.toHaveBeenCalled();
+  });
+  it.each([-1, 1.5, Number.NaN])("refuses an invalid plan limit before SQL: %s", async agentLimit => {
+    const { db, store, input } = fixture();
+    await expect(store.reserve({ ...input, agentLimit })).rejects.toMatchObject({ code: "invalid_request" });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
   it("does not pass unexpected reservation fields or provider URLs into SQL", async () => {
     const { db, store, input } = fixture();
     await expect(store.reserve({ ...input, agent: { ...reservation, api_token: "forged" } } as never)).rejects.toMatchObject({ code: "invalid_request" });

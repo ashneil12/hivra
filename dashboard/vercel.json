@@ -1,6 +1,18 @@
 {
   "crons": [
     {
+      "path": "/api/cron/seo/gsc-pull",
+      "schedule": "10 6 * * *"
+    },
+    {
+      "path": "/api/cron/seo/inventory-check",
+      "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/cron/seo/index-coverage",
+      "schedule": "30 7 * * 1"
+    },
+    {
       "path": "/api/cron/purge-expired",
       "schedule": "0 0 * * *"
     },
@@ -19,6 +31,10 @@
     {
       "path": "/api/cron/managed-venice-reconciliation",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/managed-venice-hold-sweep",
+      "schedule": "20 * * * *"
     },
     {
       "path": "/api/cron/managed-venice-token-reconciliation",
@@ -81,8 +97,20 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/progress-agent-attachments",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/purge-error-hivra-agents",
       "schedule": "40 4 * * *"
+    },
+    {
+      "path": "/api/cron/prune-hivra-activity",
+      "schedule": "50 4 * * *"
+    },
+    {
+      "path": "/api/cron/sweep-server-enrollments",
+      "schedule": "20 5 * * *"
     },
     {
       "path": "/api/cron/recover-missing-vm-instances",
@@ -219,10 +247,6 @@
     {
       "path": "/api/cron/aeon-tick",
       "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/reservation-claim-expiry",
-      "schedule": "23 */2 * * *"
     },
     {
       "path": "/api/cron/park-idle-hivra-agents",

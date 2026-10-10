@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { PortableProvisionerBundleAsset } from "./connection-preparation";
-import { FIRST_BOOT_RECIPE_VERSION } from "./first-boot-enrollment";
+import { FIRST_BOOT_RECIPE_VERSIONS } from "./first-boot-enrollment";
 import type { FirstBootOperationScope } from "./first-boot-operations";
 import { PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS, PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES, PORTABLE_HIVRA_PROVISIONER_VERSION } from "./portable-provisioner-contract";
 
@@ -13,7 +13,7 @@ const ScopeSchema = z.object({
   binding: z.object({
     userId: z.string().min(1).max(256).regex(/^[^\u0000-\u001f\u007f]+$/), connectionId: UUID,
     connectionRevision: z.number().int().positive().safe(), orderId: UUID, attemptId: UUID,
-    quoteFingerprint: DIGEST, recipeVersion: z.literal(FIRST_BOOT_RECIPE_VERSION),
+    quoteFingerprint: DIGEST, recipeVersion: z.enum(FIRST_BOOT_RECIPE_VERSIONS),
   }).strict(),
   providerServerId: z.string().regex(/^[1-9][0-9]{0,15}$/).refine(value => Number.isSafeInteger(Number(value))),
 }).strict();

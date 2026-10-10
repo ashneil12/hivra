@@ -28,12 +28,24 @@ jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
 }));
 
+const mockAuth = jest.fn();
+jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
+
+const mockSignUp = jest.fn();
+jest.mock("@clerk/nextjs", () => ({
+  SignUp: (props: Record<string, unknown>) => {
+    mockSignUp(props);
+    return <div data-testid="mock-sign-up">Sign Up</div>;
+  },
+}));
+
 describe("SignUpPage", () => {
   const originalAuthMode = process.env.HIVRA_AUTH_MODE;
 
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.HIVRA_AUTH_MODE;
+    mockAuth.mockResolvedValue({ userId: null });
   });
 
   afterAll(() => {
@@ -60,12 +72,24 @@ describe("SignUpPage", () => {
     expect(redirect).toHaveBeenCalledWith("/get-started?plan=fleet");
   });
 
-  it("redirects legacy reservation signup traffic into the live free plan flow", async () => {
-    await SignUpPage({
+  // FTUE-16: reservation links used to go through the plan picker first.
+  it("sends legacy reservation sign-ups straight to Launch like any new account", async () => {
+    render(await SignUpPage({
       searchParams: Promise.resolve({ from: "reserve" }),
-    });
+    }));
 
-    expect(redirect).toHaveBeenCalledWith("/get-started?plan=free");
+    expect(redirect).not.toHaveBeenCalled();
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1",
+    }));
+  });
+
+  // FTUE-16: public "start" links now come here, signed in or not.
+  it("sends a visitor who is already signed in on to Launch", async () => {
+    mockAuth.mockResolvedValue({ userId: "user_1" });
+    await SignUpPage({ searchParams: Promise.resolve({ agentType: "codex" }) });
+
+    expect(redirect).toHaveBeenCalledWith("/dashboard/launch?kind=agent&start=1&profile=codex");
   });
 
   it("keeps the plain signup page available when no plan intent is provided", async () => {
@@ -77,5 +101,33 @@ describe("SignUpPage", () => {
 
     expect(redirect).not.toHaveBeenCalled();
     expect(screen.queryByRole("link", { name: /back/i })).not.toBeInTheDocument();
+  });
+
+  it("shows no step counter before the product, and a Hivra home bar", async () => {
+    const ui = await SignUpPage({
+      searchParams: Promise.resolve({}),
+    });
+
+    render(ui);
+
+    // Launch has the only step counter; a count here contradicted it.
+    expect(screen.queryByText(/step \d+ of \d+/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+  });
+
+  it("sends a new account straight to Launch, not the retired welcome flow", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1",
+    }));
+  });
+
+  it("opens the agent a link asked for in Launch after sign-up", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({ agentType: "general" }) }));
+
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1&profile=hermes",
+    }));
   });
 });

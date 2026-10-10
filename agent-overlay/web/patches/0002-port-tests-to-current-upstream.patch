@@ -1,0 +1,33 @@
+--- a/apps/desktop/src/lib/web-shim-drift.test.ts
++++ b/apps/desktop/src/lib/web-shim-drift.test.ts
+@@ -69,6 +69,7 @@
+   'themes',
+   'touchBackend',
+   'uninstall',
++  'updateHold', // local-backend boot screen (blocked by an earlier update); a hosted box has no local backend
+   'windowControls'
+ ]
+ 
+@@ -93,7 +94,8 @@
+   'quickEntry',
+   'setSecretStorageEncryption',
+   'sshConfigHosts',
+-  'sshResolveHost'
++  'sshResolveHost',
++  'updateHold' // guarded: the blocked-boot screen only renders for a local backend
+ ]
+ 
+ const parse = (file: string) =>
+--- a/apps/desktop/src/components/onboarding/index.test.tsx
++++ b/apps/desktop/src/components/onboarding/index.test.tsx
+@@ -77,7 +77,9 @@
+     expect(screen.getByText('Anthropic Account')).toBeTruthy()
+     expect(screen.getByText('ChatGPT or Codex Subscription')).toBeTruthy()
+     expect(screen.queryByText('Other sign-in options')).toBeNull()
+-    expect(screen.queryByText('Recommended')).toBeNull()
++    // Hivra overlay: the Venice card holds the Recommended slot unconditionally.
++    expect(screen.getAllByText('Recommended')).toHaveLength(1)
++    expect(screen.getByText('Venice')).toBeTruthy()
+   })
+ 
+   it('offers "choose later" on first run and persists the skip', () => {

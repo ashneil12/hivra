@@ -25,7 +25,9 @@ export function DashboardPageShell({
         width: "100%",
         margin: `1rem auto ${marginBottom}`,
         padding,
-        paddingTop: `calc(env(safe-area-inset-top, 0px) + ${topPadding})`,
+        // The mobile header already clears the inset and sets this to 0px;
+        // header-less routes fall back to the inset.
+        paddingTop: `calc(var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)) + ${topPadding})`,
         ...style,
       }}
     >

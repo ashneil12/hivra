@@ -17,8 +17,11 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { resolveProxmoxTargetConfiguration } from "@/lib/services/proxmox-instance-service";
-import { resolveHivraProxmoxHost } from "@/lib/hivra/proxmox-target";
+import {
+  describeHivraAgentExecutionContextError,
+  resolveHivraAgentExecutionContext,
+} from "@/lib/hivra/agent-execution-context";
+import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import {
   installToolsOnBox,
   uninstallToolFromBox,
@@ -31,6 +34,7 @@ import { readInstalledHermesToolNames, type HermesToolServerEntry } from "@/lib/
 import { getToolById } from "@/data/curated-tools";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import { log } from "@/lib/logger";
 
 export async function GET() {
   try {
@@ -46,6 +50,56 @@ export async function GET() {
   } catch (err) {
     return handleApiError(err);
   }
+}
+
+/**
+ * Resolve the exact owner-bound host environment for one CLI target, the same
+ * way /api/hivra/agents/[id]/tools does. Never the ambient managed-fleet env: a
+ * self-managed or provider target must not be routed through Hivra's hosts.
+ */
+async function cliTargetEnv(
+  userId: string,
+  agent: Record<string, unknown>,
+): Promise<{ env: Record<string, string | undefined> } | { error: string }> {
+  const blocked = catalogToolsUnavailableReason(agent.computer_substrate);
+  if (blocked) return { error: blocked };
+  try {
+    return { env: (await resolveHivraAgentExecutionContext(userId, agent)).env };
+  } catch (contextError) {
+    const safeError = describeHivraAgentExecutionContextError(contextError);
+    if (!safeError) {
+      log.error("tools fan-out could not resolve agent host", contextError, {
+        source: "api/tools",
+        failureType: "tools_fanout_context_failed",
+        userId,
+        agentId: String(agent.id),
+      });
+    }
+    return { error: safeError?.message ?? "Hivra couldn't reach this agent's host. Try again." };
+  }
+}
+
+/**
+ * Host-script failures carry host routing and shell detail that belongs in logs,
+ * not on the Tools page. Keep the raw text server-side and show plain copy.
+ */
+function toolHostFailure(params: {
+  userId: string;
+  agentId: string;
+  op: "install" | "uninstall";
+  error: string;
+}): string {
+  log.warn("tools fan-out host operation failed", {
+    source: "api/tools",
+    failureType: "tools_fanout_host_failed",
+    userId: params.userId,
+    agentId: params.agentId,
+    op: params.op,
+    errorMessage: params.error.slice(0, 500),
+  });
+  return params.op === "install"
+    ? "Couldn't install the tool on this agent. Check that it's running, then try again."
+    : "Couldn't remove the tool from this agent. Check that it's running, then try again.";
 }
 
 /** Desired Hermes entry set = what's installed now, plus/minus this tool. */
@@ -147,7 +201,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (!target.installable) {
-        results.push({ uid, ok: false, error: target.blockedReason || "not installable" });
+        results.push({ uid, ok: false, error: target.blockedMessage || target.blockedReason || "not installable" });
         continue;
       }
 
@@ -168,25 +222,32 @@ export async function POST(req: NextRequest) {
         results.push({ uid, ok: false, error: "agent not found" });
         continue;
       }
-      const pxEnv = resolveProxmoxTargetConfiguration(
-        process.env,
-        resolveHivraProxmoxHost(agent.proxmox_host as string | null),
-      ).env;
+      const resolved = await cliTargetEnv(userId, agent as Record<string, unknown>);
+      if ("error" in resolved) {
+        results.push({ uid, ok: false, error: resolved.error });
+        continue;
+      }
       const box = {
         id: String(agent.id),
         type: (agent.type as string | null) ?? null,
         ip: (agent.ip as string | null) ?? null,
       };
       if (remove) {
-        const r = await uninstallToolFromBox(box, toolId, pxEnv);
-        results.push({ uid, ok: r.ok, error: r.error });
+        const r = await uninstallToolFromBox(box, toolId, resolved.env);
+        results.push({
+          uid,
+          ok: r.ok,
+          error: r.ok ? undefined : toolHostFailure({ userId, agentId: box.id, op: "uninstall", error: r.error || "" }),
+        });
       } else {
-        const r = await installToolsOnBox(box, [{ id: toolId, env }], pxEnv);
+        const r = await installToolsOnBox(box, [{ id: toolId, env }], resolved.env);
         const skipped = r.skipped.find((s) => s.id === toolId);
         results.push({
           uid,
           ok: r.ok && r.installed.includes(toolId),
-          error: r.error || (skipped ? skipped.reason : undefined),
+          error: r.error
+            ? toolHostFailure({ userId, agentId: box.id, op: "install", error: r.error })
+            : skipped ? skipped.reason : undefined,
         });
       }
     }

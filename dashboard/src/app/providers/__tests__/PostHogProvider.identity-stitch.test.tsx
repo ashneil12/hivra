@@ -32,6 +32,11 @@ const mockReset = jest.fn();
 const mockGetDistinctId = jest.fn(() => "anon-device-id");
 const mockIsIdentified = jest.fn(() => false);
 
+const mockSendGaEvent = jest.fn();
+jest.mock("@/lib/telemetry/ga-client", () => ({
+  sendGaEvent: (...args: unknown[]) => mockSendGaEvent(...args),
+}));
+
 jest.mock("posthog-js", () => ({
   __esModule: true,
   default: {
@@ -197,6 +202,9 @@ describe("PostHogIdentify identity stitching", () => {
     expect(
       window.localStorage.getItem("hermes:signup_completed:user_fresh_signup")
     ).not.toBeNull();
+    // Google Analytics gets GA4's sign_up once, with no personal data.
+    const gaSignups = mockSendGaEvent.mock.calls.filter(([event]) => event === "sign_up");
+    expect(gaSignups).toEqual([["sign_up", { method: "clerk" }]]);
   });
 
   it("fires signup_completed when lastSignInAt is still null right after signup", () => {

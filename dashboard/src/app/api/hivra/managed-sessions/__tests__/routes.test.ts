@@ -50,6 +50,7 @@ const launchBody = {
 };
 
 beforeEach(() => {
+  mockLaunch.mockReset();
   mockAuth.mockResolvedValue({ userId: "user_1" });
   process.env.NEXT_PUBLIC_HIVRA_AGENTS = "1";
 });
@@ -73,6 +74,32 @@ describe("POST /api/hivra/managed-sessions", () => {
 
   it("rejects an unsupported harness before calling DigitalOcean", async () => {
     const response = await launch(mutation("/api/hivra/managed-sessions", { ...launchBody, harness: "cursor" }));
+    expect(response.status).toBe(400);
+    expect(mockLaunch).not.toHaveBeenCalled();
+  });
+
+  // INF-16: a launch may name a key saved in the owner's Vault instead of pasting it.
+  it("accepts a saved Vault key id in place of a pasted key, for the signed-in owner", async () => {
+    mockLaunch.mockResolvedValueOnce({ agentId: AGENT });
+    const model = { mode: "vendor", vaultKeyId: "55555555-5555-4555-8555-555555555555" };
+    const response = await launch(mutation("/api/hivra/managed-sessions", { ...launchBody, model }));
+    expect(response.status).toBe(201);
+    expect(mockLaunch).toHaveBeenCalledWith("user_1", expect.objectContaining({ model }));
+  });
+
+  it.each([
+    ["both a saved key and a pasted key", { mode: "vendor", apiKey: "sk-" + "a".repeat(40), vaultKeyId: "55555555-5555-4555-8555-555555555555" }],
+    ["neither", { mode: "vendor" }],
+  ])("refuses a vendor model with %s before calling DigitalOcean", async (_label, model) => {
+    const response = await launch(mutation("/api/hivra/managed-sessions", { ...launchBody, model }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Choose either a saved Vault key or a pasted key for this launch." });
+    expect(mockLaunch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a saved key for DigitalOcean Inference, which the Vault doesn't hold", async () => {
+    const model = { mode: "digitalocean-inference", vaultKeyId: "55555555-5555-4555-8555-555555555555", model: "llama3.3-70b-instruct" };
+    const response = await launch(mutation("/api/hivra/managed-sessions", { ...launchBody, harness: "hermes", model }));
     expect(response.status).toBe(400);
     expect(mockLaunch).not.toHaveBeenCalled();
   });

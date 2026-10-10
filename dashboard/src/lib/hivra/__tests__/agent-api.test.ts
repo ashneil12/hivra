@@ -10,13 +10,38 @@ import {
   HivraLaunchRejectedError,
   confirmProviderResize,
   getProviderResizeState,
+  listBoxSessions,
   ProviderResizeApiError,
   reviewProviderResize,
   resizeAgent,
   telegramConnect,
   telegramStatus,
   telegramDisconnect,
+  ComputerUsageError,
+  forceRestartAgent,
+  forceStopAgent,
+  getComputerUsage,
+  restartAgent,
+  stopAgent,
 } from "../agent-api";
+
+describe("listBoxSessions", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("lists the first-contact welcome conversation as Welcome, never under its hidden prompt", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ sessions: [
+      { id: "00000000-0000-4000-8000-000000000001", title: "This is a hidden Hivra first-contact setup message. Do not mention", updatedAt: 2 },
+      { id: "00000000-0000-4000-8000-000000000002", title: "Plan the week", updatedAt: 1 },
+    ] }) } as Response);
+
+    await expect(listBoxSessions("https://box.example.com", "box-token")).resolves.toEqual([
+      { id: "00000000-0000-4000-8000-000000000001", title: "Welcome", updatedAt: 2 },
+      { id: "00000000-0000-4000-8000-000000000002", title: "Plan the week", updatedAt: 1 },
+    ]);
+  });
+});
 
 describe("resource envelope client", () => {
   const originalFetch = global.fetch;
@@ -197,6 +222,25 @@ describe("createAgent receipt handling", () => {
     expect(outcome).toMatchObject({ status: 409, code: "target_revision_changed" });
   });
 
+  // Live on Canary, a launch refused because no host had the current
+  // provisioner read as "We couldn't confirm the launch yet": nothing had
+  // been created, and the launch only needed trying again.
+  it("returns a refusal made before anything was created to Review, even as a 503", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        success: false,
+        error: "Deployment target is temporarily unavailable while the Hivra provisioner is being prepared. Please try again shortly.",
+        code: "placement_unavailable",
+      }),
+    } as Response);
+
+    const outcome = await createAgent(input).catch(error => error);
+    expect(outcome).toBeInstanceOf(HivraLaunchCorrectableError);
+    expect(outcome).toMatchObject({ status: 503, code: "placement_unavailable" });
+  });
+
   it("requires a new receipt when the server reports request identity conflict", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
@@ -268,6 +312,46 @@ describe("createAgent receipt handling", () => {
     } as Response);
 
     await expect(createAgent(input)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
+  });
+
+  it("accepts a model launch from its own admission record, which names the request but has no launch state", async () => {
+    const agent = { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 };
+    const modelInput = { ...input, llm: { provider: "venice" as const, mode: "managed" as const, model: "deepseek-v4-pro", walletType: "card" as const } };
+    for (const status of [200, 201]) {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status,
+        json: async () => ({ success: true, data: { agent, launchRequestId } }),
+      } as Response);
+      await expect(createAgent(modelInput)).resolves.toEqual(agent);
+    }
+  });
+
+  it("still needs an accepted launch state for a launch without a model key", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ success: true, data: {
+        agent: { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 },
+        launchRequestId,
+      } }),
+    } as Response);
+
+    await expect(createAgent(input)).rejects.toThrow("Provision returned an invalid receipt (201)");
+  });
+
+  it("never accepts a model launch answered for another request", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: {
+        agent: { id: "agent-1", type: "codex", name: "Codex", status: "provisioning", cpu: 2, ram: 4 },
+        launchRequestId: "22222222-2222-4222-8222-222222222222",
+      } }),
+    } as Response);
+
+    await expect(createAgent({ ...input, llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key" } }))
+      .rejects.toThrow("Provision returned an invalid receipt (200)");
   });
 });
 
@@ -453,6 +537,59 @@ describe("fetchPlanStrict managed usage", () => {
     await expect(fetchPlanStrict()).resolves.toMatchObject({ key: "free", subscribed: false, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
   });
 
+  function noPlan(extra: Record<string, unknown>) {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: {
+      subscribed: false, plan: null, usage: null, ...extra,
+    } }) });
+  }
+
+  it("marks an account billing reports no plan for as needing the Free plan turned on, with what it already runs", async () => {
+    noPlan({ planOnHold: null, managedUsage: { agentCount: 1, usedCpu: 0.5, usedRam: 1024 } });
+    const plan = await fetchPlanStrict();
+    expect(plan).toMatchObject({ key: "free", subscribed: false, needsActivation: true, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
+    expect(plan?.onHold).toBeUndefined();
+  });
+
+  it("leaves an account without a plan unknown, never empty, when billing couldn't read what it runs", async () => {
+    noPlan({});
+    const plan = await fetchPlanStrict();
+    expect(plan).toMatchObject({ key: "free", needsActivation: true });
+    expect(plan?.usage).toBeUndefined();
+    noPlan({ managedUsage: { agentCount: -1, usedCpu: 0, usedRam: 0 } });
+    expect((await fetchPlanStrict())?.usage).toBeUndefined();
+  });
+
+  it("reads a paid plan on hold as that plan, never as an account that can turn Free on", async () => {
+    noPlan({
+      planOnHold: { key: "operator", name: "Pro", status: "past_due", reason: "payment_overdue", billingPortal: true },
+      managedUsage: { agentCount: 2, usedCpu: 1, usedRam: 2048 },
+    });
+    const plan = await fetchPlanStrict();
+    expect(plan?.needsActivation).toBeUndefined();
+    expect(plan?.onHold).toEqual({ key: "operator", name: "Pro", reason: "payment_overdue", billingPortal: true });
+    // Everything else stays Free's shape: nothing reads the account as paid.
+    expect(plan).toMatchObject({ key: "free", name: "Free", subscribed: false, usage: { agentCount: 2, usedCpu: 1, usedRam: 2 } });
+  });
+
+  it.each([
+    { key: "operator", name: "Pro", reason: "unknown_reason" },
+    { key: "", name: "Pro", reason: "no_slots" },
+    { key: "operator", reason: "no_slots" },
+    "operator",
+  ])("treats a malformed plan hold as no hold: %j", async (planOnHold) => {
+    noPlan({ planOnHold });
+    const plan = await fetchPlanStrict();
+    expect(plan?.onHold).toBeUndefined();
+    expect(plan?.needsActivation).toBe(true);
+  });
+
+  it("never marks an active plan, Free included, as needing activation", async () => {
+    response({ agentCount: 0, usedCpu: 0, usedRam: 0 }, "free");
+    expect((await fetchPlanStrict())?.needsActivation).toBeUndefined();
+    response({ agentCount: 0, usedCpu: 0, usedRam: 0 }, "operator");
+    expect((await fetchPlanStrict())?.needsActivation).toBeUndefined();
+  });
+
   it.each([null, {}, { agentCount: 0 }, { agentCount: -1, usedCpu: 0, usedRam: 0 }, { agentCount: 1, usedCpu: "2", usedRam: 4096 }, { agentCount: 1, usedCpu: 2, usedRam: -1 }])("does not invent empty capacity from invalid usage: %j", async (usage) => {
     response(usage);
     expect((await fetchPlanStrict())?.usage).toBeUndefined();
@@ -559,5 +696,59 @@ describe("telegram box calls are bounded (regression: silent hang)", () => {
       expect.stringContaining("/api/telegram/disconnect"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+});
+
+describe("power actions and live usage", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
+  const respond = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+    ({ ok: status < 400, status, headers: new Headers(headers), json: async () => body }) as Response;
+
+  // Regression: Stop's answer was dropped, so Manage couldn't say the computer
+  // had to be switched off after it didn't shut down in time.
+  it("returns how a Stop or Restart ended", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(respond(200, { success: true, data: { status: "stopped", forced: true, waitedSeconds: 50 } }))
+      .mockResolvedValueOnce(respond(200, { success: true, data: { status: "provisioning" } }));
+    await expect(stopAgent("agent-1")).resolves.toEqual({ switchedOff: true, waitedSeconds: 50 });
+    await expect(restartAgent("agent-1")).resolves.toEqual({ switchedOff: false, waitedSeconds: null });
+  });
+
+  it("sends Force off and Force restart as their own actions", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(respond(200, { success: true, data: { status: "stopped", forced: true } }));
+    global.fetch = fetchMock;
+    await forceStopAgent("agent-1");
+    await forceRestartAgent("agent-1");
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init.body)))).toEqual([{ action: "force_stop" }, { action: "force_restart" }]);
+  });
+
+  it("reads usage, asking for the stored read only when told to", async () => {
+    const view = {
+      supported: true, source: "proxmox", observedAt: "2026-09-25T12:00:00.000Z", ageSeconds: 3, stale: false, refreshing: false,
+      power: { observed: "running", recorded: "running", matches: true }, uptimeSeconds: 60,
+      cpu: { percent: 1.1, vcpus: 4 }, memory: { usedBytes: 1, maximumBytes: 2, includesCache: true },
+      disk: { usedBytes: 1, sizeBytes: 2, allocatedBytes: 3, filesystem: "ext4", guestReported: true }, notes: [],
+    };
+    const fetchMock = jest.fn().mockResolvedValue(respond(200, { success: true, data: view }));
+    global.fetch = fetchMock;
+    await expect(getComputerUsage("agent-1", { cached: true })).resolves.toEqual(view);
+    await getComputerUsage("agent-1");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/hivra/agents/agent-1/usage?cached=1", "/api/hivra/agents/agent-1/usage"]);
+  });
+
+  it("refuses an answer that isn't a usage view", async () => {
+    global.fetch = jest.fn().mockResolvedValue(respond(200, { success: true, data: { supported: true, host: "fixturenode11" } }));
+    await expect(getComputerUsage("agent-1")).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("carries the status, message and Retry-After of a refusal", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(respond(409, { success: false, error: "Hivra couldn't confirm this computer belongs to you, so it didn't read it." }))
+      .mockResolvedValueOnce(respond(429, { success: false, error: "Too Many Requests" }, { "Retry-After": "42" }));
+    await expect(getComputerUsage("agent-1")).rejects.toMatchObject({ status: 409, message: "Hivra couldn't confirm this computer belongs to you, so it didn't read it." });
+    const limited = await getComputerUsage("agent-1").catch((error: unknown) => error);
+    expect(limited).toBeInstanceOf(ComputerUsageError);
+    expect(limited).toMatchObject({ status: 429, retryAfterSeconds: 42, message: "Usage was refreshed a lot just now." });
   });
 });

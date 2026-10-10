@@ -1,33 +1,43 @@
+import fs from "fs";
+import path from "path";
+
 import { GET } from "../route";
+import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { SITE_URL } from "@/lib/seo-urls";
+import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 
 // Exercises the live /llms.txt route end-to-end against the shipped link map.
 describe("GET /llms.txt", () => {
-  it("returns 200 with a text/plain content-type", () => {
-    const res = GET();
+  it("returns 200 with a text/plain content-type", async () => {
+    const res = await GET();
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 
   it("is a well-formed llms.txt: H1 product line, blurb, and Markdown link sections", async () => {
-    const body = await GET().text();
+    const body = await (await GET()).text();
 
     // H1 product line first.
     expect(body.startsWith("# Hivra\n")).toBe(true);
     // A short '> ' description blurb.
-    expect(body).toMatch(/\n> Hivra \(formerly HermesOS\) is managed cloud hosting/);
+    expect(body).toContain(`\n> ${SITE_DESCRIPTION}\n`);
     // Markdown link sections.
     expect(body).toContain("## Product");
     expect(body).toContain("## Updates");
+    expect(body).toContain("## Papers");
+    expect(body).toContain("## Source and self-hosting");
     expect(body).toContain("## Status");
     expect(body).toContain("## Legal");
   });
 
   it("links every curated public page as an absolute SITE_URL-based URL — no auth/api/404 links", async () => {
-    const body = await GET().text();
+    const body = await (await GET()).text();
 
     const expectedUrls = [
       SITE_URL, // home
+      `${SITE_URL}/agents`,
+      `${SITE_URL}/pricing`,
+      `${SITE_URL}/tools`,
       `${SITE_URL}/features`,
       `${SITE_URL}/why-hivra`,
       `${SITE_URL}/compare`,
@@ -39,6 +49,15 @@ describe("GET /llms.txt", () => {
       `${SITE_URL}/stats`,
       `${SITE_URL}/privacy`,
       `${SITE_URL}/terms`,
+      `${SITE_URL}/about`,
+      `${SITE_URL}/security`,
+      `${SITE_URL}/ecosystem`,
+      `${SITE_URL}/LITEPAPER.md`,
+      `${SITE_URL}/WHITEPAPER.md`,
+      `${SITE_URL}/TOKENOMICS.md`,
+      `${SITE_URL}/token`,
+      "https://github.com/ashneil12/hivra",
+      "https://github.com/ashneil12/hivra/blob/main/docs/self-host/QUICKSTART.md",
     ];
     for (const url of expectedUrls) {
       expect(body).toContain(`(${url})`);
@@ -51,7 +70,36 @@ describe("GET /llms.txt", () => {
     expect(body).not.toMatch(/\/get-started/);
   });
 
-  it("advertises a public, cacheable response", () => {
-    expect(GET().headers.get("cache-control")).toContain("s-maxage=3600");
+  it("only links site paths that the app, the staged papers or public/ actually serve", async () => {
+    // Every same-site link must answer 200 on the build that ships it. The app
+    // routes and public files are checked on disk. The three papers are route
+    // handlers (src/app/LITEPAPER.md/route.ts and its two siblings), so a
+    // missing handler shows up here.
+    const dashboardRoot = path.join(__dirname, "..", "..", "..", "..");
+    const appRoot = path.join(dashboardRoot, "src", "app");
+    const exists = (file: string) => fs.existsSync(file);
+    const body = await (await GET()).text();
+    const sitePaths = [...body.matchAll(/\]\(([^)\s]+)\)/g)]
+      .map(match => match[1])
+      .filter(url => url === SITE_URL || url.startsWith(`${SITE_URL}/`))
+      .map(url => new URL(url).pathname);
+
+    expect(sitePaths.length).toBeGreaterThan(15);
+    // /tools/[slug] is one dynamic route; a tool page exists when its slug is in the catalog.
+    const toolPaths = new Set(TOOL_ENTRIES.map(tool => `/tools/${tool.slug}`));
+    const missing = sitePaths.filter(pathname => {
+      if (toolPaths.has(pathname)) return false;
+      if (pathname === "/") return !exists(path.join(appRoot, "page.tsx"));
+      const relative = pathname.slice(1);
+      const routeDir = path.join(appRoot, relative);
+      if (exists(path.join(routeDir, "page.tsx")) || exists(path.join(routeDir, "route.ts"))) return false;
+      return !exists(path.join(dashboardRoot, "public", relative));
+    });
+    expect(missing).toEqual([]);
+  });
+
+  it("advertises a public, cacheable response while no country is listed", async () => {
+    // jest.setup.tsx gives this suite the empty country list, so the body is the same for everyone.
+    expect((await GET()).headers.get("cache-control")).toContain("s-maxage=3600");
   });
 });

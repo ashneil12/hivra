@@ -1,5 +1,5 @@
 import { decryptApiKey } from "@/lib/crypto";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import {
   buildCodexHermesAuthStore,
   parseCodexVaultBundle,
@@ -9,6 +9,7 @@ import { isCodexAuthProvider } from "@/lib/provider-auth";
 import { log } from "@/lib/logger";
 import { buildHostTimeSyncRepairScript } from "@/lib/services/hetzner-instance-builders";
 import { supabaseAdmin } from "@/lib/supabase";
+import { GUEST_SSH_REFUSED_MARKER } from "@/lib/proxmox/hermes-guest-ssh";
 
 const CODEX_RUNTIME_POST_RESTART_SYNC_DELAY_MS = process.env.NODE_ENV === "test" ? 0 : 2_500;
 const CODEX_RUNTIME_POST_RESTART_SYNC_RETRY_COUNT = process.env.NODE_ENV === "test" ? 1 : 3;
@@ -70,7 +71,11 @@ function buildCodexRuntimeAuthSyncInnerScript(): string {
 }
 
 function isTransientCodexRuntimeSyncError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  // A refused guest identity check is not a restart race, even when a guest
+  // agent "is not running" line precedes it.
+  if (rawMessage.includes(GUEST_SSH_REFUSED_MARKER)) return false;
+  const message = rawMessage.toLowerCase();
   return (
     message.includes("received 409") ||
     message.includes("container is restarting") ||
@@ -171,7 +176,8 @@ export function hasCodexBundleChanged(
 
 export async function restartCodexGateway(
   instanceId: string,
-  hostIp: string
+  hostIp: string,
+  guestTarget: ProxmoxSshHostConfig | null
 ): Promise<boolean> {
   const containerNames = getCodexRuntimeContainerNames(instanceId);
   const restartResult = await sshExec(
@@ -192,7 +198,8 @@ export async function restartCodexGateway(
       `else`,
       `  printf "{\\"restarted\\":false}\\n"`,
       `fi`,
-    ].join("\n")
+    ].join("\n"),
+    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
   );
 
   if (!restartResult.ok) {
@@ -212,13 +219,14 @@ export async function restartCodexGateway(
   }
 }
 
-async function repairCodexHostTimeSync(hostIp: string): Promise<void> {
+async function repairCodexHostTimeSync(hostIp: string, guestTarget: ProxmoxSshHostConfig | null): Promise<void> {
   const repairResult = await sshExec(
     hostIp,
     [
       `set -e`,
       buildHostTimeSyncRepairScript(),
-    ].join("\n")
+    ].join("\n"),
+    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
   );
 
   if (!repairResult.ok) {
@@ -231,6 +239,7 @@ async function repairCodexHostTimeSync(hostIp: string): Promise<void> {
 export async function syncCodexRuntimeAuthStore(
   instanceId: string,
   hostIp: string,
+  guestTarget: ProxmoxSshHostConfig | null,
   bundle: CodexVaultBundle,
   hermesHomeDir: string
 ): Promise<{ changed: boolean }> {
@@ -261,7 +270,8 @@ export async function syncCodexRuntimeAuthStore(
       `  fi`,
       `done`,
       `printf "{\\"changed\\":%s,\\"synced\\":%s}\\n" "$changed" "$synced"`,
-    ].join("\n")
+    ].join("\n"),
+    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
   );
 
   if (!syncResult.ok) {
@@ -295,22 +305,24 @@ export async function syncCodexRuntimeAuthStore(
 async function repairCodexRuntimeAuthFromBundle(params: {
   instanceId: string;
   hostIp: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   hermesHomeDir: string;
   bundle: CodexVaultBundle;
 }): Promise<{ attempted: boolean; changed: boolean; restarted: boolean }> {
   const runtimeSync = await syncCodexRuntimeAuthStore(
     params.instanceId,
     params.hostIp,
+    params.guestTarget,
     params.bundle,
     params.hermesHomeDir
   );
 
   const restarted = runtimeSync.changed
-    ? await restartCodexGateway(params.instanceId, params.hostIp)
+    ? await restartCodexGateway(params.instanceId, params.hostIp, params.guestTarget)
     : false;
 
   if (!runtimeSync.changed) {
-    await repairCodexHostTimeSync(params.hostIp);
+    await repairCodexHostTimeSync(params.hostIp, params.guestTarget);
   }
 
   if (restarted) {
@@ -323,6 +335,7 @@ async function repairCodexRuntimeAuthFromBundle(params: {
         await syncCodexRuntimeAuthStore(
           params.instanceId,
           params.hostIp,
+          params.guestTarget,
           params.bundle,
           params.hermesHomeDir
         );
@@ -346,6 +359,7 @@ async function repairCodexRuntimeAuthFromBundle(params: {
 export async function repairCodexRuntimeAuthFromStoredSession(params: {
   instanceId: string;
   hostIp: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   hermesHomeDir: string;
   encryptedInstanceSecret: string | null | undefined;
   provider: string | null | undefined;
@@ -362,6 +376,7 @@ export async function repairCodexRuntimeAuthFromStoredSession(params: {
   return repairCodexRuntimeAuthFromBundle({
     instanceId: params.instanceId,
     hostIp: params.hostIp,
+    guestTarget: params.guestTarget,
     hermesHomeDir: params.hermesHomeDir,
     bundle,
   });

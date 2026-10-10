@@ -22,7 +22,7 @@ describe("AgentsPage", () => {
       });
   });
 
-  it("offers one primary launch route and retains the complete runtime catalog", async () => {
+  it("offers one primary launch route and opens each catalog agent's own plan in Launch", async () => {
     render(<AgentsPage />);
     await screen.findByRole("heading", { name: "No agents yet" });
     expect(screen.getByRole("link", { name: "Launch agent" })).toHaveAttribute(
@@ -33,15 +33,73 @@ describe("AgentsPage", () => {
       screen.queryByRole("button", { name: /deploy/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText("Browse agent runtimes").closest("details"),
+      screen.getByText("Browse agents you can launch").closest("details"),
     ).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("Browse agent runtimes"));
-    expect(
-      screen.getByRole("link", { name: "Open full runtime catalog" }),
-    ).toHaveAttribute("href", "/dashboard/welcome?step=agent-type");
-    expect(
-      screen.getByRole("link", { name: "Inspect runtime" }),
-    ).toHaveAttribute("href", "/dashboard/runtimes/deepseek-harness");
+    fireEvent.click(screen.getByText("Browse agents you can launch"));
+    for (const [name, profile] of [
+      ["Hermes", "hermes"],
+      ["Claude Code", "claude-code"],
+      ["Codex", "codex"],
+      ["Aeon", "aeon"],
+      ["OpenClaw", "openclaw"],
+      ["Agent Zero", "agent-zero"],
+    ]) {
+      expect(screen.getByRole("link", { name: `Launch ${name}` })).toHaveAttribute(
+        "href",
+        `/dashboard/launch?kind=agent&start=1&profile=${profile}`,
+      );
+    }
+    // A row that can't be acted on is never listed as if it could.
+    expect(screen.queryByText("Available to configure")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Launch DeepSeek/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /full runtime catalog/i })).not.toBeInTheDocument();
+    expect(document.querySelector('a[href*="/dashboard/welcome"]')).toBeNull();
+  });
+
+  it("describes the DeepSeek preview in plain words, without engineering notes", async () => {
+    render(<AgentsPage />);
+    await screen.findByRole("heading", { name: "No agents yet" });
+    fireEvent.click(screen.getByText("Browse agents you can launch"));
+    const card = screen.getByRole("heading", { name: "DeepSeek Harness" }).closest("article") as HTMLElement;
+    expect(card).toHaveTextContent("Private preview");
+    expect(card).toHaveTextContent("can't be launched yet");
+    expect(card.textContent).not.toMatch(/canary|PTY|ACP|teardown|revocation|gated|runtime/i);
+    expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute(
+      "href",
+      "/dashboard/runtimes/deepseek-harness",
+    );
+  });
+
+  it("brings an opened runtime catalog below the fold to the top under its heading", async () => {
+    const scroll = jest.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      render(<AgentsPage />);
+      await screen.findByRole("heading", { name: "No agents yet" });
+      const details = screen.getByText("Browse agents you can launch").closest("details") as HTMLDetailsElement;
+      const body = details.querySelector("div") as HTMLElement;
+      const top = jest.spyOn(body, "getBoundingClientRect");
+
+      // Opened with its first entries already on screen: the page stays put.
+      top.mockReturnValue({ top: 200 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).not.toHaveBeenCalled();
+
+      // Opened at the bottom edge: the heading (and its collapse control) goes
+      // to the top, not the body, so the tapped summary stays visible.
+      details.open = false;
+      fireEvent(details, new Event("toggle"));
+      top.mockReturnValue({ top: window.innerHeight - 40 } as DOMRect);
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll).toHaveBeenCalledWith({ block: "start" });
+      expect(scroll.mock.instances[0]).toBe(details);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
   });
 
   it("opens the existing Hermes detail route from the merged inventory", async () => {

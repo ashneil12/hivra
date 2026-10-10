@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, Cpu, Loader2, MemoryStick, RefreshCw } from 'lucide-react';
+import styles from '../console.module.css';
+import { buildAgentLaunchHref } from '@/lib/hivra/launch-navigation';
 
 type Feedback = { tone: 'success' | 'error'; message: string } | null;
 
@@ -213,9 +215,9 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
                       <span style={subtleStyle}>{formatNumber(allocation.cpu)} vCPU · {formatNumber(allocation.ram / 1024)} GB RAM · {allocation.status}</span>
                     </div>
                     {isCurrent ? (
-                      <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Resize below</span>
+                      <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Resize below</span>
                     ) : (
-                      <Link href={allocationHref(allocation)} style={manageLinkStyle}>Manage <ArrowUpRight size={12} /></Link>
+                      <Link href={allocationHref(allocation)} className={styles.linkTarget} style={manageLinkStyle}>Manage <ArrowUpRight size={12} /></Link>
                     )}
                   </div>
                 );
@@ -237,7 +239,7 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
                 <legend className="mono" style={legendStyle}>vCPU</legend>
                 <div style={choiceRowStyle}>
                   {cpuOptions.map((value) => (
-                    <button key={value} type="button" aria-pressed={selectedCpu === value} onClick={() => { setSelectedCpu(value); setConfirming(false); setFeedback(null); }} style={choiceButtonStyle(selectedCpu === value)}>{formatNumber(value)} vCPU</button>
+                    <button key={value} type="button" aria-pressed={selectedCpu === value} onClick={() => { setSelectedCpu(value); setConfirming(false); setFeedback(null); }} className={styles.choiceTarget} style={choiceButtonStyle(selectedCpu === value)}>{formatNumber(value)} vCPU</button>
                   ))}
                 </div>
               </fieldset>
@@ -245,7 +247,7 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
                 <legend className="mono" style={legendStyle}>RAM</legend>
                 <div style={choiceRowStyle}>
                   {ramOptions.map((value) => (
-                    <button key={value} type="button" aria-pressed={selectedRamMb === value} onClick={() => { setSelectedRamMb(value); setConfirming(false); setFeedback(null); }} style={choiceButtonStyle(selectedRamMb === value)}>{formatNumber(value / 1024)} GB</button>
+                    <button key={value} type="button" aria-pressed={selectedRamMb === value} onClick={() => { setSelectedRamMb(value); setConfirming(false); setFeedback(null); }} className={styles.choiceTarget} style={choiceButtonStyle(selectedRamMb === value)}>{formatNumber(value / 1024)} GB</button>
                   ))}
                 </div>
               </fieldset>
@@ -274,7 +276,7 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
               <strong>{canLaunch ? 'Capacity is available for another agent' : slotsUsed >= maxAgents ? 'All agent slots are in use' : 'Shrink an allocation to make room'}</strong>
               <span style={subtleStyle}>{canLaunch ? `${formatNumber(freeCpu)} vCPU and ${formatNumber(freeRamGb)} GB RAM are currently free.` : 'The launch flow will enforce the minimum size and your remaining pool.'}</span>
             </div>
-            {canLaunch ? <Link href="/dashboard/welcome?step=agent-type" style={primaryLinkStyle}>Launch another agent <ArrowUpRight size={14} /></Link> : null}
+            {canLaunch ? <Link href={buildAgentLaunchHref()} style={primaryLinkStyle}>Launch another agent <ArrowUpRight size={14} /></Link> : null}
           </div>
         </>
       ) : null}
@@ -286,12 +288,12 @@ const eyebrowStyle = { margin: 0, fontSize: 11, textTransform: 'uppercase' as co
 const sectionHeadingStyle = { margin: '5px 0 0', fontSize: '1.4rem', fontWeight: 400 } as const;
 const cardStyle = { border: '1px solid var(--etched-border)', padding: 16, display: 'grid', gap: 7, color: 'var(--ink-black)' } as const;
 const subtleStyle = { fontSize: 13, color: 'var(--text-secondary)' } as const;
-const statusStyle = { border: '1px solid var(--etched-border)', padding: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: 'var(--text-secondary)' } as const;
+const statusStyle = { border: '1px solid var(--etched-border)', padding: 18, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: 'var(--text-secondary)' } as const;
 const allocationRowStyle = { border: '1px solid var(--etched-border)', padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' as const };
 const manageLinkStyle = { display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 11, textTransform: 'uppercase' as const, textDecoration: 'none' };
 const fieldsetStyle = { border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 } as const;
-const legendStyle = { fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 };
-const choiceRowStyle = { display: 'flex', gap: 7, flexWrap: 'wrap' as const };
+const legendStyle = { fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 };
+const choiceRowStyle = { display: 'flex', gap: 8, flexWrap: 'wrap' as const };
 const choiceButtonStyle = (selected: boolean) => ({ border: '1px solid var(--etched-border)', background: selected ? 'var(--gold-leaf)' : 'transparent', color: 'var(--ink-black)', padding: '7px 11px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' });
 const primaryButtonStyle = { display: 'inline-flex', alignItems: 'center', gap: 8, width: 'fit-content', border: '1px solid var(--ink-black)', background: 'var(--ink-black)', color: 'var(--bg-surface)', padding: '10px 14px', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', cursor: 'pointer' };
 const secondaryButtonStyle = { display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--etched-border)', background: 'transparent', color: 'var(--ink-black)', padding: '9px 13px', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', cursor: 'pointer' };

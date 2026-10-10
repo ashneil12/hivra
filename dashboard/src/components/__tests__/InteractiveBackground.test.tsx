@@ -101,4 +101,28 @@ describe('InteractiveBackground', () => {
       );
     });
   });
+
+  it('re-seeds particles on a width change but not when only the height changes', () => {
+    mockCanvasContext();
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: jest.fn(() => ({ matches: false })),
+    });
+    Object.defineProperty(window.navigator, 'connection', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 700 });
+    const random = jest.spyOn(Math, 'random');
+    render(<InteractiveBackground />);
+    const seeded = random.mock.calls.length;
+    expect(seeded).toBeGreaterThan(0);
+
+    // iOS Safari collapsing its toolbar: height only.
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 780 });
+    window.dispatchEvent(new Event('resize'));
+    expect(random.mock.calls.length).toBe(seeded);
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 700 });
+    window.dispatchEvent(new Event('resize'));
+    expect(random.mock.calls.length).toBeGreaterThan(seeded);
+  });
 });

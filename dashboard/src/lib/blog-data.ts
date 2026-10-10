@@ -23,6 +23,26 @@ import { article as whatCanHermesAgentDo } from "./blog/articles/what-can-hermes
 import { article as hermesAgentVsChatgpt } from "./blog/articles/hermes-agent-vs-chatgpt";
 import { article as hermesAgentCronTasks } from "./blog/articles/hermes-agent-cron-scheduled-tasks";
 import { article as howToSetUpTelegram } from "./blog/articles/how-to-set-up-hermes-agent-telegram";
+import { article as keepClaudeCodeRunning } from "./blog/articles/keep-claude-code-running-24-7";
+import { article as runCodex247InTheCloud } from "./blog/articles/run-codex-24-7-in-the-cloud";
+import { article as aiAgentHostingGuide } from "./blog/articles/ai-agent-hosting-guide";
+import { article as aiAgentDiesTerminalClosesFixes } from "./blog/articles/ai-agent-dies-terminal-closes-fixes";
+import { article as runAiAgents247 } from "./blog/articles/run-ai-agents-24-7";
+import { article as claudeCodeVsCodex247 } from "./blog/articles/claude-code-vs-codex-24-7";
+import { article as aiAgentVps } from "./blog/articles/ai-agent-vps";
+import { article as managedVsSelfHostedAiAgents } from "./blog/articles/managed-vs-self-hosted-ai-agents";
+import { article as agentZeroVsOpenclawHosting } from "./blog/articles/agent-zero-vs-openclaw-hosting";
+import { article as openclawBrokenAfterUpdate } from "./blog/articles/openclaw-broken-after-update";
+import { article as unattendedAgentSafety } from "./blog/articles/is-it-safe-to-leave-an-ai-agent-running-unattended";
+import { article as aiAgentGpuRequirements } from "./blog/articles/do-you-need-a-gpu-to-run-an-ai-agent";
+import { article as controlClaudeCodeFromTelegram } from "./blog/articles/control-claude-code-from-telegram";
+import { article as claudeCodeRemoteControl } from "./blog/articles/claude-code-remote-control";
+import { article as claudeMaxVsProForClaudeCode } from "./blog/articles/claude-max-vs-pro-for-claude-code";
+import { article as claudeCodeDangerouslySkipPermissions } from "./blog/articles/claude-code-dangerously-skip-permissions";
+import { article as codexPricingByChatgptPlan } from "./blog/articles/codex-pricing-by-chatgpt-plan";
+import { article as codexResumeSession } from "./blog/articles/codex-resume-session";
+import { article as cursorCloudAgents } from "./blog/articles/cursor-cloud-agents";
+import { article as cursorVsClaudeCode } from "./blog/articles/cursor-vs-claude-code";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -50,6 +70,26 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "hermes-agent-vs-chatgpt": hermesAgentVsChatgpt,
   "hermes-agent-cron-scheduled-tasks": hermesAgentCronTasks,
   "how-to-set-up-hermes-agent-telegram": howToSetUpTelegram,
+  "keep-claude-code-running-24-7": keepClaudeCodeRunning,
+  "run-codex-24-7-in-the-cloud": runCodex247InTheCloud,
+  "ai-agent-hosting-guide": aiAgentHostingGuide,
+  "ai-agent-dies-terminal-closes-fixes": aiAgentDiesTerminalClosesFixes,
+  "run-ai-agents-24-7": runAiAgents247,
+  "claude-code-vs-codex-24-7": claudeCodeVsCodex247,
+  "ai-agent-vps": aiAgentVps,
+  "managed-vs-self-hosted-ai-agents": managedVsSelfHostedAiAgents,
+  "agent-zero-vs-openclaw-hosting": agentZeroVsOpenclawHosting,
+  "openclaw-broken-after-update": openclawBrokenAfterUpdate,
+  "is-it-safe-to-leave-an-ai-agent-running-unattended": unattendedAgentSafety,
+  "do-you-need-a-gpu-to-run-an-ai-agent": aiAgentGpuRequirements,
+  "control-claude-code-from-telegram": controlClaudeCodeFromTelegram,
+  "claude-code-remote-control": claudeCodeRemoteControl,
+  "claude-max-vs-pro-for-claude-code": claudeMaxVsProForClaudeCode,
+  "claude-code-dangerously-skip-permissions": claudeCodeDangerouslySkipPermissions,
+  "codex-pricing-by-chatgpt-plan": codexPricingByChatgptPlan,
+  "codex-resume-session": codexResumeSession,
+  "cursor-cloud-agents": cursorCloudAgents,
+  "cursor-vs-claude-code": cursorVsClaudeCode,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

@@ -123,6 +123,8 @@
 .node {
   position: absolute;
   z-index: 2;
+  left: var(--x);
+  top: var(--y);
   min-width: 112px;
   transform: translate(-50%, -50%);
   border: 1px solid var(--etched-border);
@@ -467,3 +469,6 @@
 .closingCta { margin-top:40px; text-align:left; justify-items:start; background:var(--public-surface); border:1px solid var(--public-line); }
 .ctaButton { background:var(--public-accent); color:var(--public-accent-ink); }
 @media(max-width:800px) { .hero { grid-template-columns:1fr; gap:40px; } .sectionCard { grid-template-columns:1fr; gap:20px; padding-block:40px; } .sectionBody { grid-column:1; } .main { padding-top:40px; } .networkCard { min-height:360px; } }
+
+/* Keep edge nodes inside the card and clear of the caption on phones. */
+@media(max-width:640px) { .networkCard { min-height:400px; } .node { left:clamp(56px,var(--x),calc(100% - 56px)); min-width:0; } .nodeLabel,.nodeDetail { font-size:11px; line-height:1.3; } .networkCaption { display:none; } }

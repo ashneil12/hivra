@@ -29,13 +29,43 @@ async function claimsFromCurrentRequest(): Promise<LocalSessionClaims | null> {
   return verifyLocalSessionToken({ token, secret: requireLocalJwtSecret() });
 }
 
+/**
+ * Clerk's `has`. Reverification ("confirm it's you", which withdrawal
+ * destination changes need) has no local counterpart: the operator signs in
+ * with the installation's own password and there is no second factor, so a
+ * signed-in operator satisfies it. Roles, permissions, plans and features are
+ * not modelled locally, so those checks fail closed.
+ */
+function localHas(claims: LocalSessionClaims | null) {
+  return (params: Record<string, unknown> | null | undefined): boolean => {
+    if (!claims || !params || typeof params !== "object") return false;
+    const keys = Object.keys(params);
+    return keys.length === 1 && keys[0] === "reverification" && Boolean(params.reverification);
+  };
+}
+
 function authResult(claims: LocalSessionClaims | null) {
   return {
     userId: claims?.sub ?? null,
     sessionId: claims ? `local-${claims.iat}` : null,
     sessionClaims: claims,
     getToken: async () => claims ? null : null,
+    has: localHas(claims),
   };
+}
+
+/** Clerk's reverificationErrorResponse: the same 403 body its client reads. */
+export function reverificationErrorResponse(missingConfig?: unknown): Response {
+  return new Response(
+    JSON.stringify({
+      clerk_error: {
+        type: "forbidden",
+        reason: "reverification-error",
+        metadata: { reverification: missingConfig },
+      },
+    }),
+    { status: 403 },
+  );
 }
 
 async function resolveAuth() {

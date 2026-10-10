@@ -5,7 +5,12 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 
 import { DELETE, GET } from "../route";
-import { REMOTE_DESKTOP_BUNDLE_REVISION } from "@/lib/remote-computers/capability-inspection";
+import {
+  DESKTOP_PROVISION_UNVERIFIED_MESSAGE,
+  DESKTOP_START_OUTDATED_MESSAGE,
+  DESKTOP_START_UNVERIFIED_MESSAGE,
+  REMOTE_DESKTOP_BUNDLE_REVISION,
+} from "@/lib/remote-computers/capability-inspection";
 
 const mockAuth = jest.fn();
 const mockSupabaseFrom = jest.fn();
@@ -29,7 +34,11 @@ const mockProviderResize = jest.fn();
 const mockRevokeRemoteDesktopCapability = jest.fn();
 const mockPrepareHivraTailscaleForDelete = jest.fn();
 const mockMutateGvisorComputer = jest.fn();
+const mockReconcileWalletEnv = jest.fn();
 let mockPrivateAccessRow: Record<string, unknown> | null;
+jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
+  reconcileBankrEnvAfterHivraBoot: (...args: unknown[]) => mockReconcileWalletEnv(...args),
+}));
 jest.mock("@/lib/hivra/provider-agent-power", () => ({ advanceProviderAgentPower: (...args: unknown[]) => mockProviderPower(...args) }));
 jest.mock("@/lib/hivra/provider-agent-resize", () => ({ advanceProviderResize: (...args: unknown[]) => mockProviderResize(...args) }));
 jest.mock("@/lib/hivra/tailscale-private-access", () => ({
@@ -119,6 +128,26 @@ jest.mock("@/lib/hivra/agent-ready-telemetry", () => ({
 jest.mock("@/lib/hivra/agent-bootstrap", () => ({
   seedAgentBox: (...args: unknown[]) => mockSeedAgentBox(...args),
 }));
+
+const mockAdvanceComputerContract = jest.fn();
+const mockAdvanceProviderContract = jest.fn();
+jest.mock("@/lib/hivra/computer-contract-delivery", () => ({
+  advanceProxmoxComputerContract: (...args: unknown[]) => mockAdvanceComputerContract(...args),
+  advanceProviderComputerContract: (...args: unknown[]) => mockAdvanceProviderContract(...args),
+}));
+const mockProviderUpkeep = jest.fn();
+jest.mock("@/lib/hivra/provider-agent-upkeep", () => ({
+  ...jest.requireActual("@/lib/hivra/provider-agent-upkeep"),
+  advanceProviderAgentUpkeep: (...args: unknown[]) => mockProviderUpkeep(...args),
+}));
+// Work scheduled after the response: captured here, run by the test.
+const mockAfterResponse = jest.fn();
+jest.mock("@/lib/hivra/after-response", () => ({
+  runAfterResponse: (...args: unknown[]) => mockAfterResponse(...args),
+}));
+async function runAfterResponseTasks() {
+  for (const [task] of mockAfterResponse.mock.calls as Array<[() => Promise<unknown>]>) await task();
+}
 
 jest.mock("@/lib/hivra/proxmox-target", () => ({
   resolveHivraProxmoxHost: (host?: string | null) => host || "fixturenode10",
@@ -627,6 +656,7 @@ describe("GET /api/hivra/agents/[id]", () => {
     jest.clearAllMocks();
     updates.length = 0;
     mockCompleteRunningResult = true;
+    mockReconcileWalletEnv.mockReset().mockResolvedValue({ status: "skipped" });
     mockAuth.mockResolvedValue({ userId: "user-free" });
     mockResolveProxmoxTargetConfiguration.mockReturnValue({ env: { PROXMOX_NODE: "fixturenode10" } });
     mockResolveSelfManagedProxmoxExecutionContext.mockResolvedValue(selfManagedContext());
@@ -698,14 +728,17 @@ describe("GET /api/hivra/agents/[id]", () => {
         data: mockAgentRow,
         error: null,
       })),
+      // A stamp persists, so a later read of the row sees it (as the database would).
       update: jest.fn((payload: Record<string, unknown>) => {
         updates.push(payload);
-        const updated = { ...mockAgentRow, ...payload };
+        mockAgentRow = { ...mockAgentRow, ...payload };
+        const updated = mockAgentRow;
         return {
           eq: jest.fn(() => ({
             select: jest.fn(() => ({
               single: jest.fn(async () => ({ data: updated, error: null })),
             })),
+            then: (resolve: (value: { data: null; error: null }) => void) => resolve({ data: null, error: null }),
           })),
         };
       }),
@@ -873,6 +906,162 @@ describe("GET /api/hivra/agents/[id]", () => {
     expect(mockSupabaseRpc.mock.calls.some(([name]) => name === "release_hivra_agent_operation")).toBe(false);
   });
 
+  describe("Ubuntu Desktop made before the current desktop release", () => {
+    // Reproduced on Canary 2026-09-25: 1c8d40ce (release 2026.09.08.3, 8bc933…)
+    // went provisioning → error on every Start once 2026.09.21.1 became current.
+    const computerId = "00000000-0000-4000-8000-000000001041";
+    const operationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const PREDECESSOR = "8bc933b88594073475ac54dba45abdf25ed9ff4e1acb816217905a2713f76d8c";
+    const receipt = (observedRevision: string) => ({
+      protocol: "hivra-remote-desktop-capability-v1",
+      computerKind: "hivra-agent",
+      computerId,
+      capabilityGeneration: "00000000-0000-4000-8000-000000001044",
+      observedRevision,
+      compositor: "x11",
+      installedTransports: ["selkies-websocket"],
+      privateNetworkReachable: false,
+      supportsInputTakeover: true,
+      brokerOrigin: "https://box.example.com",
+      bootIdentitySha256: "d".repeat(64),
+      observedAt: new Date().toISOString(),
+    });
+    const lifecycle = (operationKind: string) => {
+      mockAgentRow = {
+        ...mockAgentRow,
+        id: computerId,
+        type: "linux-desktop",
+        operation_id: operationId,
+        operation_kind: operationKind,
+        operation_payload: null,
+        infrastructure_binding_token_enforced: true,
+      };
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `{"vmid":1090,"ready":true,"chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}\nHIVRA_OPERATION_RECEIPT ${operationId}\n`,
+        stderr: "",
+      });
+    };
+    const poll = () => GET(makeGetRequest() as never, { params: Promise.resolve({ id: computerId }) });
+    const completed = () => mockSupabaseRpc.mock.calls.some(([name]) => name === "complete_hivra_agent_running");
+    const releasedWith = (error: string) => expect(mockSupabaseRpc).toHaveBeenCalledWith(
+      "release_hivra_agent_operation",
+      expect.objectContaining({ p_agent_id: computerId, p_mark_error: true, p_error: error }),
+    );
+
+    it.each(["start", "restart", "resize"])("returns to running after %s on a release Hivra still recognises", async (kind) => {
+      lifecycle(kind);
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(receipt(PREDECESSOR))}\n`,
+        stderr: "",
+      });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(completed()).toBe(true);
+      expect(mockSupabaseRpc.mock.calls.some(([name]) => name === "release_hivra_agent_operation")).toBe(false);
+    });
+
+    it("still requires a fresh provision to prove the current release", async () => {
+      mockAgentRow = {
+        ...mockAgentRow,
+        id: computerId,
+        type: "linux-desktop",
+        allocation_operation_id: operationId,
+        infrastructure_binding_token_enforced: true,
+      };
+      mockRunProxmoxHostScript
+        .mockResolvedValueOnce({
+          ok: true,
+          stdout: `{"vmid":1090,"ready":true,"agent_kind":"linux-desktop","chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}\nHIVRA_PROVIDER_OWNERSHIP ${operationId}\n`,
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(receipt(PREDECESSOR))}\n`,
+          stderr: "",
+        });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_PROVISION_UNVERIFIED_MESSAGE);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "linux desktop readiness capability is unavailable",
+        expect.objectContaining({ capabilityFailureCode: "desktop_release_not_current", observedRevision: PREDECESSOR }),
+      );
+    });
+
+    it("rejects a release Hivra does not recognise", async () => {
+      lifecycle("start");
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(receipt("e".repeat(64)))}\n`,
+        stderr: "",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_UNVERIFIED_MESSAGE);
+    });
+
+    it("rejects a receipt for another computer's broker", async () => {
+      lifecycle("start");
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify({ ...receipt(PREDECESSOR), brokerOrigin: "https://other.example.com" })}\n`,
+        stderr: "",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_UNVERIFIED_MESSAGE);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "linux desktop readiness capability is unavailable",
+        expect.objectContaining({ capabilityFailureCode: "identity_mismatch" }),
+      );
+    });
+
+    it("rejects a receipt without its boot identity", async () => {
+      lifecycle("start");
+      const unbound: Partial<ReturnType<typeof receipt>> = receipt(PREDECESSOR);
+      delete unbound.bootIdentitySha256;
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_REMOTE_DESKTOP_CAPABILITY_V1 ${JSON.stringify(unbound)}\n`,
+        stderr: "",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_UNVERIFIED_MESSAGE);
+    });
+
+    it("tells the owner plainly when the guest predates identity-bound desktops", async () => {
+      lifecycle("start");
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "HIVRA_CAPABILITY_FAILURE desktop_upgrade_required\n",
+        error: "Remote bash exited with code 1",
+      });
+
+      await poll();
+
+      expect(completed()).toBe(false);
+      releasedWith(DESKTOP_START_OUTDATED_MESSAGE);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        "linux desktop readiness capability is unavailable",
+        expect.objectContaining({ capabilityCommandOk: false, capabilityFailureCode: "guest_desktop_upgrade_required" }),
+      );
+    });
+  });
+
   it("fails Ubuntu Desktop provisioning when capability evidence is absent", async () => {
     const computerId = "00000000-0000-4000-8000-000000001041";
     mockAgentRow = {
@@ -901,7 +1090,7 @@ describe("GET /api/hivra/agents/[id]", () => {
       expect.objectContaining({
         p_agent_id: computerId,
         p_mark_error: true,
-        p_error: "Ubuntu Desktop did not publish its exact remote-desktop capability receipt.",
+        p_error: DESKTOP_PROVISION_UNVERIFIED_MESSAGE,
       }),
     );
     expect(mockCaptureHivraAgentComputerReady).not.toHaveBeenCalled();
@@ -1171,6 +1360,219 @@ describe("GET /api/hivra/agents/[id]", () => {
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalled();
   });
 
+  // The poll that first sees a launch running seeds the box over SSH before it
+  // answers (identity ~2 s, Bankr skills ~3 s measured on Canary). Those used to
+  // run one after the other and hold the page on "starting" for their sum.
+  describe("launch seeds on the poll that sees the agent running", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    type HostResult = { ok: boolean; stdout: string; stderr: string };
+    let hostScripts: Array<{ guest: string; finish: (result: HostResult) => void }>;
+    let finishBootstrap: (result: { ok: boolean; error?: string }) => void;
+    // The skills seeds stream their guest script base64-wrapped; decode it to
+    // see which skill folders a host script writes.
+    const guestScriptOf = (hostScript: string) => {
+      const encoded = hostScript.match(/printf '%s' '([A-Za-z0-9+/=]+)'/)?.[1];
+      return encoded ? Buffer.from(encoded, "base64").toString("utf8") : hostScript;
+    };
+    const skillsDone = { ok: true, stdout: "HIVRA_BANKR_SKILLS_OK\n", stderr: "" };
+    async function until(condition: () => boolean) {
+      for (let tick = 0; tick < 50 && !condition(); tick += 1) await new Promise((resolve) => setImmediate(resolve));
+      expect(condition()).toBe(true);
+    }
+
+    beforeEach(() => {
+      mockAfterResponse.mockReset();
+      hostScripts = [];
+      finishBootstrap = () => undefined;
+      mockSeedAgentBox.mockImplementation(() => new Promise((resolve) => { finishBootstrap = resolve; }));
+      mockRunProxmoxHostScript.mockImplementation((script: string) =>
+        new Promise((resolve) => { hostScripts.push({ guest: guestScriptOf(script), finish: resolve }); }));
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", operation_id: null, operation_kind: null,
+        computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true,
+        bootstrapped_at: null, bankr_skills_seeded_at: null, template_skills_seeded_at: null, template_skills: null,
+      };
+    });
+
+    it("starts the identity and skills seeds together and answers with every stamp", async () => {
+      const pending = GET(makeGetRequest() as never, params);
+      // Both reached the box before either finished.
+      await until(() => mockSeedAgentBox.mock.calls.length === 1 && hostScripts.length === 1);
+      expect(hostScripts[0].guest).toContain("HIVRA_BANKR_SKILLS_OK");
+
+      hostScripts[0].finish(skillsDone);
+      finishBootstrap({ ok: true });
+      const response = await pending;
+
+      expect(response.status).toBe(200);
+      const { data } = await response.json();
+      expect(data.agent.bootstrapped_at).toEqual(expect.any(String));
+      expect(data.agent.bankr_skills_seeded_at).toEqual(expect.any(String));
+      expect(mockLogHivraAgentEvent.mock.calls.map(([event]) => event.event).sort()).toEqual(["bankr_skills_seeded", "bootstrapped"]);
+      // The read-back row carries the bootstrap stamp the contract waits for.
+      expect(mockAfterResponse.mock.calls.map((call) => call[1]?.failureType)).toContain("computer_contract_step_skipped");
+    });
+
+    it("keeps the Bankr and template skills in order, never writing the skills folder twice at once", async () => {
+      mockAgentRow = { ...mockAgentRow, template_skills: ["official-1password"] };
+      const pending = GET(makeGetRequest() as never, params);
+      await until(() => mockSeedAgentBox.mock.calls.length === 1 && hostScripts.length === 1);
+      expect(hostScripts[0].guest).not.toContain("official-security-1password");
+      // The template's skills wait for the Bankr write, however long it takes.
+      for (let tick = 0; tick < 10; tick += 1) await new Promise((resolve) => setImmediate(resolve));
+      expect(hostScripts).toHaveLength(1);
+
+      hostScripts[0].finish(skillsDone);
+      await until(() => hostScripts.length === 2);
+      expect(hostScripts[1].guest).toContain("official-security-1password");
+      hostScripts[1].finish(skillsDone);
+      finishBootstrap({ ok: true });
+      const { data } = await (await pending).json();
+
+      expect(data.agent).toMatchObject({
+        bootstrapped_at: expect.any(String),
+        bankr_skills_seeded_at: expect.any(String),
+        template_skills_seeded_at: expect.any(String),
+      });
+    });
+
+    it("leaves a seed that failed for the next poll without holding back the others", async () => {
+      const pending = GET(makeGetRequest() as never, params);
+      await until(() => mockSeedAgentBox.mock.calls.length === 1 && hostScripts.length === 1);
+      finishBootstrap({ ok: false, error: "guest unreachable" });
+      hostScripts[0].finish(skillsDone);
+      const { data } = await (await pending).json();
+
+      expect(data.agent.bootstrapped_at ?? null).toBeNull();
+      expect(data.agent.bankr_skills_seeded_at).toEqual(expect.any(String));
+      expect(mockAfterResponse.mock.calls.map((call) => call[1]?.failureType)).not.toContain("computer_contract_step_skipped");
+
+      // The next poll retries only the identity seed.
+      mockSeedAgentBox.mockResolvedValue({ ok: true });
+      const next = await (await GET(makeGetRequest() as never, params)).json();
+      expect(mockSeedAgentBox).toHaveBeenCalledTimes(2);
+      expect(hostScripts).toHaveLength(1);
+      expect(next.data.agent.bootstrapped_at).toEqual(expect.any(String));
+    });
+
+    it("still fails the poll when a seed throws, after the other seed has finished", async () => {
+      mockSeedAgentBox.mockRejectedValue(new Error("unexpected seed failure"));
+      const pending = GET(makeGetRequest() as never, params);
+      await until(() => hostScripts.length === 1);
+      hostScripts[0].finish(skillsDone);
+      const response = await pending;
+
+      expect(response.status).toBe(500);
+      expect(mockLogHivraAgentEvent.mock.calls.map(([event]) => event.event)).toEqual(["bankr_skills_seeded"]);
+    });
+  });
+
+  describe("seeds and Computer Contract on a computer in the owner's own cloud (ATT-05)", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    beforeEach(() => {
+      mockAfterResponse.mockReset();
+      mockProviderUpkeep.mockReset().mockResolvedValue(undefined);
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", desired_state: "running", operation_id: null, operation_kind: null,
+        computer_substrate: "provider-vm", deployment_mode: "self-managed", vmid: null, ip: "203.0.113.10",
+        bootstrapped_at: null, bankr_skills_seeded_at: null, template_skills_seeded_at: null,
+      };
+    });
+
+    it("answers first, then runs the seeds and contract over the enrolled pin in the background", async () => {
+      const startedAt = Date.now();
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { agent: { id: "agent-1", status: "running" } } });
+      // Nothing reached the computer before the response.
+      expect(mockProviderUpkeep).not.toHaveBeenCalled();
+      expect(mockAfterResponse).toHaveBeenCalledTimes(1);
+      expect(mockAfterResponse.mock.calls[0][1]).toMatchObject({ failureType: "provider_agent_upkeep_failed", agentId: "agent-1" });
+      await runAfterResponseTasks();
+      expect(mockProviderUpkeep).toHaveBeenCalledWith("user-free", expect.objectContaining({ id: "agent-1", type: "codex" }), {
+        deadline: expect.any(Number) });
+      // Inside the route's 120 s budget, measured from the start of the poll.
+      const { deadline } = mockProviderUpkeep.mock.calls[0][2] as { deadline: number };
+      expect(deadline - startedAt).toBeGreaterThan(100_000);
+      expect(deadline - Date.now()).toBeLessThanOrEqual(110_000);
+      // Never the Proxmox host lane.
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockSeedAgentBox).not.toHaveBeenCalled();
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a computer that isn't running", { status: "stopped" }],
+      ["a lifecycle operation in flight", { operation_id: "op", operation_kind: "restart", status: "provisioning" }],
+      ["a dashboard runtime with its own instructions", { type: "openclaw" }],
+      ["a computer without an agent", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }],
+    ])("schedules nothing for %s", async (_label, patch) => {
+      mockProviderPower.mockResolvedValue("reboot_pending");
+      mockAgentRow = { ...mockAgentRow, ...patch };
+      await GET(makeGetRequest() as never, params);
+      expect(mockAfterResponse).not.toHaveBeenCalled();
+      expect(mockProviderUpkeep).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Computer Contract step", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    beforeEach(() => {
+      mockAfterResponse.mockReset();
+      mockAdvanceComputerContract.mockReset().mockResolvedValue({ kind: "tracked" });
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", ip: "10.253.0.90", computer_substrate: "proxmox-kvm",
+        bootstrapped_at: "2026-09-24T00:00:00.000Z", bankr_skills_seeded_at: "2026-09-24T00:00:00.000Z",
+        infrastructure_binding_token_enforced: true,
+      };
+    });
+
+    it("answers first, then keeps a running Hivra Cloud agent's contract current through the owner-scoped environment", async () => {
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+      expect(mockAfterResponse.mock.calls[0][1]).toMatchObject({ failureType: "computer_contract_step_skipped", agentId: "agent-1" });
+      await runAfterResponseTasks();
+      expect(mockAdvanceComputerContract).toHaveBeenCalledWith("user-free", expect.objectContaining({ id: "agent-1", type: "codex" }),
+        expect.any(Function), "auto", { deadline: expect.any(Number) });
+      // The host environment is resolved only if a round trip is due, and
+      // then through the owner-scoped execution context.
+      const environment = mockAdvanceComputerContract.mock.calls[0][2] as () => Promise<Record<string, string>>;
+      await expect(environment()).resolves.toEqual(expect.objectContaining({ PROXMOX_NODE: "fixturenode10" }));
+    });
+
+    // Review of D1: a bootstrap retry on the next poll rewrites the same
+    // system-prompt.md and could drop a contract block delivered meanwhile.
+    it("waits for the confirmed bootstrap before keeping the contract current", async () => {
+      mockAgentRow = { ...mockAgentRow, bootstrapped_at: null };
+      mockSeedAgentBox.mockResolvedValueOnce({ ok: false, error: "guest unreachable" });
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockSeedAgentBox).toHaveBeenCalled();
+      expect(mockAfterResponse.mock.calls.map(call => call[1]?.failureType)).not.toContain("computer_contract_step_skipped");
+      await runAfterResponseTasks();
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+
+      // Once the bootstrap is confirmed, the next poll delivers the contract.
+      mockAfterResponse.mockReset();
+      await GET(makeGetRequest() as never, params);
+      await runAfterResponseTasks();
+      expect(mockAdvanceComputerContract).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["a dashboard runtime that reads its own instructions", { type: "openclaw" }],
+      ["a computer without an agent", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }],
+      ["an agent that is not running", { status: "stopped" }],
+    ])("skips %s", async (_label, patch) => {
+      mockAgentRow = { ...mockAgentRow, ...patch };
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.status).toBe(200);
+      expect(mockAfterResponse).not.toHaveBeenCalled();
+      expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not run agent bootstrap for an already-running Ubuntu Desktop", async () => {
     mockAgentRow = {
       ...mockAgentRow,
@@ -1294,6 +1696,79 @@ describe("GET /api/hivra/agents/[id]", () => {
       } finally {
         rmSync(work, { recursive: true, force: true });
       }
+    });
+  });
+
+  // Regression (Gap C): a wallet connected or disconnected while the box was
+  // stopped, or a snapshot restore's old bankr.env, was never re-applied when
+  // the box came back up.
+  describe("wallet env after boot", () => {
+    const OPERATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const READY = `{"vmid":1090,"ready":true,"chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}`;
+    const poll = () => GET(makeGetRequest() as never, { params: Promise.resolve({ id: "agent-1" }) });
+
+    beforeEach(() => {
+      mockAgentRow = { ...mockAgentRow, operation_kind: "start", operation_payload: null };
+    });
+
+    it("re-applies the wallet row once the start completion wins, with the poll's lifecycle context", async () => {
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(mockReconcileWalletEnv).toHaveBeenCalledTimes(1);
+      const [call] = mockReconcileWalletEnv.mock.calls[0];
+      expect(call).toEqual({
+        userId: "user-free",
+        agent: expect.objectContaining({ id: "agent-1", type: "claude-code", status: "running", ip: "10.253.0.90" }),
+        executionContext: expect.objectContaining({ kind: "managed", host: "fixturenode10" }),
+        trigger: "poll",
+      });
+      // The same resolved context the poll itself used, not a re-resolution.
+      expect(call.executionContext.env).toBe(mockRunProxmoxHostScript.mock.calls[0][1]);
+      expect(mockResolveProxmoxTargetConfiguration).toHaveBeenCalledTimes(1);
+      const completeOrder = mockSupabaseRpc.mock.invocationCallOrder[
+        mockSupabaseRpc.mock.calls.findIndex(([name]) => name === "complete_hivra_agent_running")
+      ];
+      expect(completeOrder).toBeLessThan(mockReconcileWalletEnv.mock.invocationCallOrder[0]);
+    });
+
+    it("does not run when another poll wins the completion, the helper failed, or the box is already running", async () => {
+      mockCompleteRunningResult = false;
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+      expect((await poll()).status).toBe(200);
+
+      mockCompleteRunningResult = true;
+      mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_id: OPERATION_ID, operation_kind: "start" };
+      mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: true, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ ok: true, stdout: '{"vmid":1090,"ready":false,"error":"start failed"}\n', stderr: "" });
+      expect((await poll()).status).toBe(200);
+
+      mockAgentRow = { ...mockAgentRow, status: "running", operation_id: null, operation_kind: null, bootstrapped_at: "2026-06-05T12:00:00.000Z" };
+      expect((await poll()).status).toBe(200);
+
+      expect(mockReconcileWalletEnv).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["resolves failed", () => mockReconcileWalletEnv.mockResolvedValue({ status: "failed", error: "ssh timed out" })],
+      ["rejects", () => mockReconcileWalletEnv.mockRejectedValue(new Error("unexpected"))],
+    ])("still reports the box running when the wallet sync %s", async (_label, arrange) => {
+      arrange();
+      mockRunProxmoxHostScript.mockResolvedValueOnce({
+        ok: true, stdout: `${READY}\nHIVRA_OPERATION_RECEIPT ${OPERATION_ID}\n`, stderr: "",
+      });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ success: true, data: { agent: { id: "agent-1", status: "running" } } });
+      expect(mockReconcileWalletEnv).toHaveBeenCalledTimes(1);
     });
   });
 });

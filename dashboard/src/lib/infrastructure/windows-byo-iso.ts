@@ -12,6 +12,7 @@ import {
   resolveSelfManagedProxmoxExecutionContext,
   type SelfManagedProxmoxExecutionContext,
 } from "./proxmox-execution-context";
+import { HIVRA_AGENT_VM_STORAGE_HEADROOM_GB } from "./portable-provisioner-contract";
 
 export const WINDOWS_BYO_ISO_TERMS_VERSION = "windows-byo-iso-v1" as const;
 export const WINDOWS_BYO_ISO_PROTOCOL = "HIVRA_WINDOWS_BYO_ISO_V1" as const;
@@ -625,6 +626,13 @@ export async function launchWindowsByoIso(userId: string, actorIdentity: string,
     const vmidMatch = reconciled.stdout.match(/(?:^|\n)HIVRA_WINDOWS_RESULT\t([1-9][0-9]{2,8})(?:\n|$)/);
     if (!reconciled.ok || !vmidMatch) throw new WindowsByoIsoError("provision_uncertain", "The saved Windows setup request could not be reconciled without risking another VM.");
     return finalizeWindowsLaunch(deps.database, userId, input, operationId, agentId, Number(vmidMatch[1]));
+  }
+
+  // The VM gets a thin sata0 of exactly the requested size, so admit that
+  // size (plus headroom), not only the 64 GB setup floor.
+  const storageAvailable = context.target.capacity.storageBytes?.available ?? null;
+  if (storageAvailable === null || storageAvailable < (input.diskGb + HIVRA_AGENT_VM_STORAGE_HEADROOM_GB) * 1024 ** 3) {
+    throw new WindowsByoIsoError("target_incompatible", "The selected host does not have enough measured free storage for that disk size.");
   }
 
   const attestedAt = deps.now().toISOString();

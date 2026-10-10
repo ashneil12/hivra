@@ -134,6 +134,68 @@
   overflow-wrap: anywhere;
 }
 
+/* Hivra's own setup note: a labelled card, never an owner bubble. */
+.setupNote {
+  border: 1px solid var(--etched-border);
+  border-left: 2px solid var(--ink-black);
+  background: var(--bg-elevated);
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.setupNote summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 44px;
+  padding: 8px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.setupNote summary::-webkit-details-marker {
+  display: none;
+}
+
+.setupNote summary:focus-visible {
+  outline: 2px solid var(--ink-black);
+  outline-offset: -2px;
+}
+
+.setupTitle {
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-black);
+}
+
+.setupSummary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.setupBody {
+  padding: 4px 14px 12px;
+  border-top: 1px solid var(--etched-border);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.setupBody p {
+  margin: 8px 0 0;
+}
+
+.setupBody h2 {
+  margin: 10px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .assistant {
   font-size: 14px;
   line-height: 1.65;

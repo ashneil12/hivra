@@ -28,7 +28,11 @@ import {
   shutdownProxmoxInstance,
   rebootProxmoxInstance,
 } from "@/lib/services/proxmox-instance-service";
-import { isProxmoxReleaseSafeForDbOnlyDelete } from "@/lib/services/proxmox-infrastructure";
+import {
+  getHermesGuestSshTarget,
+  isProxmoxReleaseSafeForDbOnlyDelete,
+  type ProxmoxHostRoutingConfig,
+} from "@/lib/services/proxmox-infrastructure";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
 import {
   acquireHostWakeSlot,
@@ -44,13 +48,14 @@ import {
   resolveInstanceIpv4,
   applyLiveUpdate,
 } from "@/lib/services/instance-orchestrator";
+import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import {
   powerOnServer,
   shutdownServer,
   getServer,
   type HetznerServer,
 } from "@/lib/hetzner/client";
-import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
+import { ensureManagedHostFingerprint, sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { isSshWarmupError, SSH_WARMUP_MESSAGE } from "@/lib/ssh-warmup";
 import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
@@ -102,6 +107,8 @@ import { isRealVeniceByokKey } from "@/lib/venice/byok-classification";
 import { normalizeWelcomeLaunchCapture } from "@/lib/welcome-personalization";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { scheduleSoulSeedReconcileAfterResponse } from "@/lib/recovery/soul-seed-reconcile";
+import { removeBackupAddonBilling } from "@/lib/billing/backup-addon-billing";
+import { backupsIncludedWithInstance } from "@/lib/billing/backup-coverage";
 // Gateway-restart shell builders live in ./gateway-restart-command so this
 // route file stays focused on request handling. Re-exported/imported below;
 // GATEWAY_RESTART_SSH_TIMEOUT_MS is also used by the restart_gateway action.
@@ -393,7 +400,6 @@ const LEGACY_CREDIT_SUSPENSION_REASON = "insufficient_credits";
 const LEGACY_CREDIT_SUSPENSION_CLEARED_REASON = "credit_compute_gate_disabled";
 const ENTITLEMENT_GATED_INSTANCE_ACTIONS = new Set([
   "start",
-  "restore_backup",
   "reboot",
   "update",
   "restart",
@@ -858,10 +864,23 @@ async function buildRuntimeDeployScript(params: {
     globalSettings,
     profileRoutes,
     profilesToRestore,
-    ghcrToken: process.env.GHCR_TOKEN ?? null,
   });
 
   return { gatewayUrl, script };
+}
+
+/**
+ * The sshExec target for a guest command in an action handler: the routed
+ * host plus the VMID being acted on and this instance's id, so the host binds
+ * SSH to that VM and checks it is still this instance's.
+ */
+function guestSshTargetFor(
+  proxmoxInfra: { vmid: number } | null | undefined,
+  hostConfig: ProxmoxHostRoutingConfig | null | undefined,
+  instanceId: string,
+): ProxmoxSshHostConfig | null {
+  if (!proxmoxInfra) return null;
+  return { ...(hostConfig ?? { failClosed: true }), vmid: proxmoxInfra.vmid, instanceId };
 }
 
 async function syncAutoUpdateSchedule(params: {
@@ -909,7 +928,8 @@ async function syncAutoUpdateSchedule(params: {
     // "webui" the webfree provisioning path passes (hetzner-instance-service.ts).
     backend: isWebfreeBackend(instance.backend) ? "webui" : "gateway",
   });
-  const result = await sshExec(ipv4, script);
+  const guestTarget = getHermesGuestSshTarget(instance);
+  const result = await sshExec(ipv4, script, guestTarget ? { proxmoxHostConfig: guestTarget } : {});
 
   if (!result.ok) {
     const detail = result.stderr?.trim() || result.error?.trim() || "";
@@ -1491,11 +1511,7 @@ export async function GET(
     // to re-derive this boolean — a blocking external round-trip on a
     // user-facing hot path. Reading the already-fetched column removes it.
     const backupsEnabled =
-      Boolean(
-        instance!.proxmox_node &&
-        instance!.proxmox_vmid &&
-        ["operator", "fleet", "command", "ws_cloud_pro", "ws_cloud_power", "credit_pro", "credit_power", "paid", "pro", "power"].includes(String(instance!.resource_tier ?? ""))
-      ) || Boolean(instance!.backups_enabled);
+      backupsIncludedWithInstance(instance!) || Boolean(instance!.backups_enabled);
     const [updateAlerts, rawFailureAlerts] = await Promise.all([
       getLatestFailedInstanceUpdateAlerts([id]),
       getLatestInstanceFailureAlerts([id]),
@@ -1580,6 +1596,18 @@ export async function PATCH(
       firstTask,
       context,
     } = parsed.data;
+
+    // Hetzner native backups are a paid add-on. Turning them on only goes
+    // through POST /api/billing/backup-addon, which checks the subscription
+    // and adds the Stripe line item; this settings PATCH must not enable them
+    // for free. Turning them off stays allowed here.
+    if (backupsEnabled === true) {
+      return apiError(
+        "Backups are a paid add-on. Enable them from Billing.",
+        403,
+        { failureType: "backups_require_addon" }
+      );
+    }
 
     // Root plus the Docker socket is intentionally an owner-controlled escape
     // hatch, but it must never be offered on a layout where that socket could
@@ -1970,21 +1998,51 @@ export async function PATCH(
       return apiError("Failed to save settings", 500, updateError);
     }
 
-    if (backupsEnabled !== undefined) {
+    // Only disabling can reach here: enabling was refused above.
+    if (backupsEnabled === false) {
       let serverIdToBackup = updated.hetzner_server_id;
       if (updated.host_id) {
-         const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).single();
+         const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).eq("user_id", userId).single();
          if (host?.hetzner_server_id) serverIdToBackup = host.hetzner_server_id;
+      }
+      // The backup add-on is a paid Stripe line item, and backups_enabled is
+      // the flag that blocks buying it again. Turning backups off has to undo
+      // all three (the line item, the Hetzner backups and the flag), in an
+      // order where a failure never leaves the customer billed for backups
+      // that are not running: stop billing first, then stop the backups, then
+      // clear the flag. Every step is safe to repeat, so a failed request can
+      // be sent again.
+      if (updated.backups_enabled) {
+        try {
+          let instanceIds = [id];
+          if (serverIdToBackup) {
+            const { data: peers } = await supabaseAdmin!
+              .from("hermes_instances")
+              .select("id")
+              .eq("hetzner_server_id", serverIdToBackup)
+              .eq("user_id", userId);
+            instanceIds = Array.from(
+              new Set([id, ...((peers ?? []) as Array<{ id: string }>).map((peer) => peer.id)]),
+            );
+          }
+          await removeBackupAddonBilling({ userId, instanceIds });
+        } catch (error) {
+          log.error("failed to remove the backup add-on from the subscription", error, {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "PATCH",
+            instanceId: id,
+            failureType: "backup_addon_billing_remove_failed",
+          });
+          return apiError("Could not turn backups off right now. Backups are still on and billed. Please try again shortly.", 502, {
+            failureType: "backup_addon_billing_remove_failed",
+          });
+        }
       }
       if (serverIdToBackup) {
           try {
-              if (backupsEnabled) {
-                  const { enableServerBackup } = await import("@/lib/hetzner/client");
-                  await enableServerBackup(serverIdToBackup);
-              } else {
-                  const { disableServerBackup } = await import("@/lib/hetzner/client");
-                  await disableServerBackup(serverIdToBackup);
-              }
+              const { disableServerBackup } = await import("@/lib/hetzner/client");
+              await disableServerBackup(serverIdToBackup);
           } catch (error) {
              log.error("failed to toggle backups on Hetzner", error, {
                source: "instances",
@@ -1999,6 +2057,26 @@ export async function PATCH(
                failureType: "backup_toggle_failed",
              });
           }
+      }
+      if (updated.backups_enabled) {
+        // POST /api/billing/backup-addon flags every instance on the server,
+        // so clear the flag the same way.
+        const flagFilter = serverIdToBackup
+          ? supabaseAdmin!.from("hermes_instances").update({ backups_enabled: false }).eq("hetzner_server_id", serverIdToBackup).eq("user_id", userId)
+          : supabaseAdmin!.from("hermes_instances").update({ backups_enabled: false }).eq("id", id).eq("user_id", userId);
+        const { error: flagError } = await flagFilter;
+        if (flagError) {
+          log.error("failed to clear backups_enabled after turning backups off", flagError, {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "PATCH",
+            instanceId: id,
+            failureType: "backup_flag_clear_failed",
+          });
+          return apiError("Backups were turned off but the setting could not be saved. Please try again.", 500, {
+            failureType: "backup_flag_clear_failed",
+          });
+        }
       }
     }
 
@@ -2068,7 +2146,10 @@ export async function PATCH(
         instanceId: id,
       });
       const ipv4 = await resolveInstanceIpv4(updated, supabaseAdmin!);
-      const result = await applyLiveUpdate(updated, ipv4, globalSettings, supabaseAdmin!);
+      // The owner pressed Save & apply: recreate now (no in-flight deferral).
+      const result = await applyLiveUpdate(updated, ipv4, globalSettings, supabaseAdmin!, {
+        initiator: USER_LIVE_UPDATE,
+      });
       applied = result.applied;
       if (result.applied) {
         applyError = null;
@@ -2558,7 +2639,6 @@ export async function POST(
     const body = await req.json();
     const action = body.action as string;
     actionForOps = action;
-    const backupId = body.backupId as number | undefined;
     const safeSshActionFailure = {
       failureType: "ssh_exec_failed",
       retryable: false,
@@ -3069,6 +3149,7 @@ export async function POST(
             return deferResponse;
           }
           const result = await startProxmoxInstance(proxmoxInfra, {
+            expectedInstanceId: instance!.id,
             hostConfig: wakeHostConfig,
             // Restore onboot so a resumed agent survives host reboots while
             // active — the inverse of the inactivity-pause onboot:0. Without
@@ -3150,22 +3231,10 @@ export async function POST(
         });
         break;
 
-      case "restore_backup":
-        if (!serverId) return apiError("No server attached", 400);
-        if (!backupId) return apiError("No backupId provided", 400);
-        const { rebuildServer } = await import("@/lib/hetzner/client");
-        await rebuildServer(serverId, { image: String(backupId) });
-        await updateInstanceAndHostStatus({
-          instanceId: id,
-          instanceStatus: "redeploying",
-          hostId: instance!.host_id,
-          hostStatus: "provisioning",
-        });
-        break;
-
       case "stop":
         if (proxmoxInfra) {
           const result = await shutdownProxmoxInstance(proxmoxInfra, {
+            expectedInstanceId: instance!.id,
             hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, { host_id: instance!.host_id ?? null }),
           });
           if (!result.ok) {
@@ -3193,6 +3262,7 @@ export async function POST(
       case "reboot":
         if (proxmoxInfra) {
           const result = await rebootProxmoxInstance(proxmoxInfra, {
+            expectedInstanceId: instance!.id,
             hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmoxInfra, { host_id: instance!.host_id ?? null }),
           });
           if (!result.ok) {
@@ -3224,7 +3294,11 @@ export async function POST(
         });
         const ipv4 = await resolveInstanceIpv4(instance!, supabaseAdmin!);
         hostIpForOps = ipv4;
-        const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!);
+        const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!, {
+          initiator: USER_LIVE_UPDATE,
+          // UPDATE NOW brings the box onto the release the registry offers it.
+          imageIntent: "release",
+        });
         if (!result.applied) {
           const retryableSshMessage = normalizeRetryableInstanceActionError(result.error);
           if (retryableSshMessage) {
@@ -3278,8 +3352,9 @@ export async function POST(
             `if [ -z "$AGENT_CONTAINER" ]; then echo "no running agent container for agent-${id}" >&2; exit 1; fi`,
             `docker restart "$AGENT_CONTAINER"`,
         ].join("\n");
-        const res = proxmoxHostConfig
-          ? await sshExec(ipv4, restartScript, { proxmoxHostConfig })
+        const guestTarget = guestSshTargetFor(proxmoxInfra, proxmoxHostConfig, id);
+        const res = guestTarget
+          ? await sshExec(ipv4, restartScript, { proxmoxHostConfig: guestTarget })
           : await sshExec(ipv4, restartScript);
 
         if (!res.ok) {
@@ -3345,13 +3420,14 @@ export async function POST(
         const restartCommand = isWebUIBackend
           ? buildWebUIRuntimeRestartCommand(id, instance!.backend)
           : buildGatewayRestartCommand(containerName, instance!.config);
+        const guestTarget = guestSshTargetFor(proxmoxInfra, proxmoxHostConfig, id);
         const res = isWebUIBackend
           ? await sshExec(ipv4, restartCommand, {
               timeoutMs: GATEWAY_RESTART_SSH_TIMEOUT_MS,
-              ...(proxmoxHostConfig ? { proxmoxHostConfig } : {}),
+              ...(guestTarget ? { proxmoxHostConfig: guestTarget } : {}),
             })
-          : proxmoxHostConfig
-            ? await sshExec(ipv4, restartCommand, { proxmoxHostConfig })
+          : guestTarget
+            ? await sshExec(ipv4, restartCommand, { proxmoxHostConfig: guestTarget })
             : await sshExec(ipv4, restartCommand);
 
         if (!res.ok) {
@@ -3416,18 +3492,14 @@ export async function POST(
             instanceId: id,
           });
           // Only a terminal/access settings apply may replace the native
-          // backend. Routine redeploys and repairs preserve owner edits.
-          const terminalApplyOptions =
-            action === "redeploy" && body.applyTerminalBackend === true
-              ? [{ applyTerminalBackend: true }] as const
-              : [] as const;
-          const result = await applyLiveUpdate(
-            instance!,
-            ipv4,
-            globalSettings,
-            supabaseAdmin!,
-            ...terminalApplyOptions,
-          );
+          // backend. Routine redeploys and repairs preserve owner edits. The
+          // owner asked for this restart, so it recreates now.
+          const result = await applyLiveUpdate(instance!, ipv4, globalSettings, supabaseAdmin!, {
+            initiator: USER_LIVE_UPDATE,
+            ...(action === "redeploy" && body.applyTerminalBackend === true
+              ? { applyTerminalBackend: true }
+              : {}),
+          });
           if (!result.applied) {
             if (isMissingInstanceHostError(result.error)) {
               await supabaseAdmin!

@@ -1,4 +1,6 @@
-import { filterDashboardResources, parseDashboardResources, resourceMatchesPath } from '../dashboard-resources';
+import type { HivraAgent } from '@/lib/hivra/agent-api';
+import { unifyAll } from '@/lib/hivra/unified-agent';
+import { filterDashboardResources, parseAttachedDashboardResources, parseDashboardResources, resourceMatchesPath } from '../dashboard-resources';
 
 const envelope = (source: string, rows: unknown[]) => ({ success: true, data: source === 'hermes' ? rows : { agents: rows } });
 
@@ -12,6 +14,21 @@ describe('dashboard resource projection', () => {
     expect(filterDashboardResources([...hermes, ...hivra], 'x-same')).toEqual(hivra);
   });
 
+  // The shell's sidebar and Cmd-K list the agents added to computers too, each
+  // opening its computer's Chat tab (or the progress while it is being added).
+  it('lists an agent added to a computer by its own uid, opening that computer', () => {
+    const computerId = '11111111-1111-4111-8111-111111111111';
+    const rows = parseAttachedDashboardResources({ success: true, data: { enabled: true, agents: [
+      { id: '77777777-7777-4777-8777-777777777777', phase: 'attached', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running', api_token: 'hidden' },
+      { id: '88888888-8888-4888-8888-888888888888', phase: 'claimed', agentName: 'Codex', computerId, computerName: 'MY_UBUNTU_DESKTOP', computerStatus: 'running' },
+    ] } });
+    expect(rows[0]).toMatchObject({ uid: 'a-77777777-7777-4777-8777-777777777777', source: 'hivra', kind: 'agent', name: 'Codex on MY_UBUNTU_DESKTOP',
+      status: 'running', href: `/dashboard/agent/${computerId}?tab=chat`, hostUid: `x-${computerId}` });
+    expect(rows[1]).toMatchObject({ status: 'provisioning', href: `/dashboard/agent/${computerId}?tab=manage` });
+    expect(JSON.stringify(rows)).not.toContain('hidden');
+    expect(parseAttachedDashboardResources({ success: true, data: { enabled: false, agents: [] } })).toEqual([]);
+  });
+
   it('carries approval metadata without carrying its command text', () => {
     const [resource] = parseDashboardResources(envelope('hermes', [{ id: 'one', name: 'Writer', status: 'running', pendingPrompt: { promptId: 'prompt', kind: 'approval', summary: 'PRIVATE COMMAND' } }]), 'hermes');
     expect(resource.attention).toBe('approval');
@@ -21,6 +38,27 @@ describe('dashboard resource projection', () => {
   it('uses the actual computer profile and working desktop path, with no availability claim', () => {
     const [computer] = parseDashboardResources(envelope('hivra', [{ id: 'box', name: 'Work', type: 'linux-desktop', computer_profile: 'omarchy', status: 'running' }]), 'hivra');
     expect(computer).toMatchObject({ kind: 'computer', description: 'Omarchy', status: 'running', href: '/dashboard/agent/box?tab=desktop' });
+  });
+
+  it('classifies a provider agent with a desktop profile as the computer web Home shows', () => {
+    // An agent type that carries a desktop profile is a computer on web Home
+    // (unified-agent) and in the canonical resource shadow; the sidebar and the
+    // native inventory must list it in the same group, on its desktop.
+    const rows = [
+      { id: 'provider-desktop', name: 'Provider box', type: 'claude-code', computer_profile: 'ubuntu-desktop', status: 'running' },
+      { id: 'agent', name: 'Agent', type: 'claude-code', computer_profile: null, status: 'running' },
+      { id: 'ubuntu', name: 'Ubuntu', type: 'linux-desktop', computer_profile: 'ubuntu-desktop', status: 'running' },
+      { id: 'sandbox', name: 'Sandbox', type: 'linux-terminal', status: 'running' },
+    ];
+    const feed = parseDashboardResources(envelope('hivra', rows), 'hivra');
+    const home = unifyAll([], rows as unknown as HivraAgent[]);
+    expect(feed.find((resource) => resource.id === 'provider-desktop')).toMatchObject({
+      kind: 'computer', description: 'Ubuntu Desktop', href: '/dashboard/agent/provider-desktop?tab=desktop',
+    });
+    for (const row of rows) {
+      expect({ id: row.id, kind: feed.find((resource) => resource.id === row.id)?.kind })
+        .toEqual({ id: row.id, kind: home.find((agent) => agent.id === row.id)?.resourceKind });
+    }
   });
 
   it('opens Windows through the fast desktop handoff from native inventory', () => {

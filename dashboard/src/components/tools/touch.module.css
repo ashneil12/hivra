@@ -1,0 +1,49 @@
+/* Touch sizing and phone layouts for the wallet page and tools surfaces.
+   Components keep their desktop sizes inline; these rules only apply on phones
+   or coarse pointers, so the overrides that beat inline styles use !important. */
+
+@media (max-width: 767px), (pointer: coarse) {
+  .touchButton {
+    min-height: 44px;
+    padding: 10px 14px !important;
+    font-size: 11px !important;
+    justify-content: center;
+  }
+
+  .touchTarget { min-height: 44px; }
+  .dismissButton {
+    width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+    display: inline-grid !important;
+    place-items: center;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .sheetOverlay { align-items: flex-end !important; padding: 0 !important; }
+  .sheetPanel {
+    width: 100% !important;
+    max-height: calc(var(--workspace-viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 24px) !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    border-left: 0 !important;
+  }
+  .sheetFooter { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important; }
+
+  .chipStrip {
+    flex: 1 1 100%;
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .chipStrip::-webkit-scrollbar { display: none; }
+  .chipStrip > * { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
+}
+
+@media (max-width: 480px) {
+  .ownRow { flex: 1 1 100% !important; order: -1; }
+  .ownRow > * { flex: 1 1 auto; justify-content: center; }
+}

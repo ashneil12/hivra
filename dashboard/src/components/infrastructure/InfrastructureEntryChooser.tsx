@@ -27,7 +27,7 @@ export function InfrastructureEntryChooser({
     if (previousPath.current !== path) headingRef.current?.focus();
     previousPath.current = path;
   }, [path]);
-  const title = path === "choose" ? "How would you like to add infrastructure?"
+  const title = path === "choose" ? "How would you like to add capacity?"
     : path === "cloud" ? "Which cloud account do you use?"
       : path === "machine" ? "Where is your machine?"
         : path === "local" ? "Connect a machine on your network" : "Connect an existing server";
@@ -37,7 +37,7 @@ export function InfrastructureEntryChooser({
     <section id="infrastructure-entry-options" className={styles.entryChooser} aria-labelledby="infrastructure-entry-heading">
       <div className={styles.guidedHeading}>
         <div>
-          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add infrastructure"}</span>
+          <span className={styles.eyebrow}>{firstConnection ? "First setup" : "Add capacity"}</span>
           <h2 ref={headingRef} id="infrastructure-entry-heading" tabIndex={-1}>{title}</h2>
         </div>
         {path !== "choose" && <button type="button" className={styles.tertiaryButton} onClick={back}><ArrowLeft size={14} aria-hidden="true" /> Back</button>}
@@ -48,17 +48,23 @@ export function InfrastructureEntryChooser({
             <Cloud size={22} aria-hidden="true" />
             <span className={styles.sectionLabel}>Managed by Hivra</span>
             <h3>Let Hivra host it</h3>
-            <p>{selfHosted ? "Use the separate hosted Hivra service. Your self-hosted installation stays independent." : "Choose a managed plan. Hivra runs and maintains the underlying servers."}</p>
+            <p>{selfHosted
+              ? "Use the separate hosted Hivra service. Your self-hosted installation stays independent."
+              : hivraCloud?.paid
+                ? "Hivra runs and maintains the servers your plan uses."
+                : "Choose a plan and Hivra runs and maintains the servers. Your free account works with the machines you connect yourself."}</p>
             {selfHosted ? <a className={styles.primaryButton} href="https://hivra.cloud/dashboard/infrastructure" target="_blank" rel="noreferrer">Open Hivra Cloud <ExternalLink size={14} aria-hidden="true" /><span className={styles.srOnly}> (opens in a new tab)</span></a>
               : hivraCloud?.paid ? <Link className={styles.primaryButton} href="/dashboard/billing">Manage Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></Link>
-                : <button type="button" className={styles.primaryButton} onClick={onChooseHivraCloud}>Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></button>}
-            <small>{hivraCloud?.paid ? `${hivraCloud.plan?.name ?? "Your plan"} is active. Review plan options in Billing.` : "Review the plan and price before payment."}</small>
+                : <button type="button" className={styles.secondaryButton} onClick={onChooseHivraCloud}>Choose Hivra Cloud <ArrowRight size={14} aria-hidden="true" /></button>}
+            <small>{hivraCloud?.paid ? `${hivraCloud.plan?.name ?? "Your plan"} is active. Review plan options in Billing.` : "Paid plans show their price before payment. Connecting your own machine costs nothing here."}</small>
           </article>
           <article className={styles.guidedChoice}>
             <Cloud size={22} aria-hidden="true" />
             <span className={styles.sectionLabel}>Your provider, your bill</span>
             <h3>Use my cloud account</h3>
-            <p>Connect Hetzner directly, or connect an existing Linux server from another provider.</p>
+            <p>{onConnectDigitalOcean
+              ? "Connect Hetzner or DigitalOcean Managed Agents directly, or connect a Linux server from any other provider."
+              : "Connect Hetzner directly, or connect an existing Linux server from another provider."}</p>
             <button type="button" className={styles.secondaryButton} onClick={() => setPath("cloud")}>Choose cloud provider <ArrowRight size={14} aria-hidden="true" /></button>
             <small>Connecting does not buy a server.</small>
           </article>
@@ -91,7 +97,7 @@ export function InfrastructureEntryChooser({
           ) : null}
           <article className={styles.guidedChoice}>
             <span className={styles.sectionLabel}>Connect over SSH</span><h3>Another provider or existing server</h3>
-            <p>AWS, Google Cloud, Azure, DigitalOcean, OVHcloud, and other providers: create a Linux server with your provider, then connect it here.</p>
+            <p>A Droplet, EC2 instance, or VM from AWS, Google Cloud, Azure, DigitalOcean, OVHcloud, or any other provider: create a Linux server there, then connect it here.</p>
             <button type="button" className={styles.secondaryButton} onClick={() => { setRemoteOrigin("cloud"); setPath("remote"); }}>Use an existing server <ArrowRight size={14} aria-hidden="true" /></button>
             <small>This uses SSH inspection, not a provider API. Hivra checks what the server can actually run.</small>
           </article>
@@ -112,23 +118,36 @@ export function InfrastructureEntryChooser({
             </details>
           ) : null}
           <h3>Before you connect</h3>
-          <ol className={styles.guidedChecklist}>
-            <li><strong>A Linux server.</strong> Hivra checks what it can run without changing it.</li>
-            <li><strong>Its address and SSH key.</strong> Find the hostname or IP in your provider or machine settings. Have a key file ready that already lets you sign in.</li>
-            <li><strong>A way to verify its identity.</strong> Open the server’s trusted console. The next step shows how to check its fingerprint so Hivra connects to the right machine.</li>
-          </ol>
+          {path === "remote" ? (
+            // The setup command is the default path (slice 13); SSH details are
+            // its advanced alternative, offered in the next step.
+            <ol className={styles.guidedChecklist}>
+              <li><strong>A Linux server.</strong> Ubuntu 22.04 or 24.04 on x86, with a public IPv4 address that accepts SSH from the internet.</li>
+              <li><strong>A terminal on it</strong> as root or a user who can use sudo. You paste one command there, and it asks before it changes anything.</li>
+              <li><strong>This page, open.</strong> When the server reports, Hivra shows its name, address and SSH identity, and you confirm it’s yours. Hivra then checks what it can run.</li>
+            </ol>
+          ) : (
+            <ol className={styles.guidedChecklist}>
+              <li><strong>A Linux server.</strong> Hivra checks what it can run without changing it.</li>
+              <li><strong>Its address and SSH key.</strong> Find the hostname or IP in your provider or machine settings. Have a key file ready that already lets you sign in.</li>
+              <li><strong>A way to verify its identity.</strong> Open the server’s trusted console. The next step shows how to check its fingerprint so Hivra connects to the right machine.</li>
+            </ol>
+          )}
+          {path === "remote" ? (
+            <p>Proxmox VE, or no terminal on the server? The next step also lets you connect with SSH details instead.</p>
+          ) : null}
           <details className={styles.hostSupportDisclosure}>
             <summary>What can this machine run?</summary>
-            <p>Existing Proxmox/KVM can run hardware VMs after readiness checks. Compatible Ubuntu amd64 with root access and cgroup v2 can be prepared for Linux terminal and Python sandboxes; these do not provide a desktop or Windows.</p>
+            <p>Existing Proxmox/KVM can run hardware VMs after readiness checks. Compatible Ubuntu amd64 with root or passwordless sudo and cgroup v2 can be prepared for Linux terminal and Python sandboxes; these do not provide a desktop or Windows.</p>
             <p>Proxmox manages the host; KVM provides the hardware-VM isolation boundary. A cloud VM needs nested KVM to host hardware VMs. Linux sandboxes use gVisor’s application-kernel boundary, not a hardware VM. Connecting does not guarantee compatibility.</p>
           </details>
           <p>Preparation and launch are separate steps you approve after inspection.</p>
           <div className={styles.entryActions}>
-            {path !== "local" || selfHosted ? <button type="button" className={styles.primaryButton} onClick={onConnectExisting}>Connect existing host <ArrowRight size={14} aria-hidden="true" /></button> : <button type="button" className={styles.secondaryButton} onClick={() => { setRemoteOrigin("machine"); setPath("remote"); }}>Use a remote server instead <ArrowRight size={14} aria-hidden="true" /></button>}
+            {path !== "local" || selfHosted ? <button type="button" className={styles.primaryButton} onClick={onConnectExisting}>Connect a server you already have <ArrowRight size={14} aria-hidden="true" /></button> : <button type="button" className={styles.secondaryButton} onClick={() => { setRemoteOrigin("machine"); setPath("remote"); }}>Use a remote server instead <ArrowRight size={14} aria-hidden="true" /></button>}
           </div>
         </div>
       )}
-      <p className={styles.guidedFootnote}>Your infrastructure choice does not change who operates your Hivra control plane. Connecting, preparation, payment, and launch are separate steps.</p>
+      <p className={styles.guidedFootnote}>Where your agents run doesn’t change who operates Hivra. Connecting, setup, payment, and launch are each their own step.</p>
     </section>
   );
 }

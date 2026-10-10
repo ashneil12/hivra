@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  HIVRA_AGENT_VM_DISK_GB,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_DIRECTORY,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
@@ -104,7 +105,7 @@ describe("portable provisioner source contract", () => {
   it("keeps the immediately prior releases compatible after a version bump", () => {
     // Regression: the lists end with the current-version constant, so bumping it
     // to 2026.09.21.1 silently dropped installed 2026.09.15.2 computers.
-    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1"]) {
+    for (const prior of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4"]) {
       expect(isCompatibleProviderVmProvisionerVersion(prior)).toBe(true);
       expect(supportsModelSettingsProvisionerVersion(prior)).toBe(true);
     }
@@ -204,7 +205,7 @@ describe("portable provisioner source contract", () => {
   it("ships the guest model-setting dependency in the verified bundle and installer", () => {
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-chat/llm-application.js");
     expect(source("provision-claude-code-box.sh")).toContain("hivra-chat/llm-application.js");
-    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js; do");
+    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do");
     expect(source("hivra-chat/server.js")).toContain('require("./llm-application.js")');
   });
   it("derives runtime compatibility from every runtime the vendored bundle accepts", () => {
@@ -250,6 +251,13 @@ describe("portable provisioner source contract", () => {
     expect(runtimeInstaller).toContain(
       'LOGIN_HINT="sudo -iu ${AGENT_USER} claude auth login"',
     );
+  });
+
+  it("admits the same guest disk size the host provisioner creates", () => {
+    const hostProvisioner = source("hivra-provision-on-host.sh");
+    const defaultDisk = hostProvisioner.match(/^DISK_GB="\$\{HIVRA_DISK_GB:-([0-9]+)\}"$/m)?.[1];
+    expect(Number(defaultDisk)).toBe(HIVRA_AGENT_VM_DISK_GB);
+    expect(hostProvisioner).toContain('qm disk resize "$VMID" scsi0 "${DISK_GB}G"');
   });
 
   it("rebases only provisioner-directory critical assets for Advanced mode", () => {
@@ -389,7 +397,7 @@ describe("portable provisioner source contract", () => {
   it("ships a bounded guest runtime updater that preserves identity and rolls back failed gateway assets", () => {
     const updater = source("hivra-update-guest-runtime.sh");
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-update-guest-runtime.sh");
-    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs index.html app.js)");
+    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)");
     expect(updater).toContain('ARCHIVE_SHA256="$(sha256sum "$ARCHIVE"');
     expect(updater).toContain('install -o root -g root -m 0600 "$ARCHIVE" "$ROOT_ARCHIVE"');
     expect(updater).toContain('sha256sum "$ROOT_ARCHIVE"');
@@ -401,6 +409,130 @@ describe("portable provisioner source contract", () => {
     expect(updater).toContain('meta.surfaceAuth === "post-cookie-v1"');
     expect(updater).toContain("HIVRA_GUEST_RUNTIME_UPDATED");
     expect(updater).not.toMatch(/\.codex|\.claude|\/home\/bux\/\.env|SOUL\.md|USER\.md/);
+  });
+
+  it("delivers persistent terminal sessions to running computers without ending open shells", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    expect(updater).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\s/);
+    expect(updater).toContain('AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf');
+    expect(updater).toContain('BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service');
+    // Linux computers keep their terminals in the shared workspace.
+    expect(updater).toContain(`sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' "$WORK/bux-ttyd-base-path.conf" "$WORK/bux-box-ttyd.service"`);
+    // Units are backed up and restored on rollback.
+    expect(updater).toContain('"$BACKUP/bux-box-ttyd.service"');
+    expect(updater).toContain('"$BACKUP/bux-ttyd-base-path.conf"');
+    // A terminal is restarted only when idle, decided before the gateway restart drops proxied sockets.
+    expect(updater.indexOf("terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1")).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain("terminal_idle 7682 /run/hivra-box-terminal/ttyd.sock && RESTART_BOX_TTYD=1");
+    expect(updater).toContain("systemctl try-restart bux-box-ttyd.service; then rollback");
+    expect(updater).toContain("HIVRA_TERMINAL_RESTART_DEFERRED");
+    // The update fails unless systemd loaded the session-keeping terminal settings.
+    expect(updater).toContain(`systemctl show -p ExecStart --value "$unit" | grep -Fq '/usr/local/bin/hivra-agent-shell --'`);
+  });
+
+  it("keeps in-flight chat runs alive across gateway restarts on new and updated guests", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    const dropIn = "/etc/systemd/system/bux-hivra-chat.service.d/10-hivra-detached-runs.conf";
+    for (const script of [installer, updater]) expect(script).toContain("'[Service]' 'KillMode=process'");
+    expect(installer).toContain(dropIn);
+    expect(updater).toContain('DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"');
+    expect(updater).toContain('node --check "$WORK/chat-runs.cjs"');
+    expect(updater).toContain('bash -n "$WORK/hivra-agent-shell"');
+    // The drop-in is backed up, restored on rollback, reloaded before the
+    // restart, and the update fails unless systemd actually applied it.
+    expect(updater).toContain('"$BACKUP/detached-runs.conf"');
+    expect(updater.indexOf("systemctl daemon-reload; then rollback")).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain('"$(systemctl show -p KillMode --value bux-hivra-chat.service)" != process');
+  });
+
+  it("refreshes the root-owned Telegram helper on running guests with backup and rollback", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    // New guests and updated guests end up with the same root-owned helper.
+    expect(installer).toContain('install -o root -g root -m 0755 "$SRC_DIR/hivra-tg-apply" /usr/local/bin/hivra-tg-apply');
+    expect(updater).toMatch(/TERMINAL_ASSETS=\([^)]*\bhivra-tg-apply\b[^)]*\)/);
+    expect(updater).toContain('tar -czf "$ARCHIVE" -C "$PROVISIONER_DIR/hivra-chat" "${ASSETS[@]}" -C "$PROVISIONER_DIR" "${TERMINAL_ASSETS[@]}"');
+    expect(updater).toContain("TG_APPLY=/usr/local/bin/hivra-tg-apply");
+    expect(updater).toContain('install -o root -g root -m 0600 "$TG_APPLY" "$BACKUP/hivra-tg-apply"');
+    expect(updater).toContain(': > "$BACKUP/hivra-tg-apply.absent"');
+    expect(updater).toContain('bash -n "$WORK/hivra-tg-apply"');
+    const rollback = shellFunction(updater, "rollback", "\n}\n");
+    expect(rollback).toContain('install -o root -g root -m 0755 "$BACKUP/hivra-tg-apply" "$TG_APPLY"');
+    expect(rollback).toContain('elif [ -f "$BACKUP/hivra-tg-apply.absent" ]; then rm -f -- "$TG_APPLY"; fi');
+    expect(rollback).toContain('"$TG_APPLY.next"');
+    // Checked before it is installed; installed before the gateway restart
+    // whose failure rolls everything back.
+    const install = updater.indexOf('install -o root -g root -m 0755 "$WORK/hivra-tg-apply" "$TG_APPLY.next"');
+    expect(install).toBeGreaterThan(updater.indexOf('bash -n "$WORK/hivra-tg-apply"'));
+    expect(install).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    expect(updater).toContain('mv -f -- "$TG_APPLY.next" "$TG_APPLY"');
+    // It never rewrites the bot token or the sudoers grant.
+    expect(updater).not.toMatch(/tg\.env|>\s*\/etc\/sudoers/);
+  });
+
+  it("installs the optional Claude app helper on Ubuntu Desktop computers only, through both lanes, with rollback and no restart of a running app", () => {
+    const updater = source("hivra-update-guest-runtime.sh");
+    const installer = source("provision-claude-code-box.sh");
+    for (const file of ["hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json"]) {
+      expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
+      expect(updater).toMatch(new RegExp(`TERMINAL_ASSETS=\\([^)]*\\b${file.replace(".", "\\.")}\\b[^)]*\\)`));
+    }
+    // New computers: Ubuntu Desktop on the managed Proxmox lane only, nothing started.
+    expect(installer).toContain('if [ "$AGENT_KIND" = "linux-desktop" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then\n  install -o root -g root -m 0755 "$SRC_DIR/hivra-claude-app.py" /usr/local/bin/hivra-claude-app');
+    expect(installer).toContain('install -o root -g root -m 0644 "$SRC_DIR/claude-desktop-pin.json" /usr/local/share/hivra/claude-desktop-pin.json');
+    expect(installer).not.toMatch(/systemctl (enable|start|restart)[^\n]*hivra-claude-app/);
+    // Running computers: only for the linux-desktop kind, checked before install,
+    // backed up, restored on rollback, and the sudoers rule validated first.
+    expect(updater).toContain('if [ "$KIND_BEFORE" = linux-desktop ]; then\n  install -d -o root -g root -m 0755 "$CLAUDE_APP_PIN_DIR"');
+    expect(updater).toContain("ast.parse(open(sys.argv[1], encoding=\"utf-8\").read())' \"$WORK/hivra-claude-app.py\"");
+    expect(updater).toContain('visudo -cf "$CLAUDE_APP_SUDOERS.next"');
+    const rollback = shellFunction(updater, "rollback", "\n}\n");
+    expect(rollback).toContain('"$CLAUDE_APP_SUDOERS:hivra-claude-app.sudoers:0440"');
+    expect(rollback).toContain('elif [ -f "$BACKUP/$name.absent" ]; then rm -f -- "$target"; fi');
+    const install = updater.indexOf('install -o root -g root -m 0755 "$WORK/hivra-claude-app.py" "$CLAUDE_APP.next"');
+    expect(install).toBeGreaterThan(updater.indexOf('ast.parse(open(sys.argv[1]'));
+    expect(install).toBeLessThan(updater.indexOf("systemctl restart bux-hivra-chat.service; then rollback"));
+    // An update never restarts or stops the supervisor, so an open Claude session
+    // is never interrupted by Update & restart.
+    expect(updater).not.toMatch(/systemctl [^\n]*(restart|stop|start|enable|disable)[^\n]*hivra-claude-app/);
+    // The grant is exact and identical in both lanes.
+    const grant = "NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove";
+    expect(updater).toContain(grant);
+    expect(installer).toContain(grant);
+  });
+
+  it("gives Agent Zero a stop grace that fits inside every host shutdown budget", () => {
+    const installer = source("provision-claude-code-box.sh");
+    const unit = installer.slice(
+      installer.indexOf("cat > /etc/systemd/system/hivra-agent-zero.service <<UNIT"),
+      installer.indexOf("chmod 0644 /etc/systemd/system/hivra-agent-zero.service"),
+    );
+    const grace = Number((unit.match(/^ExecStop=\/usr\/bin\/docker stop -t (\d+) hivra-agent-zero$/m) || [])[1]);
+    const unitTimeout = Number((unit.match(/^TimeoutStopSec=(\d+)$/m) || [])[1]);
+    // Every way the dashboard shuts a Hivra computer down gracefully before
+    // it hard-stops the VM (`qm stop`): lifecycle stop/restart/update/resize,
+    // idle parking, snapshot restore and the prepared canary computers.
+    const dashboard = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), "utf8");
+    const lifecycle = dashboard("src/app/api/hivra/agents/[id]/action/route.ts");
+    const lifecycleBudgets = [...lifecycle.matchAll(/verifiedStop(?:VmBody|VmScript)\(vmid, (\d+)[,)]/g)].map((m) => Number(m[1]));
+    const otherBudgets = [
+      "src/lib/hivra/park-idle-agents.ts",
+      "src/lib/hivra/agent-snapshots.ts",
+      "src/lib/hivra/prepared-canary-computers.ts",
+    ].flatMap((file) => [...dashboard(file).matchAll(/qm shutdown \S+ --timeout (\d+)/g)].map((m) => Number(m[1])));
+    // stop, restart and resize at least; the other three files one or more each.
+    expect(lifecycleBudgets.length).toBeGreaterThanOrEqual(3);
+    expect(otherBudgets.length).toBeGreaterThanOrEqual(3);
+    const shortestHostBudget = Math.min(...lifecycleBudgets, ...otherBudgets);
+
+    // More than docker's 10 s default, which kills Agent Zero mid-save.
+    expect(grace).toBeGreaterThan(10);
+    // systemd never kills `docker stop` before the container's grace ends...
+    expect(unitTimeout).toBeGreaterThanOrEqual(grace + 5);
+    // ...and the whole guest still powers off (10 s for everything else)
+    // before the host gives up on its graceful shutdown and hard-stops the VM.
+    expect(unitTimeout + 10).toBeLessThanOrEqual(shortestHostBudget);
   });
 
   it("does not default installer dependencies to a moving main/latest reference", () => {
@@ -516,6 +648,11 @@ describe("portable provisioner source contract", () => {
       path.join(process.cwd(), "src/app/dashboard/agent/[id]/page.tsx"),
       "utf8",
     );
+    // The page's embedded surfaces share one bootstrap handshake.
+    const surfaceBootstrap = readFileSync(
+      path.join(process.cwd(), "src/components/hivra/useSurfaceBootstrap.ts"),
+      "utf8",
+    );
 
     expect(server).toContain('req.method === "POST" && u === "/auth/bootstrap"');
     expect(server).toContain('const AUTH_COOKIE = "__Host-hivra_auth"');
@@ -526,11 +663,16 @@ describe("portable provisioner source contract", () => {
     expect(server).not.toContain("?token=");
     expect(server).toContain('surfaceAuth: "post-cookie-v1"');
     expect(page).toContain('method="POST"');
-    expect(page).toContain('/auth/bootstrap');
-    expect(page).toContain('record.surfaceAuth === "post-cookie-v1"');
-    expect(page).not.toContain('legacyQueryToken');
-    expect(page).not.toContain('encodeURIComponent(token)');
-    expect(page).not.toContain('searchParams.set("token"');
+    expect(page).toContain("useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache })");
+    expect(surfaceBootstrap).toContain('/auth/bootstrap');
+    expect(surfaceBootstrap).toContain('record.surfaceAuth === "post-cookie-v1"');
+    expect(surfaceBootstrap).toContain('credentials: "omit"');
+    for (const client of [page, surfaceBootstrap]) {
+      expect(client).not.toContain('legacyQueryToken');
+      expect(client).not.toContain('encodeURIComponent(token)');
+      expect(client).not.toContain('searchParams.set("token"');
+      expect(client).not.toContain("postMessage");
+    }
     expect(provision).not.toMatch(/sudo env[^\n]*HIVRA_MODEL_KEY/);
     expect(provision).not.toMatch(/HIVRA_TUNNEL_TOKEN_B64=[^\n]*bash -s/);
     expect(provision).toContain("guest_launch_document |");
@@ -742,7 +884,7 @@ wait_for_browser_ready '${envFile}' 9333
       "4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7",
       "2.98.0",
       "f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6",
-      "@anthropic-ai/claude-code@2.1.246",
+      "@anthropic-ai/claude-code@2.1.292",
       "@openai/codex@0.149.1",
       "openclaw@2026.6.10",
       "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",

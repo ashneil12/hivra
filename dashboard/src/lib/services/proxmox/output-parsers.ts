@@ -128,9 +128,16 @@ export function parseProxmoxTemplateAvailabilityOutput(stdout: string): {
 // netout monotonic counters we need for delta-based billing. The verbose
 // form gives us the live process counters we can subtract across samples.
 
+export type ProxmoxCpuSecondsSource =
+  | "kvm_proc"
+  | "qm_cputime"
+  | "qm_cpu_estimate"
+  | "none";
 export interface ProxmoxInstanceMetrics {
   /** Cumulative CPU seconds consumed by the VM since boot. */
   cpu_seconds_total: number;
+  /** Where cpu_seconds_total came from; "none" means no CPU reading at all. */
+  cpu_seconds_source: ProxmoxCpuSecondsSource;
   /** Peak / current RAM usage (bytes). */
   ram_peak_bytes: number;
   /** Disk usage (bytes) at sample time. */
@@ -202,17 +209,32 @@ export function parseProxmoxMetricsOutput(output: string): ProxmoxInstanceMetric
   const uptime = parseMetricNumber(raw.uptime);
   // Cumulative IO counters since boot.
   const netout = parseMetricNumber(raw.netout);
-  // CPU seconds: qm reports `cputime` as accumulated host CPU time
-  // (seconds, fractional). Older Proxmox builds may only report `cpu`
-  // (instantaneous fraction of one core) — we fall back to runtime *
-  // cpu (an estimate) only when cputime is missing, so the column is
-  // never empty.
+  // CPU seconds, cumulative since VM start. The primary source is utime+stime
+  // of the VM's kvm process (`proc_cpu_ticks` / `clk_tck`). A one-shot
+  // `qm status --verbose` cannot report CPU: PVE computes `cpu` from two
+  // samples inside one long-lived process, so on PVE 9 it prints neither
+  // `cpu` nor `cputime` and every sample used to record 0. `cputime` and the
+  // `uptime * cpu` estimate stay as fallbacks for hosts that do print them.
+  const procCpuTicks = parseMetricNumber(raw.proc_cpu_ticks);
+  const clkTck = parseMetricNumber(raw.clk_tck);
   const cputime = parseMetricNumber(raw.cputime);
   const cpuFraction = parseMetricNumber(raw.cpu);
-  const cpuSecondsTotal = cputime > 0 ? cputime : Math.max(0, uptime * cpuFraction);
+  let cpuSecondsTotal = 0;
+  let cpuSecondsSource: ProxmoxCpuSecondsSource = "none";
+  if (procCpuTicks > 0 && clkTck > 0) {
+    cpuSecondsTotal = procCpuTicks / clkTck;
+    cpuSecondsSource = "kvm_proc";
+  } else if (cputime > 0) {
+    cpuSecondsTotal = cputime;
+    cpuSecondsSource = "qm_cputime";
+  } else if (uptime > 0 && cpuFraction > 0) {
+    cpuSecondsTotal = uptime * cpuFraction;
+    cpuSecondsSource = "qm_cpu_estimate";
+  }
 
   return {
     cpu_seconds_total: cpuSecondsTotal,
+    cpu_seconds_source: cpuSecondsSource,
     ram_peak_bytes: Math.round(memUsed > 0 ? memUsed : maxmem),
     disk_used_bytes: Math.round(
       guestDiskUsed > 0 ? guestDiskUsed : (diskUsed > 0 ? diskUsed : maxdisk)

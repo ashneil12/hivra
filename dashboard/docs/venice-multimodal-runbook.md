@@ -28,27 +28,64 @@ One Venice API key now unlocks every modality the agent and dashboard expose. Bi
 
 ## How metering works
 
-The chat path has full per-call pricing (`reserveManagedVeniceChatRequest` → token-level recost → refund-or-flag). Every other modality is **offline-reconciled**:
+Every managed-Venice request goes to Venice with **Hivra's** upstream key, so Venice bills Hivra whether or not the user can pay. The chat path reserves per call (`reserveManagedVeniceChatRequest` → token-level recost → refund-or-flag). Every paid media route (images, video, audio, embeddings, web search/scrape, and the paid paths of the `[...path]` passthrough) goes through the **media spend gate** in [`lib/venice/media-spend-gate.ts`](../src/lib/venice/media-spend-gate.ts):
 
-1. Each successful upstream call writes a row to `managed_venice_usage_events` via [`recordManagedVeniceMultimodalUsage()`](../src/lib/venice/proxy-settlement.ts).
-2. The row carries `endpoint` (e.g. `/api/v1/images/generate`), `model` (e.g. `qwen-image-2`), `metadata` (resolution / duration / token counts / etc.), `actual_cost_micro_usd=0`, `charged_micro_usd=0`, and `status='reconciliation_required'`.
-3. **No per-call wallet deduction** for multi-modal. The user's proxy key is NOT paused on these rows — that's the explicit difference from `markManagedVeniceReconciliationRequired()`, which is for settlement failures.
-4. Settlement happens against Venice's monthly invoice via `/api/ops/managed-venice/invoice-reconciliation` (run on demand by ops).
+1. **Price before forwarding.** The request is priced from the in-code catalog [`lib/venice/multimodal-pricing.ts`](../src/lib/venice/multimodal-pricing.ts) as a conservative ceiling (`computeVeniceMultimodalHoldCost`: a request that sends no tier holds at the most expensive published tier, variant counts round up). An operation the catalog can't price (today: video, music, STT, embeddings, multi-edit, background removal, text parser, voice clone, crypto RPC, and any image/edit model not in the catalog) is **refused with a 402** and never sent to Venice.
+2. **Hold.** The ceiling (after `MANAGED_VENICE_MULTIMODAL_MARKUP`) is reserved on the key's wallet with the same reservation table, DB balance trigger and monthly spend cap as chat. A wallet that can't cover it gets a 402 (`managed_venice_insufficient_balance`) and Venice is never called. If the balance can't be checked, the request fails closed with a 503.
+3. **Settle.** Venice error or no answer → the hold is released and nothing is charged. A 2xx → the catalog's settlement price (the price of the tier that was sent, or of Venice's default tier when none was; never more than the hold) is captured from the hold, and a `status='recorded'` usage row + `usage_capture` financial event are written.
+
+Priced image generation models: `qwen-image-2`, `nano-banana-2`, `nano-banana-pro`, `gpt-image-2`, `venice-sd35` and `grok-imagine-image`, which is every model the agent's Venice image plugin offers. Edits: `seedream-v4-edit`, `firered-image-edit`, `nano-banana-2-edit`, `nano-banana-2-lite-edit`. Also upscale, Kokoro TTS, web search and web scrape.
+
+**Every wallet debit is one database transaction.** Captures and hold-less debits (chat overage, the backlog pass) call `capture_managed_venice_reservation` and `debit_managed_venice_wallet` (migration `20260925201500_managed_venice_atomic_wallet_debits.sql`). Each takes the per-user wallet lock the reservation and card balance guards use, debits token lots oldest first with the lots row-locked (or writes one card ledger debit), and, for a capture, marks the hold captured in the same transaction. Before this, ten images captured at once on a $1.00 lot all wrote $0.95, so the wallet paid for one image in ten; a debit spanning two lots could land on one and fail on the other; and a capture retried after a lost response was charged twice. Now a debit lands whole or not at all, and a hold that is no longer active is never charged again.
+
+**A chat, Anthropic or Responses stream that Venice answered 200 is settled in the request, however it ends.** When the client disconnects, the route stops forwarding but keeps reading Venice to its usage frame (or the routes' 270 s deadline), so the request is charged Venice's exact usage, hidden reasoning included: a reasoning model's thinking (GPT-5.x, encrypted Responses reasoning) never appears in the stream. The routes keep the function alive for that with `next/server` `after`. Only when the usage never arrives (the deadline, a broken stream, Venice leaving it out) is the stream charged the input estimate plus the output it read ([`lib/venice/stream-output-meter.ts`](../src/lib/venice/stream-output-meter.ts): the larger of the frames that carried text and a token per 4 ASCII characters plus a token per other character; Responses output sent only in `.done` events counts too), and those rows carry `metadata.pricingPolicy = managed_venice_observed_output_capture`. Either way a cost past the hold captures the hold and debits the rest as `<reference>:overage`; an overage the wallet cannot cover files `managed_venice_overage_uncovered` and pauses the key. The rest of the hold goes straight back. `venice_parameters.strip_thinking_response` is refused (400), since it hides the reasoning a stream would otherwise carry. A refused request's hold is released, a Venice 5xx included; if that release fails, `managed_venice_chat_release_failed` is filed. The Cloudflare Worker does the same through `/internal/settle`: after the box disconnects it reads Venice for up to 20 s more (Cloudflare allows 30 s of `waitUntil` work), then sends the usage or `observedOutputTokens`; it retries settles until they land, runs everything after authorize under `waitUntil`, and chooses each hold's reference itself so it can release the hold after any failure that follows authorize. A release that finds no hold yet answers 503, so the Worker retries while a slow authorize may still commit one.
+
+**Holds that the request could not settle** are settled by the stale-hold sweep ([`lib/venice/reservation-sweep.ts`](../src/lib/venice/reservation-sweep.ts)), run hourly by `/api/cron/managed-venice-hold-sweep`. Items are settled 15 minutes after they are filed:
+- Every hold has an `expires_at`: one hour for media, a day for chat and Responses. Each media hold records what a success is charged (`metadata.captureOnSuccessMicroUsd`); each chat hold records its input estimate and output price.
+- Venice answered 2xx but the request could not write its charge: the hold is **captured**, at the number the request recorded (Venice's reported usage, or the input estimate plus the observed output, with any part past the hold debited as an overage), or the catalog price for media. Only a hold with nothing recorded is charged an estimate: the input plus at most 4,096 output tokens per choice (never more than the pre-request estimate).
+- Venice refused the request and the in-request release failed (`managed_venice_media_release_failed`, `managed_venice_chat_release_failed`): the hold is **released**.
+- A Responses hold whose upstream outcome is unknown (the dispatch threw) is left to an operator for an hour, then **released**. Every other Responses item follows a 200 and is captured.
+- An expired hold with no reconciliation item (the function died mid-request) is **captured** at its estimate: nothing proves Venice didn't run it. Expired holds have their own per-run budget, so a backlog of items never starves them.
+- A hold created before holds expired is left to an operator.
+Swept captures write a usage row (`metadata.pricingPolicy = managed_venice_hold_sweep_capture`) and a `usage_capture` event. The chat reconciliation cron skips both estimated-capture policies, since there are no token counts to re-cost.
+
+A successful paid request is **always charged**. `MANAGED_VENICE_MULTIMODAL_BILLING_ENABLED` does not affect the gate: it only switches the retroactive settlement of old `status='reconciliation_required'` rows written before the gate existed (`settleManagedVeniceMultimodalUsage`, reached from `/api/ops/managed-venice/invoice-reconciliation`; flag off = dry run). If a success released its hold, the gate would only prove the wallet was non-empty, and one small top-up would buy unlimited media on Hivra's key.
+
+**The priced request is the forwarded request.** Before any hold, every paid route refuses (400) a request whose pricing fields (`model`, `modelId`, `scale`, `enhance`, `resolution`, `variants`, `duration`) are repeated, are files, arrays or objects, or where `modelId` (Venice's deprecated alias) names a different model from `model` ([`lib/venice/media-request-fields.ts`](../src/lib/venice/media-request-fields.ts)). On image edit and multi-edit, whichever of `model` / `modelId` is sent is the model priced. JSON bodies are re-serialized after parsing, so a repeated JSON key reaches Venice as the one value that was priced.
+
+Then, for every endpoint the catalog bills, the body that is priced and forwarded is built by `planMediaRequest` (same file):
+
+- **Only documented fields are forwarded.** Each endpoint has a field list taken from Venice's OpenAPI request schema (`MEDIA_REQUEST_POLICIES`); anything else is dropped (and logged), so an undocumented or newly added option, or a name like `model[0]`, can't add to the bill.
+- **Chat web search, web scraping and X search** (`venice_parameters.enable_web_search`, `enable_web_scraping`, `enable_x_search`, and the `web_search` / `x_search` tools on `/v1/chat/completions`) are refused with a 400 by default. With `MANAGED_VENICE_CHAT_SURCHARGES_ENABLED=true` (default OFF, only the exact value `true`) they are accepted and billed at Venice's rate with no markup ([`lib/venice/chat-surcharges.ts`](../src/lib/venice/chat-surcharges.ts)). The hold is the output-cap-aware token hold plus the most the options can cost (web search $0.01, scraping 5 URLs x $0.01, X search 20 results x $0.01); the half-balance rule covers both together and the output cap is lowered first. Capture charges Venice's own `cost` when the response carries it, else the published rates; X search without a reported cost is filed as `managed_venice_x_search_cost_unreported`. A hold made with the flag on is charged its surcharge after the flag is turned off. Model `fallbacks`, unreviewed `venice_parameters` options and unknown tool types stay refused. The reconciliation cron adds `metadata.surchargeMicroUsd` to its re-costed charge so it never refunds the surcharge.
+- **Options Venice bills extra for are refused (400)** when switched on: `enable_web_search`, `enhance_prompt`, `quality` and `style_references` on `image/generate`, `enhance_prompt` and `quality` on `image/edit`. Switched off, they are dropped. The agent's plugins send none of them.
+- **A tier is sent as the tier charged.** Resolution is matched case-insensitively (`"4k"` → `4K`); an upscale `scale` is read as a number, and a factor between tiers goes up to the next published tier (`"3"`, `"4.0"`, `"04"` → 4x) and is sent to Venice as that tier. A value that maps to no published tier (`"8K"`, `scale: 1`) is refused with a 400 before any hold. No tier field at all is Venice's default (1K, 2x): held at the top tier, charged at the default.
+
+### The passthrough is an allowlist
+
+`/api/managed-venice/v1/[...path]` forwards only these paths (evidence: callers in the Hermes agent fork that use `VENICE_BASE_URL`):
+
+| Method | Path | Why it's allowed |
+|---|---|---|
+| GET | `models` | model discovery (normally served by the dedicated `/v1/models` route) |
+| GET | `image/styles` | `venice_extras_tool` style list; free |
+| GET | `crypto/rpc/networks` | `venice_extras_tool` network list; free |
+| GET | `characters` | `venice_characters_tool` public persona list; free |
+| POST | `video/retrieve`, `audio/retrieve` | job polling; the generation was held at queue time |
+| POST | `video/quote`, `audio/quote` | free price previews |
+| POST | `image/generate`, `image/edit`, `image/upscale` | paid; forwarded only under a wallet hold |
+| POST | `image/multi-edit`, `image/background-remove`, `video/queue`, `video/transcriptions`, `audio/voices`, `augment/text-parser`, `crypto/rpc/{network}` | paid; routed through the gate, which refuses them (402) until the catalog prices them |
+
+Everything else — Venice account management (`api_keys*`, `billing*`, ...), unknown paths, upper-case or percent-encoded variants, dot or empty segments, and any other method — gets a 404 and is never fetched.
+
+A paid passthrough request must be `application/json` or `multipart/form-data` and must parse; anything else gets a 415 (wrong type) or 400 (unreadable body) with no hold and no fetch, rather than being priced as if it named no fields. The body forwarded to Venice is rebuilt from the parsed fields (re-serialized JSON, or the parsed form with a fresh boundary). Free POSTs (`*/retrieve`, `*/quote`) still forward their original bytes.
 
 ### Why the chat reconciliation cron skips multi-modal
 
 `/api/cron/managed-venice-reconciliation` (daily 09:00 UTC) is for chat only — it filters at the SQL layer to `endpoint='/api/v1/chat/completions'`. Without that filter, multi-modal rows show up as `unpriceable_model` (their model ids aren't in the chat catalog) and trigger a daily warn-level ops alert. Filter landed in PR #157.
 
-### Adding per-modality pricing (deferred follow-up)
+### Pricing more operations
 
-When you're ready to bill multi-modal per call (instead of monthly), the work is:
-
-1. Add price tables: `lib/venice/image-pricing.ts`, `lib/venice/video-pricing.ts`, `lib/venice/audio-pricing.ts`, `lib/venice/embeddings-pricing.ts`, `lib/venice/web-pricing.ts`.
-2. Wrap each multi-modal route: replace `recordManagedVeniceMultimodalUsage()` with a per-modality `reserve` → upstream → `capture` flow mirroring `reserveManagedVeniceChatRequest` / `captureManagedVeniceChatUsage`.
-3. Extend `/api/cron/managed-venice-reconciliation` to handle each modality (currently scoped to chat by `CHAT_COMPLETIONS_ENDPOINT`).
-4. Per-modality drift alerts.
-
-Pricing moves fast on Venice — defer until a model surface stabilizes.
+To unblock an operation the gate refuses, add a Venice list-price entry to `VENICE_MULTIMODAL_PRICES` (with its unit and, for tiered prices, the tier key), a request policy for a new endpoint in `MEDIA_REQUEST_POLICIES`, and a test. Never add a guessed price: the gate treats the catalog as the only source of truth. Pricing moves fast on Venice — re-pull the catalog from docs.venice.ai when it goes stale, and compare it with `model_spec.pricing` in Venice's public `GET https://api.venice.ai/api/v1/models?type=<image|inpaint|upscale|tts>` (no key needed), which can be higher than the docs page (it prices `nano-banana-2-edit` by resolution while the docs list a flat $0.10). Where they differ, the catalog takes the higher price. Where `GET /models` also prices by `quality` (e.g. `gpt-image-2`), the catalog charges the resolution price, which is at or above every quality price, and the gate refuses requests that set `quality`. Last full check against both sources: 2026-09-25.
 
 ## How to redeploy a tenant VM with the new code
 

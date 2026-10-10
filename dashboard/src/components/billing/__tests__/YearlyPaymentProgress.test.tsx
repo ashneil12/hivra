@@ -166,7 +166,7 @@ it("offers no one-tap wallet link while a payment for the tier is under review",
 
 it("says in the payment modal that a $HermesOS payment is final", () => {
   render(<YearlyTokenPaymentModal isOpen tier="pro" loading={false} error={null} quote={quote()} onClose={() => {}} />);
-  expect(screen.getByText("$HermesOS payments are final and can't be refunded.")).toBeInTheDocument();
+  expect(screen.getByText("Token payments are final, except where the law gives you a right to cancel.")).toBeInTheDocument();
 });
 
 describe("YearlyTokenPaymentModal", () => {

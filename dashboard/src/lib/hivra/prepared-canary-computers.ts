@@ -10,6 +10,7 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { ComputerTemplateId } from "./computer-catalog";
+import { resolvePlanAgentSlots } from "./resource-gate";
 
 const Slot = z.object({
   host: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
@@ -21,7 +22,7 @@ const Slot = z.object({
 const Slots = z.object({ omarchy: Slot, windows: Slot }).strict();
 export type PreparedCanaryProfile = "omarchy" | "windows";
 export type PreparedCanarySlot = z.infer<typeof Slot>;
-export type PreparedCanaryLifecycleAction = "start" | "stop" | "restart";
+export type PreparedCanaryLifecycleAction = "start" | "stop" | "restart" | "force_stop" | "force_restart";
 
 type PreparedCanaryComputerRow = {
   type?: unknown;
@@ -65,19 +66,36 @@ export function preparedCanaryLifecycleScript(
 ): string {
   const encodedMarker = `hivra-${profile}-operation%3A${slot.claim}`;
   const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
-  const desiredOnboot = action === "stop" ? 0 : 1;
+  const desiredOnboot = action === "stop" || action === "force_stop" ? 0 : 1;
+  // Stop and Restart ask the computer to shut down and switch it off only if
+  // it hasn't after 60 s, and say which (HIVRA_STOP_MODE, with the wait
+  // measured on the host and that 60 s budget: a shutdown can also fail
+  // sooner). Force off and Force restart switch it off at once.
+  const shutdown = `if [ "$CURRENT_STATUS" != stopped ]; then
+  SHUTDOWN_STARTED="$(date +%s)"
+  if qm shutdown "$VMID" --timeout 60; then
+    echo "HIVRA_STOP_MODE graceful"
+  else
+    SHUTDOWN_WAITED="$(( $(date +%s) - SHUTDOWN_STARTED ))"
+    [ "$SHUTDOWN_WAITED" -ge 0 ] || SHUTDOWN_WAITED=0
+    qm stop "$VMID"
+    echo "HIVRA_STOP_MODE forced $SHUTDOWN_WAITED 60"
+  fi
+fi`;
+  const switchOff = `if [ "$CURRENT_STATUS" != stopped ]; then
+  qm stop "$VMID" --overrule-shutdown 1 --timeout 30 || qm stop "$VMID" --timeout 30
+fi`;
   const transition = action === "stop"
-    ? `if [ "$CURRENT_STATUS" != stopped ]; then
-  qm shutdown "$VMID" --timeout 60 || qm stop "$VMID"
-fi
+    ? `${shutdown}
 EXPECTED_STATUS=stopped`
-    : action === "restart"
-      ? `if [ "$CURRENT_STATUS" != stopped ]; then
-  qm shutdown "$VMID" --timeout 60 || qm stop "$VMID"
-fi
+    : action === "force_stop"
+      ? `${switchOff}
+EXPECTED_STATUS=stopped`
+      : action === "restart" || action === "force_restart"
+        ? `${action === "restart" ? shutdown : switchOff}
 qm start "$VMID" 8>&-
 EXPECTED_STATUS=running`
-      : `if [ "$CURRENT_STATUS" = stopped ]; then qm start "$VMID" 8>&-; fi
+        : `if [ "$CURRENT_STATUS" = stopped ]; then qm start "$VMID" 8>&-; fi
 EXPECTED_STATUS=running`;
   return `set -euo pipefail
 VMID=${slot.vmid}
@@ -168,9 +186,17 @@ const defaults: Dependencies = {
   },
   insert: async row => {
     if (!supabaseAdmin) throw new Error("database_unavailable");
-    const { data, error } = await supabaseAdmin.from("hivra_agents").insert(row).select().single();
-    if (error || !data) throw error ?? new Error("insert_unconfirmed");
-    return data as AgentRow;
+    // A prepared computer is a Hivra-managed row, so the database writes it
+    // only after counting the owner's plan slots under the slot lock (T35).
+    const slots = await resolvePlanAgentSlots(String(row.user_id));
+    if (!slots) throw new Error("plan_access_required");
+    if (slots.freeAccount) throw new Error("hosted_compute_requires_plan");
+    const { data, error } = await supabaseAdmin.rpc("insert_hivra_managed_agent", { p_row: row, p_agent_limit: slots.agentLimit });
+    if (error) throw error;
+    const result = data as { status?: unknown; row?: unknown } | null;
+    if (result?.status === "plan_agent_limit") throw new Error("plan_agent_limit");
+    if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") throw new Error("insert_unconfirmed");
+    return result.row as AgentRow;
   },
   markBindingEnforced: async row => {
     if (!supabaseAdmin) throw new Error("database_unavailable");

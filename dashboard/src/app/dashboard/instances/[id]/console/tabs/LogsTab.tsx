@@ -33,13 +33,13 @@ export default function LogsTab({ instanceId }: { instanceId: string }) {
   }, [fetchLogs]);
 
   return (
-    <div className="interrogation-box" style={{ padding: '1rem', height: 640, display: 'flex', flexDirection: 'column', background: 'var(--ink-black)' }}>
+    <div className="interrogation-box" style={{ padding: '1rem', height: 'min(640px, calc(var(--workspace-viewport-height, 100dvh) - 200px))', minHeight: 320, display: 'flex', flexDirection: 'column', background: 'var(--ink-black)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '1rem', borderBottom: '1px solid var(--overlay-bg)', marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div className="indicator-pulse" />
             <div style={{ display: 'grid', gap: 4 }}>
-              <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: "var(--bg-surface)", fontWeight: 700 }}>Gateway Output Stream</span>
-              <span className="mono" style={{ fontSize: 9, letterSpacing: '0.08em', color: "rgba(255,255,255,0.58)", textTransform: 'uppercase' }}>
+              <span className="mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.15em', color: "var(--bg-surface)", fontWeight: 700 }}>Gateway Output Stream</span>
+              <span className="mono" style={{ fontSize: 11, letterSpacing: '0.08em', color: "var(--bg-surface)", opacity: 0.58, textTransform: 'uppercase' }}>
                 {source === 'docker-stdout'
                   ? 'Source: container stdout fallback'
                   : source === 'host-update-log'
@@ -55,7 +55,7 @@ export default function LogsTab({ instanceId }: { instanceId: string }) {
           <Loader2 size={14} className="animate-spin" style={{ color: "var(--bg-surface)", opacity: 0.5 }} />
        </div>
       {loading && !logs ? <div style={{ opacity: 0.3, color: "var(--bg-surface)" }} className="mono">Connecting to gateway...</div> : (
-        <pre style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'var(--font-mono), monospace', fontSize: 11, overflowY: 'auto', color: '#a1a1aa', lineHeight: 1.55 }}>
+        <pre style={{ flex: 1, minHeight: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'var(--font-mono), monospace', fontSize: 11, overflowY: 'auto', overscrollBehavior: 'contain', color: '#a1a1aa', lineHeight: 1.55 }}>
           {logs || 'No logs available.'}
         </pre>
       )}

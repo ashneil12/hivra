@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ActivityEvent } from "@/lib/activity-observability/types";
 import {
   describeIncompleteRun,
@@ -18,6 +19,9 @@ const when = (value: string) => {
 
 type Matches = (event: ActivityEvent) => boolean;
 
+/** Narrow screens open the selected step in place instead of in a side pane. */
+type Inline = { accordion?: boolean; detail?: ReactNode };
+
 function StepRow({
   title,
   status,
@@ -27,6 +31,8 @@ function StepRow({
   pressed,
   matched,
   onSelect,
+  accordion,
+  detail,
 }: {
   title: string;
   status: string;
@@ -35,14 +41,18 @@ function StepRow({
   event: ActivityEvent;
   pressed: boolean;
   matched?: boolean;
-  onSelect: (id: string) => void;
-}) {
+  onSelect: (id: string | null) => void;
+} & Inline) {
   return (
     <li>
       <button
         className={styles.event}
-        aria-pressed={pressed}
-        onClick={() => onSelect(event.id)}
+        {...(accordion
+          ? { "aria-expanded": pressed }
+          : { "aria-pressed": pressed })}
+        // A paired step can be open on its start record; any tap on an open
+        // row closes it.
+        onClick={() => onSelect(accordion && pressed ? null : event.id)}
       >
         <span aria-hidden="true">↳</span>
         <span>
@@ -60,6 +70,7 @@ function StepRow({
           </span>
         </span>
       </button>
+      {pressed && detail}
     </li>
   );
 }
@@ -69,12 +80,13 @@ function Steps({
   selected,
   matches,
   onSelect,
+  ...inline
 }: {
   steps: ActivityRunStep[];
   selected?: string;
   matches?: Matches;
-  onSelect: (id: string) => void;
-}) {
+  onSelect: (id: string | null) => void;
+} & Inline) {
   return (
     <ol className={styles.runSteps}>
       {steps.map((step) => (
@@ -85,6 +97,7 @@ function Steps({
           pressed={step.records.some((record) => record.id === selected)}
           matched={Boolean(matches && step.records.some(matches))}
           onSelect={onSelect}
+          {...inline}
         />
       ))}
     </ol>
@@ -106,13 +119,14 @@ function RunGroup({
   matches,
   hasOlder,
   onSelect,
+  ...inline
 }: {
   group: ActivityRunGroup;
   selected?: string;
   matches?: Matches;
   hasOlder: boolean;
-  onSelect: (id: string) => void;
-}) {
+  onSelect: (id: string | null) => void;
+} & Inline) {
   const status = describeRunStatus(group);
   const label = group.native
     ? `${group.agentName} ${runHeading(group)}`
@@ -193,32 +207,16 @@ function RunGroup({
         selected={selected}
         matches={matches}
         onSelect={onSelect}
+        {...inline}
       />
     </article>
   );
 }
 
-export function AgentRuns({
-  events,
-  matches,
-  hasOlder = false,
-  selected,
-  onSelect,
-  limited,
-}: {
-  /** Every loaded record in scope; runs are grouped from all of them. */
-  events: ActivityEvent[];
-  /** The search: shows only runs with a matching record, never trims a run. */
-  matches?: Matches;
-  /** An older page of history can be loaded. */
-  hasOlder?: boolean;
-  selected?: string;
-  onSelect: (id: string) => void;
-  limited: boolean;
-}) {
-  const { groups, ungrouped } = selectRuns(events, matches);
+/** What run reporting records and what it cannot show. */
+export function AgentRunsIntro() {
   return (
-    <section aria-label="Agent runs" className={styles.runs}>
+    <>
       <p className={styles.muted}>
         Claude Code and Codex computers report each task from the agent’s own
         transcript: when it started and ended, which tools it called, how long
@@ -230,6 +228,36 @@ export function AgentRuns({
         shown oldest first. These are the reports loaded here, not a complete
         account of a run.
       </p>
+    </>
+  );
+}
+
+export function AgentRuns({
+  events,
+  matches,
+  hasOlder = false,
+  selected,
+  onSelect,
+  limited,
+  showIntro = true,
+  ...inline
+}: {
+  /** Every loaded record in scope; runs are grouped from all of them. */
+  events: ActivityEvent[];
+  /** The search: shows only runs with a matching record, never trims a run. */
+  matches?: Matches;
+  /** An older page of history can be loaded. */
+  hasOlder?: boolean;
+  selected?: string;
+  onSelect: (id: string | null) => void;
+  limited: boolean;
+  /** Narrow screens move the intro into the collapsed "About this view". */
+  showIntro?: boolean;
+} & Inline) {
+  const { groups, ungrouped } = selectRuns(events, matches);
+  return (
+    <section aria-label="Agent runs" className={styles.runs}>
+      {showIntro && <AgentRunsIntro />}
       {limited && (
         <p className={styles.viewHelp}>
           Some records are missing or outside this view. A run may have earlier,
@@ -257,6 +285,7 @@ export function AgentRuns({
           matches={matches}
           hasOlder={hasOlder}
           onSelect={onSelect}
+          {...inline}
         />
       ))}
       {ungrouped.length > 0 && (
@@ -277,6 +306,7 @@ export function AgentRuns({
                 event={event}
                 pressed={event.id === selected}
                 onSelect={onSelect}
+                {...inline}
               />
             ))}
           </ol>

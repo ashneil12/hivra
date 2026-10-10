@@ -8,8 +8,14 @@ import {
   requestCreditTopUpCheckout,
   requestSubscriptionCheckout,
 } from "@/lib/billing/client";
+import { isPlanKey } from "@/lib/billing/plan-display";
+import { readHoldAmounts, type HoldAmounts } from "@/lib/billing/hold-amounts";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
+import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
+import { LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
+import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
+import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from "@/components/wallet/useStepUpJsonRequest";
 import type { BillingActivityData } from "@/components/billing/BillingActivityPanel";
 import {
   describeWalletProviderError,
@@ -127,6 +133,18 @@ export interface BillingUsageData {
     monthlyGrant: number;
     unit: string;
   };
+  /**
+   * Only without a plan: a paid plan that holds the account but grants it
+   * nothing (a payment didn't go through, or it has no agent slots). Free
+   * can't be turned on over it; the billing portal settles it.
+   */
+  planOnHold?: {
+    key: string;
+    name: string;
+    status: string;
+    reason: "payment_overdue" | "no_slots";
+    billingPortal: boolean;
+  } | null;
 }
 
 type UsageData = BillingUsageData;
@@ -156,6 +174,7 @@ export const BILLING_QUERY_PARAM_KEYS = [
   "yearly_token",
   "from",
   "feature",
+  "returnTo",
 ] as const;
 
 function useBillingSearchParams() {
@@ -170,13 +189,34 @@ function useBillingSearchParams() {
   return useMemo(() => searchParams, [signature]);
 }
 
+/** Where a plan change started from (a launch blocked on the plan) and
+ * should land once the plan is confirmed, marked with the plan it moved to so
+ * that page can check whether it shows yet. Only a same-origin dashboard path. */
+/** With nothing to return to, a confirmed plan opens Launch, which says
+ * whether the new plan shows yet. */
+function launchAfterPlanChange(planKey: unknown): string {
+  return withReturnParams(LAUNCH_ROUTE, planReturnParams(isPlanKey(planKey) ? planKey : null));
+}
+
+function planReturnDestination(
+  params: { get(key: string): string | null } | null | undefined,
+  planKey: unknown,
+): string | null {
+  const returnTo = safeReturnPath(params?.get("returnTo"));
+  return returnTo ? withReturnParams(returnTo, planReturnParams(isPlanKey(planKey) ? planKey : null)) : null;
+}
+
 export function useBillingController() {
   const router = useRouter();
   const searchParams = useBillingSearchParams();
+  const returnTo = safeReturnPath(searchParams?.get("returnTo"));
   const billingV2Enabled = isBillingV2UiEnabled();
   const cryptoBillingEnabled = isCryptoBillingUiEnabled();
   const creditTopUpsEnabled = isCreditTopUpsUiEnabled();
   const selfServeDowngradeEnabled = isSelfServeDowngradeUiEnabled();
+  // Token geo-policy: "allowed" at once while the policy is dormant.
+  const tokenGeo = useTokenGeoAccess();
+  const stepUpRequest = useStepUpJsonRequest();
 
   const [data, setData] = useState<UsageData | null>(null);
   const [activity, setActivity] = useState<BillingActivityData | null>(null);
@@ -384,6 +424,30 @@ export function useBillingController() {
       });
   }, []);
 
+  // Per-plan hold amounts for this user (epoch- and founders-aware), from the
+  // wallet eligibility API. Refetched when the verified balance changes.
+  const [holdAmounts, setHoldAmounts] = useState<HoldAmounts | null>(null);
+  const tokenBalanceKey = tokenHolding?.snapshot?.balanceDisplay ?? null;
+  useEffect(() => {
+    if (!cryptoBillingEnabled) return;
+    let cancelled = false;
+    fetch("/api/billing/wallet/eligibility", { cache: "no-store" })
+      .then(readApiPayload)
+      .then((payload) => {
+        if (!cancelled) setHoldAmounts(readHoldAmounts(apiSuccessData(payload)));
+      })
+      .catch((err) => {
+        clientLog.warn("Billing hold amounts fetch failed", {
+          source: "billing-page",
+          failureType: "billing_hold_amounts_fetch_failed",
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cryptoBillingEnabled, tokenBalanceKey]);
+
   const fetchTokenHolding = useCallback((quiet = false) => {
     if (!quiet) setTokenLoading(true);
     setTokenError(null);
@@ -483,7 +547,7 @@ export function useBillingController() {
             return;
           }
 
-          router.replace("/dashboard/welcome?subscription=success&step=agent-type");
+          router.replace(planReturnDestination(searchParams, data?.plan) ?? launchAfterPlanChange(data?.plan));
         } catch (err) {
           clientLog.error("Checkout confirmation request failed", err, {
             source: "billing-page",
@@ -645,10 +709,10 @@ export function useBillingController() {
     });
     setSubscribing(planKey);
     try {
-      const result = await requestSubscriptionCheckout(planKey as PlanKey, cadence);
+      const result = await requestSubscriptionCheckout(planKey as PlanKey, cadence, { returnTo });
       if (result.ok) {
         if (result.activated) {
-          router.push("/dashboard/welcome?step=agent-type");
+          router.push(planReturnDestination(searchParams, planKey) ?? launchAfterPlanChange(planKey));
           return;
         }
 
@@ -822,6 +886,8 @@ export function useBillingController() {
         // Keep the dialog busy until the new plan has loaded, so the page
         // never shows the old plan with live buttons in between.
         await fetchUsage();
+        const returnAfterPlanChange = planReturnDestination(searchParams, newPlan);
+        if (returnAfterPlanChange) router.push(returnAfterPlanChange);
       } else {
         setViolation(result.error || "Failed to change plan.");
       }
@@ -844,7 +910,7 @@ export function useBillingController() {
       const result = await requestCreditTopUpCheckout(packageCredits);
       if (result.ok) {
         if (result.activated) {
-          router.push("/dashboard/welcome?step=agent-type");
+          router.push(LAUNCH_ROUTE);
           return;
         }
 
@@ -1029,7 +1095,9 @@ export function useBillingController() {
         return;
       }
 
-      const verifyResponse = await fetch("/api/billing/wallet/verify", {
+      // Verifying a different wallet can change where a lock-wallet move
+      // sends funds, so the server may ask the user to confirm it's them.
+      const verifyResult = await stepUpRequest("/api/billing/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1037,7 +1105,11 @@ export function useBillingController() {
           signature,
         }),
       });
-      const verifyPayload = await readApiPayload(verifyResponse);
+      if (!verifyResult) {
+        setTokenError(STEP_UP_CANCELLED_VERIFY_MESSAGE);
+        return;
+      }
+      const verifyPayload = verifyResult.body;
       const verifiedWallet = readVerifiedWallet(apiSuccessData(verifyPayload));
       if (!verifiedWallet) {
         setTokenError(apiPayloadError(verifyPayload, "Wallet verification failed."));
@@ -1101,13 +1173,17 @@ export function useBillingController() {
       creditTopUpsEnabled,
       selfServeDowngradeEnabled,
     },
+    tokenGeo,
     status: { loading, confirming },
+    /** The page a plan change returns to, when one started elsewhere. */
+    returnTo,
     data,
     activity,
     activityLoading,
     activityError,
     managedVeniceSummary,
     tokenHolding,
+    holdAmounts,
     tokenLoading,
     tokenRefreshing,
     walletConnecting,

@@ -3,7 +3,7 @@ import "@testing-library/jest-dom";
 import fs from "fs";
 import path from "path";
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import Footer from "../Footer";
@@ -18,7 +18,7 @@ jest.mock("next/link", () => {
     children: React.ReactNode;
     [key: string]: unknown;
   }) => (
-    <a href={href} {...rest}>
+    <a data-next-link href={href} {...rest}>
       {children}
     </a>
   );
@@ -34,7 +34,7 @@ describe("Footer", () => {
   });
 
   it("links the product, token, status, and stats entries and credits HermesOS", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Ecosystem" })).toHaveAttribute("href", "/ecosystem");
     expect(screen.getByRole("link", { name: "Token" })).toHaveAttribute("href", "/token");
@@ -44,28 +44,47 @@ describe("Footer", () => {
     expect(screen.getByText(/Powered by Hivra/i)).toBeInTheDocument();
   });
 
+  it("links the trust pages from the Company column: About and Security", () => {
+    render(<Footer tokenSurfaces />);
+    const company = screen.getByRole("navigation", { name: "Company" });
+
+    expect(within(company).getByRole("link", { name: "About" })).toHaveAttribute("href", "/about");
+    expect(within(company).getByRole("link", { name: "Security" })).toHaveAttribute("href", "/security");
+    expect(within(company).getByRole("link", { name: "Terms" })).toHaveAttribute("href", "/terms");
+    expect(within(company).getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/privacy");
+    expect(within(company).getByRole("link", { name: "Contact" })).toHaveAttribute("href", "mailto:info@hivra.cloud");
+  });
+
   it("links the status page next to the changelog entry", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute("href", "/changelog");
   });
 
   it("includes a roadmap link in the footer", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Roadmap" })).toHaveAttribute("href", "/roadmap");
   });
 
   it("exposes computer, hosting and download routes without a dead GitHub link", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
     expect(screen.getByRole("link", { name: "Hosting & self-hosting" })).toHaveAttribute("href", "/#hosting");
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
+  it("links the official X account in a new tab", () => {
+    render(<Footer tokenSurfaces />);
+    const x = screen.getByRole("link", { name: "X (@HivraOS)" });
+    expect(x).toHaveAttribute("href", "https://x.com/HivraOS");
+    expect(x).toHaveAttribute("target", "_blank");
+    expect(x).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("links the changelog next to the roadmap entry", () => {
-    render(<Footer />);
+    render(<Footer tokenSurfaces />);
 
     expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute("href", "/changelog");
   });
@@ -78,17 +97,28 @@ describe("Footer", () => {
     );
 
     expect(screen.getByRole("link", { name: "Roadmap" })).toHaveAttribute("href", "/roadmap");
-    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/#agents");
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+  });
+  it("links the restored hubs sitewide so they are never orphaned", () => {
+    render(<Footer tokenSurfaces />);
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("href", "/pricing");
+    expect(screen.getByRole("link", { name: "Free tools" })).toHaveAttribute("href", "/tools");
   });
   it("makes the litepaper discoverable and opens only external sites in a new tab", () => {
-    render(<Footer />);
-    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/");
+    render(<Footer tokenSurfaces />);
+    // The litepaper is a static file: a plain link, so no Server Components prefetch 404s.
+    expect(screen.getByRole("link", { name: "Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
+    expect(screen.getByRole("link", { name: "Litepaper" })).not.toHaveAttribute("data-next-link");
+    expect(screen.getByRole("link", { name: "Pricing" })).toHaveAttribute("data-next-link");
     expect(screen.queryByText("A place of its own.")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Read the litepaper" })).not.toBeInTheDocument();
-    const nibbii = screen.getByRole("link", { name: "Nibbii" });
-    expect(nibbii).toHaveAttribute("href", "https://nibbii.pet/");
-    expect(nibbii).toHaveAttribute("target", "_blank");
-    expect(nibbii).toHaveAttribute("rel", "noopener noreferrer");
+    // Nibbii is no longer part of Hivra or a token use.
+    expect(screen.queryByRole("link", { name: "Nibbii" })).not.toBeInTheDocument();
+    const github = screen.getByRole("link", { name: "GitHub" });
+    expect(github).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
+    expect(github).toHaveAttribute("target", "_blank");
+    expect(github).toHaveAttribute("rel", "noopener noreferrer");
     screen.getAllByRole("link").filter((link) => link.getAttribute("href")?.startsWith("/")).forEach((link) => {
       expect(link).not.toHaveAttribute("target", "_blank");
     });

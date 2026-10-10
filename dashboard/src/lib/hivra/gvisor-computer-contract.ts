@@ -8,6 +8,29 @@ export const HIVRA_GVISOR_BUNDLE_URL = "https://github.com/google/gvisor/release
 export const HIVRA_GVISOR_BUNDLE_SHA256 = "81416511897ab8abd4e723d66823c5b0461a2ee3311cfa70d152404ef9b860cf" as const;
 export const HIVRA_GVISOR_PREFLIGHT_TTL_MS = 15 * 60_000;
 
+/** The named stages of provisioner/gvisor/prepare-gvisor-host.sh, in the order
+ * it runs them. A failed run reports the stage it stopped in; every earlier
+ * stage finished. Keep in step with the script's prepare_stage values. */
+export const HIVRA_GVISOR_PREPARE_STAGES = [
+  "host-eligibility",
+  "prerequisites",
+  "bundle-download",
+  "bundle-checksum",
+  "bundle-validation",
+  "installed-adapter-check",
+  "installed-identity-check",
+  "asset-installation",
+  "runtime-registration",
+  "sidecar-validation",
+  "image-pull",
+  "sandbox-smoke-test",
+] as const;
+export type HivraGvisorPrepareStage = (typeof HIVRA_GVISOR_PREPARE_STAGES)[number];
+
+export function isHivraGvisorPrepareStage(value: unknown): value is HivraGvisorPrepareStage {
+  return typeof value === "string" && (HIVRA_GVISOR_PREPARE_STAGES as readonly string[]).includes(value);
+}
+
 export function isGvisorPreflightFresh(lastPreflightAt: string | null, now = Date.now()): boolean {
   if (!lastPreflightAt) return false;
   const observedAt = Date.parse(lastPreflightAt);

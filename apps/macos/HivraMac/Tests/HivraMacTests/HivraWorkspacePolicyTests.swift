@@ -112,11 +112,73 @@ struct HivraWorkspacePolicyTests {
         #expect(HivraWorkspacePolicy.relativePath(url: URL(string: "https://example.test/dashboard?token=private")!, trustedURL: trusted) == nil)
         #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
             currentURL: URL(string: "https://example.test/dashboard/agent/a?tab=desktop&open=fast"), trustedURL: trusted))
-        #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+        #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
             currentURL: URL(string: "https://example.test/dashboard/agent/a?tab=desktop"), trustedURL: trusted,
             requestedPath: "/dashboard/agent/a?tab=desktop&open=native"))
         #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
             currentURL: URL(string: "https://guest.test/guacamole/#/client/expired"), trustedURL: trusted))
         #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(currentURL: nil, trustedURL: trusted))
+    }
+
+    @Test("a launch result is adopted as its resource whatever one-shot arrival state its URL carries")
+    func launchResultAdoption() throws {
+        let trusted = URL(string: "https://example.test/dashboard")!
+        let hermes = HivraWorkspaceResource(uid: "h-h", id: "h", source: .hermes, kind: .agent,
+                                            name: "H", description: "Hermes", status: "provisioning", href: "/dashboard/instances/h")
+        for (href, expected) in [
+            ("/dashboard/agent/a?welcome=1&tab=terminal", a),
+            ("/dashboard/agent/a?welcome=1&tab=aeon", a),
+            ("/dashboard/agent/a?welcome=1&tab=manage#model-settings", a),
+            ("/dashboard/agent/b?tab=desktop", b),
+            ("/dashboard/instances/h?surface=chat&welcome=1", hermes),
+        ] {
+            let path = try #require(HivraWorkspacePolicy.relativePath(url: URL(string: "https://example.test" + href)!, trustedURL: trusted),
+                                    Comment(rawValue: href))
+            #expect(HivraWorkspacePolicy.adoption(path: path, currentUID: nil, resources: [a, b, hermes], openUIDs: []) == .adopt(expected),
+                    Comment(rawValue: href))
+            // Its later surface changes stay in the same tab.
+            #expect(HivraWorkspacePolicy.adoption(path: path, currentUID: expected.uid, resources: [a, b, hermes], openUIDs: []) == .unchanged,
+                    Comment(rawValue: href))
+        }
+    }
+
+    @Test("re-selecting an open resource keeps its live page unless it left the resource or asks for a new transport")
+    func reselectionRetainsLiveSessions() {
+        let trusted = URL(string: "https://example.test/dashboard")!
+        for current in [
+            "https://example.test/dashboard/agent/a?welcome=1&tab=manage#model-settings",
+            "https://example.test/dashboard/agent/a?tab=manage&unrecognized=1",
+            "https://example.test/dashboard/agent/a/manage?tab=desktop&open=fast",
+            "https://example.test/dashboard/%61gent/a/",
+        ] {
+            #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+                currentURL: URL(string: current), trustedURL: trusted, requestedPath: a.href), Comment(rawValue: current))
+        }
+        #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+            currentURL: URL(string: "https://example.test/dashboard/instances/h?surface=chat&welcome=1&unrecognized=1"),
+            trustedURL: trusted, requestedPath: "/dashboard/instances/h"))
+        for current in [
+            // An expired guest transport, another origin, or another page of the dashboard.
+            "https://guest.test/guacamole/#/client/expired", "http://example.test/dashboard/agent/a",
+            "https://example.test:8443/dashboard/agent/a", "about:blank",
+            "https://example.test/dashboard/billing?session_id=cs_test_a1B2c3", "https://example.test/dashboard/agent/b",
+            "https://example.test/api/hivra/agents/a/export",
+        ] {
+            #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+                currentURL: URL(string: current), trustedURL: trusted, requestedPath: a.href), Comment(rawValue: current))
+        }
+        // A Windows computer's inventory href always asks for the fast desktop. Choosing
+        // its open tab again keeps the embedded session; only a tab that left it renews.
+        for current in ["https://example.test/dashboard/agent/b?tab=desktop",
+                        "https://example.test/dashboard/agent/b?tab=manage"] {
+            #expect(!HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+                currentURL: URL(string: current), trustedURL: trusted,
+                requestedPath: "/dashboard/agent/b?tab=desktop&open=fast"), Comment(rawValue: current))
+        }
+        for current in ["https://guest.test/guacamole/#/client/expired", "https://example.test/dashboard/agent/a"] {
+            #expect(HivraWorkspacePolicy.shouldReloadResourceOnReselection(
+                currentURL: URL(string: current), trustedURL: trusted,
+                requestedPath: "/dashboard/agent/b?tab=desktop&open=fast"), Comment(rawValue: current))
+        }
     }
 }

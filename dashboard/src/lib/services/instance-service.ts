@@ -1,3 +1,8 @@
+import {
+  HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
+  HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+  isFreeAccountEntitlement,
+} from "@/lib/billing/hosted-compute";
 import { clerkClient } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { createHmac, randomBytes } from "crypto";
@@ -5,13 +10,6 @@ import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 
 // SCRIPTURE_ANCHOR: instance-builder | Psalm 127:1 | Verse: Unless Yahweh builds the house, they labor in vain who build it.
 import { supabaseAdmin } from "@/lib/supabase";
-import {
-  countActiveFreeInstances,
-  enqueueWaitlist,
-  isAutoInviteEnabled,
-  markReservationOnboardedByEmail,
-  maxFreeInstances,
-} from "@/lib/reservations/promote-next";
 import { encryptApiKey, decryptApiKey } from "@/lib/crypto";
 import {
   CODEX_DEFAULT_MODEL,
@@ -59,6 +57,7 @@ import {
   type ProxmoxHostLocalFailureClass,
 } from "@/lib/services/proxmox-host-guards";
 import { stripProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructure";
+import { HIVRA_AGENT_VM_DISK_GB } from "@/lib/infrastructure/portable-provisioner-contract";
 import { buildInstanceInsertPayload } from "@/lib/instance-record";
 import {
   SLOT_FREEING_LIFECYCLE_STATES,
@@ -160,44 +159,6 @@ function captureBoxCreatedOnce(args: {
     },
   });
   return true;
-}
-
-function readClerkStringField(value: unknown, key: string): string | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  const candidate = record[key];
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
-}
-
-function resolveClerkUserEmail(user: unknown): string | null {
-  if (!user || typeof user !== "object") return null;
-  const record = user as Record<string, unknown>;
-  const primaryEmailAddress = record.primaryEmailAddress;
-  const directPrimary = readClerkStringField(primaryEmailAddress, "emailAddress");
-  if (directPrimary) return directPrimary;
-
-  const primaryEmailAddressId = readClerkStringField(record, "primaryEmailAddressId");
-  const emailAddresses = Array.isArray(record.emailAddresses)
-    ? record.emailAddresses
-    : [];
-
-  if (primaryEmailAddressId) {
-    for (const emailAddress of emailAddresses) {
-      if (
-        readClerkStringField(emailAddress, "id") === primaryEmailAddressId &&
-        readClerkStringField(emailAddress, "emailAddress")
-      ) {
-        return readClerkStringField(emailAddress, "emailAddress");
-      }
-    }
-  }
-
-  for (const emailAddress of emailAddresses) {
-    const email = readClerkStringField(emailAddress, "emailAddress");
-    if (email) return email;
-  }
-
-  return null;
 }
 
 function buildSignedAgentHeaders(params: {
@@ -759,6 +720,9 @@ async function loadProxmoxHostRegistry(
   return { active: [], nonActiveHostIds, registryHasAnyRows, outcome: "empty" };
 }
 
+// Hivra agent statuses whose VM holds CPU and RAM on its host.
+const HIVRA_AGENT_POWERED_STATUSES: ReadonlySet<string> = new Set(["provisioning", "running"]);
+
 type RankedProxmoxHost = {
   host: ProxmoxHostRegistryRow;
   freeCpu: number;
@@ -783,11 +747,16 @@ async function rankProxmoxHostsForPlacement(params: {
     .select("proxmox_node, cpu_limit, ram_limit, disk_size_gb, lifecycle_state")
     .in("proxmox_node", hostIds)
     .in("lifecycle_state", Array.from(PROXMOX_HOST_ALLOCATION_STATES));
+  // Every Hivra row that is not deleted, not only the powered-on ones: a
+  // stopped or errored computer still owns its thin-pool disk. The
+  // delete paths flip a row to `deleted` only after the VM and its local-lvm
+  // volumes are verifiably gone, so `deleted` is the one status that frees
+  // disk. CPU/RAM are split out below by status.
   const { data: hivraRows, error: hivraError } = await params.supabase
     .from("hivra_agents")
-    .select("proxmox_host, cpu, ram, status")
+    .select("proxmox_host, cpu, ram, status, vmid")
     .in("proxmox_host", hostIds)
-    .in("status", ["provisioning", "running"]);
+    .neq("status", "deleted");
 
   if (error || hivraError) {
     const allocationError = error ?? hivraError;
@@ -826,10 +795,19 @@ async function rankProxmoxHostsForPlacement(params: {
   for (const row of hivraRows ?? []) {
     const node = (row as { proxmox_host?: string | null }).proxmox_host;
     if (!node) continue;
+    const { status, vmid } = row as { status?: string | null; vmid?: number | null };
+    const powered = status !== null && status !== undefined && HIVRA_AGENT_POWERED_STATUSES.has(status);
+    // A powered row owns (or is about to own) a VM. Any other non-deleted row
+    // owns one only if it recorded a vmid: a stopped computer keeps its disk,
+    // and an errored one may have allocated before it failed.
+    const ownsVm = powered || (vmid !== null && vmid !== undefined);
+    if (!ownsVm) continue;
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
-    acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
-    acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
-    acc.disk += DEFAULT_PROXMOX_VM_DISK_GB;
+    if (powered) {
+      acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
+      acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
+    }
+    acc.disk += HIVRA_AGENT_VM_DISK_GB;
     allocByHost.set(node, acc);
   }
 
@@ -2320,23 +2298,41 @@ export class InstanceService {
       return {
         success: false,
         status: 403,
+        // No token wording: a user with no entitlement reads this in every
+        // country, so it names only the plans every viewer can buy.
         message:
-          "Active subscription required. Choose a plan or hold $HERMESOS to qualify for Pro / Power tier.",
+          "Active subscription required. Choose a plan to start deploying agents.",
       };
     }
 
-    // Stripe trialing subs reach this point because the abuse-gate
-    // bypass treats them as entitled, but provisioning was historically
-    // gated on active / past_due only — the trial budget rows are often
-    // $0 and would fail the budget check below anyway. Reject explicitly
-    // so the user sees a clear message instead of a confusing budget
-    // error. Token-holding entries are always synthesised as 'active'.
-    if (sub.source === "stripe" && !["active", "past_due"].includes(sub.status)) {
+    // Trials do not exist in Hivra: you purchase and you get what you want.
+    // A 'trialing' entitlement (a Stripe sub from before trials were removed,
+    // or an App Store intro offer, which resolves as source 'apple_iap')
+    // reaches this point because the abuse-gate bypass treats it as entitled,
+    // but trial budget rows are often $0 and we never provision on one.
+    // Reject for EVERY source so the user sees a clear message instead of a
+    // confusing budget error. Token-holding entries are always synthesised as
+    // 'active'.
+    if (!["active", "past_due"].includes(sub.status)) {
       return {
         success: false,
         status: 403,
         message:
           "Active subscription required. Choose a plan to start deploying agents.",
+      };
+    }
+
+    // A Free account never gets a Hivra-hosted computer, not even the small
+    // base tier: compute is paid, from Hivra or from someone else (bring your
+    // own computer). createInstance is the Hivra-provisioned path, so this is
+    // the server-side authority; the Launch UI only mirrors it. Owner
+    // decision 2026-10-07. The Workspace Cloud lane has its own entitlement.
+    if (productSurface !== "workspace_cloud" && isFreeAccountEntitlement(sub)) {
+      return {
+        success: false,
+        status: 403,
+        message: HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+        failureType: HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
       };
     }
 
@@ -2363,67 +2359,6 @@ export class InstanceService {
     // before any backend call below) so the rejection is the cheapest
     // possible failure path. Paid tiers fall through unchanged.
     if (isSingleInstanceBaseTierKey(sub.plan)) {
-      // ── Global free-tier cap ──────────────────────────────────────────────
-      // Bound total active free instances fleet-wide. When full, turn the
-      // signup away to the waitlist (the existing /api/reserve flow) instead of
-      // provisioning, so free demand is capped at MAX_FREE_INSTANCES instead of
-      // unbounded. Unset/0 disables the cap (default — dark-shippable).
-      const maxFree = maxFreeInstances();
-      if (maxFree > 0 && supabaseAdmin) {
-        let activeFree: number;
-        try {
-          activeFree = await countActiveFreeInstances();
-        } catch (err) {
-          log.error("free-capacity check failed", err instanceof Error ? err : new Error(String(err)), {
-            source: LOG_SOURCE,
-            userId,
-            failureType: "free_capacity_check_failed",
-          });
-          return {
-            success: false,
-            status: 503,
-            message: "Couldn't verify free capacity right now — please try again in a moment.",
-            error: { code: "FREE_CAPACITY_CHECK_FAILED" },
-          };
-        }
-        if (activeFree >= maxFree) {
-          // Capture the lead: enqueue them on the waitlist (by email) so a
-          // capped signup is never lost. Fetch the email on this rare capped
-          // path only; failure still turns them away (just without the row).
-          let waitlistPosition: number | null = null;
-          try {
-            const clerk = await clerkClient();
-            const cappedUser = await clerk.users.getUser(userId);
-            const cappedEmail = resolveClerkUserEmail(cappedUser);
-            if (cappedEmail) {
-              const queued = await enqueueWaitlist(cappedEmail, userId);
-              waitlistPosition = queued.position;
-            }
-          } catch (capErr) {
-            log.warn("waitlist auto-capture failed (still turning signup away)", {
-              source: LOG_SOURCE,
-              userId,
-              error: capErr instanceof Error ? capErr.message : String(capErr),
-            });
-          }
-          log.info("free capacity full — captured signup to waitlist", {
-            source: LOG_SOURCE,
-            userId,
-            activeFree,
-            maxFree,
-            waitlistPosition,
-          });
-          return {
-            success: false,
-            status: 202,
-            message:
-              waitlistPosition != null
-                ? `Free capacity is full right now — you're #${waitlistPosition} on the waitlist. We'll email you the moment a spot opens.`
-                : "Free capacity is full right now — join the waitlist and we'll email you the moment a spot opens.",
-            error: { code: "FREE_CAPACITY_FULL", waitlistPosition },
-          };
-        }
-      }
       try {
         await assertFreeInstanceCreatable(userId, { supabase: supabaseAdmin });
       } catch (err) {
@@ -2594,7 +2529,7 @@ export class InstanceService {
         return {
           success: false,
           status: 400,
-          message: `Host "${resolvedHost.name}" exists in the database but has no linked Hetzner server ID. The underlying VM may still be provisioning or may have been orphaned. Please wait a few minutes and retry — if it keeps failing, tell us on Discord (discord.gg/tDQZq8479F) or email info@hermesos.cloud and we'll fix the host.`,
+          message: `Host "${resolvedHost.name}" exists in the database but has no linked Hetzner server ID. The underlying VM may still be provisioning or may have been orphaned. Please wait a few minutes and retry — if it keeps failing, tell us on Discord (discord.gg/tDQZq8479F) or email info@hivra.cloud and we'll fix the host.`,
         };
       }
     }
@@ -2813,9 +2748,8 @@ export class InstanceService {
           name: `${name} managed Venice`,
           defaultWalletType: managedVeniceDeploy.walletType,
           // The deploy card submits 'hermesos' unless the card wallet was ALREADY
-          // funded at page load — which it never is on a free user's FIRST deploy,
-          // because the starter credit is granted during this very call. Let the
-          // mint re-resolve the binding against post-grant balances.
+          // funded at page load. Let the mint re-resolve the binding against
+          // real balances so a funded card wallet is never left unbound.
           autoSelectFundedWallet: true,
         });
         finalApiKey = proxyKey.plaintextKey;
@@ -3843,22 +3777,6 @@ export class InstanceService {
         error: err instanceof Error ? err.message : String(err),
       });
     });
-
-    // Best-effort: if this free deploy claims a waitlist invite, mark the
-    // matching reservation onboarded so its held slot stops counting as an
-    // outstanding invite. Reuses the clerkUser fetched above; floats so it never
-    // blocks the deploy response. No-op when the waitlist feature is off.
-    if (isAutoInviteEnabled() && isSingleInstanceBaseTierKey(sub.plan)) {
-      const claimedEmail = resolveClerkUserEmail(clerkUser);
-      if (claimedEmail) {
-        void markReservationOnboardedByEmail(claimedEmail).catch((err) => {
-          log.warn("waitlist onboard mark failed (non-fatal)", {
-            source: LOG_SOURCE,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }
-    }
 
     return {
       success: true,

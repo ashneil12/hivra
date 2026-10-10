@@ -13,6 +13,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Check, Plus, X, Wrench, Trash2 } from "lucide-react";
 
 import { listBoxMcp } from "@/lib/hivra/agent-api";
+import { SafePortal } from "@/components/ui/SafePortal";
+import { useInfrastructureDialog } from "@/components/infrastructure/useInfrastructureDialog";
+
+// Portaled above the app chrome (mobile header z60, bottom bar z80). The overlay
+// covers only the visible viewport, so with the keyboard open the panel centres
+// in the visible band and the close button and footer stay reachable.
+const OVERLAY_Z = 1000;
+const MODAL_MAX_HEIGHT = "min(760px, calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)))";
+// A short visible viewport (keyboard open, landscape phone) drops the intro so the
+// credential fields keep the scroll room.
+const PICKER_CSS = `
+.tool-picker-overlay { container: tool-picker / size; }
+@container tool-picker (max-height: 520px) {
+  .tool-picker-intro { display: none; }
+}
+`;
 
 const mono: React.CSSProperties = {
   fontFamily: "var(--font-mono), monospace",
@@ -108,6 +124,8 @@ export function ToolInstallPicker({
   }, [catalog, installedNames]);
 
   const availableCount = decorated.filter((t) => !t.installed).length;
+  // Escape would drop typed credentials without a prompt, so it only closes an untouched picker.
+  const hasTypedCredentials = Object.values(envValues).some((value) => value !== "");
 
   const setEnv = useCallback((toolId: string, key: string, val: string) => {
     setEnvValues((prev) => ({ ...prev, [`${toolId}:${key}`]: val }));
@@ -188,7 +206,8 @@ export function ToolInstallPicker({
   );
 
   const inputStyle: React.CSSProperties = {
-    padding: "7px 9px",
+    padding: "10px 12px",
+    minHeight: 44,
     border: "1px solid var(--etched-border)",
     background: "rgba(255,255,255,0.04)",
     color: "var(--ink-black)",
@@ -201,175 +220,203 @@ export function ToolInstallPicker({
   };
 
   return (
+    <SafePortal>
+      <style>{PICKER_CSS}</style>
+      <PickerDialog onClose={onClose} closeOnEscape={acting === null && !hasTypedCredentials}>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: "min(720px, 100%)",
+            maxHeight: MODAL_MAX_HEIGHT,
+            display: "flex",
+            flexDirection: "column",
+            background: "var(--bg-surface, #fff)",
+            border: "1px solid var(--etched-border)",
+            boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "20px 22px 14px", borderBottom: "1px solid var(--etched-border)" }}>
+            <div>
+              <div className="mono" style={{ ...mono, marginBottom: 6 }}>Add tools</div>
+              <h3 className="serif" style={{ fontSize: "clamp(1.2rem, 3vw, 1.6rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
+                Tool catalog
+              </h3>
+              <p className="tool-picker-intro" style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "6px 0 0", lineHeight: 1.5, maxWidth: 480 }}>
+                Attach a capability to this agent — each tool wires up an MCP server (and any teaching skills) on the box. Credentials stay on the box and are never shown back here.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: 0, minWidth: 44, minHeight: 44, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div style={{ overflowY: "auto", overscrollBehavior: "contain", padding: "16px 22px", flex: 1, minHeight: 0 }}>
+            {catalog === null ? (
+              <div style={{ padding: 48, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>
+            ) : loadError ? (
+              <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "#e06c5a", fontSize: 13.5 }}>
+                {loadError}
+                <div style={{ marginTop: 12 }}>
+                  <button type="button" onClick={() => void load()} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", minHeight: 40, cursor: "pointer", fontSize: 12.5 }}>Retry</button>
+                </div>
+              </div>
+            ) : decorated.length === 0 ? (
+              <div style={{ border: "1px dashed var(--etched-border)", padding: "28px 20px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
+                No installable tools in the catalog yet.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {decorated.map((t) => {
+                  const busy = acting === t.id;
+                  const blocked = !t.installed && missingRequired(t);
+                  return (
+                    <div
+                      key={t.id}
+                      style={{
+                        border: `1px solid ${t.installed ? "var(--gold-leaf)" : "var(--etched-border)"}`,
+                        background: t.installed ? "rgba(197,160,89,0.06)" : "rgba(255,255,255,0.03)",
+                        padding: "12px 14px",
+                        display: "grid",
+                        gap: 10,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
+                        <span style={{ marginTop: 2, flexShrink: 0, width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--gold-leaf)" }}>
+                          {t.installed ? <Check size={14} /> : <Wrench size={13} style={{ opacity: 0.5 }} />}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <strong className="serif" style={{ fontSize: 15.5, fontWeight: 400, color: "var(--ink-black)" }}>{t.name}</strong>
+                            <span className="mono" style={{ ...mono, fontSize: 9, opacity: 0.85, color: t.installed ? "var(--text-muted)" : "var(--gold-leaf)" }}>
+                              {t.installed ? "Installed" : "Available"}
+                            </span>
+                            <span className="mono" style={{ ...mono, fontSize: 9 }}>{t.category}</span>
+                            {t.skillCount > 0 ? <span className="mono" style={{ ...mono, fontSize: 9 }}>+{t.skillCount} skill{t.skillCount > 1 ? "s" : ""}</span> : null}
+                          </div>
+                          <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5, marginTop: 4 }}>
+                            {t.description}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Credential inputs — only when not yet installed and the tool needs them. */}
+                      {!t.installed && t.env.length > 0 ? (
+                        <div style={{ display: "grid", gap: 7, paddingLeft: 28 }}>
+                          {t.env.map((f) => (
+                            <label key={f.key} style={{ display: "grid", gap: 3 }}>
+                              <span className="mono" style={{ ...mono, fontSize: 9, opacity: 0.8 }}>
+                                {f.label}{f.required ? " *" : " (optional)"}
+                              </span>
+                              <input
+                                type={f.secret ? "password" : "text"}
+                                autoComplete={f.secret ? "new-password" : "off"}
+                                autoCapitalize="none"
+                                autoCorrect="off"
+                                spellCheck={false}
+                                value={envValues[`${t.id}:${f.key}`] || ""}
+                                onChange={(e) => setEnv(t.id, f.key, e.target.value)}
+                                placeholder={f.placeholder || f.key}
+                                style={inputStyle}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingLeft: 28 }}>
+                        <span style={{ fontSize: 11.5, color: "#e06c5a", minHeight: 14 }}>{rowError[t.id] || ""}</span>
+                        {t.installed ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void remove(t)}
+                            style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "6px 14px", minHeight: 40, cursor: busy ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                          >
+                            {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+                            Remove
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={busy || blocked}
+                            onClick={() => void install(t)}
+                            style={{
+                              border: "1px solid var(--gold-leaf)",
+                              background: busy || blocked ? "transparent" : "var(--gold-leaf)",
+                              color: busy || blocked ? "var(--text-muted)" : "var(--ink-black)",
+                              padding: "6px 16px",
+                              minHeight: 40,
+                              flexShrink: 0,
+                              cursor: busy || blocked ? "default" : "pointer",
+                              fontSize: 12.5,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={12} />}
+                            Install
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 22px", borderTop: "1px solid var(--etched-border)", flexWrap: "wrap" }}>
+            <div className="mono" style={{ ...mono, opacity: 0.7 }}>
+              {catalog && !loadError ? `${availableCount} available` : ""}
+            </div>
+            <button type="button" onClick={onClose} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "8px 16px", minHeight: 44, cursor: "pointer", fontSize: 13 }}>
+              Done
+            </button>
+          </div>
+        </div>
+      </PickerDialog>
+    </SafePortal>
+  );
+}
+
+// Mounted inside the portal so the hook sees the dialog node: focus moves in,
+// Tab stays inside, Escape closes (not mid-request or with typed credentials),
+// and focus returns to the trigger.
+function PickerDialog({ onClose, closeOnEscape, children }: { onClose: () => void; closeOnEscape: boolean; children: React.ReactNode }) {
+  const dialogRef = useInfrastructureDialog({ onClose, closeOnEscape });
+  return (
     <div
+      ref={dialogRef as React.RefObject<HTMLDivElement>}
       role="dialog"
       aria-modal="true"
       aria-label="Add tools"
+      tabIndex={-1}
       onClick={onClose}
+      className="tool-picker-overlay"
       style={{
         position: "fixed",
-        inset: 0,
-        zIndex: 60,
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "var(--workspace-viewport-height, 100dvh)",
+        zIndex: OVERLAY_Z,
         background: "rgba(0,0,0,0.55)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: 20,
+        boxSizing: "border-box",
+        outline: "none",
       }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(720px, 100%)",
-          maxHeight: "min(82vh, 760px)",
-          display: "flex",
-          flexDirection: "column",
-          background: "var(--bg-surface, #fff)",
-          border: "1px solid var(--etched-border)",
-          boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "20px 22px 14px", borderBottom: "1px solid var(--etched-border)" }}>
-          <div>
-            <div className="mono" style={{ ...mono, marginBottom: 6 }}>Add tools</div>
-            <h3 className="serif" style={{ fontSize: "clamp(1.2rem, 3vw, 1.6rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
-              Tool catalog
-            </h3>
-            <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "6px 0 0", lineHeight: 1.5, maxWidth: 480 }}>
-              Attach a capability to this agent — each tool wires up an MCP server (and any teaching skills) on the box. Credentials stay on the box and are never shown back here.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "5px 7px", cursor: "pointer", display: "inline-flex", flexShrink: 0 }}
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        <div style={{ overflowY: "auto", padding: "16px 22px", flex: 1, minHeight: 0 }}>
-          {catalog === null ? (
-            <div style={{ padding: 48, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>
-          ) : loadError ? (
-            <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "#e06c5a", fontSize: 13.5 }}>
-              {loadError}
-              <div style={{ marginTop: 12 }}>
-                <button type="button" onClick={() => void load()} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", cursor: "pointer", fontSize: 12.5 }}>Retry</button>
-              </div>
-            </div>
-          ) : decorated.length === 0 ? (
-            <div style={{ border: "1px dashed var(--etched-border)", padding: "28px 20px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
-              No installable tools in the catalog yet.
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {decorated.map((t) => {
-                const busy = acting === t.id;
-                const blocked = !t.installed && missingRequired(t);
-                return (
-                  <div
-                    key={t.id}
-                    style={{
-                      border: `1px solid ${t.installed ? "var(--gold-leaf)" : "var(--etched-border)"}`,
-                      background: t.installed ? "rgba(197,160,89,0.06)" : "rgba(255,255,255,0.03)",
-                      padding: "12px 14px",
-                      display: "grid",
-                      gap: 10,
-                      minWidth: 0,
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
-                      <span style={{ marginTop: 2, flexShrink: 0, width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--gold-leaf)" }}>
-                        {t.installed ? <Check size={14} /> : <Wrench size={13} style={{ opacity: 0.5 }} />}
-                      </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <strong className="serif" style={{ fontSize: 15.5, fontWeight: 400, color: "var(--ink-black)" }}>{t.name}</strong>
-                          <span className="mono" style={{ ...mono, fontSize: 9, opacity: 0.85, color: t.installed ? "var(--text-muted)" : "var(--gold-leaf)" }}>
-                            {t.installed ? "Installed" : "Available"}
-                          </span>
-                          <span className="mono" style={{ ...mono, fontSize: 9 }}>{t.category}</span>
-                          {t.skillCount > 0 ? <span className="mono" style={{ ...mono, fontSize: 9 }}>+{t.skillCount} skill{t.skillCount > 1 ? "s" : ""}</span> : null}
-                        </div>
-                        <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5, marginTop: 4 }}>
-                          {t.description}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Credential inputs — only when not yet installed and the tool needs them. */}
-                    {!t.installed && t.env.length > 0 ? (
-                      <div style={{ display: "grid", gap: 7, paddingLeft: 28 }}>
-                        {t.env.map((f) => (
-                          <label key={f.key} style={{ display: "grid", gap: 3 }}>
-                            <span className="mono" style={{ ...mono, fontSize: 9, opacity: 0.8 }}>
-                              {f.label}{f.required ? " *" : " (optional)"}
-                            </span>
-                            <input
-                              type={f.secret ? "password" : "text"}
-                              autoComplete={f.secret ? "new-password" : "off"}
-                              value={envValues[`${t.id}:${f.key}`] || ""}
-                              onChange={(e) => setEnv(t.id, f.key, e.target.value)}
-                              placeholder={f.placeholder || f.key}
-                              style={inputStyle}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingLeft: 28 }}>
-                      <span style={{ fontSize: 11.5, color: "#e06c5a", minHeight: 14 }}>{rowError[t.id] || ""}</span>
-                      {t.installed ? (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void remove(t)}
-                          style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "6px 14px", cursor: busy ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}
-                        >
-                          {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
-                          Remove
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busy || blocked}
-                          onClick={() => void install(t)}
-                          style={{
-                            border: "1px solid var(--gold-leaf)",
-                            background: busy || blocked ? "transparent" : "var(--gold-leaf)",
-                            color: busy || blocked ? "var(--text-muted)" : "var(--ink-black)",
-                            padding: "6px 16px",
-                            cursor: busy || blocked ? "default" : "pointer",
-                            fontSize: 12.5,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                          }}
-                        >
-                          {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={12} />}
-                          Install
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 22px", borderTop: "1px solid var(--etched-border)", flexWrap: "wrap" }}>
-          <div className="mono" style={{ ...mono, opacity: 0.7 }}>
-            {catalog && !loadError ? `${availableCount} available` : ""}
-          </div>
-          <button type="button" onClick={onClose} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "8px 16px", cursor: "pointer", fontSize: 13 }}>
-            Done
-          </button>
-        </div>
-      </div>
+      {children}
     </div>
   );
 }

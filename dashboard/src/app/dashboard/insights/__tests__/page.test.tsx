@@ -33,7 +33,11 @@ jest.mock("@/components/admin/AdminInsightsContent.client", () => ({
   ),
 }));
 
-jest.mock("@/lib/ops-access", () => ({ isOpsAdminUser: jest.fn() }));
+jest.mock("@/lib/ops-access", () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual("@/lib/ops-access"),
+  isOpsAdminUser: jest.fn(),
+}));
 jest.mock("@/lib/conversion-funnel", () => ({ getConversionFunnel: jest.fn() }));
 jest.mock("@/lib/activation-cohorts", () => ({ getActivationCohorts: jest.fn() }));
 jest.mock("@/lib/platform-stats", () => ({ getPlatformStats: jest.fn() }));
@@ -52,7 +56,7 @@ describe("AdminInsightsPage", () => {
     mockedAuth.mockResolvedValue({ userId: "user_1" });
     mockedAuth.protect.mockResolvedValue(undefined);
     mockedCurrentUser.mockResolvedValue({
-      primaryEmailAddress: { emailAddress: "admin@hermesos.cloud" },
+      primaryEmailAddress: { emailAddress: "admin@hermesos.cloud", verification: { status: "verified" } },
     });
     mockedGetStats.mockResolvedValue({
       generatedAt: "2026-05-23T00:00:00.000Z",
@@ -88,6 +92,41 @@ describe("AdminInsightsPage", () => {
     expect(mockedGetStats).not.toHaveBeenCalled();
     expect(mockedGetFunnel).not.toHaveBeenCalled();
     expect(mockedGetActivation).not.toHaveBeenCalled();
+  });
+
+  // The admin check matches an email against OPS_ADMIN_EMAILS, so the page may
+  // only hand it the verified primary address. An address that was added but
+  // never verified, or any other address on the account, must not count.
+  it.each([
+    ["an unverified primary email", { primaryEmailAddress: { emailAddress: "admin@hermesos.cloud", verification: { status: "unverified" } } }],
+    ["a primary email with no verification record", { primaryEmailAddress: { emailAddress: "admin@hermesos.cloud" } }],
+  ])("gives the admin check no email for %s", async (_label, user) => {
+    mockedCurrentUser.mockResolvedValue(user);
+    mockedIsAdmin.mockReturnValue(false);
+
+    await AdminInsightsPage({ searchParams: Promise.resolve({}) });
+
+    expect(mockedIsAdmin).toHaveBeenCalledWith({ userId: "user_1", email: null });
+  });
+
+  it("does not fall back to the first address on the account when there is no primary one", async () => {
+    mockedCurrentUser.mockResolvedValue({
+      primaryEmailAddress: null,
+      emailAddresses: [{ emailAddress: "admin@hermesos.cloud" }],
+    });
+    mockedIsAdmin.mockReturnValue(false);
+
+    await AdminInsightsPage({ searchParams: Promise.resolve({}) });
+
+    expect(mockedIsAdmin).toHaveBeenCalledWith({ userId: "user_1", email: null });
+  });
+
+  it("gives the admin check the verified primary email", async () => {
+    mockedIsAdmin.mockReturnValue(false);
+
+    await AdminInsightsPage({ searchParams: Promise.resolve({}) });
+
+    expect(mockedIsAdmin).toHaveBeenCalledWith({ userId: "user_1", email: "admin@hermesos.cloud" });
   });
 
   it("renders insights for admins with the default 30d range", async () => {

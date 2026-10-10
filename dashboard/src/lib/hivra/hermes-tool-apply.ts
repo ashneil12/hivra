@@ -16,7 +16,7 @@ import "server-only";
 
 import { agentWebApi } from "@/lib/agent-web-api";
 import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { isWebfreeBackend } from "@/lib/types/instance";
 import { buildResolveAgentContainerScript, buildResolveGatewayContainerScript } from "@/lib/services/agent-container";
 import { putHermesConfigWithBindMountFallback } from "@/lib/hermes-config-write";
@@ -26,6 +26,7 @@ import {
   readInstalledHermesToolNames,
   type HermesToolServerEntry,
 } from "@/lib/hivra/hermes-tool-config";
+import { getHermesGuestSshTarget, type ProxmoxLifecycleRow } from "@/lib/services/proxmox-infrastructure";
 
 export interface HermesToolApplyResult {
   applied: boolean;
@@ -101,6 +102,7 @@ function entriesPayload(entries: HermesToolServerEntry[]): Record<string, unknow
 
 async function mergeToolsOverSsh(params: {
   ip: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   containerName: string;
   hermesHomeDir: string;
   entries: HermesToolServerEntry[];
@@ -120,6 +122,7 @@ async function mergeToolsOverSsh(params: {
       `MERGE_OUT="$(docker exec "$AGENT_CONTAINER" sh -c 'set -e; echo "${b64Script}" | base64 -d > /tmp/hivra_tools_merge.py; PYBIN=$(head -1 "$(command -v hermes)" 2>/dev/null | sed "s|^#!||"); [ -x "$PYBIN" ] || PYBIN=/opt/hermes/.venv/bin/python3; CFG="\${HERMES_HOME:-${params.hermesHomeDir}}/config.yaml"; "$PYBIN" /tmp/hivra_tools_merge.py "${b64Payload}" "$CFG"; rm -f /tmp/hivra_tools_merge.py')" || { echo "hivra tools config merge failed" >&2; exit 1; }`,
       `echo "$MERGE_OUT"`,
     ].join("\n"),
+    params.guestTarget ? { proxmoxHostConfig: params.guestTarget } : {},
   );
   if (!res.ok) throw new Error(res.error || res.stderr || "tools config merge failed");
   const changed = /HIVRA_TOOLS_MCP=changed/.test(res.stdout || "");
@@ -132,6 +135,7 @@ async function mergeToolsOverSsh(params: {
         buildResolveGatewayContainerScript(params.containerName, "GW_CONTAINER"),
         `if [ -n "$GW_CONTAINER" ]; then docker restart "$GW_CONTAINER" >/dev/null 2>&1 && echo RESTARTED; fi`,
       ].join("\n"),
+      params.guestTarget ? { proxmoxHostConfig: params.guestTarget } : {},
     );
     restarted = r.ok && /RESTARTED/.test(r.stdout || "");
   }
@@ -159,6 +163,7 @@ export async function applyToolsToHermesInstance(params: {
 
   const ip = await resolveInstanceIpv4(instance as never);
   if (!ip) return { applied: false, reason: "no_public_ipv4" };
+  const guestTarget = getHermesGuestSshTarget(instance as ProxmoxLifecycleRow & { id: string });
 
   const containerName = `agent-${sanitizeDockerName(instanceId)}`;
   const hermesHomeDir = resolveHermesHomeDirFromConfig(
@@ -168,6 +173,7 @@ export async function applyToolsToHermesInstance(params: {
   if (isWebfreeBackend(instance.backend)) {
     const { changed, restarted } = await mergeToolsOverSsh({
       ip,
+      guestTarget,
       containerName,
       hermesHomeDir,
       entries,
@@ -193,6 +199,7 @@ export async function applyToolsToHermesInstance(params: {
     containerName,
     hermesHomeDir,
     ip,
+    guestTarget,
     instanceId,
     userId,
   });

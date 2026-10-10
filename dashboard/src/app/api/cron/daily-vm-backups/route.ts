@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { buildColdStorageInstallScript } from "@/lib/cold-storage-ssh";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -66,28 +67,14 @@ function redactHostOutput(value: string, max = 4000): string {
 }
 
 function buildInstallDailyBackupScript(): string {
-  const storageKeyB64 = process.env.HETZNER_SSH_PRIVATE_KEY_B64?.trim() ?? "";
-  const storageKeyInstall = storageKeyB64
-    ? `install -d -m 700 /root/.ssh
-base64 -d > /etc/hivra/keys/cold-storage <<'HERMES_COLD_STORAGE_KEY'
-${storageKeyB64}
-HERMES_COLD_STORAGE_KEY
-chmod 600 /etc/hivra/keys/cold-storage
-touch /root/.ssh/config
-chmod 600 /root/.ssh/config
-sed -i '/# BEGIN HERMES COLD STORAGE/,/# END HERMES COLD STORAGE/d' /root/.ssh/config 2>/dev/null || true
-cat >> /root/.ssh/config <<'HERMES_COLD_STORAGE_SSH_CONFIG'
-# BEGIN HERMES COLD STORAGE
-Host cold hermes-cold-storage
-  HostName u594993.your-storagebox.de
-  User u594993
-  Port 23
-  IdentityFile /etc/hivra/keys/cold-storage
-  StrictHostKeyChecking accept-new
-  UserKnownHostsFile /root/.ssh/known_hosts
-# END HERMES COLD STORAGE
-HERMES_COLD_STORAGE_SSH_CONFIG`
-    : `echo "WARNING: HETZNER_SSH_PRIVATE_KEY_B64 missing; cold Storage Box SSH alias not installed" >&2`;
+  // The alias needs the key plus the box host and user from env. When any of
+  // them is missing the install is skipped with a warning, as it always was for
+  // a missing key. A host that already has the alias from an earlier run keeps
+  // it; a host without one fails at the backup script's first `ssh cold`.
+  const coldStorage = buildColdStorageInstallScript();
+  const storageKeyInstall = coldStorage.ok
+    ? coldStorage.script
+    : `echo "WARNING: ${coldStorage.reason}; cold Storage Box SSH alias not installed" >&2`;
 
   return `install -d -m 755 /usr/local/sbin
 ${storageKeyInstall}

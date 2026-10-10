@@ -14,12 +14,12 @@
  *
  * ── WHAT "FIRST REAL OUTCOME" MEANS HERE, AND WHY ──────────────────────────
  *
- * A new free user has exactly two deploy paths on the welcome card:
+ * A new free user launching Hermes has two model access choices in Launch:
  *
- *   1. Managed (Venice), the default: the deploy mints a Venice proxy key and
- *      seeds providerId+model, so the box boots able to answer.
- *   2. "Bring your own": deploys a CLEAN box — no provider, no model, no key.
- *      The card's own copy says "paste your key from the agent after it's live."
+ *   1. Hivra credits: the launch mints a Venice proxy key and seeds
+ *      providerId+model, so the box boots able to answer.
+ *   2. "Set up inside Hermes": launches a CLEAN box — no provider, no model,
+ *      no key. Hermes asks for a provider before the first chat.
  *
  * WHEN THIS FILE WAS WRITTEN, lane 1 was closed to a virgin free account: an
  * unfunded user was early-returned into a wallet-funding screen, and the starter
@@ -76,7 +76,7 @@
  *    would have passed a 502.
  *
  * 2. OBSERVE THE PRODUCT, DON'T PERTURB IT. Readiness is polled through
- *    `GET /api/instances/[id]` — the route the welcome flow polls — NOT through
+ *    `GET /api/instances/[id]` — the route the product polls — NOT through
  *    `/api/instances/[id]/health`. Both promote the row to `running`, but only
  *    the former fires the post-ready SOUL.md reconcile (soul-seed-reconcile.ts,
  *    canary #484). Polling `/health` won the race, flipped the row first, and
@@ -263,106 +263,92 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
 
       const page = await context.newPage();
 
-      // ── 3. Welcome flow ──────────────────────────────────────────────────
-      // Enter through the same default catalog surface a new user sees. Keep
-      // this audit on Hermes Agent because the later assertions exercise the
+      // ── 3. Launch ────────────────────────────────────────────────────────
+      // Enter through the front door a new account lands on after sign-up.
+      // Keep this audit on Hermes because the later assertions exercise the
       // mature managed-instance API, workspace connection, reply, and teardown
-      // path rather than a catalog-only preview.
-      await page.goto('/dashboard/welcome', { waitUntil: 'domcontentloaded' });
+      // path rather than a catalog-only preview. (Stage names are the tally's
+      // histogram keys, so they keep their original names.)
+      await page.goto('/dashboard/launch?kind=agent&start=1&profile=hermes', { waitUntil: 'domcontentloaded' });
 
-      const agentTypeHeading = page.getByRole('heading', { name: /Choose Your Agent/i });
-      await expect(agentTypeHeading, 'welcome flow should reach the agent-type step').toBeVisible({
+      const planHeading = page.getByRole('heading', { name: /^Hermes — here's the plan$/ });
+      await expect(planHeading, 'Launch should open the Hermes plan').toBeVisible({
         timeout: 60_000,
       });
-      recorder.pass('welcome_loaded');
-
-      const agentsTab = page.getByRole('tab', { name: /^Agents$/i });
-      await expect(agentsTab, 'the default onboarding catalog should open on Agents').toHaveAttribute(
-        'aria-selected',
-        'true',
-      );
-      const hermesAgent = page.locator(
-        '[data-testid="welcome-agent-card"][data-agent-type="general"]',
-      );
-      await expect(hermesAgent, 'Hermes Agent should be directly launchable from the catalog').toBeVisible();
-      await hermesAgent.click();
-      recorder.pass('agent_type_selected');
+      recorder.pass('welcome_loaded', 'Launch opened the Hermes plan');
+      recorder.pass('agent_type_selected', 'hermes, named by the launch link');
 
       // ── 4. Free plan ─────────────────────────────────────────────────────
-      // A user with no subscription row lands on the plan step. `Start free tier`
-      // POSTs /api/billing/subscribe {plan:'free'} and advances to the deploy card.
-      const startFree = page.getByRole('button', { name: 'Start free tier' });
-      const deployHeading = page.getByRole('heading', { name: /^Deploy / });
+      // A new account has no plan. Launch offers `Turn on Free` as its own
+      // button, which POSTs /api/billing/subscribe {plan:'free'}; the plan is
+      // read back before anything counts it as active.
+      const turnOnFree = page.getByRole('button', { name: 'Turn on Free' });
+      const reviewLaunch = page.getByRole('button', { name: 'Review launch' });
 
       await expect
         .poll(
           async () =>
-            (await startFree.isVisible().catch(() => false)) ||
-            (await deployHeading.isVisible().catch(() => false)),
-          { timeout: 60_000, message: 'expected either the plan step or the deploy card' },
+            (await turnOnFree.isVisible().catch(() => false)) ||
+            (await reviewLaunch.isEnabled().catch(() => false)),
+          { timeout: 60_000, message: 'expected Turn on Free, or a plan ready to review' },
         )
         .toBe(true);
 
-      if (await startFree.isVisible().catch(() => false)) {
-        await startFree.click();
-        recorder.pass('plan_activated', 'free tier activated via plan step');
+      if (await turnOnFree.isVisible().catch(() => false)) {
+        await turnOnFree.click();
+        await expect(page.getByText('Free is active.'), 'the Free plan should read back as active').toBeVisible({
+          timeout: 60_000,
+        });
+        recorder.pass('plan_activated', 'free plan turned on in Launch');
       } else {
-        recorder.pass('plan_activated', 'already entitled — plan step skipped');
+        recorder.pass('plan_activated', 'already on a plan');
       }
 
-      await expect(deployHeading, 'should reach the deploy card').toBeVisible({ timeout: 90_000 });
-      recorder.pass('deploy_card_reached');
-
-      // ── 5. The real deploy click ─────────────────────────────────────────
-      await page.getByPlaceholder('MY_FIRST_AGENT').fill(agentName);
+      // ── 5. The real launch click ─────────────────────────────────────────
+      await page.getByRole('textbox', { name: 'Agent name' }).fill(agentName);
 
       // ── THE LANE ─────────────────────────────────────────────────────────
-      // Two lanes on this card, and the choice decides whether `agent_replied`
-      // is even reachable. The managed happy path is intentionally collapsed:
-      // its lane control lives behind Advanced setup, while the simple summary
-      // is the user-visible source of truth for what the default deploy includes.
+      // Model access decides whether `agent_replied` is even reachable.
       //
-      //   Managed Venice (the DEFAULT on a clean browser) — the deploy mints a
-      //     Venice proxy key and seeds providerId+model, so the box boots able to
-      //     answer. Since canary #490/#491 a virgin free account can complete it:
-      //     the per-user starter credit settles BEFORE wallet resolution and the
-      //     key binds to whichever wallet actually holds money. The Deploy button
-      //     is always rendered — a zero-credit managed deploy is allowed through.
+      //   Hivra credits — the launch mints a Venice proxy key and seeds the
+      //     provider and model, so the box boots able to answer. Launch offers
+      //     it only while the account has credit; a $0 balance offers Add
+      //     credit instead, and this lane cannot run.
       //
-      //   Bring your own — a clean-slate box: no provider, no model, no key. The
-      //     card's own copy says "paste your key from the agent after it's live",
-      //     so `agent_replied` is unreachable on this lane BY CONSTRUCTION.
+      //   Set up inside Hermes — a clean-slate box: no provider, no model, no
+      //     key. Hermes asks for a provider before the first chat, so
+      //     `agent_replied` is unreachable on this lane BY CONSTRUCTION.
       //
       // Gate the lane on the outcome we're certifying, so the harness can never
       // assert a reply against a box that was never given the means to produce one.
-      if (cfg.requireAgentReply) {
-        await expect(
-          page.getByTestId('deploy-simple-summary'),
-          'the collapsed default lane should include managed AI',
-        ).toContainText(
-          /private computer with AI included/i,
-          { timeout: 10_000 },
-        );
-      } else {
-        const advanced = page.getByTestId('deploy-advanced-toggle');
-        await advanced.click();
-        await expect(advanced, 'advanced setup should expose the lane controls').toHaveAttribute(
-          'aria-expanded',
-          'true',
-          { timeout: 10_000 },
-        );
-        const bringYourOwn = page.getByRole('button', { name: /Bring your own/ });
-        await bringYourOwn.click();
-        await expect(bringYourOwn, 'clean-slate toggle should be pressed').toHaveAttribute(
-          'aria-pressed',
-          'true',
-          { timeout: 10_000 },
+      const modelAccess = page.getByRole('group', { name: 'Model access' });
+      const lane = cfg.requireAgentReply
+        ? modelAccess.getByRole('button', { name: /^Hivra credits/ })
+        : modelAccess.getByRole('button', { name: /^Set up inside Hermes/ });
+      await expect(lane, 'the model access choice should be offered').toBeVisible({ timeout: 30_000 });
+      if (cfg.requireAgentReply && !(await lane.isEnabled().catch(() => false))) {
+        throw new StageError(
+          'deploy_card_reached',
+          'managed_credits_unavailable',
+          'Hivra credits are not selectable for this account (Launch shows $0), so the managed lane cannot run',
         );
       }
+      await lane.click();
+      await expect(lane, 'the chosen lane should be pressed').toHaveAttribute('aria-pressed', 'true', {
+        timeout: 10_000,
+      });
 
-      const deployButton = page.getByRole('button', { name: /^Deploy (Hermes Agent|Agent)$/ });
-      await expect(deployButton).toBeEnabled();
-      await deployButton.click();
+      await expect(reviewLaunch, 'the plan should be ready to review').toBeEnabled({ timeout: 60_000 });
+      await reviewLaunch.click();
+      await expect(
+        page.getByRole('heading', { name: /^Review and launch / }),
+        'should reach the launch review',
+      ).toBeVisible({ timeout: 30_000 });
+      recorder.pass('deploy_card_reached', 'Launch review');
+
+      const launchButton = page.getByRole('button', { name: 'Launch Hermes' });
+      await expect(launchButton).toBeEnabled();
+      await launchButton.click();
       recorder.pass('deploy_clicked');
 
       // ── 6. An instance row appears ───────────────────────────────────────
@@ -551,7 +537,7 @@ async function waitForInstance(
 
 /**
  * Wait for the box to come up, observing readiness EXACTLY where the product
- * observes it: `GET /api/instances/[id]`, the route the welcome flow polls.
+ * observes it: `GET /api/instances/[id]`, the route the product polls.
  *
  * Do not be tempted back to `/api/instances/[id]/health`. Both routes promote the
  * DB row `provisioning → running` when the gateway answers, but only this one

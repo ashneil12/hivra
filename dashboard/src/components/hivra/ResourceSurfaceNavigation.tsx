@@ -8,7 +8,17 @@ import { SurfaceActions } from "./SurfaceActions";
 import { useNativeWorkspaceSurfaces } from "@/components/layout/NativeWorkspaceBridge";
 
 type Surface = { id: string; label: string; icon: ReactNode };
+/**
+ * A top-level destination and the surfaces it holds, in order. `home` is the
+ * surface its button always opens; without one the button reopens the view
+ * last used in the group (its first view the first time).
+ */
+export type SurfaceGroup<T extends string> = { id: string; label: string; icon: ReactNode; surfaces: T[]; home?: T };
 const PRIMARY = new Set(["chat", "aeon", "terminal", "desktop", "files", "manage"]);
+// Inside the Manage group its own pane is the settings, so its tab says so
+// instead of repeating the group's name. The flat bar (computers) and native
+// clients have no group around it and keep "Manage".
+const GROUPED_LABEL: Partial<Record<string, string>> = { manage: "Settings" };
 
 /**
  * Organizes existing surfaces without owning or remounting their sessions.
@@ -18,9 +28,20 @@ const PRIMARY = new Set(["chat", "aeon", "terminal", "desktop", "files", "manage
  * separate 56px header above it — two rows that both named the same resource.
  */
 export function ResourceSurfaceNavigation<T extends string>({
-  surfaces, active, onSelect, exportHref, identity, actionSurface,
+  surfaces, groups, groupNotes, active, onSelect, exportHref, identity, actionSurface, panelId,
 }: {
   surfaces: (Surface & { id: T })[];
+  /**
+   * Agent pages pass groups (Agent · Computer · Manage): the bar shows one
+   * button per group and, when the active group holds more than one surface,
+   * a second row for them. Without groups (computers) every surface stays in
+   * one flat bar. Native clients always receive the flat list.
+   */
+  groups?: SurfaceGroup<T>[];
+  /** The element the surfaces render into, for the sub-row's aria-controls. */
+  panelId?: string;
+  /** A short fact shown at the end of a group's row, keyed by group id. */
+  groupNotes?: Record<string, ReactNode>;
   active: T;
   onSelect: (id: T) => void;
   exportHref?: string;
@@ -85,8 +106,17 @@ export function ResourceSurfaceNavigation<T extends string>({
     function dismiss(event: PointerEvent) {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     }
+    // A tap inside a Terminal, Desktop or Browser iframe never reaches this
+    // document; the window losing focus to that frame is the only signal.
+    function blurred() {
+      setOpen(false);
+    }
     document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
+    window.addEventListener("blur", blurred);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("blur", blurred);
+    };
   }, [open]);
 
   function select(id: T) {
@@ -105,6 +135,14 @@ export function ResourceSurfaceNavigation<T extends string>({
       <Download size={14} aria-hidden="true" />Export data
     </a> : null}
   </div>;
+
+  const visibleGroups = (groups ?? [])
+    .map(group => ({ ...group, surfaces: group.surfaces.filter(id => surfaces.some(surface => surface.id === id)) }))
+    .filter(group => group.surfaces.length > 0);
+  if (visibleGroups.length > 0) {
+    return <GroupedSurfaceNavigation surfaces={surfaces} groups={visibleGroups} active={active} onSelect={onSelect}
+      exportHref={exportHref} identity={identity} actions={actions} panelId={panelId} notes={groupNotes} />;
+  }
 
   return <nav aria-label="Resource surfaces" className={styles.navigation}>
     {identity}
@@ -131,6 +169,12 @@ export function ResourceSurfaceNavigation<T extends string>({
         onClick={() => setOpen(value => !value)}>
         <MoreHorizontal className={styles.toolsIcon} size={18} aria-hidden="true" /><span className={styles.toolsLabel}>{selectedTool?.label ?? "Tools"}</span><ChevronDown className={styles.toolsChevron} size={13} aria-hidden="true" />
       </button>
+      {/* Narrow panes: a transparent layer over the surface so the first tap
+          outside the menu closes it instead of landing in an iframe. It closes
+          on click, not pointerdown, so the whole tap lands here and no click
+          falls through to the pill or frame underneath. */}
+      {open && <div className={styles.catcher} aria-hidden="true" data-testid="surface-tools-catcher"
+        onClick={() => setOpen(false)} />}
       {open && <div id={toolsId} ref={popover} className={styles.popover}>
         <span className={styles.label}>Tools & connections</span>
         {tools.map(surface => <button key={surface.id} type="button"
@@ -145,4 +189,85 @@ export function ResourceSurfaceNavigation<T extends string>({
     {manage && <button type="button" className={`${styles.surface} ${styles.manage}`} aria-label={manage.label} title={manage.label}
       aria-pressed={active === manage.id} onClick={() => { setOpen(false); onSelect(manage.id); }}>{manage.icon}<span>{manage.label}</span></button>}
   </nav>;
+}
+
+/**
+ * Agent · Computer (Terminal, Files, Browser, Git) · Manage.
+ *
+ * Agent and Manage open their home surface (Chat or the dashboard, Settings);
+ * Computer reopens the view last used in it (Terminal first). The active
+ * group's surfaces sit in their own row as tabs, so every surface stays one
+ * tap away without an overflow menu. A group with a single surface has no
+ * row: its button already opens it, and the row would only repeat its name.
+ */
+function GroupedSurfaceNavigation<T extends string>({
+  surfaces, groups, active, onSelect, exportHref, identity, actions, panelId, notes,
+}: {
+  notes?: Record<string, ReactNode>;
+  surfaces: (Surface & { id: T })[];
+  groups: SurfaceGroup<T>[];
+  active: T;
+  onSelect: (id: T) => void;
+  exportHref?: string;
+  identity?: ReactNode;
+  actions: ReactNode;
+  panelId?: string;
+}) {
+  const [remembered, setRemembered] = useState<Record<string, T>>({});
+  const activeGroup = groups.find(group => group.surfaces.includes(active)) ?? groups[0];
+  const byId = new Map(surfaces.map(surface => [surface.id, surface]));
+  const choose = (group: SurfaceGroup<T>, id: T) => {
+    setRemembered(current => current[group.id] === id ? current : { ...current, [group.id]: id });
+    onSelect(id);
+  };
+  const openGroup = (group: SurfaceGroup<T>) => {
+    const home = group.home && group.surfaces.includes(group.home) ? group.home : undefined;
+    const last = remembered[group.id];
+    choose(group, home ?? (last && group.surfaces.includes(last) ? last : group.surfaces[0]));
+  };
+  const subSurfaces = activeGroup.surfaces.length > 1 ? activeGroup.surfaces : [];
+  // Export sits with Manage: in its row, or in the bar when Manage has none.
+  const showExport = Boolean(exportHref) && activeGroup.id === "manage";
+
+  return <>
+    <nav aria-label="Resource surfaces" className={styles.navigation} data-grouped="true">
+      {identity}
+      <div className={styles.primary}>
+        {groups.map(group => <button key={group.id} type="button" data-surface-group={group.id}
+          aria-label={group.label} aria-pressed={group.id === activeGroup.id} onClick={() => openGroup(group)}
+          className={styles.surface}>
+          {group.icon}<span>{group.label}</span>
+        </button>)}
+      </div>
+      {actions}
+      {showExport && subSurfaces.length === 0 ? <a href={exportHref} title="Download chats and memory as JSON" aria-label="Export data"
+        className={`${styles.surface} ${styles.barExport}`}>
+        <Download size={14} aria-hidden="true" /><span>Export data</span>
+      </a> : null}
+    </nav>
+    {subSurfaces.length > 0 ? <div className={styles.subnav} role="tablist" aria-label={`${activeGroup.label} views`}>
+      {subSurfaces.map(id => {
+        const surface = byId.get(id);
+        if (!surface) return null;
+        return <button key={id} type="button" role="tab" aria-selected={id === active}
+          aria-controls={id === active ? panelId : undefined} tabIndex={id === active ? 0 : -1}
+          className={styles.subSurface} onClick={() => choose(activeGroup, id)}
+          onKeyDown={event => {
+            if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+            event.preventDefault();
+            const index = subSurfaces.indexOf(id);
+            const next = subSurfaces[(index + (event.key === "ArrowRight" ? 1 : subSurfaces.length - 1)) % subSurfaces.length];
+            choose(activeGroup, next);
+            const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+            buttons?.[subSurfaces.indexOf(next)]?.focus();
+          }}>
+          {surface.icon}<span>{GROUPED_LABEL[id] ?? surface.label}</span>
+        </button>;
+      })}
+      {showExport ? <a href={exportHref} title="Download chats and memory as JSON" className={styles.subExport}>
+        <Download size={13} aria-hidden="true" />Export data
+      </a> : null}
+      {notes?.[activeGroup.id] ? <span className={styles.subNote}>{notes[activeGroup.id]}</span> : null}
+    </div> : null}
+  </>;
 }

@@ -16,6 +16,7 @@ import {
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl, resolveProviderFallbackModel } from "@/lib/services/provider-config";
 import { HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE } from "@/lib/services/sidecar-script";
 import { buildInstanceUpdateReporterShell } from "@/lib/services/update-status-reporting";
+import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
 import { log } from "@/lib/logger";
 import {
   buildEnsureBusyboxAvailableScript,
@@ -273,18 +274,48 @@ function supportsHermesAuthStore(provider: string): boolean {
   return isCodexAuthProvider(provider) || isNousAuthProvider(provider);
 }
 
+/**
+ * How renderEmbeddedFileWrite embeds a file's bytes in a generated script.
+ *
+ * - "gzip-base64" (default): one gzip+base64 blob per file. Keeps a script
+ *   small when it travels uncompressed (SSH command strings, guest exec).
+ * - "heredoc": the file's plain text in a quoted heredoc. Only for scripts
+ *   that are compressed as a whole (Hetzner user_data). Per-file gzip+base64
+ *   inside an outer gzip+base64 wastes space: each file loses the shared
+ *   dictionary and the outer pass cannot recover the inner base64 overhead.
+ */
+export type EmbeddedFileEncoding = "gzip-base64" | "heredoc";
+
+const EMBEDDED_FILE_HEREDOC_DELIMITER = "HIVRA_EMBEDDED_FILE_EOF";
+
 function renderEmbeddedFileWrite(
   path: string,
   content: string,
-  options?: { chmod?: string }
+  options?: { chmod?: string; encoding?: EmbeddedFileEncoding }
 ): string {
+  const chmodLine = options?.chmod ? `\nchmod ${options.chmod} ${path}` : "";
+  // A line equal to the delimiter would end the heredoc early, so such
+  // content (only reachable through user-supplied files) keeps the blob form.
+  if (
+    options?.encoding === "heredoc" &&
+    !content.split("\n").includes(EMBEDDED_FILE_HEREDOC_DELIMITER)
+  ) {
+    const heredoc = `<<'${EMBEDDED_FILE_HEREDOC_DELIMITER}'`;
+    // A heredoc always ends in a newline. Content without one goes through
+    // command substitution, which drops exactly that trailing newline.
+    const write = content.endsWith("\n")
+      ? `cat > ${path} ${heredoc}\n${content}${EMBEDDED_FILE_HEREDOC_DELIMITER}`
+      : `printf '%s' "$(cat ${heredoc}\n${content}\n${EMBEDDED_FILE_HEREDOC_DELIMITER}\n)" > ${path}`;
+    return `${write}${chmodLine}`;
+  }
+
   const raw = Buffer.from(content, "utf8");
   const compressed = gzipSync(raw, { level: 9 });
   const shouldCompress = compressed.length < raw.length;
   const encoded = (shouldCompress ? compressed : raw).toString("base64");
   const decodePipeline = shouldCompress ? "base64 -d | gunzip" : "base64 -d";
 
-  return `printf '%s' '${encoded}' | ${decodePipeline} > ${path}${options?.chmod ? `\nchmod ${options.chmod} ${path}` : ""}`;
+  return `printf '%s' '${encoded}' | ${decodePipeline} > ${path}${chmodLine}`;
 }
 
 const HERMES_RUNTIME_UID = 10000;
@@ -294,8 +325,15 @@ const HERMES_RUNTIME_GID = 10000;
 // is templated from many conditional branches that often expand to "", which
 // leaves big stretches of empty lines in the rendered output. These don't
 // affect shell semantics but they do eat into the 32 KB user_data budget.
+// Embedded heredoc bodies are file contents and are left byte-exact.
 function collapseBlankLineRuns(script: string): string {
-  return script.replace(/\n{3,}/g, "\n\n");
+  const heredocBody = new RegExp(
+    `(<<'${EMBEDDED_FILE_HEREDOC_DELIMITER}'\\n[\\s\\S]*?\\n${EMBEDDED_FILE_HEREDOC_DELIMITER}\\n)`
+  );
+  return script
+    .split(heredocBody)
+    .map((part, index) => (index % 2 === 1 ? part : part.replace(/\n{3,}/g, "\n\n")))
+    .join("");
 }
 
 function buildHermesWritableVolumeInitScript(params: {
@@ -1134,6 +1172,7 @@ export function buildAutoUpdateTimerProvisioningScript(params: {
    */
   webuiAgentImage?: string;
   includeHostTimeSyncInstallFallback?: boolean;
+  embeddedFileEncoding?: EmbeddedFileEncoding;
 }): string {
   const backend = params.backend === "webui" ? "webui" : "gateway";
   const hermesImage = params.hermesImage ?? env("HERMES_DOCKER_IMAGE", "ghcr.io/ashneil12/vanilla-hermes-agent:latest");
@@ -1404,9 +1443,10 @@ Unit=${timerName}.service
 [Install]
 WantedBy=timers.target`;
 
-  return `${renderEmbeddedFileWrite(executablePath, autoUpdateScript, { chmod: "+x" })}
-${renderEmbeddedFileWrite(servicePath, serviceFile)}
-${renderEmbeddedFileWrite(timerPath, timerFile)}
+  const encoding = params.embeddedFileEncoding;
+  return `${renderEmbeddedFileWrite(executablePath, autoUpdateScript, { chmod: "+x", encoding })}
+${renderEmbeddedFileWrite(servicePath, serviceFile, { encoding })}
+${renderEmbeddedFileWrite(timerPath, timerFile, { encoding })}
 systemctl daemon-reload
 systemctl reset-failed ${timerName}.service ${timerName}.timer >/dev/null 2>&1 || true
 systemctl enable ${timerName}.timer >/dev/null 2>&1 || true
@@ -1648,13 +1688,6 @@ interface BuildAgentDeployScriptParams {
   profilesToRestore?: { name: string; port: number }[];
   codexAuthBundle?: CodexVaultBundle;
   nousAuthBundle?: NousVaultBundle;
-  // GHCR token to use for `docker login ghcr.io` in the bootstrap.
-  // Caller decides whether to source this from process.env — keeping the
-  // builder pure means the test suite renders deterministic-size output
-  // regardless of the test runner's env (CI sets GHCR_TOKEN; local
-  // jest doesn't), which is what the user_data 32 KB size assertion
-  // depends on. Empty/null/undefined → docker-login block is omitted.
-  ghcrToken?: string | null;
   /**
    * Existing-host/live-update scripts must repair the host clock because no
    * host bootstrap runs. Fresh Hetzner provisioning already runs the repair in
@@ -1662,6 +1695,18 @@ interface BuildAgentDeployScriptParams {
    * user_data ceiling.
    */
   includeHostTimeSyncRepair?: boolean;
+  /**
+   * Remove the ghcr.io login older scripts left in root's Docker config.
+   * Defaults to on: existing hosts and live updates may carry that login. A
+   * fresh server has never run an older script, and its user_data sits close
+   * to the 32 KB ceiling, so its caller turns this off.
+   */
+  includeRegistryCredentialScrub?: boolean;
+  /**
+   * "heredoc" only when the whole script is compressed before delivery
+   * (renderCompressedProvisioningUserData). Defaults to "gzip-base64".
+   */
+  embeddedFileEncoding?: EmbeddedFileEncoding;
 }
 
 interface BuildAgentComposeContentParams {
@@ -2101,16 +2146,11 @@ fi
 
 export function buildAgentDeployScript(params: BuildAgentDeployScriptParams): string {
   const { instanceId, containerName, cpuLimit, ramLimit, globalSettings } = params;
-  const ghcrToken = (params.ghcrToken ?? "").trim();
-  // Render the docker-login block only when the caller supplied a token.
-  // Embedding the literal token in user_data is what blew the Hetzner
-  // 32 KB cloud-init budget when env-derived strings of variable length
-  // crept in (cf. the regression test guarding VERCEL_GIT_COMMIT_SHA).
-  // Empty/missing token → render nothing; production keeps working
-  // because the dashboard runtime always passes a value.
-  const ghcrLoginBlock = ghcrToken
-    ? `echo "${ghcrToken}" | docker login ghcr.io -u __token__ --password-stdin 2>/dev/null || true\n`
-    : "";
+  // No registry login: every image this script pulls is a public package, and
+  // a platform registry token must never reach a tenant box. The scrub removes
+  // the ghcr.io login older scripts left in root's Docker config.
+  const registryCredentialScrub =
+    params.includeRegistryCredentialScrub === false ? "" : buildPlatformRegistryCredentialScrubScript();
   const hostTimeSyncRepairScript =
     params.includeHostTimeSyncRepair === false ? "" : buildHostTimeSyncRepairScript();
 
@@ -2262,16 +2302,17 @@ export function buildAgentDeployScript(params: BuildAgentDeployScriptParams): st
     ramBurstMb: params.ramBurstMb,
   });
 
+  const embeddedFileEncoding = params.embeddedFileEncoding;
   return collapseBlankLineRuns(`
 mkdir -p /opt/hermes/instances/${instanceId}
 cd /opt/hermes/instances/${instanceId}
 :>w
 
-${ghcrLoginBlock}
+${registryCredentialScrub}
 ${hostTimeSyncRepairScript}
 
-${renderEmbeddedFileWrite(".env.new", envFileContent)}
-${renderEmbeddedFileWrite(".managed-env-keys", managedEnvKeysContent)}
+${renderEmbeddedFileWrite(".env.new", envFileContent, { encoding: embeddedFileEncoding })}
+${renderEmbeddedFileWrite(".managed-env-keys", managedEnvKeysContent, { encoding: embeddedFileEncoding })}
 if [ -f .env ]; then
   awk -F= 'NR==FNR {managed[$1]=1; next} /^[A-Za-z_][A-Za-z0-9_]*=/ && !managed[$1]' .managed-env-keys .env > .env.legacy
   awk -F= 'NR==FNR {a[$1]=1; next} /^[A-Za-z_][A-Za-z0-9_]*=/ && !a[$1]' .env.new .env.legacy >> .env.new
@@ -2279,22 +2320,22 @@ if [ -f .env ]; then
 fi
 rm -f .managed-env-keys
 mv .env.new .env
-${renderEmbeddedFileWrite("config.yaml", configYamlContent)}
-${renderEmbeddedFileWrite("sidecar_server.js", HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE)}
-${params.agentSettings?.systemPrompt ? renderEmbeddedFileWrite("SOUL.md", params.agentSettings.systemPrompt) : "touch SOUL.md"}
-${renderEmbeddedFileWrite("honcho.json", honchoFileContent)}
-${agentMemoryOverlay.dockerfileContent ? `${renderEmbeddedFileWrite("Dockerfile.agent-memory", agentMemoryOverlay.dockerfileContent)}
+${renderEmbeddedFileWrite("config.yaml", configYamlContent, { encoding: embeddedFileEncoding })}
+${renderEmbeddedFileWrite("sidecar_server.js", HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE, { encoding: embeddedFileEncoding })}
+${params.agentSettings?.systemPrompt ? renderEmbeddedFileWrite("SOUL.md", params.agentSettings.systemPrompt, { encoding: embeddedFileEncoding }) : "touch SOUL.md"}
+${renderEmbeddedFileWrite("honcho.json", honchoFileContent, { encoding: embeddedFileEncoding })}
+${agentMemoryOverlay.dockerfileContent ? `${renderEmbeddedFileWrite("Dockerfile.agent-memory", agentMemoryOverlay.dockerfileContent, { encoding: embeddedFileEncoding })}
 ` : ""}${hindsightConfigContent ? `mkdir -p hindsight
-${renderEmbeddedFileWrite("hindsight/config.json", hindsightConfigContent)}
-` : ""}${isRootEnabled ? `${renderEmbeddedFileWrite("root-mode-entrypoint.sh", rootModeEntrypointContent, { chmod: "+x" })}
-` : ""}${shouldInjectHermesAuthStore ? `${renderEmbeddedFileWrite("auth.json.inject", authStoreContent)}
+${renderEmbeddedFileWrite("hindsight/config.json", hindsightConfigContent, { encoding: embeddedFileEncoding })}
+` : ""}${isRootEnabled ? `${renderEmbeddedFileWrite("root-mode-entrypoint.sh", rootModeEntrypointContent, { chmod: "+x", encoding: embeddedFileEncoding })}
+` : ""}${shouldInjectHermesAuthStore ? `${renderEmbeddedFileWrite("auth.json.inject", authStoreContent, { encoding: embeddedFileEncoding })}
 ` : ""}
 
-${params.a2aSettings?.enableAcp || params.a2aSettings?.enableMcp ? renderEmbeddedFileWrite("a2a_bridge.py", a2aBridgeCode) : ""}
+${params.a2aSettings?.enableAcp || params.a2aSettings?.enableMcp ? renderEmbeddedFileWrite("a2a_bridge.py", a2aBridgeCode, { encoding: embeddedFileEncoding }) : ""}
 
-${renderEmbeddedFileWrite("Caddyfile", caddyfileContent)}
+${renderEmbeddedFileWrite("Caddyfile", caddyfileContent, { encoding: embeddedFileEncoding })}
 
-${renderEmbeddedFileWrite("docker-compose.yml", composeContent)}
+${renderEmbeddedFileWrite("docker-compose.yml", composeContent, { encoding: embeddedFileEncoding })}
 
 ${sslipPlaceholderResolutionScript}
 
@@ -2325,6 +2366,7 @@ ${buildAutoUpdateTimerProvisioningScript({
   apiServerKey: params.apiServerKey,
   dashboardUrl: globalSettings?.dashboardUrl,
   includeHostTimeSyncInstallFallback: params.includeHostTimeSyncRepair !== false,
+  embeddedFileEncoding: params.embeddedFileEncoding,
 })}
 `);
 }

@@ -1,0 +1,7 @@
+name: venice
+version: 1.0.0
+description: "Venice speech-to-text backend (OpenAI-compatible /audio/transcriptions, Whisper large-v3). One VENICE_API_KEY covers chat + image + video + speech. Select with stt.provider: venice; also the last-resort auto-detect choice on Venice-only boxes."
+author: NousResearch
+kind: backend
+requires_env:
+  - VENICE_API_KEY

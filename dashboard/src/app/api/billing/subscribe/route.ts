@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import Stripe from "stripe";
@@ -11,16 +12,11 @@ import { getStripe, validateOrRecreateStripeCustomer } from "@/lib/stripe";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import {
-  bucketForUser,
-  getTrialDaysForUser,
-  isTrialExperimentEnabled,
-} from "@/lib/billing/trial-experiment";
-import { posthogClient } from "@/lib/posthog";
-import {
-  hasPlanAccessStatus,
+  holdsPaidPlan,
   isLiveStripeSubscriptionId,
 } from "@/lib/billing/subscription-status";
 import { log } from "@/lib/logger";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 // First-touch UTM/referrer stash captured client-side (PostHogProvider) and
 // forwarded by the billing client on the first subscribe call. Unknown keys
@@ -44,7 +40,16 @@ const SubscribeRequestSchema = z.object({
   // landing on the existing monthly Stripe price exactly as before.
   cadence: z.enum(["monthly", "yearly"]).default("monthly"),
   attribution: SignupAttributionSchema.optional(),
+  // Where Stripe's success and cancel pages lead back to (e.g. the launch an
+  // upgrade started from). Validated below; an unusable value is dropped
+  // rather than failing checkout over navigation.
+  returnTo: z.unknown().optional(),
 });
+
+/** Short, stable digest for Stripe idempotency keys. */
+function keyDigest(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
 
 const RECENT_PENDING_CHECKOUT_WINDOW_MS = 60 * 60 * 1000;
 
@@ -145,6 +150,16 @@ export async function POST(req: NextRequest) {
     const rawPlanKey = parsedRequest.data.plan;
     const planKey = rawPlanKey in PLANS ? (rawPlanKey as PlanKey) : null;
     const cadence: Cadence = parsedRequest.data.cadence;
+    const returnTo = safeReturnPath(parsedRequest.data.returnTo);
+    if (parsedRequest.data.returnTo !== undefined && !returnTo) {
+      log.warn("dropped an unsafe checkout return path", {
+        source: "billing-subscribe",
+        route: "/api/billing/subscribe",
+        method: "POST",
+        userId: clerkUserId,
+        failureType: "billing_subscribe_return_to_rejected",
+      });
+    }
 
     const ip = getIP(req);
 
@@ -176,8 +191,7 @@ export async function POST(req: NextRequest) {
     // paid rows have access but no live Stripe subscription to mutate, so they
     // are allowed to start Checkout and keep their current entitlement until
     // Checkout completes.
-    const hasActivePaidSubscription =
-      Boolean(existingSub && hasPlanAccessStatus(existingSub.status) && existingSub.plan !== "free");
+    const hasActivePaidSubscription = holdsPaidPlan(existingSub);
     const shouldPreserveExistingEntitlement =
       Boolean(
         hasActivePaidSubscription &&
@@ -361,6 +375,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Sessions this request expires. A new session must never reuse the
+    // idempotency key of one it just expired: Stripe would replay that
+    // session's saved response and send the owner to an expired checkout.
+    let expiredSessionIds: string[] = [];
+
     if (hasRecentPendingCheckout && stripeCustomerId) {
       try {
         const sessions = await stripe.checkout.sessions.list({
@@ -369,8 +388,14 @@ export async function POST(req: NextRequest) {
         });
 
         const openSessions = sessions.data.filter((session) => session.status === "open");
+        // Resume only a session for the same plan that returns to the same
+        // place; one started from elsewhere would land the owner on the
+        // wrong page after paying.
         const matchingSession = openSessions.find(
-          (session) => session.url && session.metadata?.plan === planKey
+          (session) =>
+            session.url &&
+            session.metadata?.plan === planKey &&
+            (session.metadata?.return_to ?? null) === returnTo
         );
 
         if (matchingSession?.url) {
@@ -380,6 +405,7 @@ export async function POST(req: NextRequest) {
         const staleSessions = openSessions.filter(
           (session) => session.id !== matchingSession?.id
         );
+        expiredSessionIds = staleSessions.map((session) => session.id);
 
         const expirationResults = await Promise.allSettled(
           staleSessions.map((session) => stripe.checkout.sessions.expire(session.id))
@@ -421,26 +447,28 @@ export async function POST(req: NextRequest) {
     const appUrl = getDashboardOrigin();
 
     // Idempotency key scoped to the hour — prevents duplicate sessions
-    // from double-clicks within the same checkout window
+    // from double-clicks within the same checkout window. The "np" (no promo)
+    // segment retired every key minted while promotion codes were enabled:
+    // Stripe rejects a reused key whose parameters changed.
     // Cadence is part of the idempotency key so a user who first started
     // a monthly checkout and then switched to yearly within the same
     // hour gets a fresh session for the yearly price (vs. silently
     // re-using the monthly one).
-    const idempotencyKey = `checkout_${clerkUserId}_${planKey}_${cadence}_${Math.floor(Date.now() / 3600000)}`;
-
-    // 7-day Pro trial experiment (default-off scaffolding). Assignment is a
-    // pure function of the user id, so this resolves to 0 trial days for
-    // everyone until TRIAL_EXPERIMENT_ENABLED + TRIAL_EXPERIMENT_PERCENT are
-    // set. Trial users get trial_period_days on the Checkout subscription;
-    // the Stripe webhook already maps status 'trialing' → 'active'.
-    const trialDays = getTrialDaysForUser(clerkUserId, planKey);
+    // The return path and any sessions just expired are part of the key: the
+    // same click (same plan, cadence and return) still dedupes, but a request
+    // that differs in either gets its own session instead of a replay.
+    const returnKey = returnTo ? `_r${keyDigest(returnTo)}` : "";
+    const expiredKey = expiredSessionIds.length
+      ? `_x${keyDigest([...expiredSessionIds].sort().join(","))}`
+      : "";
+    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
+    const returnQuery = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : "";
 
     const sessionMetadata = {
       user_id: clerkUserId,
       plan: planKey,
       cadence,
       checkout_ip: ip,
-      ...(trialDays > 0 ? { trial_days: String(trialDays) } : {}),
     };
 
     const session = await stripe.checkout.sessions.create(
@@ -449,51 +477,23 @@ export async function POST(req: NextRequest) {
         payment_method_collection: "always",
         client_reference_id: clerkUserId,
         customer: stripeCustomerId,
-        metadata: sessionMetadata,
+        metadata: returnTo ? { ...sessionMetadata, return_to: returnTo } : sessionMetadata,
         line_items: [{ price: stripePriceId, quantity: 1 }],
+        // Direct payment only: no trial_period_days, ever (owner decision
+        // 2026-10-07: you purchase and you get what you want).
         subscription_data: {
           metadata: sessionMetadata,
-          ...(trialDays > 0 ? { trial_period_days: trialDays } : {}),
         },
         // {CHECKOUT_SESSION_ID} is replaced by Stripe — used by confirm-checkout
         // to instantly activate the account without waiting for webhook delivery
-        success_url: `${appUrl}/dashboard/billing?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${appUrl}/checkout/canceled?plan=${planKey}`,
-        allow_promotion_codes: true,
+        success_url: `${appUrl}/dashboard/billing?subscription=success&session_id={CHECKOUT_SESSION_ID}${returnQuery}`,
+        cancel_url: `${appUrl}/checkout/canceled?plan=${planKey}${returnQuery}`,
+        // No promotion codes: you purchase and you get what you want. Explicit
+        // false so the intent is visible; Stripe's default is also off.
+        allow_promotion_codes: false,
       },
       { idempotencyKey }
     );
-
-    // A/B assignment event — fires for BOTH buckets (control is the
-    // baseline) the first time a user reaches a paid checkout while the
-    // experiment is enabled. The stable $insert_id keeps PostHog from
-    // counting repeat checkouts as new assignments. Observability only:
-    // a capture/flush failure must never break checkout.
-    if (isTrialExperimentEnabled()) {
-      try {
-        posthogClient.capture({
-          distinctId: clerkUserId,
-          event: "trial_experiment_assigned",
-          properties: {
-            bucket: bucketForUser(clerkUserId),
-            plan: planKey,
-            trial_days: trialDays,
-            $insert_id: `trial_experiment_assigned_${clerkUserId}`,
-          },
-        });
-        // Flush before the function dies — Vercel won't wait for async flushes.
-        await posthogClient.flush();
-      } catch (captureError) {
-        log.warn("trial experiment assignment capture failed", {
-          source: "billing-subscribe",
-          route: "/api/billing/subscribe",
-          method: "POST",
-          userId: clerkUserId,
-          failureType: "trial_experiment_capture_failed",
-          errorName: captureError instanceof Error ? captureError.name : typeof captureError,
-        });
-      }
-    }
 
     if (shouldPreserveExistingEntitlement) {
       log.info("manual paid subscription checkout started without mutating active entitlement", {

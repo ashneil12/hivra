@@ -337,3 +337,157 @@ test('fails closed when owner assertions do not cover every asserted artwork ass
     output: path.join(f.parent, 'incomplete-owner-assertions'),
   }), /not exhaustive for owner-asserted artwork/);
 });
+
+function derivedFixture(t) {
+  const f = fixture(t);
+  f.write('assets/editorial-small.webp', Buffer.from([5, 6, 7, 8]));
+  f.write('scripts/export.py', 'print("export")\n');
+  f.commit('add derived export and its script');
+  const derivedCommit = execFileSync('git', ['-C', f.root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const policy = JSON.parse(readFileSync(f.policy, 'utf8'));
+  const source = policy.assets.find((asset) => asset.path === 'assets/editorial.webp');
+  source.rightsStatus = 'documented-owner-asserted-original-artwork';
+  source.redistributionDecision = 'include';
+  const ownerRecords = {
+    format: 'hivra-asset-owner-assertions-v1',
+    boundary: 'Fixture boundary.',
+    assertions: [{
+      path: source.path,
+      sha256: source.sha256,
+      assertedBy: 'repository-owner',
+      redistributionBasis: 'owner-originality-assertion',
+      independentEvidenceLevel: 'repository-history-only',
+      assertion: 'Fixture assertion.',
+      independentEvidence: 'Fixture evidence.',
+    }],
+  };
+  const ownerBytes = Buffer.from(`${JSON.stringify(ownerRecords, null, 2)}\n`);
+  f.write('docs/release/asset-owner-assertions.json', ownerBytes);
+  const derivedBytes = readFileSync(path.join(f.root, 'assets/editorial-small.webp'));
+  policy.assets.push({
+    path: 'assets/editorial-small.webp',
+    sha256: sha256(derivedBytes),
+    bytes: derivedBytes.length,
+    class: 'derived-export',
+    origin: 'Fixture resized export.',
+    provenanceCommit: derivedCommit,
+    rightsStatus: 'documented-derived-export',
+    redistributionDecision: 'include',
+  });
+  const records = {
+    format: 'hivra-asset-derived-exports-v1',
+    derivedAssets: [{
+      path: 'assets/editorial-small.webp',
+      sha256: sha256(derivedBytes),
+      sourcePath: source.path,
+      sourceSha256: source.sha256,
+      method: 'Lanczos resize to 256px wide, then WebP.',
+      script: 'scripts/export.py',
+      command: 'python3 scripts/export.py',
+      parameters: { width: 256, quality: 78 },
+      toolVersions: { pillow: '11.3.0' },
+      reproduction: 'Rerunning the script reproduces these bytes.',
+    }],
+  };
+  const write = (value = records) => {
+    const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+    f.write('docs/release/asset-derived-exports.json', bytes);
+    policy.rightsReview = {
+      ownerAssertions: 'docs/release/asset-owner-assertions.json',
+      ownerAssertionsSha256: sha256(ownerBytes),
+      derivedExports: 'docs/release/asset-derived-exports.json',
+      derivedExportsSha256: sha256(bytes),
+    };
+    f.write('docs/release/asset-provenance.json', `${JSON.stringify(policy, null, 2)}\n`);
+    f.commit('record derived export');
+  };
+  return { f, policy, records, write, ownerBytes };
+}
+
+test('accepts a derived export whose recorded source is includable and unchanged', (t) => {
+  const { f, records, write } = derivedFixture(t);
+  write();
+  const report = generateAssetProvenanceEvidence({ root: f.root, output: path.join(f.parent, 'derived') });
+  assert.equal(report.status, 'inventory-complete');
+  assert.deepEqual(report.derivedExports, {
+    path: 'docs/release/asset-derived-exports.json',
+    sha256: sha256(Buffer.from(`${JSON.stringify(records, null, 2)}\n`)),
+    recordedAssets: 1,
+    sources: 1,
+  });
+  assert.equal(report.generationRecords, null);
+});
+
+test('rejects a derived export with a missing, held, derived or changed source', (t) => {
+  const missing = derivedFixture(t);
+  missing.records.derivedAssets[0].sourcePath = 'assets/not-an-asset.webp';
+  missing.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: missing.f.root, output: path.join(missing.f.parent, 'missing'),
+  }), /source is missing, derived, held, or changed/);
+
+  const changed = derivedFixture(t);
+  changed.records.derivedAssets[0].sourceSha256 = 'f'.repeat(64);
+  changed.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: changed.f.root, output: path.join(changed.f.parent, 'changed'),
+  }), /source is missing, derived, held, or changed/);
+
+  const held = derivedFixture(t);
+  const heldSource = held.policy.assets.find((asset) => asset.path === 'assets/editorial.webp');
+  heldSource.rightsStatus = 'generation-record-attestation-pending';
+  heldSource.redistributionDecision = 'hold-for-rights-review';
+  held.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: held.f.root, output: path.join(held.f.parent, 'held'),
+  }), /source is missing, derived, held, or changed/);
+
+  // A derived export cannot be the source of another, so every chain ends in a recorded asset.
+  const chained = derivedFixture(t);
+  chained.records.derivedAssets[0].sourcePath = 'assets/editorial-small.webp';
+  chained.records.derivedAssets[0].sourceSha256 = chained.records.derivedAssets[0].sha256;
+  chained.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: chained.f.root, output: path.join(chained.f.parent, 'chained'),
+  }), /source is missing, derived, held, or changed/);
+});
+
+test('rejects derived export records that are not exhaustive, described or reproducible', (t) => {
+  const unrecorded = derivedFixture(t);
+  unrecorded.records.derivedAssets = [];
+  unrecorded.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: unrecorded.f.root, output: path.join(unrecorded.f.parent, 'unrecorded'),
+  }), /not exhaustive for derived exports/);
+
+  const undescribed = derivedFixture(t);
+  undescribed.records.derivedAssets[0].method = ' ';
+  undescribed.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: undescribed.f.root, output: path.join(undescribed.f.parent, 'undescribed'),
+  }), /derivation is missing or incomplete/);
+
+  const noScript = derivedFixture(t);
+  noScript.records.derivedAssets[0].script = 'scripts/absent.py';
+  noScript.records.derivedAssets[0].command = 'python3 scripts/absent.py';
+  noScript.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: noScript.f.root, output: path.join(noScript.f.parent, 'no-script'),
+  }), /Derived export script is missing/);
+
+  const wrongBytes = derivedFixture(t);
+  wrongBytes.records.derivedAssets[0].sha256 = 'a'.repeat(64);
+  wrongBytes.write();
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: wrongBytes.f.root, output: path.join(wrongBytes.f.parent, 'wrong-bytes'),
+  }), /source is missing, derived, held, or changed/);
+
+  const tampered = derivedFixture(t);
+  tampered.write();
+  tampered.records.derivedAssets[0].method = 'Tampered after policy review.';
+  tampered.f.write('docs/release/asset-derived-exports.json', `${JSON.stringify(tampered.records, null, 2)}\n`);
+  tampered.f.commit('tamper derived export record');
+  assert.throws(() => generateAssetProvenanceEvidence({
+    root: tampered.f.root, output: path.join(tampered.f.parent, 'tampered'),
+  }), /identity changed without review/);
+});

@@ -413,11 +413,8 @@ describe("FileExplorer", () => {
     const card = screen.getByTestId("file-card-README.md");
     const iconFrame = screen.getByTestId("file-card-icon-frame-README.md");
 
-    expect(card).toHaveStyle({
-      padding: "22px",
-      minHeight: "168px",
-      gap: "18px",
-    });
+    // Desktop keeps the roomy tile; phones get a compact one (Tailwind sm: split).
+    expect(card).toHaveClass("sm:p-[22px]", "sm:min-h-[168px]", "sm:gap-[18px]", "p-4", "min-h-[120px]");
     expect(iconFrame).toHaveStyle({
       width: "56px",
       height: "56px",
@@ -476,15 +473,12 @@ describe("FileExplorer", () => {
     fireEvent.doubleClick(screen.getByText("README.md"));
 
     const editorShell = await screen.findByTestId("file-editor-shell");
-    expect(editorShell).toHaveStyle({
-      minHeight: "620px",
-    });
+    expect(editorShell).toHaveClass("lg:min-h-[620px]", "min-h-[50dvh]");
 
     const editor = await screen.findByRole("textbox");
-    expect(editor).toHaveStyle({
-      padding: "24px",
-      lineHeight: "1.8",
-    });
+    expect(editor).toHaveClass("sm:p-6", "p-3", "leading-[1.8]");
+    expect(editor).toHaveAttribute("autocapitalize", "off");
+    expect(editor).toHaveAttribute("autocorrect", "off");
     expect(screen.queryByText(/preview, metadata, and actions for the current selection/i)).not.toBeInTheDocument();
   });
 
@@ -509,5 +503,172 @@ describe("FileExplorer", () => {
     expect(previewKind).toHaveTextContent("Text");
     expect(previewKind).toHaveClass("border");
     expect(previewKind).toHaveClass("bg-[var(--bg-elevated)]");
+  });
+
+  describe("narrow and touch layouts", () => {
+    const originalMatchMedia = window.matchMedia;
+    function mockNarrow(matches: boolean) {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        writable: true,
+        value: jest.fn((query: string) => ({
+          matches: matches && query === "(max-width: 1023px)",
+          media: query,
+          addEventListener: jest.fn(),
+          removeEventListener: jest.fn(),
+        })),
+      });
+    }
+    afterEach(() => {
+      Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: originalMatchMedia });
+    });
+
+    class TestPointerEvent extends MouseEvent {
+      pointerType: string;
+      constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+        super(type, init);
+        this.pointerType = init.pointerType ?? "mouse";
+      }
+    }
+    async function withPointerEvents(run: () => Promise<void>) {
+      const originalPointerEvent = (window as unknown as { PointerEvent?: unknown }).PointerEvent;
+      Object.defineProperty(window, "PointerEvent", { configurable: true, writable: true, value: TestPointerEvent });
+      try {
+        await run();
+      } finally {
+        Object.defineProperty(window, "PointerEvent", { configurable: true, writable: true, value: originalPointerEvent });
+      }
+    }
+
+    it("opens a folder on a single touch tap below the desktop breakpoint", async () => {
+      mockNarrow(true);
+      render(<FileExplorer instanceId="inst_123" />);
+
+      await withPointerEvents(async () => {
+        const folder = await screen.findByTestId("file-card-docs");
+        fireEvent.pointerDown(folder, { pointerType: "touch" });
+        fireEvent.click(folder);
+        // The double tap that follows must not act on the next folder's items.
+        fireEvent.pointerDown(folder, { pointerType: "touch" });
+        fireEvent.doubleClick(folder);
+
+        await waitFor(() => {
+          expect(getListBodies()).toContainEqual({ action: "list", path: `${INSTANCE_EXPLORER_HOME}/docs` });
+        });
+        expect(getListBodies()).toHaveLength(2);
+      });
+    });
+
+    it("selects a folder on a mouse click below the desktop breakpoint and opens it from the dossier", async () => {
+      mockNarrow(true);
+      render(<FileExplorer instanceId="inst_123" />);
+
+      await withPointerEvents(async () => {
+        const folder = await screen.findByTestId("file-card-docs");
+        fireEvent.pointerDown(folder, { pointerType: "mouse" });
+        fireEvent.click(folder);
+      });
+
+      expect(getListBodies()).toEqual([{ action: "list", path: INSTANCE_EXPLORER_HOME }]);
+      const dossier = screen.getByLabelText("Explorer dossier");
+      expect(dossier).not.toHaveClass("max-lg:hidden");
+      expect(screen.getByTestId("explorer-list-pane")).toHaveClass("max-lg:hidden");
+      fireEvent.click(within(dossier).getByRole("button", { name: /open folder/i }));
+
+      await waitFor(() => {
+        expect(getListBodies()).toContainEqual({ action: "list", path: `${INSTANCE_EXPLORER_HOME}/docs` });
+      });
+    });
+
+    it("scrolls the inline editor into view when editing starts below the desktop breakpoint", async () => {
+      mockNarrow(true);
+      const scrollIntoView = jest.fn();
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollIntoView;
+      try {
+        render(<FileExplorer instanceId="inst_123" />);
+        fireEvent.click(await screen.findByText("README.md"));
+        fireEvent.click(await screen.findByRole("button", { name: /open in editor/i }));
+
+        const editor = await screen.findByTestId("explorer-editor-section");
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+        expect(scrollIntoView.mock.contexts).toContain(editor);
+      } finally {
+        Element.prototype.scrollIntoView = original;
+      }
+    });
+
+    it("leaves the dossier scroll alone when editing on the desktop layout", async () => {
+      mockNarrow(false);
+      const scrollIntoView = jest.fn();
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollIntoView;
+      try {
+        render(<FileExplorer instanceId="inst_123" />);
+        fireEvent.click(await screen.findByText("README.md"));
+        fireEvent.click(await screen.findByRole("button", { name: /open in editor/i }));
+
+        await screen.findByTestId("explorer-editor-section");
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        Element.prototype.scrollIntoView = original;
+      }
+    });
+
+    it("shows either the file list or the dossier, with a back control, below the desktop breakpoint", async () => {
+      mockNarrow(true);
+      render(<FileExplorer instanceId="inst_123" />);
+
+      const listPane = screen.getByTestId("explorer-list-pane");
+      const dossier = screen.getByLabelText("Explorer dossier");
+      await screen.findByText("README.md");
+      expect(listPane).not.toHaveClass("max-lg:hidden");
+      expect(dossier).toHaveClass("max-lg:hidden");
+
+      fireEvent.click(screen.getByText("README.md"));
+      expect(await screen.findByText(/Explorer Notes/)).toBeInTheDocument();
+      expect(listPane).toHaveClass("max-lg:hidden");
+      expect(dossier).not.toHaveClass("max-lg:hidden");
+
+      fireEvent.click(within(dossier).getByRole("button", { name: /back to files/i }));
+      expect(listPane).not.toHaveClass("max-lg:hidden");
+      expect(dossier).toHaveClass("max-lg:hidden");
+      expect(within(dossier).queryByRole("button", { name: /back to files/i })).not.toBeInTheDocument();
+    });
+
+    it("keeps select-then-double-click for a mouse on the desktop layout", async () => {
+      mockNarrow(false);
+      render(<FileExplorer instanceId="inst_123" />);
+
+      fireEvent.click(await screen.findByText("docs"));
+      expect(getListBodies()).toEqual([{ action: "list", path: INSTANCE_EXPLORER_HOME }]);
+      expect(screen.getByText("Folder selected")).toBeInTheDocument();
+    });
+
+    it("opens a folder on a single touch tap even on the desktop layout", async () => {
+      mockNarrow(false);
+      render(<FileExplorer instanceId="inst_123" />);
+
+      await withPointerEvents(async () => {
+        const folder = await screen.findByTestId("file-card-docs");
+        fireEvent.pointerDown(folder, { pointerType: "touch" });
+        fireEvent.click(folder);
+
+        await waitFor(() => {
+          expect(getListBodies()).toContainEqual({ action: "list", path: `${INSTANCE_EXPLORER_HOME}/docs` });
+        });
+      });
+    });
+
+    it("keeps list rows readable on phones by dropping the reserved date track", async () => {
+      render(<FileExplorer instanceId="inst_123" />);
+
+      await screen.findByText("README.md");
+      fireEvent.click(screen.getByRole("button", { name: /list view/i }));
+
+      const row = screen.getByTestId("file-row-README.md");
+      expect(row).toHaveClass("grid-cols-[minmax(0,1fr)_72px]", "sm:grid-cols-[minmax(0,1fr)_100px_160px]");
+      expect(row).not.toHaveAttribute("style");
+    });
   });
 });

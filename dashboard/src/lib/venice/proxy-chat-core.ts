@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { responsesEstimateRequest, VENICE_RESPONSES_ENDPOINT, VENICE_RESPONSES_URL } from "./responses-protocol";
+import { VENICE_RESPONSES_ENDPOINT, VENICE_RESPONSES_URL } from "./responses-protocol";
 
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import {
+  ManagedVeniceBalanceHeldError,
   ManagedVeniceInsufficientBalanceError,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
@@ -13,17 +14,34 @@ import {
   checkVeniceChatPricingCatalogStaleness,
 } from "@/lib/venice/pricing";
 import {
+  InvalidVeniceChatRequestError,
   estimateChatCompletionCost,
   type VenicePricingMap,
 } from "@/lib/venice/cost-estimator";
+import {
+  managedVeniceBalanceHeldMessage,
+  managedVeniceChatEstimateBody,
+  reserveManagedVeniceChatWithinBalance,
+  unbilledVeniceChatOption,
+  unpricedVeniceChatFallbacks,
+  type ManagedVeniceOutputCapPatch,
+} from "@/lib/venice/chat-output-budget";
+import {
+  isManagedVeniceChatSurchargesEnabled,
+  planManagedChatSurcharges,
+  type ManagedChatSurchargeEvidence,
+  type ManagedChatSurchargePlan,
+} from "@/lib/venice/chat-surcharges";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
   captureManagedVeniceChatUsage,
+  captureManagedVeniceObservedOutput,
+  loadManagedVeniceReservationOwner,
+  managedVeniceUsageCostMicroUsd,
   markManagedVeniceReconciliationRequired,
-  reserveManagedVeniceChatRequest,
 } from "@/lib/venice/proxy-settlement";
 
 // SCRIPTURE_ANCHOR: venice-stream | Proverbs 18:4 | Verse: The words of a man's mouth are like deep waters. The fountain of wisdom is like a flowing brook.
@@ -79,6 +97,19 @@ interface AuthorizedManagedVeniceChat {
   pricingMap: VenicePricingMap;
   pricingSource: string;
   liveModelCount: number;
+  /**
+   * Output-cap fields to overwrite in the caller's body before it is sent to
+   * Venice, so the forwarded request cannot generate more than was held. Empty
+   * when the body goes out as sent. Always empty when `allowBodyRewrite` was
+   * false. Every forwarder MUST apply it.
+   */
+  bodyPatch: ManagedVeniceOutputCapPatch;
+  /**
+   * The billed options (web search, scraping, X search) this request was held
+   * for, or null: always null with MANAGED_VENICE_CHAT_SURCHARGES_ENABLED off.
+   * When set, the forwarder passes Venice's cost evidence to settlement.
+   */
+  surcharge?: ManagedChatSurchargePlan | null;
 }
 
 export type AuthorizeManagedVeniceChatResult =
@@ -86,6 +117,15 @@ export type AuthorizeManagedVeniceChatResult =
   // `response` is the verbatim error (401/400/402/503) to relay to the caller
   // (and, through the Worker, to the box). OpenAI-compatible bodies preserved.
   | { ok: false; response: Response };
+
+const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requestsStrippedThinking(body: Record<string, unknown>): boolean {
+  const veniceParameters = body.venice_parameters;
+  if (!veniceParameters || typeof veniceParameters !== "object" || Array.isArray(veniceParameters)) return false;
+  const strip = (veniceParameters as Record<string, unknown>).strip_thinking_response;
+  return strip !== undefined && strip !== null && strip !== false;
+}
 
 /**
  * Verify the proxy key, validate the model, fetch live pricing, reserve wallet
@@ -97,8 +137,29 @@ export async function authorizeManagedVeniceChat(params: {
   plaintextKey: string | null;
   body: Record<string, unknown>;
   protocol?: "responses";
+  /**
+   * Whether the caller forwards `{...body, ...bodyPatch}`. Default true. The
+   * off-Vercel Worker sets it only once it applies the patch; until then its
+   * requests hold their full worst case and are never given a lower cap.
+   */
+  allowBodyRewrite?: boolean;
+  /**
+   * The Cloudflare Worker chooses the hold's reference (a fresh UUID) before
+   * it calls authorize, so it can release the hold even when the authorize
+   * response never reaches it. Omitted, a reference is generated here.
+   */
+  referenceId?: string;
 }): Promise<AuthorizeManagedVeniceChatResult> {
+  if (params.referenceId !== undefined && !REFERENCE_ID_PATTERN.test(params.referenceId)) {
+    return {
+      ok: false,
+      response: apiError("Invalid request reference.", 400, {
+        failureType: "managed_venice_invalid_reference_id",
+      }),
+    };
+  }
   const { plaintextKey, body } = params;
+  const protocol = params.protocol === "responses" ? "responses" : "chat";
 
   if (!plaintextKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
@@ -112,8 +173,66 @@ export async function authorizeManagedVeniceChat(params: {
   if (typeof body.model !== "string" || !body.model.trim()) {
     return { ok: false, response: apiError("Model is required.", 400) };
   }
-  const endpoint = params.protocol === "responses" ? VENICE_RESPONSES_ENDPOINT : "/api/v1/chat/completions";
-  const estimateBody = params.protocol === "responses" ? responsesEstimateRequest(body) : body as { model: string; [key: string]: unknown };
+  // Venice leaves a reasoning model's thinking out of the stream when asked
+  // to strip it, so a stream whose usage frame never arrives could not be
+  // charged for it (security review 2026-09, #167 second review).
+  if (requestsStrippedThinking(body)) {
+    return {
+      ok: false,
+      response: apiError(
+        "venice_parameters.strip_thinking_response is not supported on managed Venice. Use disable_thinking to skip reasoning.",
+        400,
+        { failureType: "managed_venice_strip_thinking_unsupported" }
+      ),
+    };
+  }
+  const endpoint = protocol === "responses" ? VENICE_RESPONSES_ENDPOINT : "/api/v1/chat/completions";
+
+  // Options Venice bills outside token usage cannot be covered by a token
+  // hold. (The Responses allowlist already refuses every one of them.)
+  //
+  // With MANAGED_VENICE_CHAT_SURCHARGES_ENABLED (default OFF) web search,
+  // scraping and X search are priced instead: held on top of the token hold
+  // and charged at settlement (chat-surcharges.ts). Whatever cannot be priced
+  // (model fallbacks, an unreviewed venice_parameters option, an unknown tool
+  // type) is still refused here, before any hold: the Worker forwards its own
+  // copy of the body, so this is the only control on that path.
+  let surcharge: ManagedChatSurchargePlan | null = null;
+  let unbilled: string | null = null;
+  if (protocol === "chat" && isManagedVeniceChatSurchargesEnabled()) {
+    unbilled = unpricedVeniceChatFallbacks(body);
+    if (!unbilled) {
+      const planned = planManagedChatSurcharges(body);
+      if (!planned.ok) {
+        return {
+          ok: false,
+          response: openAiCompatibleError({
+            status: 400,
+            code: "managed_venice_unpriced_option",
+            type: "invalid_request_error",
+            message: planned.error,
+          }),
+        };
+      }
+      surcharge = planned.plan;
+    }
+  } else if (protocol === "chat") {
+    unbilled = unbilledVeniceChatOption(body);
+  }
+  if (unbilled) {
+    return {
+      ok: false,
+      response: openAiCompatibleError({
+        status: 400,
+        code: "managed_venice_unsupported_option",
+        type: "invalid_request_error",
+        param: unbilled,
+        message:
+          `${unbilled} is not available on managed Venice: Venice bills it separately ` +
+          `from tokens. Remove it or use your own Venice key.`,
+      }),
+    };
+  }
 
   // Live Venice pricing — fetched + cached at module level for 5 minutes.
   // Cache hits cost ~6× less than full input on most models; without this
@@ -122,17 +241,26 @@ export async function authorizeManagedVeniceChat(params: {
   const livePricing = await getVenicePricingMap();
   const pricingMap = livePricing.map;
 
+  let unsizedInputParts = 0;
   try {
-    estimateChatCompletionCost(
-      estimateBody,
-      pricingMap
-    );
+    ({ unsizedInputParts } = estimateChatCompletionCost(managedVeniceChatEstimateBody(protocol, body), pricingMap));
   } catch (error) {
     if (error instanceof UnsupportedVeniceModelError) {
       return {
         ok: false,
         response: apiError("Unsupported Venice model.", 400, {
           failureType: "managed_venice_unsupported_model",
+        }),
+      };
+    }
+    if (error instanceof InvalidVeniceChatRequestError) {
+      return {
+        ok: false,
+        response: openAiCompatibleError({
+          status: 400,
+          code: "invalid_request",
+          type: "invalid_request_error",
+          message: error.message,
         }),
       };
     }
@@ -162,7 +290,18 @@ export async function authorizeManagedVeniceChat(params: {
     );
   }
 
-  const referenceId = randomUUID();
+  const referenceId = params.referenceId ?? randomUUID();
+  // A caller-chosen reference must be new, for every user: reusing one would
+  // find the old (possibly settled) hold and forward a request with nothing
+  // held for it, or touch another user's hold (#167 second review).
+  if (params.referenceId && (await loadManagedVeniceReservationOwner(params.referenceId))) {
+    return {
+      ok: false,
+      response: apiError("Duplicate request reference.", 409, {
+        failureType: "managed_venice_duplicate_reference_id",
+      }),
+    };
+  }
   const serverKey = resolveManagedVeniceUpstreamKey({
     referenceId,
     proxyKeyId: verifiedKey.id,
@@ -180,16 +319,19 @@ export async function authorizeManagedVeniceChat(params: {
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
 
-  let reservation: Awaited<ReturnType<typeof reserveManagedVeniceChatRequest>>;
+  let budgeted: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>;
   try {
-    reservation = await reserveManagedVeniceChatRequest({
+    budgeted = await reserveManagedVeniceChatWithinBalance({
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
       walletType,
       referenceId,
-      requestBody: estimateBody,
-      ...(params.protocol === "responses" ? { endpoint: VENICE_RESPONSES_ENDPOINT } : {}),
+      protocol,
+      body,
       pricingMap,
+      allowBodyRewrite: params.allowBodyRewrite !== false,
+      ...(surcharge ? { surcharge } : {}),
+      route: protocol === "responses" ? "/api/managed-venice/v1/responses" : "/api/managed-venice/v1/chat/completions",
     });
   } catch (error) {
     if (error instanceof ManagedVeniceSpendCapError) {
@@ -218,6 +360,29 @@ export async function authorizeManagedVeniceChat(params: {
         }),
       };
     }
+    if (error instanceof ManagedVeniceBalanceHeldError) {
+      const topUpUrl = managedVeniceTopUpUrl(walletType);
+      log.warn("Managed Venice request refused: the wallet balance is held by requests still running", {
+        source: "managed-venice-chat",
+        route: "/api/managed-venice/v1/chat/completions",
+        method: "POST",
+        failureType: "managed_venice_balance_held",
+        userId: verifiedKey.userId,
+        proxyKeyId: verifiedKey.id,
+        walletType,
+        heldMicroUsd: error.heldMicroUsd,
+        availableMicroUsd: error.balance?.availableMicroUsd ?? null,
+      });
+      return {
+        ok: false,
+        response: openAiCompatibleError({
+          status: 402,
+          code: "managed_venice_insufficient_balance",
+          type: "billing_error",
+          message: managedVeniceBalanceHeldMessage(error, topUpUrl),
+        }),
+      };
+    }
     if (error instanceof ManagedVeniceInsufficientBalanceError) {
       const topUpUrl = managedVeniceTopUpUrl(walletType);
       log.warn("Managed Venice proxy key blocked by insufficient wallet balance", {
@@ -228,7 +393,14 @@ export async function authorizeManagedVeniceChat(params: {
         userId: verifiedKey.userId,
         proxyKeyId: verifiedKey.id,
         walletType,
+        unsizedInputParts,
       });
+      // A video or file part holds the model's whole context window
+      // (cost-estimator.ts), which can be far more than the text around it.
+      const unsizedNote = unsizedInputParts
+        ? ` This request includes a video, file or other part whose size Hivra cannot see, ` +
+          `so it needs credits for the model's whole context window.`
+        : "";
       return {
         ok: false,
         response: openAiCompatibleError({
@@ -236,7 +408,7 @@ export async function authorizeManagedVeniceChat(params: {
           code: "managed_venice_insufficient_balance",
           type: "billing_error",
           message:
-            `Insufficient managed Venice LLM credits. Top up LLM credits in Hivra ` +
+            `Insufficient managed Venice LLM credits.${unsizedNote} Top up LLM credits in Hivra ` +
             `to keep this proxy key active: ${topUpUrl}`,
         }),
       };
@@ -248,9 +420,9 @@ export async function authorizeManagedVeniceChat(params: {
     ok: true,
     value: {
       referenceId,
-      reservationId: reservation.reservationId,
+      reservationId: budgeted.reservation.reservationId,
       upstreamKey: serverKey,
-      upstreamUrl: params.protocol === "responses" ? VENICE_RESPONSES_URL : VENICE_CHAT_COMPLETIONS_URL,
+      upstreamUrl: protocol === "responses" ? VENICE_RESPONSES_URL : VENICE_CHAT_COMPLETIONS_URL,
       walletType,
       userId: verifiedKey.userId,
       proxyKeyId: verifiedKey.id,
@@ -258,6 +430,8 @@ export async function authorizeManagedVeniceChat(params: {
       pricingMap,
       pricingSource: livePricing.source,
       liveModelCount: livePricing.liveModelCount,
+      bodyPatch: budgeted.bodyPatch,
+      surcharge,
     },
   };
 }
@@ -265,10 +439,19 @@ export async function authorizeManagedVeniceChat(params: {
 /**
  * Settle a streamed chat completion against its reservation, given the `usage`
  * frame the streamer extracted (or null if none was seen). Mirrors the inline
- * settlement semantics of `createSettlingStream`:
+ * settlement of the chat route (stream-settlement.ts):
  *  - usage present  -> capture actual cost (closes the hold; overage debited)
- *  - usage missing  -> file reconciliation, KEEP key live (telemetry gap)
- *  - capture throws -> file reconciliation, KEEP key live (our bug, not theirs)
+ *  - usage missing  -> capture the input estimate plus `observedOutputTokens`,
+ *                      the output the Worker read from Venice (past the hold,
+ *                      as an overage); key stays live
+ *  - capture throws -> file reconciliation with the reported cost (the
+ *                      stale-hold sweep charges it); key stays live
+ * A Worker from before observed output was counted sends no
+ * `observedOutputTokens`; its usage-less streams are filed for the sweep,
+ * which charges the hold's estimate.
+ *
+ * Throws only when nothing could be written (not even the reconciliation
+ * item), so the settle route answers 5xx and the Worker retries.
  *
  * Used by the off-Vercel Worker via /api/managed-venice/internal/settle. The
  * `pricingMap` defaults to the live (module-cached) map; within the 5-minute
@@ -283,13 +466,18 @@ export async function settleManagedVeniceChatUsage(params: {
   model: string;
   upstreamStatus: number;
   usage: unknown;
+  observedOutputTokens?: number | null;
+  cause?: string | null;
   pricingMap?: VenicePricingMap;
+  /** Venice's `cost` and web-search citations, for billed options (chat-surcharges.ts). */
+  surchargeEvidence?: ManagedChatSurchargeEvidence;
 }): Promise<{ settled: boolean; reconciled: boolean }> {
   const pricingMap =
     params.pricingMap ?? (await getVenicePricingMap()).map;
+  const cause = params.cause || "completed";
 
-  try {
-    if (params.usage != null) {
+  if (params.usage != null) {
+    try {
       await captureManagedVeniceChatUsage({
         userId: params.userId,
         proxyKeyId: params.proxyKeyId,
@@ -299,39 +487,66 @@ export async function settleManagedVeniceChatUsage(params: {
         upstreamStatus: params.upstreamStatus,
         usage: params.usage,
         pricingMap,
+        ...(params.surchargeEvidence ? { surchargeEvidence: params.surchargeEvidence } : {}),
       });
       return { settled: true, reconciled: false };
+    } catch (error) {
+      await markManagedVeniceReconciliationRequired({
+        userId: params.userId,
+        proxyKeyId: params.proxyKeyId,
+        referenceId: params.referenceId,
+        reason: "managed_venice_stream_settlement_failed",
+        metadata: {
+          model: params.model,
+          upstreamStatus: params.upstreamStatus,
+          cause,
+          errorType: error instanceof Error ? error.name : typeof error,
+          usageCostMicroUsd: managedVeniceUsageCostMicroUsd({ model: params.model, usage: params.usage, pricingMap }),
+          observedOutputTokens: params.observedOutputTokens ?? null,
+        },
+        // Our settlement code threw on an otherwise-successful stream. That's
+        // our bug to reconcile, not the user's to be denied service over.
+        pauseKey: false,
+      });
+      return { settled: false, reconciled: true };
     }
-
-    await markManagedVeniceReconciliationRequired({
-      userId: params.userId,
-      proxyKeyId: params.proxyKeyId,
-      referenceId: params.referenceId,
-      reason: "managed_venice_missing_stream_usage",
-      metadata: { model: params.model, upstreamStatus: params.upstreamStatus },
-      // Upstream succeeded; we just couldn't read a usage frame. The
-      // reservation is still held and the invoice cron settles offline —
-      // don't brick the key over a telemetry gap.
-      pauseKey: false,
-    });
-    return { settled: false, reconciled: true };
-  } catch (error) {
-    await markManagedVeniceReconciliationRequired({
-      userId: params.userId,
-      proxyKeyId: params.proxyKeyId,
-      referenceId: params.referenceId,
-      reason: "managed_venice_stream_settlement_failed",
-      metadata: {
-        model: params.model,
-        upstreamStatus: params.upstreamStatus,
-        errorType: error instanceof Error ? error.name : typeof error,
-      },
-      // Our settlement code threw on an otherwise-successful stream. That's
-      // our bug to reconcile, not the user's to be denied service over.
-      pauseKey: false,
-    });
-    return { settled: false, reconciled: true };
   }
+
+  const reconciliationReason =
+    cause === "completed" ? "managed_venice_missing_stream_usage" : "managed_venice_stream_settlement_failed";
+  if (typeof params.observedOutputTokens === "number") {
+    const observed = await captureManagedVeniceObservedOutput({
+      userId: params.userId,
+      proxyKeyId: params.proxyKeyId,
+      referenceId: params.referenceId,
+      model: params.model,
+      upstreamStatus: params.upstreamStatus,
+      observedOutputTokens: params.observedOutputTokens,
+      cause,
+      reconciliationReason,
+      source: "managed-venice-internal-settle",
+    });
+    if (observed.outcome === "unfiled") {
+      throw new Error("Managed Venice could not charge or file a usage-less stream");
+    }
+    return {
+      settled: observed.outcome === "captured" || observed.outcome === "already_settled",
+      reconciled: observed.outcome === "filed_for_sweep",
+    };
+  }
+
+  await markManagedVeniceReconciliationRequired({
+    userId: params.userId,
+    proxyKeyId: params.proxyKeyId,
+    referenceId: params.referenceId,
+    reason: reconciliationReason,
+    metadata: { model: params.model, upstreamStatus: params.upstreamStatus, cause },
+    // Upstream succeeded; we just couldn't read a usage frame. The hold is
+    // still held and the stale-hold sweep charges its estimate. Don't brick
+    // the key over a telemetry gap.
+    pauseKey: false,
+  });
+  return { settled: false, reconciled: true };
 }
 
 /** Shared SSE usage-frame extraction (used by the in-Vercel streamer + Worker). */

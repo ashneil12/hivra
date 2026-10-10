@@ -7,9 +7,12 @@ import { VISIBLE_PROVIDERS } from '@/lib/models';
 import { clientLog } from '@/lib/client/logger';
 import { openWebuiWorkspaceInNewTab } from '@/lib/webui-open-new-tab';
 
-import { ConfigurationDangerZone, type DeleteReason } from "./ConfigurationDangerZone";
+import { ConfigurationDangerZone, isDeleteConfirmationMatch, type DeleteReason } from "./ConfigurationDangerZone";
 import { ConfigurationTailscalePanel } from './ConfigurationTailscalePanel';
 import { ConnectDesktopButton } from '@/components/instances/ConnectDesktopButton';
+import styles from '../console.module.css';
+
+const CARD_PADDING = 'clamp(16px, 5vw, 2rem)';
 
 type InstanceSettingsData = {
   id: string;
@@ -184,7 +187,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
 
   const handleDeleteInstance = async () => {
     if (!settingsReady) return;
-    if (deleteInputText !== instanceId) {
+    if (!isDeleteConfirmationMatch(deleteInputText, instanceId)) {
       setDeleteConfirm(true);
       return;
     }
@@ -209,7 +212,9 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          confirmation: deleteInputText,
+          // A case-insensitive match (iOS capitalises the first letter) is
+          // sent as the exact id the server compares against.
+          confirmation: instanceId,
           // Reason is optional and never gates the delete server-side.
           ...(deleteReason ? { deleteReason } : {}),
           ...(deleteReason === 'other' && trimmedNote ? { deleteReasonNote: trimmedNote } : {}),
@@ -219,11 +224,11 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
       if (data.success) {
         window.location.href = '/dashboard';
       } else {
-        alert("Failed to delete instance: " + data.error);
+        alert("Failed to delete this agent: " + data.error);
         setActionLoading(false);
       }
     } catch {
-      alert("Error deleting instance.");
+      alert("Error deleting this agent.");
       setActionLoading(false);
     }
 };
@@ -232,8 +237,8 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
     if (!settingsReady) return;
     if (next && typeof window !== 'undefined' && !window.confirm(
       'Enable Advanced cloud access?\n\n' +
-      'This gives the agent root privileges in its managed runtime and access to the isolated VM\'s Docker daemon. ' +
-      'It can install software, run containers, delete data, or break its own runtime. ' +
+      'This gives the agent root privileges on its own computer and access to the isolated VM\'s Docker daemon. ' +
+      'It can install software, run containers, delete data, or break its own setup. ' +
       'It cannot access the Proxmox host or another customer\'s VM. Continue?'
     )) {
       return;
@@ -403,7 +408,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
       });
       const applyJson = await applyRes.json();
       if (!applyRes.ok || !applyJson.success) {
-        setContextError('Saved, but applying it failed — hit Redeploy on this instance to apply.');
+        setContextError('Saved, but applying it failed — hit Redeploy on this agent to apply.');
         return;
       }
       setContextMessage('Settings saved. Restart requested — wait for the agent to reconnect.');
@@ -440,7 +445,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
 
   if (settingsLoad.status === 'error') {
     return (
-      <div className="interrogation-box" style={{ padding: '2rem' }}>
+      <div className="interrogation-box" style={{ padding: CARD_PADDING }}>
         <p role="alert" style={{ marginTop: 0 }}>Could not load settings. Retry before making changes.</p>
         <button
           type="button"
@@ -458,7 +463,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
 
-      <div className="interrogation-box" style={{ padding: '2rem' }}>
+      <div className="interrogation-box" style={{ padding: CARD_PADDING }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
           <ExternalLink size={18} />
           <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>
@@ -507,7 +512,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         </div>
       </div>
 
-      <div className="interrogation-box" style={{ padding: '2rem' }} data-testid="hermes-desktop-backend-card">
+      <div className="interrogation-box" style={{ padding: CARD_PADDING }} data-testid="hermes-desktop-backend-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
           <Monitor size={18} />
           <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>
@@ -517,7 +522,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
 
         <div style={{ display: 'grid', gap: '1.25rem', maxWidth: 680 }}>
           <p style={{ fontSize: 13, margin: 0, opacity: 0.82, lineHeight: 1.55 }}>
-            Run the native Hermes Desktop app on this instance — no local install, no Tailscale, no port-forwarding.
+            Run the native Hermes Desktop app on this agent’s computer — no local install, no Tailscale, no port-forwarding.
             The agent, memory, browser, scheduled tasks and tools all keep running here in the cloud.
           </p>
           <ConnectDesktopButton instanceId={instanceId} />
@@ -530,7 +535,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         isSharedHost={isSharedHost}
       />
 
-      <div className="interrogation-box" style={{ padding: '2rem' }} data-testid="advanced-cloud-access-card">
+      <div className="interrogation-box" style={{ padding: CARD_PADDING }} data-testid="advanced-cloud-access-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
           <Terminal size={18} />
           <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>
@@ -541,7 +546,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         <div style={{ display: 'grid', gap: '1rem', maxWidth: 680 }}>
           <p style={{ fontSize: 13, margin: 0, opacity: 0.8, lineHeight: 1.5 }}>
             Treat this isolated VM as your own cloud computer. When enabled, the agent gets
-            root privileges in its managed runtime and can use this VM&apos;s Docker daemon to
+            root privileges on its computer and can use this VM&apos;s Docker daemon to
             install software, run your own containers, and host additional workloads. It
             remains isolated from the Proxmox host and every other customer VM.
           </p>
@@ -591,7 +596,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         </div>
       </div>
 
-      <div className="interrogation-box" style={{ padding: '2rem' }} data-testid="terminal-execution-card">
+      <div className="interrogation-box" style={{ padding: CARD_PADDING }} data-testid="terminal-execution-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
           <Cpu size={18} />
           <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>
@@ -619,7 +624,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
                 setTerminalMessage('');
                 setTerminalError('');
               }}
-              style={{ padding: '0.5rem', fontSize: 13, maxWidth: 280 }}
+              className={styles.field}
             >
               {TERMINAL_BACKENDS.map((backend) => (
                 <option key={backend} value={backend}>
@@ -653,13 +658,16 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
                 autoComplete="off"
                 placeholder={hasDaytonaKey ? '•••••••• (saved — paste to replace)' : 'dtn_…'}
                 value={daytonaKeyInput}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 disabled={terminalSaving}
                 onChange={(event) => setDaytonaKeyInput(event.target.value)}
-                style={{ padding: '0.5rem', fontSize: 13, maxWidth: 420 }}
+                className={`${styles.field} ${styles.fieldWide}`}
               />
               <span style={{ fontSize: 12, opacity: 0.7, lineHeight: 1.5 }}>
                 From <code>daytona.io</code>. Stored encrypted. Commands run in Daytona&apos;s
-                cloud (not on your box), your working tree lives there and syncs back on
+                cloud (not on your agent&apos;s computer), your working tree lives there and syncs back on
                 teardown, and Daytona caps sandbox disk at 10 GiB.
               </span>
             </label>
@@ -670,7 +678,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
               type="button"
               onClick={handleSaveTerminal}
               disabled={terminalSaving || cloudAccessLoading || (terminalBackend === 'docker' && !cloudAccessEnabled)}
-              className="mono"
+              className={`mono ${styles.saveButton} ${styles.touchTarget}`}
               style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', padding: '0.5rem 1rem', cursor: terminalSaving ? 'wait' : 'pointer' }}
             >
               {terminalSaving ? 'Saving' : 'Save & apply'}
@@ -687,7 +695,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
         </div>
       </div>
 
-      <div className="interrogation-box" style={{ padding: '2rem' }} data-testid="context-engine-card">
+      <div className="interrogation-box" style={{ padding: CARD_PADDING }} data-testid="context-engine-card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
           <Layers size={18} />
           <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>
@@ -717,7 +725,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
                 setContextMessage('');
                 setContextError('');
               }}
-              style={{ padding: '0.5rem', fontSize: 13, maxWidth: 280 }}
+              className={styles.field}
             >
               <option value="">agent default (compressor)</option>
               {CONTEXT_ENGINES.map((engine) => (
@@ -746,7 +754,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
                 setContextMessage('');
                 setContextError('');
               }}
-              style={{ padding: '0.5rem', fontSize: 13, maxWidth: 280 }}
+              className={styles.field}
             >
               <option value="">inherit main model</option>
               {VISIBLE_PROVIDERS.map((provider) => (
@@ -771,7 +779,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
                   setContextMessage('');
                   setContextError('');
                 }}
-                style={{ padding: '0.5rem', fontSize: 13, maxWidth: 420 }}
+                className={`${styles.field} ${styles.fieldWide}`}
               >
                 <option value="">inherit main model</option>
                 {(VISIBLE_PROVIDERS.find((provider) => provider.id === compressionProvider)?.models ?? []).map((model) => (
@@ -792,7 +800,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
               type="button"
               onClick={handleSaveContext}
               disabled={contextSaving}
-              className="mono"
+              className={`mono ${styles.saveButton} ${styles.touchTarget}`}
               style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', padding: '0.5rem 1rem', cursor: contextSaving ? 'wait' : 'pointer' }}
             >
               {contextSaving ? 'Saving' : 'Save & apply'}

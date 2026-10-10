@@ -10,6 +10,7 @@ import {
   TOKEN_PAYMENT_FINALITY,
   TransferAmountField,
   wholeTokenQuoteRawAmount,
+  TokenContractLine,
 } from '@/components/billing/TransferDetails';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { clientLog } from '@/lib/client/logger';
@@ -341,8 +342,12 @@ export function ManagedVeniceDepositModal({
     }
   }
 
-  const quoteActive = Boolean(quote && walletType === "hermesos" && quote.status === "active");
-  const quoteSettled = Boolean(quote && walletType === "hermesos" && quote.status === "settled");
+  // With token payments off (billing v2 off, or the token geo-policy blocks
+  // this viewer) the dialog is card-only: no $HermesOS start button or bonus
+  // copy, whatever a deep link selected.
+  const shownWalletType: ManagedVeniceWalletType = tokenPaymentsEnabled ? walletType : "card";
+  const quoteActive = Boolean(quote && shownWalletType === "hermesos" && quote.status === "active");
+  const quoteSettled = Boolean(quote && shownWalletType === "hermesos" && quote.status === "settled");
 
   return (
     <ManagedVeniceDepositView
@@ -351,7 +356,7 @@ export function ManagedVeniceDepositModal({
       // $HermesOS stays reachable only for a flow that already chose it
       // (a deep link into a token top-up) and only while token payments are on.
       walletOptions={tokenPaymentsEnabled && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
-      walletType={walletType}
+      walletType={shownWalletType}
       onWalletTypeChange={onWalletTypeChange}
       calculatorId="managed-venice-billing-top-up"
       amountUsd={amountUsd}
@@ -365,7 +370,7 @@ export function ManagedVeniceDepositModal({
       quoteInFlight={quoteActive}
       quoteSettled={quoteSettled}
       loading={loading}
-      onStart={walletType === "hermesos" ? onStartHermesTopUp : onStartCardTopUp}
+      onStart={shownWalletType === "hermesos" ? onStartHermesTopUp : onStartCardTopUp}
       refreshingWallet={refreshingWallet}
       walletRefreshStatus={walletRefreshStatus}
       onRefreshWallet={() => void refreshWalletSummary()}
@@ -403,6 +408,7 @@ export function YearlyTokenPaymentModal({
     priceUsdAtQuote: string;
     tokensRequiredDisplay: string;
     tokenSymbol: string;
+    tokenAddress?: string;
     depositAddress: string;
     expiresAt: string;
     status: string;
@@ -442,6 +448,7 @@ export function YearlyTokenPaymentModal({
       ? hermesosTransferUri({
           tokenSymbol: quote.tokenSymbol,
           tokenDecimals: quote.tokenDecimals,
+          tokenAddress: quote.tokenAddress,
           depositAddress: quote.depositAddress,
           amountRaw: wholeTokenQuoteRawAmount(quote),
         })
@@ -517,6 +524,8 @@ export function YearlyTokenPaymentModal({
             ${(quote.usdTargetCents / 100).toFixed(2)} worth at{" "}
             <code className="mono">${quote.priceUsdAtQuote}</code> per token. Send the full amount in a single transfer.
           </TransferAmountField>
+
+          <TokenContractLine tokenAddress={quote.tokenAddress} tokenSymbol={quote.tokenSymbol} />
 
           <DepositAddressField
             label="Step 2 · To this address (Base network)"

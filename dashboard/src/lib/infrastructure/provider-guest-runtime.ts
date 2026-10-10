@@ -41,7 +41,7 @@ function checked(input: ProviderGuestRuntimeProbe) {
 export function buildProviderGuestRuntimeProbe(input: ProviderGuestRuntimeProbe) {
   let expected: ReturnType<typeof checked>;
   try { expected = checked(input); } catch { throw new Error("Invalid provider runtime probe"); }
-  const script = `import base64, json, os, pwd, re, stat, subprocess, sys
+  const script = `import base64, json, os, pwd, re, socket, stat, subprocess, sys
 from http.client import HTTPConnection
 EXPECTED = json.loads(base64.b64decode("${Buffer.from(JSON.stringify(expected)).toString("base64")}", validate=True))
 ROOT = "/var/lib/hivra/provider-install"
@@ -86,6 +86,36 @@ def http(port, path, token=None, body=False):
         if len(data) > MAX_BODY:
             raise ValueError()
         return response.status, data
+    finally:
+        connection.close()
+
+class UnixHTTPConnection(HTTPConnection):
+    def __init__(self, socket_path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
+
+def terminal(port, path, owner):
+    # Terminals from the socket release listen only on a bux-owned unix socket
+    # in a 0700 runtime folder; earlier releases on the loopback port. The
+    # folder is the boundary: libwebsockets creates the socket 0660, and only
+    # bux can traverse the folder, so the socket must only refuse others
+    # (connecting to a unix socket needs write permission on it).
+    socket_path = {7681: "/run/hivra-terminal/ttyd.sock", 7682: "/run/hivra-box-terminal/ttyd.sock"}[port]
+    try:
+        folder, info = os.lstat(os.path.dirname(socket_path)), os.lstat(socket_path)
+    except FileNotFoundError:
+        return http(port, path)[0]
+    if not stat.S_ISDIR(folder.st_mode) or folder.st_uid != owner or folder.st_mode & 0o077 or not stat.S_ISSOCK(info.st_mode) or info.st_uid != owner or info.st_mode & 0o002:
+        raise ValueError()
+    connection = UnixHTTPConnection(socket_path, 0.6)
+    try:
+        connection.request("GET", path)
+        return connection.getresponse().status
     finally:
         connection.close()
 
@@ -144,7 +174,7 @@ def inspect():
             raise ValueError()
         reason = "native_unavailable"
         for port, path in ((7681, "/terminal/"), (7682, "/box-terminal/")):
-            if http(port, path)[0] != 200:
+            if terminal(port, path, user.pw_uid) != 200:
                 raise ValueError()
         # Agent login is separate from service readiness; a native login page
         # or an in-app redirect can be a legitimate first-run interface.

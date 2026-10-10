@@ -635,6 +635,30 @@ describe("self-managed Hetzner Cloud project client", () => {
     expect(payload).not.toHaveProperty("backups");
   });
 
+  it("deletes exactly one identified SSH key and requires the provider's 204", async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const client = createHetznerCloudProjectClient("owner-project-token", {
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    await expect(client.deleteSshKey(901)).resolves.toBeUndefined();
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe("https://api.hetzner.cloud/v1/ssh_keys/901");
+    expect(init).toEqual(expect.objectContaining({ method: "DELETE", redirect: "error" }));
+    expect((init.headers as Headers).get("Authorization")).toBe("Bearer owner-project-token");
+
+    fetchImpl.mockResolvedValueOnce(json({}, 200));
+    await expect(client.deleteSshKey(901)).rejects.toMatchObject({ code: "response_invalid" });
+
+    fetchImpl.mockResolvedValueOnce(json({ error: { code: "token_readonly", message: "read only" } }, 403));
+    await expect(client.deleteSshKey(901)).rejects.toMatchObject({ status: 403, providerCode: "token_readonly" });
+
+    for (const invalid of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(client.deleteSshKey(invalid)).rejects.toMatchObject({ code: "response_invalid" });
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it("fails closed on POST redirects without replaying a paid mutation", async () => {
     const fetchImpl = jest.fn().mockResolvedValue(
       new Response(null, {

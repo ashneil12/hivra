@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
+import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import {
   createCryptoTopUpIntent,
   isCryptoTopUpAssetKey,
@@ -15,7 +16,13 @@ import {
   isCryptoBillingEnabled,
 } from "@/lib/billing/crypto-availability";
 import { ensureBankrDepositWalletForUser } from "@/lib/billing/bankr-deposit-wallets";
+import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { supabaseAdmin } from "@/lib/supabase";
+
+// Five starts a minute per person. A retry after a mistyped package or a 409
+// still fits; a script does not.
+const CRYPTO_TOP_UP_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const;
 
 const CryptoTopUpRequestSchema = z.object({
   asset: z.string().trim().min(1),
@@ -42,6 +49,31 @@ export async function POST(req: NextRequest) {
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
+    // Each request can provision a Bankr wallet and write a pending payment
+    // row, and a person needs one or two a day. This is a per-user cap on a
+    // burst, before any of that work. The limiter's counters are per server
+    // instance (lib/rate-limit.ts), so it bounds a burst that lands on one
+    // instance; it does not make the one-open-session check atomic (see
+    // crypto-payment-sessions.ts).
+    const limited = enforceAuthenticatedRouteRateLimit(req, {
+      routeKey: "billing-crypto-top-up",
+      userId,
+      ...CRYPTO_TOP_UP_RATE_LIMIT,
+    });
+    if (limited) return limited;
+
+    // Token geo-policy: a crypto top-up starts a new crypto payment. Card
+    // top-ups (/api/billing/top-up) never consult the policy.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/crypto/top-up",
+        route: "/api/billing/crypto/top-up",
+        method: "POST",
+        userId,
+      });
+    }
+
     let body: unknown;
     try {
       body = await req.json();
@@ -60,7 +92,6 @@ export async function POST(req: NextRequest) {
     const walletResult = await ensureBankrDepositWalletForUser({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     if (walletResult.status === "not_configured") {
       return apiError("Bankr wallet provisioning is not configured", 503, {

@@ -34,13 +34,13 @@ describe("instance tailscale private access route", () => {
     (resolveInstanceIpv4 as jest.Mock).mockResolvedValue("203.0.113.10");
     updateInstanceResult = {
       data: {
-        id: "inst-123",
+        id: "00000000-0000-4000-8000-e5a233ff63bf",
         gateway_url: "https://atlas.example.com",
       },
       error: null,
     };
     instanceRow = {
-      id: "inst-123",
+      id: "00000000-0000-4000-8000-e5a233ff63bf",
       user_id: "user_123",
       status: "running",
       provider: "anthropic",
@@ -93,8 +93,8 @@ describe("instance tailscale private access route", () => {
 
   it("returns the current public-safe tailscale metadata", async () => {
     const response = await GET(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale"),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale"),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -116,8 +116,8 @@ describe("instance tailscale private access route", () => {
     authMock.mockResolvedValue({ userId: null });
 
     const response = await POST(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -145,7 +145,7 @@ describe("instance tailscale private access route", () => {
       });
 
     const response = await POST(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "POST",
         body: JSON.stringify({
           authKey: "tskey-auth-123",
@@ -154,7 +154,7 @@ describe("instance tailscale private access route", () => {
           enableSsh: true,
         }),
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -223,14 +223,14 @@ describe("instance tailscale private access route", () => {
       });
 
     const response = await POST(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "POST",
         body: JSON.stringify({
           authKey: "tskey-auth-123",
           machineName: "atlas-agent",
         }),
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
 
     expect(response.status).toBe(200);
@@ -244,6 +244,8 @@ describe("instance tailscale private access route", () => {
           hostSlug: "fixturelegacy",
           envPrefix: "PROXMOX_HOST_FIXTURELEGACY_",
           failClosed: true,
+          vmid: 3080,
+          instanceId: "00000000-0000-4000-8000-e5a233ff63bf",
         },
         timeoutMs: expect.any(Number),
       })
@@ -258,6 +260,8 @@ describe("instance tailscale private access route", () => {
           hostSlug: "fixturelegacy",
           envPrefix: "PROXMOX_HOST_FIXTURELEGACY_",
           failClosed: true,
+          vmid: 3080,
+          instanceId: "00000000-0000-4000-8000-e5a233ff63bf",
         },
       })
     );
@@ -271,6 +275,8 @@ describe("instance tailscale private access route", () => {
           hostSlug: "fixturelegacy",
           envPrefix: "PROXMOX_HOST_FIXTURELEGACY_",
           failClosed: true,
+          vmid: 3080,
+          instanceId: "00000000-0000-4000-8000-e5a233ff63bf",
         },
       })
     );
@@ -280,8 +286,8 @@ describe("instance tailscale private access route", () => {
     instanceRow.status = "stopped";
 
     const response = await POST(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -321,8 +327,8 @@ describe("instance tailscale private access route", () => {
     });
 
     const response = await POST(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -345,8 +351,8 @@ describe("instance tailscale private access route", () => {
     });
 
     const response = await POST(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -371,8 +377,8 @@ describe("instance tailscale private access route", () => {
       });
 
     await POST(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
 
     expect(supabaseAdminMock.from).toHaveBeenCalledWith("hermes_instances");
@@ -402,8 +408,8 @@ describe("instance tailscale private access route", () => {
       });
 
     const response = await POST(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { authKey: "tskey-auth-123" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -415,10 +421,10 @@ describe("instance tailscale private access route", () => {
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "", stderr: "" });
 
     const response = await DELETE(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "DELETE",
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -442,10 +448,10 @@ describe("instance tailscale private access route", () => {
     });
 
     const response = await DELETE(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "DELETE",
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -461,10 +467,10 @@ describe("instance tailscale private access route", () => {
     });
 
     const response = await DELETE(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale?force=1", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale?force=1", {
         method: "DELETE",
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -481,10 +487,10 @@ describe("instance tailscale private access route", () => {
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "", stderr: "" });
 
     const response = await DELETE(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "DELETE",
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -512,14 +518,14 @@ describe("instance tailscale private access route", () => {
       });
 
     const response = await PATCH(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "PATCH",
         body: JSON.stringify({
           machineName: "atlas-agent-updated",
           enableSsh: false,
         }),
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -564,13 +570,13 @@ describe("instance tailscale private access route", () => {
       });
 
     const response = await PATCH(
-      new NextRequest("http://localhost/api/instances/inst-123/private-access/tailscale", {
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
         method: "PATCH",
         body: JSON.stringify({
           machineName: "atlas-agent-updated",
         }),
       }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 
@@ -582,8 +588,8 @@ describe("instance tailscale private access route", () => {
     instanceRow.status = "stopped";
 
     const response = await PATCH(
-      makeJsonRequest("http://localhost/api/instances/inst-123/private-access/tailscale", { machineName: "atlas-agent-updated" }, { method: "PATCH" }),
-      { params: Promise.resolve({ id: "inst-123" }) }
+      makeJsonRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", { machineName: "atlas-agent-updated" }, { method: "PATCH" }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
     );
     const json = await response.json();
 

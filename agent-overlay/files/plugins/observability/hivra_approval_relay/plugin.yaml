@@ -1,0 +1,7 @@
+name: hivra_approval_relay
+version: "0.1.0"
+description: "Relay blocking approval prompts to the Hivra dashboard so a waiting agent is visible outside the workspace iframe. Opt in with `hermes plugins enable observability/hivra_approval_relay`; configured via HERMES_DASHBOARD_URL + API_SERVER_KEY + HERMES_INSTANCE_ID."
+author: Hivra
+hooks:
+  - pre_approval_request
+  - post_approval_response

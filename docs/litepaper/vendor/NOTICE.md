@@ -57,11 +57,14 @@ Any replacement, version upgrade or byte change needs fresh hashes, upstream
 matching and licence review. Preserve the distinction between Hivra-owned
 Apache-2.0 source and this separately licensed third-party code.
 
-## Entry arrow
+## Entry arrow and GitHub mark
 
 The inline `arrow-down-right` icon in `build.py` and the generated HTML is from
 [Tabler Icons](https://github.com/tabler/tabler-icons/blob/main/icons/outline/arrow-down-right.svg).
-Its path geometry is unchanged; the presentation uses a 1.5px stroke.
+Its path geometry is unchanged; the presentation uses a 1.5px stroke. The
+inline GitHub mark on the cover is Tabler's
+[`brand-github`](https://github.com/tabler/tabler-icons/blob/main/icons/outline/brand-github.svg)
+icon, also with unchanged path geometry.
 
 MIT License
 

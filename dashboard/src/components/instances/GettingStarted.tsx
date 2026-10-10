@@ -181,7 +181,7 @@ export function GettingStarted({
   return (
     <section data-testid="getting-started" data-complete="false" style={CARD_STYLE}>
       <div
-        className="mono"
+        className="mono cmdp-small"
         style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.64 }}
       >
         Getting started
@@ -207,7 +207,7 @@ export function GettingStarted({
               </span>
               {item.onClick && item.cta ? (
                 <span
-                  className="mono"
+                  className="mono cmdp-small"
                   style={{
                     marginLeft: "auto",
                     fontSize: 9,
@@ -243,6 +243,7 @@ export function GettingStarted({
               onClick={item.onClick}
               data-testid={`checklist-item:${item.label}`}
               data-done={item.done}
+              className="cmdp-row cmdp-pad"
               style={rowStyle}
             >
               {inner}
@@ -252,6 +253,7 @@ export function GettingStarted({
               key={item.label}
               data-testid={`checklist-item:${item.label}`}
               data-done={item.done}
+              className="cmdp-row cmdp-pad"
               style={rowStyle}
             >
               {inner}

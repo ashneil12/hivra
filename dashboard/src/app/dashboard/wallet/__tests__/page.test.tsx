@@ -210,17 +210,28 @@ describe("WalletPage custody migration", () => {
     expect(bankrPosts).toHaveLength(0);
   });
 
-  it("creates an agent wallet only after the explicit create-wallet click", async () => {
-    (loadAgentWalletsFromApi as jest.Mock).mockResolvedValueOnce({
-      totalAgents: 1,
-      cards: [{
-        instance: { id: "inst_lazy", name: "Lazy Agent", status: "running", provider: "openai" },
-        wallet: null,
-        balance: null,
-        balances: [],
-        balanceFailed: false,
-      }],
-    });
+  it("connects the user's own Bankr account only after an explicit connect with consent", async () => {
+    const lazyInstance = { id: "inst_lazy", name: "Lazy Agent", status: "running", provider: "openai" };
+    const connectedWallet = {
+      evmAddress: "0x000000000000000000000000000000000000ba5e",
+      bankrWalletId: "user:0x000000000000000000000000000000000000ba5e",
+      status: "active",
+      withdrawalDestinationEvm: null,
+      apiKeyStatus: "active",
+      custody: "user_connected",
+      apiKeyPreview: "bk_usr_ab...wxyz",
+      connectedAt: "2026-09-23T12:00:00.000Z",
+    };
+    (loadAgentWalletsFromApi as jest.Mock)
+      .mockResolvedValueOnce({
+        totalAgents: 1,
+        cards: [{ instance: lazyInstance, wallet: null, balance: null, balances: [], balanceFailed: false }],
+      })
+      // The refresh after connecting reads the connected wallet back.
+      .mockResolvedValue({
+        totalAgents: 1,
+        cards: [{ instance: lazyInstance, wallet: connectedWallet, balance: null, balances: [], balanceFailed: false }],
+      });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);
       const method = requestMethod(input, init);
@@ -229,43 +240,38 @@ describe("WalletPage custody migration", () => {
       if (url === "/api/billing/wallet/quote" && method === "GET") {
         return json({ success: true, data: { pro: null, power: null } });
       }
-      if (url === "/api/instances/inst_lazy/bankr-wallet" && method === "POST") {
-        return json({
-          success: true,
-          data: {
-            wallet: {
-              evmAddress: "0x000000000000000000000000000000000000ba5e",
-              bankrWalletId: "wlt_instance",
-              status: "active",
-              withdrawalDestinationEvm: null,
-              apiKeyStatus: "active",
-            },
-          },
-        });
+      if (url === "/api/instances/inst_lazy/bankr-wallet/connect" && method === "POST") {
+        return json({ success: true, data: { wallet: connectedWallet } });
       }
       return json({ success: true, data: {} });
     });
 
     const { container } = render(<WalletPage />);
 
-    const createButton = await screen.findByRole("button", { name: /create wallet/i });
-    expect(fetchMock.mock.calls.some(([input, init]) => (
-      requestUrl(input as RequestInfo | URL) === "/api/instances/inst_lazy/bankr-wallet" &&
-      requestMethod(input as RequestInfo | URL, init as RequestInit | undefined) === "POST"
-    ))).toBe(false);
+    const connectButton = await screen.findByRole("button", { name: /connect bankr account/i });
+    expect(screen.queryByRole("button", { name: /create wallet/i })).not.toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(createButton);
+      fireEvent.click(connectButton);
+    });
+    const dialog = await screen.findByRole("dialog", { name: /connect your bankr account to lazy agent/i });
+    fireEvent.change(within(dialog).getByLabelText("Bankr API key"), { target: { value: "bk_usr_abcd1234_secretvalue" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /I authorise Hivra to store this key/i }));
+    expect(fetchMock.mock.calls.some(([input]) => requestUrl(input as RequestInfo | URL).endsWith("/bankr-wallet"))).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
       await Promise.resolve();
     });
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/instances/inst_lazy/bankr-wallet",
+        "/api/instances/inst_lazy/bankr-wallet/connect",
         expect.objectContaining({ method: "POST" })
       );
     });
     expect(await screen.findByText("0x000000000000000000000000000000000000ba5e")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-wallet-custody")).toHaveTextContent("Your Bankr account");
     const shortAddress = screen.getByText("0x0000…ba5e");
     expect(shortAddress).toHaveClass("agent-wallet-address-short");
     expect(shortAddress).not.toHaveStyle({ display: "none" });
@@ -323,7 +329,7 @@ describe("WalletPage custody migration", () => {
     expect(tokenGrid).toHaveClass("notranslate");
   });
 
-  it("lets users withdraw a selected Base token to a recent recipient", async () => {
+  it("lets users withdraw a selected Base token to the saved destination, and nowhere else", async () => {
     const primaryDestination = "0x1111111111111111111111111111111111111111";
     const recentRecipient = "0x2222222222222222222222222222222222222222";
     const usdcAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
@@ -383,12 +389,12 @@ describe("WalletPage custody migration", () => {
             txHash: "0xwithdraw",
             asset: "USDC",
             amountDisplay: "2.5",
-            recipientAddress: recentRecipient,
+            recipientAddress: primaryDestination,
             wallet: {
               evmAddress: "0x000000000000000000000000000000000000ba5e",
               bankrWalletId: "wlt_instance",
               status: "active",
-              withdrawalDestinationEvm: recentRecipient,
+              withdrawalDestinationEvm: primaryDestination,
               apiKeyStatus: "active",
             },
           },
@@ -404,15 +410,16 @@ describe("WalletPage custody migration", () => {
     expect(dialog).toHaveTextContent(/base network only/i);
     expect(dialog).toHaveTextContent(/gas sponsorship covers/i);
     expect(dialog).toHaveTextContent(primaryDestination);
-    expect(dialog).toHaveTextContent(recentRecipient);
+    // An earlier recipient from history is no longer offered: funds go only
+    // to the saved destination.
+    expect(dialog).not.toHaveTextContent(recentRecipient);
+    expect(within(dialog).queryByLabelText(/set as primary/i)).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText(/amount to withdraw/i)).toHaveValue("0.010000");
 
     fireEvent.change(within(dialog).getByLabelText(/token/i), { target: { value: usdcAddress } });
     const amountInput = within(dialog).getByLabelText(/amount to withdraw/i);
     expect(amountInput).toHaveValue("12.5");
     fireEvent.change(amountInput, { target: { value: "2.5" } });
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(recentRecipient, "i") }));
-    fireEvent.click(screen.getByLabelText(/set as primary/i));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /yes, withdraw/i }));
@@ -426,14 +433,13 @@ describe("WalletPage custody migration", () => {
           method: "POST",
           body: JSON.stringify({
             amount: "2.5",
-            recipientAddress: recentRecipient,
+            recipientAddress: primaryDestination,
             token: {
               symbol: "USDC",
               tokenAddress: usdcAddress,
               decimals: 6,
               chain: "Base",
             },
-            setPrimaryRecipient: true,
           }),
         })
       );
@@ -534,6 +540,83 @@ describe("WalletPage custody migration", () => {
         "/api/billing/wallet/verify",
         expect.objectContaining({ method: "POST" })
       );
+    });
+  });
+
+  describe("when verifying a wallet needs a fresh sign-in check", () => {
+    const REVERIFY = {
+      clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } },
+    };
+    type Fetcher = (...args: unknown[]) => Promise<unknown>;
+    const clerk = jest.requireMock("@clerk/nextjs") as { useReverification: (fetcher: Fetcher) => Fetcher };
+    const passthrough = clerk.useReverification;
+    let prompts = 0;
+    let cancel = false;
+
+    beforeEach(() => {
+      prompts = 0;
+      cancel = false;
+      // Clerk's useReverification, faithfully enough: a reverification answer
+      // opens the "confirm it's you" dialog, then the request is retried.
+      clerk.useReverification = (fetcher) => async (...args) => {
+        const first = (await fetcher(...args)) as { clerk_error?: { reason?: string } } | undefined;
+        if (first?.clerk_error?.reason !== "reverification-error") return first;
+        prompts += 1;
+        if (cancel) {
+          const { ClerkRuntimeError } = jest.requireActual("@clerk/nextjs/errors");
+          throw new ClerkRuntimeError("cancelled", { code: "reverification_cancelled" });
+        }
+        return fetcher(...args);
+      };
+      const baseFetch = fetchMock.getMockImplementation()!;
+      let verifyCalls = 0;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input) === "/api/billing/wallet/verify") {
+          verifyCalls += 1;
+          if (verifyCalls === 1) return json(REVERIFY, 403);
+        }
+        return baseFetch(input, init);
+      });
+      (window as unknown as { ethereum: { request: jest.Mock } }).ethereum = {
+        request: jest
+          .fn()
+          .mockResolvedValueOnce(["0x000000000000000000000000000000000000abcd"])
+          .mockResolvedValueOnce("0xsigned"),
+      };
+    });
+
+    afterEach(() => {
+      clerk.useReverification = passthrough;
+    });
+
+    function verifyCalls() {
+      return fetchMock.mock.calls.filter(([input]) => requestUrl(input as RequestInfo | URL) === "/api/billing/wallet/verify");
+    }
+
+    it("asks the owner to confirm it's them, then retries the same signed request", async () => {
+      render(<WalletPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: /connect wallet/i }));
+
+      expect(await screen.findByText(/wallet connected/i)).toBeInTheDocument();
+      expect(prompts).toBe(1);
+      expect(verifyCalls()).toHaveLength(2);
+      expect(verifyCalls()[1][1]).toEqual(expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ challengeId: "challenge_123", signature: "0xsigned" }),
+      }));
+    });
+
+    it("changes nothing and says so when the owner closes the dialog", async () => {
+      cancel = true;
+      render(<WalletPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: /connect wallet/i }));
+
+      expect(await screen.findByText(/confirm it's you to verify this wallet/i)).toBeInTheDocument();
+      expect(prompts).toBe(1);
+      expect(verifyCalls()).toHaveLength(1);
+      expect(screen.queryByText(/wallet connected/i)).not.toBeInTheDocument();
     });
   });
 
@@ -664,5 +747,109 @@ describe("WalletPage custody migration", () => {
         })
       );
     });
+  });
+
+  it("offers wallet-app deep links when a touch browser has no injected wallet", async () => {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockImplementation((media: string) => ({ matches: media === "(pointer: coarse)", media })),
+    });
+    try {
+      render(<WalletPage />);
+
+      expect(await screen.findByText(/this browser has no crypto wallet/i)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /open in metamask/i })).toHaveAttribute(
+        "href",
+        `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`,
+      );
+      expect(screen.getByRole("link", { name: /open in coinbase wallet/i })).toHaveAttribute(
+        "href",
+        `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(window.location.href)}`,
+      );
+      expect(screen.getByRole("button", { name: /copy dashboard link/i })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+    }
+  });
+
+  function renderLegacyCustodyOnTouch(snapshotWalletAddress: string | null) {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: jest.fn().mockImplementation((media: string) => ({ matches: media === "(pointer: coarse)", media })),
+    });
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(input, init);
+      if (url === "/api/billing/bankr/wallet" && method === "GET") {
+        return json({
+          success: true,
+          data: {
+            ...selfCustodyWallet.data,
+            status: "ready",
+            custodyMode: "legacy_custody",
+            tokenLockWallet: {
+              address: "0x000000000000000000000000000000000000beef",
+              normalizedAddress: "0x000000000000000000000000000000000000beef",
+            },
+          },
+        });
+      }
+      if (url === "/api/billing/wallet/eligibility" && method === "GET" && snapshotWalletAddress) {
+        return json({
+          ...eligibility,
+          data: {
+            ...eligibility.data,
+            balance: {
+              balanceRaw: "0",
+              balanceDisplay: "0",
+              capturedAt: "2026-05-12T12:00:00.000Z",
+              walletAddress: snapshotWalletAddress,
+              normalizedWalletAddress: snapshotWalletAddress,
+            },
+          },
+        });
+      }
+      return defaultFetch!(input, init);
+    });
+    render(<WalletPage />);
+    return () => Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+  }
+
+  it("offers wallet-app deep links to legacy custody on touch browsers while Unlock now still needs a wallet", async () => {
+    const restore = renderLegacyCustodyOnTouch(null);
+    try {
+      expect(await screen.findByText(/you don.t need to connect an external wallet/i)).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /re-check holdings and unlock compute now/i })).toBeInTheDocument();
+      expect(screen.getByText(/unlock now can.t verify your holdings here/i)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /open in metamask/i })).toHaveAttribute(
+        "href",
+        `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`,
+      );
+      expect(screen.getByRole("link", { name: /open in coinbase wallet/i })).toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the no-wallet banner off touch browsers for legacy custody once a wallet is verified", async () => {
+    const restore = renderLegacyCustodyOnTouch("0x000000000000000000000000000000000000abcd");
+    try {
+      expect(await screen.findByRole("button", { name: /re-check holdings and unlock compute now/i })).toBeInTheDocument();
+      expect(screen.queryByText(/this browser has no crypto wallet/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /open in metamask/i })).not.toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the no-wallet banner off desktop browsers that are not in-app", async () => {
+    render(<WalletPage />);
+
+    expect(await screen.findByRole("button", { name: /connect wallet/i })).toBeInTheDocument();
+    expect(screen.queryByText(/this browser has no crypto wallet/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /open in metamask/i })).not.toBeInTheDocument();
   });
 });

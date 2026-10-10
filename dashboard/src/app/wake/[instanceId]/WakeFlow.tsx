@@ -303,9 +303,9 @@ export default function WakeFlow({
           {phase !== "queued" && detail && (
             <p className="mt-2 text-sm opacity-80">{detail}</p>
           )}
-          <div className="mt-6 h-2 w-full overflow-hidden rounded-full bg-[var(--ink-black)]/10">
+          <div className="mt-6 h-2 w-full overflow-hidden bg-[var(--ink-black)]/10">
             <div
-              className="h-full rounded-full bg-[#ff3a3b] transition-all duration-1000"
+              className="h-full bg-[var(--hivra-red)] transition-all duration-1000"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
@@ -353,7 +353,7 @@ export default function WakeFlow({
         <button
           type="button"
           onClick={() => setRetryNonce((n) => n + 1)}
-          className="mt-6 mr-3 inline-block rounded-lg bg-[#ff3a3b] px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 mr-3 inline-flex min-h-[44px] items-center px-5 font-mono text-[11px] uppercase tracking-[0.12em] bg-[var(--hivra-red)] text-white"
         >
           Try again
         </button>
@@ -362,10 +362,10 @@ export default function WakeFlow({
       {!isWorking && phase !== "redirecting" && (
         <Link
           href="/dashboard"
-          className={`mt-6 inline-block rounded-lg px-4 py-2 text-sm font-medium ${
+          className={`mt-6 inline-flex min-h-[44px] items-center px-5 font-mono text-[11px] uppercase tracking-[0.12em] ${
             phase === "timeout" || phase === "failed"
               ? "border border-[var(--ink-black)]/20"
-              : "bg-[#ff3a3b] text-white"
+              : "bg-[var(--hivra-red)] text-white"
           }`}
         >
           Go to dashboard

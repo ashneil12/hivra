@@ -1,8 +1,9 @@
 // Hivra agent — in-app TOOL installer (Wave 6). A tool bundles an MCP server (+
 // its credentials) with optional teaching skills. GET returns the installable
 // catalog for this box; POST { tools: [{id, env}] } installs them over SSH via
-// the box's own MCP config + the skills seeder. Codex / claude-code boxes only —
-// other agent types have no MCP config path and are rejected.
+// the box's own MCP config + the skills seeder. Codex / claude-code boxes on a
+// Proxmox host only — other agent types and substrates have no MCP config path
+// and are rejected with a plain reason.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -15,6 +16,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { toolMcpKindForType } from "@/lib/hivra/tool-mcp-seed";
+import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import { installToolsOnBox, listInstallableToolMeta, type ToolInstallRequest } from "@/lib/hivra/tool-install";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
@@ -36,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const { data: agent } = await supabaseAdmin
       .from("hivra_agents")
-      .select("type,status")
+      .select("type,status,computer_substrate")
       .eq("id", id)
       .eq("user_id", userId)
       .neq("status", "deleted")
@@ -44,7 +46,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!agent) return apiError("Agent not found", 404);
 
     const kind = toolMcpKindForType(agent.type as string | null);
-    return apiSuccess({ supported: Boolean(kind), tools: kind ? listInstallableToolMeta(kind) : [] });
+    if (!kind) {
+      return apiSuccess({ supported: false, reason: "This agent type doesn't support catalog tools.", tools: [] });
+    }
+    // Report the substrate gate here too, so the picker never lists tools that
+    // the POST below would refuse.
+    const blocked = catalogToolsUnavailableReason(agent.computer_substrate);
+    if (blocked) return apiSuccess({ supported: false, reason: blocked, tools: [] });
+    return apiSuccess({ supported: true, tools: listInstallableToolMeta(kind) });
   } catch (err) {
     return handleApiError(err);
   }
@@ -80,6 +89,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!toolMcpKindForType(agent.type as string | null)) {
       return apiError("This agent type doesn't support installable tools", 400);
     }
+    // Substrate gate: only Proxmox boxes have the host path below. Answer
+    // plainly instead of letting the execution context report a bad binding.
+    const blocked = catalogToolsUnavailableReason(agent.computer_substrate);
+    if (blocked) return apiError(blocked, 400);
     if (agent.status !== "running" || !agent.ip) {
       return apiError("Agent isn't running yet", 409);
     }

@@ -13,9 +13,9 @@ import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
 import StatusPageContent from "@/components/status/StatusPageContent.client";
 
 const PATH = "/status";
-const TITLE = "Status — Hivra platform health";
+const TITLE = "Status: Hivra platform health";
 const DESCRIPTION =
-  "Live operational status of Hivra's public surfaces — website, sign-in, get-started and changelog — checked from your browser in real time.";
+  "Live status of Hivra's public pages: the website, sign-in, get started and the changelog, checked from your browser in real time.";
 
 export const metadata: Metadata = {
   title: TITLE,

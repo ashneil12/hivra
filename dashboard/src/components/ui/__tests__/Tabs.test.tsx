@@ -13,7 +13,12 @@ const ITEMS = [
 
 type Id = (typeof ITEMS)[number]["id"];
 
-function Harness({ initial = "one", onChange }: { initial?: Id; onChange?: (id: Id) => void }) {
+function Harness({ initial = "one", onChange, orientation, keepMounted }: {
+  initial?: Id;
+  onChange?: (id: Id) => void;
+  orientation?: "horizontal" | "vertical";
+  keepMounted?: boolean;
+}) {
   const [value, setValue] = useState<Id>(initial);
   return (
     <>
@@ -22,14 +27,16 @@ function Harness({ initial = "one", onChange }: { initial?: Id; onChange?: (id: 
         label="Example sections"
         items={ITEMS}
         value={value}
+        orientation={orientation}
         onChange={(id) => {
           setValue(id);
           onChange?.(id);
         }}
       />
       {ITEMS.map((item) => (
-        <TabPanel key={item.id} idPrefix="t" id={item.id} active={item.id === value}>
+        <TabPanel key={item.id} idPrefix="t" id={item.id} active={item.id === value} keepMounted={keepMounted}>
           <p>{item.label} content</p>
+          <input aria-label={`${item.label} draft`} />
         </TabPanel>
       ))}
     </>
@@ -111,6 +118,36 @@ describe("Tabs", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "One" }), { key: "ArrowDown" });
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("moves with ArrowUp/ArrowDown too when vertical, and says it is vertical", () => {
+    render(<Harness orientation="vertical" />);
+    expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
+    const one = screen.getByRole("tab", { name: "One" });
+    one.focus();
+    fireEvent.keyDown(one, { key: "ArrowDown" });
+    expect(screen.getByRole("tab", { name: "Two" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Two" }), { key: "ArrowUp" });
+    expect(screen.getByRole("tab", { name: "One" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "One" }), { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "Three" })).toHaveFocus();
+  });
+
+  it("keeps hidden panels mounted, and their drafts, when asked", () => {
+    render(<Harness keepMounted />);
+    fireEvent.change(screen.getByRole("textbox", { name: "One draft" }), { target: { value: "unsaved" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Two" }));
+    expect(document.getElementById(tabPanelDomId("t", "one"))).toHaveAttribute("hidden");
+    expect(screen.queryByRole("textbox", { name: "One draft" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "One" }));
+    expect(screen.getByRole("textbox", { name: "One draft" })).toHaveValue("unsaved");
+  });
+
+  it("marks a tab with a dot and a spoken description", () => {
+    render(<Tabs idPrefix="d" label="Marked" value="one" onChange={() => undefined}
+      items={[{ id: "one", label: "One" }, { id: "two", label: "Two", dot: true, description: "Two has unsaved changes" }]} />);
+    expect(screen.getByRole("tab", { name: "Two" })).toHaveAccessibleDescription("Two has unsaved changes");
+    expect(screen.getByRole("tab", { name: "One" })).not.toHaveAttribute("aria-describedby");
   });
 
   it("keeps the first tab tabbable when the value matches no tab", () => {

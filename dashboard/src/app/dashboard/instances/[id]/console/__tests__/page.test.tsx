@@ -1,7 +1,8 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { resetResourceInventory, resourceInventory } from "@/lib/workspace/resource-inventory";
 
 let mockSearchParams = new URLSearchParams();
 const mockPush = jest.fn();
@@ -114,10 +115,15 @@ function createConsoleFetchMock(options?: {
   patchResponse?: unknown;
   postReject?: Error;
   postResponse?: unknown;
+  releaseStatus?: Record<string, unknown>;
   snapshotData?: Record<string, unknown>;
 }) {
   return jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
+
+    if (url === "/api/instances/inst_123/release-status") {
+      return Promise.resolve(buildJsonResponse({ success: true, data: options?.releaseStatus ?? null }));
+    }
 
     if (url === "/api/instances/inst_123?no_sync=true") {
       return Promise.resolve(buildJsonResponse(buildSnapshotPayload(options?.snapshotData)));
@@ -311,7 +317,42 @@ describe("AdvancedConsolePage", () => {
     });
   });
 
-  it("offers runtime repair from the advanced console and posts the repair action", async () => {
+  // The sidebar, ⌘K and Home reuse a list of agents read in the last few
+  // seconds. An action here changes it, so it is read again.
+  it("reads the agents list again after an action on the agent", async () => {
+    const consoleFetch = createConsoleFetchMock({ postResponse: { success: true } });
+    let listReads = 0;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/instances?summary=true") {
+        listReads += 1;
+        return Promise.resolve(buildJsonResponse({ success: true, data: [] }));
+      }
+      return consoleFetch(input, init);
+    }) as jest.Mock;
+    resetResourceInventory();
+    await act(async () => { await resourceInventory.load("hermes"); });
+    // The sidebar is showing the list.
+    const stopShowing = resourceInventory.subscribe(() => undefined);
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+      expect(listReads).toBe(1);
+      fireEvent.click(screen.getByRole("button", { name: /redeploy config/i }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm redeploy/i }));
+      });
+      await waitFor(() => expect(listReads).toBe(2));
+    } finally {
+      stopShowing();
+      resetResourceInventory();
+    }
+  });
+
+  it("offers agent repair from the advanced console and posts the repair action", async () => {
     global.fetch = createConsoleFetchMock({
       postResponse: { success: true },
     });
@@ -324,12 +365,12 @@ describe("AdvancedConsolePage", () => {
       jest.runOnlyPendingTimers();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /repair runtime/i }));
+    fireEvent.click(screen.getByRole("button", { name: /repair agent/i }));
 
     expect(screen.getByText(/repairs permissions, and recreates the agent stack/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /confirm runtime repair/i }));
+      fireEvent.click(screen.getByRole("button", { name: /confirm agent repair/i }));
     });
 
     await waitFor(() => {
@@ -341,7 +382,7 @@ describe("AdvancedConsolePage", () => {
     });
   });
 
-  it("offers runtime rebuild from the advanced console and posts the rebuild action", async () => {
+  it("offers agent rebuild from the advanced console and posts the rebuild action", async () => {
     global.fetch = createConsoleFetchMock({
       postResponse: { success: true },
     });
@@ -354,12 +395,12 @@ describe("AdvancedConsolePage", () => {
       jest.runOnlyPendingTimers();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /rebuild runtime/i }));
+    fireEvent.click(screen.getByRole("button", { name: /rebuild agent/i }));
 
-    expect(screen.getByText(/clears disposable runtime state like generated logs/i)).toBeInTheDocument();
+    expect(screen.getByText(/clears disposable state like generated logs/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /confirm runtime rebuild/i }));
+      fireEvent.click(screen.getByRole("button", { name: /confirm agent rebuild/i }));
     });
 
     await waitFor(() => {
@@ -520,7 +561,7 @@ describe("AdvancedConsolePage", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/update is already in progress\. hermes is safely refreshing the live agent runtime now\./i)
+        screen.getByText(/update is already in progress\. hermes is safely refreshing the agent now\./i)
       ).toBeInTheDocument();
     });
 
@@ -704,5 +745,233 @@ describe("AdvancedConsolePage", () => {
     await waitFor(() => {
       expect(screen.getByText(/network error executing command\./i)).toBeInTheDocument();
     });
+  });
+
+  it("labels the back link as a way back to chat", async () => {
+    await act(async () => {
+      render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+    });
+
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /back to chat/i }));
+    expect(mockPush).toHaveBeenCalledWith("/dashboard/instances/inst_123");
+  });
+
+  it("shows the update notice outside the collapsed Actions list at phone width and updates through the confirm modal", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(max-width: 640px)",
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+    global.fetch = createConsoleFetchMock({
+      releaseStatus: {
+        currentVersion: "2026.9.1",
+        updateAvailable: true,
+        direction: "upgrade",
+        target: { version: "2026.10.2", digest: "sha256:new" },
+        updateHealth: "ok",
+      },
+    });
+
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+
+      const banner = await screen.findByTestId("update-available-banner");
+      expect(banner).toHaveTextContent("Hermes 2026.10.2 is ready. This agent runs 2026.9.1.");
+      expect(screen.getByTestId("console-actions")).not.toContainElement(banner);
+      const backupsTab = screen.getByRole("button", { name: /backups/i });
+      expect(banner.compareDocumentPosition(backupsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      fireEvent.click(within(banner).getByRole("button", { name: "Update" }));
+      expect(screen.getByRole("dialog")).toHaveTextContent(/without removing mounted docker volumes/i);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm update/i }));
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalledWith("/api/instances/inst_123", expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ action: "update" }),
+        }));
+      });
+      // A successful action reads the release status again.
+      await waitFor(() => {
+        const reads = (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "/api/instances/inst_123/release-status");
+        expect(reads.length).toBeGreaterThanOrEqual(2);
+      });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  it("collapses the ops buttons into one Actions disclosure below the tabs at phone width", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(max-width: 640px)",
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+    global.fetch = createConsoleFetchMock({ postResponse: { success: true } });
+
+    try {
+      await act(async () => {
+        render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+      });
+
+      act(() => {
+        jest.runOnlyPendingTimers();
+      });
+
+      expect(screen.queryByTestId("console-ops-row")).not.toBeInTheDocument();
+      const actions = screen.getByTestId("console-actions");
+      const backupsTab = screen.getByRole("button", { name: /backups/i });
+      expect(backupsTab.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      const labels = within(actions).getAllByRole("button", { hidden: true }).map((button) => button.textContent?.trim());
+      expect(labels).toEqual([
+        "REDEPLOY CONFIG",
+        "UPDATE NOW",
+        "RESTART GATEWAY",
+        "Auto-Update",
+        "Connect Desktop",
+        "REPAIR AGENT",
+        "REBUILD AGENT",
+      ]);
+      expect(within(actions).getByText("Recovery")).toBeInTheDocument();
+
+      fireEvent.click(within(actions).getByText("Actions"));
+      fireEvent.click(within(actions).getByRole("button", { name: /update now/i, hidden: true }));
+      expect(screen.getByRole("dialog")).toHaveTextContent(/without removing mounted docker volumes/i);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /confirm update/i }));
+      });
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalledWith("/api/instances/inst_123", expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ action: "update" }),
+        }));
+      });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  // matchMedia whose answers can change, notifying subscribers like a rotate.
+  function mockViewport(initial: string[]) {
+    const originalMatchMedia = window.matchMedia;
+    const listeners = new Set<() => void>();
+    let matching = initial;
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return matching.includes(query);
+      },
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })) as unknown as typeof window.matchMedia;
+    return {
+      set(next: string[]) {
+        matching = next;
+        act(() => listeners.forEach((listener) => listener()));
+      },
+      restore() {
+        window.matchMedia = originalMatchMedia;
+      },
+    };
+  }
+
+  // Renders and lets the initial snapshot fetch settle inside act.
+  async function renderConsole() {
+    await act(async () => {
+      render(<AdvancedConsolePage params={Promise.resolve({ id: "inst_123" })} />);
+    });
+    await act(async () => {
+      jest.runOnlyPendingTimers();
+    });
+  }
+
+  it("keeps the Connect Desktop guide open when a phone rotates across 640px", async () => {
+    const viewport = mockViewport(["(max-width: 640px)"]);
+    try {
+      await renderConsole();
+
+      const actions = screen.getByTestId("console-actions");
+      fireEvent.click(within(actions).getByText("Actions"));
+      fireEvent.click(within(actions).getByRole("button", { name: /connect desktop/i, hidden: true }));
+      expect(screen.getByRole("dialog", { name: "Connect Hermes Desktop" })).toBeInTheDocument();
+
+      viewport.set([]);
+      expect(screen.getByTestId("console-ops-row")).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Connect Hermes Desktop" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("dialog", { name: "Connect Hermes Desktop" })).not.toBeInTheDocument();
+    } finally {
+      viewport.restore();
+    }
+  });
+
+  it("puts the primary action first in DOM order when the confirm buttons stack", async () => {
+    const viewport = mockViewport(["(max-width: 640px)", "(max-width: 480px)"]);
+    try {
+      await renderConsole();
+
+      const actions = screen.getByTestId("console-actions");
+      fireEvent.click(within(actions).getByText("Actions"));
+      fireEvent.click(within(actions).getByRole("button", { name: /redeploy config/i, hidden: true }));
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+        "Confirm Redeploy",
+        "Cancel",
+      ]);
+
+      viewport.set([]);
+      expect(within(dialog).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+        "Cancel",
+        "Confirm Redeploy",
+      ]);
+    } finally {
+      viewport.restore();
+    }
+  });
+
+  it("closes the confirm modal only on a press that starts on the backdrop", async () => {
+    await renderConsole();
+
+    fireEvent.click(screen.getByRole("button", { name: /redeploy config/i }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.pointerDown(within(dialog).getByRole("heading", { name: /confirm redeploy/i }));
+    fireEvent.click(dialog);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.pointerDown(dialog);
+    fireEvent.click(dialog);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

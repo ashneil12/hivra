@@ -1,6 +1,8 @@
 /**
- * Read-only readout of the user's current $HERMESOS balance and tier
- * eligibility state. Used by the dashboard wallet page to render the
+ * Read-only readout of the user's current platform-token balance and tier
+ * eligibility state, in the token the user's tier is held in (or, with no
+ * tier yet, the token they would qualify in: $HermesOS before $HIVRA is
+ * active and for the grandfather cohort, else $HIVRA). Used by the dashboard wallet page to render the
  * "your qualifying quantity is X — if balance drops below X your tier
  * eligibility ends" UX prominently.
  *
@@ -25,11 +27,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   BASE_CHAIN_ID,
   getVvvStakingContractAddress,
-  HERMESOS_TOKEN_ADDRESS,
-  HERMESOS_TOKEN_SYMBOL,
   VVV_TOKEN_ADDRESS,
   VVV_TOKEN_DECIMALS,
 } from "@/lib/billing/token-holdings";
+import { requirePlatformToken, type PlatformTokenKey } from "@/lib/billing/token-registry";
+import { resolveUserTokenAccess } from "@/lib/billing/token-access";
 import {
   VENICE_BOOST_CPU,
   VENICE_BOOST_RAM_MB,
@@ -54,6 +56,7 @@ interface SnapshotRow {
 
 interface QualificationRow {
   tier: "pro" | "power";
+  token_key?: PlatformTokenKey | null;
   qualifying_quantity: string;
   threshold_at_qualification: string;
   qualified_at: string;
@@ -72,6 +75,8 @@ interface TierState {
   lastBreachAt: string | null;
   currentThreshold: string | null;
   currentThresholdDisplay: string | null;
+  /** Token the tier is held in, when held. */
+  tokenKey: PlatformTokenKey | null;
 }
 
 function formatTokenAmount(raw: bigint, decimals = HERMESOS_TOKEN_DECIMALS): string {
@@ -100,6 +105,7 @@ function buildTierState(
     lastBreachAt: qualification?.last_breach_at ?? null,
     currentThreshold: currentThreshold !== null ? currentThreshold.toString() : null,
     currentThresholdDisplay: currentThreshold !== null ? formatTokenAmount(currentThreshold) : null,
+    tokenKey: qualification ? (qualification.token_key === "hivra" ? "hivra" : "hermesos") : null,
   };
 }
 
@@ -118,42 +124,13 @@ export async function GET() {
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
-    // Latest HERMESOS balance snapshot for this user. The snapshot table
-    // also stores other token balances (for example VVV); without these
-    // token filters a newer zero-balance companion token snapshot can be
-    // mislabeled as the user's Hivra balance and disable withdraw.
-    const { data: snapRows, error: snapError } = await supabaseAdmin
-      .from("token_holding_snapshots")
-      // ::text cast prevents JSON-Number precision loss for values > 2^53.
-      .select("wallet_address, normalized_wallet_address, balance_raw::text, balance_display, checked_at")
-      .eq("user_id", userId)
-      .eq("chain_id", BASE_CHAIN_ID)
-      .eq("token_address", HERMESOS_TOKEN_ADDRESS)
-      .order("checked_at", { ascending: false })
-      .limit(1);
-
-    if (snapError) {
-      return apiError("Failed to load balance snapshot", 500, {
-        failureType: "wallet_eligibility_snapshot_failed",
-        tokenAddress: HERMESOS_TOKEN_ADDRESS,
-        chainId: BASE_CHAIN_ID,
-      }, undefined, {
-        ...LOG_CONTEXT,
-        userId,
-        failureType: "wallet_eligibility_snapshot_failed",
-        cause: snapError,
-      });
-    }
-
-    const snapshot = (snapRows as SnapshotRow[] | null)?.[0] ?? null;
-
     // Qualification rows for both tiers, if present.
     const { data: qualRows, error: qualError } = await supabaseAdmin
       .from("token_tier_qualifications")
       // ::text on numeric columns to dodge JSON-Number precision loss
       // for values that exceed 2^53 base units.
       .select(
-        "tier, qualifying_quantity::text, threshold_at_qualification::text, qualified_at, currently_eligible, last_balance_seen::text, last_evaluated_at, last_breach_at"
+        "tier, token_key, qualifying_quantity::text, threshold_at_qualification::text, qualified_at, currently_eligible, last_balance_seen::text, last_evaluated_at, last_breach_at"
       )
       .eq("user_id", userId);
 
@@ -171,6 +148,45 @@ export async function GET() {
     const quals = (qualRows as QualificationRow[] | null) ?? [];
     const proQual = quals.find((q) => q.tier === "pro");
     const powerQual = quals.find((q) => q.tier === "power");
+
+    // The readout token: the token a held tier is in (Power first), else the
+    // first token this user may newly qualify in.
+    const access = await resolveUserTokenAccess(userId, { recordMembership: false });
+    const heldTokenKey = (powerQual ?? proQual)?.token_key;
+    const tokenKey: PlatformTokenKey = heldTokenKey
+      ? heldTokenKey === "hivra" ? "hivra" : "hermesos"
+      : access.qualifyTokens[0];
+    const token = requirePlatformToken(tokenKey);
+
+    // Latest balance snapshot in the readout token. The snapshot table
+    // also stores other token balances (for example VVV); without these
+    // token filters a newer zero-balance companion token snapshot can be
+    // mislabeled as the user's Hivra balance and disable withdraw.
+    const { data: snapRows, error: snapError } = await supabaseAdmin
+      .from("token_holding_snapshots")
+      // ::text cast prevents JSON-Number precision loss for values > 2^53.
+      .select("wallet_address, normalized_wallet_address, balance_raw::text, balance_display, checked_at")
+      .eq("user_id", userId)
+      .eq("chain_id", BASE_CHAIN_ID)
+      .eq("token_address", token.address)
+      .order("checked_at", { ascending: false })
+      .limit(1);
+
+    if (snapError) {
+      return apiError("Failed to load balance snapshot", 500, {
+        failureType: "wallet_eligibility_snapshot_failed",
+        tokenAddress: token.address,
+        chainId: BASE_CHAIN_ID,
+      }, undefined, {
+        ...LOG_CONTEXT,
+        userId,
+        failureType: "wallet_eligibility_snapshot_failed",
+        cause: snapError,
+      });
+    }
+
+    const snapshot = (snapRows as SnapshotRow[] | null)?.[0] ?? null;
+
     if (!snapshot && (proQual || powerQual)) {
       log.warn("qualified user has no Hivra balance snapshot", {
         ...LOG_CONTEXT,
@@ -187,6 +203,7 @@ export async function GET() {
       // promo window; everyone else gets the date-driven epoch.
       live = await getLiveActiveThresholds({
         forceLaunchEpoch: isFoundersRateUser(userId),
+        token,
       });
     } catch (error) {
       if (error instanceof LivePriceUnavailableError) {
@@ -248,8 +265,18 @@ export async function GET() {
     }
 
     return apiSuccess({
-      tokenSymbol: HERMESOS_TOKEN_SYMBOL,
-      tokenDecimals: HERMESOS_TOKEN_DECIMALS,
+      tokenKey: token.key,
+      tokenSymbol: token.symbol,
+      tokenDecimals: token.decimals,
+      tokenAddress: token.publishedAddress,
+      tokenAccess: {
+        phase: access.phase,
+        grandfathered: access.grandfathered,
+        allowedTokens: access.allowedTokens,
+        paymentToken: access.paymentToken,
+        convertedAt: access.convertedAt?.toISOString() ?? null,
+        conversionGraceEndsAt: access.conversionGraceEndsAt?.toISOString() ?? null,
+      },
       balance: snapshot
         ? {
             balanceRaw: snapshot.balance_raw,

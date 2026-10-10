@@ -3,13 +3,15 @@
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { Loader2, CheckCircle, Zap, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { ACTIVE_PLAN_KEYS, PLANS, type Cadence, type PlanKey } from "@/lib/subscription";
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
 import InteractiveBackground from "@/components/InteractiveBackground";
+import funnelStyles from "@/components/public-site/public-site.module.css";
 
 const ACTIVATION_ROUTE = "/get-started/activate";
 
@@ -39,7 +41,7 @@ function captureActivationEvent(event: string, properties: Record<string, unknow
 export default function ActivatePage() {
   return (
     <Suspense fallback={
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
       </div>
     }>
@@ -67,7 +69,6 @@ function ActivatePageContent() {
     searchParams?.get("cadence") === "yearly" && planKey !== "free" ? "yearly" : "monthly";
   const agentTypeKey = resolveWelcomeAgentTypeKey(searchParams?.get("agentType"));
   const agentTypeQuery = buildAgentTypeQuery(agentTypeKey);
-  const firstAgentDestination = `/dashboard/welcome?step=agent-type${agentTypeQuery}`;
   const plan = PLANS[planKey];
 
   // When Stripe cancel_url brings us back, ?canceled=true is set
@@ -110,7 +111,8 @@ function ActivatePageContent() {
 
     if (result.ok) {
       if (result.activated) {
-        const destination = firstAgentDestination;
+        // Launch, with the agent the visitor picked on the way in, if any.
+        const destination = buildAgentLaunchHref(resolveWelcomeAgentTypeKey(searchParams?.get("agentType")));
         captureActivationEvent("activation_dashboard_reached", {
           plan: planKey,
           destination,
@@ -165,7 +167,7 @@ function ActivatePageContent() {
     });
     setError(result.message);
     setStatus("error");
-  }, [cadence, firstAgentDestination, isSignedIn, planKey, router, wasCanceled]);
+  }, [cadence, isSignedIn, planKey, router, searchParams, wasCanceled]);
 
   useEffect(() => {
     if (wasCanceled) {
@@ -201,7 +203,7 @@ function ActivatePageContent() {
   // Wait for Clerk to load
   if (!isLoaded) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <Loader2 size={24} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
       </div>
     );
@@ -210,7 +212,7 @@ function ActivatePageContent() {
   // Not signed in — send back to get-started
   if (!isSignedIn) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", maxWidth: 400 }}>
           <p style={{ fontSize: 14, marginBottom: "1rem" }}>Please sign in to continue.</p>
           <a
@@ -234,7 +236,7 @@ function ActivatePageContent() {
 
   if (wasCanceled) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
         <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <Loader2 size={24} style={{ opacity: 0.4, animation: "spin 1s linear infinite" }} />
           <span className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.15em", opacity: 0.5 }}>
@@ -253,15 +255,15 @@ function ActivatePageContent() {
     return (
       <>
         <InteractiveBackground />
-        <div style={{
-          minHeight: "100vh",
+        <div className={funnelStyles.funnelPage} style={{
+          minHeight: "100dvh",
           display: "grid",
           placeItems: "center",
           padding: "2rem",
           position: "relative",
           zIndex: 10,
         }}>
-          <div style={{
+          <div className={funnelStyles.funnelCard} style={{
             border: "1px solid var(--etched-border)",
             background: "var(--bg-surface)",
             padding: "3rem",
@@ -324,15 +326,15 @@ function ActivatePageContent() {
   return (
     <>
       <InteractiveBackground />
-      <div style={{
-        minHeight: "100vh",
+      <div className={funnelStyles.funnelPage} style={{
+        minHeight: "100dvh",
         display: "grid",
         placeItems: "center",
         padding: "2rem",
         position: "relative",
         zIndex: 10,
       }}>
-        <div style={{
+        <div className={funnelStyles.funnelCard} style={{
           border: "1px solid var(--etched-border)",
           background: "var(--bg-surface)",
           padding: "3rem",
@@ -378,7 +380,7 @@ function ActivatePageContent() {
                 </button>
                 <a
                   href="/dashboard/billing"
-                  style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
                 >
                   or go to billing page →
                 </a>
@@ -389,26 +391,7 @@ function ActivatePageContent() {
           {/* ── LOADING / SUBSCRIBING STATE ── */}
           {(status === "loading" || status === "subscribing") && (
             <>
-              {/* Step progress */}
-              <div style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                gap: 8, marginBottom: "2rem",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#16a34a" }}>
-                  <CheckCircle size={14} />
-                  <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-                    Account Created
-                  </span>
-                </div>
-                <div style={{ width: 24, height: 1, background: "var(--etched-border)" }} />
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--gold-leaf)" }}>
-                  <Zap size={14} />
-                  <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-                    Setting Up
-                  </span>
-                </div>
-              </div>
-
+              {/* No step strip: Launch, which opens next, has the only step counter. */}
               {/* Loading animation */}
               <div style={{
                 width: 56, height: 56, margin: "0 auto 1.5rem",
@@ -423,27 +406,9 @@ function ActivatePageContent() {
 
               <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
                 {planKey === "free"
-                  ? "Activating your Free plan. You'll be ready to deploy in a moment."
-                  : "Preparing your account. You'll be redirected to secure checkout in a moment."}
+                  ? "Setting up your free account. Launch opens next, where you can connect your own computer or choose a plan."
+                  : "Preparing secure checkout. You'll choose what to launch once your plan is active."}
               </p>
-
-              {/* Animated steps */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", alignItems: "center" }}>
-                {(planKey === "free"
-                  ? ["Creating your account", "Activating Free plan", "Opening deployment"]
-                  : ["Creating your account", "Configuring your plan", "Preparing checkout"]
-                ).map((step, i) => (
-                  <div key={step} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    opacity: 0.6,
-                  }}>
-                    <Loader2 size={10} style={{ animation: `spin ${1 + i * 0.3}s linear infinite` }} />
-                    <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                      {step}
-                    </span>
-                  </div>
-                ))}
-              </div>
             </>
           )}
         </div>

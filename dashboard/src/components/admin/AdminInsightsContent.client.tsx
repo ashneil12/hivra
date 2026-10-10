@@ -234,7 +234,7 @@ function MetricToggle({
           key={m}
           type="button"
           onClick={() => onChange(m)}
-          className="mono"
+          className="mono pointer-coarse:min-h-[44px]"
           style={{
             padding: '7px 12px',
             fontSize: 11,
@@ -297,7 +297,7 @@ function UsageExplorer({
           aria-label={`Filter by ${noun}`}
           value={active ?? ''}
           onChange={(e) => setSelected(e.target.value)}
-          className="mono"
+          className="mono pointer-coarse:min-h-[44px]"
           style={controlStyle}
         >
           {labels.map((l) => (
@@ -365,7 +365,7 @@ function CountExplorer({
           aria-label={`Filter by ${noun}`}
           value={active ?? ''}
           onChange={(e) => setSelected(e.target.value)}
-          className="mono"
+          className="mono pointer-coarse:min-h-[44px]"
           style={controlStyle}
         >
           {labels.map((l) => (

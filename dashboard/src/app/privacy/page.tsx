@@ -2,7 +2,22 @@ import PublicSite from "@/components/public-site/PublicSite";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import { CookiePreferencesButton } from "@/components/consent/CookiePreferencesButton";
 
-const LAST_UPDATED = "June 15, 2026";
+import { buildWebsiteMetadata } from "@/lib/metadata";
+
+// Self-referencing canonical: without this the page inherits the root
+// layout's canonical (the homepage) and search engines treat it as a
+// duplicate of /.
+export const metadata = {
+  title: "Privacy Policy",
+  description: "How Hivra collects, uses, and protects your data.",
+  ...buildWebsiteMetadata({
+    path: "/privacy",
+    title: "Privacy Policy",
+    description: "How Hivra collects, uses, and protects your data.",
+  }),
+};
+
+const LAST_UPDATED = "September 24, 2026";
 
 export default function PrivacyPage() {
   return (<PublicSite className={styles.page} data-page="privacy">
@@ -39,6 +54,7 @@ export default function PrivacyPage() {
             <li><strong>Vercel:</strong> hosting and delivery of this dashboard (United States and global edge).</li>
             <li><strong>Cloudflare:</strong> DNS, network routing, and secure tunneling.</li>
             <li><strong>PostHog:</strong> product analytics and session replay (United States).</li>
+            <li><strong>Google (Google Analytics and Google Tag Manager):</strong> website traffic analytics (United States). They follow your analytics cookie choice: where the law requires consent they load only after you accept, and you can turn them off at any time.</li>
             <li><strong>Stripe:</strong> payment processing; Stripe handles card numbers directly and we receive only limited metadata.</li>
             <li><strong>FingerprintJS:</strong> device signals used only for fraud and abuse prevention.</li>
             <li><strong>Managed inference and wallet partners:</strong> if you opt into managed AI inference or token and wallet features, Venice (inference) and Bankr (wallet and on-chain payments) process the data needed for those features.</li>
@@ -60,6 +76,7 @@ export default function PrivacyPage() {
             <li><strong>Third-party API keys:</strong> deleted immediately when you remove them or tear down the instance.</li>
             <li><strong>Usage and compute metrics:</strong> retained in aggregated form for up to 24 months, then deleted or kept only in further-aggregated form.</li>
             <li><strong>Diagnostic logs and error telemetry:</strong> up to 90 days.</li>
+            <li><strong>Agent activity and trace records:</strong> the activity history of your Hivra computers, meaning lifecycle events (such as launch, restart, resize, and deletion) and run and tool records (which tools ran, when, for how long, and whether they succeeded). These records never contain your prompts, commands, or file contents. We keep them for up to 90 days. When you delete a computer, its records are deleted with it; a record that the deletion happened may be kept for up to 90 days. When you close your account, all of them are deleted.</li>
             <li><strong>Session replays:</strong> up to 30 days. Product-analytics events: up to 12 months.</li>
             <li><strong>Fraud and abuse signals:</strong> up to 24 months.</li>
             <li><strong>Billing and payment records:</strong> retained as required by financial and tax law, typically up to 7 years.</li>
@@ -69,7 +86,7 @@ export default function PrivacyPage() {
           <p>Depending on where you live (including the UK and EU), you have the right to access, correct, delete, or export your personal data, and to restrict or object to certain processing or withdraw consent. To exercise any of these rights, contact us using the details below; we will respond within the timeframe required by applicable law. You also have the right to complain to your local data-protection authority, such as the Information Commissioner&apos;s Office (ICO) in the UK.</p>
 
           <h2 className="serif">9. Cookies, Analytics, and Session Replay</h2>
-          <p>We use cookies and similar technologies for essential functionality and, with your consent where the law requires it, for product analytics and session replay. Session replay masks input fields by default and is disabled on sensitive pages, including sign-in, billing, wallet, settings, and your agent chat. You can change your choice at any time: <CookiePreferencesButton />. Strictly necessary cookies cannot be turned off. You can also control non-essential cookies through your browser settings.</p>
+          <p>We use cookies and similar technologies for essential functionality and, with your consent where the law requires it, for product analytics, website traffic analytics (Google Analytics), and session replay. Session replay masks input fields by default and is disabled on sensitive pages, including sign-in, billing, wallet, settings, and your agent chat. You can change your choice at any time: <CookiePreferencesButton />. Strictly necessary cookies cannot be turned off. You can also control non-essential cookies through your browser settings.</p>
 
           <h2 className="serif">10. Data Security</h2>
           <p>All sensitive data, including your Third-Party LLM API keys, is encrypted in transit and at rest. Your agent environments are isolated. While we employ rigorous security hardening to protect your data, no method of transmission over the Internet is 100% secure.</p>
@@ -78,7 +95,7 @@ export default function PrivacyPage() {
           <p>We may update this policy as the product and our providers evolve. Material changes will be reflected by the &apos;Last Updated&apos; date above, and where required we will provide additional notice.</p>
 
           <h2 className="serif">12. Contact Us</h2>
-          <p>If you have questions about this policy or wish to exercise your privacy rights, contact us at info@hermesos.cloud or through our Discord community. For formal data-protection requests, please include enough detail for us to verify your identity and locate your records.</p>
+          <p>If you have questions about this policy or wish to exercise your privacy rights, contact us at info@hivra.cloud or through our Discord community. For formal data-protection requests, please include enough detail for us to verify your identity and locate your records.</p>
         </div>
       </main>
   </PublicSite>);

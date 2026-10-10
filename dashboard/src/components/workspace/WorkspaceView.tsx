@@ -17,8 +17,9 @@ import { resolveWorkspaceRedirect } from "@/lib/workspace/workspace-redirect";
  * its own specs because a bad mapping strands a link *silently* — the redirect
  * still returns 200, it just lands somewhere wrong.
  *
- * A bare visit resumes the owner's last available runtime and surface.
- * An explicit `?runtimes=1` visit keeps the agent/computer list open.
+ * Home lists the owner's agents and computers, with a "Continue" link to the
+ * last one. Only the app opening at Home resumes it (lib/workspace/app-open);
+ * `?runtimes=1` and `?attention=1` always ask for the list.
  *
  * The caller decides whether the workspace shell is enabled — this component
  * assumes it is, so `/dashboard` can fall through to the Hermes command center
@@ -57,6 +58,6 @@ export async function WorkspaceView({ searchParams }: WorkspaceViewProps) {
     "@/components/hivra/FleetControlPane"
   );
 
-  // The switcher offers an explicit list; Home always resumes when available.
+  // The switcher and the attention link ask for the list explicitly.
   return <FleetControlPane key={`${query.get("runtimes")}:${query.get("attention")}`} requested={query.get("runtimes") === "1" || query.get("attention") === "1"} attentionRequested={query.get("attention") === "1"} />;
 }

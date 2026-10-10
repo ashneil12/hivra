@@ -79,6 +79,15 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     ],
   },
   {
+    // Where agents and computers run: Hivra Cloud, My cloud, My server.
+    // The route keeps its original path for existing links.
+    id: "infrastructure",
+    label: "Capacity",
+    href: "/dashboard/infrastructure",
+    icon: ServerCog,
+    routePrefixes: ["/dashboard/infrastructure"],
+  },
+  {
     id: "activity",
     label: "Activity",
     href: "/dashboard/activity",
@@ -94,13 +103,6 @@ const HELP_ROUTE = "/dashboard/settings/help";
 const WALLET_ROUTE = "/dashboard/wallet";
 
 export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] = [
-  {
-    id: "infrastructure",
-    label: "Infrastructure",
-    href: "/dashboard/infrastructure",
-    icon: ServerCog,
-    routePrefixes: ["/dashboard/infrastructure"],
-  },
   {
     id: "settings",
     label: "Settings",
@@ -125,7 +127,8 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     icon: CreditCard,
     // The wallet is where $HermesOS access is paid for and agent wallets are
     // funded, so it belongs with Billing, not Settings.
-    routePrefixes: ["/dashboard/billing", WALLET_ROUTE],
+    // The optional $HermesOS → $HIVRA conversion page sits with the wallet.
+    routePrefixes: ["/dashboard/billing", WALLET_ROUTE, "/dashboard/convert"],
   },
 ];
 
@@ -134,7 +137,7 @@ export const DASHBOARD_LAUNCH_NAVIGATION: DashboardNavigationItem = {
   label: "Launch",
   href: "/dashboard/launch",
   icon: Plus,
-  routePrefixes: ["/dashboard/launch", "/dashboard/welcome"],
+  routePrefixes: ["/dashboard/launch"],
 };
 
 /** Infrequent access/help destinations stay reachable without competing with work. */
@@ -159,13 +162,84 @@ const PRIMARY_NAVIGATION_BY_ID = Object.fromEntries(
   DASHBOARD_PRIMARY_NAVIGATION.map((item) => [item.id, item]),
 ) as Record<string, DashboardNavigationItem>;
 
+/** Labels for the 72px touch rail, where the full label cannot fit. */
+export const DASHBOARD_RAIL_SHORT_LABELS: Partial<Record<DashboardNavigationId, string>> = {
+  applications: "Apps",
+};
+
+/** Phone bottom bar: the two inventories flank Launch; everything else lives in More. */
 export const DASHBOARD_MOBILE_NAVIGATION: readonly DashboardNavigationItem[] = [
   PRIMARY_NAVIGATION_BY_ID.home,
-  DASHBOARD_LAUNCH_NAVIGATION,
   PRIMARY_NAVIGATION_BY_ID.agents,
+  DASHBOARD_LAUNCH_NAVIGATION,
   PRIMARY_NAVIGATION_BY_ID.computers,
-  DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "billing")!,
 ];
+
+/** Group headings come from mobileNavigationCopy under the same id. */
+export type DashboardNavigationGroup = {
+  id: "manage" | "help";
+  items: readonly DashboardNavigationItem[];
+};
+
+/** Phone More sheet, in display order. Every destination not on the bar. */
+export const DASHBOARD_MOBILE_MORE_GROUPS: readonly DashboardNavigationGroup[] = [
+  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.infrastructure, PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
+  { id: "help", items: DASHBOARD_UTILITY_NAVIGATION },
+];
+
+export const DASHBOARD_MOBILE_MORE_NAVIGATION: readonly DashboardNavigationItem[] =
+  DASHBOARD_MOBILE_MORE_GROUPS.flatMap((group) => group.items);
+
+/** The agent and computer list, asked for explicitly. Home shows it too,
+ * except when the app is opened at Home and resumes the last one. */
+export const DASHBOARD_RUNTIME_LIST_HREF = "/dashboard?runtimes=1";
+
+type MobileNavigationCopyKey =
+  | "switchOrSearch" | "needsAttention" | "manage" | "help" | "account" | "manageAccount"
+  | "signOut" | "signingOut" | "themeDark" | "themeLight" | "switchToDark" | "switchToLight";
+
+/**
+ * The optional keys are not in src/lib/i18n.ts yet; each surface falls back to
+ * English until a locale provides them.
+ */
+type DashboardNavigationCopy = {
+  nav?: { closeMobileMenu?: string };
+  dashboard: {
+    nav: Record<"home" | "chat" | "computers" | "agents" | "infrastructure" | "settings" | "launch", string>
+      & Partial<Record<"activity" | "billing" | "applications" | "help" | "more", string>>;
+    mobileNav?: Partial<Record<MobileNavigationCopyKey, string>>;
+  };
+};
+
+/** One localization for every navigation surface (sidebar, bottom bar, More sheet). */
+export function labelForNavigationItem(
+  item: DashboardNavigationItem,
+  copy: DashboardNavigationCopy,
+): string {
+  const nav = copy.dashboard.nav;
+  const labels: Partial<Record<DashboardNavigationId, string>> = {
+    home: nav.home, chat: nav.chat, computers: nav.computers, agents: nav.agents,
+    infrastructure: nav.infrastructure, settings: nav.settings, launch: nav.launch,
+    activity: nav.activity, billing: nav.billing, applications: nav.applications, help: nav.help,
+  };
+  return labels[item.id] ?? item.label;
+}
+
+const MOBILE_NAVIGATION_COPY: Record<MobileNavigationCopyKey, string> = {
+  switchOrSearch: "Switch or search", needsAttention: "Needs attention", manage: "Manage", help: "Help",
+  account: "Account", manageAccount: "Manage account", signOut: "Sign out", signingOut: "Signing out…",
+  themeDark: "Theme: Dark", themeLight: "Theme: Light", switchToDark: "Switch to dark", switchToLight: "Switch to light",
+};
+
+/** Strings the phone bar and More sheet add on top of the item labels. */
+export function mobileNavigationCopy(copy: DashboardNavigationCopy) {
+  return {
+    ...MOBILE_NAVIGATION_COPY,
+    ...copy.dashboard.mobileNav,
+    more: copy.dashboard.nav.more ?? "More",
+    close: copy.nav?.closeMobileMenu ?? "Close menu",
+  };
+}
 
 /**
  * Hides navigation that depends on a rollout flag that is off for this
@@ -193,7 +267,7 @@ function matchesRoutePrefix(pathname: string, prefix: string): boolean {
  * so a pathname alone cannot say which family a runtime belongs to. Every
  * runtime detail page is one surface to the nav.
  */
-function isRuntimeDetailPath(pathname: string): boolean {
+export function isRuntimeDetailPath(pathname: string): boolean {
   return (
     pathname.startsWith("/dashboard/agent/") ||
     pathname.startsWith("/dashboard/instances/")

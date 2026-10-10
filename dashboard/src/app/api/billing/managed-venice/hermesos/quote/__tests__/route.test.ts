@@ -49,6 +49,15 @@ jest.mock("@clerk/nextjs/server", () => ({
   currentUser: jest.fn().mockResolvedValue(null),
 }));
 
+const mockReportPriceGateRefusal = jest.fn<Promise<unknown>, unknown[]>(async () => ({
+  refusal: { assetKey: "hermesos", asset: "$HermesOS", reason: "median_deviation", gate: "unknown", observed: {} },
+  logged: true,
+  alerted: false,
+}));
+jest.mock("@/lib/billing/price-gate-alerts", () => ({
+  reportPriceGateRefusal: (...args: unknown[]) => mockReportPriceGateRefusal(...args),
+}));
+
 import { auth } from "@clerk/nextjs/server";
 import { ManagedVeniceTokenQuotePriceError } from "@/lib/billing/managed-venice-token-quotes";
 import { POST } from "../route";
@@ -270,6 +279,20 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
     expect(body.error).toMatch(/pricing is temporarily unavailable/i);
     expect(body.reason).toBe("pricing_unavailable");
     expect(JSON.stringify(body)).not.toContain("dexscreener_uniswap_internal_detail");
+  });
+
+  it("reports each price gate refusal to the rate-limited gate log and ops alert", async () => {
+    const refusal = new ManagedVeniceTokenQuotePriceError("Managed Venice token deposits are temporarily disabled");
+    mockCreateQuote.mockRejectedValueOnce(refusal);
+
+    const response = await POST(makeReq({ tokenAmountRaw: stubQuote.tokenAmountRaw }));
+
+    expect(response.status).toBe(503);
+    expect(mockReportPriceGateRefusal).toHaveBeenCalledWith(refusal, {
+      source: "billing/managed-venice/hermesos/quote",
+      route: "/api/billing/managed-venice/hermesos/quote",
+      method: "POST",
+    });
   });
 
   it("does not expose quote internals when persistence fails", async () => {

@@ -22,7 +22,10 @@ jest.mock("@/lib/billing/crypto-topups", () => ({
 }));
 
 describe("POST /api/billing/crypto/top-up", () => {
-  const userId = "user_123";
+  // The per-user rate limit keeps counters in module memory, so each test signs
+  // in as a different user and never counts against another test.
+  let userCounter = 0;
+  let userId = "user_0";
   const depositAddress = "0x000000000000000000000000000000000000dead";
   const originalNodeEnv = process.env.NODE_ENV;
 
@@ -32,6 +35,8 @@ describe("POST /api/billing/crypto/top-up", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    userCounter += 1;
+    userId = `user_${userCounter}`;
     delete process.env.CRYPTO_BILLING_ENABLED;
     delete process.env.NEXT_PUBLIC_CRYPTO_BILLING_ENABLED;
     (auth as unknown as jest.Mock).mockResolvedValue({ userId });
@@ -164,7 +169,6 @@ describe("POST /api/billing/crypto/top-up", () => {
     expect(ensureBankrDepositWalletForUser).toHaveBeenCalledWith({
       userId,
       purpose: "credit_deposit",
-      makePrimary: true,
     });
     expect(createCryptoTopUpIntent).toHaveBeenCalledWith({
       userId,
@@ -175,6 +179,25 @@ describe("POST /api/billing/crypto/top-up", () => {
         bankrWalletId: "wlt_A1b2C3d4",
       },
     });
+  });
+
+  it("rate limits one person's top-up starts before any wallet or payment work", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      statuses.push((await POST(createRequest())).status);
+    }
+
+    expect(statuses).toEqual([200, 200, 200, 200, 200, 429, 429, 429]);
+    expect(ensureBankrDepositWalletForUser).toHaveBeenCalledTimes(5);
+    expect(createCryptoTopUpIntent).toHaveBeenCalledTimes(5);
+
+    const limited = await POST(createRequest());
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+
+    // Another person is not held back by the first one.
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: `${userId}_other` });
+    expect((await POST(createRequest())).status).toBe(200);
   });
 
   it("does not leak backend errors", async () => {

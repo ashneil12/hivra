@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
+  Monitor,
   ShieldCheck,
   UploadCloud,
   X,
@@ -38,6 +39,18 @@ interface Preview {
   format: string;
   domains: string[];
 }
+
+// Exporting cookies needs a desktop browser extension, so touch devices get a
+// notice in place of the extension steps; the file picker stays as a fallback.
+const COOKIE_IMPORT_TOUCH_CSS = `
+.cookie-import-touch-only { display: none; }
+@media (pointer: coarse) {
+  .cookie-import-desktop-only { display: none !important; }
+  .cookie-import-touch-only { display: flex; }
+  .cookie-import-close { width: 44px !important; height: 44px !important; }
+}`;
+
+const OVERLAY_GUTTER = "20px";
 
 const kicker: React.CSSProperties = {
   fontSize: 10,
@@ -77,7 +90,7 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
           flexShrink: 0,
           width: 20,
           height: 20,
-          borderRadius: 999,
+          borderRadius: 0,
           border: "1px solid var(--etched-border)",
           display: "inline-flex",
           alignItems: "center",
@@ -191,14 +204,20 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
           alignItems: "center",
           justifyContent: "center",
           zIndex: 9999,
-          padding: 20,
+          boxSizing: "border-box",
+          paddingTop: `max(${OVERLAY_GUTTER}, env(safe-area-inset-top, 0px))`,
+          paddingRight: `max(${OVERLAY_GUTTER}, env(safe-area-inset-right, 0px))`,
+          paddingBottom: `max(${OVERLAY_GUTTER}, env(safe-area-inset-bottom, 0px))`,
+          paddingLeft: `max(${OVERLAY_GUTTER}, env(safe-area-inset-left, 0px))`,
         }}
       >
+        <style>{COOKIE_IMPORT_TOUCH_CSS}</style>
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
             width: "min(560px, 100%)",
-            maxHeight: "calc(100dvh - 40px)",
+            maxHeight:
+              "calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
             overflowY: "auto",
             overflowX: "hidden",
             background: "var(--bg-elevated)",
@@ -232,6 +251,7 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
               type="button"
               aria-label="Close"
               onClick={onClose}
+              className="cookie-import-close"
               style={{
                 flexShrink: 0,
                 display: "inline-flex",
@@ -294,8 +314,28 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
                   logged into, and the agent can use that account — no passwords to share.
                 </p>
 
+                {/* Touch devices: the export flow needs a desktop browser. */}
+                <div
+                  className="cookie-import-touch-only"
+                  data-testid="cookie-import-desktop-notice"
+                  style={{
+                    gap: 10,
+                    alignItems: "flex-start",
+                    padding: "14px 16px",
+                    border: "1px solid var(--ink-black)",
+                    background: "var(--bg-surface, rgba(0,0,0,0.02))",
+                  }}
+                >
+                  <Monitor size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div style={{ ...body, opacity: 1 }}>
+                    <strong>Cookie import needs a desktop browser.</strong> Open this agent on your computer to export
+                    cookies with the browser extension. If you already have a cookies.txt file on this device, choose it
+                    below.
+                  </div>
+                </div>
+
                 {/* Guided steps */}
-                <div style={{ display: "grid", gap: 12 }}>
+                <div className="cookie-import-desktop-only" style={{ display: "grid", gap: 12 }}>
                   <Step n={1}>
                     Install the free, open-source extension{" "}
                     <a
@@ -361,9 +401,16 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
                     <UploadCloud size={22} style={{ color: "var(--text-muted)" }} />
                   )}
                   <span style={{ ...body, opacity: 1, fontWeight: 600 }}>
-                    {fileName ? fileName : "Drop your cookies.txt here, or click to choose"}
+                    {fileName ? (
+                      fileName
+                    ) : (
+                      <>
+                        <span className="cookie-import-desktop-only">Drop your cookies.txt here, or click to choose</span>
+                        <span className="cookie-import-touch-only" style={{ justifyContent: "center" }}>Choose your cookies.txt</span>
+                      </>
+                    )}
                   </span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
                     cookies.txt (Netscape) · Cookie-Editor JSON · storageState
                   </span>
                 </label>

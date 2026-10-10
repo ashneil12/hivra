@@ -1,0 +1,4276 @@
+diff --git a/apps/desktop/src/app/chat/composer/context-menu.tsx b/apps/desktop/src/app/chat/composer/context-menu.tsx
+index 716d7aed38..615b37b7ed 100644
+--- a/apps/desktop/src/app/chat/composer/context-menu.tsx
++++ b/apps/desktop/src/app/chat/composer/context-menu.tsx
+@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
+ import { useComposerAttachmentProviders } from './contrib'
+ import { GHOST_ICON_BTN } from './controls'
+ import type { ChatBarState } from './types'
++import { useWebFilePicker } from './web-file-picker' // hermes-fork: web-file-picker
+ 
+ const SNIPPET_KEYS = ['codeReview', 'implementationPlan', 'explainThis']
+ 
+@@ -31,7 +32,8 @@ export function ContextMenu({
+   onPasteClipboardImage,
+   onPickFiles,
+   onPickFolders,
+-  onPickImages
++  onPickImages,
++  onWebAttachFiles
+ }: ContextMenuProps) {
+   const { t } = useI18n()
+   const c = t.composer
+@@ -43,6 +45,9 @@ export function ContextMenu({
+   // `composer.attachments` contributions — plugin/core-registered rows that
+   // extend this menu through the same registry as every other surface.
+   const attachmentProviders = useComposerAttachmentProviders()
++  // hermes-fork: web-file-picker — hosted web opens the chooser from a real DOM
++  // click (see ./web-file-picker.tsx); native keeps the IPC picker below.
++  const web = useWebFilePicker(onWebAttachFiles)
+ 
+   return (
+     <>
+@@ -68,13 +73,23 @@ export function ContextMenu({
+           <DropdownMenuLabel className="px-2 pb-0.5 pt-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-(--ui-text-tertiary)">
+             {c.attachLabel}
+           </DropdownMenuLabel>
+-          <ContextMenuItem disabled={!onPickFiles} icon={FileText} onSelect={onPickFiles}>
++          <ContextMenuItem
++            disabled={web.enabled ? false : !onPickFiles}
++            icon={FileText}
++            onClick={web.enabled ? web.pickFiles : undefined} // hermes-fork: web-file-picker
++            onSelect={web.enabled ? undefined : onPickFiles}
++          >
+             {c.files}
+           </ContextMenuItem>
+           <ContextMenuItem disabled={!onPickFolders} icon={FolderOpen} onSelect={onPickFolders}>
+             {c.folder}
+           </ContextMenuItem>
+-          <ContextMenuItem disabled={!onPickImages} icon={ImageIcon} onSelect={onPickImages}>
++          <ContextMenuItem
++            disabled={web.enabled ? false : !onPickImages}
++            icon={ImageIcon}
++            onClick={web.enabled ? web.pickImages : undefined} // hermes-fork: web-file-picker
++            onSelect={web.enabled ? undefined : onPickImages}
++          >
+             {c.images}
+           </ContextMenuItem>
+           <ContextMenuItem
+@@ -116,6 +131,8 @@ export function ContextMenu({
+         </DropdownMenuContent>
+       </DropdownMenu>
+ 
++      {web.inputs /* hermes-fork: web-file-picker — outlives the menu closing */}
++
+       <PromptSnippetsDialog onInsertText={onInsertText} onOpenChange={setSnippetsOpen} open={snippetsOpen} />
+     </>
+   )
+@@ -163,12 +180,13 @@ function PromptSnippetsDialog({ onInsertText, onOpenChange, open }: PromptSnippe
+   )
+ }
+ 
+-export function ContextMenuItem({ children, disabled, icon: Icon, onSelect }: ContextMenuItemProps) {
++export function ContextMenuItem({ children, disabled, icon: Icon, onClick, onSelect }: ContextMenuItemProps) {
+   return (
+     // Override font size + highlight to match the / · @ completion rows exactly.
+     <DropdownMenuItem
+       className="text-[length:var(--conversation-tool-font-size)] focus:bg-(--ui-bg-tertiary)"
+       disabled={disabled}
++      onClick={onClick} // hermes-fork: web-file-picker
+       onSelect={onSelect}
+     >
+       <Icon />
+@@ -181,6 +199,7 @@ interface ContextMenuItemProps {
+   children: string
+   disabled?: boolean
+   icon: IconComponent
++  onClick?: () => void // hermes-fork: web-file-picker
+   onSelect?: () => void
+ }
+ 
+@@ -191,6 +210,7 @@ interface ContextMenuProps {
+   onPickFiles?: () => void
+   onPickFolders?: () => void
+   onPickImages?: () => void
++  onWebAttachFiles?: (files: File[]) => void // hermes-fork: web-file-picker
+   state: ChatBarState
+ }
+ 
+diff --git a/apps/desktop/src/app/chat/composer/index.tsx b/apps/desktop/src/app/chat/composer/index.tsx
+index c27685fec8..7dc77b0b9f 100644
+--- a/apps/desktop/src/app/chat/composer/index.tsx
++++ b/apps/desktop/src/app/chat/composer/index.tsx
+@@ -1114,6 +1114,11 @@ export function ChatBar({
+       onPickFiles={onPickFiles}
+       onPickFolders={onPickFolders}
+       onPickImages={onPickImages}
++      onWebAttachFiles={
++        // hermes-fork: web-file-picker — path '' = the browser-drop shape, so
++        // attachDroppedItems resolves each File via the shim's getPathForFile.
++        onAttachDroppedItems ? files => void onAttachDroppedItems(files.map(file => ({ file, path: '' }))) : undefined
++      }
+       state={state}
+     />
+   )
+diff --git a/apps/desktop/src/app/chat/composer/web-file-picker.test.tsx b/apps/desktop/src/app/chat/composer/web-file-picker.test.tsx
+new file mode 100644
+index 0000000000..b424408c52
+--- /dev/null
++++ b/apps/desktop/src/app/chat/composer/web-file-picker.test.tsx
+@@ -0,0 +1,87 @@
++import { act, cleanup, fireEvent, render } from '@testing-library/react'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++
++import { useWebFilePicker } from './web-file-picker'
++
++const setWebClient = (on: boolean) => {
++  if (on) {
++    ;(window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__ = true
++  } else {
++    delete (window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__
++  }
++}
++
++function Harness({ onAttach }: { onAttach?: (files: File[]) => void }) {
++  const picker = useWebFilePicker(onAttach)
++
++  return (
++    <div>
++      <button data-testid="files" onClick={picker.pickFiles} type="button" />
++      <button data-testid="images" onClick={picker.pickImages} type="button" />
++      <output data-testid="enabled">{String(picker.enabled)}</output>
++      {picker.inputs}
++    </div>
++  )
++}
++
++afterEach(() => {
++  cleanup()
++  setWebClient(false)
++  vi.restoreAllMocks()
++})
++
++describe('useWebFilePicker (hosted web composer attach)', () => {
++  it('is disabled and renders no inputs under Electron or without an attach handler', () => {
++    const native = render(<Harness onAttach={vi.fn()} />)
++
++    expect(native.getByTestId('enabled').textContent).toBe('false')
++    expect(native.container.querySelectorAll('input[type="file"]')).toHaveLength(0)
++    cleanup()
++
++    setWebClient(true)
++    const noHandler = render(<Harness />)
++
++    expect(noHandler.getByTestId('enabled').textContent).toBe('false')
++    expect(noHandler.container.querySelectorAll('input[type="file"]')).toHaveLength(0)
++  })
++
++  it('opens the chooser from a REAL click on a persistent off-screen input (keeps user activation)', () => {
++    setWebClient(true)
++    const click = vi.spyOn(HTMLInputElement.prototype, 'click')
++    const view = render(<Harness onAttach={vi.fn()} />)
++    const inputs = view.container.querySelectorAll<HTMLInputElement>('input[type="file"]')
++
++    expect(inputs).toHaveLength(2)
++    expect(inputs[0].style.position).toBe('fixed') // off-screen, NOT display:none
++    expect(inputs[0].style.display).not.toBe('none')
++    expect(inputs[1].accept).toBe('image/*')
++
++    fireEvent.click(view.getByTestId('files'))
++    expect(click.mock.contexts[0]).toBe(inputs[0])
++    fireEvent.click(view.getByTestId('images'))
++    expect(click.mock.contexts[1]).toBe(inputs[1])
++  })
++
++  it('hands the chosen File[] to onAttach once and resets the input so the same file can be re-picked', () => {
++    setWebClient(true)
++    const onAttach = vi.fn()
++    const view = render(<Harness onAttach={onAttach} />)
++    const [filesInput] = view.container.querySelectorAll<HTMLInputElement>('input[type="file"]')
++    const a = new File(['a'], 'a.txt')
++    const b = new File(['b'], 'b.txt')
++
++    Object.defineProperty(filesInput, 'files', { configurable: true, value: [a, b] })
++    act(() => {
++      fireEvent.change(filesInput)
++    })
++
++    expect(onAttach).toHaveBeenCalledExactlyOnceWith([a, b])
++    expect(filesInput.value).toBe('')
++
++    Object.defineProperty(filesInput, 'files', { configurable: true, value: [] })
++    act(() => {
++      fireEvent.change(filesInput)
++    })
++    expect(onAttach).toHaveBeenCalledTimes(1)
++  })
++})
+diff --git a/apps/desktop/src/app/chat/composer/web-file-picker.tsx b/apps/desktop/src/app/chat/composer/web-file-picker.tsx
+new file mode 100644
+index 0000000000..5254a21411
+--- /dev/null
++++ b/apps/desktop/src/app/chat/composer/web-file-picker.tsx
+@@ -0,0 +1,86 @@
++import { type CSSProperties, type ReactNode, useRef } from 'react'
++
++// Off-screen (NOT display:none) so a programmatic input.click() reliably opens
++// the native file dialog; some browsers won't open a chooser for display:none.
++const OFFSCREEN_INPUT_STYLE: CSSProperties = {
++  position: 'fixed',
++  left: '-9999px',
++  top: '-9999px',
++  opacity: 0,
++  pointerEvents: 'none'
++}
++
++export interface WebFilePicker {
++  /** True only on the hosted web client with an attach handler wired. */
++  enabled: boolean
++  /** Real DOM onClick handlers: they keep the click's transient user activation. */
++  pickFiles: () => void
++  pickImages: () => void
++  /** Persistent hidden inputs; render OUTSIDE the dropdown so they outlive its close. */
++  inputs: ReactNode
++}
++
++/**
++ * Hosted-web file pickers for the composer "+" menu.
++ *
++ * The Files / Images rows cannot go through Radix's `onSelect` ->
++ * `selectPaths` -> `input.click()` chain: `onSelect` fires inside Radix's
++ * synthetic event dispatch, and in the cross-origin dashboard iframe that
++ * boundary does not carry transient user activation, so Chrome silently
++ * declines to open the native chooser (no dialog, no error). Paste and drag
++ * never open a chooser, so they are unaffected. Fix: click a persistent hidden
++ * <input> from a REAL DOM `onClick`, then route the chosen File[] through the
++ * same path drag-drop uses (`onAttachDroppedItems` -> `getPathForFile`).
++ *
++ * Native (Electron) keeps its IPC picker: `enabled` is false there.
++ */
++export function useWebFilePicker(onAttach?: (files: File[]) => void): WebFilePicker {
++  const filesRef = useRef<HTMLInputElement>(null)
++  const imagesRef = useRef<HTMLInputElement>(null)
++
++  const enabled =
++    typeof window !== 'undefined' &&
++    Boolean((window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__) &&
++    Boolean(onAttach)
++
++  const drain = (input: HTMLInputElement | null) => {
++    if (!input || !onAttach) {
++      return
++    }
++
++    const files = Array.from(input.files ?? [])
++
++    input.value = '' // reset so re-picking the same file fires change again
++
++    if (files.length) {
++      onAttach(files)
++    }
++  }
++
++  return {
++    enabled,
++    pickFiles: () => filesRef.current?.click(),
++    pickImages: () => imagesRef.current?.click(),
++    inputs: enabled ? (
++      <>
++        <input
++          multiple
++          onChange={() => drain(filesRef.current)}
++          ref={filesRef}
++          style={OFFSCREEN_INPUT_STYLE}
++          tabIndex={-1}
++          type="file"
++        />
++        <input
++          accept="image/*"
++          multiple
++          onChange={() => drain(imagesRef.current)}
++          ref={imagesRef}
++          style={OFFSCREEN_INPUT_STYLE}
++          tabIndex={-1}
++          type="file"
++        />
++      </>
++    ) : null
++  }
++}
+diff --git a/apps/desktop/src/app/settings/providers-settings.tsx b/apps/desktop/src/app/settings/providers-settings.tsx
+index c31e047137..f9a7212786 100644
+--- a/apps/desktop/src/app/settings/providers-settings.tsx
++++ b/apps/desktop/src/app/settings/providers-settings.tsx
+@@ -13,6 +13,7 @@ import {
+   providerTitle,
+   sortProviders
+ } from '@/components/onboarding'
++import { VeniceRecommendedCard } from '@/components/onboarding/venice-recommended-card' // hermes-fork: venice-card
+ import { Button } from '@/components/ui/button'
+ import { RowButton } from '@/components/ui/row-button'
+ import { SearchField } from '@/components/ui/search-field'
+@@ -188,7 +189,9 @@ function OAuthPicker({
+       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
+         {p.intro}
+       </p>
+-      {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
++      {/* hermes-fork: venice-card */}
++      <VeniceRecommendedCard onWantApiKey={onWantApiKey} />
++      {featured && <FeaturedProviderRow hideRecommendedBadge onSelect={select} provider={featured} />}
+       {/* Slot #2 — the no-account path, matching onboarding. Behind the
+           --local launch flag like every local-models surface. */}
+       {$localModelsEnabled.get() && <LocalModelsProviderRow onClick={onWantLocalModels} />}
+diff --git a/apps/desktop/src/components/model-picker.keyless.test.tsx b/apps/desktop/src/components/model-picker.keyless.test.tsx
+new file mode 100644
+index 0000000000..ce85bbcd73
+--- /dev/null
++++ b/apps/desktop/src/components/model-picker.keyless.test.tsx
+@@ -0,0 +1,61 @@
++// hermes-fork: keyless-provider-guard. Own file so an upstream edit to model-picker.test.tsx can
++// never conflict with the fork's guard test (see app/shell/model-catalog-menu.keyless.test.tsx).
++import type { ModelOptionsResult } from '@hermes/shared'
++import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
++import { cleanup, render, screen } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { I18nProvider } from '@/i18n'
++import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
++
++import { ModelPickerDialog } from './model-picker'
++
++vi.mock('@/hermes', () => ({
++  getLocalModelsStatus: vi.fn().mockResolvedValue({ loading: {} })
++}))
++vi.mock('@/lib/model-options', async importOriginal => ({
++  ...(await importOriginal<Record<string, unknown>>()),
++  requestModelOptions: vi.fn()
++}))
++
++import { requestModelOptions } from '@/lib/model-options'
++
++stubResizeObserver()
++stubMenuDomApis()
++
++const OPTIONS: ModelOptionsResult = {
++  providers: [
++    { slug: 'nous', name: 'Nous', models: ['Hermes-4.5'], authenticated: true },
++    { slug: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4'], authenticated: false }
++  ]
++}
++
++beforeEach(() => {
++  vi.mocked(requestModelOptions).mockResolvedValue(OPTIONS)
++})
++
++afterEach(() => {
++  cleanup()
++  vi.clearAllMocks()
++})
++
++describe('ModelPickerDialog keyless providers', () => {
++  it('omits a provider the box has no credentials for, even when it surfaces models', async () => {
++    render(
++      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
++        <I18nProvider>
++          <ModelPickerDialog
++            currentModel="Hermes-4.5"
++            currentProvider="nous"
++            onOpenChange={() => undefined}
++            onSelect={() => undefined}
++            open
++          />
++        </I18nProvider>
++      </QueryClientProvider>
++    )
++
++    expect(await screen.findByText('Hermes-4.5')).toBeTruthy()
++    expect(screen.queryByText('claude-sonnet-4')).toBeNull()
++  })
++})
+diff --git a/apps/desktop/src/components/model-picker.tsx b/apps/desktop/src/components/model-picker.tsx
+index e30c2dcff5..19e6dbd4fa 100644
+--- a/apps/desktop/src/components/model-picker.tsx
++++ b/apps/desktop/src/components/model-picker.tsx
+@@ -325,8 +325,14 @@ function ModelResults({
+   // can't change mid-session.
+   const localModelsShown = $localModelsEnabled.get()
+ 
++  // hermes-fork: keyless-provider-guard — also drop providers the box has no
++  // usable credentials for: selecting one persists a dead provider into
++  // config.yaml and bricks new sessions at agent init ("no API key was found").
+   const configured = providers.filter(
+-    p => (p.models ?? []).length > 0 && (localModelsShown || p.slug !== LOCAL_PROVIDER_SLUG)
++    p =>
++      (p.models ?? []).length > 0 &&
++      p.authenticated !== false &&
++      (localModelsShown || p.slug !== LOCAL_PROVIDER_SLUG)
+   )
+ 
+   // In-flight local downloads render as disabled progress rows: inside the
+diff --git a/apps/desktop/src/components/onboarding/index.tsx b/apps/desktop/src/components/onboarding/index.tsx
+index b53bcd83e0..b1f597e749 100644
+--- a/apps/desktop/src/components/onboarding/index.tsx
++++ b/apps/desktop/src/components/onboarding/index.tsx
+@@ -51,6 +51,7 @@ import {
+   ProviderRow,
+   sortProviders
+ } from './providers'
++import { VeniceRecommendedCard } from './venice-recommended-card' // hermes-fork: venice-card
+ 
+ export {
+   FeaturedProviderRow,
+@@ -86,6 +87,17 @@ export interface ApiKeyOption {
+ // Curated order mirrors CANONICAL_PROVIDERS: Fireworks sits #2 overall (after
+ // Nous Portal OAuth), ahead of OpenRouter and the rest of the key catalog.
+ const API_KEY_OPTIONS: ApiKeyOption[] = [
++  // hermes-fork: venice-card — Venice leads. Managed by Hivra when enabled,
++  // otherwise paste your own Venice key (OpenAI-compatible endpoint).
++  {
++    id: 'venice',
++    name: 'Venice',
++    short: 'recommended · private frontier models',
++    envKey: 'VENICE_API_KEY',
++    description:
++      'Private, uncensored frontier models. Managed by Hivra when enabled — otherwise paste your own Venice key.',
++    docsUrl: 'https://venice.ai/settings/api'
++  },
+   {
+     id: 'fireworks',
+     name: 'Fireworks AI',
+@@ -672,7 +684,9 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
+   return (
+     <div className="grid gap-2">
+       <div className="grid max-h-[60dvh] gap-2 overflow-y-auto p-1">
+-        {featured ? <FeaturedProviderRow onSelect={select} provider={featured} /> : null}
++        {/* hermes-fork: venice-card */}
++        <VeniceRecommendedCard onWantApiKey={() => openKeyForm('VENICE_API_KEY')} />
++        {featured ? <FeaturedProviderRow hideRecommendedBadge onSelect={select} provider={featured} /> : null}
+         {/* The no-account path: everything runs on this machine. Shipped
+             behind the --local launch flag. (Fireworks moved into the
+             expanded list on main.) */}
+diff --git a/apps/desktop/src/components/onboarding/providers.tsx b/apps/desktop/src/components/onboarding/providers.tsx
+index 51b7e7eb8e..4616548495 100644
+--- a/apps/desktop/src/components/onboarding/providers.tsx
++++ b/apps/desktop/src/components/onboarding/providers.tsx
+@@ -27,10 +27,12 @@ export const sortProviders = (providers: OAuthProvider[]) =>
+ 
+ export function FeaturedProviderRow({
+   onSelect,
+-  provider
++  provider,
++  hideRecommendedBadge = false // hermes-fork: venice-card — Venice holds the Recommended slot
+ }: {
+   onSelect: (provider: OAuthProvider) => void
+   provider: OAuthProvider
++  hideRecommendedBadge?: boolean // hermes-fork: venice-card
+ }) {
+   const { t } = useI18n()
+   const freeTier = provider.status?.free_tier === true
+@@ -53,7 +55,7 @@ export function FeaturedProviderRow({
+             <FreeTierTag />
+           ) : loggedIn ? (
+             <ConnectedTag />
+-          ) : (
++          ) : hideRecommendedBadge ? null : (
+             <span className="inline-flex items-center gap-1.5 bg-primary px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-primary-foreground">
+               <span aria-hidden="true" className="dither inline-block size-2 shrink-0" />
+               {t.onboarding.recommended}
+diff --git a/apps/desktop/src/components/onboarding/venice-recommended-card.test.tsx b/apps/desktop/src/components/onboarding/venice-recommended-card.test.tsx
+new file mode 100644
+index 0000000000..cf5c247218
+--- /dev/null
++++ b/apps/desktop/src/components/onboarding/venice-recommended-card.test.tsx
+@@ -0,0 +1,73 @@
++import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { VeniceRecommendedCard } from './venice-recommended-card'
++
++const hermesApi = vi.hoisted(() => vi.fn())
++const openExternalLink = vi.hoisted(() => vi.fn())
++
++vi.mock('@/hermes', () => ({ hermesApi }))
++vi.mock('@/lib/external-link', () => ({ openExternalLink }))
++
++beforeEach(() => {
++  hermesApi.mockReset()
++  openExternalLink.mockReset()
++})
++
++afterEach(cleanup)
++
++describe('VeniceRecommendedCard', () => {
++  it('deep-links the managed-Venice enable flow on the control-plane dashboard from /api/hivra/config', async () => {
++    hermesApi.mockResolvedValue({ dashboard_url: 'https://hivra.example/' })
++    const onWantApiKey = vi.fn()
++
++    render(<VeniceRecommendedCard onWantApiKey={onWantApiKey} />)
++    await waitFor(() => expect(hermesApi).toHaveBeenCalled())
++    await new Promise(resolve => setTimeout(resolve, 0))
++    fireEvent.click(screen.getByRole('button'))
++
++    expect(hermesApi).toHaveBeenCalledWith({ path: '/api/hivra/config' })
++    expect(openExternalLink).toHaveBeenCalledWith(
++      'https://hivra.example/dashboard/billing?managedVenice=deposit&wallet=hermesos'
++    )
++    expect(onWantApiKey).not.toHaveBeenCalled()
++  })
++
++  it.each([
++    ['no dashboard_url (local dev)', { dashboard_url: null }],
++    ['a config failure', null]
++  ])('falls back to the API-key path on %s, never a dead end', async (_label, status) => {
++    if (status) {
++      hermesApi.mockResolvedValue(status)
++    } else {
++      hermesApi.mockRejectedValue(new Error('offline'))
++    }
++
++    const onWantApiKey = vi.fn()
++
++    render(<VeniceRecommendedCard onWantApiKey={onWantApiKey} />)
++    await waitFor(() => expect(hermesApi).toHaveBeenCalled())
++    await new Promise(resolve => setTimeout(resolve, 0))
++    fireEvent.click(screen.getByRole('button'))
++
++    expect(onWantApiKey).toHaveBeenCalledOnce()
++    expect(openExternalLink).not.toHaveBeenCalled()
++  })
++
++  it('holds the Recommended slot and survives a synchronous bridge throw', () => {
++    hermesApi.mockImplementation(() => {
++      throw new Error('no bridge')
++    })
++
++    render(<VeniceRecommendedCard onWantApiKey={vi.fn()} />)
++
++    expect(screen.getByText('Recommended')).toBeTruthy()
++  })
++
++  it("keeps the words 'API key' out of the button text (upstream's onboarding e2e wants exactly one /api key/i button)", () => {
++    hermesApi.mockResolvedValue({ dashboard_url: null })
++    render(<VeniceRecommendedCard onWantApiKey={vi.fn()} />)
++
++    expect(screen.getByRole('button').textContent ?? '').not.toMatch(/api key/i)
++  })
++})
+diff --git a/apps/desktop/src/components/onboarding/venice-recommended-card.tsx b/apps/desktop/src/components/onboarding/venice-recommended-card.tsx
+new file mode 100644
+index 0000000000..e86331128e
+--- /dev/null
++++ b/apps/desktop/src/components/onboarding/venice-recommended-card.tsx
+@@ -0,0 +1,72 @@
++import { useEffect, useState } from 'react'
++
++import { Codicon } from '@/components/ui/codicon'
++import { hermesApi } from '@/hermes'
++import { openExternalLink } from '@/lib/external-link'
++import { ChevronRight } from '@/lib/icons'
++
++// The recommended way to run a managed Hivra agent. Venice isn't an OAuth
++// provider: it's the managed service Hivra runs for you (server-side proxy key,
++// billed to your dashboard wallet). Enabling it is a dashboard flow (Clerk +
++// wallet), not an in-app browser sign-in, so this card deep-links there. The
++// dashboard origin comes from the fork-only `GET /api/hivra/config`
++// (`dashboard_url`, from HERMES_DASHBOARD_URL; hermes_cli/web_routers/fork_hivra.py).
++// If it's missing (e.g. local dev, or a backend without that route) the card
++// falls back to the API-key path so it is never a dead end.
++// hermes-fork: venice-card. Do not put the words "API key" in this button's text: upstream's
++// onboarding e2e (e2e/core/onboarding-first-chat.spec.ts) expects exactly ONE button matching /api key/i.
++const MANAGED_VENICE_PITCH = 'Managed by Hivra — private frontier models, nothing to copy or paste'
++
++const managedVeniceEnableUrl = (dashboardUrl: string) =>
++  `${dashboardUrl.replace(/\/+$/, '')}/dashboard/billing?managedVenice=deposit&wallet=hermesos`
++
++export function VeniceRecommendedCard({ onWantApiKey }: { onWantApiKey: () => void }) {
++  // Fetched directly (no react-query) so the card renders in any context,
++  // including unit tests that mount without a QueryClientProvider. The
++  // try/catch also absorbs a synchronous throw when the bridge isn't installed.
++  const [dashboardUrl, setDashboardUrl] = useState<null | string>(null)
++
++  useEffect(() => {
++    let cancelled = false
++
++    void (async () => {
++      try {
++        const config = await hermesApi<{ dashboard_url?: null | string }>({ path: '/api/hivra/config' })
++
++        if (!cancelled) {
++          setDashboardUrl(config?.dashboard_url ?? null)
++        }
++      } catch {
++        /* config unavailable: leave null, the click falls back to the API-key path */
++      }
++    })()
++
++    return () => {
++      cancelled = true
++    }
++  }, [])
++
++  return (
++    <button
++      className="group relative flex w-full items-center justify-between gap-4 rounded-[8px] bg-primary/[0.06] px-3 py-2.5 text-left transition-colors hover:bg-primary/10"
++      onClick={() => (dashboardUrl ? openExternalLink(managedVeniceEnableUrl(dashboardUrl)) : onWantApiKey())}
++      type="button"
++    >
++      <span aria-hidden className="arc-border arc-reverse arc-nous" />
++      <div className="min-w-0">
++        <div className="flex items-center gap-2">
++          <span className="grid size-5 shrink-0 place-items-center rounded bg-primary/15 text-primary">
++            <Codicon name="sparkle" size="0.875rem" />
++          </span>
++          <span className="text-[length:var(--conversation-text-font-size)] font-semibold">Venice</span>
++          <span className="inline-flex items-center gap-1.5 bg-primary px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-primary-foreground">
++            <span aria-hidden="true" className="dither inline-block size-2 shrink-0" />
++            Recommended
++          </span>
++        </div>
++        <p className="mt-1 text-xs leading-5 text-muted-foreground">{MANAGED_VENICE_PITCH}</p>
++      </div>
++      <ChevronRight className="size-4 shrink-0 text-primary transition group-hover:translate-x-0.5" />
++    </button>
++  )
++}
+diff --git a/apps/desktop/src/contrib/hivra-plugin.test.tsx b/apps/desktop/src/contrib/hivra-plugin.test.tsx
+new file mode 100644
+index 0000000000..7bec6ecbfb
+--- /dev/null
++++ b/apps/desktop/src/contrib/hivra-plugin.test.tsx
+@@ -0,0 +1,362 @@
++import { host } from '@hermes/plugin-sdk'
++import { cleanup, render, screen } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { PANE_TOGGLE_REVEAL_EVENT } from '@/components/pane-shell'
++import { modePref, skinPref, ThemeProvider, useTheme } from '@/themes/context'
++import { listAllThemes, resolveTheme } from '@/themes/user-themes'
++
++import {
++  createDashboardBridge,
++  DASHBOARD_APPEARANCE_MESSAGE_TYPE,
++  DASHBOARD_SEND_MESSAGE_TYPE,
++  readDashboardModeFromUrl
++} from '../plugins/hivra/dashboard-bridge'
++import plugin, {
++  AdminPanelPage,
++  closeNarrowOverlays,
++  MODE_STORAGE_KEY,
++  PANE_REVEAL_EVENT,
++  seedDefaultSkin,
++  SKIN_STORAGE_KEY
++} from '../plugins/hivra/plugin'
++import { HIVRA_SKIN_NAME } from '../plugins/hivra/themes'
++
++import { createPluginContext } from './plugin'
++import { registry } from './registry'
++
++const setWebClient = (on: boolean) => {
++  if (on) {
++    ;(window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__ = true
++  } else {
++    delete (window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__
++  }
++}
++
++function load() {
++  const disposers: Array<() => void> = []
++
++  plugin.register(createPluginContext('hivra', dispose => disposers.push(dispose)))
++
++  return () => disposers.splice(0).forEach(dispose => dispose())
++}
++
++beforeEach(() => {
++  window.localStorage.clear()
++  window.document.documentElement.removeAttribute('data-hermes-web-client')
++})
++
++afterEach(() => {
++  setWebClient(false)
++  vi.restoreAllMocks()
++})
++
++describe('hivra plugin', () => {
++  it('is inert outside the hosted web client (a Desktop build that bundles it registers nothing)', () => {
++    const unload = load()
++
++    expect(registry.getArea('themes').some(c => c.source === 'plugin:hivra')).toBe(false)
++    expect(registry.getArea('sidebar.nav').some(c => c.source === 'plugin:hivra')).toBe(false)
++    expect(skinPref.stored('default')).toBeNull()
++    expect(window.document.documentElement.hasAttribute('data-hermes-web-client')).toBe(false)
++    unload()
++  })
++
++  it('contributes the Hivra themes, the Admin Panel route + nav row and the host bridge', () => {
++    setWebClient(true)
++    const unload = load()
++    const mine = (area: string) => registry.getArea(area).filter(c => c.source === 'plugin:hivra')
++
++    expect(mine('themes').map(c => (c.data as { name: string }).name)).toEqual(['hivra'])
++    expect(resolveTheme('hivra')?.darkColors?.primary).toBe('#ff3a3b')
++    expect(listAllThemes().map(t => t.name)).toEqual(expect.arrayContaining(['hivra', 'nous']))
++    expect(mine('routes').map(c => c.data)).toEqual([{ path: '/admin-panel' }])
++    expect(mine('sidebar.nav').map(c => c.data)).toEqual([
++      { codicon: 'dashboard', label: 'Admin Panel', path: '/admin-panel' }
++    ])
++    expect(mine('statusBar.right')).toHaveLength(1)
++    expect(window.document.documentElement.hasAttribute('data-hermes-web-client')).toBe(true)
++
++    unload()
++    expect(registry.getArea('themes').some(c => c.source === 'plugin:hivra')).toBe(false)
++    expect(resolveTheme('hivra')).toBeUndefined()
++  })
++
++  it('makes Hivra the first-run skin through the SAME storage the theme provider reads', () => {
++    setWebClient(true)
++    const unload = load()
++
++    // skinPref is the theme provider's own accessor: if upstream renames the
++    // storage key this fails instead of silently painting the default skin.
++    expect(skinPref.resolve('default')).toBe(HIVRA_SKIN_NAME)
++    unload()
++  })
++
++  it('the real ThemeProvider paints Hivra on its FIRST render, with light and dark palettes', () => {
++    setWebClient(true)
++    const unload = load()
++
++    function Probe() {
++      const { renderedMode, theme, themeName } = useTheme()
++
++      return <output data-testid="probe">{`${themeName}|${theme.name}|${renderedMode}`}</output>
++    }
++
++    render(
++      <ThemeProvider>
++        <Probe />
++      </ThemeProvider>
++    )
++
++    // Plugins register at import time, so the contributed skin already resolves
++    // when the provider reads its persisted pick: no flash of the default skin.
++    expect(screen.getByTestId('probe').textContent).toMatch(/^hivra\|hivra-(light|dark)\|(light|dark)$/)
++    expect(window.document.documentElement.style.getPropertyValue('--theme-primary')).toMatch(/#ff(2c2d|3a3b)/i)
++    unload()
++    cleanup()
++  })
++
++  it('never overrides an explicit skin pick', () => {
++    skinPref.assign('default', 'mono')
++    seedDefaultSkin()
++
++    expect(skinPref.stored('default')).toBe('mono')
++  })
++
++  it('leaves the color mode on upstream\'s system default', () => {
++    setWebClient(true)
++    const unload = load()
++
++    expect(modePref.resolve('default')).toBe('system')
++    unload()
++  })
++
++  it('adds viewport-fit=cover to the viewport meta exactly once', () => {
++    const meta = window.document.createElement('meta')
++
++    meta.name = 'viewport'
++    meta.content = 'width=device-width, initial-scale=1.0'
++    window.document.head.appendChild(meta)
++    setWebClient(true)
++
++    const unload = load()
++    const once = meta.content
++
++    expect(once).toContain('viewport-fit=cover')
++    expect(once).toContain('interactive-widget=resizes-content')
++    unload()
++    load()()
++    expect(meta.content).toBe(once)
++    meta.remove()
++  })
++
++  it('closeNarrowOverlays retires the pinned panes on a phone and does nothing on a wide viewport', () => {
++    const seen = vi.fn((event: Event) => (event as CustomEvent).detail)
++    const viewport = vi.spyOn(host.state.viewport, 'get')
++
++    window.addEventListener(PANE_TOGGLE_REVEAL_EVENT, seen)
++    viewport.mockReturnValue({ height: 800, narrow: false, width: 1200 } as never)
++    closeNarrowOverlays()
++    expect(seen).not.toHaveBeenCalled()
++
++    viewport.mockReturnValue({ height: 800, narrow: true, width: 390 } as never)
++    closeNarrowOverlays()
++    window.removeEventListener(PANE_TOGGLE_REVEAL_EVENT, seen)
++
++    expect(seen.mock.results.map(result => result.value)).toEqual([
++      { id: 'sessions', mode: 'close' },
++      { id: 'files', mode: 'close' },
++      { id: 'review', mode: 'close' }
++    ])
++  })
++
++  it('mirrors the app constants the plugin cannot import (a rename upstream fails here, not silently)', () => {
++    expect(PANE_REVEAL_EVENT).toBe(PANE_TOGGLE_REVEAL_EVENT)
++
++    window.localStorage.setItem(SKIN_STORAGE_KEY, 'mono')
++    window.localStorage.setItem(MODE_STORAGE_KEY, 'dark')
++
++    expect(skinPref.stored('default')).toBe('mono')
++    expect(modePref.stored('default')).toBe('dark')
++  })
++})
++
++describe('Admin Panel page', () => {
++  const setActivation = (isActive: boolean | undefined) =>
++    Object.defineProperty(navigator, 'userActivation', { configurable: true, value: isActive === undefined ? undefined : { isActive } })
++
++  const bridge = (open: () => boolean) => {
++    ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = {
++      getAdminPanelUrl: () => '/dash/#iframe_token=t',
++      openAdminPanel: open
++    }
++  }
++
++  afterEach(() => {
++    cleanup()
++    setActivation(undefined)
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++  })
++
++  it('opens the panel in a new tab from the click that routed here, and keeps a link as the fallback', async () => {
++    vi.useFakeTimers()
++    vi.setSystemTime(Date.now() + 60_000) // outside the auto-open debounce window
++    setActivation(true)
++    const open = vi.fn(() => true)
++
++    bridge(open)
++    render(<AdminPanelPage />)
++
++    expect(open).toHaveBeenCalledOnce()
++    expect(screen.getByRole('link', { name: 'Open Admin Panel' }).getAttribute('href')).toBe('/dash/#iframe_token=t')
++    vi.useRealTimers()
++  })
++
++  it('says so when the browser blocked the tab', () => {
++    vi.useFakeTimers()
++    vi.setSystemTime(Date.now() + 120_000)
++    setActivation(true)
++    bridge(() => false)
++    render(<AdminPanelPage />)
++
++    expect(screen.getByText(/blocked the new tab/i)).toBeTruthy()
++    vi.useRealTimers()
++  })
++
++  it('never auto-opens on a reload / restored route (no live user activation)', () => {
++    vi.useFakeTimers()
++    vi.setSystemTime(Date.now() + 180_000)
++    setActivation(false)
++    const open = vi.fn(() => true)
++
++    bridge(open)
++    render(<AdminPanelPage />)
++
++    expect(open).not.toHaveBeenCalled()
++    expect(screen.getByRole('link', { name: 'Open Admin Panel' })).toBeTruthy()
++    vi.useRealTimers()
++  })
++})
++
++describe('dashboard bridge', () => {
++  const parent = {} as Window
++
++  const framed = (): Window => ({ parent, location: { search: '' } }) as unknown as Window
++
++  const appearance = (colorScheme: unknown, source: unknown = parent, from = 'hermes-dashboard') =>
++    ({ data: { appearance: { colorScheme }, source: from, type: DASHBOARD_APPEARANCE_MESSAGE_TYPE }, source }) as MessageEvent
++
++  const send = (text: unknown, source: unknown = parent, from = 'hermes-dashboard') =>
++    ({ data: { source: from, text, type: DASHBOARD_SEND_MESSAGE_TYPE }, source }) as MessageEvent
++
++  const make = (submit = vi.fn(() => true)) => {
++    const timers: Array<() => void> = []
++
++    const bridge = createDashboardBridge({
++      setTimeout: fn => {
++        timers.push(fn)
++
++        return () => {}
++      },
++      submit,
++      win: framed()
++    })
++
++    return { bridge, submit, timers }
++  }
++
++  it('applies a colorScheme from the parent dashboard, and parks it until the theme provider mounts', () => {
++    const { bridge } = make()
++    const apply = vi.fn()
++
++    bridge.onMessage(appearance('dark'))
++    expect(apply).not.toHaveBeenCalled()
++
++    bridge.attachModeSink(apply)
++    expect(apply).toHaveBeenCalledExactlyOnceWith('dark')
++
++    bridge.onMessage(appearance('light'))
++    expect(apply).toHaveBeenLastCalledWith('light')
++  })
++
++  it('ignores messages from anywhere but window.parent, other sources and bad values', () => {
++    const { bridge, submit } = make()
++    const apply = vi.fn()
++
++    bridge.attachModeSink(apply)
++    bridge.onMessage(appearance('dark', {} as Window))
++    bridge.onMessage(appearance('dark', parent, 'evil'))
++    bridge.onMessage(appearance('purple'))
++    bridge.onMessage(send('hi', {} as Window))
++    bridge.onMessage(send('hi', parent, 'evil'))
++    bridge.onMessage({ data: null, source: parent } as MessageEvent)
++
++    expect(apply).not.toHaveBeenCalled()
++    expect(submit).not.toHaveBeenCalled()
++  })
++
++  it('does nothing at all when not framed', () => {
++    const top = { location: { search: '' } } as { location: { search: string }; parent?: unknown }
++
++    top.parent = top
++    const submit = vi.fn(() => true)
++    const bridge = createDashboardBridge({ setTimeout: () => () => {}, submit, win: top as unknown as Window })
++
++    bridge.onMessage({
++      data: { source: 'hermes-dashboard', text: 'hi', type: DASHBOARD_SEND_MESSAGE_TYPE },
++      source: top
++    } as unknown as MessageEvent)
++    expect(submit).not.toHaveBeenCalled()
++  })
++
++  it('sends a starter prompt as the user, trimmed, and ignores blank text', () => {
++    const { bridge, submit } = make()
++
++    bridge.onMessage(send('  Summarise my inbox  '))
++    bridge.onMessage(send('   '))
++    bridge.onMessage(send(42))
++
++    expect(submit).toHaveBeenCalledExactlyOnceWith('Summarise my inbox')
++  })
++
++  it('retries (bounded) while no composer is mounted yet', () => {
++    const submit = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(false).mockReturnValue(true)
++    const { bridge, timers } = make(submit)
++
++    bridge.onMessage(send('hello'))
++    expect(submit).toHaveBeenCalledTimes(1)
++    timers.shift()?.()
++    timers.shift()?.()
++    expect(submit).toHaveBeenCalledTimes(3)
++    expect(timers).toHaveLength(0)
++  })
++
++  it('gives up after the retry budget instead of looping forever', () => {
++    const { bridge, timers } = make(vi.fn(() => false))
++    let guard = 0
++
++    bridge.onMessage(send('hello'))
++
++    while (timers.length && guard++ < 100) {
++      timers.shift()?.()
++    }
++
++    expect(guard).toBeLessThan(100)
++  })
++
++  it('reads the ?theme= hint only when framed', () => {
++    const url = (search: string, framedWin = true) => {
++      const win = { location: { search } } as { location: { search: string }; parent?: unknown }
++
++      win.parent = framedWin ? {} : win
++
++      return win as unknown as Window
++    }
++
++    expect(readDashboardModeFromUrl(url('?theme=dark'))).toBe('dark')
++    expect(readDashboardModeFromUrl(url('?theme=hermesos-light'))).toBe('light')
++    expect(readDashboardModeFromUrl(url('?theme=light'))).toBe('light')
++    expect(readDashboardModeFromUrl(url('?theme=other'))).toBeNull()
++    expect(readDashboardModeFromUrl(url('?theme=dark', false))).toBeNull()
++  })
++})
+diff --git a/apps/desktop/src/lib/web-files.ts b/apps/desktop/src/lib/web-files.ts
+new file mode 100644
+index 0000000000..287bd76473
+--- /dev/null
++++ b/apps/desktop/src/lib/web-files.ts
+@@ -0,0 +1,236 @@
++/**
++ * Hosted-web file bridge.
++ *
++ * A browser has no local filesystem path for a picked / dropped / pasted File,
++ * and Desktop's remote-gateway attach flow is path based: the composer chip
++ * keeps a `path`, and at send time `uploadComposerAttachment` (remote mode)
++ * reads the bytes back through `hermesDesktop.readFileDataUrl*` and ships them
++ * to the gateway with `file.attach` / `image.attach_bytes`, which stage them
++ * server side. So the web shim only has to hand the renderer a stable
++ * SYNTHETIC path per File and serve its bytes on demand. No bespoke upload
++ * endpoint is needed (the retired `/api/attachments/upload`).
++ *
++ * Synthetic paths never exist on the gateway, so `file.attach` always falls
++ * through to its `data_url` branch (tui_gateway/prompt_attachments.py).
++ */
++
++export const WEB_FILE_ROOT = '/hermes-web-upload'
++
++// Raw-bytes cap. The gateway accepts WebSocket frames up to
++// `_DESKTOP_ATTACHMENT_WS_MAX_BYTES` (384 MiB, hermes_cli/web_server_chat.py);
++// base64 inflates by a third and the renderer holds the whole file in memory.
++export const WEB_ATTACH_MAX_BYTES = 50 * 1024 * 1024
++
++const filesByPath = new Map<string, Blob>()
++const pathsByFile = new WeakMap<Blob, string>()
++let sequence = 0
++
++export interface WebSelectPathsOptions {
++  title?: string
++  defaultPath?: string
++  directories?: boolean
++  multiple?: boolean
++  filters?: Array<{ name: string; extensions: string[] }>
++}
++
++export function blobToDataUrl(blob: Blob): Promise<string> {
++  return new Promise((resolve, reject) => {
++    const reader = new FileReader()
++    reader.addEventListener('load', () => {
++      if (typeof reader.result === 'string') {
++        resolve(reader.result)
++      } else {
++        reject(new Error('Could not read file'))
++      }
++    })
++    reader.addEventListener('error', () => reject(reader.error || new Error('Could not read file')))
++    reader.readAsDataURL(blob)
++  })
++}
++
++/** Stable synthetic path for a File/Blob (same object -> same path). */
++export function registerWebFile(blob: Blob, name?: string): string {
++  const existing = pathsByFile.get(blob)
++
++  if (existing) {
++    return existing
++  }
++
++  const rawName = name || (blob as File).name || 'upload'
++
++  // The basename is what the composer chip shows; keep it readable but never a path.
++  // Path separators and control characters can never be part of the basename.
++  const cleaned = [...rawName]
++    .map(char => (char === '/' || char === '\\' || char < ' ' ? '_' : char))
++    .join('')
++    .trim()
++
++  const safeName = !cleaned || cleaned === '.' || cleaned === '..' ? 'upload' : cleaned
++  const path = `${WEB_FILE_ROOT}/${Date.now().toString(36)}-${(sequence++).toString(36)}/${safeName}`
++
++  filesByPath.set(path, blob)
++  pathsByFile.set(blob, path)
++
++  return path
++}
++
++export function isWebFilePath(path: string): boolean {
++  return filesByPath.has(path)
++}
++
++/**
++ * Bytes of a registered file as a data URL; '' for any other path.
++ *
++ * Over-cap files reject with the same "file is too large (N bytes; limit M
++ * bytes)" shape Electron's IPC uses, so `friendlyRemoteAttachError` renders
++ * the usual "too large to upload to the remote gateway" message.
++ */
++export async function readWebFileDataUrl(path: string): Promise<string> {
++  const blob = filesByPath.get(path)
++
++  if (!blob) {
++    return ''
++  }
++
++  if (blob.size > WEB_ATTACH_MAX_BYTES) {
++    throw new Error(`file is too large (${blob.size} bytes; limit ${WEB_ATTACH_MAX_BYTES} bytes)`)
++  }
++
++  return blobToDataUrl(blob)
++}
++
++export function imageMimeForExtension(ext: string): string {
++  switch (ext.replace(/^\./, '').toLowerCase()) {
++    case 'bmp':
++      return 'image/bmp'
++
++    case 'gif':
++      return 'image/gif'
++
++    case 'jpg':
++
++    case 'jpeg':
++      return 'image/jpeg'
++
++    case 'svg':
++      return 'image/svg+xml'
++
++    case 'tif':
++
++    case 'tiff':
++      return 'image/tiff'
++
++    case 'webp':
++      return 'image/webp'
++
++    case 'ico':
++      return 'image/x-icon'
++
++    default:
++      return 'image/png'
++  }
++}
++
++function acceptFromFilters(filters?: WebSelectPathsOptions['filters']): string {
++  const exts = new Set<string>()
++
++  for (const filter of filters ?? []) {
++    for (const ext of filter.extensions ?? []) {
++      const clean = ext.trim().replace(/^\.+/, '')
++
++      if (clean) {
++        exts.add(`.${clean}`)
++      }
++    }
++  }
++
++  return [...exts].join(',')
++}
++
++/** `selectPaths` for the browser: native picker -> synthetic paths. */
++export function selectBrowserFiles(options: WebSelectPathsOptions = {}): Promise<string[]> {
++  if (options.directories || typeof document === 'undefined' || !document.body) {
++    return Promise.resolve([])
++  }
++
++  return new Promise(resolve => {
++    const input = document.createElement('input')
++    input.type = 'file'
++    input.multiple = options.multiple !== false
++    input.style.position = 'fixed'
++    input.style.left = '-9999px'
++    input.style.top = '-9999px'
++    input.style.opacity = '0'
++    input.style.pointerEvents = 'none'
++
++    const accept = acceptFromFilters(options.filters)
++
++    if (accept) {
++      input.accept = accept
++    }
++
++    let settled = false
++    let dialogOpened = false
++
++    const cleanup = () => {
++      input.removeEventListener('change', onChange)
++      input.removeEventListener('cancel', onCancel)
++      window.removeEventListener('focus', onWindowFocus)
++      window.removeEventListener('blur', onWindowBlur)
++      input.remove()
++    }
++
++    const settle = (paths: string[]) => {
++      if (settled) {
++        return
++      }
++
++      settled = true
++      cleanup()
++      resolve(paths)
++    }
++
++    // Opening the native file dialog blurs the window; only a focus AFTER that
++    // blur means "dialog dismissed". Without the gate a spurious focus (the
++    // attach dropdown closing) tore the input down before the dialog opened.
++    const onWindowBlur = () => {
++      dialogOpened = true
++    }
++
++    const onWindowFocus = () => {
++      if (!dialogOpened) {
++        return
++      }
++
++      // macOS commits the selection slightly AFTER focus returns, so give
++      // `change` a generous grace; `cancel` handles fast cancellation.
++      window.setTimeout(() => {
++        if (!settled && (!input.files || input.files.length === 0)) {
++          settle([])
++        }
++      }, 1000)
++    }
++
++    function onChange() {
++      settle(Array.from(input.files ?? []).map(file => registerWebFile(file)))
++    }
++
++    function onCancel() {
++      settle([])
++    }
++
++    input.addEventListener('change', onChange)
++    input.addEventListener('cancel', onCancel)
++    window.addEventListener('blur', onWindowBlur)
++    window.addEventListener('focus', onWindowFocus)
++
++    document.body.appendChild(input)
++
++    try {
++      input.click()
++    } catch (err) {
++      console.error('Hermes web file picker failed', err)
++      settle([])
++    }
++  })
++}
+diff --git a/apps/desktop/src/lib/web-shim-attach.test.ts b/apps/desktop/src/lib/web-shim-attach.test.ts
+new file mode 100644
+index 0000000000..8e03bb27fa
+--- /dev/null
++++ b/apps/desktop/src/lib/web-shim-attach.test.ts
+@@ -0,0 +1,69 @@
++// Proves the hosted-web attach path end to end on the RENDERER side: the real
++// web shim mints a synthetic path, and Desktop's own `uploadComposerAttachment`
++// (remote mode) turns it into the gateway RPCs that stage the bytes. This is
++// what replaced the fork's `/api/attachments/upload` endpoint + two core patches.
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { uploadComposerAttachment } from '@/app/session/hooks/use-prompt-actions'
++
++describe('web shim + Desktop remote attach', () => {
++  beforeEach(async () => {
++    vi.resetModules()
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++    await import('./web-shim')
++  })
++
++  afterEach(() => {
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++    delete (window as unknown as { __HERMES_WEB_CLIENT__?: unknown }).__HERMES_WEB_CLIENT__
++  })
++
++  it('sends a non-image browser file through file.attach with its bytes and original name', async () => {
++    const path = window.hermesDesktop.getPathForFile(new File(['# hi'], 'notes.md', { type: 'text/markdown' }))
++    const requestGateway = vi.fn(async () => ({ attached: true, ref_text: '@file:attachments/notes.md' }) as never)
++
++    const result = await uploadComposerAttachment(
++      { id: 'file:notes', kind: 'file', label: 'notes.md', path },
++      { remote: true, requestGateway, sessionId: 'sess-1' }
++    )
++
++    expect(requestGateway).toHaveBeenCalledTimes(1)
++    expect(requestGateway).toHaveBeenCalledWith('file.attach', {
++      data_url: 'data:text/markdown;base64,IyBoaQ==',
++      name: 'notes.md',
++      path,
++      session_id: 'sess-1'
++    })
++    expect(result.refText).toBe('@file:attachments/notes.md')
++  })
++
++  it('sends a pasted image through image.attach_bytes', async () => {
++    const path = await window.hermesDesktop.saveImageBuffer(new Uint8Array([1, 2, 3]), '.png', 'shot.png')
++    const requestGateway = vi.fn(async () => ({ attached: true, path: '/gw/images/shot.png' }) as never)
++
++    const result = await uploadComposerAttachment(
++      { id: 'image:shot', kind: 'image', label: 'shot.png', path },
++      { remote: true, requestGateway, sessionId: 'sess-1' }
++    )
++
++    expect(requestGateway).toHaveBeenCalledWith('image.attach_bytes', {
++      content_base64: 'AQID',
++      filename: 'shot.png',
++      session_id: 'sess-1'
++    })
++    expect(result.path).toBe('/gw/images/shot.png')
++  })
++
++  it('shows Desktop\'s friendly "too large" message for an over-cap file, before any RPC', async () => {
++    const big = new File(['x'], 'huge.bin')
++
++    Object.defineProperty(big, 'size', { value: 80 * 1024 * 1024 })
++    const path = window.hermesDesktop.getPathForFile(big)
++    const requestGateway = vi.fn(async () => ({}) as never)
++
++    await expect(
++      uploadComposerAttachment({ id: 'file:big', kind: 'file', label: 'huge.bin', path }, { remote: true, requestGateway, sessionId: 'sess-1' })
++    ).rejects.toThrow(/huge\.bin.*too large to upload to the remote gateway \(max 50 MB\)/)
++    expect(requestGateway).not.toHaveBeenCalled()
++  })
++})
+diff --git a/apps/desktop/src/lib/web-shim-drift.test.ts b/apps/desktop/src/lib/web-shim-drift.test.ts
+new file mode 100644
+index 0000000000..cd23e7ca27
+--- /dev/null
++++ b/apps/desktop/src/lib/web-shim-drift.test.ts
+@@ -0,0 +1,281 @@
++// @vitest-environment node
++//
++// CI drift guard for the hosted-web bridge (`web-shim.ts`).
++//
++// Why this exists. Upstream grows the Electron preload bridge every release
++// (~120 -> ~148 keys across one sync). The web shim cannot implement all of it,
++// and it must NOT paper over the gap with a catch-all no-op Proxy: the renderer
++// feature-detects Electron-only UI (`window.hermesDesktop?.cloud`,
++// `typeof ...openWindow === 'function'`, `if (!desktop.renamePath) throw`), so a
++// no-op would switch those surfaces ON and turn "unavailable" errors into silent
++// failures. Missing keys therefore stay `undefined` on purpose.
++//
++// What can actually break is a key declared REQUIRED in global.d.ts (no `?`)
++// that the renderer calls without a feature check. So after every upstream sync
++// this test makes a human decide, once, for each new required key:
++//   - implement it in web-shim.ts, or
++//   - add it to ACKNOWLEDGED_ABSENT below (Electron-only, guarded / unreachable).
++// and for each new unguarded-looking call site of an acknowledged key, review it
++// and add it to REVIEWED_USE_SITES.
++import { readdirSync, readFileSync } from 'node:fs'
++import { dirname, join, relative } from 'node:path'
++import { fileURLToPath } from 'node:url'
++
++import ts from 'typescript'
++import { describe, expect, it } from 'vitest'
++
++const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
++const APP = join(SRC, '..')
++
++/** Keys only the web shim defines (no Electron preload twin). */
++const SHIM_ONLY_KEYS = ['getAdminPanelUrl', 'openAdminPanel']
++
++/**
++ * Required bridge keys the web shim deliberately does not implement. Each is
++ * Electron-only UI the renderer guards (`desktop?.cloud`, `typeof fn ===
++ * 'function'`, `can*()` helpers) or only reaches from oauth-mode / native flows
++ * that the token-mode shim never enters. Keep sorted.
++ */
++const ACKNOWLEDGED_ABSENT = [
++  'claimAmbientCue',
++  'cloud',
++  'connections',
++  'continueBootstrapLocal',
++  'findInPage',
++  'getGatewayWsUrl', // optional in @hermes/shared deps; token mode falls back to conn.wsUrl
++  'getPoolLimits',
++  'getProfileRoutes',
++  'getSecretStorageEncryption',
++  'oauthLoginConnectionConfig',
++  'oauthLogoutConnectionConfig',
++  'onBrowserPopoutClosed',
++  'onFoundInPage',
++  'onOpenFindBarRequested',
++  'openBrowserWindow',
++  'openSessionInTerminal',
++  'openSessionWindow',
++  'openWindow',
++  'petOverlay',
++  'probeConnectionConfig',
++  'quickEntry',
++  'revalidateConnection',
++  'sanitizeWorkspaceCwd',
++  'savePastedText',
++  'setPoolLimits',
++  'setSecretStorageEncryption',
++  'sshConfigHosts',
++  'sshResolveHost',
++  'stopFindInPage',
++  'themes',
++  'touchBackend',
++  'uninstall',
++  'windowControls'
++]
++
++/**
++ * Acknowledged-absent keys that the renderer calls without its own `?.` somewhere. Reviewed: each
++ * call sits behind a guard in the surrounding code (an early `return`, `canOpen*()`,
++ * `state.envOverride`, an oauth-only / native-only branch). Keyed by NAME, not file: upstream moves
++ * code between files all the time (a `remote-setup/` refactor relocated five of these sites), and a
++ * guard that fails on every move gets deleted. A NEW unguarded-looking key still fails.
++ */
++const REVIEWED_UNGUARDED_KEYS = [
++  'cloud',
++  'connections',
++  'continueBootstrapLocal',
++  'oauthLoginConnectionConfig',
++  'oauthLogoutConnectionConfig',
++  'openBrowserWindow',
++  'openSessionInTerminal',
++  'openSessionWindow',
++  'openWindow',
++  'probeConnectionConfig',
++  'quickEntry',
++  'setSecretStorageEncryption',
++  'sshConfigHosts',
++  'sshResolveHost'
++]
++
++const parse = (file: string) =>
++  ts.createSourceFile(
++    file,
++    readFileSync(file, 'utf8'),
++    ts.ScriptTarget.Latest,
++    true,
++    file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
++  )
++
++const objectKeys = (node: ts.ObjectLiteralExpression) =>
++  node.properties.flatMap(p => (p.name ? [p.name.getText().replace(/^['"]|['"]$/g, '')] : []))
++
++function preloadKeys(): string[] {
++  let keys: string[] = []
++
++  const visit = (node: ts.Node) => {
++    if (
++      ts.isCallExpression(node) &&
++      node.expression.getText().endsWith('exposeInMainWorld') &&
++      node.arguments[0]?.getText().includes('hermesDesktop') &&
++      ts.isObjectLiteralExpression(node.arguments[1])
++    ) {
++      keys = objectKeys(node.arguments[1])
++    }
++
++    ts.forEachChild(node, visit)
++  }
++
++  visit(parse(join(APP, 'electron/preload.ts')))
++
++  return keys
++}
++
++function declaredKeys(): { optional: string[]; required: string[] } {
++  const optional: string[] = []
++  const required: string[] = []
++
++  const visit = (node: ts.Node) => {
++    if (ts.isPropertySignature(node) && node.name.getText() === 'hermesDesktop' && node.type && ts.isTypeLiteralNode(node.type)) {
++      for (const member of node.type.members) {
++        if (member.name) {
++          ;(member.questionToken ? optional : required).push(member.name.getText())
++        }
++      }
++    }
++
++    ts.forEachChild(node, visit)
++  }
++
++  visit(parse(join(SRC, 'global.d.ts')))
++
++  return { optional, required }
++}
++
++function shimKeys(): string[] {
++  let keys: string[] = []
++
++  const visit = (node: ts.Node) => {
++    if (
++      ts.isVariableDeclaration(node) &&
++      node.name.getText() === 'bridge' &&
++      node.initializer &&
++      ts.isObjectLiteralExpression(node.initializer)
++    ) {
++      keys = objectKeys(node.initializer)
++    }
++
++    ts.forEachChild(node, visit)
++  }
++
++  visit(parse(join(SRC, 'lib/web-shim.ts')))
++
++  return keys
++}
++
++function sourceFiles(dir: string, out: string[] = []): string[] {
++  for (const entry of readdirSync(dir, { withFileTypes: true })) {
++    const path = join(dir, entry.name)
++
++    if (entry.isDirectory()) {
++      if (entry.name !== 'node_modules' && entry.name !== 'test') {
++        sourceFiles(path, out)
++      }
++    } else if (/\.tsx?$/.test(entry.name) && !/\.test\.|\.d\.ts$/.test(entry.name)) {
++      out.push(path)
++    }
++  }
++
++  return out
++}
++
++const bridgeReceiver = (text: string) => {
++  const bare = text.replace(/\?\./g, '.').replace(/!/g, '')
++
++  return /(^|\.)hermesDesktop$/.test(bare) || /(^|\.)(desktop|bridge)$/.test(bare)
++}
++
++/** `key@file` for every call / member access on `keys` lacking its own `?.`. */
++function unguardedUseSites(keys: Set<string>): string[] {
++  const sites = new Set<string>()
++
++  for (const file of sourceFiles(SRC)) {
++    const source = parse(file)
++
++    const visit = (node: ts.Node) => {
++      if (ts.isPropertyAccessExpression(node) && keys.has(node.name.text) && bridgeReceiver(node.expression.getText())) {
++        const parent = node.parent
++
++        const callsIt = ts.isCallExpression(parent) && parent.expression === node && !parent.questionDotToken
++
++        const descends =
++          (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
++          parent.expression === node &&
++          !parent.questionDotToken
++
++        if (callsIt || descends) {
++          sites.add(`${node.name.text}@${relative(SRC, file)}`)
++        }
++      }
++
++      ts.forEachChild(node, visit)
++    }
++
++    visit(source)
++  }
++
++  return [...sites].sort()
++}
++
++describe('hosted-web bridge drift guard', () => {
++  const preload = preloadKeys()
++  const declared = declaredKeys()
++  const implemented = shimKeys()
++
++  it('reads a plausible bridge (parser sanity)', () => {
++    expect(preload.length).toBeGreaterThan(100)
++    expect(declared.required.length).toBeGreaterThan(50)
++    expect(implemented).toContain('getConnection')
++  })
++
++  it('every preload key is declared in global.d.ts', () => {
++    expect(preload.filter(key => ![...declared.required, ...declared.optional].includes(key))).toEqual([])
++  })
++
++  it('the shim only defines preload keys, plus its own web-only helpers', () => {
++    expect(implemented.filter(key => !preload.includes(key) && !SHIM_ONLY_KEYS.includes(key))).toEqual([])
++  })
++
++  it('every REQUIRED upstream bridge key is implemented by the shim or explicitly acknowledged absent', () => {
++    const unhandled = preload
++      .filter(key => declared.required.includes(key) && !implemented.includes(key))
++      .filter(key => !ACKNOWLEDGED_ABSENT.includes(key))
++
++    // New required key after an upstream sync: implement it in web-shim.ts, or
++    // (if it is Electron-only and the renderer guards it) add it to
++    // ACKNOWLEDGED_ABSENT. Do NOT add a catch-all no-op Proxy (see file header).
++    expect(unhandled, `new required bridge keys: ${unhandled.join(', ')}`).toEqual([])
++  })
++
++  it('acknowledged-absent keys are still required, still in the preload, and still not implemented', () => {
++    const stale = ACKNOWLEDGED_ABSENT.filter(
++      key => !preload.includes(key) || !declared.required.includes(key) || implemented.includes(key)
++    )
++
++    expect(stale, `stale ACKNOWLEDGED_ABSENT entries: ${stale.join(', ')}`).toEqual([])
++    expect([...ACKNOWLEDGED_ABSENT].sort()).toEqual(ACKNOWLEDGED_ABSENT)
++  })
++
++  it('every acknowledged-absent key that is called without `?.` has been reviewed as guarded', () => {
++    const sites = unguardedUseSites(new Set(ACKNOWLEDGED_ABSENT))
++    const fresh = [...new Set(sites.map(site => site.split('@')[0]))].filter(key => !REVIEWED_UNGUARDED_KEYS.includes(key))
++
++    // A new key here means upstream started calling an absent key without `?.`. Read the sites
++    // below: if a guard precedes them add the key to REVIEWED_UNGUARDED_KEYS; if not, implement the
++    // key in web-shim.ts.
++    expect(fresh, `unreviewed keys, sites: ${sites.filter(s => fresh.includes(s.split('@')[0])).join(', ')}`).toEqual([])
++  })
++
++  it('keeps the reviewed-key list honest (every entry is still an acknowledged-absent key)', () => {
++    expect(REVIEWED_UNGUARDED_KEYS.filter(key => !ACKNOWLEDGED_ABSENT.includes(key))).toEqual([])
++    expect([...REVIEWED_UNGUARDED_KEYS].sort()).toEqual(REVIEWED_UNGUARDED_KEYS)
++  })
++})
+diff --git a/apps/desktop/src/lib/web-shim.test.ts b/apps/desktop/src/lib/web-shim.test.ts
+new file mode 100644
+index 0000000000..a0cbde35f2
+--- /dev/null
++++ b/apps/desktop/src/lib/web-shim.test.ts
+@@ -0,0 +1,187 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { WEB_ATTACH_MAX_BYTES, WEB_FILE_ROOT } from './web-files'
++
++type Bridge = Window['hermesDesktop'] & {
++  getAdminPanelUrl: () => string
++  openAdminPanel: () => boolean
++}
++
++const bridge = () => window.hermesDesktop as Bridge
++
++describe('hosted web connection routing', () => {
++  beforeEach(() => {
++    vi.resetModules()
++    window.localStorage.clear()
++    window.sessionStorage.clear()
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++    delete (window as unknown as { __HERMES_WEB_CLIENT__?: unknown }).__HERMES_WEB_CLIENT__
++  })
++
++  afterEach(() => {
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++    delete (window as unknown as { __HERMES_WEB_CLIENT__?: unknown }).__HERMES_WEB_CLIENT__
++  })
++
++  it('reuses the primary socket for named profiles', async () => {
++    await import('./web-shim')
++
++    const primary = await window.hermesDesktop.getConnection()
++    const epifanio = await window.hermesDesktop.getConnection('  epifanio  ')
++
++    expect(primary.sharedPrimary).toBeUndefined()
++    expect(primary.profile).toBeUndefined()
++    expect(epifanio).toMatchObject({
++      baseUrl: primary.baseUrl,
++      wsUrl: primary.wsUrl,
++      profile: 'epifanio',
++      sharedPrimary: true
++    })
++  })
++
++  it('is a no-op when the Electron preload already defined the bridge', async () => {
++    const preload = { getConnection: vi.fn() }
++
++    ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = preload
++    await import('./web-shim')
++
++    expect(window.hermesDesktop).toBe(preload)
++    expect((window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__).toBeUndefined()
++  })
++
++  it('marks the page as the hosted web client (the plugin and the composer picker key off it)', async () => {
++    await import('./web-shim')
++
++    expect((window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__).toBe(true)
++  })
++
++  it('leaves Electron-only bridge keys undefined so feature detection hides their UI', async () => {
++    await import('./web-shim')
++
++    // The renderer gates these surfaces on `window.hermesDesktop?.<key>` /
++    // `typeof ...<key> === 'function'`; a catch-all no-op would switch them on.
++    for (const key of ['cloud', 'connections', 'quickEntry', 'openWindow', 'openSessionWindow', 'zoom', 'renamePath']) {
++      expect((window.hermesDesktop as unknown as Record<string, unknown>)[key], key).toBeUndefined()
++    }
++  })
++
++  it('implements the required keys the renderer calls without a feature check', async () => {
++    await import('./web-shim')
++
++    await expect(bridge().readClipboard()).resolves.toBe('')
++    await expect(bridge().profile.set('coder')).resolves.toMatchObject({ profile: 'coder' })
++    await expect(bridge().profile.set(null)).resolves.toMatchObject({ profile: 'default' })
++    expect(bridge().profile.getDefault).toBeUndefined()
++  })
++
++  it('builds the Admin Panel URL with the handed-off token in the fragment only', async () => {
++    window.location.hash = '#iframe_token=abc%20123'
++    await import('./web-shim')
++
++    expect(bridge().getAdminPanelUrl()).toBe('/dash/#iframe_token=abc%20123')
++    // the token is scrubbed from the visible URL after being captured
++    expect(window.location.hash).toBe('')
++  })
++
++  it('openAdminPanel reports whether the browser allowed the new tab', async () => {
++    await import('./web-shim')
++    const open = vi.spyOn(window, 'open').mockReturnValueOnce({} as Window).mockReturnValueOnce(null)
++
++    expect(bridge().openAdminPanel()).toBe(true)
++    expect(bridge().openAdminPanel()).toBe(false)
++    expect(open).toHaveBeenCalledWith('/dash/', '_blank', 'noopener,noreferrer')
++    open.mockRestore()
++  })
++})
++
++describe('hosted web attachments (synthetic paths, no upload endpoint)', () => {
++  beforeEach(() => {
++    vi.resetModules()
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++  })
++
++  afterEach(() => {
++    delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
++    delete (window as unknown as { __HERMES_WEB_CLIENT__?: unknown }).__HERMES_WEB_CLIENT__
++    vi.unstubAllGlobals()
++  })
++
++  it('gives a File a stable synthetic path whose basename is the file name', async () => {
++    await import('./web-shim')
++    const file = new File(['hello'], 'notes.md', { type: 'text/markdown' })
++    const path = window.hermesDesktop.getPathForFile(file)
++
++    expect(path.startsWith(`${WEB_FILE_ROOT}/`)).toBe(true)
++    expect(path.split('/').pop()).toBe('notes.md')
++    expect(window.hermesDesktop.getPathForFile(file)).toBe(path)
++  })
++
++  it('never lets a hostile file name escape its slot', async () => {
++    await import('./web-shim')
++
++    for (const name of ['../../etc/passwd', '..', '.', '']) {
++      const path = window.hermesDesktop.getPathForFile(new File(['x'], name))
++      const segments = path.slice(WEB_FILE_ROOT.length + 1).split('/')
++
++      expect(path.startsWith(`${WEB_FILE_ROOT}/`)).toBe(true)
++      expect(segments).toHaveLength(2)
++      expect(segments).not.toContain('..')
++      expect(segments).not.toContain('.')
++    }
++  })
++
++  it('serves the bytes back as a data URL for Desktop remote attach (file.attach data_url)', async () => {
++    await import('./web-shim')
++    const path = window.hermesDesktop.getPathForFile(new File(['hello'], 'notes.md', { type: 'text/markdown' }))
++    const dataUrl = await window.hermesDesktop.readFileDataUrlForAttach!(path)
++
++    expect(dataUrl).toBe('data:text/markdown;base64,aGVsbG8=')
++    await expect(window.hermesDesktop.readFileDataUrl(path)).resolves.toBe(dataUrl)
++  })
++
++  it('returns an empty string for paths it did not mint', async () => {
++    await import('./web-shim')
++
++    await expect(window.hermesDesktop.readFileDataUrl('/etc/passwd')).resolves.toBe('')
++    await expect(window.hermesDesktop.readFileDataUrl(`${WEB_FILE_ROOT}/nope/x.txt`)).resolves.toBe('')
++  })
++
++  it('rejects over-cap files with the Electron "too large" message shape', async () => {
++    await import('./web-shim')
++    const big = new File(['x'], 'big.bin')
++
++    Object.defineProperty(big, 'size', { value: WEB_ATTACH_MAX_BYTES + 1 })
++    const path = window.hermesDesktop.getPathForFile(big)
++
++    await expect(window.hermesDesktop.readFileDataUrl(path)).rejects.toThrow(
++      `file is too large (${WEB_ATTACH_MAX_BYTES + 1} bytes; limit ${WEB_ATTACH_MAX_BYTES} bytes)`
++    )
++  })
++
++  it('stores pasted / dropped image bytes under a synthetic path (no network)', async () => {
++    const fetchSpy = vi.fn()
++
++    vi.stubGlobal('fetch', fetchSpy)
++    await import('./web-shim')
++    const path = await window.hermesDesktop.saveImageBuffer(new Uint8Array([1, 2, 3]), '.png', 'shot.png')
++
++    expect(path.endsWith('/shot.png')).toBe(true)
++    await expect(window.hermesDesktop.readFileDataUrl(path)).resolves.toBe('data:image/png;base64,AQID')
++    expect(fetchSpy).not.toHaveBeenCalled()
++  })
++
++  it('selectPaths turns the picked files into synthetic paths', async () => {
++    await import('./web-shim')
++    const picked = new File(['a'], 'a.txt')
++
++    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) {
++      Object.defineProperty(this, 'files', { value: [picked] })
++      this.dispatchEvent(new Event('change'))
++    })
++
++    const paths = await window.hermesDesktop.selectPaths()
++
++    expect(paths).toEqual([window.hermesDesktop.getPathForFile(picked)])
++    click.mockRestore()
++  })
++})
+diff --git a/apps/desktop/src/lib/web-shim.ts b/apps/desktop/src/lib/web-shim.ts
+new file mode 100644
+index 0000000000..020ba597b3
+--- /dev/null
++++ b/apps/desktop/src/lib/web-shim.ts
+@@ -0,0 +1,483 @@
++/**
++ * Hosted-web shim for `window.hermesDesktop`.
++ *
++ * The desktop renderer normally gets all native capability through the
++ * Electron preload bridge (`electron/preload.cjs`). When this same renderer
++ * is built and served as a plain browser SPA (HermesOS "web rich-chat"),
++ * there is no preload — so we install a browser-native implementation here.
++ *
++ * Design:
++ *  - CHAT PATH is fully supported: `getConnection()` resolves the backend
++ *    base URL + WS URL + bearer token from page origin + injected config, and
++ *    `api()` is a `fetch` wrapper. The JSON-RPC gateway WebSocket and the REST
++ *    session/config endpoints are all served by the same backend
++ *    (`hermes_cli/web_server.py`), reachable through the edge Caddy `/desktop`
++ *    route.
++ *  - OS conveniences (notify, clipboard, open-external, image save, mic) map
++ *    to standard browser APIs.
++ *  - Terminal PTYs use the authenticated, session-scoped hosted sidecar when
++ *    available. An older/unsupported server reports a capability error.
++ *  - ATTACHMENTS: browser Files get a synthetic path (`web-files.ts`) and Desktop's
++ *    own remote attach flow ships their bytes over the gateway WS at send time.
++ *  - Bridge keys this shim does NOT define stay `undefined` ON PURPOSE: the
++ *    renderer feature-detects Electron-only UI (`window.hermesDesktop?.cloud`,
++ *    `typeof ...openWindow === 'function'`), so a catch-all no-op Proxy would
++ *    switch those surfaces ON. `web-shim-drift.test.ts` guards against upstream
++ *    adding a required key this shim neither implements nor has reviewed.
++ *  - LOCAL-only features (local FS browse/preview/watch, native
++ *    file dialogs, auto-update, bootstrap installer) are benign stubs — the
++ *    side panels that use them are not on the chat critical path.
++ *
++ * This module is a SIDE-EFFECT import: it installs the global only when no
++ * Electron bridge is present, so importing it under Electron is a no-op.
++ */
++
++import { getApiRequestConnection, getApiRequestProfile } from '../api/client'
++
++import { imageMimeForExtension, readWebFileDataUrl, registerWebFile, selectBrowserFiles } from './web-files'
++import { createWebTerminal } from './web-terminal'
++
++interface WebRuntimeConfig {
++  /** API base path that the edge proxy maps to the dashboard backend. */
++  apiBase: string
++  /** Bearer token for the dashboard backend. */
++  token: string
++}
++
++function resolveConfig(): WebRuntimeConfig {
++  const w = window as unknown as {
++    __HERMES_WEB_API_BASE__?: string
++    __HERMES_WEB_TOKEN__?: string
++    // Injected by the dashboard backend (hermes_cli/web_server.py) when this
++    // bundle is served from the agent image, mirroring the dashboard SPA.
++    __HERMES_SESSION_TOKEN__?: string
++    __HERMES_BASE_PATH__?: string
++  }
++
++  // Token precedence: location.hash → injected global → stored.
++  // Hash key: the HermesOS control-plane dashboard hands the per-instance
++  // bearer off as `#iframe_token=<apiServerKey>` (the same handoff webui's
++  // shim consumes — see hermesdeploy webui-handoff.ts). A direct/manual link
++  // may use the plainer `#token=<bearer>`. Accept either; iframe_token wins.
++  let token = ''
++
++  try {
++    const hash = window.location.hash.replace(/^#/, '')
++    const params = new URLSearchParams(hash)
++    const fromHash = params.get('iframe_token') || params.get('token')
++
++    if (fromHash) {
++      token = fromHash
++
++      // Persist for reloads, then scrub the token out of the visible URL.
++      try {
++        sessionStorage.setItem('hermes_web_token', fromHash)
++      } catch {
++        /* ignore */
++      }
++
++      params.delete('iframe_token')
++      params.delete('token')
++      const rest = params.toString()
++      const cleanHash = rest ? `#${rest}` : ''
++      window.history.replaceState(null, '', window.location.pathname + window.location.search + cleanHash)
++    }
++  } catch {
++    /* ignore */
++  }
++
++  // Image-served: the backend injects __HERMES_SESSION_TOKEN__ into index.html.
++  if (!token && typeof w.__HERMES_SESSION_TOKEN__ === 'string' && w.__HERMES_SESSION_TOKEN__) {
++    token = w.__HERMES_SESSION_TOKEN__
++  }
++
++  if (!token && typeof w.__HERMES_WEB_TOKEN__ === 'string') {
++    token = w.__HERMES_WEB_TOKEN__
++  }
++
++  if (!token) {
++    try {
++      token = sessionStorage.getItem('hermes_web_token') ?? ''
++    } catch {
++      /* ignore */
++    }
++  }
++
++  // API base precedence: __HERMES_BASE_PATH__ (injected by the backend when
++  // image-served — may legitimately be "" for root, so test by type) →
++  // __HERMES_WEB_API_BASE__ (hand-deploy override) → "/desktop" default.
++  let apiBase: string
++
++  if (typeof w.__HERMES_BASE_PATH__ === 'string') {
++    apiBase = w.__HERMES_BASE_PATH__
++  } else if (typeof w.__HERMES_WEB_API_BASE__ === 'string') {
++    apiBase = w.__HERMES_WEB_API_BASE__
++  } else {
++    apiBase = '/desktop'
++  }
++
++  apiBase = apiBase.replace(/\/$/, '')
++
++  return { apiBase, token }
++}
++
++function buildUrls(config: WebRuntimeConfig): { baseUrl: string; wsUrl: string } {
++  const origin = window.location.origin
++  const baseUrl = `${origin}${config.apiBase}`
++  const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
++  const wsBase = `${wsProto}//${window.location.host}${config.apiBase}`
++  const qs = config.token ? `?token=${encodeURIComponent(config.token)}` : ''
++  const wsUrl = `${wsBase}/api/ws${qs}`
++
++  return { baseUrl, wsUrl }
++}
++
++async function fetchJson<T>(request: { path: string; method?: string; body?: unknown; timeoutMs?: number; keepalive?: boolean }, config = resolveConfig()): Promise<T> {
++  const { baseUrl } = buildUrls(config)
++  const controller = new AbortController()
++  const timeout = request.timeoutMs && request.timeoutMs > 0 ? request.timeoutMs : 30_000
++  const timer = window.setTimeout(() => controller.abort(), timeout)
++
++  try {
++    const headers: Record<string, string> = {}
++
++    if (config.token) {
++      headers.Authorization = `Bearer ${config.token}`
++    }
++
++    let body: BodyInit | undefined
++
++    if (request.body !== undefined && request.body !== null) {
++      headers['Content-Type'] = 'application/json'
++      body = JSON.stringify(request.body)
++    }
++
++    const terminalRequest = request.path === '/api/desktop-terminal'
++
++    const res = await fetch(`${baseUrl}${request.path}`, {
++      method: request.method ?? (request.body !== undefined ? 'POST' : 'GET'),
++      headers,
++      body,
++      signal: controller.signal,
++      credentials: 'omit',
++      // A redirect must not forward session credentials or typed shell input
++      // to a different endpoint, even when fetch strips the bearer header.
++      ...(terminalRequest ? { redirect: 'error' as const } : {}),
++      ...(request.keepalive ? { keepalive: true } : {})
++    })
++
++    const text = await res.text()
++    let data: unknown
++
++    try {
++      data = text ? JSON.parse(text) : undefined
++    } catch (error) {
++      if (terminalRequest) {
++        if ([404, 405, 501].includes(res.status)) {
++          throw new Error('This server does not support browser terminals')
++        }
++
++        throw new Error(`Terminal service returned a non-JSON response (HTTP ${res.status}); browser terminals may not be supported on this server`)
++      }
++
++      throw error
++    }
++
++    if (!res.ok) {
++      const message =
++        (data && typeof data === 'object' && 'error' in data && (data as { error?: string }).error) ||
++        (terminalRequest && [404, 405, 501].includes(res.status)
++          ? 'This server does not support browser terminals'
++          : `HTTP ${res.status} for ${request.path}`)
++
++      throw new Error(String(message))
++    }
++
++    return data as T
++  } finally {
++    window.clearTimeout(timer)
++  }
++}
++
++function noopUnsubscribe(): () => void {
++  return () => {}
++}
++
++function triggerDownload(blob: Blob, filename: string): void {
++  const url = URL.createObjectURL(blob)
++  const a = document.createElement('a')
++  a.href = url
++  a.download = filename
++  document.body.appendChild(a)
++  a.click()
++  a.remove()
++  setTimeout(() => URL.revokeObjectURL(url), 10_000)
++}
++
++function adminPanelUrl(): string {
++  const t = resolveConfig().token
++
++  return t ? `/dash/#iframe_token=${encodeURIComponent(t)}` : '/dash/'
++}
++
++function installWebShim(): void {
++  const config = resolveConfig()
++
++  const bridge = {
++    getConnection: async (profile?: null | string) => {
++      const fresh = resolveConfig()
++      const { baseUrl, wsUrl } = buildUrls(fresh)
++      const requestedProfile = (profile ?? '').trim()
++
++      return {
++        baseUrl,
++        wsUrl,
++        token: fresh.token,
++        mode: 'remote' as const,
++        source: 'env' as const,
++        // Hosted HermesOS exposes one multi-profile gateway. Mark named
++        // profile lookups as shared-primary so the renderer scopes RPCs with
++        // `profile` on the existing socket instead of dialing the same URL as
++        // a phantom secondary. The latter detaches the live runtime whenever
++        // its 20-second hydration attempt closes (#hosted-profile-loop).
++        ...(requestedProfile ? { profile: requestedProfile, sharedPrimary: true } : {}),
++        isFullscreen: false,
++        nativeOverlayWidth: 0,
++        windowButtonPosition: null,
++        logs: [] as string[]
++      }
++    },
++
++    getBootProgress: async () => ({
++      error: null,
++      fakeMode: false,
++      message: 'ready',
++      phase: 'ready',
++      progress: 100,
++      running: false,
++      timestamp: Date.now()
++    }),
++
++    getConnectionConfig: async () => ({
++      envOverride: true,
++      mode: 'remote' as const,
++      remoteTokenPreview: null,
++      remoteTokenSet: Boolean(config.token),
++      remoteUrl: `${window.location.origin}${config.apiBase}`
++    }),
++    saveConnectionConfig: async (p: unknown) => ({
++      envOverride: true,
++      mode: 'remote' as const,
++      remoteTokenPreview: null,
++      remoteTokenSet: Boolean(config.token),
++      remoteUrl: `${window.location.origin}${config.apiBase}`,
++      ...(p as object)
++    }),
++    applyConnectionConfig: async (p: unknown) => bridge.saveConnectionConfig(p),
++    testConnectionConfig: async () => {
++      try {
++        const status = await fetchJson<{ version?: string }>({ path: '/api/status' })
++
++        return { baseUrl: `${window.location.origin}${config.apiBase}`, ok: true, version: status?.version ?? null }
++      } catch {
++        return { baseUrl: `${window.location.origin}${config.apiBase}`, ok: false, version: null }
++      }
++    },
++
++    api: fetchJson,
++
++    notify: async (payload: { title?: string; body?: string; silent?: boolean }) => {
++      try {
++        if (typeof Notification === 'undefined') {
++          return false
++        }
++
++        if (Notification.permission === 'granted') {
++          new Notification(payload.title ?? 'Hermes', { body: payload.body, silent: payload.silent })
++
++          return true
++        }
++
++        if (Notification.permission !== 'denied') {
++          const perm = await Notification.requestPermission()
++
++          if (perm === 'granted') {
++            new Notification(payload.title ?? 'Hermes', { body: payload.body, silent: payload.silent })
++
++            return true
++          }
++        }
++      } catch {
++        /* ignore */
++      }
++
++      return false
++    },
++
++    requestMicrophoneAccess: async () => {
++      try {
++        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
++        stream.getTracks().forEach(t => t.stop())
++
++        return true
++      } catch {
++        return false
++      }
++    },
++
++    // Local-filesystem reads are not available in the browser. Picked / dropped
++    // / pasted browser Files live behind synthetic paths (see web-files.ts);
++    // Desktop's remote attach flow reads their bytes back through these two.
++    readFileDataUrl: readWebFileDataUrl,
++    readFileDataUrlForAttach: readWebFileDataUrl,
++    readFileText: async (filePath: string) => ({ path: filePath, text: '', binary: false }),
++    selectPaths: selectBrowserFiles,
++    readDir: async () => ({ entries: [] }),
++    gitRoot: async () => null,
++    normalizePreviewTarget: async () => null,
++    watchPreviewFile: async (url: string) => ({ id: 'web-noop', path: url }),
++    stopPreviewFileWatch: async () => true,
++
++    writeClipboard: async (text: string) => {
++      try {
++        await navigator.clipboard.writeText(text)
++
++        return true
++      } catch {
++        return false
++      }
++    },
++    // Required bridge key (terminal "Paste" in the app context menu calls it
++    // without a feature check). Denied permission / no clipboard API -> ''.
++    readClipboard: async () => {
++      try {
++        return (await navigator.clipboard.readText()) ?? ''
++      } catch {
++        return ''
++      }
++    },
++
++    saveImageFromUrl: async (url: string) => {
++      try {
++        const res = await fetch(url)
++        const blob = await res.blob()
++        const name = url.split('/').pop()?.split('?')[0] || 'image.png'
++        triggerDownload(blob, name)
++
++        return true
++      } catch {
++        return false
++      }
++    },
++    // Pasted / dropped images: no disk to save to, so register the bytes under
++    // a synthetic path; `image.attach_bytes` ships them at send time.
++    saveImageBuffer: async (data: ArrayBuffer | Uint8Array, ext: string, name?: string) => {
++      const cleanExt = ext.replace(/^\./, '') || 'png'
++      const blob = new Blob([data as BlobPart], { type: imageMimeForExtension(cleanExt) })
++
++      return registerWebFile(blob, name || `image.${cleanExt}`)
++    },
++    saveClipboardImage: async () => '',
++    // Drag-drop / hidden-input Files: a synthetic path (the composer chip shows
++    // its basename), resolved back to bytes by readFileDataUrl* above.
++    getPathForFile: (file: File) => registerWebFile(file),
++
++    setTitleBarTheme: () => {},
++    setPreviewShortcutActive: () => {},
++
++    openExternal: async (url: string) => {
++      window.open(url, '_blank', 'noopener,noreferrer')
++    },
++    fetchLinkTitle: async (url: string) => url,
++
++    // HermesOS "Admin Panel" (sidebar row from plugins/hivra) → the full
++    // dashboard (telemetry / config / channels / TUI chat) at /dash, carrying
++    // the session token in the URL fragment so it authenticates without a
++    // second login. Web-only; the native desktop app has no /dash route.
++    getAdminPanelUrl: adminPanelUrl,
++    openAdminPanel: () => Boolean(window.open(adminPanelUrl(), '_blank', 'noopener,noreferrer')),
++
++    // Required `profile` namespace. `switchProfile` calls `profile.set` without
++    // a feature check; hosted web has ONE multi-profile gateway (profiles ride
++    // `getConnection(profile)` -> sharedPrimary), so nothing relaunches here.
++    // Only set/remember are defined: `getDefault` / `setDefault` stay absent so
++    // the "default profile" affordances (feature-detected) stay hidden.
++    profile: {
++      remember: async (name: null | string) => ({ profile: name ?? 'default' }),
++      set: async (name: null | string) => ({ profile: name ?? 'default' })
++    },
++
++    settings: {
++      getDefaultProjectDir: async () => ({ defaultLabel: 'Workspace', dir: null }),
++      pickDefaultProjectDir: async () => ({ canceled: true, dir: null }),
++      setDefaultProjectDir: async (dir: null | string) => ({ dir })
++    },
++
++    revealLogs: async () => ({ ok: false, path: '', error: 'unavailable on web' }),
++    getRecentLogs: async () => ({ path: '', lines: [] as string[] }),
++
++    terminal: createWebTerminal({
++      captureRequest: () => {
++        const terminalConfig = resolveConfig()
++        const { baseUrl } = buildUrls(terminalConfig)
++
++        if ((terminalConfig.apiBase && !terminalConfig.apiBase.startsWith('/')) || new URL(baseUrl).origin !== window.location.origin) {
++          throw new Error('Browser terminal requests must stay on this server')
++        }
++
++        return request => fetchJson(request, terminalConfig)
++      },
++      getProfile: getApiRequestProfile,
++      getConnectionId: getApiRequestConnection
++    }),
++
++    onClosePreviewRequested: () => noopUnsubscribe(),
++    onOpenUpdatesRequested: () => noopUnsubscribe(),
++    onWindowStateChanged: () => noopUnsubscribe(),
++    onPreviewFileChanged: () => noopUnsubscribe(),
++    onBackendExit: () => noopUnsubscribe(),
++    onBootProgress: () => noopUnsubscribe(),
++
++    getBootstrapState: async () => ({
++      active: false,
++      manifest: null,
++      stages: {},
++      error: null,
++      log: [] as Array<{ ts: number; stage: string | null; line: string }>,
++      startedAt: null,
++      completedAt: null,
++      unsupportedPlatform: null
++    }),
++    resetBootstrap: async () => ({ ok: true }),
++    repairBootstrap: async () => ({ ok: true }),
++    cancelBootstrap: async () => ({ ok: true, cancelled: false }),
++    onBootstrapEvent: () => noopUnsubscribe(),
++
++    getVersion: async () => ({
++      appVersion: 'web',
++      electronVersion: '',
++      nodeVersion: '',
++      platform: 'web',
++      hermesRoot: ''
++    }),
++
++    updates: {
++      check: async () => ({ supported: false, reason: 'web client', message: 'Updates managed server-side' }),
++      apply: async () => ({ ok: false, error: 'Updates managed server-side' }),
++      getBranch: async () => ({ branch: 'web' }),
++      setBranch: async (name: string) => ({ branch: name }),
++      onProgress: () => noopUnsubscribe()
++    }
++  }
++
++   
++  ;(window as any).hermesDesktop = bridge
++   
++  ;(window as any).__HERMES_WEB_CLIENT__ = true
++}
++
++if (typeof window !== 'undefined' && !(window as unknown as { hermesDesktop?: unknown }).hermesDesktop) {
++  installWebShim()
++}
++
++export {}
+diff --git a/apps/desktop/src/lib/web-terminal.test.ts b/apps/desktop/src/lib/web-terminal.test.ts
+new file mode 100644
+index 0000000000..339404480e
+--- /dev/null
++++ b/apps/desktop/src/lib/web-terminal.test.ts
+@@ -0,0 +1,734 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { createWebTerminal } from './web-terminal'
++
++type Options = Parameters<typeof createWebTerminal>[0]
++type Request = Parameters<ReturnType<Options['captureRequest']>>[0]
++
++class FakeSocket extends EventTarget {
++  static instances: FakeSocket[] = []
++  readonly url: string
++  readyState = 0
++  close = vi.fn(() => { this.readyState = 3 })
++
++  constructor(url: string) {
++    super()
++    this.url = url
++    FakeSocket.instances.push(this)
++  }
++
++  open() {
++    this.readyState = 1
++    this.dispatchEvent(new Event('open'))
++  }
++
++  message(value: unknown) {
++    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) }))
++  }
++
++  disconnect() {
++    this.readyState = 3
++    this.dispatchEvent(new Event('close'))
++  }
++}
++
++function deferred<T>() {
++  let resolve!: (value: T) => void
++  let reject!: (error: Error) => void
++  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
++
++  return { promise, resolve, reject }
++}
++
++async function flush() {
++  for (let i = 0; i < 24; i += 1) {
++    await Promise.resolve()
++  }
++}
++
++function startReply(id = 'native-1', patch: Record<string, unknown> = {}) {
++  return {
++    ok: true,
++    sessionKey: id,
++    sessionToken: `session-secret-${id}`,
++    cwd: '/workspace',
++    shell: 'bash',
++    webSocketPath: `/_sidecar/api/terminal/ws?token=ticket-${id}&includeScrollback=1`,
++    ...patch
++  }
++}
++
++function harness(handler?: (request: Request) => Promise<unknown>) {
++  let nextId = 0
++
++  const request = vi.fn(async (params: Request) => {
++    if (handler) {
++      return handler(params)
++    }
++
++    return (params.body as { action: string }).action === 'start'
++      ? startReply(`native-${++nextId}`)
++      : { ok: true, cwd: null }
++  })
++
++  const getProfile = vi.fn<() => string | null>(() => null)
++  const getConnectionId = vi.fn<() => string | null>(() => null)
++  const captureRequest = vi.fn(() => async <T>(params: Request) => await request(params) as T)
++  const terminal = createWebTerminal({ captureRequest, getProfile, getConnectionId })
++  const calls = (action: string) => request.mock.calls.map(([req]) => req).filter(req => (req.body as { action: string }).action === action)
++
++  async function start() {
++    const pending = terminal.start()
++    await flush()
++    const socket = FakeSocket.instances.at(-1)!
++    socket.open()
++    const session = await pending
++
++    return { session, socket }
++  }
++
++  return { terminal, request, calls, getProfile, getConnectionId, captureRequest, start }
++}
++
++beforeEach(() => {
++  vi.useFakeTimers()
++  vi.stubGlobal('WebSocket', FakeSocket)
++  FakeSocket.instances = []
++})
++
++afterEach(async () => {
++  window.dispatchEvent(new Event('pagehide'))
++  await flush()
++  await vi.runAllTimersAsync()
++  vi.useRealTimers()
++  vi.unstubAllGlobals()
++  vi.restoreAllMocks()
++})
++
++describe('browser terminal session capability', () => {
++  it('waits for the ticket-authenticated socket and exposes no credentials in the desktop session', async () => {
++    const h = harness()
++    const settled = vi.fn()
++
++    const pending = h.terminal.start({ cwd: '/workspace/project', cols: 110, rows: 32 }).then(value => { settled();
++
++ return value })
++
++    await flush()
++    expect(settled).not.toHaveBeenCalled()
++    expect(h.calls('start')[0]).toMatchObject({
++      path: '/api/desktop-terminal', method: 'POST', timeoutMs: 20_000,
++      body: { action: 'start', cols: 110, rows: 32, cwd: '/workspace/project', profile: 'default' }
++    })
++    const socket = FakeSocket.instances[0]
++    const url = new URL(socket.url)
++    expect(url.host).toBe(window.location.host)
++    expect(url.protocol).toBe('ws:')
++    expect(url.pathname).toBe('/_sidecar/api/terminal/ws')
++    expect([...url.searchParams]).toEqual([['token', 'ticket-native-1'], ['includeScrollback', '1']])
++    socket.open()
++    await expect(pending).resolves.toEqual({ id: 'native-1', cwd: '/workspace', shell: 'bash' })
++    expect(h.calls('start')).toHaveLength(1)
++  })
++
++  it('uses wss for an https origin without accepting a server-specified host', async () => {
++    const browser = window
++    vi.stubGlobal('window', new Proxy(browser, {
++      get(target, key) { return key === 'location' ? { origin: 'https://terminal.example' } : Reflect.get(target, key) }
++    }))
++    const h = harness()
++    const { session, socket } = await h.start()
++    expect(socket.url).toBe('wss://terminal.example/_sidecar/api/terminal/ws?token=ticket-native-1&includeScrollback=1')
++    await h.terminal.dispose(session.id)
++  })
++
++  it.each([
++    'wss://evil.example/_sidecar/api/terminal/ws?token=stolen',
++    'ws://localhost/_sidecar/api/terminal/ws?token=t',
++    '//evil.example/_sidecar/api/terminal/ws?token=t',
++    '/desktop/api/terminal/ws?token=t',
++    '/_sidecar/api/terminal/../ws?token=t',
++    '/_sidecar/api/terminal/ws',
++    '/_sidecar/api/terminal/ws?token=',
++    '/_sidecar/api/terminal/ws?token=a&token=b',
++    '/_sidecar/api/terminal/ws?token=a&api_key=b',
++    '/_sidecar/api/terminal/ws?token=a#fragment',
++    '/_sidecar/api/terminal/ws?token=a&includeScrollback=0',
++    '/_sidecar/api/terminal/ws?token=a&includeScrollback=1&includeScrollback=1',
++    '/_sidecar/api/terminal/ws?token=a\\evil',
++    null
++  ])('rejects unsafe/malformed socket path %s and stops only the allocated session', async webSocketPath => {
++    const h = harness(async request => (request.body as { action: string }).action === 'start'
++      ? startReply('native-own', { webSocketPath }) : { ok: true })
++
++    await expect(h.terminal.start()).rejects.toThrow('invalid terminal WebSocket path')
++    expect(FakeSocket.instances).toHaveLength(0)
++    expect(h.calls('stop').map(req => req.body)).toEqual([{
++      action: 'stop', sessionKey: 'native-own', sessionToken: 'session-secret-native-own', profile: 'default'
++    }])
++  })
++
++  it('rejects nondefault profile and remote connection before any host operation', async () => {
++    const h = harness()
++    h.getProfile.mockReturnValue('customer-secondary')
++    await expect(h.terminal.start()).rejects.toThrow('only the default profile')
++    h.getProfile.mockReturnValue('default')
++    h.getConnectionId.mockReturnValue('remote-connection')
++    await expect(h.terminal.start()).rejects.toThrow('selected remote connection')
++    expect(h.request).not.toHaveBeenCalled()
++    expect(h.captureRequest).not.toHaveBeenCalled()
++    h.getConnectionId.mockReturnValue('local')
++    await h.start()
++    expect(h.calls('start')).toHaveLength(1)
++  })
++
++  it('retains the actual server error rather than reporting success or losing it to shape validation', async () => {
++    const h = harness(async () => ({ ok: false, error: 'Gateway container is stopped' }))
++    await expect(h.terminal.start()).rejects.toThrow('Gateway container is stopped')
++    expect(FakeSocket.instances).toHaveLength(0)
++    expect(h.calls('stop')).toHaveLength(0)
++  })
++
++  it('cleans up a malformed successful start once it knows the session credentials', async () => {
++    const h = harness(async request => (request.body as { action: string }).action === 'start'
++      ? startReply('native-own', { shell: null }) : { ok: true })
++
++    await expect(h.terminal.start()).rejects.toThrow('invalid terminal session details')
++    expect(h.calls('stop')).toHaveLength(1)
++  })
++
++  it('does not stop a previous tab if a broken server returns its duplicate id', async () => {
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? startReply() : { ok: true })
++    const first = await h.start()
++    await expect(h.terminal.start()).rejects.toThrow('duplicate terminal session')
++    expect(h.calls('stop')).toHaveLength(0)
++    await expect(h.terminal.write(first.session.id, 'still alive')).resolves.toBe(true)
++  })
++
++  // hermes-fork: Desktop's attach-after-subscribe contract (use-terminal-session.ts).
++  it('attach confirms a live session and rejects an unknown or disposed one', async () => {
++    const h = harness()
++    const { session } = await h.start()
++    await expect(h.terminal.attach(session.id)).resolves.toBe(true)
++    await expect(h.terminal.attach('nope')).resolves.toBe(false)
++    await h.terminal.dispose(session.id)
++    await expect(h.terminal.attach(session.id)).resolves.toBe(false)
++  })
++
++  it('replays bounded early output exactly once and honors data unsubscribe', async () => {
++    const h = harness()
++    const { session, socket } = await h.start()
++    socket.message({ type: 'output', data: 'first\r\n' })
++    socket.message({ type: 'output', data: 'second 🐚' })
++    const first = vi.fn()
++    const unsubscribe = h.terminal.onData(session.id, first)
++    expect(first.mock.calls.flat()).toEqual(['first\r\n', 'second 🐚'])
++    const second = vi.fn()
++    const unsubscribeSecond = h.terminal.onData(session.id, second)
++    expect(second).not.toHaveBeenCalled()
++    socket.message({ type: 'output', data: 'live' })
++    expect(first).toHaveBeenLastCalledWith('live')
++    expect(second).toHaveBeenLastCalledWith('live')
++    unsubscribe()
++    socket.message({ type: 'output', data: 'only second' })
++    expect(first).toHaveBeenCalledTimes(3)
++    expect(second).toHaveBeenLastCalledWith('only second')
++    unsubscribeSecond()
++  })
++
++  it('retains an exit before listener registration and cancels an unsubscribed replay', async () => {
++    const h = harness()
++    const pending = h.terminal.start()
++    await flush()
++    const socket = FakeSocket.instances[0]
++    socket.open()
++    socket.message({ type: 'output', data: 'last line' })
++    socket.message({ type: 'closed', reason: 'exit', exitCode: 7, signal: 'SIGTERM', cleanupConfirmed: true })
++    const session = await pending
++    const output = vi.fn()
++    h.terminal.onData(session.id, output)
++    const cancelled = vi.fn()
++    h.terminal.onExit(session.id, cancelled)()
++    const onExit = vi.fn()
++    h.terminal.onExit(session.id, onExit)
++    await flush()
++    expect(output).toHaveBeenCalledExactlyOnceWith('last line')
++    expect(cancelled).not.toHaveBeenCalled()
++    expect(onExit).toHaveBeenCalledExactlyOnceWith({ code: 7, signal: 'SIGTERM' })
++    await expect(h.terminal.write(session.id, 'after exit')).resolves.toBe(false)
++    await expect(h.terminal.dispose(session.id)).resolves.toBe(true)
++    expect(h.calls('stop')).toHaveLength(0) // the server already confirmed the PTY exited
++    expect(socket.close).toHaveBeenCalledOnce()
++  })
++
++  it('treats duplicate callback registrations as independently removable subscriptions', async () => {
++    const h = harness()
++    const { session, socket } = await h.start()
++    const callback = vi.fn()
++    const removeFirst = h.terminal.onData(session.id, callback)
++    const removeSecond = h.terminal.onData(session.id, callback)
++    socket.message({ type: 'output', data: 'one' })
++    expect(callback).toHaveBeenCalledTimes(2)
++    removeFirst()
++    socket.message({ type: 'output', data: 'two' })
++    expect(callback).toHaveBeenCalledTimes(3)
++    removeSecond()
++    socket.message({ type: 'output', data: 'three' })
++    expect(callback).toHaveBeenCalledTimes(3)
++    const exit = vi.fn()
++    const removeExit = h.terminal.onExit(session.id, exit)
++    h.terminal.onExit(session.id, exit)
++    removeExit()
++    socket.message({ type: 'closed', exitCode: 0, signal: null, cleanupConfirmed: true })
++    expect(exit).toHaveBeenCalledExactlyOnceWith({ code: 0, signal: null })
++  })
++
++  it.each([false, undefined])('requires a real stop after a closed frame with cleanupConfirmed=%s', async cleanupConfirmed => {
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? startReply() : { ok: false, error: 'Terminal cleanup could not be confirmed' })
++    const { session, socket } = await h.start()
++    const exit = vi.fn()
++    h.terminal.onExit(session.id, exit)
++    socket.message({ type: 'closed', reason: 'error', exitCode: null, signal: null, cleanupConfirmed })
++    expect(exit).toHaveBeenCalledExactlyOnceWith({ code: null, signal: null })
++    await expect(h.terminal.dispose(session.id)).resolves.toBe(false)
++    expect(h.calls('stop')).toHaveLength(1)
++    expect(h.calls('stop')[0].body).toMatchObject({ sessionKey: session.id, sessionToken: 'session-secret-native-1' })
++  })
++
++  it.each(['error', 'close'])('fails a %s during ticket attach, stops once, and never starts a replacement', async event => {
++    const h = harness()
++    const pending = h.terminal.start()
++    const rejected = expect(pending).rejects.toThrow('Could not attach the terminal WebSocket')
++    await flush()
++    const socket = FakeSocket.instances[0]
++    socket.dispatchEvent(new Event(event))
++    await rejected
++    expect(socket.close).toHaveBeenCalledOnce()
++    expect(h.calls('stop')).toHaveLength(1)
++    expect(h.calls('start')).toHaveLength(1)
++    expect(h.calls('attach')).toHaveLength(0)
++    expect(FakeSocket.instances).toHaveLength(1)
++  })
++
++  it('bounds a silent WebSocket handshake and cleans it up', async () => {
++    const h = harness()
++    const rejected = expect(h.terminal.start()).rejects.toThrow('connection timed out')
++    await flush()
++    await vi.advanceTimersByTimeAsync(10_000)
++    await rejected
++    expect(h.calls('stop')).toHaveLength(1)
++    expect(FakeSocket.instances[0].close).toHaveBeenCalledOnce()
++  })
++
++  it('does not redial an expired ticket; the next explicit tab gets a new session and ticket', async () => {
++    const h = harness()
++    const rejected = expect(h.terminal.start()).rejects.toThrow('ticket may have expired')
++    await flush()
++    FakeSocket.instances[0].dispatchEvent(new CloseEvent('close', { code: 1008, reason: 'Expired terminal ticket' }))
++    await rejected
++    const second = await h.start()
++    expect(second.session.id).toBe('native-2')
++    expect(FakeSocket.instances.map(socket => new URL(socket.url).searchParams.get('token'))).toEqual(['ticket-native-1', 'ticket-native-2'])
++    expect(h.calls('stop')).toHaveLength(1)
++  })
++
++  it('times out a lost start response but cleans up an eventual late response without opening a socket', async () => {
++    const late = deferred<unknown>()
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? late.promise : { ok: true })
++    const rejected = expect(h.terminal.start()).rejects.toThrow('timed out')
++    await vi.advanceTimersByTimeAsync(20_000)
++    await rejected
++    late.resolve(startReply('native-late'))
++    await flush()
++    expect(FakeSocket.instances).toHaveLength(0)
++    expect(h.calls('stop')).toHaveLength(1)
++    expect(h.calls('stop')[0].body).toMatchObject({ sessionKey: 'native-late', sessionToken: 'session-secret-native-late' })
++  })
++
++  it('stops a late start after page disposal and never reports it as open', async () => {
++    const late = deferred<unknown>()
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? late.promise : { ok: true })
++    const rejected = expect(h.terminal.start()).rejects.toThrow('page closed')
++    await flush()
++    window.dispatchEvent(new Event('pagehide'))
++    late.resolve(startReply())
++    await rejected
++    expect(FakeSocket.instances).toHaveLength(0)
++    expect(h.calls('stop')[0].keepalive).toBe(true)
++  })
++
++  it.each(['pagehide', 'disconnect'])('does not report success when %s races the socket-open continuation', async event => {
++    const h = harness()
++    const rejected = expect(h.terminal.start()).rejects.toThrow(/cancelled|failed before it became ready/)
++    await flush()
++    const socket = FakeSocket.instances[0]
++    socket.open()
++
++    if (event === 'pagehide') {
++      window.dispatchEvent(new Event('pagehide'))
++    } else {
++      socket.disconnect()
++    }
++
++    await rejected
++    expect(h.calls('stop')).toHaveLength(1)
++    expect(socket.close).toHaveBeenCalledOnce()
++  })
++
++  it('serializes concurrent writes, UTF-8 chunks and resize without interleaving', async () => {
++    const held = deferred<unknown>()
++    let inputCount = 0
++
++    const h = harness(async request => {
++      const body = request.body as { action: string }
++
++      if (body.action === 'start') { return startReply() }
++
++      if (body.action === 'input' && ++inputCount === 1) { return held.promise }
++
++      return { ok: true }
++    })
++
++    const { session } = await h.start()
++    const pasted = `${'🐚'.repeat(1023)}Aé${'漢'.repeat(1600)}`
++    const first = h.terminal.write(session.id, pasted)
++    const second = h.terminal.write(session.id, '\r')
++    const resized = h.terminal.resize(session.id, { cols: 120, rows: 40 })
++    await flush()
++    expect(h.calls('input')).toHaveLength(1)
++    expect(h.calls('resize')).toHaveLength(0)
++    held.resolve({ ok: true })
++    await expect(Promise.all([first, second, resized])).resolves.toEqual([true, true, true])
++    const chunks = h.calls('input').map(request => (request.body as { data: string }).data)
++    expect(chunks.join('')).toBe(pasted + '\r')
++    expect(chunks.every(chunk => new TextEncoder().encode(chunk).byteLength <= 4096)).toBe(true)
++    expect(h.request.mock.calls.at(-1)?.[0].body).toMatchObject({ action: 'resize', cols: 120, rows: 40 })
++    expect(h.calls('input').every(request => (request.body as Record<string, unknown>).sessionToken === 'session-secret-native-1')).toBe(true)
++  })
++
++  it('disposal cancels queued input, closes the socket, and shares one actual stop request', async () => {
++    const heldInput = deferred<unknown>()
++    const heldStop = deferred<unknown>()
++
++    const h = harness(async request => {
++      const { action } = request.body as { action: string }
++
++      return action === 'start' ? startReply() : action === 'input' ? heldInput.promise : heldStop.promise
++    })
++
++    const { session, socket } = await h.start()
++    const onData = vi.fn()
++    const onExit = vi.fn()
++    h.terminal.onData(session.id, onData)
++    h.terminal.onExit(session.id, onExit)
++    const first = h.terminal.write(session.id, 'in-flight')
++    await flush()
++    const second = h.terminal.write(session.id, 'must not be sent')
++    const stopped = h.terminal.dispose(session.id)
++    const alsoStopped = h.terminal.dispose(session.id)
++    await flush()
++    socket.message({ type: 'output', data: 'late' })
++    socket.disconnect()
++    expect(onData).not.toHaveBeenCalled()
++    expect(onExit).not.toHaveBeenCalled()
++    expect(h.calls('stop')).toHaveLength(1)
++    heldStop.resolve({ ok: true })
++    heldInput.resolve({ ok: true })
++    await expect(Promise.all([stopped, alsoStopped, first, second])).resolves.toEqual([true, true, false, false])
++    expect(h.calls('input')).toHaveLength(1)
++    expect(h.calls('input')[0].body).toMatchObject({ data: 'in-flight' })
++    expect(socket.close).toHaveBeenCalledOnce()
++    await expect(h.terminal.dispose(session.id)).resolves.toBe(false)
++  })
++
++  it('bounds control timeouts and never returns true for an uncertain write or stop', async () => {
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? startReply() : new Promise(() => {}))
++    const { session } = await h.start()
++    const written = h.terminal.write(session.id, 'uncertain')
++    await vi.advanceTimersByTimeAsync(10_000)
++    await expect(written).resolves.toBe(false)
++    const disposed = h.terminal.dispose(session.id)
++    await vi.advanceTimersByTimeAsync(10_000)
++    await expect(disposed).resolves.toBe(false)
++    expect(h.calls('input')).toHaveLength(1)
++    expect(h.calls('stop')).toHaveLength(1)
++  })
++
++  it('batches rapid typing behind a high-latency request without crossing resize boundaries', async () => {
++    const firstAck = deferred<unknown>()
++    const secondAck = deferred<unknown>()
++    let inputCount = 0
++
++    const h = harness(async request => {
++      const action = (request.body as { action: string }).action
++
++      if (action === 'start') { return startReply() }
++
++      if (action === 'input' && ++inputCount === 1) { return firstAck.promise }
++
++      if (action === 'input' && inputCount === 2) { return secondAck.promise }
++
++      return { ok: true }
++    })
++
++    const { session } = await h.start()
++    const writes = [h.terminal.write(session.id, 'p')]
++    await flush()
++
++    for (const key of 'wd && echo ready') {
++      writes.push(h.terminal.write(session.id, key))
++      await vi.advanceTimersByTimeAsync(40)
++    }
++
++    const resize = h.terminal.resize(session.id, { cols: 100, rows: 40 })
++    writes.push(h.terminal.write(session.id, '\r'))
++    expect(h.calls('input')).toHaveLength(1)
++    firstAck.resolve({ ok: true })
++    await flush()
++    expect(h.calls('input').map(request => (request.body as { data: string }).data)).toEqual(['p', 'wd && echo ready'])
++    expect(h.calls('resize')).toHaveLength(0)
++    secondAck.resolve({ ok: true })
++    await expect(Promise.all([...writes, resize])).resolves.toEqual(Array(writes.length + 1).fill(true))
++    expect(h.request.mock.calls.slice(1).map(([request]) => (request.body as { action: string }).action)).toEqual(['input', 'input', 'resize', 'input'])
++    expect(h.calls('input').at(-1)?.body).toMatchObject({ data: '\r' })
++  })
++
++  it('clamps transient narrow xterm columns to the server minimum for start and resize', async () => {
++    const h = harness()
++    const pending = h.terminal.start({ cols: 2, rows: 2 })
++    await flush()
++    FakeSocket.instances[0].open()
++    const session = await pending
++    await expect(h.terminal.resize(session.id, { cols: 5, rows: 3 })).resolves.toBe(true)
++    expect(h.calls('start')[0].body).toMatchObject({ cols: 10, rows: 2 })
++    expect(h.calls('resize')[0].body).toMatchObject({ cols: 10, rows: 3 })
++    await expect(h.terminal.resize(session.id, { cols: NaN, rows: 3 })).resolves.toBe(false)
++    expect(h.calls('resize')).toHaveLength(1)
++  })
++
++  it('tears down a disconnected tab without affecting another tab or resubscribing it', async () => {
++    const h = harness()
++    const one = await h.start()
++    const two = await h.start()
++    const output = vi.fn()
++    const exited = vi.fn()
++    h.terminal.onData(one.session.id, output)
++    h.terminal.onExit(one.session.id, exited)
++    one.socket.disconnect()
++    await flush()
++    expect(output).toHaveBeenCalledWith(expect.stringContaining('Terminal connection failed'))
++    expect(exited).toHaveBeenCalledExactlyOnceWith({ code: null, signal: null })
++    await expect(h.terminal.write(two.session.id, 'safe')).resolves.toBe(true)
++    expect(h.calls('stop').map(request => (request.body as { sessionKey: string }).sessionKey)).toEqual([one.session.id])
++    expect(FakeSocket.instances).toHaveLength(2)
++  })
++
++  it.each(['bytes', 'chunks'])('bounds early output by %s and closes the owned PTY on overflow', async mode => {
++    const h = harness()
++    const { session, socket } = await h.start()
++
++    if (mode === 'bytes') {
++      socket.message({ type: 'output', data: 'a'.repeat(256 * 1024) })
++    } else {
++      for (let i = 0; i < 256; i += 1) { socket.message({ type: 'output', data: 'a' }) }
++    }
++
++    socket.message({ type: 'output', data: 'overflow' })
++    const output = vi.fn()
++    h.terminal.onData(session.id, output)
++    await flush()
++    expect(output).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('buffer limit'))
++    expect(h.calls('stop')).toHaveLength(1)
++    await expect(h.terminal.write(session.id, 'not sent')).resolves.toBe(false)
++  })
++
++  it('bounds pasted input and pending operation count rather than buffering forever', async () => {
++    const held = deferred<unknown>()
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? startReply() : (request.body as { action: string }).action === 'stop' ? { ok: true } : held.promise)
++    const { session } = await h.start()
++    const writes = Array.from({ length: 129 }, () => h.terminal.write(session.id, 'a'))
++    held.resolve({ ok: true })
++    expect((await Promise.all(writes)).every(result => result === false)).toBe(true)
++    expect(h.calls('input')).toHaveLength(0)
++    expect(h.calls('stop')).toHaveLength(1)
++    await h.terminal.dispose(session.id)
++    const next = await h.start()
++    await expect(h.terminal.write(next.session.id, '🐚'.repeat(20_000))).resolves.toBe(false)
++    expect(h.calls('input')).toHaveLength(0)
++  })
++
++  it('returns only a fresh best-effort cwd, never the initial or prior value', async () => {
++    let cwd: unknown = '/changed'
++    const h = harness(async request => (request.body as { action: string }).action === 'start' ? startReply() : { ok: true, cwd })
++    const { session } = await h.start()
++    await expect(h.terminal.cwd(session.id)).resolves.toBe('/changed')
++    cwd = null
++    await expect(h.terminal.cwd(session.id)).resolves.toBeNull()
++    cwd = 42
++    await expect(h.terminal.cwd(session.id)).resolves.toBeNull()
++    await expect(h.terminal.cwd('another-session')).resolves.toBeNull()
++  })
++
++  it('captures per-session transport and profile even after the active context changes', async () => {
++    const h = harness()
++    const { session } = await h.start()
++    const otherRequest = vi.fn()
++    h.captureRequest.mockImplementation(() => otherRequest)
++    h.getProfile.mockReturnValue('other-profile')
++    h.getConnectionId.mockReturnValue('other-host')
++    await h.terminal.write(session.id, 'owned input')
++    await h.terminal.resize(session.id, { cols: 90, rows: 30 })
++    await h.terminal.cwd(session.id)
++    await h.terminal.dispose(session.id)
++    expect(otherRequest).not.toHaveBeenCalled()
++    expect(h.captureRequest).toHaveBeenCalledOnce()
++    expect(h.request.mock.calls.every(([request]) => (request.body as { profile: string }).profile === 'default')).toBe(true)
++  })
++
++  it('uses unique server sessions per tab, caps live tabs and cleans only its own ids on pagehide', async () => {
++    const h = harness()
++    const opened = []
++
++    for (let i = 0; i < 4; i += 1) { opened.push(await h.start()) }
++    expect(new Set(opened.map(({ session }) => session.id)).size).toBe(4)
++    await expect(h.terminal.start()).rejects.toThrow('Close an existing terminal')
++    await expect(h.terminal.write('not-owned', 'x')).resolves.toBe(false)
++    await expect(h.terminal.resize('not-owned', { cols: 80, rows: 24 })).resolves.toBe(false)
++    await expect(h.terminal.dispose('not-owned')).resolves.toBe(false)
++    window.dispatchEvent(new Event('pagehide'))
++    await flush()
++    expect(h.calls('stop').map(request => (request.body as { sessionKey: string }).sessionKey).sort()).toEqual(opened.map(({ session }) => session.id).sort())
++    expect(h.calls('stop').every(request => request.keepalive === true)).toBe(true)
++    expect(opened.every(({ socket }) => socket.close.mock.calls.length === 1)).toBe(true)
++  })
++
++  it('ignores a broken subscriber without losing exit delivery or cleanup', async () => {
++    const h = harness()
++    const { session, socket } = await h.start()
++    h.terminal.onData(session.id, () => { throw new Error('unmounted') })
++    h.terminal.onExit(session.id, () => { throw new Error('unmounted') })
++    const remaining = vi.fn()
++    h.terminal.onExit(session.id, remaining)
++    socket.disconnect()
++    await flush()
++    expect(remaining).toHaveBeenCalledOnce()
++    expect(h.calls('stop')).toHaveLength(1)
++  })
++})
++
++describe('web shim terminal integration', () => {
++  beforeEach(() => {
++    vi.resetModules()
++    vi.stubGlobal('hermesDesktop', undefined)
++    vi.stubGlobal('__HERMES_BASE_PATH__', '/desktop')
++    vi.stubGlobal('__HERMES_SESSION_TOKEN__', 'native-api-secret')
++    sessionStorage.clear()
++  })
++
++  async function install(fetcher: (input: unknown, init?: RequestInit) => Promise<Response>) {
++    vi.stubGlobal('fetch', vi.fn(fetcher))
++    await import('./web-shim')
++
++    return window.hermesDesktop.terminal
++  }
++
++  it('uses the existing authenticated API path, freezes auth/base per start and keeps API credentials off the socket URL', async () => {
++    const terminal = await install(async (_input, init) => {
++      const body = JSON.parse(String(init?.body))
++
++      return Response.json(body.action === 'start' ? startReply() : { ok: true, cwd: null })
++    })
++
++    const pending = terminal.start({ cols: 90, rows: 26 })
++    await flush()
++    const socket = FakeSocket.instances[0]
++    socket.open()
++    const session = await pending
++    vi.stubGlobal('__HERMES_BASE_PATH__', '/some-other-base')
++    vi.stubGlobal('__HERMES_SESSION_TOKEN__', 'changed-secret')
++    await terminal.write(session.id, 'pwd\r')
++    await terminal.dispose(session.id)
++    const calls = vi.mocked(fetch).mock.calls
++    expect(calls).toHaveLength(3)
++
++    for (const [url, init] of calls) {
++      expect(url).toBe(`${window.location.origin}/desktop/api/desktop-terminal`)
++      expect(init).toMatchObject({ method: 'POST', credentials: 'omit', redirect: 'error', headers: { Authorization: 'Bearer native-api-secret', 'Content-Type': 'application/json' } })
++    }
++
++    expect(socket.url).not.toContain('native-api-secret')
++    expect(socket.url).not.toContain('session-secret')
++    expect(calls[2][1]?.keepalive).toBe(true)
++  })
++
++  it.each([404, 405, 501, 200])('reports unsupported HTML server HTTP %s honestly instead of a JSON parse crash', async status => {
++    const terminal = await install(async () => new Response('<html>Old server SPA</html>', { status }))
++    await expect(terminal.start()).rejects.toThrow(/browser terminals.*support|support.*browser terminals/)
++    expect(FakeSocket.instances).toHaveLength(0)
++    expect(fetch).toHaveBeenCalledOnce()
++  })
++
++  it('retains a structured server denial and HTTP failures without mislabeling them successful', async () => {
++    const terminal = await install(async () => Response.json({ error: 'Terminal request is not authenticated' }, { status: 401 }))
++    await expect(terminal.start()).rejects.toThrow('Terminal request is not authenticated')
++    expect(fetch).toHaveBeenCalledOnce()
++  })
++
++  it('retains a structured 404 from a capable server rather than claiming the capability is missing', async () => {
++    const terminal = await install(async () => Response.json({ error: 'Managed gateway container not found' }, { status: 404 }))
++    await expect(terminal.start()).rejects.toThrow('Managed gateway container not found')
++  })
++
++  it('refuses redirecting authenticated terminal requests instead of forwarding their POST body', async () => {
++    const redirected = vi.fn()
++
++    const terminal = await install(async (_input, init) => {
++      if (init?.redirect === 'error') {
++        throw new TypeError('fetch failed: unexpected redirect')
++      }
++
++      redirected(init?.body)
++
++      return Response.json(startReply())
++    })
++
++    await expect(terminal.start()).rejects.toThrow('unexpected redirect')
++    expect(redirected).not.toHaveBeenCalled()
++    expect(fetch).toHaveBeenCalledOnce()
++  })
++
++  it('rejects malformed API-base configuration that would send credentials to another origin', async () => {
++    vi.stubGlobal('__HERMES_BASE_PATH__', 'https://evil.example')
++    const terminal = await install(async () => Response.json(startReply()))
++    await expect(terminal.start()).rejects.toThrow('must stay on this server')
++    expect(fetch).not.toHaveBeenCalled()
++  })
++
++  it('aborts a stuck HTTP start at its deadline', async () => {
++    let signal: AbortSignal | null | undefined
++
++    const terminal = await install(async (_input, init) => {
++      signal = init?.signal
++
++      return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))
++    })
++
++    const rejected = expect(terminal.start()).rejects.toThrow(/timed out|Aborted/)
++    await vi.advanceTimersByTimeAsync(20_000)
++    await rejected
++    expect(signal?.aborted).toBe(true)
++    expect(fetch).toHaveBeenCalledOnce()
++  })
++
++  it('leaves an existing Electron bridge untouched', async () => {
++    const nativeTerminal = { start: vi.fn() }
++    const nativeBridge = { terminal: nativeTerminal }
++    vi.stubGlobal('hermesDesktop', nativeBridge)
++    const fetcher = vi.fn()
++    await install(fetcher)
++    expect(window.hermesDesktop).toBe(nativeBridge)
++    expect(window.hermesDesktop.terminal).toBe(nativeTerminal)
++    expect(fetcher).not.toHaveBeenCalled()
++    expect(FakeSocket.instances).toHaveLength(0)
++  })
++})
+diff --git a/apps/desktop/src/lib/web-terminal.ts b/apps/desktop/src/lib/web-terminal.ts
+new file mode 100644
+index 0000000000..b8f1b527c3
+--- /dev/null
++++ b/apps/desktop/src/lib/web-terminal.ts
+@@ -0,0 +1,699 @@
++import type { HermesTerminalExit, HermesTerminalSession } from '@/global'
++
++interface TerminalRequest {
++  path: string
++  method: string
++  body: unknown
++  timeoutMs: number
++  keepalive?: boolean
++}
++
++type TerminalTransport = <T>(request: TerminalRequest) => Promise<T>
++
++interface WebTerminalOptions {
++  captureRequest: () => TerminalTransport
++  getProfile: () => string | null
++  getConnectionId: () => string | null
++}
++
++interface SessionIdentity {
++  sessionKey: string
++  sessionToken: string
++  profile: string
++  request: TerminalTransport
++}
++
++interface InputBatch {
++  parts: string[]
++  result: Promise<boolean>
++}
++
++interface Session extends SessionIdentity {
++  dataListeners: Set<(data: string) => void>
++  exitListeners: Set<(exit: HermesTerminalExit) => void>
++  output: string[]
++  outputBytes: number
++  exit: HermesTerminalExit | null
++  serverClosed: boolean
++  cleanupConfirmed: boolean
++  disposed: boolean
++  disconnect: (() => void) | null
++  rejectStart: ((error: Error) => void) | null
++  stop: Promise<boolean> | null
++  queue: Promise<unknown>
++  queuedBytes: number
++  queuedOperations: number
++  pendingInput: InputBatch | null
++}
++
++const API_PATH = '/api/desktop-terminal'
++const START_TIMEOUT_MS = 20_000
++const CONNECT_TIMEOUT_MS = 10_000
++const CONTROL_TIMEOUT_MS = 10_000
++const MAX_SESSIONS = 4
++const MAX_INPUT_BYTES = 4096
++const MAX_QUEUED_BYTES = 64 * 1024
++const MAX_QUEUED_OPERATIONS = 128
++const MAX_OUTPUT_BYTES = 256 * 1024
++const MAX_OUTPUT_CHUNKS = 256
++const encoder = new TextEncoder()
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return value !== null && typeof value === 'object' && !Array.isArray(value)
++}
++
++function checkedReply(value: unknown): Record<string, unknown> {
++  if (!isRecord(value) || value.ok !== true) {
++    throw new Error(
++      isRecord(value) && typeof value.error === 'string'
++        ? value.error
++        : 'The server did not confirm the terminal operation'
++    )
++  }
++
++  return value
++}
++
++function identity(value: unknown, profile: string, request: TerminalTransport): SessionIdentity | null {
++  if (
++    !isRecord(value) ||
++    typeof value.sessionKey !== 'string' ||
++    !/^[a-zA-Z0-9:_-]{1,256}$/.test(value.sessionKey) ||
++    typeof value.sessionToken !== 'string' ||
++    !value.sessionToken ||
++    value.sessionToken.length > 4096
++  ) {
++    return null
++  }
++
++  return { sessionKey: value.sessionKey, sessionToken: value.sessionToken, profile, request }
++}
++
++function socketUrl(path: unknown): string {
++  const origin = new URL(window.location.origin)
++
++  if (
++    !['http:', 'https:'].includes(origin.protocol) ||
++    typeof path !== 'string' ||
++    path.length > 8192 ||
++    !/^\/_sidecar\/api\/terminal\/ws\?[^#\\\s]+$/.test(path)
++  ) {
++    throw new Error('The server returned an invalid terminal WebSocket path')
++  }
++
++  const url = new URL(path, origin)
++  const params = url.searchParams
++
++  if (
++    url.origin !== origin.origin ||
++    url.pathname !== '/_sidecar/api/terminal/ws' ||
++    url.username ||
++    url.password ||
++    url.hash ||
++    params.getAll('token').length !== 1 ||
++    !params.get('token') ||
++    params.getAll('includeScrollback').length > 1 ||
++    (params.has('includeScrollback') && params.get('includeScrollback') !== '1') ||
++    [...params.keys()].some(key => key !== 'token' && key !== 'includeScrollback')
++  ) {
++    throw new Error('The server returned an invalid terminal WebSocket path')
++  }
++
++  url.protocol = origin.protocol === 'https:' ? 'wss:' : 'ws:'
++
++  return url.toString()
++}
++
++function dimensions(cols = 80, rows = 24): { cols: number; rows: number } {
++  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 200) {
++    throw new Error('Invalid terminal dimensions')
++  }
++
++  // xterm may briefly fit a narrow/hidden pane below the PTY's minimum width.
++  return { cols: Math.max(10, cols), rows }
++}
++
++function inputChunks(data: string): string[] {
++  const chunks: string[] = []
++  let chunk = ''
++  let bytes = 0
++
++  // Iterate code points, not UTF-16 units: a paste must not split an emoji or
++  // exceed the server's UTF-8 byte limit even when every character is wide.
++  for (const character of data) {
++    const size = encoder.encode(character).byteLength
++
++    if (bytes + size > MAX_INPUT_BYTES) {
++      chunks.push(chunk)
++      chunk = ''
++      bytes = 0
++    }
++
++    chunk += character
++    bytes += size
++  }
++
++  if (chunk) {
++    chunks.push(chunk)
++  }
++
++  return chunks
++}
++
++/** Browser implementation of the existing, narrow Electron PTY capability.
++ * Credentials stay in this closure; a renderer tab only receives its own id.
++ * There is deliberately no automatic reconnect/start retry: a failed dial may
++ * already own a PTY, so recovery must close that session before starting anew.
++ */
++export function createWebTerminal(options: WebTerminalOptions): Window['hermesDesktop']['terminal'] {
++  const sessions = new Map<string, Session>()
++  let pendingStarts = 0
++  let pageGeneration = 0
++  let watchingPage = false
++
++  function watchPage() {
++    if (!watchingPage) {
++      window.addEventListener('pagehide', onPageHide)
++      watchingPage = true
++    }
++  }
++
++  function unwatchPage() {
++    if (watchingPage && !pendingStarts && !sessions.size) {
++      window.removeEventListener('pagehide', onPageHide)
++      watchingPage = false
++    }
++  }
++
++  function post(request: TerminalTransport, body: Record<string, unknown>, deadline: number, onLate?: (value: unknown) => void): Promise<unknown> {
++    const timeoutMs = deadline - Date.now()
++
++    if (timeoutMs <= 0) {
++      return Promise.reject(new Error('Terminal operation timed out'))
++    }
++
++    // fetchJson aborts the HTTP request too. The outer deadline also bounds a
++    // delayed transport/body reader; late start replies still get scoped cleanup.
++    return new Promise((resolve, reject) => {
++      let settled = false
++
++      const timer = window.setTimeout(() => {
++        settled = true
++        reject(new Error('Terminal operation timed out'))
++      }, timeoutMs)
++
++      Promise.resolve()
++        .then(() => request<unknown>({
++          path: API_PATH,
++          method: 'POST',
++          body,
++          timeoutMs,
++          ...(body.action === 'stop' ? { keepalive: true } : {})
++        }))
++        .then(value => {
++          if (settled) {
++            onLate?.(value)
++
++            return
++          }
++
++          settled = true
++          window.clearTimeout(timer)
++          resolve(value)
++        }, error => {
++          if (!settled) {
++            settled = true
++            window.clearTimeout(timer)
++            reject(error)
++          }
++        })
++    })
++  }
++
++  function control(session: SessionIdentity, action: string, fields: Record<string, unknown> = {}, deadline = Date.now() + CONTROL_TIMEOUT_MS) {
++    return post(session.request, { ...fields, action, sessionKey: session.sessionKey, sessionToken: session.sessionToken, profile: session.profile }, deadline)
++      .then(checkedReply)
++  }
++
++  function stop(session: Session): Promise<boolean> {
++    if (session.cleanupConfirmed) {
++      return Promise.resolve(true)
++    }
++
++    session.stop ??= control(session, 'stop').then(() => true, () => false)
++
++    return session.stop
++  }
++
++  function cleanupLateStart(value: unknown, profile: string, request: TerminalTransport) {
++    const owned = identity(value, profile, request)
++
++    if (owned && !sessions.has(owned.sessionKey)) {
++      // No blind retries if the HTTP outcome is uncertain. Native sessions also
++      // have server-side unattached/disconnected expiry for a lost response.
++      void control(owned, 'stop').catch(() => {})
++    }
++  }
++
++  function notify<T>(listeners: Set<(value: T) => void>, value: T) {
++    for (const listener of [...listeners]) {
++      if (listeners.has(listener)) {
++        try {
++          listener(value)
++        } catch {
++          // One unmounted/broken subscriber must not prevent PTY cleanup or
++          // delivery to another subscriber. Never log terminal output/tickets.
++        }
++      }
++    }
++  }
++
++  function finish(session: Session, exit: HermesTerminalExit, error?: string) {
++    if (session.exit || session.disposed) {
++      return
++    }
++
++    session.exit = exit
++
++    if (error) {
++      const message = `\r\n${error}\r\n`
++
++      if (session.dataListeners.size) {
++        notify(session.dataListeners, message)
++      } else {
++        session.output = [message]
++        session.outputBytes = encoder.encode(message).byteLength
++      }
++    }
++
++    session.rejectStart?.(new Error(error || 'Terminal closed before it connected'))
++    session.disconnect?.()
++    notify(session.exitListeners, exit)
++  }
++
++  function fail(session: Session, message: string) {
++    finish(session, { code: null, signal: null }, message)
++    void stop(session)
++  }
++
++  function output(session: Session, data: string) {
++    if (session.dataListeners.size) {
++      notify(session.dataListeners, data)
++
++      return
++    }
++
++    const size = encoder.encode(data).byteLength
++
++    if (session.output.length >= MAX_OUTPUT_CHUNKS || session.outputBytes + size > MAX_OUTPUT_BYTES) {
++      fail(session, 'Terminal output exceeded its buffer limit; open a new terminal to continue')
++
++      return
++    }
++
++    session.output.push(data)
++    session.outputBytes += size
++  }
++
++  function connect(session: Session, path: unknown): Promise<void> {
++    return new Promise((resolve, reject) => {
++      const socket = new WebSocket(socketUrl(path))
++      let connected = false
++      const timer = window.setTimeout(() => fail(session, 'Terminal WebSocket connection timed out'), CONNECT_TIMEOUT_MS)
++
++      session.rejectStart = reject
++
++      session.disconnect = () => {
++        window.clearTimeout(timer)
++        socket.removeEventListener('open', onOpen)
++        socket.removeEventListener('message', onMessage)
++        socket.removeEventListener('error', onError)
++        socket.removeEventListener('close', onClose)
++        session.disconnect = null
++        session.rejectStart = null
++
++        try {
++          socket.close()
++        } catch {
++          // HTTP stop and server-side disconnect expiry still own cleanup.
++        }
++      }
++
++      function onOpen() {
++        connected = true
++        window.clearTimeout(timer)
++        session.rejectStart = null
++        resolve()
++      }
++
++      function onMessage(event: MessageEvent) {
++        if (session.disposed || session.exit) {
++          return
++        }
++
++        try {
++          if (typeof event.data !== 'string' || event.data.length > MAX_OUTPUT_BYTES * 6 + 1024) {
++            throw new Error('Invalid terminal frame')
++          }
++
++          const message: unknown = JSON.parse(event.data)
++
++          if (!isRecord(message)) {
++            throw new Error('Invalid terminal frame')
++          }
++
++          if (message.type === 'output' && typeof message.data === 'string' && encoder.encode(message.data).byteLength <= MAX_OUTPUT_BYTES) {
++            output(session, message.data)
++          } else if (message.type === 'closed') {
++            if (
++              !(message.exitCode === null || (typeof message.exitCode === 'number' && Number.isInteger(message.exitCode))) ||
++              !(message.signal === null || (typeof message.signal === 'string' && message.signal.length <= 64))
++            ) {
++              throw new Error('Invalid terminal exit')
++            }
++
++            session.serverClosed = true
++            session.cleanupConfirmed = message.cleanupConfirmed === true
++            finish(session, { code: message.exitCode as number | null, signal: message.signal as string | null })
++          } else if (message.type !== 'pong') {
++            throw new Error('Invalid terminal frame')
++          }
++        } catch {
++          fail(session, 'Terminal received an invalid server message')
++        }
++      }
++
++      function onError() {
++        fail(session, connected ? 'Terminal connection failed; open a new terminal to continue' : 'Could not attach the terminal WebSocket (the ticket may have expired)')
++      }
++
++      function onClose() {
++        onError()
++      }
++
++      socket.addEventListener('open', onOpen)
++      socket.addEventListener('message', onMessage)
++      socket.addEventListener('error', onError)
++      socket.addEventListener('close', onClose)
++    })
++  }
++
++  function reserveInput(session: Session, bytes: number): boolean {
++    if (session.disposed || session.exit) {
++      return false
++    }
++
++    if (session.queuedBytes + bytes > MAX_QUEUED_BYTES || session.queuedOperations >= MAX_QUEUED_OPERATIONS) {
++      fail(session, 'Terminal input exceeded its queue limit; open a new terminal to continue')
++
++      return false
++    }
++
++    session.queuedBytes += bytes
++    session.queuedOperations += 1
++
++    return true
++  }
++
++  function releaseInput(session: Session, bytes: number) {
++    session.queuedBytes -= bytes
++    session.queuedOperations -= 1
++  }
++
++  function enqueue(session: Session, bytes: number, work: (deadline: number) => Promise<void>): Promise<boolean> {
++    if (!reserveInput(session, bytes)) {
++      return Promise.resolve(false)
++    }
++
++    const deadline = Date.now() + CONTROL_TIMEOUT_MS
++
++    const result = session.queue.then(async () => {
++      if (session.disposed || session.exit) {
++        return false
++      }
++
++      try {
++        await work(deadline)
++
++        return !session.disposed && !session.exit
++      } catch {
++        fail(session, 'Terminal control failed; open a new terminal to continue')
++
++        return false
++      }
++    }).finally(() => releaseInput(session, bytes))
++
++    session.queue = result
++
++    return result
++  }
++
++  async function dispose(id: string): Promise<boolean> {
++    const session = sessions.get(id)
++
++    if (!session) {
++      return false
++    }
++
++    session.disposed = true
++    session.dataListeners.clear()
++    session.exitListeners.clear()
++    session.output = []
++    session.outputBytes = 0
++    session.pendingInput = null
++    session.rejectStart?.(new Error('Terminal was disposed before it connected'))
++    session.disconnect?.()
++    const stopped = await stop(session)
++    sessions.delete(id)
++    unwatchPage()
++
++    return stopped
++  }
++
++  function onPageHide() {
++    pageGeneration += 1
++
++    for (const id of sessions.keys()) {
++      void dispose(id)
++    }
++  }
++
++  return {
++    async start(settings = {}): Promise<HermesTerminalSession> {
++      const profile = options.getProfile() || 'default'
++      const connection = options.getConnectionId()
++
++      if (connection && connection !== 'local') {
++        throw new Error('Browser terminals are not available for the selected remote connection')
++      }
++
++      if (profile !== 'default') {
++        throw new Error('Browser terminals currently support only the default profile')
++      }
++
++      const size = dimensions(settings.cols, settings.rows)
++
++      if (settings.cwd !== undefined && (typeof settings.cwd !== 'string' || settings.cwd.length > 4096 || settings.cwd.includes('\0'))) {
++        throw new Error('Invalid terminal working directory')
++      }
++
++      if (pendingStarts + sessions.size >= MAX_SESSIONS) {
++        throw new Error('Close an existing terminal before opening another')
++      }
++
++      const request = options.captureRequest()
++      pendingStarts += 1
++      watchPage()
++      const generation = pageGeneration
++      let awaitingReply = true
++      let session: Session | undefined
++      let response: unknown
++
++      try {
++        response = await post(request, { action: 'start', ...size, ...(settings.cwd !== undefined ? { cwd: settings.cwd } : {}), profile }, Date.now() + START_TIMEOUT_MS, value => cleanupLateStart(value, profile, request))
++        pendingStarts -= 1
++        awaitingReply = false
++        const owned = identity(response, profile, request)
++
++        if (!owned) {
++          checkedReply(response)
++          throw new Error('The server returned invalid terminal session credentials')
++        }
++
++        if (sessions.has(owned.sessionKey)) {
++          throw new Error('The server returned an invalid or duplicate terminal session')
++        }
++
++        session = { ...owned, dataListeners: new Set(), exitListeners: new Set(), output: [], outputBytes: 0, exit: null, serverClosed: false, cleanupConfirmed: false, disposed: false, disconnect: null, rejectStart: null, stop: null, queue: Promise.resolve(), queuedBytes: 0, queuedOperations: 0, pendingInput: null }
++        sessions.set(owned.sessionKey, session)
++        const reply = checkedReply(response)
++
++        if (typeof reply.cwd !== 'string' || reply.cwd.length > 4096 || typeof reply.shell !== 'string' || !reply.shell || reply.shell.length > 128) {
++          throw new Error('The server returned invalid terminal session details')
++        }
++
++        if (generation !== pageGeneration) {
++          throw new Error('Terminal start was cancelled when the page closed')
++        }
++
++        await connect(session, reply.webSocketPath)
++
++        if (session.disposed || generation !== pageGeneration) {
++          throw new Error('Terminal start was cancelled when the page closed')
++        }
++
++        if (session.exit && !session.serverClosed) {
++          throw new Error('Terminal connection failed before it became ready')
++        }
++
++        return { id: session.sessionKey, cwd: reply.cwd, shell: reply.shell }
++      } catch (error) {
++        if (session) {
++          await dispose(session.sessionKey)
++        } else {
++          cleanupLateStart(response, profile, request)
++        }
++
++        throw error
++      } finally {
++        if (awaitingReply) {
++          pendingStarts -= 1
++        }
++
++        unwatchPage()
++      }
++    },
++    dispose,
++    // hermes-fork: the renderer calls attach() after registering onData/onExit
++    // (upstream Desktop's attach-after-subscribe contract). This transport
++    // already buffers output until a listener subscribes, so attach only
++    // confirms the session is still alive.
++    attach(id) {
++      const session = sessions.get(id)
++
++      return Promise.resolve(Boolean(session && !session.disposed))
++    },
++    async cwd(id) {
++      const session = sessions.get(id)
++
++      if (!session || session.disposed || session.exit) {
++        return null
++      }
++
++      try {
++        const reply = await control(session, 'cwd')
++
++        return !session.disposed && !session.exit && typeof reply.cwd === 'string' && reply.cwd ? reply.cwd : null
++      } catch {
++        return null
++      }
++    },
++    resize(id, size) {
++      const session = sessions.get(id)
++
++      if (!session) {
++        return Promise.resolve(false)
++      }
++
++      try {
++        const checked = dimensions(size.cols, size.rows)
++        // A resize is an ordering boundary: later input cannot join a batch
++        // queued before this resize.
++        session.pendingInput = null
++
++        return enqueue(session, 0, async deadline => { await control(session, 'resize', checked, deadline) })
++      } catch {
++        return Promise.resolve(false)
++      }
++    },
++    write(id, data) {
++      const session = sessions.get(id)
++
++      if (!session || typeof data !== 'string') {
++        return Promise.resolve(false)
++      }
++
++      const bytes = data.length <= MAX_QUEUED_BYTES ? encoder.encode(data).byteLength : MAX_QUEUED_BYTES + 1
++
++      if (!bytes) {
++        return Promise.resolve(!session.disposed && !session.exit)
++      }
++
++      if (session.pendingInput) {
++        if (!reserveInput(session, bytes)) {
++          return Promise.resolve(false)
++        }
++
++        session.pendingInput.parts.push(data)
++
++        return session.pendingInput.result.finally(() => releaseInput(session, bytes))
++      }
++
++      // Batch keystrokes that arrive while an earlier HTTP control is in flight.
++      // This keeps high-RTT typing to one bounded request per batch, not one RTT
++      // per character. Adjacent writes share acknowledgement, never a retry.
++      const batch: InputBatch = { parts: [data], result: Promise.resolve(false) }
++      batch.result = enqueue(session, bytes, async deadline => {
++        if (session.pendingInput === batch) {
++          session.pendingInput = null
++        }
++
++        for (const chunk of inputChunks(batch.parts.join(''))) {
++          if (session.disposed || session.exit) {
++            return
++          }
++
++          await control(session, 'input', { data: chunk }, deadline)
++        }
++      })
++
++      if (!session.disposed && !session.exit) {
++        session.pendingInput = batch
++      }
++
++      return batch.result
++    },
++    onData(id, callback) {
++      const session = sessions.get(id)
++
++      if (!session || session.disposed) {
++        return () => {}
++      }
++
++      const listener = (data: string) => callback(data)
++      session.dataListeners.add(listener)
++      const buffered = session.output
++      session.output = []
++      session.outputBytes = 0
++
++      for (const data of buffered) {
++        if (session.dataListeners.has(listener)) {
++          notify(new Set([listener]), data)
++        }
++      }
++
++      return () => { session.dataListeners.delete(listener) }
++    },
++    onExit(id, callback) {
++      const session = sessions.get(id)
++
++      if (!session || session.disposed) {
++        return () => {}
++      }
++
++      const listener = (exit: HermesTerminalExit) => callback(exit)
++      session.exitListeners.add(listener)
++
++      if (session.exit) {
++        const exit = session.exit
++        queueMicrotask(() => {
++          if (session.exitListeners.has(listener)) {
++            notify(new Set([listener]), exit)
++          }
++        })
++      }
++
++      return () => { session.exitListeners.delete(listener) }
++    }
++  }
++}
+diff --git a/apps/desktop/src/main.tsx b/apps/desktop/src/main.tsx
+index 0e9b8cc250..1cc2e60557 100644
+--- a/apps/desktop/src/main.tsx
++++ b/apps/desktop/src/main.tsx
+@@ -1,3 +1,6 @@
++// hermes-fork: web-shim — install the hosted-web `window.hermesDesktop` bridge
++// before anything reads it. No-op under Electron (preload already defined it).
++import './lib/web-shim'
+ import './styles.css'
+ // Side-effect: reports in-flight turns to the main process for the quit guard.
+ import './store/active-work'
+diff --git a/apps/desktop/src/plugins/hivra/dashboard-bridge.ts b/apps/desktop/src/plugins/hivra/dashboard-bridge.ts
+new file mode 100644
+index 0000000000..729110330e
+--- /dev/null
++++ b/apps/desktop/src/plugins/hivra/dashboard-bridge.ts
+@@ -0,0 +1,119 @@
++/**
++ * Dashboard <-> chat bridge for the hosted web client.
++ *
++ * The Hivra dashboard embeds this renderer in a cross-origin iframe and talks to
++ * it with two postMessage types (guards mirror the originals: only when actually
++ * framed, only from `window.parent`, only `source: 'hermes-dashboard'`):
++ *
++ *   hermes-dashboard:appearance    { appearance: { colorScheme } } -> light/dark sync
++ *   hermes-dashboard:send-message  { text }                        -> send as the user
++ *
++ * Plain TS on purpose: it registers at plugin load, BEFORE React mounts, so an
++ * early message from the dashboard is never missed. The live theme mode setter
++ * only exists once the shell is mounted, so appearance messages that arrive
++ * earlier are parked in `pendingMode` and applied by `attachModeSink`.
++ */
++
++export type DashboardColorScheme = 'dark' | 'light'
++
++export const DASHBOARD_APPEARANCE_MESSAGE_TYPE = 'hermes-dashboard:appearance'
++export const DASHBOARD_SEND_MESSAGE_TYPE = 'hermes-dashboard:send-message'
++export const DASHBOARD_MESSAGE_SOURCE = 'hermes-dashboard'
++
++// The composer may not be mounted yet when the dashboard fires a starter prompt.
++const SUBMIT_RETRY_MS = 400
++const SUBMIT_RETRY_LIMIT = 25
++
++/** Mode hint the dashboard pre-encodes on the iframe URL (`?theme=`), when framed. */
++export function readDashboardModeFromUrl(win: Window = window): DashboardColorScheme | null {
++  if (win === win.parent) {
++    return null
++  }
++
++  const theme = new URLSearchParams(win.location.search).get('theme')
++
++  if (theme === 'dark') {
++    return 'dark'
++  }
++
++  return theme === 'hermesos-light' || theme === 'light' ? 'light' : null
++}
++
++export interface DashboardBridgeDeps {
++  /** Send `text` as if the user typed it; false when no composer claimed it. */
++  submit: (text: string) => boolean
++  /** Scoped timer (cleared when the plugin unloads). */
++  setTimeout: (fn: () => void, ms: number) => () => void
++  win?: Window
++}
++
++export interface DashboardBridge {
++  /** Hand over the live mode setter once the theme provider is mounted. */
++  attachModeSink: (apply: ((mode: DashboardColorScheme) => void) | null) => void
++  /** The window `message` listener; exported for tests. */
++  onMessage: (event: MessageEvent) => void
++}
++
++export function createDashboardBridge({ submit, setTimeout, win = window }: DashboardBridgeDeps): DashboardBridge {
++  let sink: ((mode: DashboardColorScheme) => void) | null = null
++  let pendingMode: DashboardColorScheme | null = null
++
++  const submitWithRetry = (text: string, attempt = 0) => {
++    if (submit(text) || attempt >= SUBMIT_RETRY_LIMIT) {
++      return
++    }
++
++    setTimeout(() => submitWithRetry(text, attempt + 1), SUBMIT_RETRY_MS)
++  }
++
++  return {
++    attachModeSink(apply) {
++      sink = apply
++
++      if (apply && pendingMode) {
++        const mode = pendingMode
++
++        pendingMode = null
++        apply(mode)
++      }
++    },
++    onMessage(event) {
++      if (win === win.parent || event.source !== win.parent) {
++        return
++      }
++
++      const data = event.data as {
++        appearance?: { colorScheme?: unknown }
++        source?: unknown
++        text?: unknown
++        type?: unknown
++      } | null
++
++      if (!data || typeof data !== 'object' || data.source !== DASHBOARD_MESSAGE_SOURCE) {
++        return
++      }
++
++      if (data.type === DASHBOARD_APPEARANCE_MESSAGE_TYPE) {
++        const scheme = data.appearance?.colorScheme
++
++        if (scheme === 'dark' || scheme === 'light') {
++          if (sink) {
++            sink(scheme)
++          } else {
++            pendingMode = scheme
++          }
++        }
++
++        return
++      }
++
++      if (data.type === DASHBOARD_SEND_MESSAGE_TYPE && typeof data.text === 'string') {
++        const text = data.text.trim()
++
++        if (text) {
++          submitWithRetry(text)
++        }
++      }
++    }
++  }
++}
+diff --git a/apps/desktop/src/plugins/hivra/plugin.tsx b/apps/desktop/src/plugins/hivra/plugin.tsx
+new file mode 100644
+index 0000000000..864f1bdab1
+--- /dev/null
++++ b/apps/desktop/src/plugins/hivra/plugin.tsx
+@@ -0,0 +1,226 @@
++/**
++ * Hivra hosted-web integration, as one add-only bundled plugin.
++ *
++ * It replaces what used to be hunks in upstream-owned files: the Hivra theme
++ * (themes/presets.ts), the dashboard appearance / starter-prompt listeners
++ * (themes/context.tsx, contrib/wiring.tsx), the Admin Panel sidebar row
++ * (app/types.ts, sidebar/index.tsx, use-session-actions) and phone polish.
++ *
++ * INERT outside the hosted web client: `window.__HERMES_WEB_CLIENT__` is set by
++ * lib/web-shim.ts only when it installs the browser bridge, so a Desktop
++ * (Electron) build that happens to bundle this file registers nothing.
++ */
++
++import './web.css'
++
++import {
++  Codicon,
++  type HermesPlugin,
++  host,
++  type RouteContribution,
++  ROUTES_AREA,
++  SIDEBAR_NAV_AREA,
++  type SidebarNavContribution,
++  STATUSBAR_AREAS,
++  THEMES_AREA,
++  useTheme
++} from '@hermes/plugin-sdk'
++import { useEffect, useState } from 'react'
++import { useLocation } from 'react-router'
++
++import { createDashboardBridge, type DashboardBridge, readDashboardModeFromUrl } from './dashboard-bridge'
++import { HIVRA_SKIN_NAME, hivraTheme } from './themes'
++
++const ADMIN_PANEL_PATH = '/admin-panel'
++const PHONE_PANES = ['sessions', 'files', 'review'] as const
++
++// Plugins may import only the SDK, so these mirror the app's own constants. They are pinned
++// by src/contrib/hivra-plugin.test.tsx against the real exports (themes/context.tsx,
++// components/pane-shell): if upstream renames one, that test fails instead of a silent no-op.
++export const SKIN_STORAGE_KEY = 'hermes-desktop-theme-v2'
++export const MODE_STORAGE_KEY = 'hermes-desktop-mode-v1'
++export const PANE_REVEAL_EVENT = 'hermes:pane-toggle-reveal'
++
++const readStored = (key: string): null | string => {
++  try {
++    return window.localStorage.getItem(key)
++  } catch {
++    return null
++  }
++}
++
++const writeStored = (key: string, value: string) => {
++  try {
++    window.localStorage.setItem(key, value)
++  } catch {
++    /* private mode: the app default applies */
++  }
++}
++
++const isWebClient = () =>
++  typeof window !== 'undefined' && Boolean((window as unknown as { __HERMES_WEB_CLIENT__?: boolean }).__HERMES_WEB_CLIENT__)
++
++interface AdminBridge {
++  getAdminPanelUrl?: () => string
++  openAdminPanel?: () => boolean
++}
++
++const adminBridge = (): AdminBridge => (typeof window === 'undefined' ? {} : (window.hermesDesktop as AdminBridge) ?? {})
++
++/**
++ * First run paints the Hivra skin. `DEFAULT_SKIN_NAME` is upstream's constant,
++ * so the default is seeded into the storage the theme provider reads at its
++ * first render (plugins register at import time, before it mounts; the
++ * contributed theme resolves reactively). Only when UNSET: an explicit pick
++ * from Settings / Cmd+K is never overridden. Mode already defaults to `system`.
++ */
++export function seedDefaultSkin(): void {
++  if (readStored(SKIN_STORAGE_KEY) === null) {
++    writeStored(SKIN_STORAGE_KEY, HIVRA_SKIN_NAME)
++  }
++}
++
++/** Dashboard `?theme=` first-paint hint (persisted like the live message is). */
++export function seedDashboardMode(): void {
++  const hint = readDashboardModeFromUrl()
++
++  if (hint) {
++    writeStored(MODE_STORAGE_KEY, hint)
++  }
++}
++
++/** Phone: any navigation retires the pinned sidebar / files / review overlays. */
++export function closeNarrowOverlays(): void {
++  if (typeof window === 'undefined' || !host.state.viewport.get().narrow) {
++    return
++  }
++
++  for (const id of PHONE_PANES) {
++    window.dispatchEvent(new CustomEvent(PANE_REVEAL_EVENT, { detail: { id, mode: 'close' } }))
++  }
++}
++
++function enablePhoneViewport(): void {
++  window.document.documentElement.setAttribute('data-hermes-web-client', '')
++
++  // viewport-fit=cover exposes env(safe-area-inset-*) on notched phones;
++  // interactive-widget=resizes-content makes the layout viewport track the
++  // on-screen keyboard. Pinch-zoom stays enabled on purpose.
++  const meta = window.document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
++  const content = meta?.getAttribute('content') ?? ''
++
++  if (meta && !content.includes('viewport-fit')) {
++    meta.setAttribute('content', `${content}, viewport-fit=cover, interactive-widget=resizes-content`)
++  }
++}
++
++let bridge: DashboardBridge | null = null
++
++/** Mounted (renders nothing) so it can reach the router + theme provider. */
++function HostBridge() {
++  const { setMode } = useTheme()
++  const { key } = useLocation()
++
++  useEffect(() => {
++    bridge?.attachModeSink(setMode)
++
++    return () => bridge?.attachModeSink(null)
++  }, [setMode])
++
++  useEffect(closeNarrowOverlays, [key])
++
++  return null
++}
++
++let lastAutoOpen = 0
++
++/**
++ * The sidebar row routes here (a `sidebar.nav` row can only navigate, it cannot
++ * open an external tab). Opening from an effect keeps the one-click feel where
++ * the browser still honours the click's activation (Chrome); where it does not
++ * (Safari), the link below is the one tap that works.
++ *
++ * Only while the click that brought the user here is still "active": a reload or
++ * a restored route must never pop a tab (or, in an embedded browser, navigate the
++ * page away) by itself, so without live activation the link is the only door.
++ */
++export function AdminPanelPage() {
++  const [blocked, setBlocked] = useState(false)
++
++  useEffect(() => {
++    // lastAutoOpen also absorbs React StrictMode's double-run in dev.
++    if (Date.now() - lastAutoOpen < 2_000 || navigator.userActivation?.isActive === false) {
++      return
++    }
++
++    lastAutoOpen = Date.now()
++    setBlocked(adminBridge().openAdminPanel?.() === false)
++  }, [])
++
++  const href = adminBridge().getAdminPanelUrl?.() ?? '/dash/'
++
++  return (
++    <div className="grid h-full place-items-center p-6">
++      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
++        <Codicon name="dashboard" size="1.5rem" />
++        <h2 className="text-base font-semibold">Admin Panel</h2>
++        <p className="text-sm text-muted-foreground">
++          {blocked
++            ? 'Your browser blocked the new tab. Open it with the link below.'
++            : 'The Admin Panel opens in a new tab: telemetry, config, channels and logs.'}
++        </p>
++        <a
++          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
++          href={href}
++          rel="noopener noreferrer"
++          target="_blank"
++        >
++          Open Admin Panel
++        </a>
++      </div>
++    </div>
++  )
++}
++
++const plugin: HermesPlugin = {
++  id: 'hivra',
++  name: 'Hivra',
++  description: 'Hivra web client: brand theme, Admin Panel link, dashboard bridge, phone polish.',
++  register(ctx) {
++    if (!isWebClient()) {
++      return
++    }
++
++    seedDefaultSkin()
++    seedDashboardMode()
++    enablePhoneViewport()
++
++    bridge = createDashboardBridge({
++      setTimeout: ctx.setTimeout,
++      submit: text => host.composer.submit(null, text)
++    })
++    ctx.addEventListener(window, 'message', event => bridge?.onMessage(event as MessageEvent))
++    ctx.onDispose(() => {
++      bridge = null
++    })
++
++    ctx.registerMany([
++      { id: 'theme-hivra', area: THEMES_AREA, data: hivraTheme },
++      {
++        id: 'admin-panel-page',
++        area: ROUTES_AREA,
++        data: { path: ADMIN_PANEL_PATH } satisfies RouteContribution,
++        render: () => <AdminPanelPage />
++      },
++      {
++        id: 'admin-panel-nav',
++        area: SIDEBAR_NAV_AREA,
++        order: 90,
++        data: { codicon: 'dashboard', label: 'Admin Panel', path: ADMIN_PANEL_PATH } satisfies SidebarNavContribution
++      },
++      { id: 'host-bridge', area: STATUSBAR_AREAS.right, order: 999, render: () => <HostBridge /> }
++    ])
++  }
++}
++
++export default plugin
+diff --git a/apps/desktop/src/plugins/hivra/themes.ts b/apps/desktop/src/plugins/hivra/themes.ts
+new file mode 100644
+index 0000000000..b28ffa7399
+--- /dev/null
++++ b/apps/desktop/src/plugins/hivra/themes.ts
+@@ -0,0 +1,79 @@
++import type { DesktopTheme } from '@hermes/plugin-sdk'
++
++// Fallback stacks after the Hivra fonts (the SDK does not export the app's own).
++const SANS_FALLBACK =
++  '"Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif, "Apple Color Emoji", "Noto Color Emoji"'
++
++const MONO_FALLBACK = 'Menlo, Monaco, "SF Mono", monospace'
++
++/** Name painted on a hosted-web first run (see `seedDefaultSkin` in plugin.tsx). */
++export const HIVRA_SKIN_NAME = 'hivra'
++
++const HIVRA_RED = '#ff2c2d'
++const HIVRA_RED_DARK = '#ff3a3b'
++
++export const hivraTheme: DesktopTheme = {
++  name: HIVRA_SKIN_NAME,
++  label: 'Hivra',
++  description: 'Matches the Hivra dashboard — red signal, light & dark',
++  colors: {
++    background: '#fdfcf9',
++    foreground: '#1a1a1a',
++    card: '#ffffff',
++    cardForeground: '#1a1a1a',
++    muted: '#f3f1ec',
++    mutedForeground: '#6f6d68',
++    popover: '#ffffff',
++    popoverForeground: '#1a1a1a',
++    primary: HIVRA_RED,
++    primaryForeground: '#ffffff',
++    secondary: '#efece4',
++    secondaryForeground: '#242424',
++    accent: '#fdeaea',
++    accentForeground: '#1a1a1a',
++    border: 'rgba(26, 26, 26, 0.10)',
++    input: 'rgba(26, 26, 26, 0.16)',
++    ring: HIVRA_RED,
++    midground: HIVRA_RED,
++    composerRing: HIVRA_RED,
++    destructive: '#c0392b',
++    destructiveForeground: '#ffffff',
++    sidebarBackground: '#f7f4ee',
++    sidebarBorder: 'rgba(26, 26, 26, 0.08)',
++    userBubble: '#efece4',
++    userBubbleBorder: 'rgba(26, 26, 26, 0.12)'
++  },
++  darkColors: {
++    background: '#0d0d0d',
++    foreground: '#fdfcf9',
++    card: '#141414',
++    cardForeground: '#fdfcf9',
++    muted: '#1a1a1a',
++    mutedForeground: 'rgba(253, 252, 249, 0.52)',
++    popover: '#161616',
++    popoverForeground: '#fdfcf9',
++    primary: HIVRA_RED_DARK,
++    primaryForeground: '#ffffff',
++    secondary: '#1f1f1f',
++    secondaryForeground: '#e8e6e1',
++    accent: '#2a1414',
++    accentForeground: '#fdfcf9',
++    border: 'rgba(253, 252, 249, 0.12)',
++    input: 'rgba(253, 252, 249, 0.16)',
++    ring: HIVRA_RED_DARK,
++    midground: HIVRA_RED_DARK,
++    composerRing: HIVRA_RED_DARK,
++    destructive: '#e0524a',
++    destructiveForeground: '#ffffff',
++    sidebarBackground: '#0a0a0a',
++    sidebarBorder: 'rgba(253, 252, 249, 0.08)',
++    userBubble: '#1a1a1a',
++    userBubbleBorder: 'rgba(253, 252, 249, 0.14)'
++  },
++  typography: {
++    fontSans: `"Space Grotesk", ${SANS_FALLBACK}`,
++    fontMono: `"Space Mono", ${MONO_FALLBACK}`,
++    fontUrl:
++      'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap'
++  }
++}
+diff --git a/apps/desktop/src/plugins/hivra/web.css b/apps/desktop/src/plugins/hivra/web.css
+new file mode 100644
+index 0000000000..217ef8354d
+--- /dev/null
++++ b/apps/desktop/src/plugins/hivra/web.css
+@@ -0,0 +1,29 @@
++/* Hosted-web (phone / tablet browser) polish. Everything is scoped to the
++   attribute the plugin sets on <html> only for the hosted web client, so the
++   native Desktop app is never touched. Replaces the retired per-component
++   `touch:` variant patches: upstream now trusts :hover itself (styles.css
++   `@custom-variant hover`), and a tap sticks :hover, so hover-revealed
++   controls stay reachable. */
++
++/* iOS Safari zooms the page when a focused control's font is under 16px. */
++@media (hover: none) {
++  html[data-hermes-web-client] input,
++  html[data-hermes-web-client] select,
++  html[data-hermes-web-client] textarea,
++  html[data-hermes-web-client] [contenteditable='true'] {
++    font-size: max(1em, 16px);
++  }
++
++  /* Clear the iOS home indicator under the statusbar (env() is 0 elsewhere). */
++  html[data-hermes-web-client] [data-slot='statusbar'] {
++    padding-bottom: env(safe-area-inset-bottom);
++  }
++}
++
++/* Mobile Safari's 100vh is the LARGE viewport, which pushes the statusbar and
++   composer under the browser toolbar. Desktop browsers resolve dvh == vh. */
++@supports (height: 100dvh) {
++  html[data-hermes-web-client] .h-screen {
++    height: 100dvh;
++  }
++}
+diff --git a/web/inject-dash-bootstrap.cjs b/web/inject-dash-bootstrap.cjs
+new file mode 100644
+index 0000000000..ad9d39bd04
+--- /dev/null
++++ b/web/inject-dash-bootstrap.cjs
+@@ -0,0 +1,49 @@
++#!/usr/bin/env node
++/*
++ * HermesOS — /dash static-bake bootstrap injector.
++ *
++ * The dashboard SPA is baked twice: the default base=/ build (hermes_cli/web_dist,
++ * served at /desktop by the backend, which injects globals server-side) and a
++ * base=/dash build (hermes_cli/web_dist_dash) for the "Admin Panel" nav item,
++ * served as a STATIC file_server by the control-plane Caddy (no backend
++ * injection). This script splices a tiny classic <head> script into the /dash
++ * bundle's index.html that supplies the two globals src/lib/api.ts reads at
++ * import time:
++ *   - window.__HERMES_BASE_PATH__   = "/dash"  (BrowserRouter basename + API/WS/SSE URLs)
++ *   - window.__HERMES_SESSION_TOKEN__ from the #iframe_token handoff hash (#token fallback)
++ *
++ * A classic inline <head> script runs before the deferred module bundle, so the
++ * globals are set before readBasePath()/getSessionToken() first run.
++ *
++ * Usage: node inject-dash-bootstrap.cjs <path-to-index.html>
++ */
++const fs = require("fs");
++
++const file = process.argv[2];
++if (!file) {
++  console.error("inject-dash-bootstrap: missing <index.html> argument");
++  process.exit(2);
++}
++
++const boot =
++  '<script>(function(){try{' +
++  'var m=(location.hash||"").match(/[#&](?:iframe_token|token)=([^&]+)/);' +
++  'if(m&&m[1])window.__HERMES_SESSION_TOKEN__=decodeURIComponent(m[1]);' +
++  '}catch(e){}' +
++  'window.__HERMES_BASE_PATH__="/dash";' +
++  "})();</script>";
++
++let html = fs.readFileSync(file, "utf8");
++
++if (html.includes('__HERMES_BASE_PATH__="/dash"')) {
++  console.log("inject-dash-bootstrap: already present, skipping " + file);
++  process.exit(0);
++}
++if (!html.includes("</head>")) {
++  console.error("inject-dash-bootstrap: no </head> in " + file);
++  process.exit(1);
++}
++
++html = html.replace("</head>", boot + "</head>");
++fs.writeFileSync(file, html);
++console.log("inject-dash-bootstrap: injected /dash bootstrap into " + file);

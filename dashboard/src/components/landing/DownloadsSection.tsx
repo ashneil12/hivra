@@ -1,10 +1,9 @@
-import { ArrowRight, Command, Download, Monitor } from "lucide-react";
+import { ArrowRight, Command, Download } from "lucide-react";
 import { PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
 import styles from "./downloads.module.css";
 
 const PLATFORMS = [
   { id: "macos", name: "macOS", icon: Command },
-  { id: "windows", name: "Windows", icon: Monitor },
 ] as const;
 
 export default function DownloadsSection({ downloads = PUBLIC_PROJECT_LINKS.desktop, headingLevel = 2 }: { downloads?: DesktopDownloads; headingLevel?: 1 | 2 }) {

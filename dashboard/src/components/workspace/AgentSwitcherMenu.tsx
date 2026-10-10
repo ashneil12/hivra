@@ -13,8 +13,11 @@ import {
 } from "react";
 
 import { SafePortal } from "@/components/ui/SafePortal";
+import { matchesFleetQuery } from "@/lib/hivra/fleet-sections";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { unifiedStateLabel } from "@/lib/hivra/unified-agent";
+import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
+import type { RecentVisit } from "@/lib/workspace/recents";
 
 const MENU_MIN_WIDTH = 320;
 const MENU_VIEWPORT_MARGIN = 8;
@@ -31,8 +34,19 @@ export interface AgentSwitcherMenuProps {
   hermesError: string | null;
   hivraError: string | null;
   anchorRef: RefObject<HTMLButtonElement | null>;
+  /**
+   * What this browser opened, most recent first. Listed as a Recent group
+   * ahead of the rest, without the current resource; the highlight starts on
+   * its first entry, and 1–9 open an entry while nothing is typed.
+   */
+  recents?: readonly RecentVisit[];
   onSelect: (agent: UnifiedAgent, keyboardOrigin: boolean) => void;
-  onClose: () => void;
+  /**
+   * `restoreFocus: false` means focus already went somewhere the person chose
+   * (a Terminal, Desktop or Browser frame), so the host must not pull it back
+   * to the trigger.
+   */
+  onClose: (options?: { restoreFocus?: boolean }) => void;
   onRetryHermes: () => void;
   onRetryHivra: () => void;
   onOpenTestGuide?: () => void;
@@ -46,6 +60,21 @@ function optionId(uid: string): string {
   return `agent-switcher-option-${uid}`;
 }
 
+const NO_RECENTS: readonly RecentVisit[] = [];
+
+function isComputer(agent: UnifiedAgent): boolean {
+  return agent.resourceKind === "computer";
+}
+
+/** On touch, focusing the search raises a keyboard that hides the list. */
+function coarsePointer(): boolean {
+  try {
+    return typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The fleet switcher: a searchable menu anchored under the header, replacing the
  * 264px rail that used to hold the fleet list permanently open.
@@ -56,12 +85,9 @@ function optionId(uid: string): string {
  * place those lived. What changes is that it now costs no layout space at all
  * and closes on a click anywhere outside it.
  *
- * It serves BOTH resource families, so its own copy says "runtimes" rather than
- * "agents": the menu returns computers, and a search field promising agents
- * would contradict the rows directly beneath it. That is the same word the Chat
- * control pane and the owner use for the set, so one noun covers both families
- * everywhere. The per-group headings still name each family, which is where that
- * distinction belongs.
+ * It serves BOTH resource families, so its copy names both ("agents and
+ * computers"), matching the sidebar's switcher and Hivra's glossary. The
+ * per-group headings still name each family.
  */
 export function AgentSwitcherMenu(props: AgentSwitcherMenuProps) {
   // Mounted only while open, so the query and highlight start fresh every time
@@ -77,6 +103,7 @@ function AgentSwitcherPanel({
   hermesError,
   hivraError,
   anchorRef,
+  recents = NO_RECENTS,
   onSelect,
   onClose,
   onRetryHermes,
@@ -87,11 +114,16 @@ function AgentSwitcherPanel({
   const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [query, setQuery] = useState("");
-  // Seeded from the current agent at mount. Deliberately not re-seeded when the
-  // agent list refreshes — that would move the selection out from under someone
-  // who is arrowing through it.
+  // The 1–9 keys work only where their hints show (not on a touch screen).
+  const [shortcuts] = useState(recentShortcutsShown);
+  // Seeded at mount on the resource you were in before this one (the first
+  // Recent entry), else on the current one. Deliberately not re-seeded when
+  // the agent list refreshes — that would move the selection out from under
+  // someone who is arrowing through it.
   const [activeIndex, setActiveIndex] = useState(() => {
-    const index = agents.findIndex((agent) => agent.uid === selectedUid);
+    const groups = switcherGroups(agents, { recents, currentUid: selectedUid, isComputer });
+    if (groups[0]?.key === "recent") return 0;
+    const index = groups.flatMap((group) => group.items).findIndex((agent) => agent.uid === selectedUid);
     return index >= 0 ? index : 0;
   });
 
@@ -103,21 +135,29 @@ function AgentSwitcherPanel({
     const anchor = anchorRef.current;
     if (!menu || !anchor || typeof window === "undefined") return;
     const rect = anchor.getBoundingClientRect();
+    // A hidden anchor measures 0x0; keep the last good position instead of
+    // jumping to the viewport corner.
+    if (rect.width === 0 && rect.height === 0) return;
     const available = window.innerWidth - MENU_VIEWPORT_MARGIN * 2;
     const width = Math.max(MENU_MIN_WIDTH, Math.min(rect.width, available));
     const left = Math.max(
       MENU_VIEWPORT_MARGIN,
       Math.min(rect.left, window.innerWidth - width - MENU_VIEWPORT_MARGIN),
     );
+    // The visual viewport excludes an open on-screen keyboard; innerHeight
+    // does not, which put the lower rows and footer under the iOS keyboard.
+    const viewport = window.visualViewport;
+    const visibleTop = viewport?.offsetTop ?? 0;
+    const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
     const spaceBelow =
-      window.innerHeight - rect.bottom - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
-    const spaceAbove = rect.top - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
+      visibleBottom - rect.bottom - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - visibleTop - MENU_OFFSET - MENU_VIEWPORT_MARGIN;
     const placeAbove = spaceBelow < MENU_MIN_HEIGHT && spaceAbove > spaceBelow;
     const room = Math.max(placeAbove ? spaceAbove : spaceBelow, MENU_MIN_HEIGHT);
     const maxHeight = Math.min(MENU_MAX_HEIGHT, room);
     menu.style.top = `${
       placeAbove
-        ? Math.max(MENU_VIEWPORT_MARGIN, rect.top - MENU_OFFSET - maxHeight)
+        ? Math.max(visibleTop + MENU_VIEWPORT_MARGIN, rect.top - MENU_OFFSET - maxHeight)
         : rect.bottom + MENU_OFFSET
     }px`;
     menu.style.left = `${left}px`;
@@ -138,17 +178,28 @@ function AgentSwitcherPanel({
       menuRef.current = node;
       if (!node) return;
       place();
-      searchRef.current?.focus();
+      if (!coarsePointer()) {
+        searchRef.current?.focus();
+        return;
+      }
+      // Touch: keep the keyboard down and land on the current runtime.
+      const selected = optionRefs.current.find((option) => option?.getAttribute("aria-selected") === "true");
+      (selected ?? node).focus({ preventScroll: true });
     },
     [place],
   );
 
   useLayoutEffect(() => {
+    const viewport = window.visualViewport;
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
     return () => {
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
     };
   }, [place]);
 
@@ -167,36 +218,30 @@ function AgentSwitcherPanel({
         close();
       }
     };
+    // Fires when an iframe (terminal, desktop, browser) takes focus, where a
+    // tap never reaches this document's pointer listener. Focus stays there.
+    const handleBlur = () => onClose({ restoreFocus: false });
     document.addEventListener("pointerdown", handlePointerDown, true);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("blur", handleBlur);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("blur", handleBlur);
     };
-  }, [anchorRef, close]);
+  }, [anchorRef, close, onClose]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const sections = useMemo(() => {
-    const matching = agents.filter(
-      (agent) =>
-        !normalizedQuery ||
-        agent.name.toLowerCase().includes(normalizedQuery) ||
-        agent.typeLabel.toLowerCase().includes(normalizedQuery) ||
-        agent.vendor.toLowerCase().includes(normalizedQuery),
-    );
-    return [
-      {
-        key: "agent",
-        label: "Agents",
-        items: matching.filter((agent) => agent.resourceKind !== "computer"),
-      },
-      {
-        key: "computer",
-        label: "Computers",
-        items: matching.filter((agent) => agent.resourceKind === "computer"),
-      },
-    ].filter((section) => section.items.length > 0);
-  }, [agents, normalizedQuery]);
+  // Recent, then Agents, then Computers: the order every switcher shares. A
+  // search narrows all three.
+  const sections = useMemo(
+    () => switcherGroups(
+      agents.filter((agent) => matchesFleetQuery(agent, normalizedQuery)),
+      { recents, currentUid: selectedUid, isComputer },
+    ),
+    [agents, normalizedQuery, recents, selectedUid],
+  );
+  const recent = sections.find((section) => section.key === "recent")?.items ?? [];
 
   // The arrow keys walk this flat order, so it has to match the DOM order the
   // sections render in — not the raw agent array, which interleaves the two.
@@ -228,29 +273,40 @@ function AgentSwitcherPanel({
     }
   }, [clampedIndex]);
 
+  // On the dialog, not just the search field: on touch, focus starts on the
+  // current option, and a hardware keyboard must still walk the list.
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    const fromSearch = target === searchRef.current;
+    const fromOption = target.getAttribute("role") === "option";
+    if (!fromSearch && !fromOption && target !== menuRef.current) return;
+    // Only while nothing is typed, only for an entry that exists, and only
+    // where the hints show, so a search that starts with a digit still types.
+    if (shortcuts && !normalizedQuery && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const pick = recent[Number(event.key) - 1];
+      if (pick) {
+        event.preventDefault();
+        onSelect(pick, true);
+        return;
+      }
+    }
     if (flat.length === 0) return;
-    if (event.key === "ArrowDown") {
+    const next =
+      event.key === "ArrowDown" ? (clampedIndex + 1) % flat.length
+        : event.key === "ArrowUp" ? (clampedIndex - 1 + flat.length) % flat.length
+          : event.key === "Home" ? 0
+            : event.key === "End" ? flat.length - 1
+              : null;
+    if (next !== null) {
       event.preventDefault();
-      setActiveIndex((index) => (index + 1) % flat.length);
+      setActiveIndex(next);
+      // The combobox tracks the highlight with aria-activedescendant; off the
+      // search field, DOM focus follows it instead.
+      if (!fromSearch) optionRefs.current[next]?.focus();
       return;
     }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((index) => (index - 1 + flat.length) % flat.length);
-      return;
-    }
-    if (event.key === "Home") {
-      event.preventDefault();
-      setActiveIndex(0);
-      return;
-    }
-    if (event.key === "End") {
-      event.preventDefault();
-      setActiveIndex(flat.length - 1);
-      return;
-    }
-    if (event.key === "Enter") {
+    // A focused option activates itself as a button.
+    if (event.key === "Enter" && !fromOption) {
       const active = flat[clampedIndex];
       if (!active) return;
       event.preventDefault();
@@ -266,11 +322,14 @@ function AgentSwitcherPanel({
       <div
         ref={attachMenu}
         role="dialog"
-        aria-label="Switch runtime"
-        style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)" }}
+        aria-label="Switch agent or computer"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+        style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)", outline: "none" }}
         className="flex max-w-[calc(100vw-16px)] flex-col overflow-hidden border border-[var(--etched-border)] bg-[var(--bg-surface)] shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--etched-border)] px-2.5 py-2">
+        {/* A label, so a tap anywhere on the row focuses the field. */}
+        <label className="flex shrink-0 cursor-text items-center gap-2 border-b border-[var(--etched-border)] px-2.5 py-2 pointer-coarse:py-0">
           <Search
             aria-hidden="true"
             size={14}
@@ -283,49 +342,60 @@ function AgentSwitcherPanel({
             aria-controls={LISTBOX_ID}
             aria-autocomplete="list"
             aria-activedescendant={activeAgent ? optionId(activeAgent.uid) : undefined}
-            aria-label="Search your runtimes"
-            placeholder="Search runtimes"
+            aria-label="Search your agents and computers"
+            placeholder="Search agents and computers"
             value={query}
-            onKeyDown={handleKeyDown}
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            enterKeyHint="search"
             onChange={(event) => setQuery(event.target.value)}
-            className="mono min-w-0 flex-1 bg-transparent text-[13px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
+            className="mono min-w-0 flex-1 bg-transparent text-[13px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)] pointer-coarse:min-h-[44px] max-md:text-[16px]"
           />
-        </div>
+        </label>
 
-        {hermesError ? (
-          <SourceFailure source="Hermes" onRetry={onRetryHermes} />
+        {activeAgent && recent.includes(activeAgent) && !normalizedQuery ? (
+          <p aria-hidden="true" className="mono shrink-0 border-b border-[var(--etched-border)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)] pointer-coarse:hidden">
+            ↵ back to {activeAgent.name}{shortcuts ? ` · 1–${Math.min(recent.length, 9)} recent` : ""}
+          </p>
         ) : null}
-        {hivraError ? (
-          <SourceFailure source="Hivra" onRetry={onRetryHivra} />
+
+        {hermesError || hivraError ? (
+          <SourceFailure onRetry={() => {
+            if (hermesError) onRetryHermes();
+            if (hivraError) onRetryHivra();
+          }} />
         ) : null}
 
         <div
           id={LISTBOX_ID}
           role="listbox"
-          aria-label="Your runtimes"
+          aria-label="Your agents and computers"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1"
         >
           {loading ? (
             <p className="px-2.5 py-3 text-[13px] text-[var(--text-muted)]">
-              Loading your runtimes…
+              Loading your agents and computers…
             </p>
           ) : flat.length === 0 ? (
             <p className="px-2.5 py-3 text-[13px] text-[var(--text-muted)]">
               {query.trim()
-                ? "Nothing in your runtimes matches that search."
-                : "No runtimes yet. Launch one to get started."}
+                ? "Nothing matches that search."
+                : "No agents or computers yet. Launch one to get started."}
             </p>
           ) : (
             sections.map((section) => (
               <div key={section.key} role="group" aria-label={section.label}>
-                <p className="mono px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                <p className="mono px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] max-md:text-[11px] pointer-coarse:text-[11px]">
                   {section.label}
                 </p>
-                {section.items.map((agent) => {
+                {section.items.map((agent, position) => {
                   optionIndex += 1;
                   const index = optionIndex;
                   const selected = agent.uid === selectedUid;
                   const active = index === clampedIndex;
+                  const shortcut = shortcuts && section.key === "recent" && !normalizedQuery && position < 9 ? String(position + 1) : undefined;
                   return (
                     <button
                       key={agent.uid}
@@ -336,8 +406,10 @@ function AgentSwitcherPanel({
                       type="button"
                       role="option"
                       aria-selected={selected}
+                      aria-keyshortcuts={shortcut}
                       title={`${agent.name} — ${agentMeta(agent)}`}
                       onMouseEnter={() => setActiveIndex(index)}
+                      onFocus={() => setActiveIndex(index)}
                       onClick={(event) => onSelect(agent, event.detail === 0)}
                       className={[
                         "flex min-h-[44px] w-full min-w-0 items-center gap-2 border-l-2 px-2.5 py-2 text-left outline-none",
@@ -376,6 +448,11 @@ function AgentSwitcherPanel({
                           className="shrink-0 text-[var(--hivra-red)]"
                         />
                       ) : null}
+                      {shortcut ? (
+                        <kbd aria-hidden="true" className="mono shrink-0 border border-[var(--etched-border)] px-1.5 text-[10px] text-[var(--text-muted)] pointer-coarse:hidden">
+                          {shortcut}
+                        </kbd>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -394,7 +471,7 @@ function AgentSwitcherPanel({
             className="mono flex min-h-[40px] min-w-0 flex-1 items-center gap-2 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
           >
             <Plus aria-hidden="true" size={14} />
-            Launch a runtime
+            Launch an agent or computer
           </a>
           {/* The test guide used to be an unlabelled book glyph in the header.
               It is a contributor-facing panel, not a per-task tool, so it is
@@ -413,17 +490,11 @@ function AgentSwitcherPanel({
   );
 }
 
-function SourceFailure({
-  source,
-  onRetry,
-}: {
-  source: "Hermes" | "Hivra";
-  onRetry: () => void;
-}) {
+function SourceFailure({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="shrink-0 border-b border-[var(--etched-border)] px-2.5 py-2">
       <p className="text-[11.5px] leading-[1.4] text-[var(--yellow)]">
-        {source} agents are unavailable. Your other agents are still listed.
+        Some agents and computers couldn&apos;t be loaded. The rest are listed.
       </p>
       <button
         type="button"
@@ -431,7 +502,7 @@ function SourceFailure({
         className="mono mt-1 inline-flex min-h-[32px] items-center gap-1.5 text-[11.5px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
       >
         <RotateCcw aria-hidden="true" size={13} />
-        Retry {source}
+        Retry
       </button>
     </div>
   );

@@ -32,7 +32,12 @@
  *     (existing depositors grandfathered for at least 12 months).
  */
 
-import { HERMESOS_TOKEN_DECIMALS } from "./token-holdings";
+import { HERMESOS_TOKEN } from "./token-registry";
+
+// The static calibration constants below are $HermesOS amounts. Live
+// thresholds (live-thresholds.ts) price every platform token from the same
+// USD targets, so the launch and founders discounts carry over to $HIVRA.
+const HERMESOS_TOKEN_DECIMALS = HERMESOS_TOKEN.decimals;
 
 // ────────────────────────────────────────────────────────────────────
 // Calibration notes

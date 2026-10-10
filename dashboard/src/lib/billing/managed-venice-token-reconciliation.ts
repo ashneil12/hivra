@@ -1,3 +1,4 @@
+import { livePlatformTokens } from "@/lib/billing/token-registry";
 import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -476,12 +477,12 @@ interface DepositTransferLog {
 // exactly these logs, so a tx's first log to the address, which carries the
 // bare tx/address item key, is the same log on both paths. Null for any other
 // log, including one that does not parse.
-function parseDepositTransferLog(log: EvmLog, toTopic: string): DepositTransferLog | null {
+function parseDepositTransferLog(log: EvmLog, toTopic: string, tokenAddress: string): DepositTransferLog | null {
   try {
     const address = typeof log.address === "string" ? normalizeEvmAddress(log.address) : "";
     const transactionHash =
       typeof log.transactionHash === "string" ? log.transactionHash.trim().toLowerCase() : "";
-    if (address !== HERMESOS_TOKEN_ADDRESS || !transactionHash) return null;
+    if (address !== tokenAddress.toLowerCase() || !transactionHash) return null;
     const topics = (Array.isArray(log.topics) ? log.topics : []).map((topic) =>
       typeof topic === "string" ? topic.toLowerCase() : null
     );
@@ -550,6 +551,8 @@ export async function resolveManagedVeniceTokenTransferLog(params: {
   transactionHash: string;
   depositAddress: string;
   tokenAmountRaw: string | bigint;
+  /** The quote's token: only its Transfer logs can pay the quote. Default $HermesOS. */
+  tokenAddress?: string;
   rpcUrl?: string;
   fetchImpl?: JsonRpcFetch;
   rpcOptions?: RpcCallOptions;
@@ -570,7 +573,7 @@ export async function resolveManagedVeniceTokenTransferLog(params: {
   const toTopic = encodeErc20TransferToTopic(params.depositAddress);
   const accepted = new Map<number, DepositTransferLog>();
   for (const log of receipt.logs as EvmLog[]) {
-    const transfer = parseDepositTransferLog(log, toTopic);
+    const transfer = parseDepositTransferLog(log, toTopic, params.tokenAddress ?? HERMESOS_TOKEN_ADDRESS);
     if (transfer && transfer.transactionHash === transactionHash) accepted.set(transfer.logIndex, transfer);
   }
   const amount = BigInt(params.tokenAmountRaw);
@@ -634,7 +637,10 @@ async function scanQuoteTransfers(params: {
   quotedAtMs: number;
   graceEndMs: number;
   minConfirmations: number;
+  /** Token whose Transfer logs to read. Default: the quote's own token. */
+  tokenAddress?: string;
 }) {
+  const tokenAddress = (params.tokenAddress ?? params.quote.tokenAddress).toLowerCase();
   const { chain } = params;
   const latest = await chain.latestBlock();
   const latestSec = await chain.blockTimestamp(latest);
@@ -663,14 +669,14 @@ async function scanQuoteTransfers(params: {
   // public RPC answers a wider range with HTTP 413 / JSON-RPC -32614).
   const logs = await getLogsInBlockChunks<EvmLog>({
     call: callRequiringArrayResults(chain.call),
-    filter: { address: HERMESOS_TOKEN_ADDRESS, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
+    filter: { address: tokenAddress, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
     fromBlock,
     toBlock,
   });
 
   const parsed = new Map<string, DepositTransferLog & { confirmations: number }>();
   for (const log of logs) {
-    const transfer = parseDepositTransferLog(log, toTopic);
+    const transfer = parseDepositTransferLog(log, toTopic, tokenAddress);
     if (!transfer) continue;
     parsed.set(`${transfer.transactionHash}:${transfer.logIndex}`, {
       ...transfer,
@@ -879,6 +885,7 @@ async function scanAttributableTransfers(params: {
   chain: BaseChainReader;
   quote: ManagedVeniceTokenQuote;
   minConfirmations: number;
+  now?: Date;
 }) {
   const { db, quote } = params;
   const window = managedVeniceTokenQuoteWindow(quote);
@@ -901,6 +908,46 @@ async function scanAttributableTransfers(params: {
       (boundaryMs === null || transfer.timestampMs < boundaryMs)
   );
   const { unbound, extraLogs } = await partitionByBindings(db, quote, inRange);
+
+  // Any OTHER live platform token sent into this range is the wrong token:
+  // surfaced for operator recovery, never credited. With $HIVRA dormant there
+  // is no other token and nothing extra is scanned.
+  const inAttributionRange = (transfer: ScannedTransfer) =>
+    transfer.timestampMs >= quotedAtMs &&
+    transfer.timestampMs <= graceEndMs &&
+    (boundaryMs === null || transfer.timestampMs < boundaryMs);
+  for (const other of livePlatformTokens(params.now ?? new Date()).filter((token) => token.address !== quote.tokenAddress)) {
+    const otherScan = await scanQuoteTransfers({
+      chain: params.chain,
+      quote,
+      quotedAtMs,
+      graceEndMs,
+      minConfirmations: params.minConfirmations,
+      tokenAddress: other.address,
+    });
+    const confirmedOther = otherScan.transfers.filter(
+      (transfer) => inAttributionRange(transfer) && transfer.confirmations >= params.minConfirmations
+    );
+    if (confirmedOther.length === 0) continue;
+    const { surfaceable } = await partitionByBindings(db, quote, confirmedOther);
+    for (const transfer of surfaceable) {
+      await surfaceManagedVeniceTokenTransfer(
+        {
+          quote,
+          transactionHash: transfer.transactionHash,
+          logIndex: transfer.logIndex,
+          // Keyed by its own log index, never the bare tx/address key the
+          // quote token's first log of the same tx would use.
+          dedupeLogIndex: transfer.logIndex,
+          tokenAmountRaw: transfer.amount.toString(),
+          observedAt: transfer.observedAt,
+          reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.wrongToken,
+          tokenAddress: other.address,
+        },
+        db
+      );
+    }
+  }
 
   const quoted = BigInt(quote.tokenAmountRaw);
   const band = {
@@ -1278,7 +1325,7 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     return finishSettlement({ db, quote, settlement, transfer: recovery, failOnSurfacingError });
   }
 
-  const scan = await scanAttributableTransfers({ db, chain, quote, minConfirmations });
+  const scan = await scanAttributableTransfers({ db, chain, quote, minConfirmations, now });
   const { attributable, extraLogs, classOf, isConfirmed, expiresAtMs, graceEndMs } = scan;
   const confirmed = attributable.filter(isConfirmed);
   const confirmedExtraLogs = extraLogs.filter(isConfirmed);

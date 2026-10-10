@@ -1,19 +1,30 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 
 import StructuredData from "@/components/StructuredData";
 import PublicSite from "@/components/public-site/PublicSite";
+import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
+import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
+import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
+import { getHivraTokenPhase } from "@/lib/billing/token-registry";
+import { getAgent } from "@/lib/hivra/agent-catalog";
 import { buildAbsoluteSiteUrl, buildWebsiteMetadata } from "@/lib/metadata";
+import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 
 import styles from "../page.module.css";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const PAGE_PATH = "/why-hivra/evolution";
 const SITE_ROOT = buildAbsoluteSiteUrl("/");
 const PAGE_URL = buildAbsoluteSiteUrl(PAGE_PATH);
 const PAGE_TITLE = "Why Hivra? The Evolution of HermesOS";
 const PAGE_DESCRIPTION =
-  "HermesOS (Hermes Agent OS) is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
+  "HermesOS is evolving into Hivra as the platform expands beyond one agent framework. Existing users, deployments, accounts, and $HermesOS continue working.";
+
+// The $HIVRA copy changes at its activation instant: re-render at least every
+// minute rather than freezing the build-time phase into static HTML.
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: PAGE_TITLE,
@@ -47,48 +58,62 @@ const pageSchema = {
       isPartOf: { "@id": `${SITE_ROOT}/#website` },
       about: [
         { "@type": "SoftwareApplication", name: "Hivra", alternateName: "HermesOS" },
-        { "@type": "SoftwareApplication", name: "HermesOS", alternateName: "Hermes Agent OS" },
+        // Hermes Agent is Nous Research's product name, so it is not an alternate
+        // name for HermesOS in markup.
+        { "@type": "SoftwareApplication", name: "HermesOS" },
       ],
     },
   ],
 };
 
-const tokenFunctions = [
-  "An access mechanism",
-  "A payment option",
-  "A discount mechanism",
-  "A future settlement layer for parts of the platform",
-] as const;
+// Availability comes from the agent catalog, so this page cannot drift from
+// what the launch flow actually offers.
+const agentLineup = [
+  { id: "hermes", label: "Hermes Agent", x: 20, y: 22 },
+  { id: "claude-code", label: "Claude Code", x: 50, y: 12 },
+  { id: "codex", label: "Codex", x: 80, y: 22 },
+  { id: "agent-zero", label: "Agent Zero", x: 84, y: 50 },
+  { id: "openclaw", label: "OpenClaw", x: 74, y: 80 },
+  { id: "aeon", label: "Aeon", x: 42, y: 86 },
+  { id: "deepseek-harness", label: "DeepSeek", x: 16, y: 46 },
+].map((agent) => ({ ...agent, available: getAgent(agent.id)?.available === true }));
 
-const supportedNow = ["Hermes Agent", "Claude Code"] as const;
-const comingSoon = ["Codex", "OpenClaw", "AEON"] as const;
+const availableNow = agentLineup.filter((agent) => agent.available).map((agent) => agent.label);
+const inPreview = agentLineup.filter((agent) => !agent.available).map((agent) => agent.label);
+
+const CORE = { x: 50, y: 46 };
+const ORIGIN = { x: 16, y: 70 };
 
 const networkNodes = [
-  { label: "HermesOS", detail: "origin", x: 12, y: 72, variant: "origin" },
-  { label: "Hivra", detail: "platform", x: 47, y: 44, variant: "core" },
-  { label: "Hermes Agent", detail: "live", x: 19, y: 24, variant: "active" },
-  { label: "Claude Code", detail: "live", x: 73, y: 21, variant: "active" },
-  { label: "Codex", detail: "soon", x: 82, y: 62, variant: "future" },
-  { label: "OpenClaw", detail: "soon", x: 58, y: 80, variant: "future" },
-  { label: "AEON", detail: "soon", x: 33, y: 86, variant: "future" },
-] as const;
+  { label: "HermesOS", detail: "origin", x: ORIGIN.x, y: ORIGIN.y, variant: "origin" },
+  { label: "Hivra", detail: "platform", x: CORE.x, y: CORE.y, variant: "core" },
+  ...agentLineup.map((agent) => ({
+    label: agent.label,
+    detail: agent.available ? "live" : "preview",
+    x: agent.x,
+    y: agent.y,
+    variant: agent.available ? "active" : "future",
+  })),
+];
 
 function NetworkMap() {
   return (
     <div className={styles.networkCard} aria-label="Hivra agent network map">
       <svg className={styles.networkLines} viewBox="0 0 100 100" aria-hidden="true">
-        <path d="M12 72 L47 44 L19 24" />
-        <path d="M47 44 L73 21" />
-        <path d="M47 44 L82 62" />
-        <path d="M47 44 L58 80" />
-        <path d="M47 44 L33 86" />
-        <path d="M19 24 L73 21 L82 62 L58 80 L33 86 L12 72" className={styles.softLine} />
+        <path d={`M${ORIGIN.x} ${ORIGIN.y} L${CORE.x} ${CORE.y}`} />
+        {agentLineup.map((agent) => (
+          <path key={agent.id} d={`M${CORE.x} ${CORE.y} L${agent.x} ${agent.y}`} />
+        ))}
+        <path
+          d={`M${agentLineup.map((agent) => `${agent.x} ${agent.y}`).join(" L")} Z`}
+          className={styles.softLine}
+        />
       </svg>
       {networkNodes.map((node) => (
         <div
           key={node.label}
           className={`${styles.node} ${styles[`node_${node.variant}`]}`}
-          style={{ left: `${node.x}%`, top: `${node.y}%` }}
+          style={{ "--x": `${node.x}%`, "--y": `${node.y}%` } as CSSProperties}
         >
           <span className={styles.nodeLabel}>{node.label}</span>
           <span className={styles.nodeDetail}>{node.detail}</span>
@@ -123,6 +148,22 @@ function SectionShell({
 }
 
 export default function WhyHivraPage() {
+  // No country is listed (the list is empty, so the policy is dormant): render
+  // as before, without reading the request country.
+  if (!isTokenGeoPolicyActive()) return <WhyHivraContent geoNotice={null} />;
+  // A country is listed (GB today): render per request; a blocked viewer sees
+  // the notice and the facts, not the token payment discount or the proposal.
+  return renderForViewer();
+}
+
+async function renderForViewer() {
+  const geo = await resolveTokenGeoBlockForPage();
+  return <WhyHivraContent geoNotice={geo.blocked ? geo.message : null} />;
+}
+
+function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
+  // Dormant, every phase string is exactly the copy from before.
+  const tokenCopy = getTokenPhaseCopy(getHivraTokenPhase()).evolution;
   return (
     <PublicSite className={styles.page} data-page="why-hivra">
       <StructuredData schema={pageSchema} />
@@ -146,7 +187,7 @@ export default function WhyHivraPage() {
 
         <div className={styles.sectionList}>
           <SectionShell number="01" title="Why change the name?">
-            <p>HermesOS — the Hermes Agent OS — was originally built around a single agent ecosystem.</p>
+            <p>HermesOS was originally built around a single agent ecosystem.</p>
             <p>Today the platform is expanding to support multiple AI workers, frameworks, and deployment types.</p>
             <p>The future of the platform is not one agent.</p>
             <p>It is networks of specialised agents working together.</p>
@@ -163,22 +204,33 @@ export default function WhyHivraPage() {
           </SectionShell>
 
           <SectionShell number="03" title="What happens to $HermesOS?">
-            <p>Nothing.</p>
-            <p>$HermesOS remains an important part of the ecosystem.</p>
-            <p>The token continues to function as:</p>
-            <ul className={styles.bulletList}>
-              {tokenFunctions.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-            <div className={styles.sameTokenBox}>
-              <p>The platform brand is changing.</p>
-              <p>The token is not.</p>
-              <p>Same token.</p>
-              <p>Same contract.</p>
-              <p>Same ecosystem.</p>
-            </div>
-            <p>As the platform expanded beyond its original scope, the platform branding evolved while the underlying token remained unchanged.</p>
+            <p>Existing $HermesOS holders are grandfathered.</p>
+            <p>You keep your access, and you can keep using $HermesOS.</p>
+            {geoNotice ? (
+              <TokenGeoNotice notice={geoNotice} />
+            ) : (
+              <>
+                <p>On Hivra today, $HermesOS is used to:</p>
+                <ul className={styles.bulletList}>
+                  <li>Hold for a compute tier</li>
+                  <li>Pay for a plan, with the discount for paying in the token</li>
+                </ul>
+              </>
+            )}
+            {/* A blocked viewer reads no $HIVRA status or proposal line here: the notice above and the
+                token page link below are what stays (RESTRICTED_TOKEN_PAGE_COPY). */}
+            {geoNotice ? null : (
+              <div className={styles.sameTokenBox}>
+                <p>{tokenCopy.hivraStatus}</p>
+                {tokenCopy.hivraDetails.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            )}
+            <p>
+              {geoNotice ? RESTRICTED_TOKEN_PAGE_COPY.evolutionAddressNote : tokenCopy.addressNote}{" "}
+              <Link href="/token">token page</Link>.
+            </p>
           </SectionShell>
 
           <SectionShell number="04" title="What is Hivra?">
@@ -190,17 +242,17 @@ export default function WhyHivraPage() {
 
             <div className={styles.supportGrid}>
               <div className={styles.supportCard}>
-                <h3>Supported now</h3>
+                <h3>Available now</h3>
                 <ul>
-                  {supportedNow.map((item) => (
+                  {availableNow.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>
               <div className={styles.supportCard}>
-                <h3>Coming soon</h3>
+                <h3>In preview</h3>
                 <ul>
-                  {comingSoon.map((item) => (
+                  {inPreview.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
@@ -233,7 +285,7 @@ export default function WhyHivraPage() {
             <p>Simple version:</p>
             <div className={styles.relationshipBox}>
               <p>Hivra is the platform.</p>
-              <p>$HermesOS remains part of the ecosystem that powers it.</p>
+              {geoNotice ? null : <p>{tokenCopy.relationship}</p>}
             </div>
             <p>The platform became bigger than its original name.</p>
             <p>The vision expanded.</p>
@@ -247,7 +299,7 @@ export default function WhyHivraPage() {
             The mission hasn&apos;t changed.
           </h2>
           <p>Make launching and operating AI agents as easy as launching a website.</p>
-          <Link href="/get-started?plan=free" className={`action-button ${styles.ctaButton}`}>
+          <Link href={PUBLIC_START_HREF} className={`action-button ${styles.ctaButton}`}>
             Launch Your First Agent <span aria-hidden="true">→</span>
           </Link>
         </section>

@@ -1,9 +1,9 @@
 /**
  * Lifecycle emails — Resend integration.
  *
- * Six emails driven by the lifecycle-emails cron (day 1 idle / day 1
- * active / day 3 use-case / day 7 offer / stalled after 5 days / trial
- * day 5), selected by key. Send-at-most-once bookkeeping lives in lifecycle_email_sends
+ * Lifecycle emails driven by the lifecycle-emails cron (day 1 idle / day 1
+ * active / day 3 use-case / day 7 offer / stalled after 5 days / weekly
+ * activity digest), selected by key. Send-at-most-once bookkeeping lives in lifecycle_email_sends
  * (see the lifecycle-email-sweep module); this module only knows how to
  * build and send each email.
  *
@@ -29,7 +29,6 @@ export const LIFECYCLE_EMAIL_KEYS = [
   "day3_usecase",
   "day7_offer",
   "stalled_5d",
-  "trial_day5",
   "activity_digest",
 ] as const;
 
@@ -88,7 +87,8 @@ export type LifecycleEmailSendResult =
 
 const LOG_SOURCE = "lifecycle-email";
 const DASHBOARD_URL = `${SITE_URL}/dashboard`;
-const WELCOME_URL = `${SITE_URL}/dashboard/welcome`;
+/** A new launch in the one place agents and computers start from. */
+const LAUNCH_URL = `${SITE_URL}/dashboard/launch?kind=agent&start=1`;
 const BILLING_URL = `${SITE_URL}/dashboard/billing`;
 
 function greeting(firstName?: string | null): string {
@@ -228,7 +228,7 @@ function shellHtml(opts: {
 
 function buildDay1Idle(params: LifecycleEmailContentParams): LifecycleEmailContent {
   const subject = "your agent is still waiting";
-  const ctaUrl = WELCOME_URL;
+  const ctaUrl = LAUNCH_URL;
   const asks = [
     `"Watch Hacker News for anything about my industry and summarize the good posts each morning."`,
     `"Take this messy CSV and turn it into a clean summary table."`,
@@ -240,8 +240,8 @@ function buildDay1Idle(params: LifecycleEmailContentParams): LifecycleEmailConte
   // exception path — the generic intro is the default.
   const goalPhrase = goalEmailPhrase(params.goal);
   const introText = goalPhrase
-    ? `You signed up yesterday to ${goalPhrase}, but never deployed an agent to do it. Fair — most tools ask a lot before showing anything. This one takes about two minutes and the free plan covers it.`
-    : "You signed up yesterday but never deployed an agent. Fair — most tools ask a lot before showing anything. This one takes about two minutes and the free plan covers it.";
+    ? `You signed up yesterday to ${goalPhrase}, but never deployed an agent to do it. Fair — most tools ask a lot before showing anything. This one takes about two minutes: connect a computer of yours, or pick a plan and we run one for you.`
+    : "You signed up yesterday but never deployed an agent. Fair — most tools ask a lot before showing anything. This one takes about two minutes: connect a computer of yours, or pick a plan and we run one for you.";
 
   const text = [
     greeting(params.firstName),
@@ -295,11 +295,11 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
     "",
     `${agent} has been up for a day now. Good start.`,
     "",
-    "Three things it can't do yet on the free plan:",
+    "Three things it can't do yet on a free account:",
     "",
     ...capabilitiesText.map((c) => `  • ${c}`),
     "",
-    "All three come with Pro. No rush — the free plan is yours as long as you want it.",
+    "All three come with Pro. No rush — a free account stays free for as long as you want it.",
     "",
     `Keep going: ${ctaUrl}`,
     "",
@@ -313,10 +313,10 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
     body: [
       htmlParagraph(greeting(params.firstName)),
       htmlParagraph(`${agent} has been up for a day now. Good start.`),
-      htmlParagraph("Three things it can't do yet on the free plan:"),
+      htmlParagraph("Three things it can't do yet on a free account:"),
       htmlList(capabilities),
       htmlParagraph(
-        "All three come with Pro. No rush — the free plan is yours as long as you want it."
+        "All three come with Pro. No rush — a free account stays free for as long as you want it."
       ),
     ].join("\n"),
     ctaText: "Open your agent",
@@ -415,14 +415,14 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
   const subject = "the honest pitch for Pro";
   const ctaUrl = BILLING_URL;
   const changes = [
-    `<strong>Always-on</strong> — your agent is never paused for inactivity (free agents sleep after 4 idle days).`,
+    `<strong>Always-on</strong> — your agent is never paused for inactivity (a free agent sleeps after 4 idle days).`,
     `<strong>2 vCPU / 4 GB RAM</strong> — double the headroom, noticeably faster under load.`,
     `<strong>Web browsing</strong> — your agent can read live pages, not just what it already knows.`,
     `<strong>Persistent memory</strong> — context carries across conversations instead of resetting.`,
     `<strong>Scheduled tasks</strong> — standing jobs that run on a timer, no prompt needed.`,
   ];
   const changesText = [
-    "Always-on — your agent is never paused for inactivity (free agents sleep after 4 idle days).",
+    "Always-on — your agent is never paused for inactivity (a free agent sleeps after 4 idle days).",
     "2 vCPU / 4 GB RAM — double the headroom, noticeably faster under load.",
     "Web browsing — your agent can read live pages, not just what it already knows.",
     "Persistent memory — context carries across conversations instead of resetting.",
@@ -431,7 +431,7 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
   const text = [
     greeting(params.firstName),
     "",
-    "You've had a week on the free plan. Here's the honest pitch for Pro — and if the agent hasn't been useful, skip this email.",
+    "You've had a week with a free account. If you'd like Hivra to run the computer, here's the honest pitch for Pro — and if you're happy on your own computer, skip this email.",
     "",
     "$9.99/mo, or $79/yr.",
     "",
@@ -453,7 +453,7 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
     body: [
       htmlParagraph(greeting(params.firstName)),
       htmlParagraph(
-        "You've had a week on the free plan. Here's the honest pitch for Pro — and if the agent hasn't been useful, skip this email."
+        "You've had a week with a free account. If you'd like Hivra to run the computer, here's the honest pitch for Pro — and if you're happy on your own computer, skip this email."
       ),
       htmlParagraph("<strong>$9.99/mo, or $79/yr.</strong> What actually changes:"),
       htmlList(changes),
@@ -513,63 +513,6 @@ function buildStalled5d(params: LifecycleEmailContentParams): LifecycleEmailCont
     ctaText: "Open the chat",
     ctaUrl,
     footerNote: footnote,
-  });
-  return { subject, text, html, ctaUrl };
-}
-
-function buildTrialDay5(params: LifecycleEmailContentParams): LifecycleEmailContent {
-  const agent = agentDisplayName(params.agentName);
-  const subject = "your Pro trial ends in two days";
-  const ctaUrl = BILLING_URL;
-  const keeps = [
-    `<strong>Web browsing</strong> — ${agent} keeps reading live pages.`,
-    `<strong>Persistent memory</strong> — context keeps carrying across conversations.`,
-    `<strong>Scheduled tasks</strong> — standing jobs keep running on their timer.`,
-  ];
-  const keepsText = [
-    `Web browsing — ${agent} keeps reading live pages.`,
-    "Persistent memory — context keeps carrying across conversations.",
-    "Scheduled tasks — standing jobs keep running on their timer.",
-  ];
-  const text = [
-    greeting(params.firstName),
-    "",
-    "You're five days into the seven-day Pro trial. Two days left, so here's the honest version of what happens next.",
-    "",
-    "If you do nothing and your card is on file, Pro continues at $9.99/mo and everything keeps working:",
-    "",
-    ...keepsText.map((k) => `  • ${k}`),
-    "",
-    "If it hasn't been useful, cancel from the billing page before the trial ends and you won't be charged. No hard feelings.",
-    "",
-    `Billing page (keep it or cancel, same place): ${ctaUrl}`,
-    "",
-    "Reply if something didn't work the way you expected. I read every reply.",
-    "",
-    "— Ash",
-    "Founder, Hivra",
-  ].join("\n");
-  const html = shellHtml({
-    preheader: "Two days left. Keep it or cancel — same page, no tricks.",
-    eyebrow: "Trial — day five",
-    title: "Your Pro trial ends in two days.",
-    body: [
-      htmlParagraph(greeting(params.firstName)),
-      htmlParagraph(
-        "You're five days into the seven-day Pro trial. Two days left, so here's the honest version of what happens next."
-      ),
-      htmlParagraph(
-        "If you do nothing and your card is on file, Pro continues at <strong>$9.99/mo</strong> and everything keeps working:"
-      ),
-      htmlList(keeps),
-      htmlParagraph(
-        "If it hasn't been useful, cancel from the billing page before the trial ends and you won't be charged. No hard feelings."
-      ),
-    ].join("\n"),
-    ctaText: "Open billing",
-    ctaUrl,
-    footerNote:
-      "Reply if something didn't work the way you expected. I read every reply. — Ash, Founder, Hivra",
   });
   return { subject, text, html, ctaUrl };
 }
@@ -666,7 +609,6 @@ const BUILDERS: Record<
   day3_usecase: buildDay3Usecase,
   day7_offer: buildDay7Offer,
   stalled_5d: buildStalled5d,
-  trial_day5: buildTrialDay5,
   activity_digest: buildActivityDigest,
 };
 

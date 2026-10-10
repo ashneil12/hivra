@@ -1,4 +1,7 @@
-import { createFirstBootChallenge, FIRST_BOOT_RECIPE_VERSION, canonicalFirstBootHostKey } from "../first-boot-enrollment";
+import {
+  createFirstBootChallenge, FIRST_BOOT_ARMED_WINDOW_MS, FIRST_BOOT_LEGACY_RECIPE_VERSION, FIRST_BOOT_RECIPE_VERSION,
+  canonicalFirstBootHostKey,
+} from "../first-boot-enrollment";
 import type { StoredFirstBootEnrollment } from "../first-boot-store";
 import type { FirstBootCapacityEvidence } from "../first-boot-receiver";
 import { cleanupFixture, cleanupConnection, cleanupOrder } from "./hetzner-cleanup.fixtures";
@@ -6,18 +9,25 @@ import { HETZNER_CLOUD_BILLING_SEMANTICS, HETZNER_CLOUD_FIREWALL_LIMITATION,
   HETZNER_CLOUD_SIMPLE_MODE_POLICY,HETZNER_CLOUD_SPENDING_CONFIRMATION } from "../contracts";
 
 export const firstBootNow = new Date("2026-08-27T15:00:00.000Z");
-export function receiverFixture() {
+/** Default: a legacy (2026.08.27.1) server enrolling at its creation time, the
+ * rules those servers keep. "armed": a current server created two hours ago
+ * and powered on for setup one minute before firstBootNow. "unarmed": the
+ * same server before Start setup. */
+export function receiverFixture(recipe: "legacy" | "armed" | "unarmed" = "legacy") {
   const {order,snapshot} = cleanupFixture();
   const binding = {userId:"owner",connectionId:cleanupConnection,connectionRevision:7,
     orderId:cleanupOrder,attemptId:"44444444-4444-4444-8444-444444444444",
-    quoteFingerprint:"a".repeat(64),recipeVersion:FIRST_BOOT_RECIPE_VERSION};
-  const proof = createFirstBootChallenge(binding,firstBootNow);
+    quoteFingerprint:"a".repeat(64),recipeVersion:recipe === "legacy" ? FIRST_BOOT_LEGACY_RECIPE_VERSION : FIRST_BOOT_RECIPE_VERSION};
+  const issued = recipe === "legacy" ? firstBootNow : new Date(firstBootNow.getTime() - 2 * 60 * 60_000);
+  const proof = createFirstBootChallenge(binding,issued);
+  const armedAt = recipe === "armed" ? new Date(firstBootNow.getTime() - 60_000) : null;
   const host = canonicalFirstBootHostKey("ssh-ed25519 "+Buffer.concat([
     Buffer.from("0000000b7373682d6564323535313900000020","hex"),Buffer.alloc(32,8),
   ]).toString("base64"));
   const stored: StoredFirstBootEnrollment = {challenge:proof.challenge,phase:"awaiting_identity",
     capacityIdempotencyKey:"33333333-3333-4333-8333-333333333333",providerServerId:"42",
-    enrolledHostPublicKey:null,hostFingerprintSha256:null};
+    enrolledHostPublicKey:null,hostFingerprintSha256:null,armedAt:armedAt?.toISOString() ?? null,
+    armedExpiresAt:armedAt ? new Date(armedAt.getTime() + FIRST_BOOT_ARMED_WINDOW_MS).toISOString() : null};
   const amount = {net:"1",gross:"1.19"};
   const component = {hourly:amount,monthly:amount};
   const evidence: FirstBootCapacityEvidence = {

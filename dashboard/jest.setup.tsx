@@ -10,6 +10,19 @@ if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
   process.env.NEXT_PUBLIC_POSTHOG_KEY = 'phc_test_token_not_a_real_project';
 }
 
+// The real token geo list (lib/compliance/token-geo-list.ts) blocks the UK. Most
+// suites test token screens and routes as any other country sees them, so they
+// run against an empty list. A suite that tests the gate itself opts back in with
+// its own `jest.mock('@/lib/compliance/token-geo-list', () =>
+// jest.requireActual('@/lib/compliance/token-geo-list'))` (the *real-list* suites
+// and the geo route and page suites do), so the committed list is proven to reach
+// the policy, the routes, the pages and the rewrites. With the empty list those
+// checks cannot fail.
+// HIVRA_NEW_TOKEN_SURFACES is OFF in production; the suite runs with the surfaces ON so the
+// existing token tests keep covering them. token-surfaces tests set it per case.
+process.env.HIVRA_NEW_TOKEN_SURFACES = process.env.HIVRA_NEW_TOKEN_SURFACES ?? 'true';
+jest.mock('@/lib/compliance/token-geo-list', () => ({ BLOCKED_COUNTRIES: [] }));
+
 const mockClerk = {
   ClerkProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   useUser: () => ({
@@ -35,6 +48,9 @@ const mockClerk = {
     isLoaded: true,
     isSignedIn: true,
   })),
+  // A session that verified recently: requests pass straight through. Tests
+  // of the "confirm it's you" flow mock this themselves.
+  useReverification: (fetcher: (...args: unknown[]) => unknown) => fetcher,
   UserButton: () => <div data-testid="mock-user-button">User Button</div>,
   SignIn: () => <div data-testid="mock-sign-in">Sign In</div>,
   SignUp: () => <div data-testid="mock-sign-up">Sign Up</div>,

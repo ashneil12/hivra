@@ -11,6 +11,13 @@
  * (see tier-thresholds.ts), so the billing UI links to the wallet page for
  * them instead of printing a number.
  */
+import {
+  HERMESOS_TOKEN,
+  HIVRA_DISPLAY_UNIT,
+  HIVRA_SYMBOL,
+  platformTokenByAddress,
+} from "./token-registry";
+
 export const YEARLY_TOKEN_USD = {
   pro: 49,
   power: 99,
@@ -24,17 +31,27 @@ export const YEARLY_TOKEN_TIER_PLAN = {
   power: "fleet",
 } as const satisfies Record<YearlyTokenTier, string>;
 
-/** What people call the live Base token everywhere in the product. */
-export const HERMESOS_DISPLAY_UNIT = "$HermesOS";
+/** What people call the legacy Base token everywhere in the product. */
+export const HERMESOS_DISPLAY_UNIT = HERMESOS_TOKEN.displayUnit;
 
 /**
- * Unit label to show next to a $HermesOS amount. The server's token symbol
- * (persisted in holding snapshots and quotes) reads "Hivra", but the live
- * contract is $HermesOS and $HIVRA is only a proposal, so the UI never prints
- * the stored symbol for it. Other assets (USDC, VVV, ETH) pass through.
+ * Unit label to show next to a platform-token amount.
+ *
+ * Pass the token's contract address when it is known: the registry then names
+ * the unit exactly. Without it, the stored symbol decides. $HIVRA is stored as
+ * "HIVRA". $HermesOS is stored as "HermesOS", and rows written before the token
+ * registry carry "Hivra", so every other spelling of hivra/hermesos reads as
+ * $HermesOS. Other assets (USDC, VVV, ETH) pass through.
  */
-export function displayTokenUnit(symbol: string | null | undefined): string {
-  const normalized = symbol?.trim().replace(/^\$/, "").toLowerCase() ?? "";
+export function displayTokenUnit(
+  symbol: string | null | undefined,
+  tokenAddress?: string | null
+): string {
+  const token = platformTokenByAddress(tokenAddress);
+  if (token) return token.displayUnit;
+  const trimmed = symbol?.trim().replace(/^\$/, "") ?? "";
+  if (trimmed === HIVRA_SYMBOL) return HIVRA_DISPLAY_UNIT;
+  const normalized = trimmed.toLowerCase();
   if (!normalized || normalized === "hivra" || normalized === "hermesos") return HERMESOS_DISPLAY_UNIT;
   return symbol!.trim();
 }

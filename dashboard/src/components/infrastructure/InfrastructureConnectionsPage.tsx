@@ -14,22 +14,30 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
 import {
   deleteInfrastructureConnection,
   discoverInfrastructureHost,
   forceForgetHetznerCloudConnection,
+  getHetznerCloudCapacitySlot,
   getHetznerCloudInventory,
   InfrastructureApiError,
   listInfrastructureConnections,
   listInfrastructureTargets,
+  listProviderComputerSetupEvidence,
   preflightInfrastructureConnection,
   refreshHetznerCloudInventory,
+  updateInfrastructureConnection,
   type InfrastructurePreparation,
 } from "@/lib/infrastructure/client";
+import {
+  cancelServerEnrollment,
+  listServerEnrollments,
+} from "@/lib/infrastructure/server-enrollment-client";
+import type { ServerEnrollmentDto } from "@/lib/infrastructure/server-enrollment-contracts";
 import {
   listManagedSessions,
   refreshDigitalOceanAccount,
@@ -49,20 +57,28 @@ import type {
 import {
   HETZNER_CLOUD_CONNECTION_ERROR_CODES,
   HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION,
-  isGvisorDeploymentTarget,
-  isProxmoxDeploymentTarget,
 } from "@/lib/infrastructure/contracts";
+import { staleHetznerPowerKeys } from "@/lib/infrastructure/hetzner-inventory-freshness";
 import type { HostDiscoveryResult } from "@/lib/infrastructure/host-discovery-contracts";
+import {
+  hetznerCloudTokenReplacedNotice,
+  type HetznerCloudCapacitySlotDto,
+} from "@/lib/infrastructure/hetzner-cloud-token-contracts";
+import type {
+  HetznerCloudCreatedServer,
+  ProviderComputerSetupView,
+} from "@/lib/infrastructure/provider-computer-setup-contracts";
 import {
   getHivraCloudCapacity,
   type HivraCloudCapacityDto,
 } from "@/lib/infrastructure/hivra-cloud-client";
 import { canPrepareFromPreflight } from "@/lib/infrastructure/preparation-eligibility";
-import { targetSupportsCatalogRuntime } from "@/lib/hivra/agent-placement";
+import { targetSupportsLaunchResource } from "@/lib/infrastructure/launch-on-server";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import {
   buildLaunchSetupHref,
   parsePortableLaunchResourceId,
+  type PortableLaunchResourceId,
 } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
@@ -80,11 +96,15 @@ import { InfrastructurePrepareDialog } from "./InfrastructurePrepareDialog";
 import { HetznerCloudCapacityDialog } from "./HetznerCloudCapacityDialog";
 import { ProviderComputerSetupDialog } from "./ProviderComputerSetupDialog";
 import { HetznerCloudCleanupDialog } from "./HetznerCloudCleanupDialog";
-import { HetznerCloudConnectionCard } from "./HetznerCloudConnectionCard";
+import { HetznerCloudConnectionCard, type HetznerSetupEvidenceStatus } from "./HetznerCloudConnectionCard";
 import { HetznerCloudConnectionDialog } from "./HetznerCloudConnectionDialog";
-import { DigitalOceanConnectionCard } from "./DigitalOceanConnectionCard";
+import { DigitalOceanConnectionCard, digitalOceanLaunchHref } from "./DigitalOceanConnectionCard";
 import { DigitalOceanConnectionDialog } from "./DigitalOceanConnectionDialog";
-import { DigitalOceanLaunchDialog } from "./DigitalOceanLaunchDialog";
+import { ServerEnrollmentDialog } from "./ServerEnrollmentDialog";
+import { ServerEnrollmentCard, useNow } from "./ServerEnrollmentCard";
+import { CopyButton } from "./CopyButton";
+import enrollmentStyles from "./ServerEnrollment.module.css";
+import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -97,6 +117,18 @@ type CheckDialogState = {
   discovery?: HostDiscoveryResult;
   preflight?: ProxmoxPreflightResult;
   error?: string;
+  /** The owner asked to check Linux Sandbox readiness: after the inspection,
+   * run the strict check without a second click. */
+  checkGvisorReadiness?: boolean;
+};
+
+/** Which host setup the shared review dialog is running, and on what. */
+type PreparingState = {
+  connection: SshInfrastructureConnectionDto;
+  engine: "proxmox" | "gvisor";
+  mode: "prepare" | "repair";
+  /** Handed over from the connection wizard: setup carries on its progress bar. */
+  continuesHostSetup?: boolean;
 };
 
 type HetznerInventoryState = {
@@ -105,10 +137,50 @@ type HetznerInventoryState = {
   error: string | null;
 };
 
+/** The last loaded setup evidence for one connection and whether it's current. */
+type HetznerSetupEvidenceState = {
+  status: HetznerSetupEvidenceStatus;
+  computers: ProviderComputerSetupView[];
+  createdServers: HetznerCloudCreatedServer[];
+};
+
 function isSshConnection(
   connection: InfrastructureConnectionDto,
 ): connection is SshInfrastructureConnectionDto {
   return connection.provider === "proxmox" || connection.provider === "host";
+}
+
+/** A connection the setup command created: user hivra through sudo. */
+function isEnrolledConnection(connection: InfrastructureConnectionDto): boolean {
+  return isSshConnection(connection)
+    && connection.endpoint.sshUser === "hivra" && connection.endpoint.sshPrivilege === "sudo";
+}
+
+/** Open setup commands and answers the page shows, newest first. */
+export function openEnrollments(
+  enrollments: ServerEnrollmentDto[],
+  dismissed: Set<string>,
+  now: number,
+  declinedHere: ReadonlyMap<string, ServerEnrollmentDto> = new Map(),
+) {
+  const shown = enrollments.filter((item) => {
+    if (dismissed.has(item.id)) return false;
+    if (item.phase === "reported") return true;
+    // Every open command: closing the panel doesn't cancel one, so a copied
+    // command can still be run, and a download may mean a run is under way.
+    if (item.phase === "issued") return Date.parse(item.expiresAt) > now;
+    // No, cancel: "Cancelled." and its uninstall command stay until the owner
+    // dismisses them, even after a refresh reads the command as rejected; after
+    // a reload, like "A server used your setup command…", for an hour.
+    const recent = item.decidedAt !== null && now - Date.parse(item.decidedAt) < 60 * 60_000;
+    if (item.phase === "rejected") return declinedHere.has(item.id) || recent;
+    return item.phase === "unsupported" && recent;
+  });
+  // A command declined on this page that the list no longer returns.
+  for (const [id, item] of declinedHere) {
+    if (!dismissed.has(id) && !shown.some((other) => other.id === id)) shown.push(item);
+  }
+  return shown.sort((a, b) => Date.parse(b.issuedAt) - Date.parse(a.issuedAt));
 }
 
 function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | null {
@@ -120,17 +192,44 @@ function hetznerErrorCode(error: unknown): HetznerCloudConnectionErrorCode | nul
     : null;
 }
 
-export function InfrastructureConnectionsPage() {
+/** The Capacity page opened in a sheet over Launch: its launch comes from
+ * Launch, and a ready place to run goes straight back to it. */
+export type EmbeddedCapacity = {
+  launchResourceId: PortableLaunchResourceId | null;
+  /** A ready server or DigitalOcean team the owner chose for their launch. */
+  onLaunchTarget: (targetId: string) => void;
+  onClose: () => void;
+};
+
+/** A Launch link inside the sheet, and the place it chooses if any; null for
+ * any other link. */
+function launchLinkFromHref(href: string | null): { targetId: string | null } | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href, "https://hivra.invalid");
+    if (url.origin !== "https://hivra.invalid" || url.pathname !== "/dashboard/launch") return null;
+    return { targetId: url.searchParams.get("targetId") };
+  } catch {
+    return null;
+  }
+}
+
+export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: EmbeddedCapacity | null } = {}) {
   // DigitalOcean sessions are Hivra agents; offer them only where those are on.
   const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the hostname flag after hydration, as the agent page does.
     setHivraAgentsEnabled(isHivraEnabled());
   }, []);
   const searchParams = useSearchParams();
-  const requestedLaunchResource = parsePortableLaunchResourceId(searchParams?.get("launch"));
-  const unifiedLaunchReturn = searchParams?.get("returnTo") === "unified-launch";
+  const router = useRouter();
+  const requestedLaunchResource = embedded ? embedded.launchResourceId : parsePortableLaunchResourceId(searchParams?.get("launch"));
+  // Deep link from a DigitalOcean agent whose token stopped working.
+  const requestedTokenReplacement = searchParams?.get("replaceToken") ?? null;
+  const unifiedLaunchReturn = embedded ? true : searchParams?.get("returnTo") === "unified-launch";
   const selfHosted = isLocalAuthMode();
+  const pendingLaunch = usePendingLaunch(embedded
+    ? { launchParam: embedded.launchResourceId, returnTo: "unified-launch" }
+    : null);
   const [connections, setConnections] = useState<InfrastructureConnectionDto[]>([]);
   const [targets, setTargets] = useState<DeploymentTargetDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,19 +244,38 @@ export function InfrastructureConnectionsPage() {
   const [hivraCloudDialogOpen, setHivraCloudDialogOpen] = useState(false);
   const [hetznerDialogOpen, setHetznerDialogOpen] = useState(false);
   const [digitalOceanDialogOpen, setDigitalOceanDialogOpen] = useState(false);
-  const [digitalOceanLaunch, setDigitalOceanLaunch] = useState<{ connection: DigitalOceanConnectionDto; target: DigitalOceanDeploymentTargetDto } | null>(null);
+  const [replacingDigitalOcean, setReplacingDigitalOcean] = useState<DigitalOceanConnectionDto | null>(null);
   const [digitalOceanTargets, setDigitalOceanTargets] = useState<DigitalOceanDeploymentTargetDto[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSessionDto[]>([]);
   const [digitalOceanRefreshing, setDigitalOceanRefreshing] = useState<Set<string>>(() => new Set());
   const [digitalOceanErrors, setDigitalOceanErrors] = useState<Record<string, string>>({});
   const [capacityConnection, setCapacityConnection] = useState<HetznerCloudConnectionDto | null>(null);
   const [cleanupConnection, setCleanupConnection] = useState<HetznerCloudConnectionDto | null>(null);
-  const [setupConnection, setSetupConnection] = useState<HetznerCloudConnectionDto | null>(null);
+  const [setupTarget, setSetupTarget] = useState<{ connection: HetznerCloudConnectionDto; orderId: string | null } | null>(null);
+  const setupConnection = setupTarget?.connection ?? null;
+  const [replacingHetzner, setReplacingHetzner] = useState<HetznerCloudConnectionDto | null>(null);
+  const [hetznerSetups, setHetznerSetups] = useState<Record<string, HetznerSetupEvidenceState>>({});
+  const hetznerSetupRequests = useRef<Record<string, number>>({});
+  const [hetznerSlot, setHetznerSlot] = useState<HetznerCloudCapacitySlotDto | null>(null);
+  const [wizardPrefill, setWizardPrefill] = useState<{ name: string; sshHost: string } | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [enrollmentDialogOpen, setEnrollmentDialogOpen] = useState(false);
+  const [enrollments, setEnrollments] = useState<ServerEnrollmentDto[]>([]);
+  const [uninstallCommand, setUninstallCommand] = useState<string | null>(null);
+  const [dismissedEnrollments, setDismissedEnrollments] = useState<Set<string>>(() => new Set());
+  // Commands the owner answered No to while this page is open, as the answer
+  // left them: they stay listed, with the uninstall command, until dismissed.
+  const [declinedEnrollments, setDeclinedEnrollments] = useState<ReadonlyMap<string, ServerEnrollmentDto>>(() => new Map());
+  const rememberDeclined = useCallback((item: ServerEnrollmentDto) => {
+    setDeclinedEnrollments((current) => new Map(current).set(item.id, { ...item, phase: "rejected" }));
+  }, []);
+  // Coarse clock for which setup commands the page still shows.
+  const enrollmentNow = useNow(30_000);
   const [editingConnection, setEditingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
   const [deletingConnection, setDeletingConnection] = useState<InfrastructureConnectionDto | null>(null);
   const [forceForgetConnection, setForceForgetConnection] = useState<HetznerCloudConnectionDto | null>(null);
-  const [preparingConnection, setPreparingConnection] = useState<SshInfrastructureConnectionDto | null>(null);
+  const [preparing, setPreparing] = useState<PreparingState | null>(null);
+  const preparingConnection = preparing?.connection ?? null;
   const [deleting, setDeleting] = useState(false);
   const [forceForgetting, setForceForgetting] = useState(false);
   const [forceForgetError, setForceForgetError] = useState<string | null>(null);
@@ -166,6 +284,36 @@ export function InfrastructureConnectionsPage() {
   const [checkDialog, setCheckDialog] = useState<CheckDialogState | null>(null);
   const [hetznerInventory, setHetznerInventory] = useState<Record<string, HetznerInventoryState>>({});
   const addCapacityButtonRef = useRef<HTMLButtonElement>(null);
+  const modalAnchorRef = useRef<HTMLDivElement>(null);
+  const openDialogKey = [
+    hetznerDialogOpen ? "hetzner" : "",
+    replacingHetzner ? `hetzner-token:${replacingHetzner.id}` : "",
+    !selfHosted && hivraCloudDialogOpen ? "hivra-cloud" : "",
+    cleanupConnection ? `cleanup:${cleanupConnection.id}` : "",
+    setupConnection ? `setup:${setupConnection.id}` : "",
+    capacityConnection ? `capacity:${capacityConnection.id}` : "",
+    wizardOpen ? `wizard:${editingConnection?.id ?? "new"}` : "",
+    enrollmentDialogOpen ? "server-enrollment" : "",
+    deletingConnection ? `delete:${deletingConnection.id}` : "",
+    forceForgetConnection ? `forget:${forceForgetConnection.id}` : "",
+    preparingConnection ? `prepare:${preparingConnection.id}` : "",
+    checkDialog ? `check:${checkDialog.connection.id}` : "",
+  ].filter(Boolean).join("|");
+
+  // A layout effect so the scroll lands before useInfrastructureDialog's
+  // passive effect moves focus into the dialog; that focus then only scrolls
+  // when its target is out of view.
+  useLayoutEffect(() => {
+    if (!openDialogKey) return;
+    const anchor = modalAnchorRef.current;
+    const dialog = anchor?.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+    // Phones render an open dialog as the page itself, scrolled by the
+    // dashboard main. Start it at its top rather than at the scroll offset of
+    // the control that opened it; focusing its sticky header does not scroll.
+    if (anchor && dialog && window.getComputedStyle(dialog).overflowY === "visible") {
+      anchor.scrollIntoView?.({ block: "start" });
+    }
+  }, [openDialogKey]);
 
   const loadHetznerInventory = useCallback(async (
     connectionId: string,
@@ -234,6 +382,40 @@ export function InfrastructureConnectionsPage() {
     }
   }, []);
 
+  // Hivra's records say which inventory servers it created and how far their
+  // setup got. Read-only; it never advances setup. Until a read succeeds, the
+  // card calls no server "Not created by Hivra"; the last loaded records still
+  // label the servers they name. Only the newest read may land.
+  const loadHetznerSetups = useCallback(async (connectionId: string, signal?: AbortSignal) => {
+    const request = (hetznerSetupRequests.current[connectionId] ?? 0) + 1;
+    hetznerSetupRequests.current[connectionId] = request;
+    const settle = (next: (previous: HetznerSetupEvidenceState) => HetznerSetupEvidenceState) => {
+      setHetznerSetups((current) => ({
+        ...current,
+        [connectionId]: next(current[connectionId] ?? { status: "loading", computers: [], createdServers: [] }),
+      }));
+    };
+    settle((previous) => ({ ...previous, status: "loading" }));
+    try {
+      const evidence = await listProviderComputerSetupEvidence(connectionId);
+      if (signal?.aborted || hetznerSetupRequests.current[connectionId] !== request) return;
+      settle(() => ({ status: "loaded", ...evidence }));
+    } catch {
+      if (signal?.aborted || hetznerSetupRequests.current[connectionId] !== request) return;
+      settle((previous) => ({ ...previous, status: "failed" }));
+    }
+  }, []);
+
+  const loadHetznerSlot = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const slot = await getHetznerCloudCapacitySlot(signal);
+      if (!signal?.aborted) setHetznerSlot(slot);
+    } catch {
+      // The purchase-time claim stays authoritative; Create stays available.
+      if (!signal?.aborted) setHetznerSlot(null);
+    }
+  }, []);
+
   const loadConnections = useCallback(async (signal?: AbortSignal) => {
     try {
       const [connectionResult, targetResult, hivraCloudResult, managedResult] = await Promise.allSettled([
@@ -263,11 +445,15 @@ export function InfrastructureConnectionsPage() {
       }
       if (connectionResult.status === "rejected") throw connectionResult.reason;
       setConnections(connectionResult.value);
+      let hasHetzner = false;
       for (const connection of connectionResult.value) {
         if (connection.provider === "hetzner-cloud") {
+          hasHetzner = true;
           void loadHetznerInventory(connection.id, { signal });
+          void loadHetznerSetups(connection.id, signal);
         }
       }
+      if (hasHetzner) void loadHetznerSlot(signal);
       setLoadError(null);
       if (targetResult.status === "fulfilled") {
         setTargets(targetResult.value);
@@ -293,13 +479,70 @@ export function InfrastructureConnectionsPage() {
         setHivraCloudLoading(false);
       }
     }
-  }, [loadHetznerInventory, selfHosted]);
+  }, [loadHetznerInventory, loadHetznerSetups, loadHetznerSlot, selfHosted]);
 
   useEffect(() => {
     const controller = new AbortController();
     void loadConnections(controller.signal);
     return () => controller.abort();
   }, [loadConnections]);
+
+  // Setup commands: open ones, answers still to give, and each connection's
+  // receipts. Observed state only; never a code.
+  const loadEnrollments = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const list = await listServerEnrollments(signal);
+      if (signal?.aborted) return;
+      setEnrollments(list.enrollments);
+      setUninstallCommand(list.uninstallCommand);
+    } catch {
+      // The rest of the page doesn't depend on this list.
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadEnrollments(controller.signal);
+    return () => controller.abort();
+  }, [loadEnrollments]);
+
+  // While any command is open (a server may still run it and report) or an
+  // answer is waiting, keep the list fresh, so "Is this your server?" appears
+  // here after the panel was closed. The dialog polls its own command.
+  const waitingEnrollment = enrollments.some((item) => item.phase === "reported"
+    || (item.phase === "issued" && Date.parse(item.expiresAt) > enrollmentNow));
+  useEffect(() => {
+    if (!waitingEnrollment || enrollmentDialogOpen) return;
+    const timer = window.setInterval(() => void loadEnrollments(), 5_000);
+    return () => window.clearInterval(timer);
+  }, [waitingEnrollment, enrollmentDialogOpen, loadEnrollments]);
+
+  // A server Hivra set up can be newer than the last inventory sync: Start
+  // setup powers it on after that sync. Sync once per setup step so its card
+  // doesn't say "Off" beside "Ready for agents".
+  const syncedForSetup = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const [connectionId, state] of Object.entries(hetznerInventory)) {
+      const setup = hetznerSetups[connectionId];
+      if (state.loading || state.error || setup?.status !== "loaded") continue;
+      const fresh = staleHetznerPowerKeys(state.inventory, setup.computers)
+        .map((key) => `${connectionId}:${key}`)
+        .filter((key) => !syncedForSetup.current.has(key));
+      if (fresh.length === 0) continue;
+      for (const key of fresh) syncedForSetup.current.add(key);
+      void loadHetznerInventory(connectionId, { refresh: true });
+    }
+  }, [hetznerInventory, hetznerSetups, loadHetznerInventory]);
+
+  // Open "Replace token" once for the connection a deep link names.
+  const handledTokenReplacement = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedTokenReplacement || handledTokenReplacement.current === requestedTokenReplacement) return;
+    const connection = connections.find((candidate) => candidate.id === requestedTokenReplacement);
+    if (!connection || connection.provider !== "digitalocean") return;
+    handledTokenReplacement.current = requestedTokenReplacement;
+    setReplacingDigitalOcean(connection);
+  }, [connections, requestedTokenReplacement]);
 
   const targetsByConnection = useMemo(() => {
     const indexed = new Map<string, DeploymentTargetDto>();
@@ -314,13 +557,13 @@ export function InfrastructureConnectionsPage() {
   const hasHivraCloudCapacity = Boolean(
     hivraCloud?.subscribed && hivraCloud.plan && hivraCloud.usage,
   );
+  // Ready now, not only once: a Linux Sandbox host's check lapses after 15
+  // minutes, and the banner goes away with it.
+  const launchReadyTargetIds = useLaunchReadyTargetIds(targets);
   const readyLaunchTarget = requestedLaunchResource
     ? targets.find((target) => (
-        target.status === "ready"
-        && target.capabilities.launchReady
-        && targetSupportsCatalogRuntime(target, requestedLaunchResource)
-        && (requestedLaunchResource !== "linux-desktop" || isProxmoxDeploymentTarget(target))
-        && (requestedLaunchResource !== "linux-terminal" || isGvisorDeploymentTarget(target))
+        launchReadyTargetIds.has(target.id)
+        && targetSupportsLaunchResource(target, requestedLaunchResource)
       )) ?? null
     : null;
   const launchReturnHref = requestedLaunchResource
@@ -348,9 +591,48 @@ export function InfrastructureConnectionsPage() {
   function openCreateWizard() {
     setEntryChooserOpen(true);
     setEditingConnection(null);
+    setWizardPrefill(null);
     setWizardOpen(true);
     setActionError(null);
     setActionNotice(null);
+  }
+
+  /** My server, command first. The SSH details wizard is its advanced path. */
+  function openServerEnrollment() {
+    setEntryChooserOpen(true);
+    setWizardOpen(false);
+    setEditingConnection(null);
+    setWizardPrefill(null);
+    setCheckDialog(null);
+    setEnrollmentDialogOpen(true);
+    setActionError(null);
+    setActionNotice(null);
+  }
+
+  /** After Yes or Replace: show the connection and start the normal
+   * inspection, then prepare and launch. */
+  function inspectEnrolledConnection(connection: InfrastructureConnectionDto, notice: string | null) {
+    upsertConnection(connection);
+    setEnrollmentDialogOpen(false);
+    void loadEnrollments();
+    if (notice) setActionNotice(notice);
+    if (isSshConnection(connection)) void runDiscovery(connection);
+  }
+
+  /** "Use sudo for setup": an operational change (revision + 1), then a new
+   * inspection. Refused while agents use the connection. */
+  async function switchToSudoForSetup(connection: SshInfrastructureConnectionDto) {
+    setActionError(null);
+    try {
+      const updated = await updateInfrastructureConnection(connection.id, {
+        endpoint: { ...connection.endpoint, sshPrivilege: "sudo" },
+      });
+      upsertConnection(updated);
+      if (isSshConnection(updated)) await runDiscovery(updated);
+    } catch (error) {
+      setCheckDialog(null);
+      setActionError(error instanceof Error ? error.message : "Hivra couldn't switch this connection to sudo.");
+    }
   }
 
   function openHivraCloudDialog() {
@@ -392,6 +674,18 @@ export function InfrastructureConnectionsPage() {
     }
   }
 
+  /** A server Hivra didn't create connects the way any other server does,
+   * with its public address filled in. */
+  function connectExistingServer(server: HetznerCloudServerInventoryDto) {
+    const sshHost = server.publicNetwork.ipv4 ?? server.publicNetwork.ipv6?.split("/")[0] ?? "";
+    if (!sshHost) return;
+    setWizardPrefill({ name: server.name, sshHost });
+    setEditingConnection(null);
+    setWizardOpen(true);
+    setActionError(null);
+    setActionNotice(null);
+  }
+
   function openHetznerDialog() {
     setEntryChooserOpen(true);
     setHetznerDialogOpen(true);
@@ -427,14 +721,46 @@ export function InfrastructureConnectionsPage() {
     await loadConnections();
   }
 
-  const runDiscovery = useCallback(async (connection: SshInfrastructureConnectionDto) => {
+  // The page reloads target evidence rather than trusting the dialog's copy.
+  async function recordGvisorPreparation() {
+    await loadConnections();
+  }
+
+  /** Close whichever inspection is open and hand over to the review dialog.
+   * From the connection wizard, the review carries on the wizard's progress. */
+  function requestGvisorSetup(
+    connection: InfrastructureConnectionDto,
+    mode: "prepare" | "repair",
+    options: { continuesHostSetup?: boolean } = {},
+  ) {
+    if (!isSshConnection(connection)) return;
+    setWizardOpen(false);
+    setEditingConnection(null);
+    setWizardPrefill(null);
+    setCheckDialog(null);
+    setPreparing({ connection, engine: "gvisor", mode, continuesHostSetup: options.continuesHostSetup });
+  }
+
+  /** Close the inspection and open the connection's settings. */
+  function requestConnectionEdit(connection: InfrastructureConnectionDto) {
+    if (!isSshConnection(connection)) return;
+    setCheckDialog(null);
+    setWizardPrefill(null);
+    openEditWizard(connection);
+  }
+
+  const runDiscovery = useCallback(async (
+    connection: SshInfrastructureConnectionDto,
+    options: { checkGvisorReadiness?: boolean } = {},
+  ) => {
+    const checkGvisorReadiness = options.checkGvisorReadiness === true;
     setCheckingIds((current) => new Set(current).add(connection.id));
-    setCheckDialog({ connection, phase: "discovering" });
+    setCheckDialog({ connection, phase: "discovering", checkGvisorReadiness });
     setActionError(null);
     setActionNotice(null);
     try {
       const discovery = await discoverInfrastructureHost(connection.id);
-      setCheckDialog({ connection, phase: "discovery", discovery });
+      setCheckDialog({ connection, phase: "discovery", discovery, checkGvisorReadiness });
     } catch (error) {
       setCheckDialog({
         connection,
@@ -559,24 +885,43 @@ export function InfrastructureConnectionsPage() {
   }
 
   return (
-    <div className={styles.page}>
-      <div className={styles.pageGlow} aria-hidden="true" />
+    <LaunchOnServerProvider pending={pendingLaunch} targets={targets}>
+    <div
+      className={embedded ? styles.embeddedPage : styles.page}
+      // Inside Launch, every link back to Launch returns to the same launch
+      // instead of opening Launch again: with the place it chooses, if any.
+      onClickCapture={embedded ? (event) => {
+        const anchor = (event.target as HTMLElement | null)?.closest?.("a");
+        const link = launchLinkFromHref(anchor?.getAttribute("href") ?? null);
+        if (!link) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (link.targetId) embedded.onLaunchTarget(link.targetId);
+        else embedded.onClose();
+      } : undefined}
+    >
+      {embedded ? null : <div className={styles.pageGlow} aria-hidden="true" />}
       <main className={styles.pageInner}>
-        <nav className={styles.breadcrumb} aria-label="Breadcrumb">
-          <Link href="/dashboard">Command Center</Link>
+        {embedded ? null : <nav className={styles.breadcrumb} aria-label="Breadcrumb">
+          <Link href="/dashboard">Home</Link>
           <ArrowRight size={12} aria-hidden="true" />
-          <span aria-current="page">Infrastructure</span>
-        </nav>
+          <span aria-current="page">Capacity</span>
+        </nav>}
 
         <header className={styles.pageHeader}>
           <div className={styles.pageHeading}>
-            <span className={styles.eyebrow}>Infrastructure</span>
-            <h1>Your infrastructure.</h1>
-            <p>
-              {selfHosted
-                ? "Connect a cloud project or bring a computer you control."
-                : "Manage your plan and the machines that power your agents and computers."}
-            </p>
+            <span className={styles.eyebrow}>Capacity</span>
+            {embedded ? <>
+              <h1 id="launch-capacity-sheet-heading">Add capacity for your launch</h1>
+              <p>Connect a server or a cloud account, or finish setting one up. When it&apos;s ready, choose Launch on this server and Hivra takes you back to your launch.</p>
+            </> : <>
+              <h1>Where your agents run.</h1>
+              <p>
+                {selfHosted
+                  ? "Connect a cloud project or bring a computer you control."
+                  : "Hivra Cloud, your cloud accounts, and your own servers: the places your agents and computers run."}
+              </p>
+            </>}
           </div>
           {!showingFirstConnection ? (
             <button
@@ -590,7 +935,7 @@ export function InfrastructureConnectionsPage() {
               {entryChooserOpen
                 ? <X size={16} aria-hidden="true" />
                 : <Plus size={16} aria-hidden="true" />}
-              {entryChooserOpen ? "Close options" : "Add infrastructure"}
+              {entryChooserOpen ? "Close options" : "Add capacity"}
             </button>
           ) : null}
         </header>
@@ -605,7 +950,17 @@ export function InfrastructureConnectionsPage() {
           </div>
         ) : null}
 
-        {launchReturnHref && requestedLaunchLabel ? (
+        {/* Inside Launch, Hivra Cloud is already one of the launch's choices:
+            only a new place to run is news worth handing back. */}
+        {embedded && readyLaunchTarget && requestedLaunchLabel ? (
+          <div className={styles.pageNotice} role="status">
+            <CheckCircle2 size={16} aria-hidden="true" />
+            <span>{readyLaunchTarget.displayName} is ready for {requestedLaunchLabel}.</span>
+            <button type="button" className={styles.primaryButton} onClick={() => embedded.onLaunchTarget(readyLaunchTarget.id)}>
+              Use it for this launch <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          </div>
+        ) : !embedded && launchReturnHref && requestedLaunchLabel ? (
           <div className={styles.pageNotice} role="status">
             <CheckCircle2 size={16} aria-hidden="true" />
             <span>Capacity is ready for {requestedLaunchLabel}. Return to finish this launch.</span>
@@ -661,6 +1016,30 @@ export function InfrastructureConnectionsPage() {
           </div>
         ) : null}
 
+        {/* Answers waiting (Is this your server?, open commands) come first:
+            they are the owner's next step, above the ways to add more. */}
+        <ServerEnrollmentAnswers
+          enrollments={openEnrollments(enrollments, dismissedEnrollments, enrollmentNow, declinedEnrollments)}
+          uninstallCommand={uninstallCommand}
+          onConfirmed={(connection) => inspectEnrolledConnection(connection, `${connection.name} is connected. Hivra is inspecting it now.`)}
+          onReplaced={(connection) => inspectEnrolledConnection(connection, `${connection.name}'s access was replaced. Hivra is checking it again.`)}
+          onDeclined={(item) => {
+            rememberDeclined(item);
+            void loadEnrollments();
+          }}
+          onCancel={async (id) => {
+            // A failed cancel is shown beside the command; the list is read
+            // again either way, since the command may have been used meanwhile.
+            try {
+              await cancelServerEnrollment(id);
+            } finally {
+              void loadEnrollments();
+            }
+          }}
+          onDismiss={(id) => setDismissedEnrollments((current) => new Set(current).add(id))}
+          onNewCommand={openServerEnrollment}
+        />
+
         {showingEntryChooser ? (
           <InfrastructureEntryChooser
             firstConnection={showingFirstConnection}
@@ -669,7 +1048,7 @@ export function InfrastructureConnectionsPage() {
             onChooseHivraCloud={openHivraCloudDialog}
             onConnectHetzner={openHetznerDialog}
             onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
-            onConnectExisting={openCreateWizard}
+            onConnectExisting={openServerEnrollment}
           />
         ) : null}
 
@@ -730,12 +1109,25 @@ export function InfrastructureConnectionsPage() {
                         key={connection.id}
                         connection={connection}
                         inventory={state.inventory}
+                        setups={hetznerSetups[connection.id]?.computers ?? []}
+                        createdServers={hetznerSetups[connection.id]?.createdServers ?? []}
+                        setupEvidence={hetznerSetups[connection.id]?.status ?? "loading"}
+                        onRetrySetupEvidence={() => void loadHetznerSetups(connection.id)}
+                        slot={hetznerSlot}
                         loading={state.loading}
                         error={state.error}
+                        launchResourceId={requestedLaunchResource}
+                        unifiedLaunchReturn={unifiedLaunchReturn}
                         onCreateCapacity={() => setCapacityConnection(connection)}
                         onCleanup={() => setCleanupConnection(connection)}
-                        onSetup={() => setSetupConnection(connection)}
-                        onRefresh={() => void loadHetznerInventory(connection.id, { refresh: true })}
+                        onSetup={(orderId) => setSetupTarget({ connection, orderId: orderId ?? null })}
+                        onReplaceToken={() => setReplacingHetzner(connection)}
+                        onConnectExistingServer={(server) => connectExistingServer(server)}
+                        onRefresh={() => {
+                          void loadHetznerInventory(connection.id, { refresh: true });
+                          void loadHetznerSetups(connection.id);
+                          void loadHetznerSlot();
+                        }}
                         onDelete={() => setDeletingConnection(connection)}
                       />
                     );
@@ -750,9 +1142,14 @@ export function InfrastructureConnectionsPage() {
                         sessions={managedSessions.filter((session) => session.connectionId === connection.id)}
                         refreshing={digitalOceanRefreshing.has(connection.id)}
                         error={digitalOceanErrors[connection.id] ?? null}
-                        onLaunch={() => { if (target) setDigitalOceanLaunch({ connection, target }); }}
                         onRefresh={() => void refreshDigitalOcean(connection.id)}
+                        onReplaceToken={() => setReplacingDigitalOcean(connection)}
                         onDelete={() => setDeletingConnection(connection)}
+                        onExpiryChanged={(credentialExpiry) => setConnections((current) => current.map((candidate) => (
+                          candidate.id === connection.id && candidate.provider === "digitalocean"
+                            ? { ...candidate, credentialExpiry }
+                            : candidate
+                        )))}
                       />
                     );
                   }
@@ -760,11 +1157,13 @@ export function InfrastructureConnectionsPage() {
                     <InfrastructureConnectionCard
                       key={connection.id}
                       connection={connection}
+                      receipts={enrollments.filter((item) => item.connectionId === connection.id && item.phase === "confirmed")}
                       savedTarget={targetsByConnection.get(connection.id)}
                       latestPreflight={latestPreflight[connection.id]}
                       checking={checkingIds.has(connection.id)}
-                      onPrepare={() => setPreparingConnection(connection)}
+                      onPrepare={() => setPreparing({ connection, engine: "proxmox", mode: "prepare" })}
                       onCheck={() => void runDiscovery(connection)}
+                      onCheckReadiness={() => void runDiscovery(connection, { checkGvisorReadiness: true })}
                       onEdit={() => openEditWizard(connection)}
                       onDelete={() => setDeletingConnection(connection)}
                     />
@@ -779,7 +1178,7 @@ export function InfrastructureConnectionsPage() {
       {/* WKWebView scrolls the dashboard's inner main element. Present setup as
           a full in-app workflow before the inert infrastructure content instead
           of opening a body portal outside the visible scroll position. */}
-      <div className={styles.modalAnchor} data-infrastructure-modal-anchor>
+      <div ref={modalAnchorRef} className={styles.modalAnchor} data-infrastructure-modal-anchor>
         <div className={styles.modalTheme}>
           {hetznerDialogOpen ? (
             <HetznerCloudConnectionDialog
@@ -797,6 +1196,33 @@ export function InfrastructureConnectionsPage() {
             />
           ) : null}
 
+          {replacingHetzner ? (
+            <HetznerCloudConnectionDialog
+              replacing={replacingHetzner}
+              onClose={() => setReplacingHetzner(null)}
+              returnFocusRef={addCapacityButtonRef}
+              onReplaced={({ connection, inventory, projectCheck }) => {
+                upsertConnection(connection);
+                if (inventory) {
+                  setHetznerInventory((current) => ({
+                    ...current,
+                    [connection.id]: { inventory, loading: false, error: null },
+                  }));
+                } else {
+                  // Saved, but the server list wasn't: read it with the new token.
+                  void loadHetznerInventory(connection.id, { refresh: true });
+                }
+                void loadHetznerSetups(connection.id);
+                setReplacingHetzner(null);
+                setActionNotice(hetznerCloudTokenReplacedNotice(connection.name, projectCheck));
+              }}
+              onReplaceUnconfirmed={() => {
+                // The token was swapped; show what the connection holds now.
+                void loadConnections();
+              }}
+            />
+          ) : null}
+
           {digitalOceanDialogOpen ? (
             <DigitalOceanConnectionDialog
               onClose={() => setDigitalOceanDialogOpen(false)}
@@ -805,22 +1231,33 @@ export function InfrastructureConnectionsPage() {
                 upsertConnection(connection);
                 setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
                 setDigitalOceanDialogOpen(false);
-                setDigitalOceanLaunch({ connection, target });
+                // Connected and ready: choose what runs there in Launch.
+                if (target.status === "ready" && target.capabilities.launchReady) {
+                  if (embedded) embedded.onLaunchTarget(target.id);
+                  else router.push(digitalOceanLaunchHref(target.id));
+                }
               }}
             />
           ) : null}
 
-          {digitalOceanLaunch ? (
-            <DigitalOceanLaunchDialog
-              connection={digitalOceanLaunch.connection}
-              target={digitalOceanLaunch.target}
-              onClose={() => setDigitalOceanLaunch(null)}
+          {replacingDigitalOcean ? (
+            <DigitalOceanConnectionDialog
+              replacing={replacingDigitalOcean}
+              onClose={() => setReplacingDigitalOcean(null)}
               returnFocusRef={addCapacityButtonRef}
-              onLaunched={(session) => {
-                setManagedSessions((current) => [session, ...current.filter((candidate) => candidate.agentId !== session.agentId)]);
+              onConnected={(connection, target) => {
+                upsertConnection(connection);
+                setDigitalOceanTargets((current) => [target, ...current.filter((candidate) => candidate.id !== target.id)]);
+                setDigitalOceanErrors((current) => {
+                  const next = { ...current };
+                  delete next[connection.id];
+                  return next;
+                });
+                setReplacingDigitalOcean(null);
               }}
             />
           ) : null}
+
 
           {!selfHosted && hivraCloudDialogOpen ? (
             <HivraCloudPurchaseDialog
@@ -831,6 +1268,8 @@ export function InfrastructureConnectionsPage() {
                 void loadConnections();
               }}
               returnFocusRef={addCapacityButtonRef}
+              // A plan bought during a launch detour returns to that launch.
+              returnTo={unifiedLaunchReturn ? "/dashboard/launch" : null}
             />
           ) : null}
 
@@ -839,17 +1278,31 @@ export function InfrastructureConnectionsPage() {
             onForgot={()=>{setActionNotice("Hivra access was erased. Provider cleanup was not completed; resources may still incur charges in Hetzner.");void loadConnections();}}
             onComplete={()=>void loadHetznerInventory(cleanupConnection.id,{refresh:true})}/>}
 
-          {setupConnection && <ProviderComputerSetupDialog connection={setupConnection}
+          {setupTarget && <ProviderComputerSetupDialog connection={setupTarget.connection}
+            orderId={setupTarget.orderId}
             launchResourceId={requestedLaunchResource}
             unifiedLaunchReturn={unifiedLaunchReturn}
-            onClose={() => setSetupConnection(null)} onChanged={() => { void loadConnections(); void loadHetznerInventory(setupConnection.id, { refresh: true }); }} />}
+            onClose={() => setSetupTarget(null)}
+            onChanged={() => {
+              void loadConnections();
+              void loadHetznerInventory(setupTarget.connection.id, { refresh: true });
+              void loadHetznerSetups(setupTarget.connection.id);
+            }} />}
 
           {capacityConnection ? (
             <HetznerCloudCapacityDialog
               connection={capacityConnection}
               returnFocusRef={addCapacityButtonRef}
               onClose={() => setCapacityConnection(null)}
-              onSetup={() => { setSetupConnection(capacityConnection); setCapacityConnection(null); }}
+              slot={hetznerSlot}
+              launchResourceId={requestedLaunchResource}
+              launchLabel={requestedLaunchLabel}
+              unifiedLaunchReturn={unifiedLaunchReturn}
+              onChanged={() => {
+                void loadHetznerSetups(capacityConnection.id);
+                void loadHetznerSlot();
+                void loadConnections();
+              }}
               onInventoryChanged={(inventory) => {
                 setHetznerInventory((current) => ({
                   ...current,
@@ -863,13 +1316,34 @@ export function InfrastructureConnectionsPage() {
             />
           ) : null}
 
+          {enrollmentDialogOpen ? (
+            <ServerEnrollmentDialog
+              returnFocusRef={addCapacityButtonRef}
+              onClose={() => {
+                setEnrollmentDialogOpen(false);
+                void loadEnrollments();
+              }}
+              onUseSshDetails={openCreateWizard}
+              onConnected={(connection) => inspectEnrolledConnection(connection, `${connection.name} is connected. Hivra is inspecting it now.`)}
+              onAccessReplaced={(connection) => inspectEnrolledConnection(connection, `${connection.name}'s access was replaced. Hivra is checking it again.`)}
+              onChanged={() => void loadEnrollments()}
+              onDeclined={rememberDeclined}
+              onConnectionsChanged={() => void loadConnections()}
+            />
+          ) : null}
+
           {wizardOpen ? (
             <InfrastructureConnectionWizard
+              // A new key when the wizard switches to editing a saved host,
+              // so the edit form starts from that host rather than the draft.
+              key={editingConnection?.id ?? "new"}
               connection={editingConnection}
+              prefill={editingConnection ? null : wizardPrefill}
               returnFocusRef={addCapacityButtonRef}
               onClose={() => {
                 setWizardOpen(false);
                 setEditingConnection(null);
+                setWizardPrefill(null);
                 void loadConnections();
               }}
               onConnectionSaved={upsertConnection}
@@ -877,14 +1351,22 @@ export function InfrastructureConnectionsPage() {
               onPrepareRequested={(saved) => {
                 setWizardOpen(false);
                 setEditingConnection(null);
-                if (isSshConnection(saved)) setPreparingConnection(saved);
+                setWizardPrefill(null);
+                if (isSshConnection(saved)) {
+                  setPreparing({ connection: saved, engine: "proxmox", mode: "prepare", continuesHostSetup: true });
+                }
               }}
+              onGvisorSetupRequested={(saved, mode) => requestGvisorSetup(saved, mode, { continuesHostSetup: true })}
+              onEditRequested={requestConnectionEdit}
+              onSetupCommandRequested={openServerEnrollment}
+              onGvisorReady={() => void loadConnections()}
             />
           ) : null}
 
           {deletingConnection ? (
             <DeleteConnectionDialog
               connection={deletingConnection}
+              uninstallCommand={isEnrolledConnection(deletingConnection) ? uninstallCommand : null}
               deleting={deleting}
               onCancel={() => setDeletingConnection(null)}
               onConfirm={() => void confirmDelete()}
@@ -904,14 +1386,19 @@ export function InfrastructureConnectionsPage() {
             />
           ) : null}
 
-          {preparingConnection ? (
+          {preparing ? (
             <InfrastructurePrepareDialog
-              connection={preparingConnection}
+              key={`${preparing.connection.id}:${preparing.engine}:${preparing.mode}`}
+              connection={preparing.connection}
+              engine={preparing.engine}
+              mode={preparing.mode}
+              continuesHostSetup={preparing.continuesHostSetup}
               onClose={() => {
-                setPreparingConnection(null);
+                setPreparing(null);
                 void loadConnections();
               }}
               onPrepared={recordPreparation}
+              onGvisorPrepared={recordGvisorPreparation}
             />
           ) : null}
 
@@ -932,13 +1419,19 @@ export function InfrastructureConnectionsPage() {
               }}
               onPrepareRequested={() => {
                 setCheckDialog(null);
-                setPreparingConnection(checkDialog.connection);
+                setPreparing({ connection: checkDialog.connection, engine: "proxmox", mode: "prepare" });
               }}
+              onGvisorSetupRequested={(mode) => requestGvisorSetup(checkDialog.connection, mode)}
+              onEditRequested={() => requestConnectionEdit(checkDialog.connection)}
+              onUseSudoRequested={() => void switchToSudoForSetup(checkDialog.connection)}
+              onSetupCommandRequested={openServerEnrollment}
+              onGvisorReady={() => void loadConnections()}
             />
           ) : null}
         </div>
       </div>
     </div>
+    </LaunchOnServerProvider>
   );
 }
 
@@ -969,11 +1462,14 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 
 function DeleteConnectionDialog({
   connection,
+  uninstallCommand = null,
   deleting,
   onCancel,
   onConfirm,
 }: {
   connection: InfrastructureConnectionDto;
+  /** For a server the setup command connected: how to remove the hivra user. */
+  uninstallCommand?: string | null;
   deleting: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -1024,6 +1520,15 @@ function DeleteConnectionDialog({
             </>
           )}
         </p>
+        {uninstallCommand ? (
+          <div className={enrollmentStyles.fine}>
+            <p>Disconnecting deletes Hivra&apos;s key for this server, so Hivra can&apos;t sign in again. To remove the hivra user from the server too, run there:</p>
+            <div className={enrollmentStyles.commandRow}>
+              <code className={enrollmentStyles.command}>{uninstallCommand}</code>
+              <CopyButton value={uninstallCommand} label="Copy the uninstall command" />
+            </div>
+          </div>
+        ) : null}
         <div className={styles.resultActions}>
           <button
             ref={cancelRef}
@@ -1070,6 +1575,7 @@ function ForceForgetHetznerDialog({
     initialFocusRef: confirmationRef,
   });
   const confirmed = confirmation === HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION;
+  const mismatch = confirmation.length > 0 && !confirmed;
 
   return (
     <div className={styles.modalBackdrop}>
@@ -1120,13 +1626,22 @@ function ForceForgetHetznerDialog({
             value={confirmation}
             onChange={(event) => setConfirmation(event.target.value)}
             autoComplete="off"
+            autoCapitalize="characters"
+            autoCorrect="off"
             spellCheck={false}
             disabled={forgetting}
-            aria-describedby="force-forget-confirmation-hint"
+            aria-describedby={mismatch
+              ? "force-forget-confirmation-hint force-forget-confirmation-mismatch"
+              : "force-forget-confirmation-hint"}
           />
           <span id="force-forget-confirmation-hint" className={styles.fieldHint}>
             {HETZNER_CLOUD_FORCE_FORGET_CONFIRMATION}
           </span>
+          {mismatch ? (
+            <span id="force-forget-confirmation-mismatch" className={styles.fieldHint}>
+              Doesn&apos;t match yet
+            </span>
+          ) : null}
         </label>
 
         {error ? (
@@ -1168,6 +1683,11 @@ function ConnectionCheckDialog({
   onStrictPreflight,
   onRetryPreflight,
   onPrepareRequested,
+  onGvisorSetupRequested,
+  onEditRequested,
+  onUseSudoRequested,
+  onSetupCommandRequested,
+  onGvisorReady,
 }: {
   state: CheckDialogState;
   checking: boolean;
@@ -1176,6 +1696,11 @@ function ConnectionCheckDialog({
   onStrictPreflight: (discovery: HostDiscoveryResult) => void;
   onRetryPreflight: () => void;
   onPrepareRequested: () => void;
+  onGvisorSetupRequested: (mode: "prepare" | "repair") => void;
+  onEditRequested: () => void;
+  onUseSudoRequested?: () => void;
+  onSetupCommandRequested?: () => void;
+  onGvisorReady: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -1239,12 +1764,20 @@ function ConnectionCheckDialog({
           ) : state.phase === "discovery" && state.discovery ? (
             <InfrastructureHostDiscoveryResult
               result={state.discovery}
+              hostName={state.connection.name}
+              sshUser={state.connection.endpoint.sshUser}
               connectionId={state.connection.id}
               onRetry={onRetryDiscovery}
               onDone={onClose}
               onStrictPreflightRequested={supportsStrictProxmoxDiscovery(state.discovery)
                 ? () => onStrictPreflight(state.discovery as HostDiscoveryResult)
                 : undefined}
+              onGvisorSetupRequested={onGvisorSetupRequested}
+              onChangeSshUserRequested={onEditRequested}
+              onUseSudoRequested={onUseSudoRequested}
+              onSetupCommandRequested={onSetupCommandRequested}
+              onGvisorReady={onGvisorReady}
+              checkGvisorReadiness={state.checkGvisorReadiness}
               retrying={checking}
             />
           ) : state.phase === "preflighting" ? (
@@ -1300,5 +1833,111 @@ function ConnectionCheckDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Answers still to give: "Is this your server?", every open command (used
+ * or not), recent unsupported results, and a No given on this page. Each
+ * stays until it is answered, cancelled, expires or is dismissed. */
+function ServerEnrollmentAnswers({
+  enrollments,
+  uninstallCommand,
+  onConfirmed,
+  onReplaced,
+  onDeclined,
+  onCancel,
+  onDismiss,
+  onNewCommand,
+}: {
+  enrollments: ServerEnrollmentDto[];
+  uninstallCommand: string | null;
+  onConfirmed: (connection: InfrastructureConnectionDto) => void;
+  onReplaced: (connection: InfrastructureConnectionDto) => void;
+  onDeclined: (enrollment: ServerEnrollmentDto) => void;
+  /** Rejects when Hivra couldn't cancel the command. */
+  onCancel: (id: string) => Promise<void>;
+  onDismiss: (id: string) => void;
+  onNewCommand: () => void;
+}) {
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({});
+  if (enrollments.length === 0) return null;
+
+  async function cancel(id: string) {
+    setCancelling(id);
+    setCancelErrors((current) => {
+      const rest = { ...current };
+      delete rest[id];
+      return rest;
+    });
+    try {
+      await onCancel(id);
+    } catch (error) {
+      // 404/409: the command ended another way (used, expired); the refreshed
+      // list shows how. Anything else: it was not cancelled and still works.
+      const ended = error instanceof InfrastructureApiError && (error.status === 404 || error.status === 409);
+      const message = error instanceof Error && error.message ? error.message : "Hivra couldn't cancel this command.";
+      setCancelErrors((current) => ({
+        ...current,
+        [id]: ended ? message : `${message} It wasn't cancelled and still works until it expires. Try again.`,
+      }));
+    } finally {
+      setCancelling(null);
+    }
+  }
+
+  return (
+    <section className={enrollmentStyles.section} aria-labelledby="server-enrollment-answers-heading">
+      <div className={styles.sectionHeader}>
+        <div>
+          <span className={styles.eyebrow}>My server</span>
+          <h2 id="server-enrollment-answers-heading">Setup commands</h2>
+        </div>
+      </div>
+      {enrollments.map((item) => item.phase === "issued" ? (
+        <div key={item.id} className={enrollmentStyles.pendingLine} role="status">
+          <span>
+            {item.scriptFetches > 0 ? (
+              <>
+                The setup script was downloaded with your command at {clockTime(item.lastFetchedAt ?? item.issuedAt)}.
+                {" "}No report yet.
+              </>
+            ) : (
+              <>
+                The setup command you made at {clockTime(item.issuedAt)} hasn&apos;t been used yet. It works until
+                {" "}{clockTime(item.expiresAt)}.
+              </>
+            )}
+          </span>
+          <button type="button" className={styles.tertiaryButton} onClick={() => void cancel(item.id)} disabled={cancelling === item.id}>
+            {cancelling === item.id ? "Cancelling…" : "Cancel this command"}
+          </button>
+          {cancelErrors[item.id] ? (
+            <div className={styles.formError} role="alert">
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>{cancelErrors[item.id]}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div key={item.id}>
+          <ServerEnrollmentCard
+            enrollment={item}
+            uninstallCommand={uninstallCommand}
+            onConfirmed={onConfirmed}
+            onReplaced={onReplaced}
+            onDeclined={() => onDeclined(item)}
+            onNewCommand={onNewCommand}
+          />
+          {item.phase === "unsupported" || item.phase === "rejected" ? (
+            <button type="button" className={styles.tertiaryButton} onClick={() => onDismiss(item.id)}>Dismiss</button>
+          ) : null}
+        </div>
+      ))}
+    </section>
   );
 }

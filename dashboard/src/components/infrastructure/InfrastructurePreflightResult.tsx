@@ -16,12 +16,14 @@ import {
 import { useEffect, useRef, type ReactNode } from "react";
 
 import type { ProxmoxPreflightResult } from "@/lib/infrastructure/contracts";
+import type { LaunchOnServerAction } from "@/lib/infrastructure/launch-on-server";
 import {
   formatInfrastructureBytes,
   preflightHeadline,
 } from "@/lib/infrastructure/formatters";
 
 import styles from "./Infrastructure.module.css";
+import { LaunchOnServerLink, useLaunchOnServer } from "./LaunchOnServer";
 
 type InfrastructurePreflightResultProps = {
   result: ProxmoxPreflightResult;
@@ -40,6 +42,12 @@ export function InfrastructurePreflightResult({
 }: InfrastructurePreflightResultProps) {
   const headline = preflightHeadline(result);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const launch = useLaunchOnServer();
+  // Launch appears once the saved target evidence for this connection says
+  // ready; the page reloads it right after every check.
+  const launchAction = result.ok && result.target.launchReady
+    ? launch.forProxmoxConnection(result.connectionId, result.target.externalId)
+    : null;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -131,79 +139,84 @@ export function InfrastructurePreflightResult({
         </div>
       ) : null}
 
-      <div className={styles.targetIdentity}>
-        <div>
-          <span className={styles.sectionLabel}>Detected host</span>
-          <strong>{target.displayName}</strong>
-          <span>Detected platform: Proxmox VE {target.proxmoxVersion}</span>
+      <details className={styles.technicalDetails}>
+        <summary>Technical details</summary>
+        <div className={styles.technicalDetailsBody}>
+          <div className={styles.targetIdentity}>
+            <div>
+              <span className={styles.sectionLabel}>Detected host</span>
+              <strong>{target.displayName}</strong>
+              <span>Detected platform: Proxmox VE {target.proxmoxVersion}</span>
+            </div>
+            <span className={styles.isolationBadge}>
+              <ShieldCheck size={14} aria-hidden="true" />
+              Recommended: Hardware-isolated VM
+            </span>
+          </div>
+
+          <div className={styles.metricGrid}>
+            <ResultMetric
+              icon={<Cpu size={16} />}
+              label="CPU"
+              value={`${target.capacity.cpu.totalCores} cores`}
+              detail={`${cpuUtilization}% currently in use`}
+            />
+            <ResultMetric
+              icon={<MemoryStick size={16} />}
+              label="Memory"
+              value={`${formatInfrastructureBytes(memory.available)} available`}
+              detail="After computer reservations and host headroom"
+            />
+            <ResultMetric
+              icon={<HardDrive size={16} />}
+              label="Storage"
+              value={`${formatInfrastructureBytes(storage.available)} free`}
+              detail={`${formatInfrastructureBytes(storage.total)} total`}
+            />
+            <ResultMetric
+              icon={<Box size={16} />}
+              label="VM slots"
+              value={`${target.capabilities.vmidRange.freeCount} free`}
+              detail={`${target.capabilities.vmidRange.start}-${target.capabilities.vmidRange.end}`}
+            />
+          </div>
+
+          <div className={styles.capabilityGrid}>
+            <CapabilityRow
+              icon={<Network size={15} />}
+              label="Network bridges"
+              value={target.capabilities.bridges.join(", ") || "None detected"}
+            />
+            <CapabilityRow
+              icon={<Server size={15} />}
+              label="Agent storage"
+              value={target.capabilities.storages.join(", ") || "None detected"}
+            />
+            <CapabilityRow
+              icon={<Box size={15} />}
+              label="Base image"
+              value={
+                target.capabilities.template
+                  ? target.capabilities.template.ready
+                    ? `VM ${target.capabilities.template.vmid} ready`
+                    : `VM ${target.capabilities.template.vmid} needs attention`
+                  : "Not configured"
+              }
+            />
+            <CapabilityRow
+              icon={<ShieldCheck size={15} />}
+              label="Hivra host tools"
+              value={
+                target.capabilities.provisioner
+                  ? target.capabilities.provisioner.ready
+                    ? `Version ${target.capabilities.provisioner.version ?? "verified"}`
+                    : "Needs attention"
+                  : "Not configured"
+              }
+            />
+          </div>
         </div>
-        <span className={styles.isolationBadge}>
-          <ShieldCheck size={14} aria-hidden="true" />
-          Recommended: Hardware-isolated VM
-        </span>
-      </div>
-
-      <div className={styles.metricGrid}>
-        <ResultMetric
-          icon={<Cpu size={16} />}
-          label="CPU"
-          value={`${target.capacity.cpu.totalCores} cores`}
-          detail={`${cpuUtilization}% currently in use`}
-        />
-        <ResultMetric
-          icon={<MemoryStick size={16} />}
-          label="Memory"
-          value={`${formatInfrastructureBytes(memory.available)} available`}
-          detail="After computer reservations and host headroom"
-        />
-        <ResultMetric
-          icon={<HardDrive size={16} />}
-          label="Storage"
-          value={`${formatInfrastructureBytes(storage.available)} free`}
-          detail={`${formatInfrastructureBytes(storage.total)} total`}
-        />
-        <ResultMetric
-          icon={<Box size={16} />}
-          label="VM slots"
-          value={`${target.capabilities.vmidRange.freeCount} free`}
-          detail={`${target.capabilities.vmidRange.start}-${target.capabilities.vmidRange.end}`}
-        />
-      </div>
-
-      <div className={styles.capabilityGrid}>
-        <CapabilityRow
-          icon={<Network size={15} />}
-          label="Network bridges"
-          value={target.capabilities.bridges.join(", ") || "None detected"}
-        />
-        <CapabilityRow
-          icon={<Server size={15} />}
-          label="Agent storage"
-          value={target.capabilities.storages.join(", ") || "None detected"}
-        />
-        <CapabilityRow
-          icon={<Box size={15} />}
-          label="Base image"
-          value={
-            target.capabilities.template
-              ? target.capabilities.template.ready
-                ? `VM ${target.capabilities.template.vmid} ready`
-                : `VM ${target.capabilities.template.vmid} needs attention`
-              : "Not configured"
-          }
-        />
-        <CapabilityRow
-          icon={<ShieldCheck size={15} />}
-          label="Hivra host tools"
-          value={
-            target.capabilities.provisioner
-              ? target.capabilities.provisioner.ready
-                ? `Version ${target.capabilities.provisioner.version ?? "verified"}`
-                : "Needs attention"
-              : "Not configured"
-          }
-        />
-      </div>
+      </details>
 
       {result.warnings.length > 0 ? (
         <div className={styles.warningList}>
@@ -225,6 +238,7 @@ export function InfrastructurePreflightResult({
         onRetry={onRetry}
         onDone={onDone}
         onPrepareRequested={!target.launchReady ? onPrepareRequested : undefined}
+        launchAction={launchAction}
         retrying={retrying}
       />
     </section>
@@ -274,11 +288,13 @@ function ResultActions({
   onRetry,
   onDone,
   onPrepareRequested,
+  launchAction = null,
   retrying,
 }: {
   onRetry: () => void;
   onDone: () => void;
   onPrepareRequested?: () => void;
+  launchAction?: LaunchOnServerAction | null;
   retrying: boolean;
 }) {
   return (
@@ -290,14 +306,19 @@ function ResultActions({
         disabled={retrying}
       >
         <RefreshCw size={14} className={retrying ? styles.spin : undefined} aria-hidden="true" />
-        {retrying ? "Inspecting..." : "Inspect again"}
+        {retrying ? "Checking…" : "Check again"}
       </button>
       {onPrepareRequested ? (
         <>
           <button type="button" className={styles.tertiaryButton} onClick={onDone}>Not now</button>
           <button type="button" className={styles.primaryButton} onClick={onPrepareRequested}>
-            <ServerCog size={14} aria-hidden="true" /> Prepare recommended setup
+            <ServerCog size={14} aria-hidden="true" /> Review setup
           </button>
+        </>
+      ) : launchAction ? (
+        <>
+          <button type="button" className={styles.tertiaryButton} onClick={onDone}>Done</button>
+          <LaunchOnServerLink action={launchAction} />
         </>
       ) : (
         <button type="button" className={styles.primaryButton} onClick={onDone}>

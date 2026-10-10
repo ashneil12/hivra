@@ -14,8 +14,10 @@ const EN_BILLING = MARKETING_COPY.en.dashboard.billing;
 
 const mockGet = jest.fn();
 const mockReplace = jest.fn();
+const mockPush = jest.fn();
 const mockRouter = {
   replace: mockReplace,
+  push: mockPush,
 };
 const mockSearchParams = {
   get: mockGet,
@@ -405,6 +407,30 @@ describe("BillingPage", () => {
           },
         }));
       }
+      if (url.includes("/api/billing/wallet/eligibility")) {
+        return Promise.resolve(jsonResponse({
+          balance: { balanceDisplay: "1.25" },
+          thresholds: {
+            configured: true,
+            proDisplay: "134,476,535",
+            powerDisplay: "269,855,596",
+            priceUsd: "0.000001108",
+            priceFetchedAt: "2026-09-24T12:59:43.827Z",
+          },
+          tiers: {
+            pro: { currentlyEligible: false, currentThresholdDisplay: "134,476,535" },
+            power: { currentlyEligible: false, currentThresholdDisplay: "269,855,596" },
+          },
+          veniceBoost: {
+            thresholdUsd: 199,
+            cpuBonus: 1,
+            ramBonusMb: 2048,
+            currentlyEligible: false,
+            requiredVvvDisplay: "7",
+            countsStakedVvv: true,
+          },
+        }));
+      }
       if (url.includes("/api/billing/token-holding")) {
         return Promise.resolve(jsonResponse(
           requestMethod(input, init) === "POST" ? tokenRefreshData : tokenHoldingData
@@ -736,6 +762,55 @@ describe("BillingPage", () => {
       expect(screen.getByRole("heading", { name: "Choose a plan" })).toBeInTheDocument();
     });
 
+    // Live review on Canary: "vCPU 0.5 −7.5" beside the figure read as a range.
+    it("says how each plan differs from yours in words, not as a bare signed number", async () => {
+      render(<BillingPage />);
+      fireEvent.click(await screen.findByRole("tab", { name: "Plans" }));
+      // The free account shows no compute rows, so it has nothing to compare.
+      const free = (await screen.findByRole("heading", { name: "Free" })).closest("article") as HTMLElement;
+      expect(within(free).queryByText(/vs yours/)).not.toBeInTheDocument();
+      const pro = screen.getByRole("heading", { name: "Pro" }).closest("article") as HTMLElement;
+      expect(within(pro).getByText("(−4 GB vs yours)")).toBeInTheDocument();
+    });
+
+    it("opens Overview on a paid plan on hold, with the way to settle it", async () => {
+      notSubscribed();
+      usageData = {
+        ...usageData,
+        planOnHold: { key: "operator", name: "Pro", status: "past_due", reason: "payment_overdue", billingPortal: true },
+      };
+      render(<BillingPage />);
+
+      expect(await screen.findByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("heading", { name: "Pro plan on hold" })).toBeInTheDocument();
+      expect(screen.getByText(
+        "A payment didn't go through, so this plan isn't active right now. Pay the open invoice or update your card in the billing portal.",
+      )).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open billing portal" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Choose a plan" })).not.toBeInTheDocument();
+      // A live card subscription still bills the plan, so a new plan would be
+      // refused (ACTIVE_SUBSCRIPTION) until it is settled in the portal.
+      expect(screen.queryByRole("button", { name: "See plans" })).not.toBeInTheDocument();
+    });
+
+    it("offers no billing portal for a plan on hold that no live card subscription bills", async () => {
+      notSubscribed();
+      usageData = {
+        ...usageData,
+        planOnHold: { key: "fleet", name: "Power", status: "active", reason: "no_slots", billingPortal: false },
+      };
+      render(<BillingPage />);
+
+      expect(await screen.findByRole("heading", { name: "Power plan on hold" })).toBeInTheDocument();
+      expect(screen.getByText("This plan has no agent slots right now. Contact support to check it.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
+      // Nothing bills this plan by card, so Checkout for a plan still works.
+      fireEvent.click(screen.getByRole("button", { name: "See plans" }));
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
+      });
+    });
+
     it("renders only the active panel and wires tabs to their panels", async () => {
       render(<BillingPage />);
       const tablist = await screen.findByRole("tablist", { name: "Billing sections" });
@@ -922,7 +997,7 @@ describe("BillingPage", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/billing/activity");
   });
 
-  it("confirms a successful checkout before routing to welcome", async () => {
+  it("confirms a successful checkout before opening Launch", async () => {
     mockGet.mockImplementation((key: string) => {
       if (key === "subscription") return "success";
       if (key === "session_id") return "cs_checkout_success";
@@ -950,7 +1025,55 @@ describe("BillingPage", () => {
       });
     });
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith("/dashboard/welcome?subscription=success&step=agent-type");
+      // With nothing to return to, Launch opens and says whether the plan shows.
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?upgraded=operator");
+    });
+  });
+
+  it("returns to the launch a checkout started from once the checkout is confirmed", async () => {
+    const launchReturn = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+    mockGet.mockImplementation((key: string) => ({
+      subscription: "success",
+      session_id: "cs_checkout_success",
+      returnTo: launchReturn,
+    } as Record<string, string>)[key] ?? null);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (requestUrl(input).includes("/api/billing/confirm-checkout")) {
+        return Promise.resolve(apiResponse({ success: true, data: { activated: true, plan: "operator" } }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<BillingPage />);
+
+    await waitFor(() => {
+      // Named with the plan it moved to, so Launch can tell whether it shows yet.
+      expect(mockReplace).toHaveBeenCalledWith(`${launchReturn}&upgraded=operator`);
+    });
+    expect(mockReplace).not.toHaveBeenCalledWith(expect.stringContaining("/dashboard/welcome"));
+  });
+
+  it.each([
+    ["an absolute URL", "https://evil.example/dashboard/launch"],
+    ["a protocol-relative URL", "//evil.example/dashboard/launch"],
+    ["a path outside the dashboard", "/api/billing/subscribe"],
+  ])("ignores %s as a checkout return path", async (_label, returnTo) => {
+    mockGet.mockImplementation((key: string) => ({
+      subscription: "success",
+      session_id: "cs_checkout_success",
+      returnTo,
+    } as Record<string, string>)[key] ?? null);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (requestUrl(input).includes("/api/billing/confirm-checkout")) {
+        return Promise.resolve(apiResponse({ success: true, data: { activated: true, plan: "operator" } }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    render(<BillingPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/launch?upgraded=operator");
     });
   });
 
@@ -1199,15 +1322,23 @@ describe("BillingPage", () => {
     expect(within(holdBlock).getByText("Wallet verified")).toBeInTheDocument();
     expect(holdBlock).not.toHaveTextContent(/minimum|qualified|base tier|token access|verified wallet:/i);
     expect(holdBlock).not.toHaveTextContent(/(^|[^\d.])1 \$HermesOS/);
-    expect(within(holdBlock).getByRole("link", { name: /see how much to hold/i })).toHaveAttribute(
+    expect(within(holdBlock).getByRole("link", { name: /verify a wallet and track your holding/i })).toHaveAttribute(
       "href",
       "/dashboard/wallet?from=billing"
     );
+    // The account's own hold amounts, straight from the eligibility API.
+    const holdTable = await within(holdBlock).findByRole("table", { name: /\$HermesOS to hold for each plan/i });
+    const proRow = within(holdTable).getByRole("row", { name: /^Pro/ });
+    expect(proRow).toHaveTextContent("134,476,535 $HermesOS");
+    expect(proRow).toHaveTextContent("$149");
+    expect(proRow).toHaveTextContent("Not yet");
+    expect(within(holdTable).getByRole("row", { name: /^Power/ })).toHaveTextContent("269,855,596 $HermesOS");
+    expect(holdBlock).toHaveTextContent("7 VVV (staked counts), about $199, adds +1 vCPU and +2 GB per agent");
     for (const rule of [
       "Base network only.",
       "Send the exact amount in one transfer.",
       "Prices lock for 20 minutes.",
-      "Token payments are final.",
+      "Token payments are final, except where the law gives you a right to cancel.",
       "Yearly access doesn't renew automatically.",
     ]) {
       expect(screen.getByText(rule)).toBeInTheDocument();
@@ -1498,6 +1629,72 @@ describe("BillingPage", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/billing/token-holding", { method: "POST" });
   });
 
+  it("asks the owner to confirm it's them when verifying a wallet needs it, then retries the same signed request", async () => {
+    type Fetcher = (...args: unknown[]) => Promise<unknown>;
+    const clerk = jest.requireMock("@clerk/nextjs") as { useReverification: (fetcher: Fetcher) => Fetcher };
+    const passthrough = clerk.useReverification;
+    let prompts = 0;
+    // Clerk's useReverification, faithfully enough: a reverification answer
+    // opens the "confirm it's you" dialog, then the request is retried.
+    clerk.useReverification = (fetcher) => async (...args) => {
+      const first = (await fetcher(...args)) as { clerk_error?: { reason?: string } } | undefined;
+      if (first?.clerk_error?.reason !== "reverification-error") return first;
+      prompts += 1;
+      return fetcher(...args);
+    };
+    try {
+      tokenHoldingData = {
+        token: { chainId: 8453, tokenAddress: HERMESOS_CONTRACT, tokenSymbol: "Hivra", minimumBalanceDisplay: "1" },
+        wallet: null,
+        snapshot: null,
+        entitlement: { verified: false, qualifiesBaseTier: false },
+      };
+      tokenRefreshData = {
+        token: { chainId: 8453, tokenAddress: HERMESOS_CONTRACT, tokenSymbol: "Hivra", minimumBalanceDisplay: "1" },
+        refresh: {
+          status: "refreshed",
+          snapshot: { id: "snapshot_2", balanceDisplay: "2", qualifiesBaseTier: true, checkedAt: "2026-04-24T12:05:00.000Z" },
+        },
+        entitlement: { verified: true, qualifiesBaseTier: true },
+      };
+      const baseFetch = fetchMock.getMockImplementation()!;
+      let verifyCalls = 0;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/wallet/verify")) {
+          verifyCalls += 1;
+          if (verifyCalls === 1) {
+            return Promise.resolve(apiResponse(
+              { clerk_error: { type: "forbidden", reason: "reverification-error", metadata: { reverification: "strict" } } },
+              { ok: false, status: 403 },
+            ));
+          }
+        }
+        return baseFetch(input, init);
+      });
+      (window as unknown as { ethereum?: { request: jest.Mock } }).ethereum = {
+        request: jest.fn()
+          .mockResolvedValueOnce(["0x000000000000000000000000000000000000dEaD"])
+          .mockResolvedValueOnce("0xsigned"),
+      };
+
+      render(<BillingPage />);
+      await openTab("Payment methods");
+      await waitFor(() => {
+        expect(screen.getByText(/no verified wallet/i)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /connect wallet/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("0x000000000000000000000000000000000000dead")).toBeInTheDocument();
+      });
+      expect(prompts).toBe(1);
+      expect(verifyCalls).toBe(2);
+    } finally {
+      clerk.useReverification = passthrough;
+    }
+  });
+
   it("asks the wallet for accounts on billing even when the provider reports disconnected before permission", async () => {
     tokenHoldingData = {
       token: {
@@ -1611,6 +1808,44 @@ describe("BillingPage", () => {
       screen.getByText("Your plan isn't billed to a card. You'll enter card details at checkout.")
     ).toBeInTheDocument();
     expect(screen.queryByText(/no card on file/i)).not.toBeInTheDocument();
+  });
+
+  it("carries a launch return path into checkout and offers the way back", async () => {
+    const location = stubLocation("http://localhost/dashboard/billing?from=launch");
+    const launchReturn = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+    mockGet.mockImplementation((key: string) => ({ from: "launch", returnTo: launchReturn } as Record<string, string>)[key] ?? null);
+    const defaultFetch = fetchMock.getMockImplementation();
+    usageData = {
+      ...usageData,
+      plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes("/api/billing/subscribe")) {
+        return Promise.resolve(jsonResponse({ url: "https://checkout.stripe.test/session" }));
+      }
+      return defaultFetch?.(input, init) ?? Promise.resolve(jsonResponse({}));
+    });
+
+    try {
+      render(<BillingPage />);
+      expect(await screen.findByRole("link", { name: /back to your launch/i })).toHaveAttribute("href", launchReturn);
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade to Pro" }));
+      fireEvent.click(await screen.findByRole("button", { name: /open checkout/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith("/api/billing/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: "operator", cadence: "monthly", returnTo: launchReturn }),
+        });
+      });
+      expect(location.assignMock).toHaveBeenCalledWith("https://checkout.stripe.test/session");
+    } finally {
+      location.restore();
+    }
   });
 
   it("opens Stripe checkout when a Free plan user upgrades from the plans ladder", async () => {
@@ -1935,10 +2170,28 @@ describe("BillingPage", () => {
     render(<BillingPage />);
 
     const free = await screen.findByRole("article", { name: "Free" });
-    expect(free).toHaveTextContent("start without a bill");
+    expect(free).toHaveTextContent("free to use. bring your own computer");
+    expect(free).not.toHaveTextContent(/vCPU|Memory|Sleeps after/);
     expect(free).not.toHaveTextContent(/Power/);
-    expect(within(free).getByRole("button", { name: "Start free" })).toBeInTheDocument();
+    expect(within(free).getByRole("button", { name: "Use the free account" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Power" })).toHaveTextContent("Most popular");
+  });
+
+  it("shows an account-only Free plate with no hardware or idle-sleep rule when it holds no computer", async () => {
+    usageData = {
+      subscribed: true,
+      plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
+      usage: { agentCount: 0, maxAgents: 1, usedCpu: 0, totalCpu: 0.5, usedRam: 0, totalRam: 1024, instances: [] },
+      credits: { balance: 0, monthlyGrant: 0, unit: "100 credits = $1" },
+    };
+
+    render(<BillingPage />);
+
+    const plate = await screen.findByRole("region", { name: "Free" });
+    expect(within(plate).getByText("Your own")).toBeInTheDocument();
+    expect(within(plate).getByText("Run by Hivra")).toBeInTheDocument();
+    expect(plate).not.toHaveTextContent(/vCPU|Memory|Sleeps after|idle|0\.5/i);
+    expect(within(plate).queryByRole("meter")).not.toBeInTheDocument();
   });
 
   it("switches card prices to yearly with computed savings and checks out yearly", async () => {
@@ -2000,6 +2253,18 @@ describe("BillingPage", () => {
           },
         }));
       }
+      if (requestUrl(input).includes("/api/billing/wallet/eligibility")) {
+        // Deliberately unlike any old hardcoded price, so the cards can only
+        // be showing what the server resolved for this account.
+        return Promise.resolve(jsonResponse({
+          balance: null,
+          thresholds: { configured: true, proDisplay: "10,000,000", powerDisplay: "25,000,000", priceUsd: "0.00001" },
+          tiers: {
+            pro: { currentlyEligible: false, currentThresholdDisplay: "10,000,000" },
+            power: { currentlyEligible: false, currentThresholdDisplay: "25,000,000" },
+          },
+        }));
+      }
       return defaultFetch?.(input, init) ?? Promise.resolve(jsonResponse({}));
     });
 
@@ -2008,16 +2273,20 @@ describe("BillingPage", () => {
     fireEvent.click(await screen.findByRole("radio", { name: "$HermesOS" }));
     expect(screen.queryByRole("radiogroup", { name: "Billing cadence" })).not.toBeInTheDocument();
     expect(screen.queryByRole("article", { name: "Free" })).not.toBeInTheDocument();
-    expect(screen.getByText("$HermesOS payments are final and can't be refunded.")).toBeInTheDocument();
+    expect(screen.getByText("Token payments are final, except where the law gives you a right to cancel.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: "Hold to qualify" }));
-    const holdLinks = screen.getAllByRole("link", { name: /see how much to hold/i });
+    const holdLinks = screen.getAllByRole("link", { name: /verify a wallet to hold/i });
     expect(holdLinks.map((link) => link.getAttribute("href"))).toEqual([
       "/dashboard/wallet?from=billing&plan=pro",
       "/dashboard/wallet?from=billing&plan=power",
     ]);
-    // Hold amounts depend on the user's pricing epoch and are shown on the
-    // wallet page, never hardcoded here.
+    // Hold amounts depend on the user's pricing epoch: the cards show what the
+    // eligibility API resolved, never a hardcoded price.
+    const proCard = screen.getByRole("article", { name: "Pro" });
+    expect(await within(proCard).findByText("Hold 10,000,000 $HermesOS in a verified wallet · move it any time")).toBeInTheDocument();
+    expect(proCard).toHaveTextContent("≈$100");
+    expect(screen.getByRole("article", { name: "Power" })).toHaveTextContent("≈$250");
     for (const name of ["Pro", "Power"]) {
       expect(screen.getByRole("article", { name })).not.toHaveTextContent(/\$(99|149|199|299)\b/);
     }
@@ -2388,6 +2657,27 @@ describe("BillingPage", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
       expect(within(screen.getByRole("article", { name: "Power" })).getAllByText("Current plan").length).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: "Upgrade to Power" })).not.toBeInTheDocument();
+    });
+
+    it("goes back to the launch an in-place upgrade started from once the new plan has loaded", async () => {
+      const launchReturn = "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333";
+      mockGet.mockImplementation((key: string) => ({ from: "launch", returnTo: launchReturn } as Record<string, string>)[key] ?? null);
+      subscribedAs({ key: "operator", name: "Pro", source: "stripe", canChangePlanInPlace: true });
+      const base = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(input).includes("/api/billing/change-plan")) {
+          return Promise.resolve(jsonResponse({ message: "Plan changed to Power." }));
+        }
+        return base(input, init);
+      });
+
+      render(<BillingPage />);
+      await openTab("Plans");
+      fireEvent.click(screen.getByRole("button", { name: "Upgrade to Power" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Upgrade" }));
+
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(`${launchReturn}&upgraded=fleet`));
     });
 
     it("brings a plan-change result into view when it lands above the screen", async () => {

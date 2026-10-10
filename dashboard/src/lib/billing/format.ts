@@ -80,7 +80,13 @@ export interface CryptoTopUpIntentData {
     symbol: string;
     network: string;
     label?: string;
+    /** ERC-20 contract, when the server sent it. */
+    tokenAddress?: string;
+    /** EIP-155 chain id, when the server sent it. */
+    chainId?: number;
   };
+  /** Exact amount in the asset's smallest unit (the integer the reconciler matches). */
+  amountRaw?: string;
 }
 /**
  * Shape of a yearly $HermesOS quote returned by /api/billing/yearly-token-quote.
@@ -95,6 +101,9 @@ export interface YearlyTokenQuotePayload {
   priceUsdAtQuote: string;
   tokensRequiredDisplay: string;
   tokenSymbol: string;
+  /** Contract of the token this quote must be paid in. */
+  tokenAddress?: string;
+  tokenKey?: string;
   depositAddress: string;
   expiresAt: string;
   status: string;
@@ -207,7 +216,16 @@ export function readCryptoTopUpIntent(value: Record<string, unknown> | null): Cr
       symbol: intent.asset.symbol,
       network: intent.asset.network,
       label: typeof intent.asset.label === "string" ? intent.asset.label : undefined,
+      tokenAddress: typeof intent.asset.tokenAddress === "string" ? intent.asset.tokenAddress : undefined,
+      chainId: typeof intent.asset.chainId === "number" ? intent.asset.chainId : undefined,
     },
+    // Only a safe integer is exact; anything else leaves the wallet link off.
+    amountRaw:
+      typeof intent.amountMinor === "number" && Number.isSafeInteger(intent.amountMinor) && intent.amountMinor > 0
+        ? String(intent.amountMinor)
+        : typeof intent.amountMinor === "string" && /^[0-9]+$/.test(intent.amountMinor)
+          ? intent.amountMinor
+          : undefined,
   };
 }
 export function isFiniteNumber(value: unknown): value is number {

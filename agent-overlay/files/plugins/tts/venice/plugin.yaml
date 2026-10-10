@@ -1,0 +1,7 @@
+name: venice
+version: 1.0.0
+description: "Venice text-to-speech backend (OpenAI-compatible /audio/speech: Kokoro, Qwen 3, xAI, ElevenLabs, Inworld, Orpheus voices). One VENICE_API_KEY covers chat + image + video + speech. Select with tts.provider: venice."
+author: NousResearch
+kind: backend
+requires_env:
+  - VENICE_API_KEY

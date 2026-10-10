@@ -50,7 +50,8 @@ import {
   loadHermesosTransferOwnership,
   loadNextHermesosPaymentSessionMs,
 } from "@/lib/billing/hermesos-transfer-attribution";
-import { HERMESOS_TOKEN_ADDRESS, normalizeEvmAddress } from "@/lib/billing/token-holdings";
+import { normalizeEvmAddress } from "@/lib/billing/token-holdings";
+import { livePlatformTokens } from "@/lib/billing/token-registry";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 import { applyYearlyPaymentToInstances, type YearlyPaymentTrigger } from "@/lib/billing/yearly-activation";
 import {
@@ -82,7 +83,10 @@ export type YearlyReviewReason =
   | "payment_after_review"
   | "legacy_subscription_exists"
   | "contested_by_managed_venice_review"
-  | "predates_legacy_settlement";
+  | "predates_legacy_settlement"
+  // A transfer of a DIFFERENT platform token than the quote's arrived in the
+  // quote's range. It is never credited; an operator returns or converts it.
+  | "wrong_token";
 
 export type YearlyReconcileStatus =
   | "activated"
@@ -176,7 +180,8 @@ interface SettlementRpcResult {
     | "transaction_already_claimed"
     | "not_found"
     | "invalid_transaction"
-    | "invalid_amount";
+    | "invalid_amount"
+    | "wrong_token";
   subscription_id?: string | null;
   expires_at?: string | null;
   renewed_subscription_id?: string | null;
@@ -186,23 +191,26 @@ interface SettlementRpcResult {
 
 async function settleYearlyTokenPayment(
   db: YearlySettlementDb,
-  params: { quoteId: string; transfer: ScannedTransfer; now: Date }
+  params: { quoteId: string; transfer: ScannedTransfer; tokenAddress: string; now: Date }
 ): Promise<SettlementRpcResult> {
-  const { data, error } = await db.rpc("settle_yearly_token_payment", {
+  // The token-aware settle refuses a transfer in any token other than the
+  // quote's, so a mis-scan can never credit the wrong token.
+  const { data, error } = await db.rpc("settle_yearly_platform_token_payment", {
     p_quote_id: params.quoteId,
     p_transaction_hash: params.transfer.transactionHash,
     p_log_index: params.transfer.logIndex,
     // numeric: a string keeps the full 78-digit precision through PostgREST.
     p_amount_raw: params.transfer.amount.toString(),
     p_block_timestamp: params.transfer.observedAt,
+    p_token_address: params.tokenAddress,
     p_now: params.now.toISOString(),
   });
   if (error) {
-    throw new Error(`settle_yearly_token_payment failed: ${error.message || error.code || "unknown error"}`);
+    throw new Error(`settle_yearly_platform_token_payment failed: ${error.message || error.code || "unknown error"}`);
   }
   const result = data as SettlementRpcResult | null;
   if (!result || typeof result.status !== "string") {
-    throw new Error("settle_yearly_token_payment returned no status");
+    throw new Error("settle_yearly_platform_token_payment returned no status");
   }
   return result;
 }
@@ -239,6 +247,8 @@ interface ReviewItem {
   tokensRequiredRaw: string | null;
   depositAddress: string;
   observedAt: string | null;
+  /** Contract of the token that was sent. */
+  tokenAddress: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -260,6 +270,7 @@ async function insertReviewItem(db: YearlySettlementDb, item: ReviewItem) {
     tokens_required_raw: item.tokensRequiredRaw,
     deposit_address: normalizeEvmAddress(item.depositAddress),
     observed_at: item.observedAt,
+    token_address: item.tokenAddress,
     dedupe_key: yearlyTransferDedupeKey(item),
     metadata: item.metadata,
   });
@@ -270,10 +281,13 @@ async function insertReviewItem(db: YearlySettlementDb, item: ReviewItem) {
   await reportOpsEvent({
     source: "billing.yearly-token-payments",
     severity: "warn",
-    title: "Yearly $HermesOS payment needs review",
+    title:
+      item.reason === "wrong_token"
+        ? "Yearly token payment arrived in the wrong token"
+        : "Yearly token payment needs review",
     message:
-      `A $HermesOS transfer to a yearly quote's deposit wallet needs an operator ` +
-      `(${item.reason}). It is recorded in yearly_token_reconciliation_items.`,
+      `A token transfer to a yearly quote's deposit wallet needs an operator ` +
+      `(${item.reason}). It is recorded in yearly_token_reconciliation_items and was not credited.`,
     userId: item.userId,
     metadata: {
       failureType: "yearly_token_payment_review",
@@ -284,6 +298,7 @@ async function insertReviewItem(db: YearlySettlementDb, item: ReviewItem) {
       logIndex: item.logIndex,
       tokenAmountRaw: item.tokenAmountRaw,
       tokensRequiredRaw: item.tokensRequiredRaw,
+      tokenAddress: item.tokenAddress,
     },
   });
   return true;
@@ -294,9 +309,11 @@ function surfaceTransfer(
   quote: YearlyTokenQuote,
   transfer: ScannedTransfer,
   reason: YearlyReviewReason,
-  subscriptionId: string | null = null
+  subscriptionId: string | null = null,
+  tokenAddress: string = quote.tokenAddress
 ) {
   return insertReviewItem(db, {
+    tokenAddress,
     userId: quote.userId,
     quoteId: quote.id,
     subscriptionId,
@@ -310,6 +327,7 @@ function surfaceTransfer(
     metadata: {
       tier: quote.tier,
       quoteStatus: quote.status,
+      quoteTokenAddress: quote.tokenAddress,
       blockNumber: transfer.blockNumber,
       confirmations: transfer.confirmations,
       quoteExpiresAt: quote.expiresAt,
@@ -348,7 +366,7 @@ export async function flagYearlyPaymentsInManagedVeniceReviews(params: { db?: un
 
   const hashes = Array.from(reviewed.keys());
   const { data: subs, error: subsError } = await table(db, "yearly_token_subscriptions")
-    .select("id, user_id, yearly_quote_id, deposit_tx_hash, deposit_log_index, deposit_address, amount_received_raw::text, paid_at, metadata")
+    .select("id, user_id, yearly_quote_id, deposit_tx_hash, deposit_log_index, deposit_address, token_address, amount_received_raw::text, paid_at, metadata")
     .in("deposit_tx_hash", hashes);
   if (subsError) throw new Error(`Failed to load yearly subscriptions: ${subsError.message || "unknown error"}`);
 
@@ -368,6 +386,7 @@ export async function flagYearlyPaymentsInManagedVeniceReviews(params: { db?: un
       tokenAmountRaw: String(sub.amount_received_raw),
       tokensRequiredRaw: typeof metadata.tokensRequiredRaw === "string" ? metadata.tokensRequiredRaw : null,
       depositAddress: wallet,
+      tokenAddress: typeof sub.token_address === "string" ? sub.token_address : null,
       observedAt:
         typeof metadata.blockTimestamp === "string" ? metadata.blockTimestamp : typeof sub.paid_at === "string" ? sub.paid_at : null,
       metadata: { source: "managed_venice_review_cross_check" },
@@ -447,6 +466,53 @@ async function stampTokenConversion(db: YearlySettlementDb, userId: string, now:
   }
 }
 
+/**
+ * Surface confirmed transfers of any OTHER live platform token into a quote's
+ * range as wrong_token items (one per transfer, deduped like every item).
+ * Transfers another flow already owns are skipped. Never credits anything.
+ */
+async function surfaceWrongTokenTransfers(
+  db: YearlySettlementDb,
+  params: {
+    chain: BaseChainReader;
+    quote: YearlyTokenQuote;
+    fromMs: number;
+    toMs: number;
+    minConfirmations: number;
+    now: Date;
+  }
+) {
+  const others = livePlatformTokens(params.now).filter(
+    (token) => token.address !== params.quote.tokenAddress.toLowerCase()
+  );
+  for (const token of others) {
+    const scan = await scanErc20TransfersInWindow({
+      chain: params.chain,
+      tokenAddress: token.address,
+      toAddress: params.quote.depositAddress,
+      fromMs: params.fromMs,
+      toMs: params.toMs,
+      minConfirmations: params.minConfirmations,
+    });
+    const inRange = scan.transfers.filter(
+      (transfer) =>
+        transfer.timestampMs >= params.fromMs &&
+        transfer.timestampMs <= params.toMs &&
+        transfer.confirmations >= params.minConfirmations
+    );
+    if (inRange.length === 0) continue;
+    const ownership = await loadHermesosTransferOwnership(db, {
+      transfers: inRange,
+      depositAddress: params.quote.depositAddress,
+      userId: params.quote.userId,
+    });
+    for (const transfer of inRange) {
+      if (ownership.isBound(transfer)) continue;
+      await surfaceTransfer(db, params.quote, transfer, "wrong_token", null, token.address);
+    }
+  }
+}
+
 export async function reconcileYearlyTokenQuote(params: {
   quote: YearlyTokenQuote;
   db?: unknown;
@@ -494,13 +560,25 @@ export async function reconcileYearlyTokenQuote(params: {
   // A transfer at or after the next session's start belongs to that session.
   const rangeEndMs = boundaryMs === null ? graceEndMs : Math.min(graceEndMs, boundaryMs - 1);
 
+  // Only transfers of the quote's own token can pay it.
   const scan = await scanErc20TransfersInWindow({
     chain,
-    tokenAddress: HERMESOS_TOKEN_ADDRESS,
+    tokenAddress: quote.tokenAddress,
     toAddress: quote.depositAddress,
     fromMs: quotedAtMs,
     toMs: rangeEndMs,
     minConfirmations,
+  });
+  // Any other live platform token sent into this range is the wrong token:
+  // surfaced for operator recovery, never credited. With $HIVRA dormant
+  // there is no other token and nothing extra is scanned.
+  await surfaceWrongTokenTransfers(db, {
+    chain,
+    quote,
+    fromMs: quotedAtMs,
+    toMs: rangeEndMs,
+    minConfirmations,
+    now,
   });
   // The scan pads its block range on the safe side; the range is exact here.
   const inRange = scan.transfers.filter(
@@ -584,7 +662,12 @@ export async function reconcileYearlyTokenQuote(params: {
     if (!isConfirmed(candidate)) {
       return { ...base, status: "underconfirmed", confirmations: candidate.confirmations };
     }
-    const settlement = await settleYearlyTokenPayment(db, { quoteId: quote.id, transfer: candidate, now });
+    const settlement = await settleYearlyTokenPayment(db, {
+      quoteId: quote.id,
+      transfer: candidate,
+      tokenAddress: quote.tokenAddress,
+      now,
+    });
     const settledResult = {
       ...base,
       transactionHash: candidate.transactionHash,
@@ -634,7 +717,7 @@ export async function reconcileYearlyTokenQuote(params: {
       case "not_found":
         return { ...base, status: "closed", quoteStatus: "not_found" };
       default:
-        throw new Error(`settle_yearly_token_payment rejected the transfer: ${settlement.status}`);
+        throw new Error(`settle_yearly_platform_token_payment rejected the transfer: ${settlement.status}`);
     }
   }
 

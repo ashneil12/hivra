@@ -222,4 +222,42 @@ describe("CommandPanel", () => {
     fireEvent.click(row);
     expect(onOpenChannels).toHaveBeenCalledWith("Telegram");
   });
+
+  it("renders the sheet variant with a console link, a 44px close and touch sizing scope", async () => {
+    installFetch();
+    const onCollapse = jest.fn();
+    render(
+      <CommandPanel
+        instanceId="inst-1"
+        instanceName="Atlas"
+        variant="sheet"
+        consoleHref="/dashboard/instances/inst-1/console"
+        onCollapse={onCollapse}
+      />,
+    );
+
+    const panel = screen.getByTestId("instance-command-panel");
+    expect(panel).toHaveAttribute("data-sheet");
+    expect(panel).toHaveAttribute("data-cmdp");
+    expect(screen.getByTestId("command-panel-console-link")).toHaveAttribute("href", "/dashboard/instances/inst-1/console");
+    expect(screen.queryByTestId("command-panel-collapse")).not.toBeInTheDocument();
+
+    const close = screen.getByRole("button", { name: "Close command panel" });
+    expect(close).toHaveStyle({ width: "44px", height: "44px" });
+    fireEvent.click(close);
+    expect(onCollapse).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("command-panel-channels-toggle")).toHaveClass("cmdp-row");
+    await waitFor(() => expect(screen.getByTestId("command-panel-status-pill")).toHaveTextContent("Ready"));
+  });
+
+  it("keeps the dock variant's collapse control and no console link", async () => {
+    installFetch();
+    render(<CommandPanel instanceId="inst-1" instanceName="Atlas" />);
+    await waitFor(() => expect(screen.getByTestId("command-panel-status-pill")).toHaveTextContent("Ready"));
+
+    const panel = screen.getByTestId("instance-command-panel");
+    expect(panel).not.toHaveAttribute("data-sheet");
+    expect(screen.getByTestId("command-panel-collapse")).toBeInTheDocument();
+    expect(screen.queryByTestId("command-panel-console-link")).not.toBeInTheDocument();
+  });
 });

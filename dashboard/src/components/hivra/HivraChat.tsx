@@ -5,33 +5,136 @@
 // CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
 // box in localStorage; each session resumes its own Claude session_id.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Children, isValidElement, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Send, Loader2, Check, X, Plus, MessageSquare, Trash2, ChevronRight, ChevronDown, Square, RotateCcw, Copy, Paperclip, PanelLeft, Brain, Cpu, ThumbsUp, ThumbsDown } from "lucide-react";
 
-import { listBoxSessions, readBoxSession, stampAgentFirstUsage, uploadBoxFile, type BoxMessage } from "@/lib/hivra/agent-api";
+import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
-import { requestAgentWelcomeMessage, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
-import { getAdapter, type AgentKind, type ChatSink, type ToolStatus } from "@/lib/hivra/agent-adapters";
+import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
+import { getAdapter, type AgentKind, type ChatSink, type ToolStatus, type TurnOutcome } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { MemoryUsageBanner } from "@/components/memory/MemoryUsageBanner";
+import styles from "./HivraChat.module.css";
 
-// Fenced code → the shared syntax-highlighted CodeBlock (same component the
-// Hermes chat uses); inline code keeps a lightweight mono chip.
-const MD_COMPONENTS = {
- code(props: { className?: string; children?: React.ReactNode }) {
- const { className, children } = props;
- const text = String(children ?? "").replace(/\n$/, "");
- const lang = /language-(\w+)/.exec(className || "")?.[1];
- if (lang || text.includes("\n")) return <CodeBlock language={lang || "text"} value={text} />;
- return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", padding: "1px 5px" }}>{text}</code>;
+// Fenced code (any <pre>, including one-line blocks with no language) → the
+// shared syntax-highlighted CodeBlock, which scrolls inside its own box.
+// Inline code keeps a lightweight mono chip that wraps anywhere.
+export const CHAT_MARKDOWN_COMPONENTS = {
+ pre(props: { children?: React.ReactNode }) {
+ const child = Children.toArray(props.children)[0];
+ if (isValidElement<{ className?: string; children?: React.ReactNode }>(child)) {
+ const text = String(child.props.children ?? "").replace(/\n$/, "");
+ const lang = /language-([\w-]+)/.exec(child.props.className || "")?.[1];
+ return <CodeBlock language={lang || "text"} value={text} />;
+ }
+ return <CodeBlock language="text" value={String(props.children ?? "")} />;
+ },
+ code(props: { children?: React.ReactNode }) {
+ return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", padding: "1px 5px", overflowWrap: "anywhere" }}>{props.children}</code>;
+ },
+ table({ children }: { children?: React.ReactNode }) {
+ return <div className="chat-md-table-wrapper"><table className="chat-md-table">{children}</table></div>;
+ },
+ // Replies open links in a new tab so tapping one never navigates the
+ // dashboard (or the installed PWA) away and aborts the running turn.
+ a({ href, children }: { href?: string; children?: React.ReactNode }) {
+ return <a href={href} target="_blank" rel="noopener noreferrer" className="chat-md-link" style={{ overflowWrap: "anywhere" }}>{children}</a>;
  },
 };
+
+const COARSE_POINTER_QUERY = "(hover: none) and (pointer: coarse)";
+const NARROW_QUERY = "(max-width: 767px)";
+
+function matchesMedia(query: string): boolean {
+ return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+}
+
+function useMediaQuery(query: string): boolean {
+ const subscribe = useCallback((onChange: () => void) => {
+ if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+ const list = window.matchMedia(query);
+ list.addEventListener?.("change", onChange);
+ return () => list.removeEventListener?.("change", onChange);
+ }, [query]);
+ return useSyncExternalStore(subscribe, () => matchesMedia(query), () => false);
+}
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_EDGE = 2048;
+const PASSTHROUGH_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function formatMegabytes(bytes: number): string {
+ return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readBase64(blob: Blob): Promise<string> {
+ return new Promise<string>((resolve, reject) => {
+ const fr = new FileReader();
+ fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
+ fr.onerror = () => reject(new Error("read failed"));
+ fr.readAsDataURL(blob);
+ });
+}
+
+async function decodeImage(file: Blob): Promise<{ source: CanvasImageSource; width: number; height: number; release: () => void } | null> {
+ if (typeof createImageBitmap === "function") {
+ try {
+ const bitmap = await createImageBitmap(file);
+ return { source: bitmap, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
+ } catch {
+ // Fall through to <img>, which also decodes HEIC on Safari.
+ }
+ }
+ if (typeof Image === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
+ const url = URL.createObjectURL(file);
+ try {
+ const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+ const el = new Image();
+ el.onload = () => resolve(el);
+ el.onerror = () => reject(new Error("decode failed"));
+ el.src = url;
+ });
+ return { source: img, width: img.naturalWidth, height: img.naturalHeight, release: () => URL.revokeObjectURL(url) };
+ } catch {
+ URL.revokeObjectURL(url);
+ return null;
+ }
+}
+
+// Phone photos are 12+ MP JPEG or HEIC. Anything larger than 2048px, over the
+// upload limit, or in a format the box may not read is re-encoded as a JPEG no
+// larger than 2048px. Returns null to upload the original file unchanged.
+async function prepareImageAttachment(file: File): Promise<{ blob: Blob; name: string } | null> {
+ if (!file.type.startsWith("image/") || file.type === "image/gif" || file.type === "image/svg+xml") return null;
+ if (typeof document === "undefined") return null;
+ const decoded = await decodeImage(file);
+ if (!decoded) return null;
+ try {
+ const longest = Math.max(decoded.width, decoded.height);
+ if (!longest) return null;
+ if (longest <= MAX_IMAGE_EDGE && file.size <= MAX_ATTACHMENT_BYTES && PASSTHROUGH_IMAGE_TYPES.has(file.type)) return null;
+ const scale = Math.min(1, MAX_IMAGE_EDGE / longest);
+ const canvas = document.createElement("canvas");
+ canvas.width = Math.max(1, Math.round(decoded.width * scale));
+ canvas.height = Math.max(1, Math.round(decoded.height * scale));
+ const ctx = canvas.getContext("2d");
+ if (!ctx) return null;
+ ctx.fillStyle = "#fff";
+ ctx.fillRect(0, 0, canvas.width, canvas.height);
+ ctx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+ const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+ if (!blob) return null;
+ return { blob, name: `${(file.name || "photo").replace(/\.[^.]+$/, "")}.jpg` };
+ } finally {
+ decoded.release();
+ }
+}
 
 // Hover copy-the-whole-message affordance for assistant replies.
 function MessageCopy({ text }: { text: string }) {
@@ -47,8 +150,8 @@ function MessageCopy({ text }: { text: string }) {
  window.setTimeout(() => setCopied(false), 1600);
  });
  }}
- className="mono"
- style={{ display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: copied ? "#22c55e" : "var(--text-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
+ className={`mono ${styles.msgAction}`}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: copied ? "#22c55e" : "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
  >
  {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? "Copied" : "Copy"}
  </button>
@@ -62,6 +165,7 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  const base = {
  display: "inline-flex",
  alignItems: "center",
+ justifyContent: "center",
  border: "1px solid var(--etched-border)",
  background: "transparent",
  cursor: "pointer",
@@ -69,12 +173,13 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  marginTop: 6,
  } as const;
  return (
- <span style={{ display: "inline-flex", gap: 6, marginLeft: 8 }}>
+ <span className={styles.msgFeedback} style={{ display: "inline-flex", marginLeft: 8 }}>
  <button
  type="button"
  aria-label="Good response"
  aria-pressed={rating === "up"}
  onClick={() => onRate("up")}
+ className={styles.msgAction}
  style={{ ...base, color: rating === "up" ? "#22c55e" : "var(--text-muted)" }}
  >
  <ThumbsUp size={11} />
@@ -84,6 +189,7 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  aria-label="Bad response"
  aria-pressed={rating === "down"}
  onClick={() => onRate("down")}
+ className={styles.msgAction}
  style={{ ...base, color: rating === "down" ? "#c0392b" : "var(--text-muted)" }}
  >
  <ThumbsDown size={11} />
@@ -105,7 +211,28 @@ interface ChatMessage {
   text: string;
   tools: ToolChip[];
   streaming?: boolean;
-  outcome?: "complete" | "error" | "stopped";
+  /** "disconnected": this page lost the reply's stream, but the agent keeps
+   * working on its computer and the reply fills in once it is reachable.
+   * "unknown": the run finished while no page was watching and the computer
+   * no longer keeps its log, so only the text that arrived here is shown. */
+  outcome?: "complete" | "error" | "stopped" | "disconnected" | "unknown";
+  /** What the agent's own final event said about the turn (Claude's result,
+   * Codex's turn.completed / turn.failed). It decides `outcome` once the run
+   * ends; an agent that says nothing is judged by its exit. */
+  reported?: TurnOutcome;
+  /** Warnings the agent raised during the turn, shown under the reply. They
+   * never decide how the turn ended. */
+  warnings?: string[];
+  /** The box run producing this reply: the key for Stop and for re-attaching. */
+  runId?: string;
+  /** The computer confirmed it started the run (its `_run` line arrived). */
+  started?: boolean;
+  /** The first-contact welcome's reply, whose prompt never shows: a failed
+   * one offers Retry, one that never reached the computer starts again. */
+  welcome?: boolean;
+  /** Why a reply that has not started yet is waiting (the computer is moving
+   * its agent CLI to a new version); cleared once the computer takes it. */
+  pending?: string;
 }
 
 interface Session {
@@ -154,7 +281,83 @@ function boxMsgToChat(m: BoxMessage): ChatMessage {
  };
 }
 
+// A conversation's history from the computer. A conversation the agent opened
+// itself starts with the hidden first-contact prompt, which never shows.
+function boxHistoryToChat(messages: BoxMessage[]): ChatMessage[] {
+ return messages.filter((m) => !(m.role === "user" && isHiddenWelcomeTitle(m.text))).map(boxMsgToChat);
+}
+
+// What a conversation shows before a reply adopted from a run that is still
+// going: its history (from the box, or this device's copy) up to and including
+// that turn's prompt. The box may already hold the turn's output so far, which
+// the reply replays in full. A welcome is its conversation's first turn, and
+// its prompt is hidden.
+function historyBeforeRunningTurn(history: ChatMessage[], prompt: string | null, welcome: boolean): ChatMessage[] {
+ if (welcome) return [];
+ const asked: ChatMessage[] = prompt ? [{ role: "user", text: prompt, tools: [] }] : [];
+ const lastUser = history.map((m) => m.role).lastIndexOf("user");
+ const head = (prompt || "").replace(/…$/, "");
+ if (lastUser >= 0 && head && history[lastUser].text.startsWith(head)) return history.slice(0, lastUser + 1);
+ // The box has not recorded this turn's prompt yet.
+ return [...history, ...asked];
+}
+
+// Any sign the computer took up the reply's run: its `_run` line, text, a tool
+// or a warning.
+function replyStarted(m: ChatMessage): boolean {
+ return Boolean(m.started || m.text.trim() || m.tools.length || m.warnings?.length);
+}
+
+// A reply as it reads: the agent's text, then the warnings it raised.
+function replyMarkdown(m: ChatMessage): string {
+ return [m.text, ...(m.warnings || []).map((w) => "⚠ " + w)].filter(Boolean).join("\n\n");
+}
+
+// How a run ended when its agent reported nothing of its own (a generic CLI,
+// or one that died before its final event): exit 0 is success; any other code,
+// or none (killed by a signal, or never started), is a failure.
+//
+// With no `_done` there is no exit to go on. That stream comes from a computer
+// on the chat gateway from before detached runs, which writes `_done` whenever
+// the agent's process closes; it ends a stream without one when the agent
+// could not start at all (its "spawn error: …" stderr is the only line), or
+// when the connection closed under the turn. A reply the agent wrote is kept
+// as finished; one with nothing but warnings, or nothing at all, failed.
+function exitOutcome(m: ChatMessage, done: Record<string, unknown> | null): TurnOutcome {
+ if (done) return !("code" in done) || done.code === 0 ? "complete" : "error";
+ return m.text.trim() || m.tools.length ? "complete" : "error";
+}
+
+// A pending reply whose run log the computer no longer keeps. Finished runs are
+// kept for a week, so a run that started and then aged out finished while no
+// page watched it: keep what arrived and say so, not that it failed. A reply
+// with no sign its run ever started may never have reached the computer, and
+// keeps the failure state.
+function settleMissingRun(m: ChatMessage): ChatMessage {
+ return { ...m, streaming: false, outcome: replyStarted(m) ? "unknown" : "error" };
+}
+
+// A box-history stub for this conversation that has not been opened yet: the
+// placeholder a chat that learns the conversation's id (a reply adopted from
+// another device) replaces.
+function isUnopenedStubOf(s: Session, conversationId: string | null): boolean {
+ return Boolean(conversationId) && s.claudeSessionId === conversationId && s.loaded === false && s.messages.length === 0;
+}
+
+// The user's message as another device's run list names it: the computer keeps
+// the first 120 characters as the run's title.
+const RUN_TITLE_LIMIT = 120;
+function promptFromRunTitle(title: string): string | null {
+ const text = title.trim();
+ if (!text) return null;
+ return title.length >= RUN_TITLE_LIMIT ? text + "…" : text;
+}
+
 const MAX_SESSIONS = 30;
+// Autoscroll: within this many px of the bottom counts as at the bottom; this far
+// above it, with no scroll-up observed, counts as not following.
+const AT_BOTTOM_PX = 2;
+const FAR_FROM_BOTTOM_PX = 80;
 
 // Per-session draft key — the half-typed message survives reloads + session switches.
 function draftKey(sk: string, sessionId: string): string {
@@ -164,8 +367,91 @@ function draftKey(sk: string, sessionId: string): string {
 function keyFor(boxUrl: string): string {
  return "hivra_sessions_" + boxUrl.replace(/[^a-z0-9]/gi, "").slice(-32);
 }
+
+// Set once a computer's first-contact welcome has started (here, on another
+// device or in another view), so no view of that computer starts another. It
+// is keyed like keyFor: the agent page and the workspace name the same
+// computer differently but share its chats, and must share this too.
+function welcomeFlagKey(sk: string): string {
+ return "hivra:first-welcome:" + sk.replace(/[^a-z0-9]/gi, "").slice(-32);
+}
+function readWelcomed(sk: string): boolean {
+ try {
+ // Each view kept its own flag, under its raw key, before the two shared one.
+ return window.localStorage.getItem(welcomeFlagKey(sk)) === "1" || window.localStorage.getItem("hivra:first-welcome:" + sk) === "1";
+ } catch {
+ // Storage is only a duplicate guard; the chat still works without it.
+ return false;
+ }
+}
+function writeWelcomed(sk: string, welcomed: boolean) {
+ try {
+ if (welcomed) {
+ window.localStorage.setItem(welcomeFlagKey(sk), "1");
+ } else {
+ window.localStorage.removeItem(welcomeFlagKey(sk));
+ window.localStorage.removeItem("hivra:first-welcome:" + sk);
+ }
+ } catch {
+ // Best-effort duplicate guard only.
+ }
+}
 function newId(): string {
  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+// Chat turns run on the box detached from the request that started them. The
+// client picks the run id so Stop and re-attach work before the box answers.
+function newRunId(): string {
+ if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+ const b = crypto.getRandomValues(new Uint8Array(16));
+ b[6] = (b[6] & 0x0f) | 0x40;
+ b[8] = (b[8] & 0x3f) | 0x80;
+ const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+ return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+type RunStreamResult =
+ | { kind: "done"; done: Record<string, unknown> }
+ | { kind: "ended" | "failed"; sawRun: boolean }
+ | { kind: "superseded" };
+type RunFollowResult = RunStreamResult | { kind: "missing" } | { kind: "unreachable" };
+const RUN_RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 15000];
+// While the computer swaps its agent CLI for the vetted version it answers a new
+// run with 503 agent_updating for a few seconds. Keep the message and send it
+// again, for about two minutes before giving up.
+const AGENT_UPDATING_RETRY_MS = [3000, 5000, 5000, 10000, 10000, 15000, 15000, 20000, 20000, 20000];
+function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = window.setTimeout(done, ms);
+    function done() { window.clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); }
+    signal.addEventListener("abort", done);
+  });
+}
+
+/** A session's in-flight turn, as registered for Stop and re-attach. */
+interface TurnHandle {
+ controller: AbortController;
+ /** False once the turn was stopped or the chat moved to another computer. */
+ isCurrent: () => boolean;
+ /** Unregister the turn and clear the session's busy state. */
+ finish: () => void;
+}
+/** How a turn's POST ended. "settled": the reply was closed. The rest are
+ * failures to start the turn, which each caller words for itself. */
+type TurnEnd =
+ | { kind: "settled" }
+ | { kind: "superseded" }
+ | { kind: "aborted" }
+ | { kind: "unreachable" }
+ | { kind: "refused"; status: number; reason: string };
+
+// What a reply says when its turn could not start (null: say nothing more).
+function turnFailureNote(end: TurnEnd): string | null {
+ if (end.kind === "unreachable") return "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.";
+ if (end.kind === "refused") return end.reason ? "⚠ " + end.reason : "⚠ Your agent hit an error (HTTP " + end.status + "). Try again.";
+ return null;
 }
 
 function parseNdjsonLine(line: string): Record<string, unknown> | null {
@@ -233,7 +519,7 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
     <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
       <button
         type="button"
-        className="hivra-chat-tool-toggle"
+        className={`hivra-chat-tool-toggle ${styles.msgAction}`}
         aria-label={`${tool.name}${tool.detail ? ` · ${tool.detail}` : ""} — ${statusLabel}`}
         disabled={!hasResult}
         aria-expanded={hasResult ? open : undefined}
@@ -254,7 +540,7 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  <span style={{ flex: 1 }} />
  )}
         {unconfirmed ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{statusLabel}</span>
+          <span style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{statusLabel}</span>
         ) : tool.status === "running" ? (
           <Loader2 className="hivra-chat-spinner" size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
  ) : tool.status === "error" ? (
@@ -279,11 +565,13 @@ function AssistantActivity({ tools, streaming, outcome, text }: { tools: ToolChi
   const failed = tools.some((tool) => tool.status === "error");
   const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
   const summary = streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
+    : outcome === "disconnected" ? "Still working"
+    : outcome === "unknown" ? "Finished while you were away"
     : outcome === "stopped" ? "Activity stopped"
     : outcome === "error" ? "Response failed"
     : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
   const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? `${tools.length} action${tools.length === 1 ? "" : "s"}` : "";
-  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" ? "is-muted" : "is-done";
+  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "disconnected" || outcome === "unknown" ? "is-muted" : "is-done";
   return (
     <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
       <span className={`hivra-chat-activity-dot ${dot}`} aria-hidden />
@@ -350,15 +638,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }, []);
  const [boxHistoryChecked, setBoxHistoryChecked] = useState(false);
  const [hasBoxHistory, setHasBoxHistory] = useState(false);
+ const hasBoxHistoryRef = useRef(false);
+ useEffect(() => { hasBoxHistoryRef.current = hasBoxHistory; }, [hasBoxHistory]);
+ // What the computer's run list says about the first-contact welcome: nothing
+ // yet ("pending"), no welcome run ("none"), or one started elsewhere ("seen").
+ const [welcomeOnBox, setWelcomeOnBox] = useState<"pending" | "none" | "seen">("pending");
  const activeIdRef = useRef<string>("");
  const scrollRef = useRef<HTMLDivElement>(null);
  const autoWelcomeAttemptedRef = useRef(false);
  // Per-turn scratch state for each session's parser (e.g. codex's id→text
  // segment map). Reset at the start of each send() for that session.
  const turnStateRef = useRef(new Map<string, Record<string, unknown>>());
- // Aborts a session's in-flight turn. The box kills the CLI when the client
- // disconnects, so aborting the fetch genuinely stops that agent run.
+ // Aborts this page's connection to a session's in-flight turn. The run itself
+ // is detached on the box: only an explicit Stop (runRef's id) ends it.
  const abortRef = useRef(new Map<string, AbortController>());
+ // The box run id of each session's in-flight turn, for Stop.
+ const runRef = useRef(new Map<string, string>());
+ // Set once the box has shown it runs turns detached (a `_run` line or a run list).
+ const runsSupportedRef = useRef(false);
  // Every async turn captures the current generation. Changing the backing box
  // or stable storage identity invalidates that generation before aborting so a
  // late fetch result or reader callback cannot target the replacement chat.
@@ -386,19 +683,62 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const attachmentsRef = useRef<{ name: string; path: string }[]>([]);
  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
  const [uploading, setUploading] = useState(false);
+ const [attachError, setAttachError] = useState<string | null>(null);
  const fileInputRef = useRef<HTMLInputElement>(null);
  const composerRef = useRef<HTMLTextAreaElement>(null);
+ const composerDockRef = useRef<HTMLDivElement>(null);
+ // Touch keyboards have no Shift+Enter, so there Return inserts a newline and
+ // only the Send button sends.
+ const coarsePointer = useMediaQuery(COARSE_POINTER_QUERY);
+ const narrow = useMediaQuery(NARROW_QUERY);
+ const composerCap = narrow ? 120 : 160;
  useEffect(() => {
    const textarea = composerRef.current;
    if (!textarea) return;
    textarea.style.height = "auto";
-   textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, 160))}px`;
-   textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
- }, [input]);
- // Sessions rail visibility — collapsed by default on narrow screens.
+   textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, composerCap))}px`;
+   textarea.style.overflowY = textarea.scrollHeight > composerCap ? "auto" : "hidden";
+ }, [input, composerCap]);
+ // Sessions rail visibility. Below md it is an overlay drawer, closed by default.
  const [showRail, setShowRail] = useState(false);
+ const drawerOpen = showRail && narrow;
+ const railToggleRef = useRef<HTMLButtonElement>(null);
+ const drawerRef = useRef<HTMLDivElement>(null);
+ const drawerId = useId();
  useEffect(() => {
- if (typeof window !== "undefined" && window.innerWidth < 720) setShowRail(false);
+ if (!drawerOpen) return;
+ const onKey = (event: KeyboardEvent) => {
+ if (event.key === "Escape") setShowRail(false);
+ };
+ window.addEventListener("keydown", onKey);
+ return () => window.removeEventListener("keydown", onKey);
+ }, [drawerOpen]);
+ // The drawer is modal below md: focus moves into it on open and back to the
+ // toggle once it closes (Escape, backdrop, Close chats, or a pick).
+ const drawerWasOpenRef = useRef(false);
+ useEffect(() => {
+ if (drawerOpen) {
+ drawerWasOpenRef.current = true;
+ drawerRef.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus();
+ return;
+ }
+ if (!drawerWasOpenRef.current) return;
+ drawerWasOpenRef.current = false;
+ if (!showRail) railToggleRef.current?.focus();
+ }, [drawerOpen, showRail]);
+ const trapDrawerFocus = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+ if (event.key !== "Tab") return;
+ const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled])"));
+ if (focusable.length === 0) return;
+ const first = focusable[0];
+ const last = focusable[focusable.length - 1];
+ if (event.shiftKey && document.activeElement === first) {
+ event.preventDefault();
+ last.focus();
+ } else if (!event.shiftKey && document.activeElement === last) {
+ event.preventDefault();
+ first.focus();
+ }
  }, []);
 
  useEffect(() => {
@@ -411,6 +751,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  };
  abortAll();
  autoWelcomeAttemptedRef.current = false;
+ setWelcomeOnBox("pending");
  setBusyIds(new Set());
  setFailedBySession({});
 
@@ -419,27 +760,42 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
 
  const uploadAttachment = useCallback(async (file: File) => {
  if (!token || uploading || attachmentsRef.current.length >= 5) return;
- if (file.size > 8 * 1024 * 1024) return;
+ setAttachError(null);
  setUploading(true);
  try {
- const dataBase64 = await new Promise<string>((resolve, reject) => {
- const fr = new FileReader();
- fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
- fr.onerror = () => reject(new Error("read failed"));
- fr.readAsDataURL(file);
- });
- const r = await uploadBoxFile(boxUrl, file.name || "pasted.png", dataBase64, token);
- if (r.ok && r.path) setAttachments((prev) => [...prev, { name: file.name || "pasted.png", path: r.path! }]);
- } catch { /* drop silently; the user can retry */ }
- finally { setUploading(false); }
- }, [boxUrl, token, uploading]);
+ const prepared = await prepareImageAttachment(file).catch(() => null);
+ const blob: Blob = prepared?.blob ?? file;
+ const name = prepared?.name ?? (file.name || "pasted.png");
+ if (blob.size > MAX_ATTACHMENT_BYTES) {
+ setAttachError(`This file is ${formatMegabytes(blob.size)} — the limit is 8 MB`);
+ return;
+ }
+ const dataBase64 = await readBase64(blob);
+ const r = await uploadBoxFile(boxUrl, name, dataBase64, token);
+ if (r.ok && r.path) {
+ setAttachments((prev) => [...prev, { name, path: r.path! }]);
+ } else {
+ clientLog.warn("chat attachment upload rejected", { source: "hivra-chat", failureType: "hivra_chat_attachment_upload_failed", agentKind, reason: r.error });
+ setAttachError("Upload failed — try again");
+ }
+ } catch (err) {
+ clientLog.warn("chat attachment upload failed", { source: "hivra-chat", failureType: "hivra_chat_attachment_upload_failed", agentKind }, err);
+ setAttachError("Upload failed — try again");
+ } finally {
+ setUploading(false);
+ }
+ }, [agentKind, boxUrl, token, uploading]);
 
  // Load persisted sessions for this box (or start fresh), and re-open whichever
  // chat was active last time (falls back to the newest).
+ // `loadedKey` marks which box's sessions are in state, so resuming detached
+ // runs never scans the previous box's chats.
+ const [loadedKey, setLoadedKey] = useState<string | null>(null);
  useEffect(() => {
  const loaded = loadSessions(skey);
  const next = loaded.length ? loaded : [emptySession()];
  setSessions(next);
+ setLoadedKey(skey);
  const saved = loadActiveId(skey);
  setActiveId(saved && next.some((s) => s.id === saved) ? saved : next[0].id);
  }, [skey]);
@@ -504,39 +860,77 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // Persist on a short debounce (avoid thrashing localStorage on every token).
  // With parallel chats some session is often streaming, so waiting for idle
  // could postpone saving indefinitely; loadSessions clears stale streaming.
+ // Nothing is saved until this box's sessions are in state: saving the
+ // placeholder chat (or the previous box's chats) would overwrite its history.
  useEffect(() => {
+ if (loadedKey !== skey) return;
  const timer = window.setTimeout(() => saveSessions(skey, sessions), anyBusy ? 1000 : 0);
  return () => window.clearTimeout(timer);
- }, [sessions, anyBusy, skey]);
+ }, [sessions, anyBusy, loadedKey, skey]);
+ // Leaving must not lose a reply's run id inside the save debounce: the next
+ // visit uses it to pick the still-running reply back up. Closing the tab fires
+ // pagehide; in-app navigation only unmounts the chat.
+ const sessionsRef = useRef<Session[]>(sessions);
+ const sessionsKeyRef = useRef<string | null>(null);
+ useEffect(() => {
+ sessionsRef.current = sessions;
+ sessionsKeyRef.current = loadedKey;
+ }, [sessions, loadedKey]);
+ useEffect(() => {
+ const flush = () => {
+ if (sessionsKeyRef.current === skey) saveSessions(skey, sessionsRef.current);
+ };
+ window.addEventListener("pagehide", flush);
+ return () => {
+ window.removeEventListener("pagehide", flush);
+ flush();
+ };
+ }, [skey]);
 
  const active = useMemo(() => sessions.find((s) => s.id === activeId) || sessions[0], [sessions, activeId]);
 
  // Activate a session; if it's an unloaded box-backed stub, fetch its messages
- // from the VM first so history shows up.
+ // from the VM first so history shows up. A stub that loaded meanwhile (a
+ // running reply was adopted into it) keeps what it has.
  const selectSession = useCallback(
  (s: Session) => {
  setActiveId(s.id);
+ if (matchesMedia(NARROW_QUERY)) setShowRail(false);
  if (s.claudeSessionId && !s.loaded && s.messages.length === 0) {
  void readBoxSession(boxUrl, s.claudeSessionId, token).then((msgs) => {
- setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, messages: msgs.map(boxMsgToChat), loaded: true } : x)));
+ setSessions((prev) => prev.map((x) => (x.id === s.id && !x.loaded ? { ...x, messages: boxHistoryToChat(msgs), loaded: true } : x)));
  });
  }
  },
  [boxUrl, token],
  );
 
- // Smart autoscroll: follow the stream only while the user is at (or near) the
- // bottom. Scrolling up to re-read mid-stream pins the view; returning to the
- // bottom re-engages following. `force` is for user-initiated sends.
+ // Smart autoscroll: follow the stream only while the user is at the bottom.
+ // Any scroll-up unsticks at once, whatever caused it (wheel, touch, keys, a
+ // scrollbar drag, browser Find, a screen-reader cursor). We only ever scroll
+ // down ourselves, so a scrollTop decrease is never ours. Only returning to the
+ // bottom re-engages following. `force` is for user-initiated sends and
+ // "Return to latest".
  const stickToBottomRef = useRef(true);
  const scrollFrameRef = useRef<number | null>(null);
+ const lastScrollTopRef = useRef(0);
  const [showLatest, setShowLatest] = useState(false);
  const onScrollPane = useCallback(() => {
  const el = scrollRef.current;
  if (!el) return;
- const following = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
- stickToBottomRef.current = following;
- setShowLatest(!following);
+ const top = el.scrollTop;
+ const previous = lastScrollTopRef.current;
+ lastScrollTopRef.current = top;
+ const distance = el.scrollHeight - el.clientHeight - top;
+ if (distance <= AT_BOTTOM_PX) {
+ // Also covers the browser clamping scrollTop when content shrinks.
+ stickToBottomRef.current = true;
+ } else if (top < previous - 1 || distance >= FAR_FROM_BOTTOM_PX) {
+ stickToBottomRef.current = false;
+ } else if (top > previous) {
+ stickToBottomRef.current = true;
+ }
+ setShowLatest(!stickToBottomRef.current);
  }, []);
  const scrollDown = useCallback((force?: boolean) => {
  if (force) {
@@ -549,100 +943,52 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // A scroll-up between the stream event and this frame must win.
  if (!stickToBottomRef.current) return;
  const el = scrollRef.current;
- if (el) el.scrollTop = el.scrollHeight;
+ // An empty chat has nothing to follow; pinning it would clip the greeting
+ // on short screens.
+ if (el && el.dataset.empty !== "true") {
+ el.scrollTop = el.scrollHeight;
+ lastScrollTopRef.current = el.scrollTop;
+ }
  });
  }, []);
  useEffect(() => {
  scrollDown(true);
+ const pane = scrollRef.current;
+ if (pane?.dataset.empty === "true") {
+ pane.scrollTop = 0;
+ lastScrollTopRef.current = 0;
+ }
  return () => {
  if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
  scrollFrameRef.current = null;
  };
  }, [activeId, scrollDown]);
+ // The pane also changes size without a scroll event: the soft keyboard
+ // opening, the composer growing. Re-pin when following, otherwise refresh
+ // the "Return to latest" state.
+ useEffect(() => {
+ const pane = scrollRef.current;
+ if (!pane) return;
+ const onResize = () => {
+ if (stickToBottomRef.current) scrollDown();
+ else onScrollPane();
+ };
+ const observer = typeof ResizeObserver === "function" ? new ResizeObserver(onResize) : null;
+ observer?.observe(pane);
+ if (composerDockRef.current) observer?.observe(composerDockRef.current);
+ const viewport = typeof window !== "undefined" ? window.visualViewport : null;
+ viewport?.addEventListener("resize", onResize);
+ return () => {
+ observer?.disconnect();
+ viewport?.removeEventListener("resize", onResize);
+ };
+ }, [onScrollPane, scrollDown]);
 
  // Stream updates target the session that started the turn, never whichever
  // chat happens to be open when the event arrives.
  const updateSession = useCallback((sessionId: string, fn: (s: Session) => Session) => {
  setSessions((prev) => prev.map((s) => (s.id === sessionId ? fn(s) : s)));
  }, []);
-
- useEffect(() => {
- if (!boxHistoryChecked || hasBoxHistory || anyBusy || autoWelcomeAttemptedRef.current) return;
- if (!active || active.messages.length > 0) return;
- const welcomeSessionId = active.id;
- const flagKey = `hivra:first-welcome:${skey}`;
- try {
- if (window.localStorage.getItem(flagKey) === "1") return;
- } catch {
- // Storage is only a duplicate guard; the chat still works without it.
- }
-
- autoWelcomeAttemptedRef.current = true;
- const welcomeGeneration = requestGenerationRef.current;
- const isCurrentWelcome = () => requestGenerationRef.current === welcomeGeneration;
- setSessionBusy(welcomeSessionId, true);
- const hasFirstTask = Boolean((firstTask || "").trim());
- updateSession(welcomeSessionId, (s) => ({
- ...s,
- title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text: "", tools: [], streaming: true }],
- }));
-
- // The agent opens the conversation on its own — and when a first task was
- // captured at launch, this turn DOES it and returns the result ("do, don't
- // show"). Fire the activation event once per box (the localStorage guard
- // above makes this run at most once). Analytics must never break the chat.
- try {
- captureClient("agent_initiated_message_sent", {
- agent_id: skey,
- agent_kind: agentKind,
- lane: "hivra",
- has_first_task: hasFirstTask,
- $insert_id: `auto_first_task_${skey}`,
- });
- } catch {
- // Best-effort analytics only.
- }
-
- void requestAgentWelcomeMessage({
- boxUrl,
- token,
- agentKind,
- agentName,
- goal,
- context,
- firstTask,
- channel: "chat",
- })
- .then((text) => {
- if (!isCurrentWelcome()) return;
- updateSession(welcomeSessionId, (s) => ({
- ...s,
- title: s.title === "New chat" ? "Welcome" : s.title,
- messages: [{ role: "assistant", text, tools: [], streaming: false }],
- }));
- try {
- window.localStorage.setItem(flagKey, "1");
- } catch {
- // Best-effort duplicate guard only.
- }
- })
- .catch((err) => {
- if (!isCurrentWelcome()) return;
- clientLog.warn("agent first message generation failed", {
- source: "hivra-chat",
- failureType: "hivra_chat_welcome_generation_failed",
- agentKind,
- agentName,
- }, err);
- updateSession(welcomeSessionId, (s) => ({ ...s, messages: [] }));
- })
- .finally(() => {
- if (!isCurrentWelcome()) return;
- setSessionBusy(welcomeSessionId, false);
- scrollDown();
- });
- }, [agentKind, agentName, active, anyBusy, boxHistoryChecked, boxUrl, context, firstTask, goal, hasBoxHistory, scrollDown, setSessionBusy, skey, token, updateSession]);
 
  const updateAssistant = useCallback(
  (sessionId: string, fn: (msg: ChatMessage) => ChatMessage) => {
@@ -656,9 +1002,25 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  [updateSession],
  );
 
+ // A run writes into its own reply by id, so a reply that finished while the
+ // chat was closed lands in the right message even if it is no longer last.
+ const updateRunMessage = useCallback(
+ (sessionId: string, runId: string | undefined, fn: (msg: ChatMessage) => ChatMessage) => {
+ if (!runId) return updateAssistant(sessionId, fn);
+ updateSession(sessionId, (s) => {
+ const index = s.messages.findIndex((m) => m.role === "assistant" && m.runId === runId);
+ if (index < 0) return s;
+ const messages = s.messages.slice();
+ messages[index] = fn(messages[index]);
+ return { ...s, messages };
+ });
+ },
+ [updateAssistant, updateSession],
+ );
+
  const upsertTool = useCallback(
- (sessionId: string, id: string | undefined, patch: Partial<ToolChip>) => {
- updateAssistant(sessionId, (m) => {
+ (sessionId: string, runId: string | undefined, id: string | undefined, patch: Partial<ToolChip>) => {
+ updateRunMessage(sessionId, runId, (m) => {
  const tools = m.tools.slice();
  const idx = id ? tools.findIndex((t) => t.id === id) : -1;
  if (idx >= 0) tools[idx] = { ...tools[idx], ...patch };
@@ -666,27 +1028,218 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return { ...m, tools };
  });
  },
- [updateAssistant],
+ [updateRunMessage],
  );
 
  // One stream event → UI. The per-agent parsing lives in the adapter registry
  // (agent-adapters), which the welcome path shares — so live + welcome can't
  // diverge. This component only provides the sink that maps parser intents onto
  // React state, plus the per-turn scratch state in turnStateRef.
+ const runSink = useCallback(
+ (sessionId: string, runId: string | undefined): ChatSink => ({
+ // A box-history stub listed for this conversation before this chat knew
+ // its id (a reply adopted from another device) is the same chat: drop it.
+ setSessionId: (id) => setSessions((prev) => prev
+ .filter((s) => s.id === sessionId || s.id === activeIdRef.current || !isUnopenedStubOf(s, id))
+ .map((s) => (s.id === sessionId ? { ...s, claudeSessionId: id } : s))),
+ appendText: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: m.text + t })),
+ setText: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, text: t })),
+ upsertTool: (id, patch) => upsertTool(sessionId, runId, id, patch),
+ appendWarning: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, warnings: [...(m.warnings || []), t] })),
+ reportOutcome: (outcome) => updateRunMessage(sessionId, runId, (m) => ({ ...m, reported: outcome })),
+ }),
+ [updateRunMessage, upsertTool],
+ );
  const handleEvent = useCallback(
- (sessionId: string, ev: Record<string, unknown>) => {
- const sink: ChatSink = {
- setSessionId: (id) => updateSession(sessionId, (s) => ({ ...s, claudeSessionId: id })),
- appendText: (t) => updateAssistant(sessionId, (m) => ({ ...m, text: m.text + t })),
- setText: (t) => updateAssistant(sessionId, (m) => ({ ...m, text: t })),
- upsertTool: (id, patch) => upsertTool(sessionId, id, patch),
- appendWarning: (t) => updateAssistant(sessionId, (m) => ({ ...m, text: m.text + "\n\n⚠ " + t, outcome: "error" })),
- };
+ (sessionId: string, ev: Record<string, unknown>, runId?: string) => {
  let turnState = turnStateRef.current.get(sessionId);
- if (!turnState) { turnState = {}; turnStateRef.current.set(sessionId, turnState); }
- getAdapter(agentKind).parseEvent(ev, sink, turnState);
+ const adapter = getAdapter(agentKind);
+ if (!turnState) { turnState = adapter.createTurnState(); turnStateRef.current.set(sessionId, turnState); }
+ adapter.parseEvent(ev, runSink(sessionId, runId), turnState);
  },
- [agentKind, updateSession, updateAssistant, upsertTool],
+ [agentKind, runSink],
+ );
+
+ // Read one NDJSON chat stream into a reply. `_done` means the run finished; a
+ // stream can also just stop (network drop, proxy timeout, box restart) while
+ // the run keeps working on the box. `_run` says the box runs turns detached.
+ const readRunStream = useCallback(
+ async (body: ReadableStream<Uint8Array>, sessionId: string, runId: string | undefined, isCurrent: () => boolean): Promise<RunStreamResult> => {
+ const reader = body.getReader();
+ const dec = new TextDecoder();
+ const seen: { run: boolean; done: Record<string, unknown> | null } = { run: false, done: null };
+ let buf = "";
+ const dispatchLine = (line: string): boolean => {
+ if (!isCurrent()) return false;
+ const event = parseNdjsonLine(line);
+ if (!event) return true;
+ if (event.type === "_run" && !seen.run) {
+ seen.run = true;
+ runsSupportedRef.current = true;
+ updateRunMessage(sessionId, runId, (m) => (m.started ? m : { ...m, started: true }));
+ }
+ if (event.type === "_done") seen.done = event;
+ try {
+ handleEvent(sessionId, event, runId);
+ } catch {
+ /* skip malformed or unsupported event */
+ }
+ if (activeIdRef.current === sessionId) scrollDown();
+ return true;
+ };
+ try {
+ for (;;) {
+ const { done, value } = await reader.read();
+ if (!isCurrent()) return { kind: "superseded" };
+ buf += done ? dec.decode() : dec.decode(value, { stream: true });
+ let idx: number;
+ while ((idx = buf.indexOf("\n")) >= 0) {
+ const line = buf.slice(0, idx);
+ buf = buf.slice(idx + 1);
+ if (!dispatchLine(line)) return { kind: "superseded" };
+ }
+ if (!done) continue;
+ if (buf.trim() && !dispatchLine(buf)) return { kind: "superseded" };
+ break;
+ }
+ } catch {
+ if (!isCurrent()) return { kind: "superseded" };
+ return { kind: "failed", sawRun: seen.run };
+ }
+ return seen.done ? { kind: "done", done: seen.done } : { kind: "ended", sawRun: seen.run };
+ },
+ [handleEvent, scrollDown, updateRunMessage],
+ );
+
+ // Re-read a run from the box, rebuilding its reply from the start, and keep
+ // following it live until it finishes. Used when a stream drops mid-turn and
+ // when the chat reopens with replies that were still running.
+ const followRun = useCallback(
+ async (sessionId: string, runId: string, isCurrent: () => boolean, signal: AbortSignal, attempts: number): Promise<RunFollowResult> => {
+ for (let attempt = 0; attempt < attempts; attempt++) {
+ const wait = RUN_RETRY_DELAYS_MS[Math.min(attempt, RUN_RETRY_DELAYS_MS.length - 1)];
+ if (wait) await new Promise((resolve) => window.setTimeout(resolve, wait));
+ if (!isCurrent()) return { kind: "superseded" };
+ let resp: Response;
+ try {
+ resp = await fetch(boxChatRunEventsUrl(boxUrl, runId), { cache: "no-store", headers: token ? { Authorization: `Bearer ${token}` } : {}, signal });
+ } catch {
+ if (!isCurrent()) return { kind: "superseded" };
+ continue;
+ }
+ if (!isCurrent()) return { kind: "superseded" };
+ if (resp.status === 404) return { kind: "missing" };
+ if (!resp.ok || !resp.body) continue;
+ turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState());
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], warnings: undefined, reported: undefined, outcome: undefined, streaming: true, started: true }));
+ const result = await readRunStream(resp.body, sessionId, runId, isCurrent);
+ if (result.kind === "done" || result.kind === "superseded") return result;
+ }
+ return { kind: "unreachable" };
+ },
+ [agentKind, boxUrl, readRunStream, token, updateRunMessage],
+ );
+
+ // Close a reply from the box's `_done` line (null: a stream from the older
+ // gateway that ended without one; see exitOutcome). The agent's parser first
+ // emits what it held back for more of the stream. How the run ended decides
+ // the outcome, never a warning raised on the way.
+ const finalizeRun = useCallback(
+ (sessionId: string, runId: string | undefined, done: Record<string, unknown> | null) => {
+ const turnState = turnStateRef.current.get(sessionId);
+ if (turnState) getAdapter(agentKind).endTurn(runSink(sessionId, runId), turnState);
+ updateRunMessage(sessionId, runId, (m) => {
+ if (done?.interrupted) {
+ return { ...m, streaming: false, outcome: "error", warnings: [...(m.warnings || []), "The run was interrupted before it finished because the agent's computer restarted."] };
+ }
+ if (done?.stopped) return { ...m, streaming: false, outcome: "stopped" };
+ return { ...m, streaming: false, outcome: m.reported ?? exitOutcome(m, done) };
+ });
+ },
+ [agentKind, runSink, updateRunMessage],
+ );
+
+ // Register a session's in-flight turn so Stop finds its controller and run id,
+ // and every async step can tell it is still that session's current turn.
+ const beginTurn = useCallback(
+ (sessionId: string, runId: string): TurnHandle => {
+ const controller = new AbortController();
+ const generation = requestGenerationRef.current;
+ const isCurrent = () => requestGenerationRef.current === generation && abortRef.current.get(sessionId) === controller;
+ abortRef.current.set(sessionId, controller);
+ runRef.current.set(sessionId, runId);
+ turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState()); // fresh per-turn parser state
+ setSessionBusy(sessionId, true);
+ const finish = () => {
+ if (abortRef.current.get(sessionId) === controller) abortRef.current.delete(sessionId);
+ if (runRef.current.get(sessionId) === runId) runRef.current.delete(sessionId);
+ turnStateRef.current.delete(sessionId);
+ setSessionBusy(sessionId, false);
+ };
+ return { controller, isCurrent, finish };
+ },
+ [agentKind, setSessionBusy],
+ );
+
+ // Carry a turn from its POST to its end, writing into the reply `runId` names.
+ // The box runs the turn detached, so a stream that drops mid-turn re-attaches
+ // through the run's log. A normal send and the first-contact welcome share
+ // this path; each words its own failure to start.
+ const driveTurn = useCallback(
+ async (sessionId: string, runId: string, turn: TurnHandle, post: (signal: AbortSignal) => Promise<Response>, onAccepted?: () => void): Promise<TurnEnd> => {
+ let resp: Response;
+ let updatingDetail: { error?: unknown } | null = null;
+ for (let attempt = 0; ; attempt += 1) {
+ try {
+ resp = await post(turn.controller.signal);
+ } catch (e) {
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ // User stops invalidate the turn before aborting. Any current failure
+ // here is an unexpected transport error.
+ if ((e as Error).name === "AbortError") return { kind: "aborted" };
+ // The request may have reached the box before the connection failed.
+ const recovered = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, 2);
+ if (recovered.kind === "superseded") return recovered;
+ if (recovered.kind !== "done") return { kind: "unreachable" };
+ finalizeRun(sessionId, runId, recovered.done);
+ return { kind: "settled" };
+ }
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (resp.status !== 503) break;
+ // The computer is moving its agent CLI to a new version: the message waits
+ // (the same runId, so a retry can never start it twice) and goes out again.
+ const detail = (await resp.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (detail?.code !== "agent_updating" || attempt >= AGENT_UPDATING_RETRY_MS.length) { updatingDetail = detail; break; }
+ const cli = agentKind === "codex" ? "Codex" : "Claude Code";
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, pending: `Your computer is updating ${cli} to a new version. Your message will send in a moment.` }));
+ await waitUnlessAborted(AGENT_UPDATING_RETRY_MS[attempt], turn.controller.signal);
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (turn.controller.signal.aborted) return { kind: "aborted" };
+ }
+ updateRunMessage(sessionId, runId, (m) => (m.pending ? { ...m, pending: undefined } : m));
+ if (!resp.ok || !resp.body) {
+ // 409 (this conversation is still working), 429 (too many runs) and a 503
+ // whose update outlasted the wait carry a reason worth showing as-is.
+ const detail = updatingDetail ?? (resp.status === 409 || resp.status === 429 ? (await resp.json().catch(() => null)) as { error?: unknown } | null : null);
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ return { kind: "refused", status: resp.status, reason: typeof detail?.error === "string" ? detail.error : "" };
+ }
+ onAccepted?.();
+ let result: RunFollowResult = await readRunStream(resp.body, sessionId, runId, turn.isCurrent);
+ if (result.kind === "superseded") return result;
+ if (result.kind !== "done" && result.sawRun) {
+ // The run keeps going on the box when the stream drops; pick it back up.
+ result = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, RUN_RETRY_DELAYS_MS.length);
+ if (result.kind === "superseded") return result;
+ }
+ if (result.kind === "done") finalizeRun(sessionId, runId, result.done);
+ else if (result.kind === "ended") finalizeRun(sessionId, runId, null);
+ else if (result.kind === "unreachable") updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "disconnected" }));
+ else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
+ return { kind: "settled" };
+ },
+ [agentKind, finalizeRun, followRun, readRunStream, updateRunMessage],
  );
 
  const send = useCallback(
@@ -700,20 +1253,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const images = attachmentsRef.current.map((a) => a.path);
  setInput("");
  setAttachments([]);
+ setAttachError(null);
  try { window.localStorage.removeItem(draftKey(skey, sessionId)); } catch { /* ignore */ }
- setSessionBusy(sessionId, true);
  setLastFailed(sessionId, null);
- const controller = new AbortController();
- const requestGeneration = requestGenerationRef.current;
- const isCurrentRequest = () =>
- requestGenerationRef.current === requestGeneration && abortRef.current.get(sessionId) === controller;
- abortRef.current.set(sessionId, controller);
- turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState()); // fresh per-turn parser state
- const finishTurn = () => {
- if (abortRef.current.get(sessionId) === controller) abortRef.current.delete(sessionId);
- turnStateRef.current.delete(sessionId);
- setSessionBusy(sessionId, false);
- };
+ const runId = newRunId();
+ const turn = beginTurn(sessionId, runId);
  const shownText = images.length ? text + "\n\n📎 " + images.map((p) => p.split("/").pop()).join(", ") : text;
  updateSession(sessionId, (s) => ({
  ...s,
@@ -721,7 +1265,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  messages: [
  ...s.messages,
  { role: "user", text: shownText, tools: [] },
- { role: "assistant", text: "", tools: [], streaming: true },
+ { role: "assistant", text: "", tools: [], streaming: true, runId },
  ],
  }));
  const followIfOpen = (force?: boolean) => {
@@ -730,9 +1274,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  stickToBottomRef.current = true; // a fresh send re-engages following
  followIfOpen(true);
 
- let resp: Response;
- try {
- resp = await fetch(`${boxUrl.replace(/\/$/, "")}/api/chat`, {
+ const post = (signal: AbortSignal) => fetch(`${boxUrl.replace(/\/$/, "")}/api/chat`, {
  method: "POST",
  headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
  // `reasoning` carries the composer's "Think" toggle. The box's /api/chat
@@ -744,34 +1286,16 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // name/shape (does it accept `reasoning: boolean`, or a thinking-level
  // string like the cron path's, or `--model`-style flags?) and align this
  // key + the TaskModal cron path so chat and scheduled tasks match.
- body: JSON.stringify({ message: text, sessionId: resumeId, ...(images.length ? { images } : {}), ...(thinkRef.current ? { reasoning: true } : {}) }),
- signal: controller.signal,
+ // `detach` asks the box to keep the run going when this page goes away
+ // (closed tab, sleeping laptop, dropped network). Only Stop ends it.
+ body: JSON.stringify({ message: text, sessionId: resumeId, detach: true, runId, clientRef: sessionId, ...(images.length ? { images } : {}), ...(thinkRef.current ? { reasoning: true } : {}) }),
+ signal,
  });
- } catch (e) {
- if (!isCurrentRequest()) return;
- // User stops invalidate this request before aborting. Any current failure
- // here is an unexpected transport error.
- if ((e as Error).name === "AbortError") {
- updateAssistant(sessionId, (m) => ({ ...m, streaming: false, outcome: "error" }));
- } else {
- updateAssistant(sessionId, (m) => ({ ...m, text: "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.", streaming: false, outcome: "error" }));
- setLastFailed(sessionId, text);
- }
- finishTurn();
- return;
- }
- if (!isCurrentRequest()) return;
- if (!resp.ok || !resp.body) {
- updateAssistant(sessionId, (m) => ({ ...m, text: "⚠ Your agent hit an error (HTTP " + resp.status + "). Try again.", streaming: false, outcome: "error" }));
- setLastFailed(sessionId, text);
- finishTurn();
- return;
- }
-
  // agent_first_message_sent — the funnel's Hivra-lane activation event.
  // Fires once per box (localStorage guard keyed on the stable storage
  // key); the $insert_id makes PostHog dedupe any double-fire across
  // devices/reinstalls best-effort. Analytics must never break the chat.
+ const onAccepted = () => {
  try {
  const firstMessageKey = "hermes:first_message_sent:" + skey;
  if (!window.localStorage.getItem(firstMessageKey)) {
@@ -787,71 +1311,328 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  } catch {
  // localStorage unavailable (private mode) — skip the once-guard.
  }
-
- const reader = resp.body.getReader();
- const dec = new TextDecoder();
- let buf = "";
- const dispatchLine = (line: string): boolean => {
- if (!isCurrentRequest()) return false;
- const event = parseNdjsonLine(line);
- if (!event) return true;
- try {
- handleEvent(sessionId, event);
- } catch {
- /* skip malformed or unsupported event */
- }
- followIfOpen();
- return true;
  };
- try {
- for (;;) {
- const { done, value } = await reader.read();
- if (!isCurrentRequest()) return;
- if (done) {
- buf += dec.decode();
- } else {
- buf += dec.decode(value, { stream: true });
+
+ const end = await driveTurn(sessionId, runId, turn, post, onAccepted);
+ if (end.kind === "superseded") return;
+ if (end.kind === "aborted") {
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
+ } else if (end.kind !== "settled") {
+ const note = turnFailureNote(end) ?? "";
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note, streaming: false, outcome: "error" }));
+ setLastFailed(sessionId, text);
  }
- let idx: number;
- while ((idx = buf.indexOf("\n")) >= 0) {
- const line = buf.slice(0, idx);
- buf = buf.slice(idx + 1);
- if (!dispatchLine(line)) return;
- }
- if (!done) continue;
- if (buf.trim() && !dispatchLine(buf)) return;
- buf = "";
- break;
- }
- } catch {
- if (!isCurrentRequest()) return;
- updateSession(sessionId, (s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "error" } : m)) }));
- finishTurn();
- return;
- }
- if (!isCurrentRequest()) return;
- updateSession(sessionId, (s) => ({ ...s, messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: m.outcome || "complete" } : m)) }));
- finishTurn();
- followIfOpen();
+ turn.finish();
+ if (end.kind === "settled") followIfOpen();
  },
- [agentKind, boxUrl, handleEvent, scrollDown, sessions, setLastFailed, setSessionBusy, updateSession, updateAssistant, token, skey],
+ [agentKind, beginTurn, boxUrl, driveTurn, scrollDown, sessions, setLastFailed, updateSession, updateRunMessage, token, skey],
  );
 
- // Stop a session's in-flight turn. Aborting the fetch disconnects from the
- // box, which kills that CLI process — a real interrupt, not just a UI reset.
- // Other sessions keep running.
+ // Take back a welcome reply that never got going: the chat falls back to the
+ // starter suggestions, and the welcome may start again.
+ const retractWelcome = useCallback((sessionId: string, runId: string) => {
+ writeWelcomed(skey, false);
+ updateSession(sessionId, (s) => {
+ const messages = s.messages.filter((m) => m.runId !== runId);
+ return { ...s, messages, title: messages.length === 0 && s.title === "Welcome" ? "New chat" : s.title };
+ });
+ }, [skey, updateSession]);
+
+ // The agent opens a new computer's first chat on its own: a hidden prompt
+ // asks it to introduce itself or, when the owner gave a first task at launch,
+ // to DO that task and return the result ("do, don't show"). It is a detached
+ // run like any send: a reload, a closed tab or a dropped network re-attaches
+ // to it (resumeDetachedRuns), Stop ends it, and the conversation it starts is
+ // the owner's to continue. Only the reply shows; the prompt never does, so a
+ // welcome that fails keeps its reply with Retry, which carries on the failed
+ // attempt's conversation (`resumeSessionId`) as Retry does for a message.
+ const startWelcome = useCallback((sessionId: string, retry: boolean) => {
+ if (abortRef.current.has(sessionId)) return;
+ const resumeSessionId = retry ? sessionsRef.current.find((s) => s.id === sessionId)?.claudeSessionId ?? null : null;
+ // Marked before the turn starts, not when it ends: the run outlives this
+ // page, so a reload must re-attach to it instead of starting another.
+ writeWelcomed(skey, true);
+ const runId = newRunId();
+ const turn = beginTurn(sessionId, runId);
+ updateSession(sessionId, (s) => ({
+ ...s,
+ title: s.title === "New chat" ? "Welcome" : s.title,
+ messages: [...s.messages.filter((m) => !m.welcome), { role: "assistant", text: "", tools: [], streaming: true, runId, welcome: true }],
+ }));
+ const post = (signal: AbortSignal) => startAgentWelcomeRun({
+ boxUrl,
+ token,
+ agentName,
+ goal,
+ context,
+ firstTask,
+ channel: "chat",
+ runId,
+ clientRef: sessionId,
+ resumeSessionId,
+ signal,
+ });
+ void driveTurn(sessionId, runId, turn, post).then((end) => {
+ if (end.kind === "superseded") return;
+ if (end.kind !== "settled") {
+ clientLog.warn("agent first message generation failed", {
+ source: "hivra-chat",
+ failureType: "hivra_chat_welcome_generation_failed",
+ agentKind,
+ agentName,
+ reason: end.kind,
+ retry,
+ ...(end.kind === "refused" ? { status: end.status } : {}),
+ });
+ if (retry) {
+ // The owner asked for this one: say why it failed, and keep Retry.
+ const note = turnFailureNote(end);
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note ?? m.text, streaming: false, outcome: "error" }));
+ } else {
+ // The turn never got going: fall back to the starter suggestions, and
+ // let the next visit try the welcome again.
+ retractWelcome(sessionId, runId);
+ }
+ } else {
+ // A welcome that ends without a word failed as surely as one that
+ // errored, and its reply is the only place left to try it again.
+ updateRunMessage(sessionId, runId, (m) => (m.outcome === "complete" && !m.text.trim() && m.tools.length === 0
+ ? { ...m, text: "⚠ Your agent finished without replying.", outcome: "error" }
+ : m));
+ }
+ turn.finish();
+ if (activeIdRef.current === sessionId) scrollDown();
+ });
+ }, [agentKind, agentName, beginTurn, boxUrl, context, driveTurn, firstTask, goal, retractWelcome, scrollDown, skey, token, updateRunMessage, updateSession]);
+
+ // The welcome starts once per computer, only once the chat knows it is new:
+ // no conversation on the computer or in this browser, and no welcome in the
+ // computer's run list (started on another device or in another view).
+ const anyChatStarted = useMemo(() => sessions.some((s) => s.messages.length > 0 || Boolean(s.claudeSessionId)), [sessions]);
+ useEffect(() => {
+ if (loadedKey !== skey || !boxHistoryChecked || hasBoxHistory || welcomeOnBox !== "none") return;
+ if (anyBusy || autoWelcomeAttemptedRef.current || anyChatStarted || !active) return;
+ if (readWelcomed(skey)) return;
+ autoWelcomeAttemptedRef.current = true;
+ // Fire the activation event once per box (the flag above makes this run at
+ // most once). Analytics must never break the chat.
+ try {
+ captureClient("agent_initiated_message_sent", {
+ agent_id: skey,
+ agent_kind: agentKind,
+ lane: "hivra",
+ has_first_task: Boolean((firstTask || "").trim()),
+ $insert_id: `auto_first_task_${skey}`,
+ });
+ } catch {
+ // Best-effort analytics only.
+ }
+ startWelcome(active.id, false);
+ }, [active, agentKind, anyBusy, anyChatStarted, boxHistoryChecked, firstTask, hasBoxHistory, loadedKey, skey, startWelcome, welcomeOnBox]);
+
+ // Stop a session's in-flight turn. The box keeps a detached run going without
+ // this page, so Stop asks the box to end it; aborting the fetch also stops
+ // older runtimes, which end a turn when the client disconnects. Other sessions
+ // keep running.
  const stopSession = useCallback((sessionId: string) => {
  const controller = abortRef.current.get(sessionId);
  if (!controller) return;
+ const runId = runRef.current.get(sessionId);
  abortRef.current.delete(sessionId);
+ runRef.current.delete(sessionId);
  turnStateRef.current.delete(sessionId);
+ if (runId) {
+ void stopBoxChatRun(boxUrl, runId, token).then((stopped) => {
+ if (!stopped && runsSupportedRef.current) {
+ clientLog.warn("chat run stop was not confirmed by the computer", { source: "hivra-chat", failureType: "hivra_chat_run_stop_unconfirmed", agentKind });
+ }
+ });
+ }
  controller.abort();
  updateSession(sessionId, (s) => ({
  ...s,
  messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
  }));
  setSessionBusy(sessionId, false);
- }, [setSessionBusy, updateSession]);
+ }, [agentKind, boxUrl, setSessionBusy, token, updateSession]);
+
+ // A reply whose run the computer has no log of. A welcome with no sign it
+ // ever started never reached the computer (a reload while the computer was
+ // still starting). While nothing else has happened on the computer, take it
+ // back and let the welcome start again, as if it never began. Otherwise it
+ // cannot start on its own any more, so it settles as a failed welcome, which
+ // keeps Retry; so does any other reply, as settleMissingRun says.
+ const settleMissingReply = useCallback((sessionId: string, runId: string) => {
+ const reply = sessionsRef.current.find((s) => s.id === sessionId)?.messages.find((m) => m.runId === runId);
+ const untouched = !hasBoxHistoryRef.current && !sessionsRef.current.some((s) => Boolean(s.claudeSessionId) || s.messages.some((m) => m.runId !== runId));
+ if (reply?.welcome && !replyStarted(reply)) {
+ clientLog.warn("agent first message never reached the computer", { source: "hivra-chat", failureType: "hivra_chat_welcome_lost", agentKind, restarting: untouched });
+ if (untouched) {
+ retractWelcome(sessionId, runId);
+ autoWelcomeAttemptedRef.current = false;
+ return;
+ }
+ }
+ updateRunMessage(sessionId, runId, settleMissingRun);
+ }, [agentKind, retractWelcome, updateRunMessage]);
+
+ // Pick a reply back up from the box: follow it live if it is still running,
+ // or rebuild it from the run's log if it finished while this page was away.
+ const resumeRun = useCallback(async (sessionId: string, runId: string) => {
+ if (abortRef.current.has(sessionId)) return;
+ const turn = beginTurn(sessionId, runId);
+ const result = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, 3);
+ if (result.kind === "superseded") return;
+ if (result.kind === "done") finalizeRun(sessionId, runId, result.done);
+ else if (result.kind === "missing") settleMissingReply(sessionId, runId);
+ else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "disconnected" }));
+ turn.finish();
+ }, [beginTurn, finalizeRun, followRun, settleMissingReply, updateRunMessage]);
+
+ // Runs adopted from the box's list since this chat opened, so a wake-up that
+ // lands before an adopted reply is in state never follows it twice.
+ const adoptedRunsRef = useRef(new Set<string>());
+ useEffect(() => {
+ adoptedRunsRef.current = new Set();
+ }, [boxUrl, skey]);
+
+ // Show a turn this page did not start (another device, or a save that never
+ // landed): attach its reply to the conversation it belongs to, or open it as a
+ // chat of its own, and follow it live.
+ const adoptRun = useCallback(async (run: BoxChatRun) => {
+ adoptedRunsRef.current.add(run.runId);
+ const generation = requestGenerationRef.current;
+ // A welcome turn's title is its hidden prompt, which never shows.
+ const welcome = isHiddenWelcomeTitle(run.title);
+ // A welcome opens in the chat on screen while that chat is still blank, so
+ // a device that opens a new computer mid-welcome watches the first task land.
+ const blankOpenChat = () => sessionsRef.current.find((s) => s.id === activeIdRef.current && s.messages.length === 0 && !s.claudeSessionId && s.loaded !== false);
+ const findTarget = () => sessionsRef.current.find((s) => s.id === run.clientRef)
+ ?? (run.agentSessionId ? sessionsRef.current.find((s) => s.claudeSessionId === run.agentSessionId) : undefined)
+ ?? (welcome ? blankOpenChat() : undefined);
+ const unloaded = (s: Session | undefined) => !s || (s.loaded === false && s.messages.length === 0);
+ const prompt = welcome ? null : promptFromRunTitle(run.title);
+ const asked: ChatMessage[] = prompt ? [{ role: "user", text: prompt, tools: [] }] : [];
+ const reply: ChatMessage = { role: "assistant", text: "", tools: [], streaming: true, runId: run.runId, started: true, ...(welcome ? { welcome: true } : {}) };
+ // A conversation this page has not loaded shows its earlier turns too.
+ let before = welcome ? [] : asked;
+ if (run.agentSessionId && unloaded(findTarget())) {
+ const history = boxHistoryToChat(await readBoxSession(boxUrl, run.agentSessionId, token));
+ if (requestGenerationRef.current !== generation) return;
+ before = historyBeforeRunningTurn(history, prompt, welcome);
+ }
+ const target = findTarget();
+ if (target && abortRef.current.has(target.id)) {
+ // That chat is busy with a turn of its own: look again on the next wake-up.
+ adoptedRunsRef.current.delete(run.runId);
+ return;
+ }
+ let sessionId: string;
+ if (target) {
+ sessionId = target.id;
+ updateSession(target.id, (s) => {
+ if (unloaded(s)) return { ...s, messages: [...before, reply], loaded: true };
+ // A chat that already holds this conversation (its history opened
+ // meanwhile, or this device's own copy) keeps its turns up to this one's
+ // prompt, shown once: the reply replays the turn's output in full.
+ return {
+ ...s,
+ title: welcome && s.title === "New chat" ? "Welcome" : s.title,
+ claudeSessionId: s.claudeSessionId ?? run.agentSessionId,
+ messages: [...historyBeforeRunningTurn(s.messages, prompt, welcome), reply],
+ };
+ });
+ } else {
+ const created: Session = {
+ id: newId(),
+ title: welcome ? "Welcome" : (prompt || "Chat").slice(0, 42),
+ claudeSessionId: run.agentSessionId,
+ createdAt: Date.parse(run.createdAt) || Date.now(),
+ messages: [...before, reply],
+ ...(run.agentSessionId ? { loaded: true } : {}),
+ };
+ sessionId = created.id;
+ // The box-history pull runs alongside this and may have listed the
+ // conversation meanwhile; this chat, with its history loaded, replaces it.
+ setSessions((prev) => [created, ...prev.filter((s) => s.id === activeIdRef.current || !isUnopenedStubOf(s, run.agentSessionId))]);
+ }
+ void resumeRun(sessionId, run.runId);
+ }, [boxUrl, resumeRun, token, updateSession]);
+
+ // When the chat opens or comes back into view, catch up with the box: replies
+ // this page last saw unfinished (tab closed, laptop asleep, network lost) are
+ // resumed, and turns still running that this page does not know about (started
+ // on another device) are adopted.
+ // The generation (box and chat identity) whose catch-up is in flight: a
+ // wake-up joins it, and a new box or chat identity starts its own.
+ const resumingRef = useRef<number | null>(null);
+ const resumeDetachedRuns = useCallback(async () => {
+ const generation = requestGenerationRef.current;
+ if (resumingRef.current === generation) return;
+ resumingRef.current = generation;
+ try {
+ const runs = await listBoxChatRuns(boxUrl, token);
+ if (requestGenerationRef.current !== generation) return;
+ // The first-contact welcome waits for this answer, so it never starts
+ // while the computer runs, or has run, one begun elsewhere.
+ if (runs?.some((run) => isHiddenWelcomeTitle(run.title))) {
+ writeWelcomed(skey, true);
+ setWelcomeOnBox("seen");
+ } else {
+ setWelcomeOnBox((prev) => (prev === "pending" ? "none" : prev));
+ }
+ // An older runtime or an unreachable box: try again on the next wake-up.
+ if (!runs) return;
+ runsSupportedRef.current = true;
+ const tracked = new Set<string>([...runRef.current.values(), ...adoptedRunsRef.current]);
+ for (const s of sessionsRef.current) {
+ for (const m of s.messages) if (m.runId) tracked.add(m.runId);
+ if (abortRef.current.has(s.id)) continue;
+ const m = s.messages.find((msg) => msg.role === "assistant" && msg.runId && !msg.streaming && (msg.outcome === undefined || msg.outcome === "disconnected"));
+ // The list holds only the newest runs, and the computer keeps logs for
+ // more: ask for the run's log whether or not it is listed.
+ if (m?.runId) void resumeRun(s.id, m.runId);
+ }
+ for (const run of runs) {
+ if (run.state === "running" && !tracked.has(run.runId)) void adoptRun(run);
+ }
+ } finally {
+ if (resumingRef.current === generation) resumingRef.current = null;
+ }
+ }, [adoptRun, boxUrl, resumeRun, skey, token]);
+
+ // A reply whose run log aged out ("unknown") is complete in the box's own
+ // history of the conversation: show that history in place of this chat's copy.
+ const showBoxHistory = useCallback((sessionId: string) => {
+ const session = sessionsRef.current.find((s) => s.id === sessionId);
+ if (!session?.claudeSessionId || abortRef.current.has(sessionId)) return;
+ const generation = requestGenerationRef.current;
+ void readBoxSession(boxUrl, session.claudeSessionId, token).then((msgs) => {
+ if (requestGenerationRef.current !== generation) return;
+ if (msgs.length === 0) {
+ clientLog.warn("chat history could not be read from the computer", { source: "hivra-chat", failureType: "hivra_chat_history_read_failed", agentKind });
+ return;
+ }
+ // A turn started meanwhile keeps its live reply; try again once it ends.
+ if (abortRef.current.has(sessionId)) return;
+ setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, messages: boxHistoryToChat(msgs), loaded: true } : s)));
+ });
+ }, [agentKind, boxUrl, token]);
+ useEffect(() => {
+ if (loadedKey !== skey) return;
+ void resumeDetachedRuns();
+ const onWake = () => {
+ if (document.visibilityState !== "hidden") void resumeDetachedRuns();
+ };
+ window.addEventListener("focus", onWake);
+ window.addEventListener("online", onWake);
+ document.addEventListener("visibilitychange", onWake);
+ return () => {
+ window.removeEventListener("focus", onWake);
+ window.removeEventListener("online", onWake);
+ document.removeEventListener("visibilitychange", onWake);
+ };
+ }, [loadedKey, resumeDetachedRuns, skey]);
  const stop = useCallback(() => stopSession(activeIdRef.current), [stopSession]);
 
  // Record a thumbs up/down on an assistant message and fire the funnel event.
@@ -894,11 +1675,21 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  });
  setActiveId(s.id);
  setInput("");
+ if (matchesMedia(NARROW_QUERY)) setShowRail(false);
  }, []);
 
  const deleteChat = useCallback(
  (id: string) => {
  stopSession(id);
+ // A reply this page is not following (the connection was lost, or it never
+ // re-attached) may still be running on the box. Deleting its chat ends it
+ // too, and it is never adopted back as another device's run.
+ const session = sessionsRef.current.find((s) => s.id === id);
+ for (const m of session?.messages || []) {
+ if (!m.runId || adoptedRunsRef.current.has(m.runId)) continue;
+ adoptedRunsRef.current.add(m.runId);
+ if (m.role === "assistant" && !m.streaming && (m.outcome === undefined || m.outcome === "disconnected")) void stopBoxChatRun(boxUrl, m.runId, token);
+ }
  setLastFailed(id, null);
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
@@ -907,14 +1698,44 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  return final;
  });
  },
- [setLastFailed, stopSession],
+ [boxUrl, setLastFailed, stopSession, token],
  );
+
+ // Deleting has no undo, so it takes two taps: the first arms a red
+ // "Delete?" for 3s, the second deletes.
+ const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+ const confirmDeleteTimerRef = useRef<number | null>(null);
+ useEffect(() => () => {
+ if (confirmDeleteTimerRef.current !== null) window.clearTimeout(confirmDeleteTimerRef.current);
+ }, []);
+ const requestDeleteChat = useCallback((id: string) => {
+ if (confirmDeleteTimerRef.current !== null) {
+ window.clearTimeout(confirmDeleteTimerRef.current);
+ confirmDeleteTimerRef.current = null;
+ }
+ if (confirmDeleteId === id) {
+ setConfirmDeleteId(null);
+ deleteChat(id);
+ return;
+ }
+ setConfirmDeleteId(id);
+ confirmDeleteTimerRef.current = window.setTimeout(() => {
+ confirmDeleteTimerRef.current = null;
+ setConfirmDeleteId(null);
+ }, 3000);
+ }, [confirmDeleteId, deleteChat]);
 
  useEffect(() => {
  scrollDown();
  }, [active?.messages, scrollDown]);
 
  const messages = active?.messages || [];
+ // A first-contact welcome that failed: its prompt is hidden, so Retry on its
+ // reply is the only way to ask again. It lasts across reloads.
+ const lastMessage = messages[messages.length - 1];
+ const welcomeFailed = Boolean(lastMessage?.welcome && !lastMessage.streaming && lastMessage.outcome === "error");
+ // The open chat's conversation on the box, when it has one to reload from.
+ const historySessionId = active?.claudeSessionId ? active.id : null;
  // Welcome suggestions: the chosen goal's three concrete starters (falls back to
  // the general-purpose goal so there's always something to tap). Tapping one
  // sends it as the first message — the seeded agent answers in character.
@@ -922,31 +1743,63 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const starters = (goalDef ?? getGoal(undefined)).starters;
 
  return (
- <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)" }}>
- {/* Sessions sidebar */}
+ <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)", position: "relative" }}>
+ {/* Sessions sidebar: an overlay drawer below md, an inline column from md up. */}
  {showRail ? (
- <div className="flex w-[232px] shrink-0 flex-col border-r border-[var(--etched-border)]">
+ <>
+ <button
+ type="button"
+ aria-hidden="true"
+ tabIndex={-1}
+ onClick={() => setShowRail(false)}
+ className="absolute inset-0 z-10 bg-black/40 md:hidden"
+ />
+ <div
+ ref={drawerRef}
+ id={drawerId}
+ role={drawerOpen ? "dialog" : undefined}
+ aria-modal={drawerOpen ? true : undefined}
+ aria-label={drawerOpen ? "Chats" : undefined}
+ onKeyDown={drawerOpen ? trapDrawerFocus : undefined}
+ className="absolute inset-y-0 left-0 z-20 flex w-[min(85vw,300px)] shrink-0 flex-col border-r border-[var(--etched-border)] bg-[var(--bg-surface)] md:static md:z-auto md:w-[232px]"
+ >
+ <div className="mx-3 mt-3 flex gap-2">
  <button
  type="button"
  onClick={newChat}
- className="mx-3 mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] disabled:opacity-50"
+ className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] md:min-h-[40px]"
  >
  <Plus size={15} /> New chat
  </button>
+ <button
+ type="button"
+ aria-label="Close chats"
+ onClick={() => setShowRail(false)}
+ className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center border border-[var(--etched-border)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:hidden"
+ >
+ <X size={15} />
+ </button>
+ </div>
  <div className="flex-1 overflow-y-auto p-2">
  {sessions.map((s) => {
  const isActive = s.id === activeId;
+ const armed = confirmDeleteId === s.id;
  const running = busyIds.has(s.id);
  return (
  <div
  key={s.id}
- onClick={() => selectSession(s)}
  className={[
- "group mb-0.5 flex cursor-pointer items-center gap-2 px-2.5 py-2",
+ "group mb-0.5 flex items-center",
  isActive
  ? "bg-[var(--hivra-red-soft)]"
  : "hover:bg-[var(--bg-elevated)]",
  ].join(" ")}
+ >
+ <button
+ type="button"
+ aria-current={isActive ? "true" : undefined}
+ onClick={() => selectSession(s)}
+ className="flex min-h-[44px] min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left md:min-h-0"
  >
  {running ? (
  <Loader2 size={13} className="hivra-chat-spinner shrink-0 text-[var(--gold-leaf)]" aria-label="Working" />
@@ -956,36 +1809,51 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink-black)]">
  {s.title || "New chat"}
  </span>
+ </button>
  {sessions.length > 1 ? (
+ armed ? (
+ <button
+ type="button"
+ aria-label="Confirm delete chat"
+ onClick={() => requestDeleteChat(s.id)}
+ className="mono mr-1.5 inline-flex min-h-[24px] shrink-0 items-center justify-center bg-[var(--hivra-red)] px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-white pointer-coarse:min-h-[40px]"
+ >
+ Delete?
+ </button>
+ ) : (
  <button
  type="button"
  aria-label={running ? "Stop and delete chat" : "Delete chat"}
- onClick={(e) => {
- e.stopPropagation();
- deleteChat(s.id);
- }}
- className="inline-flex p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+ onClick={() => requestDeleteChat(s.id)}
+ className="mr-2.5 inline-flex shrink-0 items-center justify-center p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:min-h-[40px] pointer-coarse:min-w-[40px] [@media(hover:none)]:opacity-100"
  >
  <Trash2 size={12} />
  </button>
+ )
  ) : null}
  </div>
  );
  })}
  </div>
  </div>
+ </>
  ) : null}
 
  {/* Chat column */}
- <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
+ <div inert={drawerOpen} style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
  {instanceId ? <MemoryUsageBanner instanceId={instanceId} /> : null}
- <div className="absolute left-2 top-2 z-[5] flex items-center gap-1.5">
+ {/* Below md an in-flow row under the banner; from md up the floating pair.
+ Pixel sizes: the 14px root makes rem spacing 3.5px a step. */}
+ <div className="flex h-[48px] shrink-0 items-center gap-1 border-b border-[var(--etched-border)] px-2 md:absolute md:left-2 md:top-2 md:z-[5] md:h-auto md:gap-1.5 md:border-0 md:px-0">
  <button
+ ref={railToggleRef}
  type="button"
  aria-label={showRail ? "Hide chats" : "Show chats"}
+ aria-expanded={showRail}
+ aria-controls={showRail ? drawerId : undefined}
  title={showRail ? "Hide chats" : "Show chats"}
  onClick={() => setShowRail((v) => !v)}
- className="inline-flex border border-[var(--etched-border)] bg-[var(--bg-surface)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]"
+ className="inline-flex h-[44px] w-[44px] items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-surface)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:w-auto md:p-1.5"
  >
  <PanelLeft size={13} />
  </button>
@@ -995,22 +1863,23 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-label="New chat"
  title="New chat — runs alongside the others"
  onClick={newChat}
- className="inline-flex border border-[var(--etched-border)] bg-[var(--bg-surface)] p-1.5 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]"
+ className="inline-flex h-[44px] items-center justify-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-3 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:gap-0 md:p-1.5"
  >
  <Plus size={13} />
+ <span className="mono text-[11px] uppercase tracking-[0.06em] md:hidden">New chat</span>
  </button>
  ) : null}
  {!showRail && busyIds.size > (busy ? 1 : 0) ? (
  <button
  type="button"
  onClick={() => setShowRail(true)}
- className="mono inline-flex items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)] hover:text-[var(--ink-black)]"
+ className="mono inline-flex h-[44px] items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 text-[11px] uppercase tracking-[0.06em] text-[var(--text-muted)] hover:text-[var(--ink-black)] md:h-auto md:py-1"
  >
  <Loader2 size={11} className="hivra-chat-spinner" aria-hidden /> {busyIds.size - (busy ? 1 : 0)} other{busyIds.size - (busy ? 1 : 0) === 1 ? "" : "s"} working
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} role="region" aria-label="Conversation" onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
+ <div ref={scrollRef} role="region" aria-label="Conversation" tabIndex={0} data-empty={messages.length === 0 ? "true" : undefined} onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
@@ -1045,7 +1914,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const isUser = m.role === "user";
  return (
  <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
+ {/* The user bubble is already tinted, so its avatar is dropped below md. */}
  <div
+ className={isUser ? "hidden md:flex" : "flex"}
  style={{
  width: 26,
  height: 26,
@@ -1054,10 +1925,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  border: "1px solid var(--etched-border)",
  background: isUser ? "var(--bg-elevated)" : accent,
  color: isUser ? "var(--ink-black)" : "#fff",
- display: "flex",
  alignItems: "center",
  justifyContent: "center",
- fontSize: 10,
+ fontSize: 11,
  fontWeight: 700,
  fontFamily: "var(--font-mono)",
  }}
@@ -1066,17 +1936,35 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
  {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
- <div className="hivra-md" style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
+ <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
  {m.role === "assistant" ? (
- <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
+ <ReactMarkdown remarkPlugins={[remarkGfm]} components={CHAT_MARKDOWN_COMPONENTS}>{replyMarkdown(m)}</ReactMarkdown>
  ) : (
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}
  </div>
  {m.role === "assistant" ? <ToolHistory message={m} /> : null}
- {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error") ? (
- <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : "Response failed"}>
- {m.outcome === "stopped" ? "Stopped" : "Could not complete response"}
+ {m.role === "assistant" && m.streaming && m.pending ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label="Waiting for the agent update">{m.pending}</div>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && m.outcome === "unknown" ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label="Finished while you were away">
+ {historySessionId ? "Finished while you were away — open the history to see the full reply" : "Finished while you were away"}
+ </div>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && m.outcome === "unknown" && historySessionId ? (
+ <button
+ type="button"
+ onClick={() => showBoxHistory(historySessionId)}
+ className={`mono ${styles.msgAction}`}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
+ >
+ <MessageSquare size={11} /> Open the history
+ </button>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error" || m.outcome === "disconnected") ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : m.outcome === "disconnected" ? "Reconnecting to the agent" : "Response failed"}>
+ {m.outcome === "stopped" ? "Stopped" : m.outcome === "disconnected" ? "Connection lost. Your agent keeps working; this reply fills in when it reconnects." : "Could not complete response"}
  </div>
  ) : null}
  {m.role === "assistant" && m.text && !m.streaming ? (
@@ -1092,22 +1980,35 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  </div>
 
- <div className="relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 pb-3 pt-3">
- {showLatest ? (
- <button type="button" onClick={() => scrollDown(true)} className="hivra-chat-latest">
+ <div ref={composerDockRef} className={`relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] ${styles.composerDock}`}>
+ {showLatest && messages.length > 0 ? (
+ <button
+ type="button"
+ onClick={() => {
+ scrollDown(true);
+ // This button unmounts on activation; keep focus in the chat, on the
+ // conversation the user asked to see.
+ scrollRef.current?.focus({ preventScroll: true });
+ }}
+ className="hivra-chat-latest"
+ >
  <ChevronDown size={14} aria-hidden /> Return to latest
  </button>
  ) : null}
- {lastFailed && !busy ? (
+ {(lastFailed || welcomeFailed) && !busy ? (
  <div className="mx-auto mb-2 w-full max-w-[760px]">
  <button
  type="button"
  onClick={() => {
+ if (!lastFailed) {
+ startWelcome(activeId, true);
+ return;
+ }
  const t = lastFailed;
  setLastFailed(activeId, null);
  void send(t);
  }}
- className="inline-flex items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)]"
+ className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] md:min-h-[34px] md:min-w-0"
  >
  <RotateCcw size={13} /> Retry
  </button>
@@ -1126,6 +2027,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  value={input}
  onChange={(e) => setInput(e.target.value)}
  onKeyDown={(e) => {
+ if (coarsePointer) return;
  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
  e.preventDefault();
  void send(input);
@@ -1139,8 +2041,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  }}
  rows={1}
  placeholder={`Message ${agentName}…`}
- className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[14px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
- style={{ minHeight: 44, maxHeight: 160, fontFamily: "inherit" }}
+ enterKeyHint={coarsePointer ? "enter" : "send"}
+ autoCapitalize="sentences"
+ className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[16px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)] md:text-[14px]"
+ style={{ minHeight: 44, maxHeight: composerCap, fontFamily: "inherit" }}
  />
  <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
  {token ? (
@@ -1162,18 +2066,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  title="Attach an image or text file (the agent reads it on the box)"
  disabled={busy || uploading || attachments.length >= 5}
  onClick={() => fileInputRef.current?.click()}
- className="inline-flex min-h-[34px] items-center px-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] disabled:opacity-40"
+ className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] disabled:opacity-40 md:min-h-[34px] md:min-w-0"
  >
  {uploading ? <Loader2 size={15} className="hivra-chat-spinner" /> : <Paperclip size={15} />}
  </button>
  </>
  ) : null}
  <span
- className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-[var(--etched-border)] px-2.5 py-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--text-muted)]"
+ className="mono hidden min-w-0 max-w-full items-center gap-1.5 px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--text-muted)] md:inline-flex"
  title="The model this agent is currently running"
  >
  <Cpu size={11} className="shrink-0" /> <span className="truncate">{shownModel}</span>
  </span>
+ {/* Hidden below md until the box confirms it reads the reasoning flag. */}
  <button
  type="button"
  role="switch"
@@ -1182,7 +2087,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  title="Think — let the agent reason for longer before answering"
  onClick={toggleThink}
  className={[
- "mono inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10.5px] uppercase tracking-[0.06em] transition-colors",
+ "mono hidden items-center gap-1.5 border px-2.5 py-1 text-[11px] uppercase tracking-[0.06em] transition-colors md:inline-flex",
  think
  ? "border-transparent bg-[var(--ink-black)] text-[var(--bg-surface)]"
  : "border-[var(--etched-border)] text-[var(--text-muted)] hover:text-[var(--ink-black)]",
@@ -1190,14 +2095,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  >
  <Brain size={11} /> Think{think ? " · On" : ""}
  </button>
- <span className="flex-1" />
  {busy ? (
  <button
  type="button"
  onClick={stop}
  aria-label="Stop response"
  title="Stop the agent"
- className="inline-flex min-h-[34px] items-center gap-1.5 border border-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--bg-elevated)]"
+ className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 border border-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--bg-elevated)] md:min-h-[34px] md:min-w-0"
  >
  <Square size={13} fill="currentColor" /> Stop response
  </button>
@@ -1206,7 +2110,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="submit"
  disabled={!input.trim()}
  aria-label="Send message"
- className="inline-flex min-h-[34px] items-center gap-1.5 bg-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--bg-surface)] transition-opacity disabled:opacity-40"
+ className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 bg-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--bg-surface)] transition-opacity disabled:opacity-40 md:min-h-[34px] md:min-w-0"
  >
  <Send size={14} />
  <span className="hidden md:inline">Send message</span>
@@ -1214,20 +2118,26 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  )}
  </div>
  </form>
+ {attachError ? (
+ <p role="alert" className="mono mx-auto mt-2 w-full max-w-[760px] text-[12px] text-[var(--hivra-red)]">
+ {attachError}
+ </p>
+ ) : null}
  {attachments.length > 0 ? (
  <div className="mx-auto mt-2 flex w-full max-w-[760px] flex-wrap gap-1.5">
  {attachments.map((a) => (
- <span key={a.path} className="mono inline-flex items-center gap-1.5 rounded-full border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
- <Paperclip size={10} /> {a.name}
- <button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))} className="inline-flex text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]">
+ <span key={a.path} className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] py-1 pl-2.5 pr-2.5 text-[11px] text-[var(--text-secondary)]">
+ <Paperclip size={10} className="shrink-0" />
+ <span className="min-w-0 truncate">{a.name}</span>
+ <button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))} className="-my-[11px] -mr-[8px] inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]">
  <X size={11} />
  </button>
  </span>
  ))}
  </div>
  ) : null}
- <p className="mx-auto mt-2 w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)]">
- Runs the official agent CLI on this computer · Enter to send, Shift+Enter for newline
+ <p className="mx-auto mt-2 hidden w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)] md:block">
+ Runs the official agent CLI on this computer{coarsePointer ? "" : " · Enter to send, Shift+Enter for newline"}
  </p>
  </div>
  </div>

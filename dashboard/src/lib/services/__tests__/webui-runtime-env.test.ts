@@ -1,4 +1,5 @@
 import {
+  WEBUI_BANKR_RUNTIME_ENV_KEYS,
   WEBUI_HERMES_AGENT_DIR,
   WEBUI_HERMES_HOME,
   WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
@@ -12,6 +13,7 @@ import {
   buildWebUIToolchainDiagnosticCommand,
   buildWebUIUsrLocalHermesShimCommand,
 } from "../webui-runtime-env";
+import { buildHermesEnvFile } from "../webui-instance-builder";
 
 describe("webui runtime environment", () => {
   it("prefers the packaged Hermes virtualenv command over the raw source wrapper", () => {
@@ -189,12 +191,12 @@ describe("WEBUI_CLEARABLE_RUNTIME_ENV_KEYS", () => {
   it("never clears BANKR_* — absence there can mean the wallet lookup threw", () => {
     // THE load-bearing assertion. Clearing keys on "absent from the generated
     // env" is only sound when absence unambiguously means the user cleared it.
-    // BANKR_* comes from resolveBankrAgentConfigForUpdate(), which catches ANY
-    // error and returns null, so buildBankrEnvLines emits [] for BOTH "no wallet"
-    // and "the lookup just threw". Clearing on that would erase live wallet
+    // buildBankrEnvLines emits [] for "no wallet", "nothing deliverable" AND
+    // "the lookup just threw". Clearing on that would erase live wallet
     // credentials from every box that hit a transient DB hiccup mid-redeploy.
-    // If this ever needs to change, teach that resolver to distinguish
-    // resolved-empty from lookup-failed FIRST, and suppress the clear on failure.
+    // A user disconnect clears BANKR_* through the per-run
+    // bankrRuntimeReconcile flag instead, which resolveBankrRuntimeEnvPlanForUpdate
+    // sets only after a successful lookup (webui-instance-builder tests).
     const bankr = WEBUI_MANAGED_RUNTIME_ENV_KEYS.filter((k) => k.startsWith("BANKR_"));
     expect(bankr.length).toBeGreaterThan(0);
     for (const key of bankr) {
@@ -220,5 +222,60 @@ describe("WEBUI_CLEARABLE_RUNTIME_ENV_KEYS", () => {
     // missing scheme. Clearing it would fall back to _DEFAULT_URL and buy a real 3s
     // network probe for the same unregistered toolset.
     expect(WEBUI_CLEARABLE_RUNTIME_ENV_KEYS).not.toContain("HERMES_BROWSER_SIDECAR_URL");
+  });
+});
+
+describe("WEBUI_BANKR_RUNTIME_ENV_KEYS", () => {
+  const bankrKeys = [
+    "BANKR_AGENT_WALLET_ADDRESS",
+    "BANKR_WALLET_ADDRESS",
+    "BANKR_AGENT_API_KEY",
+    "BANKR_API_KEY",
+    "BANKR_AGENT_WALLET_ID",
+    "BANKR_AGENT_WITHDRAWAL_DESTINATION",
+  ];
+
+  it("is exactly the six wallet keys, all still managed, in the managed list's original order", () => {
+    expect([...WEBUI_BANKR_RUNTIME_ENV_KEYS]).toEqual(bankrKeys);
+    // Extracting the list must not reorder or change what every update repairs.
+    expect(WEBUI_MANAGED_RUNTIME_ENV_KEYS).toEqual([
+      "API_SERVER_ENABLED",
+      "API_SERVER_HOST",
+      "API_SERVER_PORT",
+      "TERMINAL_ENV",
+      "TERMINAL_STRICT_BACKEND",
+      "BROWSER_CDP_URL",
+      "HERMES_BROWSER_SIDECAR_URL",
+      "DAYTONA_API_KEY",
+      "TAVILY_API_KEY",
+      "FIRECRAWL_API_KEY",
+      ...bankrKeys,
+    ]);
+    for (const key of WEBUI_BANKR_RUNTIME_ENV_KEYS) {
+      expect(WEBUI_CLEARABLE_RUNTIME_ENV_KEYS).not.toContain(key);
+    }
+  });
+
+  it("covers every BANKR_* line the env builder can emit, so a clear leaves none behind", () => {
+    const env = buildHermesEnvFile({
+      instanceId: "inst-123",
+      containerName: "agent-inst-123",
+      fqdn: "agent.example.com",
+      llmApiKey: "provider-key",
+      inferenceProvider: "custom",
+      defaultModel: "deepseek-v3.2",
+      webuiPassword: "webui-password",
+      bankr: {
+        walletAddress: "0x000000000000000000000000000000000000ba5e",
+        apiKey: "bk_test_placeholder",
+        walletId: "wlt_1",
+        withdrawalDestination: "0x00000000000000000000000000000000000c0ffe",
+      },
+    });
+    const emitted = env
+      .split("\n")
+      .filter((line) => line.startsWith("BANKR_"))
+      .map((line) => line.slice(0, line.indexOf("=")));
+    expect(emitted.sort()).toEqual([...WEBUI_BANKR_RUNTIME_ENV_KEYS].sort());
   });
 });

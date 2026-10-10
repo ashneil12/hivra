@@ -30,7 +30,9 @@ async function main() {
     for (const file of ["20260827150000_hetzner_creation_resource_receipts.sql",
       "20260827160000_hetzner_scoped_cleanup.sql","20260827190000_hetzner_first_boot_enrollment.sql",
       "20260827200000_hetzner_first_boot_operations.sql","20260827210000_hetzner_first_boot_cleanup.sql",
-      "20260827220000_hetzner_first_boot_recipe_admission.sql"]) {
+      "20260827220000_hetzner_first_boot_recipe_admission.sql",
+      // Legacy (2026.08.27.1) rules must hold unchanged after the arm-at-start migration.
+      "20260924190000_hetzner_first_boot_arm_at_start.sql"]) {
       await db.exec(fs.readFileSync(path.join(dir,file),"utf8"));
     }
     const connection = "11111111-1111-4111-8111-111111111111";

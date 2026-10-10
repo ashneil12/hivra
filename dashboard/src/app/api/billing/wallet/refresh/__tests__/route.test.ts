@@ -71,6 +71,7 @@ describe("POST /api/billing/wallet/refresh", () => {
         balanceRaw: "39022814000000000000000000",
         qualifiesBaseTier: true,
       },
+      balances: { hermesos: 39022814000000000000000000n },
     });
     mockEvaluate.mockResolvedValueOnce({ configured: true });
 
@@ -80,9 +81,13 @@ describe("POST /api/billing/wallet/refresh", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data.snapshotId).toBe("snap_x");
+    // This suite runs with the empty country list (jest.setup.tsx), so the route
+    // passes exactly these arguments and no country verdict. Extra or missing
+    // arguments fail here. With a listed country the route adds `tokenGeo`:
+    // api/billing/__tests__/token-geo-routes.test.ts pins that with the real list.
     expect(mockEvaluate).toHaveBeenCalledWith({
       userId: "user_a",
-      currentBalance: 39022814000000000000000000n,
+      balances: { hermesos: 39022814000000000000000000n },
     });
   });
 

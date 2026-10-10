@@ -8,18 +8,14 @@ import {
   provisionBankrWalletForInstance,
   readInstanceBankrWalletBalances,
 } from "@/lib/billing/bankr-instance-wallets";
-import { agentWebApi } from "@/lib/agent-web-api";
+import {
+  loadOwnedHermesInstance,
+  syncBankrConfigToRunningHermesInstance,
+} from "@/lib/agent-wallets/hermes-lane";
 import { resolveWalletRouteIdentity } from "@/lib/billing/bankr-wallet-route-shared";
-import type { HermesInstanceRow } from "@/app/api/instances/[id]/route";
-import { putHermesConfigWithBindMountFallback } from "@/lib/hermes-config-write";
-import { resolveHermesHomeDirFromConfig } from "@/lib/hermes-home";
-import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
 import { log } from "@/lib/logger";
 import { getRequestContext } from "@/lib/request-context";
 import { preinstallBankrSuiteForInstance } from "@/lib/services/instance-service";
-import { sanitizeDockerName } from "@/lib/services/profile-service";
-import { supabaseAdmin } from "@/lib/supabase";
-import { isWebfreeBackend } from "@/lib/types/instance";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -27,14 +23,10 @@ export const revalidate = 0;
 const LOG_SOURCE = "bankr-instance-wallet-route";
 const ROUTE_PATTERN = "/api/instances/[id]/bankr-wallet";
 const BALANCE_RPC_FAILURE_TYPE = "bankr_instance_wallet_balance_rpc_failed";
+const CONNECT_REQUIRED_MESSAGE =
+  "New agent wallets connect to your own Bankr account. Use Connect Bankr account instead.";
 const BALANCE_UNAVAILABLE_MESSAGE =
   "Balance temporarily unavailable. Your wallet address is still usable; retry the balance check shortly.";
-
-function asConfig(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
 
 function readMetadataString(metadata: Record<string, unknown> | undefined, key: string): string | null {
   const value = metadata?.[key];
@@ -49,73 +41,6 @@ function classifyWalletBalanceError(err: unknown): string {
   return "rpc_balance_read_failed";
 }
 
-async function loadOwnedInstance(instanceId: string, userId: string): Promise<HermesInstanceRow | null> {
-  if (!supabaseAdmin) return null;
-
-  const { data, error } = await supabaseAdmin
-    .from("hermes_instances")
-    .select(
-      [
-        "id",
-        "user_id",
-        "name",
-        "status",
-        "backend",
-        "provider",
-        "subdomain",
-        "hetzner_server_id",
-        "gateway_url",
-        "api_key_encrypted",
-        "api_key_preview",
-        "api_server_key_encrypted",
-        "honcho_api_key_encrypted",
-        "config",
-        "host_id",
-        "ipv4_address",
-        "cpu_limit",
-        "ram_limit",
-        "infrastructure_provider",
-        "proxmox_vmid",
-        "lifecycle_state",
-        "created_at",
-        "updated_at",
-      ].join(",")
-    )
-    .eq("id", instanceId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error("Failed to verify instance ownership");
-  }
-
-  return data ? (data as unknown as HermesInstanceRow) : null;
-}
-
-async function syncBankrConfigToRunningAgent(instance: HermesInstanceRow, userId: string): Promise<"synced" | "skipped"> {
-  if (instance.status !== "running" || isWebfreeBackend(instance.backend)) {
-    return "skipped";
-  }
-
-  const config = asConfig(instance.config);
-  const ip = await resolveInstanceIpv4(instance);
-  if (!ip) {
-    throw new Error("Server has no public IPv4");
-  }
-
-  await putHermesConfigWithBindMountFallback({
-    api: await agentWebApi(instance.id, userId),
-    config,
-    containerName: `agent-${sanitizeDockerName(instance.id)}`,
-    hermesHomeDir: resolveHermesHomeDirFromConfig(config),
-    ip,
-    instanceId: instance.id,
-    userId,
-  });
-
-  return "synced";
-}
-
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const requestContext = await getRequestContext(req as NextRequest, {
     source: LOG_SOURCE,
@@ -127,7 +52,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     if (!identity.ok) return identity.response;
     const { id, userId } = identity;
 
-    const instance = await loadOwnedInstance(id, userId);
+    const instance = await loadOwnedHermesInstance(id, userId);
     if (!instance) return apiError("Instance not found", 404);
 
     const record = await getBankrWalletForInstance({ instanceId: id });
@@ -190,13 +115,19 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     if (!identity.ok) return identity.response;
     const { id, userId } = identity;
 
-    const instance = await loadOwnedInstance(id, userId);
+    const instance = await loadOwnedHermesInstance(id, userId);
     if (!instance) return apiError("Instance not found", 404);
 
     const result = await provisionBankrWalletForInstance({
       instanceId: id,
       userId,
     });
+    if (result.status === "connect_required") {
+      // Hivra no longer creates agent wallets. Only a wallet it already
+      // created is kept working; everything else connects the user's own
+      // Bankr account via POST ./connect.
+      return apiError(CONNECT_REQUIRED_MESSAGE, 409, { failureType: "bankr_agent_wallet_connect_required" });
+    }
     if (result.status === "pending" || result.status === "not_configured") {
       log.warn("bankr instance wallet provisioning still pending after dashboard retry", {
         source: LOG_SOURCE,
@@ -214,7 +145,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     let configSync: "synced" | "skipped" | "failed" = "skipped";
     if (result.record?.status === "active") {
       try {
-        configSync = await syncBankrConfigToRunningAgent(instance, userId);
+        configSync = await syncBankrConfigToRunningHermesInstance(instance, userId);
       } catch (err) {
         configSync = "failed";
         log.warn("bankr wallet provisioned but config sync failed", {

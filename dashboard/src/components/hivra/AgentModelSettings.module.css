@@ -18,7 +18,7 @@
 .field { display: grid; gap: 7px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
 .field input, .field select { width: 100%; box-sizing: border-box; min-width: 0; min-height: 40px; padding: 10px 12px; border: 1px solid var(--etched-border); background: var(--bg-surface); color: var(--ink-black); font-family: var(--font-mono), monospace; font-size: 12px; border-radius: 0; }
 .choices, .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.choices button, .quiet, .primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 9px 12px; border: 1px solid var(--etched-border); background: transparent; color: var(--text-secondary); font-size: 12px; font-family: var(--font-mono), monospace; cursor: pointer; border-radius: 0; }
+.choices button, .quiet, .primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 9px 12px; border: 1px solid var(--etched-border); background: transparent; color: var(--text-secondary); font-size: 12px; font-family: var(--font-mono), monospace; cursor: pointer; border-radius: 0; }
 .choices button[aria-pressed="true"] { border-color: var(--ink-black); color: var(--ink-black); background: rgba(128,128,128,.12); }
 .primary { background: var(--ink-black); color: var(--bg-surface); border-color: var(--ink-black); }
 .quiet { flex-shrink: 0; }

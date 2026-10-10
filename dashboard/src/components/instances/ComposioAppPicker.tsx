@@ -13,10 +13,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Loader2, Search, X } from 'lucide-react';
 
+import { SafePortal } from '@/components/ui/SafePortal';
+
 // Cap rendered tiles so a 1,400-item catalog doesn't mount thousands of nodes;
 // search + category narrow it. We tell the user when results are truncated.
 const RENDER_CAP = 120;
 const BATCH_CAP = 50; // slugs per connected-apps check (matches the server cap)
+const OVERLAY_GUTTER = 'clamp(12px, 4vw, 48px)';
+// Category pills grow to a full touch target on coarse pointers.
+const PICKER_TOUCH_CSS = `@media (pointer: coarse) { .composio-category-pill { min-height: 44px !important; } }`;
+const PICKER_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface CatalogApp {
   slug: string;
@@ -97,6 +103,10 @@ export function ComposioAppPicker({
   // never write state synchronously from an effect.
   const [batchConnected, setBatchConnected] = useState<Set<string>>(() => new Set());
   const startedRef = useRef(false);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   const loading = open && !catalog && !error;
   const isConnectedSlug = useCallback(
@@ -119,11 +129,52 @@ export function ComposioAppPicker({
       .catch(() => setError('Could not load the app catalog.'));
   }, [open]);
 
-  // Esc closes; lock body scroll while open (restored on close/unmount).
+  // Remember what opened the picker and hand focus back to it on close.
+  useEffect(() => {
+    if (!open) return;
+    triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => {
+      const trigger = triggerRef.current;
+      triggerRef.current = null;
+      if (trigger?.isConnected) trigger.focus();
+    };
+  }, [open]);
+
+  // Focus enters the dialog once the portal mounts: the search on a fine
+  // pointer, the close button on touch so the soft keyboard stays down.
+  const attachPanel = useCallback((node: HTMLDivElement | null) => {
+    panelRef.current = node;
+    if (!node) return;
+    const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    (coarse ? closeRef.current : searchRef.current)?.focus();
+  }, []);
+
+  // Esc closes and Tab stays inside; lock body scroll while open (restored on
+  // close/unmount).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      const panel = panelRef.current;
+      if (e.key !== 'Tab' || !panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(PICKER_FOCUSABLE));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!active || !panel.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
@@ -191,6 +242,7 @@ export function ComposioAppPicker({
   if (!open) return null;
 
   return (
+    <SafePortal>
     <div
       role="dialog"
       aria-modal="true"
@@ -199,20 +251,31 @@ export function ComposioAppPicker({
       onClick={onClose}
       style={{
         position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
+        top: 0,
+        left: 0,
+        right: 0,
+        // The visible viewport, so results stay above the soft keyboard.
+        height: 'var(--workspace-viewport-height, 100dvh)',
+        // Above the narrow-viewport command panel sheet it can open from.
+        zIndex: 9999,
         background: 'rgba(0,0,0,0.5)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 'clamp(12px, 4vw, 48px)',
+        boxSizing: 'border-box',
+        paddingTop: `max(${OVERLAY_GUTTER}, env(safe-area-inset-top, 0px))`,
+        paddingRight: `max(${OVERLAY_GUTTER}, env(safe-area-inset-right, 0px))`,
+        paddingBottom: `max(${OVERLAY_GUTTER}, env(safe-area-inset-bottom, 0px))`,
+        paddingLeft: `max(${OVERLAY_GUTTER}, env(safe-area-inset-left, 0px))`,
       }}
     >
+      <style>{PICKER_TOUCH_CSS}</style>
       <div
+        ref={attachPanel}
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 'min(760px, 100%)',
-          maxHeight: '100%',
+          maxHeight: 'min(100%, var(--workspace-viewport-height, 100dvh))',
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
@@ -226,11 +289,12 @@ export function ComposioAppPicker({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <strong style={{ fontSize: 15, flex: '1 1 auto', minWidth: 0 }}>Connect an app</strong>
             <button
+              ref={closeRef}
               type="button"
               onClick={onClose}
               aria-label="Close"
               data-testid="composio-app-picker-close"
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'inline-flex' }}
+              style={{ width: 44, height: 44, margin: '-10px -10px -10px 0', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
             >
               <X size={17} />
             </button>
@@ -247,10 +311,18 @@ export function ComposioAppPicker({
           >
             <Search size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <input
+              ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search 1,400+ apps — Gmail, Notion, Stripe…"
+              aria-label="Search apps"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
               autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               data-testid="composio-app-picker-search"
               style={{
                 flex: '1 1 auto',
@@ -318,7 +390,7 @@ export function ComposioAppPicker({
                       <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-black)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {app.name}
                       </span>
-                      <span className="mono" style={{ fontSize: 9.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                         {app.category}
                         {app.toolCount ? ` · ${app.toolCount} tools` : ''}
                       </span>
@@ -356,6 +428,7 @@ export function ComposioAppPicker({
         </div>
       </div>
     </div>
+    </SafePortal>
   );
 }
 
@@ -364,17 +437,19 @@ function CategoryPill({ label, active, onClick }: { label: string; active: boole
     <button
       type="button"
       onClick={onClick}
-      className="mono"
+      aria-pressed={active}
+      className="mono composio-category-pill"
       style={{
         flexShrink: 0,
         border: active ? '1px solid var(--ink-black)' : '1px solid var(--etched-border)',
         background: active ? 'var(--ink-black)' : 'transparent',
         color: active ? 'var(--bg-surface)' : 'var(--text-secondary)',
-        fontSize: 10,
+        fontSize: 11,
         textTransform: 'uppercase',
         letterSpacing: '0.06em',
         fontWeight: 700,
-        padding: '5px 9px',
+        minHeight: 36,
+        padding: '0 10px',
         cursor: 'pointer',
         whiteSpace: 'nowrap',
       }}

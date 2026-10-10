@@ -89,6 +89,12 @@ describe("applyManagedSessionEvent", () => {
 
   it("attaches the prompt Hivra recorded to the run DigitalOcean returned", () => {
     const transcript = addManagedPrompt(fold([event("run.token_delta", { text: "Done." }, "run_9")]), "run_9", "Fix the build");
-    expect(transcript.runs[0]).toMatchObject({ runId: "run_9", prompt: "Fix the build", text: "Done." });
+    expect(transcript.runs[0]).toMatchObject({ runId: "run_9", prompt: "Fix the build", text: "Done.", promptSource: "user" });
+  });
+
+  it("keeps Hivra's setup note apart from what the owner typed", () => {
+    const setup = addManagedPrompt(fold([]), "run_1", "## Your computer (from Hivra, revision 1)", "hivra-setup");
+    const owner = addManagedPrompt(setup, "run_2", "Fix the build");
+    expect(owner.runs.map((run) => [run.runId, run.promptSource])).toEqual([["run_1", "hivra-setup"], ["run_2", "user"]]);
   });
 });

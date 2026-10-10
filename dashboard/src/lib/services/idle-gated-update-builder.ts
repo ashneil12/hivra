@@ -1,6 +1,11 @@
 import { gzipSync } from "zlib";
 import { deploymentScopedDefault } from "@/lib/deployment-channel";
 import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime-env";
+import { buildAgentActivityProbeShell } from "@/lib/services/agent-activity-probe";
+import {
+  buildReleaseClientShell,
+  buildSessionSurvivalShell,
+} from "@/lib/services/box-release-shell";
 
 /**
  * Idle-gated update stack provisioner.
@@ -12,7 +17,11 @@ import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime
  *
  * Three units (all proven in production):
  *   1. idle-sampler (every 3 min): stamps /run/hermes-last-active-<INST> whenever
- *      the agent is processing a turn. Fail-safe: unknown/stale => BUSY.
+ *      the agent is processing a turn: a gateway turn (messaging, cron, scheduled
+ *      tasks: gateway_state.json active_agents) or a web-chat turn running in
+ *      official-dashboard (a fresh turn marker). It runs the same probe as the
+ *      in-flight update gate (agent-activity-probe.ts). Fail-safe: unknown/stale
+ *      => BUSY.
  *   2. roll (hourly): idle-gated recreate of gateway+official-dashboard onto the
  *      latest :stable — only when idle >= 45 min and a new image exists. A
  *      20-hour cooldown suppresses repeat work for the same image, but never
@@ -59,9 +68,14 @@ function renderEmbeddedFileWrite(
   const encoded = (shouldCompress ? compressed : raw).toString("base64");
   const decodePipeline = shouldCompress ? "base64 -d | gunzip" : "base64 -d";
 
-  return `printf '%s' '${encoded}' | ${decodePipeline} > ${path}${
-    options?.chmod ? `\nchmod ${options.chmod} ${path}` : ""
-  }`;
+  // Write-then-rename: the update path rewrites these files on live boxes, and a
+  // running bash reads its script incrementally, so truncating a script mid-run
+  // (the hourly roll, or the 3-minute sampler) would execute garbage. The rename
+  // leaves a running process on the old inode.
+  const staged = `${path}.hermes-new`;
+  return `printf '%s' '${encoded}' | ${decodePipeline} > ${staged}${
+    options?.chmod ? `\nchmod ${options.chmod} ${staged}` : ""
+  }\nmv -f ${staged} ${path}`;
 }
 
 /**
@@ -139,40 +153,32 @@ export function buildIdleGatedUpdateProvisioningScript(params: {
   // hermes-idle-sampler-<INST> — stamp the "last active" marker whenever the
   // agent is processing a turn. Fail-safe: stale/unreadable => ACTIVE so the
   // roller never rolls into an in-flight turn.
+  //
+  // "A turn is running" comes from the shared agent activity probe
+  // (agent-activity-probe.ts), the same code the in-flight update gate runs, so
+  // the roll and system updates can never disagree about what busy means. It
+  // sees gateway turns (messaging, cron, scheduled tasks: gateway_state.json
+  // active_agents) and web-chat turns, which run inside official-dashboard and
+  // are invisible to gateway_state.json (the agent's durable turn markers).
   const samplerScript = `#!/usr/bin/env bash
 # hermes-idle-sampler — stamp the "last active" marker whenever the agent is
-# processing a turn. Fail-safe: stale/unreadable => ACTIVE so the roller never
-# rolls into an in-flight turn.
+# processing a turn (a gateway turn: messaging, cron, scheduled tasks; or a
+# web-chat turn in official-dashboard). Fail-safe: stale/unreadable => ACTIVE so
+# the roller never rolls into an in-flight turn.
 set -uo pipefail
 INST="${INST}"
-G="agent-\${INST}-gateway"
 MARK="/run/hermes-last-active-\${INST}"
-PYV="/home/hermes/.hermes/hermes-agent/.venv/bin/python3"
-verdict="$(docker exec -i "$G" "$PYV" - <<'PY' 2>/dev/null
-import json, glob, sys
-from datetime import datetime, timezone
-now = datetime.now(timezone.utc).timestamp()
-busy = 0
-stale = 0
-# Single-gateway mode runs only the default gateway. Legacy sub-profile state
-# files have no live owner and become stale permanently, so they cannot be
-# treated as activity evidence.
-files = glob.glob("/home/hermes/.hermes/gateway_state.json")
-if not files:
-    print("BUSY"); sys.exit(0)
-for f in files:
-    try:
-        d = json.load(open(f))
-        ts = datetime.fromisoformat(d["updated_at"]).timestamp()
-        if now - ts > 150:
-            stale += 1
-        busy += int(d.get("active_agents", 0) or 0)
-    except Exception:
-        stale += 1
-print("BUSY" if (busy > 0 or stale > 0) else "IDLE")
-PY
-)" || verdict="BUSY"
-if [ "$verdict" != "IDLE" ]; then
+${buildAgentActivityProbeShell()}
+hivra_agent_activity "agent-\${INST}-gateway" "agent-\${INST}-official-dashboard"
+# Only a proven-idle probe with the gateway running counts as idle. A gateway
+# that is not running is never proof of idle: the roll recreates both
+# containers, and this sampler has always refused to call a box it cannot see
+# running idle.
+case "$HIVRA_GATEWAY_STATE" in
+  "true "*) gateway_up=1 ;;
+  *) gateway_up=0 ;;
+esac
+if [ "$HIVRA_ACTIVITY_VERDICT" != idle ] || [ "$gateway_up" != 1 ]; then
   date +%s > "$MARK"
 elif [ ! -e "$MARK" ]; then
   # No prior BUSY sample exists: start the 45-minute proof window now.
@@ -192,7 +198,14 @@ IMG=${REPO}:stable
 LOG=/var/log/hermes-refresh.log
 ts(){ date -u -Iseconds; }
 cd "$DIR" 2>/dev/null || { echo "$(ts) no inst dir"; exit 1; }
-docker compose pull official-dashboard gateway >/dev/null 2>>$LOG || docker pull "$IMG" >/dev/null 2>>$LOG || { echo "$(ts) pull failed" >>$LOG; exit 1; }
+if [ -e "/var/lib/hermes-release-governed-$INST" ] || [ -e "/var/lib/hermes-upstream-direct-$INST" ]; then
+  # The dashboard pins this box to an exact release: extract the static
+  # surfaces from the image the gateway runs, and never pull a floating tag.
+  IMG="$(docker inspect "agent-$INST-gateway" -f '{{.Image}}' 2>/dev/null)"
+  [ -n "$IMG" ] || { echo "$(ts) gateway image unknown" >>$LOG; exit 1; }
+else
+  docker compose pull official-dashboard gateway >/dev/null 2>>$LOG || docker pull "$IMG" >/dev/null 2>>$LOG || { echo "$(ts) pull failed" >>$LOG; exit 1; }
+fi
 for m in webchat_dist:webchat web_dist_dash:dash; do
   src=\${m%%:*}; dst=\${m##*:}; [ -d "$DIR/$dst" ] || continue
   docker run --rm -v "$DIR/$dst":/out --entrypoint sh "$IMG" -lc "if [ -d /opt/hermes/hermes_cli/$src ]; then cp -a /opt/hermes/hermes_cli/$src/. /out/ && chmod -R a+rX /out; else echo WARN-image-missing /opt/hermes/hermes_cli/$src; fi" >>$LOG 2>&1
@@ -237,6 +250,26 @@ IDLE_MIN=45
 MIN_ROLL_GAP_H=20
 ts() { date -u -Iseconds; }
 log() { echo "$(ts) $*" >> "$LOG"; }
+ENV_DIR="$DIR"
+REPORTED="/var/lib/hermes-reported-digest-\${INST}"
+PAUSE_REPORTED="/var/lib/hermes-roll-pause-reported-\${INST}"
+GOVERNED="/var/lib/hermes-release-governed-\${INST}"
+# Set by the no-fork migration: this box follows stock upstream Hermes by itself. The Hivra
+# overlay (add-only files) lives in $OVERLAY_DIR and is laid over every fresh agent source.
+DIRECT="/var/lib/hermes-upstream-direct-\${INST}"
+UPSTREAM_SOAK_H=24
+OVERLAY_DIR="\${DIR}/overlay"
+${buildReleaseClientShell({ instanceId: INST })}
+${buildSessionSurvivalShell()}
+# Best-effort report to the dashboard: never changes what the roll does.
+report() { hermes_release_report "$@" || log "release report failed ($1)"; }
+# Pause the roller and tell the dashboard. $1 = reason (kept as the pause
+# marker text), $2 = kind (paused|failed|rolled_back), $3 = digest the roll was
+# moving to (set only when the image itself is the suspect), $4 = digest now running.
+pause_roll() {
+  echo "auto-roll paused $(ts): $1" > "$PAUSE"
+  if hermes_release_report "$2" failed "$1" "\${4:-\${CUR_DIGEST:-}}" "\${3:-}"; then touch "$PAUSE_REPORTED"; else log "release report failed ($2)"; fi
+}
 repair_runtime_env_file() {
   file="$1"
   [ -f "$file" ] || return 0
@@ -282,6 +315,10 @@ import tempfile
 compose_path = pathlib.Path(sys.argv[1])
 backup_path = pathlib.Path(sys.argv[2])
 original = compose_path.read_bytes()
+if b"def managed_gateway_command(" in original:
+    # Current-generation compose: the supervisor already runs the existing venv without syncing,
+    # so there is no old uv command to rewrite.
+    raise SystemExit(0)
 pairs = (
     (
         b'status_cmd = ["uv", "run", "--extra", "messaging", "hermes", "gateway", "status"]',
@@ -397,17 +434,36 @@ assert_agent_source_quiesced() {
     return 1
   }
 }
+# Lay the box's overlay tools (uv, gh, hermes) over a stock upstream image, locally, with no Hivra build.
+assemble_local_image() {
+  stock="$1"; tag="$2"
+  [ -d "$OVERLAY_DIR/bin" ] || { docker tag "$stock" "$tag"; return $?; }
+  cid="$(docker create "$stock" 2>>"$LOG")" || return 1
+  asm_ok=1
+  for b in "$OVERLAY_DIR"/bin/*; do
+    [ -f "$b" ] || continue
+    docker cp "$b" "$cid:/usr/local/bin/$(basename "$b")" >>"$LOG" 2>&1 || asm_ok=0
+  done
+  if [ "$asm_ok" = 1 ]; then
+    docker commit -c "LABEL io.hivra.assembled=local" -c "LABEL io.hivra.upstream.image=$stock" "$cid" "$tag" >/dev/null 2>>"$LOG" || asm_ok=0
+  fi
+  docker rm "$cid" >/dev/null 2>&1
+  [ "$asm_ok" = 1 ]
+}
 reseed_agent_source() {
   ref="$1"
   source_image_id="$(docker image inspect "$ref" -f '{{.Id}}' 2>/dev/null)"
   [ -n "$source_image_id" ] || { log "cannot resolve source image id for $ref"; return 1; }
-  docker run --rm --user root -v "$SOURCE_VOLUME:$SOURCE_RUNTIME_DIR" --entrypoint sh "$ref" -lc '
+  overlay_args=""
+  [ -d "$OVERLAY_DIR/files" ] && overlay_args="-v $OVERLAY_DIR:/overlay:ro"
+  docker run --rm --user root -v "$SOURCE_VOLUME:$SOURCE_RUNTIME_DIR" $overlay_args --entrypoint sh "$ref" -lc '
     set -e
     target="$1"
     source_image_id="$2"
     test -f /opt/hermes/pyproject.toml
     find "$target" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     cp -a /opt/hermes/. "$target/"
+    if [ -d /overlay/files ]; then cp -a /overlay/files/. "$target/"; fi
     assert_relocated_venv() {
       if find "$target/.venv" -type f \\( -path "*/bin/*" -o -name "__editable__*.py" -o -name "*.pth" -o -name "direct_url.json" \\) -exec grep -IlF /opt/hermes {} + 2>/dev/null | grep -q .; then
         echo "source reseed relocation left embedded /opt/hermes paths" >&2
@@ -448,13 +504,101 @@ reseed_agent_source() {
     chmod -R u+w "$target"
   ' -- "$SOURCE_RUNTIME_DIR" "$source_image_id" >>"$LOG" 2>&1
 }
-[ -f "$PAUSE" ] && { log "PAUSED ($(cat "$PAUSE" 2>/dev/null)) - skip"; exit 0; }
 cd "$DIR" 2>/dev/null || { log "no inst dir"; exit 1; }
-docker compose pull official-dashboard gateway >/dev/null 2>>"$LOG" || docker pull "$IMG" >/dev/null 2>>"$LOG" || { log "pull failed"; exit 0; }
-LATEST="$(docker image inspect "$IMG" -f '{{.Id}}' 2>/dev/null)"
 RUNNING="$(docker inspect "$G" -f '{{.Image}}' 2>/dev/null)"
+CUR_DIGEST=""
+[ -n "$RUNNING" ] && CUR_DIGEST="$(hermes_image_digest "$RUNNING" "$REPO")"
+if [ -f "$PAUSE" ]; then
+  log "PAUSED ($(cat "$PAUSE" 2>/dev/null)) - skip"
+  # Tell the dashboard once per pause marker, including markers written before
+  # it listened: a paused box is otherwise invisible until someone reads this log.
+  if [ "$PAUSE" -nt "$PAUSE_REPORTED" ]; then
+    if hermes_release_report paused failed "$(head -c 300 "$PAUSE" 2>/dev/null)" "$CUR_DIGEST" ""; then touch "$PAUSE_REPORTED"; else log "release report failed (paused)"; fi
+  fi
+  exit 0
+fi
+if [ -e "$PAUSE_REPORTED" ]; then
+  # An operator cleared the pause: say the box is healthy again.
+  if hermes_release_report updated succeeded "auto-roll pause cleared" "$CUR_DIGEST" ""; then rm -f "$PAUSE_REPORTED"; fi
+fi
 SOURCE_IMAGE="$(docker exec "$G" cat "$SOURCE_STAMP" 2>/dev/null || true)"
-[ -n "$LATEST" ] && [ "$LATEST" = "$RUNNING" ] && [ "$LATEST" = "$SOURCE_IMAGE" ] && { log "already on latest image and source - no roll"; exit 0; }
+# The dashboard decides which image this box runs. It answers: roll to an exact
+# digest, nothing to do, nothing offered (hold), or "legacy" while the registry
+# has no release of this repository (then the floating :stable tag is followed
+# exactly as before). A lookup that fails never falls back to a floating tag.
+if ! REPLY="$(hermes_release_get "$REPO" "$CUR_DIGEST" 2>>"$LOG")"; then
+  if [ -e "$DIRECT" ]; then
+    # A box that follows upstream by itself never waits for the control plane.
+    log "release lookup failed (dashboard unreachable or no credentials) - following upstream directly"
+    REPLY="action=legacy"
+  else
+    log "release lookup failed (dashboard unreachable or no credentials) - skip"
+    exit 0
+  fi
+fi
+ACTION="$(hermes_reply_field "$REPLY" action)"
+TARGET_REF=""
+TARGET_DIGEST=""
+case "$ACTION" in
+  legacy)
+    rm -f "$GOVERNED"
+    if [ -e "$DIRECT" ]; then
+      # Follow stock upstream Hermes by ourselves: pull the official image (Docker verifies the content
+      # against its digest), let a new one soak, then add the box's own overlay tools on top locally.
+      # Nothing here asks Hivra for an image.
+      UP_REF="$(cat "$DIR/upstream.ref" 2>/dev/null)"
+      case "$UP_REF" in nousresearch/hermes-agent:*|nousresearch/hermes-agent@sha256:*) ;; *) UP_REF="nousresearch/hermes-agent:stable" ;; esac
+      docker pull -q "$UP_REF" >/dev/null 2>>"$LOG" || { log "upstream pull failed for $UP_REF - skip"; exit 0; }
+      UP_DIGEST="$(docker image inspect "$UP_REF" -f '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null | grep -m1 '^nousresearch/hermes-agent@sha256:')"
+      [ -n "$UP_DIGEST" ] || { log "upstream image has no registry digest - skip"; exit 0; }
+      CUR_UP="$(docker image inspect "$IMG" -f '{{index .Config.Labels "io.hivra.upstream.image"}}' 2>/dev/null)"
+      if [ "$CUR_UP" = "$UP_DIGEST" ] && [ "$(docker image inspect "$IMG" -f '{{.Id}}' 2>/dev/null)" = "$RUNNING" ]; then
+        log "already on the latest upstream image \${UP_DIGEST#*@} - no roll"
+        exit 0
+      fi
+      # A new upstream image waits UPSTREAM_SOAK_H hours, so a bad release can be pulled upstream first.
+      SEEN="/var/lib/hermes-upstream-seen-\${INST}-\${UP_DIGEST#*@sha256:}"
+      [ -e "$SEEN" ] || { date +%s > "$SEEN"; log "new upstream image \${UP_DIGEST#*@} first seen - soaking \${UPSTREAM_SOAK_H}h"; }
+      seen_h=$(( ( $(date +%s) - $(stat -c %Y "$SEEN") ) / 3600 ))
+      [ "$seen_h" -lt "$UPSTREAM_SOAK_H" ] && { log "upstream image \${UP_DIGEST#*@} seen \${seen_h}h ago (<\${UPSTREAM_SOAK_H}h) - skip"; exit 0; }
+      TARGET_REF="\${REPO}:upstream-next"
+      assemble_local_image "$UP_DIGEST" "$TARGET_REF" || { log "could not add the box's overlay tools to $UP_DIGEST - skip"; exit 0; }
+      LATEST="$(docker image inspect "$TARGET_REF" -f '{{.Id}}' 2>/dev/null)"
+    else
+      docker compose pull official-dashboard gateway >/dev/null 2>>"$LOG" || docker pull "$IMG" >/dev/null 2>>"$LOG" || { log "pull failed"; exit 0; }
+      LATEST="$(docker image inspect "$IMG" -f '{{.Id}}' 2>/dev/null)"
+    fi
+    ;;
+  roll|none)
+    : > "$GOVERNED"
+    TARGET_DIGEST="$(hermes_reply_field "$REPLY" digest)"
+    if [ "$ACTION" = none ]; then
+      # Already on the target release. Tell the dashboard once per digest so a
+      # box that never reported shows its version.
+      if [ -n "$CUR_DIGEST" ] && [ "$(cat "$REPORTED" 2>/dev/null)" != "$CUR_DIGEST" ]; then
+        if hermes_release_report updated succeeded "version sync" "$CUR_DIGEST" ""; then printf '%s\\n' "$CUR_DIGEST" > "$REPORTED"; fi
+      fi
+      log "on the target release \${TARGET_DIGEST:-unknown} - no roll"
+      exit 0
+    fi
+    TARGET_REF="$(hermes_reply_field "$REPLY" image)"
+    case "$TARGET_DIGEST" in sha256:*) ;; *) log "release reply has no digest - skip"; exit 0 ;; esac
+    if [ "$TARGET_REF" != "\${REPO}@\${TARGET_DIGEST}" ]; then log "release reply names an image outside $REPO - skip"; exit 0; fi
+    docker pull "$TARGET_REF" >/dev/null 2>>"$LOG" || { log "pull failed for $TARGET_REF"; exit 0; }
+    LATEST="$(docker image inspect "$TARGET_REF" -f '{{.Id}}' 2>/dev/null)"
+    ;;
+  *)
+    log "no release offered (action=\${ACTION:-none} \$(hermes_reply_field "$REPLY" reason)) - skip"
+    exit 0
+    ;;
+esac
+if [ -n "$LATEST" ] && [ "$LATEST" = "$RUNNING" ] && [ "$LATEST" = "$SOURCE_IMAGE" ]; then
+  log "already on latest image and source - no roll"
+  if [ -n "$CUR_DIGEST" ] && [ "$(cat "$REPORTED" 2>/dev/null)" != "$CUR_DIGEST" ]; then
+    if hermes_release_report updated succeeded "version sync" "$CUR_DIGEST" ""; then printf '%s\\n' "$CUR_DIGEST" > "$REPORTED"; fi
+  fi
+  exit 0
+fi
 if [ -f "$ROLLMARK" ]; then
   LAST_ROLLED_IMAGE="$(head -n 1 "$ROLLMARK" 2>/dev/null || true)"
   if [ "$LATEST" = "$LAST_ROLLED_IMAGE" ]; then
@@ -467,30 +611,37 @@ fi
 if [ ! -f "$MARK" ]; then date +%s > "$MARK"; log "no idle marker yet - starting clock, skip"; exit 0; fi
 idle_min=$(( ( $(date +%s) - $(stat -c %Y "$MARK") ) / 60 ))
 [ "$idle_min" -lt "$IDLE_MIN" ] && { log "active \${idle_min}m ago (<\${IDLE_MIN}m idle) - defer"; exit 0; }
+# The sampler runs every 3 minutes, so a turn may have started since its last
+# sample. Take one more sample right before stopping anything.
+/usr/local/bin/hermes-idle-sampler-"\${INST}" >/dev/null 2>&1 || date +%s > "$MARK"
+idle_min=$(( ( $(date +%s) - $(stat -c %Y "$MARK") ) / 60 ))
+[ "$idle_min" -lt "$IDLE_MIN" ] && { log "turn started since the last idle sample - defer"; exit 0; }
 if ! repair_runtime_env_files; then
   log "managed runtime env migration failed - aborting before service stop + PAUSING auto-roll"
-  echo "auto-roll paused $(ts): managed runtime env migration failed; cleared by removing this file after repair" > "$PAUSE"
+  pause_roll "managed runtime env migration failed; cleared by removing this file after repair" paused ""
   exit 1
 fi
 if ! assert_no_unmanaged_source_consumers; then
   log "shared agent source has unmanaged running consumers - aborting before service stop + PAUSING auto-roll"
-  echo "auto-roll paused $(ts): shared agent source has an unmanaged running consumer; clear only after coordinating every profile container" > "$PAUSE"
+  pause_roll "shared agent source has an unmanaged running consumer; clear only after coordinating every profile container" paused ""
   exit 1
 fi
 if ! migrate_gateway_runtime_contract >>"$LOG" 2>&1; then
   log "gateway runtime compose migration mismatch - aborting before service stop + PAUSING auto-roll"
-  echo "auto-roll paused $(ts): generated gateway supervisor command contract did not match; clear only after compose repair" > "$PAUSE"
+  pause_roll "generated gateway supervisor command contract did not match; clear only after compose repair" paused ""
   exit 1
 fi
 if ! docker compose config --quiet >>"$LOG" 2>&1; then
   log "compose config invalid - aborting before service stop + PAUSING auto-roll"
   restore_gateway_runtime_contract || true
-  echo "auto-roll paused $(ts): compose config is invalid; cleared by removing this file after config repair" > "$PAUSE"
+  pause_roll "compose config is invalid; cleared by removing this file after config repair" paused ""
   exit 1
 fi
 log "ROLL: idle \${idle_min}m, new image \${LATEST} (container \${RUNNING}, source \${SOURCE_IMAGE:-unstamped})"
 [ -n "$RUNNING" ] && docker tag "$RUNNING" "$LKG" 2>/dev/null || { log "cannot save running image as LKG - aborting roll"; restore_gateway_runtime_contract || true; exit 1; }
 log "saved LKG \${RUNNING}"
+SESS_BEFORE="$(hermes_sessions_snapshot "$G")"
+log "sessions before roll: $SESS_BEFORE"
 if ! docker compose stop official-dashboard gateway >>"$LOG" 2>&1; then
   log "failed to stop services cleanly - aborting roll"
   restore_gateway_runtime_contract || true
@@ -501,7 +652,15 @@ if ! assert_agent_source_quiesced; then
   log "shared agent source did not quiesce - restoring services + PAUSING auto-roll"
   restore_gateway_runtime_contract || true
   docker compose up -d official-dashboard gateway >>"$LOG" 2>&1 || true
-  echo "auto-roll paused $(ts): shared agent source remained in use after service stop; clear only after coordinating every profile container" > "$PAUSE"
+  pause_roll "shared agent source remained in use after service stop; clear only after coordinating every profile container" paused ""
+  exit 1
+fi
+# Point the local alias compose runs at the exact release, only now that the
+# services are stopped: every earlier abort leaves the alias on the old image.
+if [ -n "$TARGET_REF" ] && ! docker tag "$TARGET_REF" "$IMG" 2>>"$LOG"; then
+  log "cannot point $IMG at $TARGET_REF - restoring services"
+  restore_gateway_runtime_contract || true
+  docker compose up -d official-dashboard gateway >>"$LOG" 2>&1 || true
   exit 1
 fi
 if ! reseed_agent_source "$IMG"; then
@@ -527,7 +686,7 @@ if ! reseed_agent_source "$IMG"; then
   else
     log "CRITICAL: refusing to start services from an unverified partial source tree"
   fi
-  echo "auto-roll paused $(ts): source reseed for \${LATEST} failed; cleared by removing this file" > "$PAUSE"
+  pause_roll "source reseed for \${LATEST} failed; cleared by removing this file" failed "$TARGET_DIGEST"
   exit 1
 fi
 docker compose up -d --force-recreate official-dashboard gateway >>"$LOG" 2>&1
@@ -539,14 +698,30 @@ for _ in $(seq 1 60); do
   [ "$hg" = unhealthy ] && break
   if { [ "$hg" = healthy ] || [ "$hg" = none ]; } && { [ "$hd" = healthy ] || [ "$hd" = none ]; }; then ok=1; break; fi
 done
+FAIL_REASON=""
 if [ "$ok" != 1 ]; then
-  log "UNHEALTHY after roll (gw=$hg dash=$hd) - rolling back to LKG + PAUSING auto-roll"
+  FAIL_REASON="image \${LATEST} came up unhealthy"
+elif [ "$(docker inspect "$G" -f '{{.Image}}' 2>/dev/null)" != "$LATEST" ]; then
+  ok=0
+  FAIL_REASON="image \${LATEST} is not what the gateway runs after the roll"
+else
+  SESS_AFTER="$(hermes_sessions_snapshot "$G")"
+  log "sessions after roll: $SESS_AFTER"
+  if ! hermes_sessions_survived "$SESS_BEFORE" "$SESS_AFTER"; then
+    ok=0
+    FAIL_REASON="sessions did not survive the roll to \${LATEST} (before: $SESS_BEFORE, after: $SESS_AFTER)"
+  fi
+fi
+if [ "$ok" != 1 ]; then
+  log "$FAIL_REASON (gw=\${hg:-} dash=\${hd:-}) - rolling back to LKG + PAUSING auto-roll"
   restore_gateway_runtime_contract || true
+  rolled_back=0
   if docker image inspect "$LKG" >/dev/null 2>&1; then
     docker tag "$LKG" "$IMG" 2>/dev/null
     if reseed_agent_source "$LKG"; then
       if docker compose up -d --force-recreate official-dashboard gateway >>"$LOG" 2>&1; then
         log "rollback applied (container and source restored to last-known-good)"
+        rolled_back=1
       else
         log "CRITICAL: rollback compose recreate failed"
       fi
@@ -554,13 +729,20 @@ if [ "$ok" != 1 ]; then
       log "CRITICAL: LKG source reseed failed; containers left stopped from failed roll"
     fi
   fi
-  echo "auto-roll paused $(ts): image \${LATEST} came up unhealthy; cleared by removing this file" > "$PAUSE"
+  if [ "$rolled_back" = 1 ]; then kind=rolled_back; else kind=failed; fi
+  pause_roll "$FAIL_REASON; cleared by removing this file" "$kind" "$TARGET_DIGEST"
   exit 1
 fi
 /usr/local/bin/hermes-refresh-"\${INST}" >/dev/null 2>&1 || true
 docker rmi "$LKG" >/dev/null 2>&1 || true
 commit_gateway_runtime_contract
 printf '%s\\n' "$LATEST" > "$ROLLMARK"
+NEW_DIGEST="$(hermes_image_digest "$LATEST" "$REPO")"
+if hermes_release_report updated succeeded "rolled to \${TARGET_DIGEST:-$NEW_DIGEST}" "$NEW_DIGEST" "\${TARGET_DIGEST:-$NEW_DIGEST}"; then
+  [ -n "$NEW_DIGEST" ] && printf '%s\\n' "$NEW_DIGEST" > "$REPORTED"
+else
+  log "release report failed (updated)"
+fi
 log "roll complete + healthy + UI re-extracted"
 `;
 

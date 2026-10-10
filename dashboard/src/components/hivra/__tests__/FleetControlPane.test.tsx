@@ -1,9 +1,10 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
-import { restoreWorkspaceSelection } from "@/lib/workspace/workspace-persistence";
+import type { AgentSurfaceId } from "@/lib/agent-computers/agent-surfaces";
+import { recordVisit } from "@/lib/workspace/recents";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 
 import { FleetControlPane } from "../FleetControlPane";
@@ -17,12 +18,21 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push: jest.fn(), prefetch: jest.fn() }),
 }));
 
-jest.mock("@/lib/workspace/workspace-persistence", () => ({
-  restoreWorkspaceSelection: jest.fn(() => null),
+let appOpenAtHome = false;
+const markHomeOpened = jest.fn();
+jest.mock("@/lib/workspace/app-open", () => ({
+  isAppOpenAtHome: () => appOpenAtHome,
+  markHomeOpened: () => markHomeOpened(),
 }));
 
 const mockedUseWorkspaceAgents = jest.mocked(useWorkspaceAgents);
-const mockedRestore = jest.mocked(restoreWorkspaceSelection);
+
+/** Records visits oldest first, so the last one named is the most recent. */
+function opened(...visits: Array<[uid: string, tab: AgentSurfaceId, minutesAgo?: number]>) {
+  for (const [uid, tab, minutesAgo = 1] of visits) {
+    recordVisit(uid, tab, { now: Date.now() - minutesAgo * 60_000 });
+  }
+}
 
 function agent(uid: string, name: string, extra: Partial<UnifiedAgent> = {}): UnifiedAgent {
   const kind = uid.startsWith("h-") ? "hermes" : "hivra";
@@ -40,7 +50,7 @@ function agent(uid: string, name: string, extra: Partial<UnifiedAgent> = {}): Un
   };
 }
 
-const codex = agent("x-codex", "CODEX_AGENT");
+const codex = agent("x-codex", "CODEX_AGENT", { agentType: "codex" });
 const ubuntu = agent("x-ubuntu", "MY_UBUNTU_DESKTOP", {
   resourceKind: "computer",
   typeLabel: "Ubuntu Desktop",
@@ -53,6 +63,7 @@ function state(overrides: Record<string, unknown> = {}) {
     loading: false,
     hermesError: null,
     hivraError: null,
+    attachedError: null,
     lastRefreshedAt: null,
     retryHermes: jest.fn(async () => undefined),
     retryHivra: jest.fn(async () => undefined),
@@ -71,7 +82,8 @@ describe("FleetControlPane", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedUseWorkspaceAgents.mockReturnValue(state());
-    mockedRestore.mockReturnValue(null);
+    window.localStorage.clear();
+    appOpenAtHome = false;
   });
 
   it("lists BOTH families, so a Hivra-only owner sees their runtimes", () => {
@@ -101,6 +113,18 @@ describe("FleetControlPane", () => {
       "href",
       "/dashboard/instances/one",
     );
+  });
+
+  it("shows each agent with the computer it runs on, and nothing of the kind for a computer (ATT-11)", () => {
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [
+      agent("x-codex", "CODEX_AGENT", { resourceKind: "agent", computerPair: { relation: "On its own computer", placement: "Hivra Cloud", size: "1.5 CPU / 3 GB" } }),
+      ubuntu,
+    ] }));
+    render(<FleetControlPane />);
+    const pairs = screen.getAllByTestId("fleet-computer-pair");
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]).toHaveTextContent("On its own computer · Hivra Cloud · 1.5 CPU / 3 GB");
+    expect(screen.getByRole("link", { name: /CODEX_AGENT/ })).toContainElement(pairs[0]);
   });
 
   it("filters across both families as you type", () => {
@@ -138,17 +162,46 @@ describe("FleetControlPane", () => {
 
   it("keeps the other family listed when one source fails, and offers retry", () => {
     const retryHermes = jest.fn(async () => undefined);
+    const retryHivra = jest.fn(async () => undefined);
     mockedUseWorkspaceAgents.mockReturnValue(
-      state({ hermesError: "boom", retryHermes, agents: [codex, ubuntu] }),
+      state({ hermesError: "boom", retryHermes, retryHivra, agents: [codex, ubuntu] }),
     );
     render(<FleetControlPane />);
 
-    expect(screen.getByText(/Hermes runtimes are unavailable/)).toBeInTheDocument();
-    // The Hivra half must still be usable.
+    // One message in product words: never how Hivra stores an agent (FTUE-03).
+    expect(screen.getByText("Some agents and computers couldn't be loaded. The rest are listed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry (Hermes|Hivra)/ })).not.toBeInTheDocument();
+    // The rest must still be usable.
     expect(screen.getByText("CODEX_AGENT")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Retry Hermes/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retryHermes).toHaveBeenCalledTimes(1);
+    expect(retryHivra).not.toHaveBeenCalled();
+  });
+
+  it("offers one retry that re-reads every list that failed", () => {
+    const retryHermes = jest.fn(async () => undefined);
+    const retryHivra = jest.fn(async () => undefined);
+    mockedUseWorkspaceAgents.mockReturnValue(state({ hermesError: "a", hivraError: "b", retryHermes, retryHivra }));
+    render(<FleetControlPane />);
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retryHermes).toHaveBeenCalledTimes(1);
+    expect(retryHivra).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps every other agent and computer current when only the list of added agents failed", () => {
+    const retryHivra = jest.fn(async () => undefined);
+    const added = agent("a-attach", "Codex on MY_UBUNTU_DESKTOP", { id: "ubuntu",
+      attachment: { id: "attach", computerId: "ubuntu", computerName: "MY_UBUNTU_DESKTOP", phase: "attached" } });
+    mockedUseWorkspaceAgents.mockReturnValue(state({ attachedError: "x", retryHivra,
+      agents: [{ ...ubuntu, state: "error", attention: "error" }, added] }));
+    render(<FleetControlPane />);
+    // The computer's own attention is still current; only the added agent is shown as last known.
+    expect(screen.getByText("1 needs attention")).toBeInTheDocument();
+    expect(screen.getByText(/Last known: Running/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retryHivra).toHaveBeenCalledTimes(1);
   });
 
   it("marks duplicate names so two same-named boxes are tellable apart", () => {
@@ -170,27 +223,50 @@ describe("FleetControlPane", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
-  // A bare visit continues where you left off. This used to be forbidden, because
-  // it "teleported" you into a box of the app's choosing — but the app is no
-  // longer choosing: `lastSelection` is the runtime you opened yourself.
-  it("continues into the last runtime you were in", () => {
-    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+  // Home reached from inside the app (the Home link, the logo) is the list.
+  // It used to follow the saved selection, so Home from inside an agent
+  // bounced straight back into that agent.
+  it("shows the list led by where you left off when Home is reached inside the app", () => {
+    opened(["x-codex", "chat"]);
+    render(<FleetControlPane />);
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Where will you work?" })).toBeInTheDocument();
+    expect(screen.getByTestId("home-continue")).toHaveAttribute("href", "/dashboard/agent/codex?tab=chat");
+    expect(markHomeOpened).toHaveBeenCalled();
+  });
+
+  // Opening the app at Home continues where you left off: `lastSelection` is
+  // the agent or computer you opened yourself.
+  it("continues into the last agent you were in when the app is opened at Home", () => {
+    appOpenAtHome = true;
+    opened(["x-codex", "chat"]);
     render(<FleetControlPane />);
     expect(replace).toHaveBeenCalledWith("/dashboard/agent/codex?tab=chat");
     expect(screen.queryByRole("heading", { name: "Where will you work?" })).not.toBeInTheDocument();
   });
 
-  it("resumes the surface, not just the runtime", () => {
-    mockedRestore.mockReturnValue({ uid: "x-ubuntu", surface: "desktop" });
+  it("resumes the surface, not just the agent", () => {
+    appOpenAtHome = true;
+    opened(["x-ubuntu", "desktop"]);
     render(<FleetControlPane />);
     expect(replace).toHaveBeenCalledWith("/dashboard/agent/ubuntu?tab=desktop");
+  });
+
+  // Computer › Terminal and the agent's own session used to be stored as the
+  // same word, so resuming the computer's shell opened the agent's session.
+  it("resumes Computer › Terminal, not the agent's session", () => {
+    appOpenAtHome = true;
+    opened(["x-codex", "box"]);
+    render(<FleetControlPane />);
+    expect(replace).toHaveBeenCalledWith("/dashboard/agent/codex?tab=box");
   });
 
   it("shows the list when the remembered runtime is not usable", () => {
     // A stopped box is not a place to resume into — the resume link already
     // guards on this, and the redirect must agree with it or arriving would
     // strand you somewhere that cannot open.
-    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+    appOpenAtHome = true;
+    opened(["x-codex", "chat"]);
     const stopped = { ...codex, state: "stopped" as const };
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [stopped] }));
     render(<FleetControlPane />);
@@ -201,14 +277,16 @@ describe("FleetControlPane", () => {
   it("does not redirect when the list is still loading", () => {
     // Redirecting before the fleet confirms would open a runtime that may have
     // stopped since, so the decision waits for the list.
-    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+    appOpenAtHome = true;
+    opened(["x-codex", "chat"]);
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [], loading: true }));
     render(<FleetControlPane />);
     expect(replace).not.toHaveBeenCalled();
   });
 
   it("does not resume from a partial list while sources are loading", () => {
-    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+    appOpenAtHome = true;
+    opened(["x-codex", "chat"]);
     mockedUseWorkspaceAgents.mockReturnValue(state({ loading: true }));
     const view = render(<FleetControlPane />);
     expect(replace).not.toHaveBeenCalled();
@@ -226,8 +304,8 @@ describe("FleetControlPane", () => {
   });
 
   it("stays put when the navigation asked for the list explicitly", () => {
-    // Only the explicit all-resources link asks to stay on the list.
-    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+    appOpenAtHome = true;
+    opened(["x-codex", "chat"]);
     render(<FleetControlPane requested />);
     expect(replace).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Where will you work?" })).toBeInTheDocument();
@@ -240,7 +318,7 @@ describe("FleetControlPane", () => {
   });
 
   it("opens attention without redirecting and includes approvals, not healthy resources", () => {
-    mockedRestore.mockReturnValue({ uid: "x-codex", surface: "conversation" });
+    opened(["x-codex", "chat"]);
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, { ...hermes, attention: "approval" }] }));
     render(<FleetControlPane attentionRequested />);
     expect(replace).not.toHaveBeenCalled();
@@ -275,11 +353,12 @@ describe("FleetControlPane", () => {
   );
 
   it('does not resume a cached resource from an unavailable source', () => {
-    mockedRestore.mockReturnValue({ uid: 'x-codex', surface: 'conversation' });
+    appOpenAtHome = true;
+    opened(['x-codex', 'chat']);
     mockedUseWorkspaceAgents.mockReturnValue(state({ hivraError: 'Unavailable' }));
     render(<FleetControlPane />);
     expect(replace).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Retry Hivra' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
 
   it('distinguishes an attention search with no matches from no attention', () => {
@@ -290,4 +369,125 @@ describe("FleetControlPane", () => {
     expect(screen.queryByText('Nothing needs attention.')).not.toBeInTheDocument();
   });
 
+  describe("Pick up where you left off", () => {
+    const writer = agent("x-writer", "WRITER", { agentType: "claude-code", resourceKind: "agent" });
+    const sandbox = agent("x-sandbox", "SANDBOX", { resourceKind: "computer", agentType: "linux-terminal" });
+    const stoppedDesk = agent("x-desk", "OLD_DESK", { resourceKind: "computer", state: "stopped", statusRaw: "stopped", dot: "var(--text-muted)" });
+
+    it("shows nothing until something has been used in this browser", () => {
+      render(<FleetControlPane requested />);
+      expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Recent" })).not.toBeInTheDocument();
+    });
+
+    it("offers the last resource with the surface you were on and when, in one click", () => {
+      opened(["x-codex", "box", 5]);
+      render(<FleetControlPane requested />);
+      const card = screen.getByTestId("home-continue");
+      expect(card).toHaveAttribute("href", "/dashboard/agent/codex?tab=box");
+      expect(card).toHaveTextContent("Pick up where you left off");
+      expect(card).toHaveTextContent("CODEX_AGENT");
+      expect(card).toHaveTextContent("Running");
+      expect(card).toHaveTextContent("Computer › Terminal");
+      expect(card).toHaveTextContent("used 5 min ago");
+      expect(card).not.toHaveTextContent("Open to respond");
+    });
+
+    it.each([
+      ["terminal", "Codex session"],
+      ["chat", "Chat"],
+      ["skills", "Manage › Skills"],
+    ] as const)("names the %s surface the way the agent page does (%s)", (tab, label) => {
+      opened(["x-codex", tab]);
+      render(<FleetControlPane requested />);
+      expect(screen.getByTestId("home-continue")).toHaveTextContent(label);
+    });
+
+    it("lists the rest in the order you used them, and nothing you have not opened", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, ubuntu, hermes, writer, sandbox] }));
+      opened(["x-sandbox", "manage", 50], ["h-one", "chat", 40], ["x-ubuntu", "files", 30], ["x-codex", "chat", 2]);
+      render(<FleetControlPane requested />);
+
+      expect(screen.getByTestId("home-continue")).toHaveTextContent("CODEX_AGENT");
+      const recent = screen.getByRole("region", { name: "Recent" });
+      const links = within(recent).getAllByRole("link");
+      expect(links.map((link) => link.textContent)).toEqual([
+        expect.stringContaining("MY_UBUNTU_DESKTOP"),
+        expect.stringContaining("Hermes One"),
+        expect.stringContaining("SANDBOX"),
+      ]);
+      expect(links[0]).toHaveAttribute("href", "/dashboard/agent/ubuntu?tab=files");
+      expect(links[0]).toHaveTextContent("used 30 min ago");
+      expect(links[0]).toHaveTextContent("Files");
+      expect(links[1]).toHaveAttribute("href", "/dashboard/instances/one");
+      expect(links[1]).toHaveTextContent("Chat");
+      expect(links[2]).toHaveAttribute("href", "/dashboard/agent/sandbox?tab=manage");
+      expect(within(recent).queryByText("WRITER")).not.toBeInTheDocument();
+    });
+
+    it("keeps Recent to five", () => {
+      const many = Array.from({ length: 8 }, (_, index) => agent(`x-a${index}`, `AGENT_${index}`));
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: many }));
+      opened(...many.map((item, index) => [item.uid, "chat", 10 - index] as [string, AgentSurfaceId, number]));
+      render(<FleetControlPane requested />);
+      expect(screen.getByTestId("home-continue")).toHaveTextContent("AGENT_7");
+      expect(within(screen.getByRole("region", { name: "Recent" })).getAllByRole("link")).toHaveLength(5);
+    });
+
+    it("does not offer a stopped resource as the one to continue", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, stoppedDesk] }));
+      opened(["x-codex", "chat", 20], ["x-desk", "desktop", 3]);
+      render(<FleetControlPane requested />);
+
+      expect(screen.getByTestId("home-continue")).toHaveTextContent("CODEX_AGENT");
+      const stopped = within(screen.getByRole("region", { name: "Recent" })).getByRole("link", { name: /OLD_DESK/ });
+      expect(stopped).toHaveTextContent("Stopped");
+      expect(stopped).toHaveTextContent("View details");
+      expect(stopped).toHaveAttribute("href", "/dashboard/agent/desk?tab=desktop");
+    });
+
+    it("offers no card when the only recent resource is stopped, but still lists it", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, stoppedDesk] }));
+      opened(["x-desk", "desktop"]);
+      render(<FleetControlPane requested />);
+      expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Recent" })).getByRole("link", { name: /OLD_DESK.*View details/ })).toBeVisible();
+    });
+
+    it("does not offer a resource whose list could not be refreshed", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ hivraError: "Unavailable" }));
+      opened(["x-codex", "chat"]);
+      render(<FleetControlPane requested />);
+      expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
+      const cached = within(screen.getByRole("region", { name: "Recent" })).getByRole("link", { name: /CODEX_AGENT/ });
+      expect(cached).toHaveTextContent("Last known: Running");
+      expect(cached).toHaveTextContent("View details");
+    });
+
+    it("says when the one to continue is waiting on you", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, { ...hermes, attention: "approval" }] }));
+      opened(["h-one", "chat"]);
+      render(<FleetControlPane requested />);
+      const card = screen.getByTestId("home-continue");
+      expect(card).toHaveTextContent("Open to respond");
+      expect(card).toHaveAttribute("href", "/dashboard/instances/one");
+    });
+
+    it("carries over the single remembered selection once, without claiming when it was", () => {
+      window.localStorage.setItem("hivra.workspace.last-selection", JSON.stringify({ version: 1, uid: "x-codex", surface: "terminal" }));
+      render(<FleetControlPane requested />);
+      const card = screen.getByTestId("home-continue");
+      // Its "terminal" could have meant either terminal: resume the primary view.
+      expect(card).toHaveAttribute("href", "/dashboard/agent/codex?tab=chat");
+      expect(card).not.toHaveTextContent("used");
+      expect(window.localStorage.getItem("hivra.workspace.last-selection")).toBeNull();
+    });
+
+    it("steps aside while searching", () => {
+      opened(["x-codex", "chat"]);
+      render(<FleetControlPane requested />);
+      fireEvent.change(screen.getByRole("searchbox", { name: "Search agents and computers" }), { target: { value: "ubuntu" } });
+      expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
+    });
+  });
 });

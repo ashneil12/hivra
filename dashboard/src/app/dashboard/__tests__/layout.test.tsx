@@ -68,6 +68,8 @@ jest.mock("next/headers", () => ({
 }));
 
 jest.mock("@/lib/ops-access", () => ({
+  // Keep the real verifiedPrimaryEmailOf: the routes use it to read the admin email.
+  ...jest.requireActual("@/lib/ops-access"),
   isOpsAdminUser: jest.fn(),
 }));
 
@@ -84,7 +86,7 @@ describe("DashboardLayout", () => {
     mockedAuth.protect.mockResolvedValue(undefined);
     mockedCurrentUser.mockResolvedValue({
       firstName: "Ash",
-      primaryEmailAddress: { emailAddress: "admin@example.com" },
+      primaryEmailAddress: { emailAddress: "admin@example.com", verification: { status: "verified" } },
     });
     mockedCookies.mockResolvedValue({
       get: jest.fn().mockReturnValue(undefined),
@@ -126,7 +128,7 @@ describe("DashboardLayout", () => {
     });
   });
 
-  it("falls back to the first email address when no primary address is present", async () => {
+  it("still shows the first email address when no primary address is present, but never offers it to the admin check", async () => {
     mockedCurrentUser.mockResolvedValue({
       firstName: "Ash",
       emailAddresses: [{ emailAddress: "fallback@hermesos.cloud" }],
@@ -138,14 +140,31 @@ describe("DashboardLayout", () => {
 
     render(ui);
 
+    // The sidebar can show any address the person has.
     expect(screen.getByTestId("layout-wrapper")).toHaveAttribute(
       "data-user-email",
       "fallback@hermesos.cloud"
     );
+    // The admin check only ever gets a verified primary email.
     expect(mockedIsOpsAdminUser).toHaveBeenCalledWith({
       userId: "user_123",
-      email: "fallback@hermesos.cloud",
+      email: null,
     });
+  });
+
+  it("does not offer an unverified primary email to the admin check", async () => {
+    mockedCurrentUser.mockResolvedValue({
+      firstName: "Ash",
+      primaryEmailAddress: { emailAddress: "admin@example.com", verification: { status: "unverified" } },
+    });
+
+    const ui = await DashboardLayout({
+      children: <div>Dashboard child</div>,
+    });
+
+    render(ui);
+
+    expect(mockedIsOpsAdminUser).toHaveBeenCalledWith({ userId: "user_123", email: null });
   });
 
   it("wraps the dashboard shell with the saved site language", async () => {

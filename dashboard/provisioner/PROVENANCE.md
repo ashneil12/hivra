@@ -234,7 +234,13 @@ inferring them from a live host.
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
   - SHA-256: `f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6`
-- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.246`
+- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.292`
+- Anthropic Claude desktop app for Linux (optional, owner-initiated):
+  `https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_2.26454.0_amd64.deb`
+  - package version: `2.26454.0`
+  - SHA-256: `6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`
+  - size: 180809792 bytes
+  - proprietary Anthropic software, downloaded from Anthropic's repository and never bundled or redistributed by Hivra
 - OpenAI Codex CLI npm package: `@openai/codex@0.149.1`
 - OpenClaw npm package: `openclaw@2026.6.10`
 - Agent Zero OCI image:
@@ -512,6 +518,94 @@ density. Observation is the legacy default. It never resizes or evicts an
 existing guest, and a reducing resize remains available on an already
 overcommitted host. Inventory and per-guest status errors fail closed, and an
 uncapped QEMU guest's CPU maximum counts every configured socket.
+
+Release `2026.09.24.2` builds on `2026.09.24.1` and keeps agent work running
+and visible across refreshes, closed tabs, gateway restarts and updates.
+Every terminal tab (the agent terminal on every runtime and the Box Terminal)
+runs in its own private tmux session slot, and both ttyd units use
+`KillMode=process`, so a closed tab or a ttyd restart detaches instead of
+ending the shell; the gateway lists and closes those sessions for the dashboard.
+The agent terminal runs the exact Claude Code / Codex binary the chat gateway
+runs and never another vendor's CLI. The vetted CLI versions ship as
+`agent-cli-versions.json`; vendor self-updaters are off (`DISABLE_AUTOUPDATER=1`
+and Codex's `check_for_update_on_startup = false` via
+`hivra-codex-config-pin.py`, only when unset), and `hivra-agent-cli-update.sh`
+moves the CLI to the vetted version in the background once no chat run is in
+flight, verifying it and restoring the previous package on failure. Surface
+sign-ins are saved as digests bound to the box token, so a gateway restart
+keeps them, and `/api/meta` advertises the store's epoch as `bootId`. The
+runtime updater now updates in place (only `bux-hivra-chat` restarts) and also
+refreshes both terminal units, the CLI pins and helpers, and `hivra-tg-apply`,
+which restarts the Telegram bot when a new token or pairing is applied. The
+computer's own chat page uses detached runs; the Aeon fork sync never discards
+the owner's git work; Agent Zero gets a stop grace that fits the host's
+shutdown budget; the DeepSeek native broker renews its upstream session without
+a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. This source release does
+not deploy, install, or establish Canary acceptance.
+
+Release `2026.10.07.1` builds on `2026.09.24.4` and adds an optional Claude app
+for Ubuntu Desktop computers, plus the vetted Claude Code CLI pin move from
+`2.1.246` to `2.1.292`. A root helper (`hivra-claude-app.py`), an inert
+supervisor unit (`hivra-claude-app.service`) and a package pin
+(`claude-desktop-pin.json`) are installed on a desktop computer by provisioning
+and by Update & restart, together with a sudoers rule that lets the gateway run
+exactly five commands: `status`, `install`, `mode app`, `mode desktop` and
+`remove`. Nothing is installed or started until the owner adds the app. Adding it
+downloads Anthropic's own Linux package from `downloads.claude.ai`, checks its
+size and SHA-256 against the pin, and unpacks it without root inside the existing
+contained desktop; Hivra never bundles or redistributes it. The desktop
+container is unchanged: no mount, port or privilege is added, so the isolation
+proof and the remote-desktop bundle revision are preserved. The app's own data is
+kept across desktop restarts as a size-capped, root-only backup on the same VM that
+no Hivra service reads; because that data includes whatever the app keeps there, a
+sign-in session among it, `remove` deletes it. The gateway gains four
+owner-authenticated routes under `/api/claude-app/` and advertises `claudeApp` in
+`/api/meta`. The owner signs in to the unmodified app themselves; Hivra's own
+systems never receive or read that sign-in. Remote-desktop assets are unchanged. This source release does not
+deploy, install, or establish Canary acceptance.
+
+Release `2026.09.24.4` builds on `2026.09.24.3` and fixes two terminal
+follow-ups from the socket move. The runtime updater's "is anyone on this
+terminal" check now counts clients on the owner-only unix sockets as well as on
+the loopback ports (a computer updating from an older release still runs its
+terminals on the ports when the check runs), so Update & restart no longer
+restarts a terminal someone is using. The gateway falls back to a terminal's
+loopback port only while its installed unit is still the port-bound one; a unit
+from the socket release answers "restarting" (503) until its socket is back,
+so no other local process that bound the port during a restart can receive the
+owner's terminal traffic. Remote-desktop assets are unchanged, so the
+remote-desktop bundle revision and every session revision are preserved. This
+source release does not deploy, install, or establish Canary acceptance.
+
+Release `2026.09.24.3` builds on `2026.09.24.2` and hardens the computer for
+agents added to it. Both terminals keep their persistent tmux session slots
+and `KillMode=process`, and now listen on unix sockets in bux-owned `0700`
+runtime folders (`/run/hivra-terminal`, `/run/hivra-box-terminal`) instead of
+loopback ports, so no other local user or service can open a shell as bux; the
+gateway proxies to a socket only when it and its folder are its own, falls back
+to the loopback port for a terminal whose unit predates the move, and reports
+which it uses in `/api/meta` (bearer only). The runtime updater restarts an
+idle terminal onto its socket and checks it through the gateway; a busy one
+moves at its next start. On a computer the gateway answers `/api/git/*` with
+404 before any process starts, and it serves an agent added to the computer
+through `/agents/<installation id>/` (a fixed route allowlist, JSON only, none
+of the agent's headers forwarded, CSP sandbox, no WebSocket), advertising
+`attachedAgents: "hivra-attached-agent-v1"` in `/api/meta`; the attached
+instance itself listens only on the socket systemd passes it. This source
+release does not deploy, install, or establish Canary acceptance.
+
+Release `2026.09.24.1` builds on `2026.09.22.2` and makes agent chat turns
+survive the browser going away. `hivra-chat/chat-runs.cjs` runs each turn under
+a detached runner that owns the Claude Code/Codex CLI and records its stream and
+outcome under `~/.hivra/chat-runs`; the gateway tails that log, and only an
+explicit stop ends a detached run. The CLI arguments and permission flags are
+unchanged. The guest installer and runtime updater add a
+`bux-hivra-chat.service` drop-in with `KillMode=process` for chat runtimes so a
+gateway restart leaves in-flight runs alone, and `hivra-agent-shell` keeps the
+interactive agent terminal in a private tmux session so a closed tab detaches
+instead of ending the CLI. Remote-desktop assets are unchanged, so the
+remote-desktop bundle revision and every session revision are preserved.
 
 Release `2026.09.22.2` builds on `2026.09.22.1` and aligns the provider-VM
 desktop service planner with the Selkies environment the sealed desktop

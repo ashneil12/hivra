@@ -122,325 +122,10 @@ const BASE_MARKETING_COPY = {
       mobileMenu: "Open menu",
       closeMobileMenu: "Close menu",
     },
-    hero: {
-      eyebrow: "Now Live",
-      headlinePrefix: "Launch AI agents",
-      headlineEmphasis: "in one click.",
-      primary:
-        "Run AI coding agents, AI researchers, and AI operators in the cloud. No VPS setup, no terminals, no server management — just launch and start working.",
-      secondary:
-        "Free to start — no credit card required. Pay with card or $HermesOS when you scale.",
-      primaryCta: "Launch Your First Agent",
-      secondaryCta: "See How It Works",
-      proofPoints: [
-        "Launch in minutes",
-        "Keys stay encrypted",
-        "Cancel anytime",
-      ],
-    },
-    ticker: {
-      proofPoints: [
-        "Deploy any AI agent in one click",
-        "BYO key, zero markup",
-        "Free tier always available",
-      ],
-    },
-    positioning: {
-      title: "Powerful agents, zero ops.",
-      body:
-        "The best AI agents — persistent assistants like Hermes, browser drivers, coding agents — are powerful but a pain to run yourself: a server, Docker, config files, a weekend lost to setup, then uptime and updates forever. Hivra runs any of them on managed cloud infrastructure, with persistent memory that compounds every session.",
-      punchline: "Pick an agent, click deploy — it's live in five minutes.",
-    },
-    features: {
-      eyebrow: "Why Hivra",
-      titlePrefix: "Most agents stop the moment you close your laptop.",
-      titleEmphasis: "Hivra keeps them running.",
-      items: [
-        {
-          headline: "Always online",
-          body:
-            "Your agents keep working in the cloud — even when your laptop is closed and you've logged off for the day.",
-        },
-        {
-          headline: "Accessible anywhere",
-          body:
-            "Open and control your agents from any browser, on any device. Nothing to install.",
-        },
-        {
-          headline: "No technical setup",
-          body:
-            "Skip the VPS, SSH, Linux, and server maintenance. If you can use a website, you can use Hivra.",
-        },
-        {
-          headline: "Managed for you",
-          body:
-            "We handle the infrastructure, uptime, and updates so you can focus on results — not DevOps.",
-        },
-        {
-          headline: "Recovers on its own",
-          body:
-            "If an agent crashes, it restarts automatically — with daily backups, so you're never more than a day from a clean restore.",
-        },
-        {
-          headline: "Your keys stay private",
-          body:
-            "Bring your own AI key. Encrypted at rest, injected at launch, never logged — and zero markup on what you spend.",
-        },
-      ],
-    },
-    howItWorks: {
-      eyebrow: "Getting started",
-      titlePrefix: "Three steps",
-      titleEmphasis: "to get started.",
-      steps: [
-        {
-          step: "1",
-          headline: "Choose an agent",
-          body:
-            "Pick the AI worker that fits your goal — a coding agent, a researcher, or an operator.",
-        },
-        {
-          step: "2",
-          headline: "Connect your API keys",
-          body:
-            "Paste your AI provider key once. Encrypted, stored securely, and injected at launch.",
-        },
-        {
-          step: "3",
-          headline: "Launch",
-          body:
-            "Your agent is now running in the cloud — no servers required. Start working right away.",
-        },
-      ],
-      footer: "That's it. Your agent runs in the cloud while you get on with your day.",
-      cta: "Launch Your First Agent",
-    },
-    useCases: {
-      eyebrow: "Use cases",
-      titlePrefix: "What can you",
-      titleEmphasis: "actually do?",
-      intro:
-        "Put an AI worker on the job and let it run — in the cloud, around the clock.",
-      items: [
-        {
-          headline: "Build software",
-          body:
-            "Launch Claude Code and let it write code, fix bugs, and work on your projects straight from the cloud.",
-        },
-        {
-          headline: "Research faster",
-          body:
-            "Launch Hermes Agent to gather information, browse websites, and investigate topics for you.",
-        },
-        {
-          headline: "Automate repetitive work",
-          body:
-            "Hand off the tasks that normally eat hours of your day — triage, scheduling, data entry, follow-ups.",
-        },
-        {
-          headline: "Run long-term projects",
-          body:
-            "Keep agents working for hours or days without leaving your own computer on.",
-        },
-      ],
-      footer:
-        "Pick the worker that fits your goal and launch it in a click.",
-      cta: "Launch Your First Agent",
-    },
-    whatsComing: {
-      eyebrow: "What's coming",
-      titlePrefix: "Today you launch agents.",
-      titleEmphasis: "Tomorrow you'll discover, deploy, and monetise them.",
-      intro: "Hivra is just getting started. Coming soon:",
-      items: [
-        {
-          title: "Agent Marketplace",
-          body:
-            "Discover ready-to-run agents built by the community.",
-        },
-        {
-          title: "Publish your own agents",
-          body:
-            "Package what you build and share it with other users.",
-        },
-        {
-          title: "Agent collaboration",
-          body:
-            "Let multiple agents work together on the same goal.",
-        },
-        {
-          title: "Shared intelligence",
-          body:
-            "Agents learn from successful workflows across the network.",
-        },
-      ],
-      footer:
-        "The future of work isn't one AI — it's teams of AI agents. Hivra is building the easiest place to launch them.",
-    },
-    pricing: {
-      eyebrow: "Pricing",
-      titlePrefix: "Start free.",
-      titleEmphasis: "Scale when you're ready.",
-      intro: "Pick the plan that matches how much you lean on AI. Upgrade or downgrade anytime.",
-      compute: "Compute",
-      mostPopular: "Most Popular",
-      forPros: "For Pros",
-      getStarted: "Get Started",
-      recommended: "Recommended",
-      accessPrefix: "Three ways to access",
-      footnote:
-        "Save up to 40% paying with $HermesOS. Launch pricing for the first wave — rates may adjust as the platform matures.",
-      guarantee: "Free tier — try before you upgrade · 48-hr refund on card payments",
-      tiers: [
-        {
-          name: "Free",
-          tagline:
-            "Perfect for trying Hivra.",
-          price: "$0",
-          priceNote: "No credit card required to start",
-          specs: [
-            { label: "vCPU", value: "0.5" },
-            { label: "RAM", value: "1 GB" },
-            { label: "Active agents", value: "1" },
-          ],
-          features: [
-            "One starter agent — sleeps after 4 idle days",
-            "Basic cloud resources",
-            "Community support",
-            "No credit card required",
-          ],
-          ctaLabel: "Start Free",
-        },
-        {
-          name: "Pro",
-          tagline: "For people who rely on AI every day.",
-          price: "$9.99",
-          priceCadence: "/mo",
-          priceNote: "Subscribe monthly with card",
-          specs: [
-            { label: "vCPU", value: "2" },
-            { label: "RAM", value: "4 GB" },
-            {
-              label: "Concurrent agents",
-              value: "3",
-              tooltip:
-                "How many of your agents can run tasks at the same moment. Profiles are unlimited — this is the live-execution cap.",
-            },
-          ],
-          features: [
-            "Always-on — never paused for inactivity",
-            "Claude Code + Hermes Agent",
-            "Browser automation",
-            "More power, faster performance",
-          ],
-          paymentPaths: [
-            { label: "Monthly card", detail: "$9.99/mo" },
-            { label: "Yearly", detail: "$79/yr card · $49/yr in $HermesOS" },
-            { label: "Hold $HermesOS", detail: "~$149 in $HermesOS" },
-          ],
-          ctaLabel: "Upgrade to Pro",
-        },
-        {
-          name: "Power",
-          tagline: "For teams, operators, and heavy workloads.",
-          price: "$19.99",
-          priceCadence: "/mo",
-          priceNote: "Subscribe monthly with card",
-          specs: [
-            { label: "vCPU", value: "4" },
-            { label: "RAM", value: "8 GB" },
-            {
-              label: "Concurrent agents",
-              value: "5",
-              tooltip:
-                "Run up to 5 agents in parallel, sharing your plan's compute pool.",
-            },
-          ],
-          features: [
-            "Multiple agents at once",
-            "Long-running projects",
-            "Advanced automation",
-            "Priority support",
-          ],
-          paymentPaths: [
-            { label: "Monthly card", detail: "$19.99/mo" },
-            { label: "Yearly", detail: "$149/yr card · $99/yr in $HermesOS" },
-            { label: "Hold $HermesOS", detail: "~$299 in $HermesOS" },
-          ],
-          ctaLabel: "Go Power",
-        },
-      ],
-    },
-    token: {
-      eyebrow: "About $HermesOS",
-      title: "The access layer for the platform.",
-      body:
-        "$HermesOS lets you pay subscriptions for a discount, hold to maintain your tier without paying monthly, or transact across the agent economy as we ship it.",
-      secondary:
-        "The token isn't required to use Hivra — the free tier stays available without it, with anti-abuse checks where needed. If you want to be in the ecosystem deeper, holding $HermesOS unlocks more flexibility on how you pay and access.",
-      cta: "Token verification page",
-    },
-    faq: {
-      eyebrow: "Common questions",
-      title: "Straight answers.",
-      items: [
-        {
-          q: "What is Hivra?",
-          a:
-            "Hivra is a platform that lets you launch and manage AI agents in the cloud — coding agents, researchers, and operators that work for you, around the clock.",
-        },
-        {
-          q: "Do I need a VPS?",
-          a:
-            "No. Hivra handles all the infrastructure for you — no servers, SSH, or Linux required.",
-        },
-        {
-          q: "Do I need technical experience?",
-          a:
-            "No. If you can use a website, you can use Hivra. Choose an agent, connect your key, and launch.",
-        },
-        {
-          q: "What agents are available?",
-          a:
-            "Claude Code and Hermes Agent today, with more — OpenClaw, Codex, AEON — coming soon.",
-        },
-        {
-          q: "Is my API key safe?",
-          a:
-            "Yes. Your keys are encrypted at rest and injected at launch via environment variables. We never proxy or log your AI requests.",
-        },
-        {
-          q: "Do I need $HermesOS to use it?",
-          a:
-            "No. The free tier doesn't require it, and Pro and Power can be paid with a card. $HermesOS just gives you discounts and a third way to pay if you want it.",
-        },
-        {
-          q: "What happened to HermesOS?",
-          a:
-            "HermesOS is evolving into Hivra as the platform expands beyond a single agent ecosystem. Existing deployments, accounts, and $HermesOS continue to operate normally.",
-        },
-      ],
-    },
-    finalCta: {
-      eyebrow: "Start now",
-      title: "Ready to deploy?",
-      body: "Free tier is live with abuse safeguards. Pro and Power are available now.",
-      primary: "Start Free",
-      secondary: "See Pricing",
-      note: "Most free users can start without a card; higher-risk signups may need a card-on-file check.",
-      accountPrefix: "Already have an account?",
-      accountLink: "Log in",
-    },
     getStarted: {
       loadingCheckout: "Redirecting to checkout...",
-      steps: {
-        choosePlan: "Choose Plan",
-        createAccount: "Create Account",
-        activate: "Activate",
-        payment: "Payment",
-      },
       badges: {
-        free: "Always Free",
+        free: "Free account",
         paid: "7-Day Money-Back Guarantee",
       },
       yourPlan: "Your Plan",
@@ -457,7 +142,7 @@ const BASE_MARKETING_COPY = {
       // honest. Edit this single string to change the anchor everywhere.
       marketAnchor: "Comparable agent platforms start around $19/mo",
       mostPopular: "Most popular",
-      freeGap: "Sleeps after 4 idle days · no web browsing · no persistent memory · no scheduled tasks · 0.5 vCPU",
+      freeGap: "No computer run by Hivra · connect your own computer or server",
       specs: {
         agents: "Agents",
         cpu: "CPU",
@@ -471,7 +156,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "Best Fit",
       planGuidance: {
         free:
-          "Free is best for trying Hermes with one guarded starter agent. It sleeps after 4 idle days to keep costs down — a tap brings it back. Most users can launch without a card; higher-risk free-tier deploys may need card verification first.",
+          "A free account is best if you have your own computer or server to connect. It includes no computer run by Hivra; choose a plan when you want Hivra to run one.",
         operator:
           "Pro is best for solo builders and daily drivers — your agent stays always-on (never paused for inactivity) with room for three running at once.",
         fleet:
@@ -481,7 +166,7 @@ const BASE_MARKETING_COPY = {
       },
       createAccountTitle: "Create your account.",
       createAccountIntroFree:
-        "Your account details become your login credentials. After signup, we'll activate your Free plan and take you straight to deployment. Most users can launch without a card; higher-risk free-tier deploys may need card verification first.",
+        "Your account details become your login credentials. After signup, we'll set up your free account and take you to Launch, where you can connect your own computer or choose a plan.",
       createAccountIntroPaid:
         "Your account details become your login credentials. After signup, you'll continue to secure checkout. Protected by our 7-day money-back guarantee.",
       legalPrefix: "By continuing, you agree to our",
@@ -496,7 +181,7 @@ const BASE_MARKETING_COPY = {
         home: "Home",
         computers: "Computers",
         agents: "Agents",
-        infrastructure: "Infrastructure",
+        infrastructure: "Capacity",
         collaboration: "Collaboration",
         settings: "Settings",
         launch: "Launch",
@@ -667,11 +352,16 @@ const BASE_MARKETING_COPY = {
         titleSuffix: " wallet.",
         legacyIntroStrong: "Grandfathered custody wallet",
         legacyIntroBody:
-          "your existing deposit and withdraw flow stays active. Lock today's $HERMESOS price for the tier you want, then send the quoted amount to your deposit address. Free tier always works without a deposit.",
+          "your existing deposit and withdraw flow stays active. Lock today's $HERMESOS price for the tier you want, then send the quoted amount to your deposit address. Your free account always works without a deposit.",
         selfCustodyIntroStrong: "Connect your own wallet",
         selfCustodyIntroBody:
-          "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Free tier always works without token verification.",
+          "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Your free account always works without token verification.",
         priceUnavailable: "Token price unavailable — please try again later.",
+        restricted: {
+          eyebrow: "Wallet",
+          title: "Your wallets.",
+          intro: "Your agents' wallets are listed here.",
+        },
         buyToken: {
           ariaLabel: "Buy $HermesOS",
           eyebrow: "Get $HermesOS",
@@ -736,9 +426,9 @@ const BASE_MARKETING_COPY = {
         agentWallets: {
           ariaLabel: "Agent wallets",
           title: "Agent wallets.",
-          subtitle: "One wallet per agent · Bankr-managed · Base only",
+          subtitle: "One wallet per agent · Bankr · Base only",
           emptyNoAgents:
-            "Spin up your first agent and we'll provision a Bankr wallet for it automatically.",
+            "Launch an agent, then connect your own Bankr account to give it a wallet.",
           deployAgent: "Deploy an agent",
           runningEmpty: "Running agents will appear here.",
         },
@@ -827,7 +517,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "Unlimited",
           agents: "agents",
           active: "Active",
-          guarantee: "48-hour refund policy · Upgrade-only plans",
+          guarantee: "7-day money-back guarantee · Upgrade-only plans",
         },
         noSubscription: {
           title: "No plan yet",
@@ -921,7 +611,7 @@ const BASE_MARKETING_COPY = {
           },
           rows: {
             billing: { description: "Plan, payment methods, credits and invoices" },
-            wallets: { title: "Wallets", description: "Agent wallets and $HermesOS access" },
+            wallets: { title: "Wallets", description: "Agent wallets" },
             apiKeys: { title: "API keys", description: "Provider keys and which agents use them" },
             infrastructure: { description: "The machines and cloud accounts your agents run on" },
             memory: { title: "Shared agent memory", description: "What every new agent starts out knowing" },
@@ -969,7 +659,7 @@ const BASE_MARKETING_COPY = {
         },
         cta: {
           button: "Deploy your agent →",
-          subtitle: "Free tier — 1 agent, 0.5 vCPU, 1 GB RAM",
+          subtitle: "Open source, on Hivra Cloud or your own server",
         },
       },
     },
@@ -998,318 +688,10 @@ const BASE_MARKETING_COPY = {
       mobileMenu: "打开菜单",
       closeMobileMenu: "关闭菜单",
     },
-    hero: {
-      eyebrow: "现已上线",
-      headlinePrefix: "你的 AI Agent，",
-      headlineEmphasis: "始终在线。",
-      primary:
-        "Hivra 可在 5 分钟内启动你的 Hermes Agent，并默认带有持久记忆、浏览器自动化和工具调用。不用 Docker，不用配置文件，也不用半夜排查部署问题。",
-      secondary:
-        "免费层级已经开放。Pro 和 Power 适合更重的正式工作负载。支持银行卡或 $HermesOS 支付。",
-      primaryCta: "免费开始",
-      secondaryCta: "查看流程",
-      proofPoints: [
-        "免费层级始终可用",
-        "自带密钥，无加价",
-        "基于 Hermes Agent",
-      ],
-    },
-    ticker: {
-      proofPoints: [
-        "基于 Hermes Agent（Nous Research）",
-        "自带密钥，零加价",
-        "免费层级始终可用",
-      ],
-    },
-    positioning: {
-      title: "OpenClaw 会遗忘，Hermes 会积累。",
-      body:
-        "Hermes 由 Nous Research 打造，运行在服务器上，能记住项目、偏好和经验。每一次会话都会让它更了解你的工作。自己托管通常要花掉一个周末。",
-      punchline: "Hivra 把这个周末压缩到 5 分钟。",
-    },
-    features: {
-      eyebrow: "包含内容",
-      titlePrefix: "Agent 需要的能力都在这里。",
-      titleEmphasis: "不需要的复杂度都拿掉。",
-      items: [
-        {
-          headline: "零配置，完整栈。",
-          body:
-            "浏览器自动化、工具调用、终端、记忆和定时任务都已预配置。不用 Docker，也不用深夜翻文档。",
-        },
-        {
-          headline: "第一天就支持多 Agent。",
-          body:
-            "一个实例可拥有无限 Agent 档案。研究员、运营、专家角色都能共存，不按 Agent 额外收费。",
-        },
-        {
-          headline: "你的密钥，零加价。",
-          body:
-            "支持 OpenRouter、OpenAI 和 Anthropic。密钥静态加密，部署时注入。我们不抽成你的 AI 用量。",
-        },
-        {
-          headline: "随处聊天。",
-          body:
-            "内置流式控制台。Telegram、Discord、Slack 或 WhatsApp 集成开箱即用。",
-        },
-        {
-          headline: "内置 OpenClaw 迁移。",
-          body:
-            "现有配置、提示词和技能可完整迁移，不用从零开始。",
-        },
-        {
-          headline: "稳定、可恢复、一直在线。",
-          body:
-            "更新会先按你的配置测试。失败自动重启。每日备份，最多 24 小时即可回到干净状态。",
-        },
-      ],
-    },
-    howItWorks: {
-      eyebrow: "如何运作",
-      titlePrefix: "三步完成。",
-      titleEmphasis: "无需打开终端。",
-      steps: [
-        {
-          step: "1",
-          headline: "选择层级",
-          body:
-            "先从免费开始，需要更多算力再升级。可按月刷卡、按年折扣支付，或持有 $HermesOS 获得访问资格。",
-        },
-        {
-          step: "2",
-          headline: "添加 AI 密钥",
-          body:
-            "只需粘贴一次 OpenRouter、OpenAI 或 Anthropic 密钥。加密、注入、完成。",
-        },
-        {
-          step: "3",
-          headline: "部署、对话、自动化。",
-          body:
-            "几分钟内 Agent 上线，带聊天、终端和监控。连接 Telegram 或 Discord 后，它可以随时跟着你工作。",
-        },
-      ],
-      footer: "准备从了解进入搭建？选择层级后即可直接创建账户。",
-      cta: "选择层级",
-    },
-    useCases: {
-      eyebrow: "使用场景",
-      titlePrefix: "一个带记忆的 24/7 Agent",
-      titleEmphasis: "到底能做什么？",
-      intro:
-        "它可以浏览网页、写代码、管理文件、调用 API、运行定时任务，并记住上周学到的东西。",
-      items: [
-        {
-          headline: "运维与监控",
-          body:
-            "读取日志、重启失败服务，只在真的需要人工时提醒你，并记住你的技术栈。",
-        },
-        {
-          headline: "研究与竞品情报",
-          body:
-            "给它主题和截止时间，它会浏览、汇总并交付结构化简报，还会保存经验供下次使用。",
-        },
-        {
-          headline: "后台自动化",
-          body:
-            "邮件分拣、日程安排、API 调用、表格处理等重复工作都可定时运行。",
-        },
-        {
-          headline: "客服分流",
-          body:
-            "接入你的文档后，它能处理常见问题，把复杂问题升级，并在每次对话后变得更聪明。",
-        },
-      ],
-      footer: "看到了 Hermes 可以帮你接手哪些工作？选择计划，启动匹配你负载的工作流。",
-      cta: "查看计划并启动",
-    },
-    whatsComing: {
-      eyebrow: "即将推出",
-      titlePrefix: "这只是",
-      titleEmphasis: "开始。",
-      intro: "托管是基础。接下来会有：",
-      items: [
-        {
-          title: "Operator Packs",
-          body:
-            "面向研究、交易情报、内容自动化等具体工作的预置 Agent 模板，一键部署。",
-        },
-        {
-          title: "Marketplace",
-          body:
-            "构建 Operator Pack，发布给社区，并从使用中获得收益，以 $HermesOS 结算。",
-        },
-        {
-          title: "Agent Endpoints",
-          body:
-            "把你的 Agent 暴露为可调用 API，其他 Agent 可按请求向你付费。",
-        },
-        {
-          title: "Hive Mind",
-          body:
-            "Agent 共享经验，整个网络一起变聪明。",
-        },
-      ],
-      footer: "Hivra 是 Agent 经济的基础设施。托管只是第一步，后续能力都会在它之上展开。",
-    },
-    pricing: {
-      eyebrow: "价格",
-      titlePrefix: "简单计划。",
-      titleEmphasis: "认真算力。",
-      intro: "专属算力、无限 Agent 档案、自带密钥、零加价。",
-      compute: "算力",
-      mostPopular: "最受欢迎",
-      forPros: "专业用途",
-      getStarted: "开始使用",
-      recommended: "推荐",
-      accessPrefix: "访问方式：",
-      footnote:
-        "使用 $HermesOS 支付最高可省 40%。首批用户享启动价格，平台成熟后价格可能调整。",
-      guarantee: "免费层级 — 先试用再升级 · 刷卡付款 48 小时退款",
-      tiers: [
-        {
-          name: "Free",
-          tagline:
-            "大多数用户无需银行卡即可启动；风险较高的免费部署可能需要先完成银行卡验证。",
-          price: "$0",
-          priceNote: "始终免费；仅在风控需要时验证银行卡",
-          specs: [
-            { label: "vCPU", value: "0.5" },
-            { label: "内存", value: "1 GB" },
-            { label: "活跃 Agent", value: "1" },
-          ],
-          features: [
-            "持久记忆",
-            "包含全部集成",
-            "适用公平使用限制",
-          ],
-          ctaLabel: "免费开始",
-        },
-        {
-          name: "Pro",
-          tagline: "适合正式工作，而不只是试验。",
-          price: "$9.99",
-          priceCadence: "/月",
-          priceNote: "银行卡按月订阅",
-          specs: [
-            { label: "vCPU", value: "2" },
-            { label: "内存", value: "4 GB" },
-            {
-              label: "并发 Agent",
-              value: "3",
-              tooltip:
-                "同一时间能运行任务的 Agent 数量。档案数量不限，这里指实时执行上限。",
-            },
-          ],
-          features: [
-            "无限 Agent 档案",
-            "包含 Free 的全部能力",
-            "优先于免费层级",
-          ],
-          paymentPaths: [
-            { label: "银行卡月付", detail: "$9.99/月" },
-            { label: "按年", detail: "$79/年银行卡 · $49/年 $HermesOS" },
-            { label: "持有 $HermesOS", detail: "约 $99（上线前 30 天启动价）" },
-          ],
-          ctaLabel: "获取 Pro",
-        },
-        {
-          name: "Power",
-          tagline: "适合更重的流程和多 Agent 协作。",
-          price: "$19.99",
-          priceCadence: "/月",
-          priceNote: "银行卡按月订阅",
-          specs: [
-            { label: "vCPU", value: "4" },
-            { label: "内存", value: "8 GB" },
-            {
-              label: "并发 Agent",
-              value: "无限",
-              tooltip:
-                "只受算力池限制，可让多个 Agent 并行工作，平台不额外设置并发上限。",
-            },
-          ],
-          features: [
-            "无限 Agent 档案",
-            "包含 Pro 的全部能力",
-            "容量允许时可突发 CPU",
-          ],
-          paymentPaths: [
-            { label: "银行卡月付", detail: "$19.99/月" },
-            { label: "按年", detail: "$149/年银行卡 · $99/年 $HermesOS" },
-            { label: "持有 $HermesOS", detail: "约 $199（上线前 30 天启动价）" },
-          ],
-          ctaLabel: "获取 Power",
-        },
-      ],
-    },
-    token: {
-      eyebrow: "关于 $HermesOS",
-      title: "平台的访问层。",
-      body:
-        "$HermesOS 可用于折扣订阅、持有获取访问资格，或在我们逐步推出 Agent 经济时参与交易。",
-      secondary:
-        "使用 Hivra 不强制需要代币；免费层级会继续开放，并在需要时做反滥用检查。如果你想更深入参与生态，持有 $HermesOS 会带来更灵活的支付和访问方式。",
-      cta: "代币验证页面",
-    },
-    faq: {
-      eyebrow: "常见问题",
-      title: "直接回答。",
-      items: [
-        {
-          q: "我的 API 密钥安全吗？",
-          a: "安全。密钥静态加密，并在部署时通过环境变量注入。我们不会代理或记录你的 AI 请求。",
-        },
-        {
-          q: "更新会弄坏我的设置吗？",
-          a: "不会。每次更新发布前都会按容器配置测试。每日备份意味着最多 24 小时就能回到干净恢复点。",
-        },
-        {
-          q: "这和 OpenClaw 有什么不同？",
-          a:
-            "OpenClaw 是优秀的开源桌面框架。Hivra 是完全托管的生产级云环境。Hermes Agent 的记忆更稳定、可靠性更高，更新不会破坏已有功能。",
-        },
-        {
-          q: "如果我的 Agent 崩溃怎么办？",
-          a: "它会自动重启。健康状态、日志和资源用量始终可以在控制台查看。",
-        },
-        {
-          q: "一个计划能运行多个 Agent 吗？",
-          a: "可以。每个实例可拥有无限档案。Free 可运行 1 个活跃 Agent，Pro 可运行 3 个，Power 没有并发上限。真正的限制是你的算力池。",
-        },
-        {
-          q: "支持哪些 AI 提供商？",
-          a: "支持 OpenRouter、OpenAI 和 Anthropic。仅 OpenRouter 一个密钥就可访问数百个模型。",
-        },
-        {
-          q: "访问平台必须使用 $HermesOS 吗？",
-          a: "不需要。免费层级不要求代币。Pro 和 Power 可用银行卡支付。代币提供折扣，也给想参与生态的人第三种支付路径。",
-        },
-        {
-          q: "接下来会推出什么？",
-          a: "Operator Packs（预置 Agent 模板）将在未来几周推出。之后会有 Marketplace、Agent Endpoints 和 Hive Mind。路线图在 hermesos.cloud/roadmap。",
-        },
-      ],
-    },
-    finalCta: {
-      eyebrow: "现在开始",
-      title: "准备部署了吗？",
-      body: "免费层级已上线并带有反滥用保护。Pro 和 Power 现在也可使用。",
-      primary: "免费开始",
-      secondary: "查看价格",
-      note: "大多数免费用户无需银行卡即可开始；风险较高的注册可能需要银行卡验证。",
-      accountPrefix: "已经有账户？",
-      accountLink: "登录",
-    },
     getStarted: {
       loadingCheckout: "正在跳转到结账...",
-      steps: {
-        choosePlan: "选择计划",
-        createAccount: "创建账户",
-        activate: "激活",
-        payment: "付款",
-      },
       badges: {
-        free: "始终免费",
+        free: "免费账户",
         paid: "7 天退款保证",
       },
       yourPlan: "你的计划",
@@ -1323,7 +705,7 @@ const BASE_MARKETING_COPY = {
       },
       marketAnchor: "同类智能体平台起价约 $19/月",
       mostPopular: "最受欢迎",
-      freeGap: "无网页浏览 · 无持久记忆 · 无定时任务 · 0.5 vCPU",
+      freeGap: "不含由 Hivra 运行的计算机 · 连接你自己的电脑或服务器",
       specs: {
         agents: "Agent",
         cpu: "CPU",
@@ -1337,7 +719,7 @@ const BASE_MARKETING_COPY = {
       bestFit: "最佳适合",
       planGuidance: {
         free:
-          "Free 适合用一个受保护的 Agent 先试用 Hermes。大多数用户无需银行卡即可启动；风险较高的免费部署可能需要先完成银行卡验证。",
+          "如果你有自己的电脑或服务器可以连接，免费账户最合适。它不包含由 Hivra 运行的计算机；想让 Hivra 来运行时，请选择一个套餐。",
         operator:
           "Pro 适合独立开发者、黑客松项目，以及想快速上线一个 Agent 的用户。",
         fleet:
@@ -1347,7 +729,7 @@ const BASE_MARKETING_COPY = {
       },
       createAccountTitle: "创建你的账户。",
       createAccountIntroFree:
-        "账户信息将成为你的登录凭据。注册后，我们会激活 Free 计划并直接带你进入部署。大多数用户无需银行卡即可启动；风险较高的免费部署可能需要先完成银行卡验证。",
+        "账户信息将成为你的登录凭据。注册后，我们会为你设置免费账户并带你进入启动页，你可以在那里连接自己的电脑或选择套餐。",
       createAccountIntroPaid:
         "账户信息将成为你的登录凭据。注册后，你会继续进入安全结账流程，并受到 7 天退款保证保护。",
       legalPrefix: "继续即表示你同意我们的",
@@ -1362,7 +744,7 @@ const BASE_MARKETING_COPY = {
         home: "首页",
         computers: "电脑",
         agents: "智能体",
-        infrastructure: "基础设施",
+        infrastructure: "容量",
         collaboration: "协作",
         settings: "设置",
         launch: "启动",
@@ -1526,11 +908,16 @@ const BASE_MARKETING_COPY = {
         titleSuffix: " 钱包。",
         legacyIntroStrong: "原托管钱包",
         legacyIntroBody:
-          "现有的存入和提现流程会继续可用。先锁定目标层级今天的 $HERMESOS 价格，再把报价金额发送到你的存入地址。免费层级始终无需存入即可使用。",
+          "现有的存入和提现流程会继续可用。先锁定目标层级今天的 $HERMESOS 价格，再把报价金额发送到你的存入地址。你的免费账户始终无需存入即可使用。",
         selfCustodyIntroStrong: "连接你自己的钱包",
         selfCustodyIntroBody:
-          "自行持有 $HermesOS 和 VVV，然后签名验证所有权。免费层级始终无需代币验证即可使用。",
+          "自行持有 $HermesOS 和 VVV，然后签名验证所有权。你的免费账户始终无需代币验证即可使用。",
         priceUnavailable: "代币价格暂不可用，请稍后重试。",
+        restricted: {
+          eyebrow: "钱包",
+          title: "你的钱包。",
+          intro: "你的 Agent 的钱包都列在这里。",
+        },
         buyToken: {
           ariaLabel: "购买 $HermesOS",
           eyebrow: "获取 $HermesOS",
@@ -1592,8 +979,8 @@ const BASE_MARKETING_COPY = {
         agentWallets: {
           ariaLabel: "Agent 钱包",
           title: "Agent 钱包。",
-          subtitle: "每个 Agent 一个钱包 · Bankr 管理 · 仅限 Base",
-          emptyNoAgents: "启动第一个 Agent 后，我们会自动为它配置 Bankr 钱包。",
+          subtitle: "每个 Agent 一个钱包 · Bankr · 仅限 Base",
+          emptyNoAgents: "启动一个 Agent，然后连接你自己的 Bankr 账户，为它配置钱包。",
           deployAgent: "部署 Agent",
           runningEmpty: "运行中的 Agent 会显示在这里。",
         },
@@ -1678,7 +1065,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "无限",
           agents: "个 Agent",
           active: "已启用",
-          guarantee: "48 小时退款政策 · 仅支持升级",
+          guarantee: "7 天退款政策 · 仅支持升级",
         },
         noSubscription: {
           title: "没有有效订阅",
@@ -1770,7 +1157,7 @@ const BASE_MARKETING_COPY = {
           },
           rows: {
             billing: { description: "计划、付款方式、额度和发票" },
-            wallets: { title: "钱包", description: "Agent 钱包和 $HermesOS 访问权限" },
+            wallets: { title: "钱包", description: "Agent 钱包" },
             apiKeys: { title: "API 密钥", description: "服务商密钥，以及使用它们的 Agent" },
             infrastructure: { description: "运行你的 Agent 的机器和云账户" },
             memory: { title: "共享 Agent 记忆", description: "每个新 Agent 一开始就知道的内容" },
@@ -1818,7 +1205,7 @@ const BASE_MARKETING_COPY = {
         },
         cta: {
           button: "部署你的 agent →",
-          subtitle: "免费层 — 1 个 agent，0.5 vCPU，1 GB 内存，始终在线",
+          subtitle: "开源，可在 Hivra Cloud 或你自己的服务器上运行",
         },
       },
     },
@@ -1894,329 +1281,10 @@ const LOCALE_COPY_OVERRIDES = {
       "mobileMenu": "Abrir menú",
       "closeMobileMenu": "Cerrar menú"
     },
-    "hero": {
-      "eyebrow": "Ya disponible",
-      "headlinePrefix": "Tus agentes de IA,",
-      "headlineEmphasis": "siempre activos.",
-      "primary": "Hivra pone tu agente Hermes en marcha en menos de 5 minutos, con memoria persistente, automatización del navegador y uso de herramientas. Sin Docker, sin archivos de configuración y sin depuración a medianoche.",
-      "secondary": "El plan gratuito ya está activo. Pro y Power están disponibles para cargas de trabajo serias. Paga con tarjeta o con $HermesOS.",
-      "primaryCta": "Empezar gratis",
-      "secondaryCta": "Ver cómo funciona",
-      "proofPoints": [
-        "Plan gratuito permanente",
-        "Tu propia clave, sin recargo",
-        "Basado en Hermes Agent"
-      ]
-    },
-    "ticker": {
-      "proofPoints": [
-        "Construido sobre Hermes Agent (Nous Research)",
-        "Tu propia clave, cero markup",
-        "Tier gratuito siempre disponible"
-      ]
-    },
-    "positioning": {
-      "title": "OpenClaw olvida. Hermes acumula.",
-      "body": "Creado por Nous Research, Hermes vive en un servidor y recuerda todo — proyectos, preferencias, lecciones aprendidas. Cada sesión lo hace más afilado. Montarlo por cuenta propia le toma a la mayoría un fin de semana.",
-      "punchline": "Hivra reduce ese fin de semana a 5 minutos."
-    },
-    "features": {
-      "eyebrow": "Qué incluye",
-      "titlePrefix": "Todo lo que tu agente necesita.",
-      "titleEmphasis": "Nada que no necesites.",
-      "items": [
-        {
-          "headline": "Cero configuración. Stack completo.",
-          "body": "Automatización de navegador, uso de herramientas, terminal, memoria y cron — preconfigurados. Sin Docker, sin StackOverflow a medianoche."
-        },
-        {
-          "headline": "Multi-agente desde el día uno.",
-          "body": "Perfiles de agente ilimitados en una sola instancia. Investigadores, operadores, especialistas — sin costo adicional por agente."
-        },
-        {
-          "headline": "Tu clave. Cero markup.",
-          "body": "OpenRouter, OpenAI o Anthropic. Cifrada en reposo, inyectada al desplegar. Nunca vemos tu gasto en IA."
-        },
-        {
-          "headline": "Chatea desde cualquier lugar.",
-          "body": "Dashboard integrado con streaming. Conecta Telegram, Discord, Slack o WhatsApp — sin configuración adicional."
-        },
-        {
-          "headline": "Migración desde OpenClaw incluida.",
-          "body": "Tu configuración, prompts y habilidades actuales se transfieren intactos. Sin empezar desde cero."
-        },
-        {
-          "headline": "Estable. Recuperable. Siempre activo.",
-          "body": "Actualizaciones probadas contra tu configuración antes del despliegue. Reinicio automático ante fallos. Respaldos diarios — nunca a más de 24 horas de una restauración limpia."
-        }
-      ]
-    },
-    "howItWorks": {
-      "eyebrow": "Cómo funciona",
-      "titlePrefix": "Tres pasos.",
-      "titleEmphasis": "Sin terminal requerida.",
-      "steps": [
-        {
-          "step": "1",
-          "headline": "Elige tu tier",
-          "body": "Empieza gratis, sube de plan cuando necesites más. Paga mensual con tarjeta, anual con descuento, o mantén $HermesOS para conservar el acceso sin suscripción."
-        },
-        {
-          "step": "2",
-          "headline": "Agrega tu clave de IA",
-          "body": "Pega tu clave de OpenRouter, OpenAI o Anthropic una sola vez. Cifrada, inyectada, listo."
-        },
-        {
-          "step": "3",
-          "headline": "Despliega. Habla. Automatiza.",
-          "body": "Tu agente está activo en minutos — chat, terminal, monitoreo. Conecta Telegram o Discord y te sigue a todas partes."
-        }
-      ],
-      "footer": "¿Listo para pasar de leer a configurar? Elige tu tier y ve directo a crear tu cuenta.",
-      "cta": "Elige Tu Tier"
-    },
-    "useCases": {
-      "eyebrow": "Casos de uso",
-      "titlePrefix": "¿Qué hace un agente 24/7",
-      "titleEmphasis": "con memoria, en la práctica?",
-      "intro": "Navega, escribe código, gestiona archivos, llama APIs, ejecuta tareas cron — de forma autónoma. Y recuerda lo que aprendió la semana pasada.",
-      "items": [
-        {
-          "headline": "DevOps y Monitoreo",
-          "body": "Lee logs, reinicia servicios con fallos, te avisa solo cuando se necesita un humano. Recuerda tu stack."
-        },
-        {
-          "headline": "Investigación e Inteligencia Competitiva",
-          "body": "Dale un tema y una fecha límite. Navega, agrega y entrega un brief estructurado — y guarda lo que aprendió para la próxima vez."
-        },
-        {
-          "headline": "Automatización en segundo plano",
-          "body": "Triaje de email, agendamiento, llamadas API, hojas de cálculo — todo lo repetitivo. Corre en cron mientras duermes."
-        },
-        {
-          "headline": "Triaje de Soporte al Cliente",
-          "body": "Dale tus docs. Resuelve tickets comunes, escala los difíciles, y mejora con cada conversación."
-        }
-      ],
-      "footer": "¿Ya viste el tipo de trabajo que Hermes puede quitarte de encima? Elige un plan y lanza el flujo que se ajusta a tu carga.",
-      "cta": "Ver Planes y Lanzar"
-    },
-    "whatsComing": {
-      "eyebrow": "Próximamente",
-      "titlePrefix": "Esto es solo",
-      "titleEmphasis": "el comienzo.",
-      "intro": "El hosting es la base. Próximamente:",
-      "items": [
-        {
-          "title": "Operator Packs",
-          "body": "Plantillas de agente preconfiguradas para tareas específicas — investigación, inteligencia de trading, automatización de contenido. Despliega en un clic."
-        },
-        {
-          "title": "Marketplace",
-          "body": "Crea operator packs, publícalos a la comunidad y gana por su uso. Liquidado en $HermesOS."
-        },
-        {
-          "title": "Agent Endpoints",
-          "body": "Expón tu agente como una API invocable. Otros agentes te pagan por solicitud."
-        },
-        {
-          "title": "Hive Mind",
-          "body": "Los agentes comparten lo que aprenden. Toda la red se vuelve más inteligente en conjunto."
-        }
-      ],
-      "footer": "Hivra es la infraestructura para una economía de agentes. El hosting es el paso uno. Todo lo demás se construye encima."
-    },
-    "pricing": {
-      "eyebrow": "Precios",
-      "titlePrefix": "Planes simples.",
-      "titleEmphasis": "Cómputo serio.",
-      "intro": "Cómputo dedicado. Perfiles de agente ilimitados. Tu propia clave, cero markup.",
-      "compute": "Cómputo",
-      "mostPopular": "Más Popular",
-      "forPros": "Para Pros",
-      "getStarted": "Comenzar",
-      "recommended": "Recomendado",
-      "accessPrefix": "Tres formas de acceder",
-      "footnote": "Ahorra hasta un 40% pagando con $HermesOS. Precios de lanzamiento para la primera ola — las tarifas pueden ajustarse conforme la plataforma madure.",
-      "guarantee": "Tier gratuito — prueba antes de actualizar · Reembolso de 48 h en pagos con tarjeta",
-      "tiers": [
-        {
-          "name": "Free",
-          "tagline": "La mayoría puede lanzarse sin tarjeta; los despliegues del tier gratuito con mayor riesgo pueden requerir verificación con tarjeta primero.",
-          "price": "$0",
-          "priceNote": "Siempre gratis; tarjeta solo si lo exigen las verificaciones de riesgo",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "0.5"
-            },
-            {
-              "label": "RAM",
-              "value": "1 GB"
-            },
-            {
-              "label": "Agentes activos",
-              "value": "1"
-            }
-          ],
-          "features": [
-            "Memoria persistente",
-            "Todas las integraciones incluidas",
-            "Se aplican límites de uso justo"
-          ],
-          "ctaLabel": "Empezar Gratis"
-        },
-        {
-          "name": "Pro",
-          "tagline": "Para trabajo real, no solo experimentos.",
-          "price": "$9.99",
-          "priceCadence": "/mes",
-          "priceNote": "Suscripción mensual con tarjeta",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "2"
-            },
-            {
-              "label": "RAM",
-              "value": "4 GB"
-            },
-            {
-              "label": "Agentes simultáneos",
-              "value": "3",
-              "tooltip": "Cuántos de tus agentes pueden ejecutar tareas al mismo tiempo. Los perfiles son ilimitados — este es el límite de ejecución en vivo."
-            }
-          ],
-          "features": [
-            "Perfiles de agente ilimitados",
-            "Todo lo del plan Free",
-            "Prioridad sobre el tier gratuito"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Tarjeta mensual",
-              "detail": "$9.99/mo"
-            },
-            {
-              "label": "Anual",
-              "detail": "$79/yr con tarjeta · $49/yr en $HermesOS"
-            },
-            {
-              "label": "Mantener $HermesOS",
-              "detail": "~$99 (precio de lanzamiento, primeros 30 días)"
-            }
-          ],
-          "ctaLabel": "Obtener Pro"
-        },
-        {
-          "name": "Power",
-          "tagline": "Para flujos de trabajo serios y operaciones multi-agente.",
-          "price": "$19.99",
-          "priceCadence": "/mes",
-          "priceNote": "Suscripción mensual con tarjeta",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "4"
-            },
-            {
-              "label": "RAM",
-              "value": "8 GB"
-            },
-            {
-              "label": "Agentes simultáneos",
-              "value": "Ilimitado",
-              "tooltip": "Ejecuta tantos agentes simultáneamente como soporte tu pool de cómputo — múltiples agentes trabajando tareas en paralelo, sin límite impuesto por la plataforma."
-            }
-          ],
-          "features": [
-            "Perfiles de agente ilimitados",
-            "Todo lo del plan Pro",
-            "CPU en ráfaga cuando la capacidad lo permite"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Tarjeta mensual",
-              "detail": "$19.99/mo"
-            },
-            {
-              "label": "Anual",
-              "detail": "$149/yr con tarjeta · $99/yr en $HermesOS"
-            },
-            {
-              "label": "Mantener $HermesOS",
-              "detail": "~$199 (precio de lanzamiento, primeros 30 días)"
-            }
-          ],
-          "ctaLabel": "Obtener Power"
-        }
-      ]
-    },
-    "token": {
-      "eyebrow": "Sobre $HermesOS",
-      "title": "La capa de acceso a la plataforma.",
-      "body": "$HermesOS te permite pagar suscripciones con descuento, mantenerlo para conservar tu tier sin pagar mensualmente, o transaccionar dentro de la economía de agentes a medida que la desarrollamos.",
-      "secondary": "El token no es obligatorio para usar Hivra — el tier gratuito sigue disponible sin él, con controles anti-abuso donde sea necesario. Si quieres integrarte más profundo en el ecosistema, mantener $HermesOS desbloquea más flexibilidad en cómo pagas y accedes.",
-      "cta": "Página de verificación del token"
-    },
-    "faq": {
-      "eyebrow": "Preguntas frecuentes",
-      "title": "Respuestas directas.",
-      "items": [
-        {
-          "q": "¿Mi clave API está segura?",
-          "a": "Sí. Cifrada en reposo, inyectada al desplegar mediante variables de entorno. Nunca hacemos proxy ni registramos tus solicitudes de IA."
-        },
-        {
-          "q": "¿Las actualizaciones pueden romper mi configuración?",
-          "a": "No. Cada actualización se prueba contra las configuraciones de contenedor antes de enviarse. Los respaldos diarios garantizan que nunca estés a más de 24 horas de una restauración limpia."
-        },
-        {
-          "q": "¿En qué se diferencia de OpenClaw?",
-          "a": "OpenClaw es un excelente framework de escritorio open-source. Hivra es un entorno cloud completamente gestionado y listo para producción. Hermes Agent tiene memoria más estable, mayor confiabilidad y actualizaciones que no rompen tus funciones existentes."
-        },
-        {
-          "q": "¿Qué pasa si mi agente falla?",
-          "a": "Se reinicia automáticamente. El estado, los logs y el uso de recursos siempre son visibles en el dashboard."
-        },
-        {
-          "q": "¿Puedo correr múltiples agentes con un solo plan?",
-          "a": "Sí — perfiles ilimitados por instancia. Free corre 1 agente activo, Pro corre 3, Power no tiene límite de simultáneos. Tu pool de cómputo es el único límite real."
-        },
-        {
-          "q": "¿Qué proveedores de IA son compatibles?",
-          "a": "OpenRouter, OpenAI y Anthropic. Solo OpenRouter te da acceso a cientos de modelos con una sola clave."
-        },
-        {
-          "q": "¿Necesito usar $HermesOS para acceder a la plataforma?",
-          "a": "No. El tier gratuito no lo requiere. Pro y Power se pueden pagar con tarjeta. El token te da descuentos y una tercera vía de pago para quienes la quieran."
-        },
-        {
-          "q": "¿Qué viene después?",
-          "a": "Los operator packs (plantillas de agente preconfiguradas) se publican en las próximas semanas. Marketplace, agent endpoints y Hive Mind vienen a continuación. El roadmap está en hermesos.cloud/roadmap."
-        }
-      ]
-    },
-    "finalCta": {
-      "eyebrow": "Empieza ahora",
-      "title": "¿Listo para desplegar?",
-      "body": "El tier gratuito está activo con salvaguardas contra abuso. Pro y Power disponibles ahora.",
-      "primary": "Empezar Gratis",
-      "secondary": "Ver Precios",
-      "note": "La mayoría de usuarios gratuitos puede empezar sin tarjeta; los registros de mayor riesgo pueden requerir una tarjeta en archivo.",
-      "accountPrefix": "¿Ya tienes una cuenta?",
-      "accountLink": "Inicia sesión"
-    },
     "getStarted": {
       "loadingCheckout": "Redirigiendo al pago...",
-      "steps": {
-        "choosePlan": "Elige plan",
-        "createAccount": "Crear cuenta",
-        "activate": "Activar",
-        "payment": "Pago"
-      },
       "badges": {
-        "free": "Siempre gratis",
+        "free": "Cuenta gratuita",
         "paid": "Garantía de devolución de 7 días"
       },
       "yourPlan": "Tu plan",
@@ -2230,7 +1298,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Plataformas de agentes comparables cuestan desde unos $19/mes",
       "mostPopular": "Más popular",
-      "freeGap": "Sin navegación web · sin memoria persistente · sin tareas programadas · 0.5 vCPU",
+      "freeGap": "Sin computadora gestionada por Hivra · conecta tu propia computadora o servidor",
       "specs": {
         "agents": "Agentes",
         "cpu": "CPU",
@@ -2243,13 +1311,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Cambiar plan",
       "bestFit": "Mejor opción",
       "planGuidance": {
-        "free": "Free es ideal para probar Hermes con un agente protegido. La mayoría puede lanzarse sin tarjeta; los despliegues del tier gratuito con mayor riesgo pueden requerir verificación con tarjeta primero.",
+        "free": "Una cuenta gratuita es ideal si tienes tu propia computadora o servidor para conectar. No incluye ninguna computadora gestionada por Hivra; elige un plan cuando quieras que Hivra gestione una.",
         "operator": "Pro es ideal para builders en solitario, proyectos de hackathon y poner en marcha un agente rápidamente.",
         "fleet": "Power es ideal para flujos multi-agente, navegación más intensa y equipos que quieren más capacidad de cómputo de inmediato.",
         "command": "Command es ideal para las cargas de trabajo más grandes, el camino de escalado más rápido y el máximo cómputo por despliegue."
       },
       "createAccountTitle": "Crea tu cuenta.",
-      "createAccountIntroFree": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, activaremos tu plan Free y te llevaremos directo al despliegue. La mayoría puede lanzarse sin tarjeta; los despliegues del tier gratuito con mayor riesgo pueden requerir verificación con tarjeta primero.",
+      "createAccountIntroFree": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, configuraremos tu cuenta gratuita y te llevaremos a Launch, donde puedes conectar tu propia computadora o elegir un plan.",
       "createAccountIntroPaid": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, continuarás al checkout seguro. Protegido por nuestra garantía de devolución de 7 días.",
       "legalPrefix": "Al continuar, aceptas nuestros",
       "terms": "Términos de servicio",
@@ -2263,7 +1331,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Inicio",
         "computers": "Ordenadores",
         "agents": "Agentes",
-        "infrastructure": "Infraestructura",
+        "infrastructure": "Capacidad",
         "collaboration": "Colaboración",
         "settings": "Configuración",
         "launch": "Lanzar",
@@ -2426,10 +1494,15 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": ".",
         "legacyIntroStrong": "Wallet de custodia heredada",
-        "legacyIntroBody": "tu flujo actual de depósito y retiro sigue activo. Fija el precio de hoy de $HERMESOS para el tier que quieres, luego envía el monto cotizado a tu dirección de depósito. El tier gratuito siempre funciona sin depósito.",
+        "legacyIntroBody": "tu flujo actual de depósito y retiro sigue activo. Fija el precio de hoy de $HERMESOS para el tier que quieres, luego envía el monto cotizado a tu dirección de depósito. Tu cuenta gratuita siempre funciona sin depósito.",
         "selfCustodyIntroStrong": "Conecta tu propia billetera",
-        "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. El plan gratuito siempre funciona sin verificación de token.",
+        "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. Tu cuenta gratuita siempre funciona sin verificación de token.",
         "priceUnavailable": "El precio del token no está disponible. Inténtalo de nuevo más tarde.",
+        "restricted": {
+          "eyebrow": "Billetera",
+          "title": "Tus billeteras.",
+          "intro": "Aquí se muestran las billeteras de tus agentes.",
+        },
         "buyToken": {
           "ariaLabel": "Comprar $HermesOS",
           "eyebrow": "Obtener $HermesOS",
@@ -2491,8 +1564,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Billeteras de agentes",
           "title": "Billeteras de agentes.",
-          "subtitle": "Una billetera por agente · Gestionada por Bankr · Solo Base",
-          "emptyNoAgents": "Inicia tu primer agente y le aprovisionaremos una billetera Bankr automáticamente.",
+          "subtitle": "Una billetera por agente · Bankr · Solo Base",
+          "emptyNoAgents": "Inicia un agente y conecta tu propia cuenta de Bankr para darle una billetera.",
           "deployAgent": "Desplegar agente",
           "runningEmpty": "Los agentes en ejecución aparecerán aquí."
         }
@@ -2577,7 +1650,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Activo",
-          "guarantee": "Política de reembolso de 48 horas · Solo actualizaciones"
+          "guarantee": "Política de reembolso de 7 días · Solo actualizaciones"
         },
         "noSubscription": {
           "title": "Sin suscripción activa"
@@ -2669,7 +1742,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Plan, métodos de pago, créditos y facturas" },
-            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes y acceso con $HermesOS" },
+            "wallets": { "title": "Billeteras", "description": "Billeteras de agentes" },
             "apiKeys": { "title": "Claves de API", "description": "Claves de proveedores y qué agentes las usan" },
             "infrastructure": { "description": "Las máquinas y cuentas en la nube donde se ejecutan tus agentes" },
             "memory": { "title": "Memoria compartida de agentes", "description": "Lo que cada agente nuevo sabe desde el principio" },
@@ -2717,7 +1790,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cta": {
           "button": "Despliega tu agente →",
-          "subtitle": "Plan gratis — 1 agente, 0,5 vCPU, 1 GB RAM"
+          "subtitle": "Código abierto, en Hivra Cloud o en tu propio servidor"
         }
       }
     },
@@ -2746,329 +1819,10 @@ const LOCALE_COPY_OVERRIDES = {
       "mobileMenu": "Abrir menu",
       "closeMobileMenu": "Fechar menu"
     },
-    "hero": {
-      "eyebrow": "Já disponível",
-      "headlinePrefix": "Seus agentes de IA,",
-      "headlineEmphasis": "sempre ativos.",
-      "primary": "Hivra coloca seu agente Hermes no ar em menos de 5 minutos, com memória persistente, automação de navegador e uso de ferramentas.",
-      "secondary": "O plano gratuito está ativo. Pro e Power servem cargas de trabalho sérias. Pague com cartão ou $HermesOS.",
-      "primaryCta": "Começar grátis",
-      "secondaryCta": "Ver como funciona",
-      "proofPoints": [
-        "Plano gratuito permanente",
-        "Sua chave, sem margem",
-        "Baseado no Hermes Agent"
-      ]
-    },
-    "ticker": {
-      "proofPoints": [
-        "Baseado no Hermes Agent (Nous Research)",
-        "Use sua chave, sem sobretaxa",
-        "Plano gratuito sempre disponível"
-      ]
-    },
-    "positioning": {
-      "title": "OpenClaw esquece. Hermes acumula.",
-      "body": "Desenvolvido pela Nous Research, o Hermes vive em um servidor e lembra de tudo — projetos, preferências, lições aprendidas. Cada sessão o torna mais afiado. Configurá-lo por conta própria leva a maioria das pessoas um fim de semana.",
-      "punchline": "Hivra reduz esse fim de semana para 5 minutos."
-    },
-    "features": {
-      "eyebrow": "O que está incluído",
-      "titlePrefix": "Tudo que seu agente precisa.",
-      "titleEmphasis": "Nada além disso.",
-      "items": [
-        {
-          "headline": "Zero configuração. Full stack.",
-          "body": "Automação de browser, uso de ferramentas, terminal, memória e cron — pré-configurados. Sem Docker, sem StackOverflow na madrugada."
-        },
-        {
-          "headline": "Multi-agente desde o primeiro dia.",
-          "body": "Perfis de agentes ilimitados em uma única instância. Pesquisadores, operadores, especialistas — sem custo extra por agente."
-        },
-        {
-          "headline": "Sua chave. Zero markup.",
-          "body": "OpenRouter, OpenAI ou Anthropic. Criptografado em repouso, injetado no deploy. Nunca vemos seus gastos com IA."
-        },
-        {
-          "headline": "Converse de qualquer lugar.",
-          "body": "Dashboard integrado com streaming. Conecte Telegram, Discord, Slack ou WhatsApp — out of the box."
-        },
-        {
-          "headline": "Migração do OpenClaw embutida.",
-          "body": "Sua configuração atual, prompts e skills são transferidos intactos. Sem começar do zero."
-        },
-        {
-          "headline": "Estável. Recuperável. Sempre ativo.",
-          "body": "Atualizações testadas contra sua configuração antes do rollout. Reinicialização automática em falhas. Backups diários — nunca a mais de 24 horas de uma restauração limpa."
-        }
-      ]
-    },
-    "howItWorks": {
-      "eyebrow": "Como funciona",
-      "titlePrefix": "Três passos.",
-      "titleEmphasis": "Sem terminal necessário.",
-      "steps": [
-        {
-          "step": "1",
-          "headline": "Escolha seu plano",
-          "body": "Comece gratuitamente, faça upgrade quando precisar de mais. Pague mensalmente com cartão, anualmente com desconto, ou mantenha $HermesOS para manter o acesso sem assinatura."
-        },
-        {
-          "step": "2",
-          "headline": "Adicione sua chave de IA",
-          "body": "Cole sua chave do OpenRouter, OpenAI ou Anthropic uma vez. Criptografada, injetada, pronto."
-        },
-        {
-          "step": "3",
-          "headline": "Deploy. Converse. Automatize.",
-          "body": "Seu agente fica ativo em minutos — chat, terminal, monitoramento. Conecte Telegram ou Discord e ele te acompanha em todo lugar."
-        }
-      ],
-      "footer": "Pronto para passar da leitura para a configuração? Escolha seu plano e vá direto para a criação da conta.",
-      "cta": "Escolha Seu Plano"
-    },
-    "useCases": {
-      "eyebrow": "Casos de uso",
-      "titlePrefix": "O que um agente 24/7",
-      "titleEmphasis": "com memória realmente faz?",
-      "intro": "Navega, escreve código, gerencia arquivos, chama APIs, executa tarefas cron — de forma autônoma. E lembra do que aprendeu na semana passada.",
-      "items": [
-        {
-          "headline": "DevOps & Monitoramento",
-          "body": "Lê logs, reinicia serviços com falha, te aciona só quando um humano é realmente necessário. Lembra da sua stack."
-        },
-        {
-          "headline": "Pesquisa & Inteligência Competitiva",
-          "body": "Dê um tema e um prazo. Ele navega, agrega e entrega um briefing estruturado — e salva o que aprendeu para a próxima vez."
-        },
-        {
-          "headline": "Automação em Background",
-          "body": "Triagem de e-mails, agendamentos, chamadas de API, planilhas — tudo que é repetitivo. Roda via cron enquanto você dorme."
-        },
-        {
-          "headline": "Triagem de Suporte ao Cliente",
-          "body": "Alimente-o com sua documentação. Ele resolve tickets comuns, escala os difíceis e fica mais inteligente a cada conversa."
-        }
-      ],
-      "footer": "Viu o tipo de trabalho que o Hermes pode tirar do seu prato? Escolha um plano e lance o workflow que combina com sua carga.",
-      "cta": "Ver Planos e Lançar"
-    },
-    "whatsComing": {
-      "eyebrow": "O que vem por aí",
-      "titlePrefix": "Isso é só",
-      "titleEmphasis": "o começo.",
-      "intro": "O hosting é a base. Em breve:",
-      "items": [
-        {
-          "title": "Operator Packs",
-          "body": "Templates de agentes pré-construídos para trabalhos específicos — pesquisa, inteligência de trading, automação de conteúdo. Deploy em um clique."
-        },
-        {
-          "title": "Marketplace",
-          "body": "Crie Operator Packs, publique para a comunidade, ganhe por uso. Liquidado em $HermesOS."
-        },
-        {
-          "title": "Agent Endpoints",
-          "body": "Exponha seu agente como uma API chamável. Outros agentes pagam por requisição."
-        },
-        {
-          "title": "Hive Mind",
-          "body": "Agentes compartilham o que aprendem. Toda a rede fica mais inteligente juntos."
-        }
-      ],
-      "footer": "Hivra é a infraestrutura para uma economia de agentes. Hosting é o passo um. Todo o resto se constrói em cima."
-    },
-    "pricing": {
-      "eyebrow": "Preços",
-      "titlePrefix": "Planos simples.",
-      "titleEmphasis": "Compute de verdade.",
-      "intro": "Compute dedicado. Perfis de agentes ilimitados. BYO key, zero markup.",
-      "compute": "Computação",
-      "mostPopular": "Mais Popular",
-      "forPros": "Para Profissionais",
-      "getStarted": "Começar",
-      "recommended": "Recomendado",
-      "accessPrefix": "Três formas de acessar",
-      "footnote": "Economize até 40% pagando com $HermesOS. Preços de lançamento para a primeira onda — valores podem ser ajustados conforme a plataforma amadurece.",
-      "guarantee": "Plano gratuito — experimente antes de fazer upgrade · Reembolso em 48h para pagamentos com cartão",
-      "tiers": [
-        {
-          "name": "Free",
-          "tagline": "A maioria dos usuários pode começar sem cartão; deploys no plano gratuito com risco mais alto podem exigir verificação de cartão primeiro.",
-          "price": "$0",
-          "priceNote": "Sempre gratuito; cartão só se verificações de risco exigirem",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "0.5"
-            },
-            {
-              "label": "RAM",
-              "value": "1 GB"
-            },
-            {
-              "label": "Agentes ativos",
-              "value": "1"
-            }
-          ],
-          "features": [
-            "Memória persistente",
-            "Todas as integrações incluídas",
-            "Limites de uso justo aplicáveis"
-          ],
-          "ctaLabel": "Começar Gratuitamente"
-        },
-        {
-          "name": "Pro",
-          "tagline": "Para trabalho de verdade, não apenas experimentos.",
-          "price": "$9.99",
-          "priceCadence": "/mês",
-          "priceNote": "Assine mensalmente com cartão",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "2"
-            },
-            {
-              "label": "RAM",
-              "value": "4 GB"
-            },
-            {
-              "label": "Agentes simultâneos",
-              "value": "3",
-              "tooltip": "Quantos dos seus agentes podem executar tarefas ao mesmo tempo. Perfis são ilimitados — este é o limite de execução ao vivo."
-            }
-          ],
-          "features": [
-            "Perfis de agentes ilimitados",
-            "Tudo do Free",
-            "Prioridade sobre o plano gratuito"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Cartão mensal",
-              "detail": "$9,99/mês"
-            },
-            {
-              "label": "Anual",
-              "detail": "$79/ano cartão · $49/ano em $HermesOS"
-            },
-            {
-              "label": "Manter $HermesOS",
-              "detail": "~$99 (preço de lançamento, primeiros 30 dias)"
-            }
-          ],
-          "ctaLabel": "Assinar Pro"
-        },
-        {
-          "name": "Power",
-          "tagline": "Para workflows sérios e operações multi-agente.",
-          "price": "$19.99",
-          "priceCadence": "/mês",
-          "priceNote": "Assine mensalmente com cartão",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "4"
-            },
-            {
-              "label": "RAM",
-              "value": "8 GB"
-            },
-            {
-              "label": "Agentes simultâneos",
-              "value": "Ilimitado",
-              "tooltip": "Execute quantos agentes simultaneamente seu pool de compute suportar — vários agentes trabalhando em paralelo, sem limite imposto pela plataforma."
-            }
-          ],
-          "features": [
-            "Perfis de agentes ilimitados",
-            "Tudo do Pro",
-            "CPU em burst quando a capacidade permitir"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Cartão mensal",
-              "detail": "$19,99/mês"
-            },
-            {
-              "label": "Anual",
-              "detail": "$149/ano cartão · $99/ano em $HermesOS"
-            },
-            {
-              "label": "Manter $HermesOS",
-              "detail": "~$199 (preço de lançamento, primeiros 30 dias)"
-            }
-          ],
-          "ctaLabel": "Assinar Power"
-        }
-      ]
-    },
-    "token": {
-      "eyebrow": "Sobre $HermesOS",
-      "title": "A camada de acesso da plataforma.",
-      "body": "$HermesOS permite pagar assinaturas com desconto, manter para conservar seu plano sem pagar mensalmente, ou transacionar pela economia de agentes conforme a lançamos.",
-      "secondary": "O token não é obrigatório para usar o Hivra — o plano gratuito continua disponível sem ele, com verificações anti-abuso onde necessário. Se você quiser mergulhar mais fundo no ecossistema, manter $HermesOS desbloqueia mais flexibilidade em como você paga e acessa.",
-      "cta": "Página de verificação do token"
-    },
-    "faq": {
-      "eyebrow": "Perguntas frequentes",
-      "title": "Respostas diretas.",
-      "items": [
-        {
-          "q": "Minha chave de API está segura?",
-          "a": "Sim. Criptografada em repouso, injetada no deploy via variáveis de ambiente. Nunca fazemos proxy nem registramos suas requisições de IA."
-        },
-        {
-          "q": "As atualizações vão quebrar minha configuração?",
-          "a": "Não. Cada atualização é testada contra as configurações do container antes de ser publicada. Backups diários garantem que você nunca estará a mais de 24 horas de uma restauração limpa."
-        },
-        {
-          "q": "Como isso é diferente do OpenClaw?",
-          "a": "OpenClaw é um excelente framework open-source para desktop. Hivra é um ambiente cloud totalmente gerenciado e pronto para produção. O Hermes Agent tem memória mais estável, maior confiabilidade e atualizações que não quebram seus recursos existentes."
-        },
-        {
-          "q": "E se meu agente travar?",
-          "a": "Ele reinicia automaticamente. Saúde, logs e uso de recursos sempre visíveis no dashboard."
-        },
-        {
-          "q": "Posso rodar vários agentes em um único plano?",
-          "a": "Sim — perfis ilimitados por instância. Free roda 1 agente ativo, Pro roda 3, Power não tem limite de concorrência. Seu pool de compute é o único limite real."
-        },
-        {
-          "q": "Quais provedores de IA são suportados?",
-          "a": "OpenRouter, OpenAI e Anthropic. Só o OpenRouter já te dá acesso a centenas de modelos com uma única chave."
-        },
-        {
-          "q": "Preciso usar $HermesOS para acessar a plataforma?",
-          "a": "Não. O plano gratuito não exige. Pro e Power podem ser pagos com cartão. O token oferece descontos e um terceiro caminho de pagamento para quem quiser."
-        },
-        {
-          "q": "O que vem a seguir?",
-          "a": "Operator Packs (templates de agentes pré-construídos) chegam nas próximas semanas. Marketplace, Agent Endpoints e Hive Mind vêm depois. O roadmap está em hermesos.cloud/roadmap."
-        }
-      ]
-    },
-    "finalCta": {
-      "eyebrow": "Comece agora",
-      "title": "Pronto para fazer o deploy?",
-      "body": "O plano gratuito está ativo com proteções contra abuso. Pro e Power disponíveis agora.",
-      "primary": "Começar Gratuitamente",
-      "secondary": "Ver Preços",
-      "note": "A maioria dos usuários gratuitos pode começar sem cartão; cadastros de maior risco podem precisar de cartão registrado.",
-      "accountPrefix": "Já tem uma conta?",
-      "accountLink": "Entrar"
-    },
     "getStarted": {
       "loadingCheckout": "Redirecionando para o checkout...",
-      "steps": {
-        "choosePlan": "Escolher Plano",
-        "createAccount": "Criar Conta",
-        "activate": "Ativar",
-        "payment": "Pagamento"
-      },
       "badges": {
-        "free": "Sempre Gratuito",
+        "free": "Conta gratuita",
         "paid": "Garantia de 7 Dias"
       },
       "yourPlan": "Seu Plano",
@@ -3082,7 +1836,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Plataformas de agentes comparáveis começam em torno de $19/mês",
       "mostPopular": "Mais popular",
-      "freeGap": "Sem navegação web · sem memória persistente · sem tarefas agendadas · 0.5 vCPU",
+      "freeGap": "Sem computador gerenciado pela Hivra · conecte seu próprio computador ou servidor",
       "specs": {
         "agents": "Agentes",
         "cpu": "CPU",
@@ -3095,13 +1849,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Trocar Plano",
       "bestFit": "Melhor Opção",
       "planGuidance": {
-        "free": "O Free é ideal para experimentar o Hermes com um agente monitorado. A maioria dos usuários pode começar sem cartão; deploys de maior risco podem exigir verificação de cartão primeiro.",
+        "free": "Uma conta gratuita é ideal se você tem um computador ou servidor próprio para conectar. Ela não inclui computador gerenciado pela Hivra; escolha um plano quando quiser que a Hivra rode um.",
         "operator": "O Pro é ideal para desenvolvedores solo, projetos de hackathon e para colocar um agente no ar rapidamente.",
         "fleet": "O Power é ideal para workflows multi-agente, navegação mais intensa e equipes que querem mais margem de compute imediatamente.",
         "command": "O Command é ideal para as maiores cargas de trabalho, o caminho de escalonamento mais rápido e o máximo de compute por deploy."
       },
       "createAccountTitle": "Crie sua conta.",
-      "createAccountIntroFree": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, ativaremos seu plano Free e te levaremos direto para o deploy. A maioria dos usuários pode começar sem cartão; deploys de maior risco podem exigir verificação de cartão primeiro.",
+      "createAccountIntroFree": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, vamos configurar sua conta gratuita e levar você ao Launch, onde você pode conectar seu próprio computador ou escolher um plano.",
       "createAccountIntroPaid": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, você prosseguirá para o checkout seguro. Protegido pela nossa garantia de reembolso em 7 dias.",
       "legalPrefix": "Ao continuar, você concorda com nossos",
       "terms": "Termos de Serviço",
@@ -3115,7 +1869,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Início",
         "computers": "Computadores",
         "agents": "Agentes",
-        "infrastructure": "Infraestrutura",
+        "infrastructure": "Capacidade",
         "collaboration": "Colaboração",
         "settings": "Configurações",
         "launch": "Lançar",
@@ -3278,10 +2032,15 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": ".",
         "legacyIntroStrong": "Carteira custody grandfathered",
-        "legacyIntroBody": "seu fluxo existente de depósito e retirada continua ativo. Trave o preço atual do $HERMESOS para o plano desejado e envie o valor cotado para seu endereço de depósito. O plano gratuito sempre funciona sem depósito.",
+        "legacyIntroBody": "seu fluxo existente de depósito e retirada continua ativo. Trave o preço atual do $HERMESOS para o plano desejado e envie o valor cotado para seu endereço de depósito. Sua conta gratuita sempre funciona sem depósito.",
         "selfCustodyIntroStrong": "Conecte sua própria carteira",
-        "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. O plano gratuito sempre funciona sem verificação de token.",
+        "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. Sua conta gratuita sempre funciona sem verificação de token.",
         "priceUnavailable": "Preço do token indisponível — tente novamente mais tarde.",
+        "restricted": {
+          "eyebrow": "Carteira",
+          "title": "Suas carteiras.",
+          "intro": "As carteiras dos seus agentes aparecem aqui.",
+        },
         "buyToken": {
           "ariaLabel": "Comprar $HermesOS",
           "eyebrow": "Obter $HermesOS",
@@ -3343,8 +2102,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Carteiras dos agentes",
           "title": "Carteiras dos agentes.",
-          "subtitle": "Uma carteira por agente · Gerenciada pela Bankr · Apenas Base",
-          "emptyNoAgents": "Crie seu primeiro agente e provisionaremos automaticamente uma carteira Bankr para ele.",
+          "subtitle": "Uma carteira por agente · Bankr · Apenas Base",
+          "emptyNoAgents": "Crie um agente e conecte sua própria conta Bankr para dar uma carteira a ele.",
           "deployAgent": "Criar um agente",
           "runningEmpty": "Agentes em execução aparecerão aqui."
         }
@@ -3429,7 +2188,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Ativo",
-          "guarantee": "Política de reembolso em 48h · Planos somente com upgrade"
+          "guarantee": "Política de reembolso em 7 dias · Planos somente com upgrade"
         },
         "noSubscription": {
           "title": "Sem assinatura ativa"
@@ -3521,7 +2280,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Plano, formas de pagamento, créditos e faturas" },
-            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes e acesso com $HermesOS" },
+            "wallets": { "title": "Carteiras", "description": "Carteiras dos agentes" },
             "apiKeys": { "title": "Chaves de API", "description": "Chaves de provedores e quais agentes as usam" },
             "infrastructure": { "description": "As máquinas e contas de nuvem onde seus agentes rodam" },
             "memory": { "title": "Memória compartilhada dos agentes", "description": "O que todo agente novo já sabe desde o início" },
@@ -3569,7 +2328,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cta": {
           "button": "Implante seu agente →",
-          "subtitle": "Plano grátis — 1 agente, 0,5 vCPU, 1 GB RAM"
+          "subtitle": "Código aberto, no Hivra Cloud ou no seu próprio servidor"
         }
       }
     },
@@ -3598,329 +2357,10 @@ const LOCALE_COPY_OVERRIDES = {
       "mobileMenu": "Ouvrir le menu",
       "closeMobileMenu": "Fermer le menu"
     },
-    "hero": {
-      "eyebrow": "Disponible",
-      "headlinePrefix": "Vos agents IA,",
-      "headlineEmphasis": "toujours actifs.",
-      "primary": "Hivra lance votre agent Hermes en moins de 5 minutes, avec mémoire persistante, automatisation du navigateur et outils.",
-      "secondary": "Le niveau gratuit est actif. Pro et Power sont prêts pour les charges sérieuses.",
-      "primaryCta": "Commencer gratis",
-      "secondaryCta": "Voir le fonctionnement",
-      "proofPoints": [
-        "Niveau gratuit permanent",
-        "Votre clé, sans marge",
-        "Basé sur Hermes Agent"
-      ]
-    },
-    "ticker": {
-      "proofPoints": [
-        "Propulsé par Hermes Agent (Nous Research)",
-        "Votre clé, zéro commission",
-        "Tier gratuit toujours disponible"
-      ]
-    },
-    "positioning": {
-      "title": "OpenClaw oublie. Hermes capitalise.",
-      "body": "Conçu par Nous Research, Hermes vit sur un serveur et se souvient de tout — projets, préférences, leçons apprises. Chaque session l'affûte davantage. En auto-hébergement, la mise en place prend généralement un week-end.",
-      "punchline": "Hivra réduit ce week-end à 5 minutes."
-    },
-    "features": {
-      "eyebrow": "Ce qui est inclus",
-      "titlePrefix": "Tout ce dont votre agent a besoin.",
-      "titleEmphasis": "Rien de superflu.",
-      "items": [
-        {
-          "headline": "Zéro config. Full stack.",
-          "body": "Automatisation du navigateur, outils, terminal, mémoire et cron — préconfigurés. Ni Docker, ni StackOverflow à minuit."
-        },
-        {
-          "headline": "Multi-agent dès le premier jour.",
-          "body": "Profils d'agents illimités sur une seule instance. Chercheurs, opérateurs, spécialistes — aucun coût supplémentaire par agent."
-        },
-        {
-          "headline": "Votre clé. Zéro commission.",
-          "body": "OpenRouter, OpenAI ou Anthropic. Chiffrée au repos, injectée au déploiement. Nous ne voyons jamais vos dépenses IA."
-        },
-        {
-          "headline": "Chattez depuis n'importe où.",
-          "body": "Dashboard intégré avec streaming. Connectez Telegram, Discord, Slack ou WhatsApp — nativement."
-        },
-        {
-          "headline": "Migration OpenClaw intégrée.",
-          "body": "Votre configuration actuelle, vos prompts et vos compétences migrent intacts. Pas de départ de zéro."
-        },
-        {
-          "headline": "Stable. Récupérable. Toujours actif.",
-          "body": "Mises à jour testées contre votre config avant déploiement. Redémarrage automatique en cas de panne. Sauvegardes quotidiennes — jamais à plus de 24 heures d'une restauration propre."
-        }
-      ]
-    },
-    "howItWorks": {
-      "eyebrow": "Comment ça marche",
-      "titlePrefix": "Trois étapes.",
-      "titleEmphasis": "Aucun terminal requis.",
-      "steps": [
-        {
-          "step": "1",
-          "headline": "Choisissez votre tier",
-          "body": "Commencez gratuitement, passez à un tier supérieur quand vous en avez besoin. Payez mensuellement par carte, annuellement pour bénéficier d'une réduction, ou détenez des $HermesOS pour maintenir votre accès sans abonnement."
-        },
-        {
-          "step": "2",
-          "headline": "Ajoutez votre clé IA",
-          "body": "Collez votre clé OpenRouter, OpenAI ou Anthropic une seule fois. Chiffrée, injectée, c'est fait."
-        },
-        {
-          "step": "3",
-          "headline": "Déployez. Chattez. Automatisez.",
-          "body": "Votre agent est en ligne en quelques minutes — chat, terminal, monitoring. Connectez Telegram ou Discord et il vous suit partout."
-        }
-      ],
-      "footer": "Prêt à passer de la lecture à la mise en place ? Choisissez votre tier et lancez directement la création de compte.",
-      "cta": "Choisissez votre tier"
-    },
-    "useCases": {
-      "eyebrow": "Cas d'usage",
-      "titlePrefix": "Que fait un agent 24h/24",
-      "titleEmphasis": "avec de la mémoire, concrètement ?",
-      "intro": "Naviguer, coder, gérer des fichiers, appeler des API, exécuter des tâches cron — de manière autonome. Et il se souvient de ce qu'il a appris la semaine dernière.",
-      "items": [
-        {
-          "headline": "DevOps et supervision",
-          "body": "Lit les logs, redémarre les services défaillants, vous alerte uniquement quand une intervention humaine est vraiment nécessaire. Mémorise votre stack."
-        },
-        {
-          "headline": "Recherche & Veille concurrentielle",
-          "body": "Donnez-lui un sujet et une deadline. Il navigue, agrège et produit un brief structuré — puis sauvegarde ce qu'il a appris pour la prochaine fois."
-        },
-        {
-          "headline": "Automatisation en arrière-plan",
-          "body": "Tri des e-mails, planification, appels API, tableurs — tout ce qui est répétitif. Tourne sur cron pendant que vous dormez."
-        },
-        {
-          "headline": "Triage du support client",
-          "body": "Alimentez-le avec votre documentation. Il résout les tickets courants, escalade les cas complexes et s'améliore à chaque conversation."
-        }
-      ],
-      "footer": "Vous avez vu ce que Hermes peut prendre en charge ? Choisissez un plan et lancez le workflow qui correspond à votre charge.",
-      "cta": "Voir les plans & lancer"
-    },
-    "whatsComing": {
-      "eyebrow": "Ce qui arrive",
-      "titlePrefix": "Ce n'est que",
-      "titleEmphasis": "le début.",
-      "intro": "L'hébergement est la fondation. À venir :",
-      "items": [
-        {
-          "title": "Operator Packs",
-          "body": "Templates d'agents préconstruits pour des usages spécifiques — recherche, veille trading, automatisation de contenu. Déployez en un clic."
-        },
-        {
-          "title": "Marketplace",
-          "body": "Créez des Operator Packs, distribuez-les à la communauté, gagnez à l'usage. Réglé en $HermesOS."
-        },
-        {
-          "title": "Agent Endpoints",
-          "body": "Exposez votre agent comme une API callable. D'autres agents vous paient par requête."
-        },
-        {
-          "title": "Hive Mind",
-          "body": "Les agents partagent ce qu'ils apprennent. Tout le réseau devient plus intelligent ensemble."
-        }
-      ],
-      "footer": "Hivra est l'infrastructure d'une économie d'agents. L'hébergement est la première étape. Tout le reste se construit par-dessus."
-    },
-    "pricing": {
-      "eyebrow": "Tarification",
-      "titlePrefix": "Des plans simples.",
-      "titleEmphasis": "Un compute sérieux.",
-      "intro": "Compute dédié. Profils d'agents illimités. Votre clé, zéro commission.",
-      "compute": "Calcul",
-      "mostPopular": "Le plus populaire",
-      "forPros": "Pour les pros",
-      "getStarted": "Commencer",
-      "recommended": "Recommandé",
-      "accessPrefix": "Trois façons d'accéder",
-      "footnote": "Économisez jusqu'à 40 % en payant avec $HermesOS. Tarifs de lancement pour la première vague — susceptibles d'évoluer à mesure que la plateforme mûrit.",
-      "guarantee": "Tier gratuit — essayez avant de monter en gamme · Remboursement sous 48h sur paiement par carte",
-      "tiers": [
-        {
-          "name": "Free",
-          "tagline": "La plupart des utilisateurs peuvent démarrer sans carte ; les déploiements Free à risque élevé peuvent nécessiter une vérification par carte au préalable.",
-          "price": "$0",
-          "priceNote": "Toujours gratuit ; carte uniquement si les contrôles de risque l'exigent",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "0.5"
-            },
-            {
-              "label": "RAM",
-              "value": "1 GB"
-            },
-            {
-              "label": "Agents actifs",
-              "value": "1"
-            }
-          ],
-          "features": [
-            "Mémoire persistante",
-            "Toutes les intégrations incluses",
-            "Limites d'usage équitable applicables"
-          ],
-          "ctaLabel": "Démarrer gratuitement"
-        },
-        {
-          "name": "Pro",
-          "tagline": "Pour un vrai travail, pas juste des expérimentations.",
-          "price": "$9.99",
-          "priceCadence": "/mois",
-          "priceNote": "Abonnement mensuel par carte",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "2"
-            },
-            {
-              "label": "RAM",
-              "value": "4 GB"
-            },
-            {
-              "label": "Agents simultanés",
-              "value": "3",
-              "tooltip": "Combien de vos agents peuvent exécuter des tâches au même moment. Les profils sont illimités — il s'agit du plafond d'exécution simultanée."
-            }
-          ],
-          "features": [
-            "Profils d'agents illimités",
-            "Tout ce qui est dans Free",
-            "Priorité sur le tier Free"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Carte mensuelle",
-              "detail": "$9.99/mo"
-            },
-            {
-              "label": "Annuel",
-              "detail": "79 $/an carte · 49 $/an en $HermesOS"
-            },
-            {
-              "label": "Détenir $HermesOS",
-              "detail": "~99 $ (tarif de lancement, 30 premiers jours)"
-            }
-          ],
-          "ctaLabel": "Passer à Pro"
-        },
-        {
-          "name": "Power",
-          "tagline": "Pour les workflows sérieux et les opérations multi-agents.",
-          "price": "$19.99",
-          "priceCadence": "/mois",
-          "priceNote": "Abonnement mensuel par carte",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "4"
-            },
-            {
-              "label": "RAM",
-              "value": "8 GB"
-            },
-            {
-              "label": "Agents simultanés",
-              "value": "Illimité",
-              "tooltip": "Faites tourner autant d'agents simultanément que votre pool de compute peut en supporter — plusieurs agents travaillant en parallèle, sans plafond imposé par la plateforme."
-            }
-          ],
-          "features": [
-            "Profils d'agents illimités",
-            "Tout ce qui est dans Pro",
-            "CPU en rafale selon la capacité disponible"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Carte mensuelle",
-              "detail": "$19.99/mo"
-            },
-            {
-              "label": "Annuel",
-              "detail": "149 $/an carte · 99 $/an en $HermesOS"
-            },
-            {
-              "label": "Détenir $HermesOS",
-              "detail": "~199 $ (tarif de lancement, 30 premiers jours)"
-            }
-          ],
-          "ctaLabel": "Passer à Power"
-        }
-      ]
-    },
-    "token": {
-      "eyebrow": "À propos de $HermesOS",
-      "title": "La couche d'accès à la plateforme.",
-      "body": "$HermesOS vous permet de payer vos abonnements à prix réduit, de détenir des tokens pour maintenir votre tier sans paiement mensuel, ou de transacter dans l'économie d'agents au fur et à mesure de nos livraisons.",
-      "secondary": "Le token n'est pas obligatoire pour utiliser Hivra — le tier gratuit reste accessible sans lui, avec des contrôles anti-abus si nécessaire. Si vous souhaitez vous impliquer davantage dans l'écosystème, détenir des $HermesOS vous offre plus de flexibilité sur la façon dont vous payez et accédez.",
-      "cta": "Page de vérification du token"
-    },
-    "faq": {
-      "eyebrow": "Questions fréquentes",
-      "title": "Des réponses directes.",
-      "items": [
-        {
-          "q": "Ma clé API est-elle en sécurité ?",
-          "a": "Oui. Chiffrée au repos, injectée au déploiement via des variables d'environnement. Nous ne proxifions ni ne journalisons jamais vos requêtes IA."
-        },
-        {
-          "q": "Les mises à jour vont-elles casser ma configuration ?",
-          "a": "Non. Chaque mise à jour est testée contre les configs des conteneurs avant déploiement. Les sauvegardes quotidiennes garantissent que vous n'êtes jamais à plus de 24 heures d'une restauration propre."
-        },
-        {
-          "q": "En quoi est-ce différent d'OpenClaw ?",
-          "a": "OpenClaw est un excellent framework desktop open-source. Hivra est un environnement cloud entièrement géré, de niveau production. Hermes Agent offre une mémoire plus stable, une fiabilité accrue et des mises à jour qui ne cassent pas vos fonctionnalités existantes."
-        },
-        {
-          "q": "Que se passe-t-il si mon agent plante ?",
-          "a": "Il redémarre automatiquement. Santé, logs et utilisation des ressources toujours visibles dans le dashboard."
-        },
-        {
-          "q": "Puis-je faire tourner plusieurs agents sur un seul plan ?",
-          "a": "Oui — profils illimités par instance. Free fait tourner 1 agent actif, Pro en fait tourner 3, Power n'a pas de plafond de simultanéité. Votre pool de compute est la seule vraie limite."
-        },
-        {
-          "q": "Quels fournisseurs IA sont supportés ?",
-          "a": "OpenRouter, OpenAI et Anthropic. OpenRouter seul vous donne accès à des centaines de modèles avec une seule clé."
-        },
-        {
-          "q": "Dois-je utiliser $HermesOS pour accéder à la plateforme ?",
-          "a": "Non. Le tier Free n'en a pas besoin. Pro et Power peuvent être payés par carte. Le token vous offre des réductions et une troisième voie de paiement pour ceux qui le souhaitent."
-        },
-        {
-          "q": "Quelle est la prochaine étape ?",
-          "a": "Les Operator Packs (templates d'agents préconstruits) seront disponibles dans les prochaines semaines. Le Marketplace, les Agent Endpoints et le Hive Mind suivront. La feuille de route est sur hermesos.cloud/roadmap."
-        }
-      ]
-    },
-    "finalCta": {
-      "eyebrow": "Commencez maintenant",
-      "title": "Prêt à déployer ?",
-      "body": "Le tier Free est en ligne avec des protections anti-abus. Pro et Power sont disponibles dès maintenant.",
-      "primary": "Démarrer gratuitement",
-      "secondary": "Voir les tarifs",
-      "note": "La plupart des utilisateurs Free peuvent démarrer sans carte ; les inscriptions à risque élevé peuvent nécessiter une carte enregistrée.",
-      "accountPrefix": "Vous avez déjà un compte ?",
-      "accountLink": "Se connecter"
-    },
     "getStarted": {
       "loadingCheckout": "Redirection vers le paiement...",
-      "steps": {
-        "choosePlan": "Choisir un plan",
-        "createAccount": "Créer un compte",
-        "activate": "Activer",
-        "payment": "Paiement"
-      },
       "badges": {
-        "free": "Toujours gratuit",
+        "free": "Compte gratuit",
         "paid": "Garantie satisfait ou remboursé 7 jours"
       },
       "yourPlan": "Votre plan",
@@ -3934,7 +2374,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Les plateformes d'agents comparables démarrent autour de 19 $/mois",
       "mostPopular": "Le plus populaire",
-      "freeGap": "Pas de navigation web · pas de mémoire persistante · pas de tâches planifiées · 0,5 vCPU",
+      "freeGap": "Aucun ordinateur géré par Hivra · connectez votre propre ordinateur ou serveur",
       "specs": {
         "agents": "Agents",
         "cpu": "CPU",
@@ -3947,13 +2387,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Changer de plan",
       "bestFit": "Meilleur choix",
       "planGuidance": {
-        "free": "Free est idéal pour essayer Hermes avec un agent sécurisé. La plupart des utilisateurs peuvent démarrer sans carte ; les déploiements Free à risque élevé peuvent nécessiter une vérification par carte au préalable.",
+        "free": "Un compte gratuit convient si vous avez votre propre ordinateur ou serveur à connecter. Il n'inclut aucun ordinateur géré par Hivra ; choisissez un plan quand vous voulez que Hivra en fasse tourner un.",
         "operator": "Pro est idéal pour les développeurs solos, les projets de hackathon et la mise en ligne rapide d'un agent.",
         "fleet": "Power est idéal pour les workflows multi-agents, la navigation intensive et les équipes qui veulent plus de marge de compute immédiatement.",
         "command": "Command est idéal pour les charges les plus importantes, la voie de montée en charge la plus rapide et le maximum de compute par déploiement."
       },
       "createAccountTitle": "Créez votre compte.",
-      "createAccountIntroFree": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, nous activerons votre plan Free et vous emmènerons directement au déploiement. La plupart des utilisateurs peuvent démarrer sans carte ; les déploiements Free à risque élevé peuvent nécessiter une vérification par carte au préalable.",
+      "createAccountIntroFree": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, nous configurerons votre compte gratuit et vous emmènerons vers Launch, où vous pourrez connecter votre propre ordinateur ou choisir un plan.",
       "createAccountIntroPaid": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, vous continuerez vers le paiement sécurisé. Protégé par notre garantie satisfait ou remboursé 7 jours.",
       "legalPrefix": "En continuant, vous acceptez nos",
       "terms": "Conditions d'utilisation",
@@ -3967,7 +2407,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Accueil",
         "computers": "Ordinateurs",
         "agents": "Agents IA",
-        "infrastructure": "Infrastructure système",
+        "infrastructure": "Capacité",
         "collaboration": "Coopération",
         "settings": "Paramètres",
         "launch": "Lancer",
@@ -4130,10 +2570,15 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": ".",
         "legacyIntroStrong": "Portefeuille de garde grandfathered",
-        "legacyIntroBody": "votre flux de dépôt et de retrait existant reste actif. Verrouillez le prix $HERMESOS d'aujourd'hui pour le tier souhaité, puis envoyez le montant indiqué à votre adresse de dépôt. Le tier Free fonctionne toujours sans dépôt.",
+        "legacyIntroBody": "votre flux de dépôt et de retrait existant reste actif. Verrouillez le prix $HERMESOS d'aujourd'hui pour le tier souhaité, puis envoyez le montant indiqué à votre adresse de dépôt. Votre compte gratuit fonctionne toujours sans dépôt.",
         "selfCustodyIntroStrong": "Connectez votre propre portefeuille",
-        "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Le tier Free fonctionne toujours sans vérification de token.",
+        "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Votre compte gratuit fonctionne toujours sans vérification de token.",
         "priceUnavailable": "Prix du token indisponible — veuillez réessayer plus tard.",
+        "restricted": {
+          "eyebrow": "Portefeuille",
+          "title": "Vos portefeuilles.",
+          "intro": "Les portefeuilles de vos agents sont listés ici.",
+        },
         "buyToken": {
           "ariaLabel": "Acheter $HermesOS",
           "eyebrow": "Obtenir $HermesOS",
@@ -4195,8 +2640,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Portefeuilles des agents",
           "title": "Portefeuilles d’agents.",
-          "subtitle": "Un portefeuille par agent · Géré par Bankr · Base uniquement",
-          "emptyNoAgents": "Lancez votre premier agent et nous lui provisionnerons automatiquement un portefeuille Bankr.",
+          "subtitle": "Un portefeuille par agent · Bankr · Base uniquement",
+          "emptyNoAgents": "Lancez un agent, puis connectez votre propre compte Bankr pour lui donner un portefeuille.",
           "deployAgent": "Déployer un agent",
           "runningEmpty": "Les agents en cours d'exécution apparaîtront ici."
         }
@@ -4281,7 +2726,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Illimité",
           "agents": "agents",
           "active": "Actif",
-          "guarantee": "Politique de remboursement 48h · Plans avec upgrade uniquement"
+          "guarantee": "Politique de remboursement sous 7 jours · Plans avec upgrade uniquement"
         },
         "noSubscription": {
           "title": "Aucun abonnement actif"
@@ -4373,7 +2818,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Offre, moyens de paiement, crédits et factures" },
-            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents et accès $HermesOS" },
+            "wallets": { "title": "Portefeuilles", "description": "Portefeuilles des agents" },
             "apiKeys": { "title": "Clés API", "description": "Clés des fournisseurs et agents qui les utilisent" },
             "infrastructure": { "description": "Les machines et comptes cloud sur lesquels tournent vos agents" },
             "memory": { "title": "Mémoire partagée des agents", "description": "Ce que chaque nouvel agent sait dès le départ" },
@@ -4421,7 +2866,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cta": {
           "button": "Déployez votre agent →",
-          "subtitle": "Niveau gratuit — 1 agent, 0,5 vCPU, 1 Go RAM"
+          "subtitle": "Open source, sur Hivra Cloud ou sur votre propre serveur"
         }
       }
     },
@@ -4450,329 +2895,10 @@ const LOCALE_COPY_OVERRIDES = {
       "mobileMenu": "Menü öffnen",
       "closeMobileMenu": "Menü schließen"
     },
-    "hero": {
-      "eyebrow": "Jetzt live",
-      "headlinePrefix": "Deine KI-Agenten,",
-      "headlineEmphasis": "immer aktiv.",
-      "primary": "Hivra startet deinen Hermes-Agenten in unter 5 Minuten, mit persistentem Gedächtnis, Browser-Automatisierung und Tools.",
-      "secondary": "Der Free-Tarif ist live. Pro und Power sind für ernsthafte Workloads verfügbar.",
-      "primaryCta": "Kostenlos starten",
-      "secondaryCta": "So funktioniert es",
-      "proofPoints": [
-        "Free-Tarif dauerhaft",
-        "Eigener Key, kein Aufschlag",
-        "Auf Hermes Agent gebaut"
-      ]
-    },
-    "ticker": {
-      "proofPoints": [
-        "Basiert auf Hermes Agent (Nous Research)",
-        "Eigener API-Key, kein Aufschlag",
-        "Free-Tier immer verfügbar"
-      ]
-    },
-    "positioning": {
-      "title": "OpenClaw vergisst. Hermes wächst.",
-      "body": "Von Nous Research entwickelt, läuft Hermes auf einem Server und erinnert sich an alles — Projekte, Einstellungen, gelernte Lektionen. Jede Session macht ihn schärfer. Self-Hosting kostet die meisten ein Wochenende.",
-      "punchline": "Hivra macht daraus 5 Minuten."
-    },
-    "features": {
-      "eyebrow": "Was enthalten ist",
-      "titlePrefix": "Alles, was dein Agent braucht.",
-      "titleEmphasis": "Nichts, was du nicht brauchst.",
-      "items": [
-        {
-          "headline": "Null Konfiguration. Voller Stack.",
-          "body": "Browser-Automatisierung, Tool-Nutzung, Terminal, Memory und cron — vorkonfiguriert. Kein Docker, kein StackOverflow um Mitternacht."
-        },
-        {
-          "headline": "Multi-Agent vom ersten Tag an.",
-          "body": "Unbegrenzte Agent-Profile auf einer Instanz. Researcher, Operators, Spezialisten — kein Aufpreis pro Agent."
-        },
-        {
-          "headline": "Dein Key. Kein Aufschlag.",
-          "body": "OpenRouter, OpenAI oder Anthropic. Verschlüsselt gespeichert, beim Deploy injiziert. Wir sehen deine KI-Ausgaben nie."
-        },
-        {
-          "headline": "Überall chatten.",
-          "body": "Eingebautes Dashboard mit Streaming. Telegram, Discord, Slack oder WhatsApp verbinden — out of the box."
-        },
-        {
-          "headline": "OpenClaw-Migration inklusive.",
-          "body": "Dein bestehendes Setup, Prompts und Skills werden vollständig übernommen. Kein Neustart von vorne."
-        },
-        {
-          "headline": "Stabil. Wiederherstellbar. Always on.",
-          "body": "Updates werden vor dem Rollout gegen deine Konfiguration getestet. Auto-Neustart bei Ausfall. Tägliche Backups — nie mehr als 24 Stunden von einem sauberen Restore entfernt."
-        }
-      ]
-    },
-    "howItWorks": {
-      "eyebrow": "So funktioniert es",
-      "titlePrefix": "Drei Schritte.",
-      "titleEmphasis": "Kein Terminal nötig.",
-      "steps": [
-        {
-          "step": "1",
-          "headline": "Tier wählen",
-          "body": "Kostenlos starten, upgraden wenn du mehr brauchst. Monatlich per Karte zahlen, jährlich für Rabatt — oder $HermesOS halten, um Zugang ohne Abo zu behalten."
-        },
-        {
-          "step": "2",
-          "headline": "AI-Key hinzufügen",
-          "body": "OpenRouter-, OpenAI- oder Anthropic-Key einmal einfügen. Verschlüsselt, injiziert, fertig."
-        },
-        {
-          "step": "3",
-          "headline": "Deploy. Chatten. Automatisieren.",
-          "body": "Dein Agent ist in Minuten live — Chat, Terminal, Monitoring. Telegram oder Discord verbinden und er folgt dir überallhin."
-        }
-      ],
-      "footer": "Bereit, vom Lesen zum Einrichten zu wechseln? Tier wählen und direkt zur Kontoerstellung.",
-      "cta": "Tier wählen"
-    },
-    "useCases": {
-      "eyebrow": "Anwendungsfälle",
-      "titlePrefix": "Was macht ein 24/7-Agent",
-      "titleEmphasis": "mit Memory wirklich?",
-      "intro": "Browsen, coden, Dateien verwalten, APIs aufrufen, cron-Tasks ausführen — autonom. Und er erinnert sich, was er letzte Woche gelernt hat.",
-      "items": [
-        {
-          "headline": "DevOps & Monitoring",
-          "body": "Liest Logs, startet fehlerhafte Dienste neu, benachrichtigt dich nur wenn ein Mensch wirklich gebraucht wird. Kennt deinen Stack."
-        },
-        {
-          "headline": "Recherche & Wettbewerbsanalyse",
-          "body": "Thema und Deadline angeben. Er browst, aggregiert und liefert ein strukturiertes Briefing — und speichert das Gelernte für das nächste Mal."
-        },
-        {
-          "headline": "Hintergrundautomatisierung",
-          "body": "E-Mail-Triage, Planung, API-Aufrufe, Tabellen — alles Repetitive. Läuft per cron während du schläfst."
-        },
-        {
-          "headline": "Customer-Support-Triage",
-          "body": "Deine Docs rein. Er löst häufige Tickets, eskaliert die schwierigen und wird mit jedem Gespräch besser."
-        }
-      ],
-      "footer": "Siehst du die Arbeit, die Hermes dir abnehmen kann? Plan wählen und den passenden Workflow starten.",
-      "cta": "Pläne ansehen & starten"
-    },
-    "whatsComing": {
-      "eyebrow": "Was kommt als Nächstes",
-      "titlePrefix": "Das ist erst",
-      "titleEmphasis": "der Anfang.",
-      "intro": "Das Hosting ist das Fundament. Bald verfügbar:",
-      "items": [
-        {
-          "title": "Operator Packs",
-          "body": "Vorgefertigte Agent-Templates für spezifische Aufgaben — Research, Trading-Insights, Content-Automatisierung. Mit einem Klick deployen."
-        },
-        {
-          "title": "Marketplace",
-          "body": "Operator Packs bauen, an die Community ausliefern, an der Nutzung verdienen. Abgerechnet in $HermesOS."
-        },
-        {
-          "title": "Agent Endpoints",
-          "body": "Deinen Agenten als aufrufbares API exponieren. Andere Agenten zahlen dir pro Request."
-        },
-        {
-          "title": "Hive Mind",
-          "body": "Agenten teilen, was sie lernen. Das gesamte Netzwerk wird gemeinsam klüger."
-        }
-      ],
-      "footer": "Hivra ist die Infrastruktur für eine Agent-Ökonomie. Hosting ist Schritt eins. Alles andere baut darauf auf."
-    },
-    "pricing": {
-      "eyebrow": "Preise",
-      "titlePrefix": "Einfache Pläne.",
-      "titleEmphasis": "Ernsthaftes Compute.",
-      "intro": "Dediziertes Compute. Unbegrenzte Agent-Profile. Eigener Key, kein Aufschlag.",
-      "compute": "Rechenleistung",
-      "mostPopular": "Beliebteste Wahl",
-      "forPros": "Für Profis",
-      "getStarted": "Loslegen",
-      "recommended": "Empfohlen",
-      "accessPrefix": "Drei Zugangswege",
-      "footnote": "Bis zu 40 % sparen bei Zahlung mit $HermesOS. Launch-Preise für die erste Welle — können sich mit Reife der Plattform ändern.",
-      "guarantee": "Free-Tier — erst testen, dann upgraden · 48-Std.-Rückerstattung bei Kartenzahlung",
-      "tiers": [
-        {
-          "name": "Free",
-          "tagline": "Die meisten Nutzer können ohne Karte starten; bei höherem Risiko im Free-Tier kann eine Kartenverifizierung erforderlich sein.",
-          "price": "$0",
-          "priceNote": "Immer kostenlos; Karte nur wenn Risikoprüfung es verlangt",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "0.5"
-            },
-            {
-              "label": "RAM",
-              "value": "1 GB"
-            },
-            {
-              "label": "Aktive Agenten",
-              "value": "1"
-            }
-          ],
-          "features": [
-            "Persistentes Memory",
-            "Alle Integrationen inklusive",
-            "Fair-Use-Limits gelten"
-          ],
-          "ctaLabel": "Kostenlos starten"
-        },
-        {
-          "name": "Pro",
-          "tagline": "Für echte Arbeit, nicht nur Experimente.",
-          "price": "$9.99",
-          "priceCadence": "/Monat",
-          "priceNote": "Monatliches Abo per Karte",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "2"
-            },
-            {
-              "label": "RAM",
-              "value": "4 GB"
-            },
-            {
-              "label": "Parallele Agenten",
-              "value": "3",
-              "tooltip": "Wie viele deiner Agenten gleichzeitig Tasks ausführen können. Profile sind unbegrenzt — das ist das Live-Execution-Limit."
-            }
-          ],
-          "features": [
-            "Unbegrenzte Agent-Profile",
-            "Alles aus Free",
-            "Vorrang gegenüber Free-Tier"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Monatlich per Karte",
-              "detail": "$9.99/mo"
-            },
-            {
-              "label": "Jährlich",
-              "detail": "$79/Jahr Karte · $49/Jahr in $HermesOS"
-            },
-            {
-              "label": "$HermesOS halten",
-              "detail": "~$99 (Einführungspreis, erste 30 Tage)"
-            }
-          ],
-          "ctaLabel": "Pro holen"
-        },
-        {
-          "name": "Power",
-          "tagline": "Für anspruchsvolle Workflows und Multi-Agent-Betrieb.",
-          "price": "$19.99",
-          "priceCadence": "/Monat",
-          "priceNote": "Monatliches Abo per Karte",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "4"
-            },
-            {
-              "label": "RAM",
-              "value": "8 GB"
-            },
-            {
-              "label": "Parallele Agenten",
-              "value": "Unbegrenzt",
-              "tooltip": "So viele Agenten gleichzeitig ausführen, wie dein Compute-Pool unterstützt — mehrere Agenten arbeiten parallel, kein plattformseitiges Limit."
-            }
-          ],
-          "features": [
-            "Unbegrenzte Agent-Profile",
-            "Alles aus Pro",
-            "Burst-CPU wenn Kapazität verfügbar"
-          ],
-          "paymentPaths": [
-            {
-              "label": "Monatlich per Karte",
-              "detail": "$19.99/mo"
-            },
-            {
-              "label": "Jährlich",
-              "detail": "$149/Jahr Karte · $99/Jahr in $HermesOS"
-            },
-            {
-              "label": "$HermesOS halten",
-              "detail": "~$199 (Einführungspreis, erste 30 Tage)"
-            }
-          ],
-          "ctaLabel": "Power holen"
-        }
-      ]
-    },
-    "token": {
-      "eyebrow": "Über $HermesOS",
-      "title": "Die Zugriffsschicht der Plattform.",
-      "body": "$HermesOS ermöglicht es, Abos mit Rabatt zu bezahlen, das Tier ohne monatliche Zahlung zu halten oder Transaktionen in der Agent-Ökonomie abzuwickeln, sobald wir sie ausliefern.",
-      "secondary": "Das Token ist für die Nutzung von Hivra nicht erforderlich — der Free-Tier bleibt ohne Token verfügbar, mit Anti-Abuse-Prüfungen wo nötig. Wer tiefer ins Ökosystem einsteigen will, erhält durch das Halten von $HermesOS mehr Flexibilität bei Zahlung und Zugang.",
-      "cta": "Token-Verifizierungsseite"
-    },
-    "faq": {
-      "eyebrow": "Häufige Fragen",
-      "title": "Klare Antworten.",
-      "items": [
-        {
-          "q": "Ist mein API-Key sicher?",
-          "a": "Ja. Verschlüsselt gespeichert, beim Deploy per Umgebungsvariablen injiziert. Wir proxen oder loggen deine KI-Anfragen nie."
-        },
-        {
-          "q": "Können Updates mein Setup kaputt machen?",
-          "a": "Nein. Jedes Update wird vor der Auslieferung gegen Container-Konfigurationen getestet. Tägliche Backups bedeuten, dass du nie mehr als 24 Stunden von einem sauberen Restore entfernt bist."
-        },
-        {
-          "q": "Was ist der Unterschied zu OpenClaw?",
-          "a": "OpenClaw ist ein exzellentes Open-Source-Desktop-Framework. Hivra ist eine vollständig verwaltete, produktionsreife Cloud-Umgebung. Hermes Agent hat stabileres Memory, höhere Zuverlässigkeit und Updates, die bestehende Features nicht brechen."
-        },
-        {
-          "q": "Was passiert, wenn mein Agent abstürzt?",
-          "a": "Er startet automatisch neu. Zustand, Logs und Ressourcenverbrauch sind im Dashboard jederzeit sichtbar."
-        },
-        {
-          "q": "Kann ich mehrere Agenten auf einem Plan betreiben?",
-          "a": "Ja — unbegrenzte Profile pro Instanz. Free führt 1 aktiven Agenten aus, Pro 3, Power hat kein paralleles Limit. Dein Compute-Pool ist die einzige echte Grenze."
-        },
-        {
-          "q": "Welche KI-Anbieter werden unterstützt?",
-          "a": "OpenRouter, OpenAI und Anthropic. OpenRouter allein gibt dir Hunderte von Modellen mit einem einzigen Key."
-        },
-        {
-          "q": "Muss ich $HermesOS verwenden, um auf die Plattform zuzugreifen?",
-          "a": "Nein. Der Free-Tier erfordert es nicht. Pro und Power können per Karte bezahlt werden. Das Token bietet Rabatte und einen dritten Zahlungsweg für alle, die ihn nutzen möchten."
-        },
-        {
-          "q": "Was kommt als Nächstes?",
-          "a": "Operator Packs (vorgefertigte Agent-Templates) erscheinen in den nächsten Wochen. Marketplace, Agent Endpoints und Hive Mind folgen. Die Roadmap ist auf hermesos.cloud/roadmap."
-        }
-      ]
-    },
-    "finalCta": {
-      "eyebrow": "Jetzt starten",
-      "title": "Bereit zum Deployen?",
-      "body": "Free-Tier ist live mit Abuse-Schutz. Pro und Power sind jetzt verfügbar.",
-      "primary": "Kostenlos starten",
-      "secondary": "Preise ansehen",
-      "note": "Die meisten Free-Nutzer können ohne Karte starten; bei höherem Risiko kann eine Karte hinterlegt werden müssen.",
-      "accountPrefix": "Bereits ein Konto?",
-      "accountLink": "Anmelden"
-    },
     "getStarted": {
       "loadingCheckout": "Weiterleitung zum Checkout...",
-      "steps": {
-        "choosePlan": "Plan wählen",
-        "createAccount": "Konto erstellen",
-        "activate": "Aktivieren",
-        "payment": "Zahlung"
-      },
       "badges": {
-        "free": "Immer kostenlos",
+        "free": "Kostenloses Konto",
         "paid": "7-Tage-Geld-zurück-Garantie"
       },
       "yourPlan": "Dein Plan",
@@ -4786,7 +2912,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "Vergleichbare Agent-Plattformen beginnen bei rund 19 $/Monat",
       "mostPopular": "Am beliebtesten",
-      "freeGap": "Kein Web-Browsing · kein persistentes Gedächtnis · keine geplanten Aufgaben · 0,5 vCPU",
+      "freeGap": "Kein von Hivra betriebener Computer · verbinde deinen eigenen Computer oder Server",
       "specs": {
         "agents": "Agenten",
         "cpu": "CPU",
@@ -4799,13 +2925,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "Plan wechseln",
       "bestFit": "Beste Wahl",
       "planGuidance": {
-        "free": "Free eignet sich am besten, um Hermes mit einem gesicherten Agenten auszuprobieren. Die meisten Nutzer können ohne Karte starten; bei höherem Risiko im Free-Tier kann eine Kartenverifizierung nötig sein.",
+        "free": "Ein kostenloses Konto passt, wenn du einen eigenen Computer oder Server zum Verbinden hast. Es enthält keinen von Hivra betriebenen Computer; wähle einen Plan, wenn Hivra einen für dich betreiben soll.",
         "operator": "Pro ist ideal für Solo-Entwickler, Hackathon-Projekte und den schnellen Start mit einem Agenten.",
         "fleet": "Power ist optimal für Multi-Agent-Workflows, intensiveres Browsen und Teams, die sofort mehr Compute-Headroom benötigen.",
         "command": "Command eignet sich am besten für die größten Workloads, den schnellsten Skalierungspfad und maximales Compute pro Deployment."
       },
       "createAccountTitle": "Konto erstellen.",
-      "createAccountIntroFree": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung aktivieren wir deinen Free-Plan und leiten dich direkt zum Deployment weiter. Die meisten Nutzer können ohne Karte starten; bei höherem Risiko im Free-Tier kann eine Kartenverifizierung nötig sein.",
+      "createAccountIntroFree": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung richten wir dein kostenloses Konto ein und leiten dich zu Launch weiter, wo du deinen eigenen Computer verbinden oder einen Plan wählen kannst.",
       "createAccountIntroPaid": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung geht es zum sicheren Checkout. Geschützt durch unsere 7-Tage-Geld-zurück-Garantie.",
       "legalPrefix": "Mit dem Fortfahren stimmst du unseren",
       "terms": "Nutzungsbedingungen",
@@ -4982,10 +3108,15 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": " Wallet.",
         "legacyIntroStrong": "Bestandskunden-Custody-Wallet",
-        "legacyIntroBody": "dein bestehender Einzahlungs- und Auszahlungsflow bleibt aktiv. Den heutigen $HERMESOS-Preis für das gewünschte Tier sperren, dann den genannten Betrag an deine Einzahlungsadresse senden. Der Free-Tier funktioniert immer ohne Einzahlung.",
+        "legacyIntroBody": "dein bestehender Einzahlungs- und Auszahlungsflow bleibt aktiv. Den heutigen $HERMESOS-Preis für das gewünschte Tier sperren, dann den genannten Betrag an deine Einzahlungsadresse senden. Dein kostenloses Konto funktioniert immer ohne Einzahlung.",
         "selfCustodyIntroStrong": "Verbinde deine eigene Wallet",
-        "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Der Free-Tier funktioniert immer ohne Token-Verifizierung.",
+        "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Dein kostenloses Konto funktioniert immer ohne Token-Verifizierung.",
         "priceUnavailable": "Token-Preis nicht verfügbar — bitte später erneut versuchen.",
+        "restricted": {
+          "eyebrow": "Krypto-Wallet",
+          "title": "Deine Wallets.",
+          "intro": "Hier siehst du die Wallets deiner Agents.",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS kaufen",
           "eyebrow": "$HermesOS erwerben",
@@ -5047,8 +3178,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "Agent-Wallets",
           "title": "Agent-Wallets.",
-          "subtitle": "Eine Wallet pro Agent · Von Bankr verwaltet · Nur Base",
-          "emptyNoAgents": "Ersten Agenten starten und wir richten automatisch eine Bankr-Wallet dafür ein.",
+          "subtitle": "Eine Wallet pro Agent · Bankr · Nur Base",
+          "emptyNoAgents": "Starte einen Agenten und verbinde dann dein eigenes Bankr-Konto, um ihm eine Wallet zu geben.",
           "deployAgent": "Agent deployen",
           "runningEmpty": "Laufende Agenten erscheinen hier."
         }
@@ -5133,7 +3264,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Unbegrenzt",
           "agents": "Agenten",
           "active": "Aktiv",
-          "guarantee": "48-Stunden-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
+          "guarantee": "7-Tage-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
         },
         "noSubscription": {
           "title": "Kein aktives Abo"
@@ -5225,7 +3356,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "Tarif, Zahlungsmethoden, Guthaben und Rechnungen" },
-            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets und $HermesOS-Zugang" },
+            "wallets": { "title": "Krypto-Wallets", "description": "Agent-Wallets" },
             "apiKeys": { "title": "API-Schlüssel", "description": "Anbieter-Schlüssel und welche Agents sie nutzen" },
             "infrastructure": { "description": "Die Maschinen und Cloud-Konten, auf denen deine Agents laufen" },
             "memory": { "title": "Gemeinsames Agent-Gedächtnis", "description": "Was jeder neue Agent von Anfang an weiß" },
@@ -5273,7 +3404,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cta": {
           "button": "Stelle deinen Agenten bereit →",
-          "subtitle": "Free-Tarif — 1 Agent, 0,5 vCPU, 1 GB RAM, immer aktiv"
+          "subtitle": "Open Source, auf Hivra Cloud oder auf deinem eigenen Server"
         }
       }
     },
@@ -5302,329 +3433,10 @@ const LOCALE_COPY_OVERRIDES = {
       "mobileMenu": "メニューを開く",
       "closeMobileMenu": "メニューを閉じる"
     },
-    "hero": {
-      "eyebrow": "公開中",
-      "headlinePrefix": "あなたの AI エージェントを、",
-      "headlineEmphasis": "常時稼働。",
-      "primary": "Hivra は Hermes Agent を 5 分以内に起動し、永続メモリ、ブラウザ自動化、ツール利用を標準で備えます。",
-      "secondary": "無料プランは利用可能です。Pro と Power は本格的なワークロード向けです。",
-      "primaryCta": "無料で始める",
-      "secondaryCta": "仕組みを見る",
-      "proofPoints": [
-        "無料プランは常時利用可",
-        "自分のキー、上乗せなし",
-        "Hermes Agent ベース"
-      ]
-    },
-    "ticker": {
-      "proofPoints": [
-        "Hermes Agent（Nous Research）搭載",
-        "自前のキーをそのまま使用。マークアップなし",
-        "Free プランは常時利用可能"
-      ]
-    },
-    "positioning": {
-      "title": "OpenClaw は忘れる。Hermes は積み重ねる。",
-      "body": "Nous Research が開発した Hermes は、サーバー上で常時稼働し、プロジェクト・設定・学びをすべて記憶します。セッションを重ねるほど精度が上がる AI エージェントです。セルフホストの構築には、通常 1 週間ほどかかります。",
-      "punchline": "Hivra なら、その 1 週間がわずか 5 分に。"
-    },
-    "features": {
-      "eyebrow": "含まれる機能",
-      "titlePrefix": "エージェントに必要なものは、すべてここに。",
-      "titleEmphasis": "余計なものは何もない。",
-      "items": [
-        {
-          "headline": "設定不要。フルスタック。",
-          "body": "ブラウザ自動化、ツール利用、ターミナル、メモリ、cron —— すべて設定済み。Docker も深夜の StackOverflow も不要です。"
-        },
-        {
-          "headline": "マルチエージェント、最初から。",
-          "body": "1 つのインスタンスで無制限のエージェントプロファイルを利用可能。リサーチャー、オペレーター、スペシャリスト —— エージェントごとの追加料金なし。"
-        },
-        {
-          "headline": "自前のキー。マークアップなし。",
-          "body": "OpenRouter、OpenAI、Anthropic に対応。保存時は暗号化、デプロイ時に注入。AI への支出を当社が知ることはありません。"
-        },
-        {
-          "headline": "どこからでもチャット。",
-          "body": "ストリーミング対応の組み込みダッシュボード。Telegram、Discord、Slack、WhatsApp もすぐに接続できます。"
-        },
-        {
-          "headline": "OpenClaw からの移行も組み込み済み。",
-          "body": "既存のセットアップ、プロンプト、スキルをそのまま移行。ゼロから始める必要はありません。"
-        },
-        {
-          "headline": "安定。復旧可能。常時稼働。",
-          "body": "アップデートはリリース前にあなたの設定でテスト済み。障害時は自動再起動。毎日バックアップ —— クリーンな復元まで最大 24 時間以内。"
-        }
-      ]
-    },
-    "howItWorks": {
-      "eyebrow": "使い方",
-      "titlePrefix": "3 ステップ。",
-      "titleEmphasis": "ターミナル不要。",
-      "steps": [
-        {
-          "step": "1",
-          "headline": "プランを選ぶ",
-          "body": "まず無料で始め、必要になったらアップグレード。カードで月払い・年払い（割引あり）、または $HermesOS を保有してサブスクリプションなしでアクセスを維持。"
-        },
-        {
-          "step": "2",
-          "headline": "AI キーを追加",
-          "body": "OpenRouter、OpenAI、または Anthropic のキーを一度貼り付けるだけ。暗号化・注入・完了。"
-        },
-        {
-          "step": "3",
-          "headline": "デプロイ。対話。自動化。",
-          "body": "数分でエージェントが起動 —— チャット、ターミナル、モニタリングが揃っています。Telegram や Discord に接続すれば、どこにいても追いかけてきます。"
-        }
-      ],
-      "footer": "読むだけから実際のセットアップへ。プランを選んで、そのままアカウント作成へ進んでください。",
-      "cta": "プランを選ぶ"
-    },
-    "useCases": {
-      "eyebrow": "活用例",
-      "titlePrefix": "メモリを持つ 24 時間 365 日のエージェントは",
-      "titleEmphasis": "実際に何をするのか？",
-      "intro": "ブラウジング、コーディング、ファイル管理、API 呼び出し、cron タスクの実行 —— すべて自律的に。しかも先週学んだことを覚えています。",
-      "items": [
-        {
-          "headline": "DevOps & モニタリング",
-          "body": "ログを読み、障害サービスを再起動し、人間が本当に必要なときだけ通知。あなたのスタックを記憶します。"
-        },
-        {
-          "headline": "リサーチ & 競合インテリジェンス",
-          "body": "テーマと締め切りを渡すだけ。ブラウジング・集約・構造化レポートの作成まで実行し、次回のために学んだことを保存します。"
-        },
-        {
-          "headline": "バックグラウンド自動化",
-          "body": "メールのトリアージ、スケジュール管理、API 呼び出し、スプレッドシート —— あらゆる繰り返し作業。あなたが眠っている間も cron で動き続けます。"
-        },
-        {
-          "headline": "カスタマーサポートのトリアージ",
-          "body": "ドキュメントを読み込ませるだけ。よくあるチケットを解決し、難しいものをエスカレーション。会話のたびに賢くなります。"
-        }
-      ],
-      "footer": "Hermes があなたの仕事を肩代わりできるイメージが湧きましたか？プランを選んで、ワークフローを今すぐ立ち上げましょう。",
-      "cta": "プランを見て始める"
-    },
-    "whatsComing": {
-      "eyebrow": "Coming soon",
-      "titlePrefix": "これは",
-      "titleEmphasis": "はじまりにすぎない。",
-      "intro": "ホスティングは基盤です。近日公開予定：",
-      "items": [
-        {
-          "title": "Operator Packs",
-          "body": "特定業務向けのエージェントテンプレート —— リサーチ、トレーディングインテリジェンス、コンテンツ自動化。ワンクリックでデプロイ。"
-        },
-        {
-          "title": "Marketplace",
-          "body": "Operator Packs を作成してコミュニティに公開し、利用量に応じて収益化。報酬は $HermesOS で決済。"
-        },
-        {
-          "title": "Agent Endpoints",
-          "body": "自分のエージェントを呼び出し可能な API として公開。他のエージェントがリクエストごとに支払います。"
-        },
-        {
-          "title": "Hive Mind",
-          "body": "エージェントが学びを共有。ネットワーク全体がともに賢くなります。"
-        }
-      ],
-      "footer": "Hivra はエージェントエコノミーのインフラです。ホスティングはステップ 1。そのすべてがこの基盤の上に構築されていきます。"
-    },
-    "pricing": {
-      "eyebrow": "料金",
-      "titlePrefix": "シンプルなプラン。",
-      "titleEmphasis": "本格的なコンピュート。",
-      "intro": "専有コンピュート。エージェントプロファイル無制限。自前のキー、マークアップなし。",
-      "compute": "コンピュート",
-      "mostPopular": "最も人気",
-      "forPros": "プロ向け",
-      "getStarted": "今すぐ始める",
-      "recommended": "おすすめ",
-      "accessPrefix": "3 つのアクセス方法",
-      "footnote": "$HermesOS での支払いで最大 40% 割引。ローンチ価格は初回ウェーブ限定 —— プラットフォームの成熟に伴い料金が変更になる場合があります。",
-      "guarantee": "Free プランで試してからアップグレード · カード決済は 48 時間返金保証",
-      "tiers": [
-        {
-          "name": "Free",
-          "tagline": "ほとんどのユーザーはカードなしで起動できます。リスクの高い Free プランのデプロイでは、先にカード認証が必要な場合があります。",
-          "price": "$0",
-          "priceNote": "常時無料。リスクチェックが必要な場合のみカード",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "0.5"
-            },
-            {
-              "label": "RAM",
-              "value": "1 GB"
-            },
-            {
-              "label": "アクティブエージェント",
-              "value": "1"
-            }
-          ],
-          "features": [
-            "永続メモリ",
-            "全インテグレーション込み",
-            "フェアユース制限あり"
-          ],
-          "ctaLabel": "無料で始める"
-        },
-        {
-          "name": "Pro",
-          "tagline": "実験ではなく、本番ワークのために。",
-          "price": "$9.99",
-          "priceCadence": "/月",
-          "priceNote": "カードで月払い",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "2"
-            },
-            {
-              "label": "RAM",
-              "value": "4 GB"
-            },
-            {
-              "label": "同時実行エージェント",
-              "value": "3",
-              "tooltip": "同時にタスクを実行できるエージェント数。プロファイルは無制限 —— これはライブ実行の上限です。"
-            }
-          ],
-          "features": [
-            "エージェントプロファイル無制限",
-            "Free のすべてを含む",
-            "Free プランより優先処理"
-          ],
-          "paymentPaths": [
-            {
-              "label": "カード月払い",
-              "detail": "$9.99/月"
-            },
-            {
-              "label": "年払い",
-              "detail": "カード $79/年 · $HermesOS $49/年"
-            },
-            {
-              "label": "$HermesOS 保有",
-              "detail": "約 $99（ローンチレート、最初の 30 日間）"
-            }
-          ],
-          "ctaLabel": "Pro を始める"
-        },
-        {
-          "name": "Power",
-          "tagline": "本格的なワークフローとマルチエージェント運用のために。",
-          "price": "$19.99",
-          "priceCadence": "/月",
-          "priceNote": "カードで月払い",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "4"
-            },
-            {
-              "label": "RAM",
-              "value": "8 GB"
-            },
-            {
-              "label": "同時実行エージェント",
-              "value": "無制限",
-              "tooltip": "コンピュートプールが対応できる限り、同時に何台でもエージェントを並列実行可能。プラットフォームによる上限なし。"
-            }
-          ],
-          "features": [
-            "エージェントプロファイル無制限",
-            "Pro のすべてを含む",
-            "空き容量があればバースト CPU 利用可"
-          ],
-          "paymentPaths": [
-            {
-              "label": "カード月払い",
-              "detail": "$19.99/月"
-            },
-            {
-              "label": "年払い",
-              "detail": "カード $149/年 · $HermesOS $99/年"
-            },
-            {
-              "label": "$HermesOS 保有",
-              "detail": "約 $199（ローンチレート、最初の 30 日間）"
-            }
-          ],
-          "ctaLabel": "Power を始める"
-        }
-      ]
-    },
-    "token": {
-      "eyebrow": "$HermesOS について",
-      "title": "プラットフォームへのアクセス層。",
-      "body": "$HermesOS を使えば、サブスクリプションを割引料金で支払ったり、月払いなしでティアを維持したり、構築中のエージェントエコノミー全体で取引したりできます。",
-      "secondary": "Hivra を利用するためにトークンは必須ではありません —— Free プランはトークンなしで利用でき、必要に応じてアンチアビューズチェックが適用されます。エコシステムにより深く関わりたい場合、$HermesOS を保有することで支払い方法とアクセス手段の柔軟性が広がります。",
-      "cta": "トークン認証ページ"
-    },
-    "faq": {
-      "eyebrow": "よくある質問",
-      "title": "率直な回答。",
-      "items": [
-        {
-          "q": "API キーは安全ですか？",
-          "a": "はい。保存時は暗号化され、環境変数経由でデプロイ時に注入されます。AI リクエストのプロキシやログ記録は一切行いません。"
-        },
-        {
-          "q": "アップデートで設定が壊れることはありますか？",
-          "a": "ありません。すべてのアップデートはリリース前にコンテナ設定に対してテスト済みです。毎日バックアップを取っているため、クリーンな復元まで最大 24 時間以内です。"
-        },
-        {
-          "q": "OpenClaw との違いは何ですか？",
-          "a": "OpenClaw は優れたオープンソースのデスクトップフレームワークです。Hivra はフルマネージドの本番グレードクラウド環境です。Hermes Agent はより安定したメモリ、高い信頼性、そして既存機能を壊さないアップデートを提供します。"
-        },
-        {
-          "q": "エージェントがクラッシュしたらどうなりますか？",
-          "a": "自動的に再起動されます。ヘルス状態、ログ、リソース使用状況はダッシュボードで常時確認できます。"
-        },
-        {
-          "q": "1 つのプランで複数のエージェントを動かせますか？",
-          "a": "はい —— インスタンスあたりプロファイル数は無制限です。Free は同時 1 エージェント、Pro は 3 エージェント、Power は同時実行数の上限なし。実際の制限はコンピュートプールのみです。"
-        },
-        {
-          "q": "どの AI プロバイダーに対応していますか？",
-          "a": "OpenRouter、OpenAI、Anthropic に対応。OpenRouter だけで 1 つのキーから数百のモデルを利用できます。"
-        },
-        {
-          "q": "プラットフォームを利用するために $HermesOS は必要ですか？",
-          "a": "いいえ。Free プランはトークン不要。Pro と Power はカードで支払えます。トークンは割引と、希望する方向けの第 3 の支払い手段を提供します。"
-        },
-        {
-          "q": "次に追加される機能は何ですか？",
-          "a": "Operator Packs（事前構築済みエージェントテンプレート）が数週間以内にリリース予定です。続いて Marketplace、Agent Endpoints、Hive Mind が登場します。ロードマップは hermesos.cloud/roadmap をご覧ください。"
-        }
-      ]
-    },
-    "finalCta": {
-      "eyebrow": "今すぐ始める",
-      "title": "デプロイする準備はできましたか？",
-      "body": "Free プランはアビューズ対策を施して稼働中。Pro と Power は今すぐご利用いただけます。",
-      "primary": "無料で始める",
-      "secondary": "料金を見る",
-      "note": "ほとんどの Free ユーザーはカードなしで始められます。リスクの高いサインアップではカード登録が必要な場合があります。",
-      "accountPrefix": "すでにアカウントをお持ちの方は",
-      "accountLink": "ログイン"
-    },
     "getStarted": {
       "loadingCheckout": "チェックアウトへ移動中...",
-      "steps": {
-        "choosePlan": "プランを選ぶ",
-        "createAccount": "アカウント作成",
-        "activate": "有効化",
-        "payment": "お支払い"
-      },
       "badges": {
-        "free": "常時無料",
+        "free": "無料アカウント",
         "paid": "7 日間返金保証"
       },
       "yourPlan": "あなたのプラン",
@@ -5638,7 +3450,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "同等のエージェントプラットフォームは月額 $19 程度から",
       "mostPopular": "一番人気",
-      "freeGap": "ウェブブラウジングなし · 永続メモリなし · 定期タスクなし · 0.5 vCPU",
+      "freeGap": "Hivra が運用するコンピューターは含まれません · ご自身のコンピューターまたはサーバーを接続",
       "specs": {
         "agents": "エージェント",
         "cpu": "CPU",
@@ -5651,13 +3463,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "プランを変更",
       "bestFit": "おすすめ",
       "planGuidance": {
-        "free": "Free は 1 つのエージェントで Hermes を試したい方に最適です。ほとんどのユーザーはカードなしで起動できますが、リスクの高い Free プランのデプロイでは先にカード認証が必要な場合があります。",
+        "free": "接続できる自分のコンピューターやサーバーがあるなら、無料アカウントが最適です。Hivra が運用するコンピューターは含まれません。Hivra に運用してほしいときは、プランを選んでください。",
         "operator": "Pro は個人ビルダー、ハッカソンプロジェクト、1 つのエージェントを素早く立ち上げたい方に最適です。",
         "fleet": "Power はマルチエージェントのワークフロー、ヘビーなブラウジング、すぐに多くのコンピュートが必要なチームに最適です。",
         "command": "Command は最大規模のワークロード、最速のスケーリング、デプロイあたりの最大コンピュートが必要な方に最適です。"
       },
       "createAccountTitle": "アカウントを作成してください。",
-      "createAccountIntroFree": "入力したアカウント情報がログイン認証情報になります。サインアップ後、Free プランを有効化してデプロイ画面に直接進みます。ほとんどのユーザーはカードなしで起動できますが、リスクの高い Free プランのデプロイでは先にカード認証が必要な場合があります。",
+      "createAccountIntroFree": "入力したアカウント情報がログイン認証情報になります。サインアップ後、無料アカウントを設定して Launch に進みます。そこでご自身のコンピューターを接続するか、プランを選べます。",
       "createAccountIntroPaid": "入力したアカウント情報がログイン認証情報になります。サインアップ後、安全なチェックアウトへ進みます。7 日間返金保証付き。",
       "legalPrefix": "続行することで、以下に同意したものとみなされます：",
       "terms": "利用規約",
@@ -5834,10 +3646,15 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": " ウォレット。",
         "legacyIntroStrong": "移行前のカストディウォレット",
-        "legacyIntroBody": "既存の入金・出金フローはそのまま有効です。希望するティアの $HERMESOS 価格を今日ロックし、入金アドレスに見積もり額を送金してください。Free プランはデポジットなしで常時利用可能です。",
+        "legacyIntroBody": "既存の入金・出金フローはそのまま有効です。希望するティアの $HERMESOS 価格を今日ロックし、入金アドレスに見積もり額を送金してください。無料アカウントはデポジットなしで常時利用可能です。",
         "selfCustodyIntroStrong": "自分のウォレットを接続",
-        "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。Free プランはトークン認証なしで常時利用可能です。",
+        "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。無料アカウントはトークン認証なしで常時利用可能です。",
         "priceUnavailable": "トークン価格を取得できません —— しばらくしてから再試行してください。",
+        "restricted": {
+          "eyebrow": "ウォレット",
+          "title": "あなたのウォレット。",
+          "intro": "エージェントのウォレットをここに表示します。",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS を購入",
           "eyebrow": "$HermesOS を手に入れる",
@@ -5899,8 +3716,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "エージェントウォレット",
           "title": "エージェントウォレット。",
-          "subtitle": "エージェントごとに 1 つ · Bankr 管理 · Base のみ",
-          "emptyNoAgents": "最初のエージェントを起動すると、Bankr ウォレットが自動的にプロビジョニングされます。",
+          "subtitle": "エージェントごとに 1 つ · Bankr · Base のみ",
+          "emptyNoAgents": "エージェントを起動し、ご自身の Bankr アカウントを接続してウォレットを使えるようにします。",
           "deployAgent": "エージェントをデプロイ",
           "runningEmpty": "実行中のエージェントがここに表示されます。"
         }
@@ -5985,7 +3802,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "無制限",
           "agents": "エージェント",
           "active": "有効",
-          "guarantee": "48 時間返金ポリシー · アップグレード専用プラン"
+          "guarantee": "7 日間返金ポリシー · アップグレード専用プラン"
         },
         "noSubscription": {
           "title": "有効なサブスクリプションなし"
@@ -6077,7 +3894,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "プラン、支払い方法、クレジット、請求書" },
-            "wallets": { "title": "ウォレット", "description": "エージェントのウォレットと $HermesOS アクセス" },
+            "wallets": { "title": "ウォレット", "description": "エージェントのウォレット" },
             "apiKeys": { "title": "API キー", "description": "プロバイダーのキーと、それを使うエージェント" },
             "infrastructure": { "description": "エージェントが動くマシンとクラウドアカウント" },
             "memory": { "title": "共有エージェントメモリー", "description": "新しいエージェントが最初から知っていること" },
@@ -6125,7 +3942,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cta": {
           "button": "あなたのエージェントをデプロイ →",
-          "subtitle": "無料プラン — エージェント 1、0.5 vCPU、1 GB RAM、常時稼働"
+          "subtitle": "オープンソース。Hivra Cloud でも自分のサーバーでも動かせます"
         }
       }
     },
@@ -6154,329 +3971,10 @@ const LOCALE_COPY_OVERRIDES = {
       "mobileMenu": "메뉴 열기",
       "closeMobileMenu": "메뉴 닫기"
     },
-    "hero": {
-      "eyebrow": "출시됨",
-      "headlinePrefix": "당신의 AI 에이전트를,",
-      "headlineEmphasis": "항상 온라인으로.",
-      "primary": "Hivra는 Hermes Agent를 5분 안에 실행하고 지속 메모리, 브라우저 자동화, 도구 사용을 기본 제공합니다.",
-      "secondary": "무료 플랜은 이미 열려 있습니다. Pro와 Power는 본격 워크로드용입니다.",
-      "primaryCta": "무료로 시작",
-      "secondaryCta": "작동 방식 보기",
-      "proofPoints": [
-        "항상 무료 플랜",
-        "내 키 사용, 마진 없음",
-        "Hermes Agent 기반"
-      ]
-    },
-    "ticker": {
-      "proofPoints": [
-        "Hermes Agent(Nous Research) 기반",
-        "내 키 사용, 수수료 없음",
-        "Free 티어 상시 운영"
-      ]
-    },
-    "positioning": {
-      "title": "OpenClaw은 잊어버린다. Hermes는 쌓아간다.",
-      "body": "Nous Research가 만든 Hermes는 서버에서 살아 숨 쉬며 모든 것을 기억합니다 — 프로젝트, 설정, 배운 것들까지. 세션마다 더 날카로워집니다. 셀프 호스팅을 설정하려면 대부분 주말 한 번이 필요합니다.",
-      "punchline": "Hivra는 그 주말을 5분으로 줄입니다."
-    },
-    "features": {
-      "eyebrow": "포함 기능",
-      "titlePrefix": "에이전트에 필요한 모든 것.",
-      "titleEmphasis": "불필요한 건 하나도 없이.",
-      "items": [
-        {
-          "headline": "설정 제로. 풀스택.",
-          "body": "브라우저 자동화, 도구 사용, 터미널, 메모리, cron — 모두 사전 구성됨. Docker도, 자정의 StackOverflow도 필요 없습니다."
-        },
-        {
-          "headline": "첫날부터 멀티 에이전트.",
-          "body": "단일 인스턴스에서 무제한 에이전트 프로필. 리서처, 오퍼레이터, 스페셜리스트 — 에이전트당 추가 비용 없음."
-        },
-        {
-          "headline": "내 키. 수수료 없음.",
-          "body": "OpenRouter, OpenAI, 또는 Anthropic. 저장 시 암호화, 배포 시 주입. 귀하의 AI 비용은 우리가 볼 수 없습니다."
-        },
-        {
-          "headline": "어디서나 채팅.",
-          "body": "스트리밍이 내장된 대시보드. Telegram, Discord, Slack, WhatsApp을 바로 연결 — 즉시 사용 가능."
-        },
-        {
-          "headline": "OpenClaw 마이그레이션 내장.",
-          "body": "기존 설정, 프롬프트, 스킬이 그대로 이전됩니다. 처음부터 다시 시작할 필요 없음."
-        },
-        {
-          "headline": "안정적. 복구 가능. 항상 켜진 상태.",
-          "body": "업데이트는 배포 전 컨테이너 설정으로 검증. 장애 시 자동 재시작. 매일 백업 — 클린 복구까지 항상 24시간 이내."
-        }
-      ]
-    },
-    "howItWorks": {
-      "eyebrow": "작동 방식",
-      "titlePrefix": "세 단계.",
-      "titleEmphasis": "터미널 불필요.",
-      "steps": [
-        {
-          "step": "1",
-          "headline": "티어 선택",
-          "body": "Free로 시작하고, 필요할 때 업그레이드하세요. 카드로 월 결제, 할인을 위한 연 결제, 또는 $HermesOS를 보유해 구독 없이 이용 가능."
-        },
-        {
-          "step": "2",
-          "headline": "AI 키 추가",
-          "body": "OpenRouter, OpenAI, 또는 Anthropic 키를 한 번만 붙여넣으세요. 암호화, 주입, 완료."
-        },
-        {
-          "step": "3",
-          "headline": "배포. 대화. 자동화.",
-          "body": "에이전트가 수분 내 가동됩니다 — 채팅, 터미널, 모니터링. Telegram 또는 Discord와 연결하면 어디서든 함께합니다."
-        }
-      ],
-      "footer": "읽는 것에서 설정으로 넘어갈 준비가 됐나요? 티어를 선택하고 바로 계정 생성으로 이동하세요.",
-      "cta": "티어 선택하기"
-    },
-    "useCases": {
-      "eyebrow": "활용 사례",
-      "titlePrefix": "메모리를 가진 24/7 에이전트는",
-      "titleEmphasis": "실제로 무엇을 할까요?",
-      "intro": "브라우징, 코딩, 파일 관리, API 호출, cron 작업 — 자율적으로. 그리고 지난주에 배운 것도 기억합니다.",
-      "items": [
-        {
-          "headline": "DevOps & 모니터링",
-          "body": "로그를 읽고, 실패한 서비스를 재시작하며, 사람이 실제로 필요할 때만 알림. 귀하의 스택을 기억합니다."
-        },
-        {
-          "headline": "리서치 & 경쟁사 인텔리전스",
-          "body": "주제와 마감일을 주면, 브라우징하고 집계해 구조화된 브리핑을 제공 — 다음을 위해 배운 것도 저장합니다."
-        },
-        {
-          "headline": "백그라운드 자동화",
-          "body": "이메일 분류, 일정 관리, API 호출, 스프레드시트 — 반복 작업 모두. 잠든 사이 cron으로 실행됩니다."
-        },
-        {
-          "headline": "고객 지원 분류",
-          "body": "문서를 입력해 두세요. 일반 티켓을 처리하고, 어려운 건 에스컬레이션하며, 대화마다 더 똑똑해집니다."
-        }
-      ],
-      "footer": "Hermes가 처리할 수 있는 업무를 확인하셨나요? 플랜을 선택하고 워크로드에 맞는 워크플로를 시작하세요.",
-      "cta": "플랜 보기 & 시작"
-    },
-    "whatsComing": {
-      "eyebrow": "출시 예정",
-      "titlePrefix": "이건 시작일",
-      "titleEmphasis": "뿐입니다.",
-      "intro": "호스팅은 토대입니다. 곧 출시 예정:",
-      "items": [
-        {
-          "title": "Operator Packs",
-          "body": "특정 업무를 위한 사전 제작 에이전트 템플릿 — 리서치, 트레이딩 인텔, 콘텐츠 자동화. 원클릭으로 배포."
-        },
-        {
-          "title": "Marketplace",
-          "body": "오퍼레이터 팩을 만들어 커뮤니티에 배포하고 사용량에서 수익을 얻으세요. $HermesOS로 정산."
-        },
-        {
-          "title": "Agent Endpoints",
-          "body": "에이전트를 호출 가능한 API로 공개하세요. 다른 에이전트가 요청당 비용을 지불합니다."
-        },
-        {
-          "title": "Hive Mind",
-          "body": "에이전트들이 배운 것을 공유합니다. 네트워크 전체가 함께 더 똑똑해집니다."
-        }
-      ],
-      "footer": "Hivra는 에이전트 경제를 위한 인프라입니다. 호스팅이 첫 번째 단계이며, 나머지 모든 것이 그 위에 구축됩니다."
-    },
-    "pricing": {
-      "eyebrow": "요금제",
-      "titlePrefix": "간단한 플랜.",
-      "titleEmphasis": "강력한 컴퓨팅.",
-      "intro": "전용 컴퓨팅. 무제한 에이전트 프로필. 내 키 사용, 수수료 없음.",
-      "compute": "컴퓨팅",
-      "mostPopular": "가장 인기 있음",
-      "forPros": "전문가용",
-      "getStarted": "시작하기",
-      "recommended": "추천",
-      "accessPrefix": "이용 방법 세 가지",
-      "footnote": "$HermesOS 결제 시 최대 40% 절약. 첫 번째 웨이브를 위한 런칭 요금 — 플랫폼 성숙에 따라 조정될 수 있습니다.",
-      "guarantee": "Free 티어 — 업그레이드 전 체험 · 카드 결제 48시간 환불",
-      "tiers": [
-        {
-          "name": "Free",
-          "tagline": "대부분의 사용자는 카드 없이 시작할 수 있습니다. 위험도가 높은 Free 티어 배포는 카드 인증이 먼저 필요할 수 있습니다.",
-          "price": "$0",
-          "priceNote": "항상 무료; 위험 확인이 필요한 경우에만 카드",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "0.5"
-            },
-            {
-              "label": "RAM",
-              "value": "1 GB"
-            },
-            {
-              "label": "활성 에이전트",
-              "value": "1"
-            }
-          ],
-          "features": [
-            "영구 메모리",
-            "모든 통합 포함",
-            "합리적 사용 제한 적용"
-          ],
-          "ctaLabel": "무료로 시작"
-        },
-        {
-          "name": "Pro",
-          "tagline": "실험이 아닌 실제 작업을 위해.",
-          "price": "$9.99",
-          "priceCadence": "/월",
-          "priceNote": "카드로 월 구독",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "2"
-            },
-            {
-              "label": "RAM",
-              "value": "4 GB"
-            },
-            {
-              "label": "동시 에이전트",
-              "value": "3",
-              "tooltip": "같은 순간에 작업을 실행할 수 있는 에이전트 수. 프로필은 무제한 — 이것은 동시 실행 상한선입니다."
-            }
-          ],
-          "features": [
-            "무제한 에이전트 프로필",
-            "Free의 모든 기능 포함",
-            "Free 티어 대비 우선권"
-          ],
-          "paymentPaths": [
-            {
-              "label": "월간 카드",
-              "detail": "$9.99/mo"
-            },
-            {
-              "label": "연간",
-              "detail": "$79/년 카드 · $49/년 $HermesOS"
-            },
-            {
-              "label": "$HermesOS 보유",
-              "detail": "~$99 (출시 가격, 첫 30일)"
-            }
-          ],
-          "ctaLabel": "Pro 시작"
-        },
-        {
-          "name": "Power",
-          "tagline": "본격적인 워크플로와 멀티 에이전트 운영을 위해.",
-          "price": "$19.99",
-          "priceCadence": "/월",
-          "priceNote": "카드로 월 구독",
-          "specs": [
-            {
-              "label": "vCPU",
-              "value": "4"
-            },
-            {
-              "label": "RAM",
-              "value": "8 GB"
-            },
-            {
-              "label": "동시 에이전트",
-              "value": "무제한",
-              "tooltip": "컴퓨팅 풀이 지원하는 만큼 에이전트를 동시에 실행 — 여러 에이전트가 병렬로 작업, 플랫폼 상한선 없음."
-            }
-          ],
-          "features": [
-            "무제한 에이전트 프로필",
-            "Pro의 모든 기능 포함",
-            "여유 용량 시 CPU 버스트"
-          ],
-          "paymentPaths": [
-            {
-              "label": "월간 카드",
-              "detail": "$19.99/mo"
-            },
-            {
-              "label": "연간",
-              "detail": "$149/년 카드 · $99/년 $HermesOS"
-            },
-            {
-              "label": "$HermesOS 보유",
-              "detail": "~$199 (출시 가격, 첫 30일)"
-            }
-          ],
-          "ctaLabel": "Power 시작"
-        }
-      ]
-    },
-    "token": {
-      "eyebrow": "$HermesOS 소개",
-      "title": "플랫폼의 접근 레이어.",
-      "body": "$HermesOS로 구독을 할인 결제하거나, 보유하여 월 결제 없이 티어를 유지하거나, 에이전트 경제 전반에서 거래하세요.",
-      "secondary": "토큰은 Hivra 이용에 필수가 아닙니다 — Free 티어는 없이도 이용 가능하며, 필요한 경우 어뷰징 방지 확인이 적용됩니다. 생태계에 더 깊이 참여하고 싶다면 $HermesOS 보유로 결제 및 접근 방식에서 더 많은 유연성을 얻을 수 있습니다.",
-      "cta": "토큰 인증 페이지"
-    },
-    "faq": {
-      "eyebrow": "자주 묻는 질문",
-      "title": "명확한 답변.",
-      "items": [
-        {
-          "q": "API 키는 안전한가요?",
-          "a": "네. 저장 시 암호화되고, 배포 시 환경 변수로 주입됩니다. AI 요청을 프록시하거나 로그에 기록하지 않습니다."
-        },
-        {
-          "q": "업데이트가 설정을 망가뜨릴 수 있나요?",
-          "a": "아니요. 모든 업데이트는 배포 전 컨테이너 설정으로 검증됩니다. 매일 백업으로 클린 복구까지 항상 24시간 이내입니다."
-        },
-        {
-          "q": "OpenClaw과 어떻게 다른가요?",
-          "a": "OpenClaw은 우수한 오픈 소스 데스크탑 프레임워크입니다. Hivra는 완전 관리형 프로덕션급 클라우드 환경입니다. Hermes Agent는 더 안정적인 메모리, 높은 신뢰성, 기존 기능을 망가뜨리지 않는 업데이트를 제공합니다."
-        },
-        {
-          "q": "에이전트가 충돌하면 어떻게 되나요?",
-          "a": "자동으로 재시작됩니다. 상태, 로그, 리소스 사용량은 대시보드에서 항상 확인 가능합니다."
-        },
-        {
-          "q": "하나의 플랜으로 여러 에이전트를 실행할 수 있나요?",
-          "a": "네 — 인스턴스당 무제한 프로필. Free는 활성 에이전트 1개, Pro는 3개, Power는 동시 실행 제한 없음. 컴퓨팅 풀이 유일한 실질적 한계입니다."
-        },
-        {
-          "q": "어떤 AI 공급자가 지원되나요?",
-          "a": "OpenRouter, OpenAI, Anthropic. OpenRouter만으로도 단일 키로 수백 개의 모델을 사용할 수 있습니다."
-        },
-        {
-          "q": "플랫폼을 이용하려면 $HermesOS가 필요한가요?",
-          "a": "아니요. Free 티어는 필요하지 않습니다. Pro와 Power는 카드로 결제할 수 있습니다. 토큰은 원하는 분들을 위한 할인과 세 번째 결제 수단을 제공합니다."
-        },
-        {
-          "q": "다음에 무엇이 출시되나요?",
-          "a": "오퍼레이터 팩(사전 제작 에이전트 템플릿)이 몇 주 내로 출시됩니다. Marketplace, 에이전트 엔드포인트, Hive Mind가 뒤따릅니다. 로드맵은 hermesos.cloud/roadmap에서 확인하세요."
-        }
-      ]
-    },
-    "finalCta": {
-      "eyebrow": "지금 시작",
-      "title": "배포할 준비가 됐나요?",
-      "body": "Free 티어가 어뷰징 방지와 함께 운영 중입니다. Pro와 Power는 지금 이용 가능합니다.",
-      "primary": "무료로 시작",
-      "secondary": "요금제 보기",
-      "note": "대부분의 무료 사용자는 카드 없이 시작 가능합니다. 위험도가 높은 가입은 카드 등록 확인이 필요할 수 있습니다.",
-      "accountPrefix": "이미 계정이 있으신가요?",
-      "accountLink": "로그인"
-    },
     "getStarted": {
       "loadingCheckout": "결제 페이지로 이동 중...",
-      "steps": {
-        "choosePlan": "플랜 선택",
-        "createAccount": "계정 만들기",
-        "activate": "활성화",
-        "payment": "결제"
-      },
       "badges": {
-        "free": "항상 무료",
+        "free": "무료 계정",
         "paid": "7일 환불 보장"
       },
       "yourPlan": "내 플랜",
@@ -6490,7 +3988,7 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "marketAnchor": "비슷한 에이전트 플랫폼은 월 $19 정도부터 시작합니다",
       "mostPopular": "가장 인기",
-      "freeGap": "웹 브라우징 없음 · 영구 메모리 없음 · 예약 작업 없음 · 0.5 vCPU",
+      "freeGap": "Hivra가 운영하는 컴퓨터 없음 · 내 컴퓨터나 서버를 연결",
       "specs": {
         "agents": "에이전트",
         "cpu": "CPU",
@@ -6503,13 +4001,13 @@ const LOCALE_COPY_OVERRIDES = {
       "switchPlan": "플랜 변경",
       "bestFit": "최적 선택",
       "planGuidance": {
-        "free": "Free는 하나의 보호된 에이전트로 Hermes를 체험하기에 가장 적합합니다. 대부분의 사용자는 카드 없이 시작할 수 있으며, 위험도가 높은 Free 티어 배포는 카드 인증이 필요할 수 있습니다.",
+        "free": "연결할 내 컴퓨터나 서버가 있다면 무료 계정이 가장 잘 맞습니다. Hivra가 운영하는 컴퓨터는 포함되지 않으며, Hivra가 운영해 주기를 원하면 플랜을 선택하세요.",
         "operator": "Pro는 개인 빌더, 해커톤 프로젝트, 에이전트를 빠르게 가동하는 데 가장 적합합니다.",
         "fleet": "Power는 멀티 에이전트 워크플로, 무거운 브라우징, 즉각적으로 더 많은 컴퓨팅 여유를 원하는 팀에 가장 적합합니다.",
         "command": "Command는 최대 규모의 워크로드, 가장 빠른 확장 경로, 배포당 최대 컴퓨팅에 가장 적합합니다."
       },
       "createAccountTitle": "계정을 만드세요.",
-      "createAccountIntroFree": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 Free 플랜을 활성화하고 배포로 바로 이동합니다. 대부분의 사용자는 카드 없이 시작할 수 있으며, 위험도가 높은 Free 티어 배포는 카드 인증이 필요할 수 있습니다.",
+      "createAccountIntroFree": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 무료 계정을 설정하고 Launch로 이동합니다. 거기서 내 컴퓨터를 연결하거나 플랜을 선택할 수 있습니다.",
       "createAccountIntroPaid": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 안전한 결제 단계로 진행됩니다. 7일 환불 보장이 적용됩니다.",
       "legalPrefix": "계속 진행하면 다음에 동의하는 것입니다:",
       "terms": "이용약관",
@@ -6686,10 +4184,15 @@ const LOCALE_COPY_OVERRIDES = {
         "titleEmphasis": "$HermesOS",
         "titleSuffix": " 지갑.",
         "legacyIntroStrong": "레거시 수탁 지갑",
-        "legacyIntroBody": "기존 입출금 플로우가 계속 활성 상태입니다. 원하는 티어의 $HERMESOS 가격을 오늘 잠그고, 입금 주소로 견적 금액을 보내세요. Free 티어는 입금 없이 항상 이용 가능합니다.",
+        "legacyIntroBody": "기존 입출금 플로우가 계속 활성 상태입니다. 원하는 티어의 $HERMESOS 가격을 오늘 잠그고, 입금 주소로 견적 금액을 보내세요. 무료 계정은 입금 없이 항상 이용 가능합니다.",
         "selfCustodyIntroStrong": "내 지갑 연결",
-        "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. Free 티어는 토큰 인증 없이 항상 이용 가능합니다.",
+        "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. 무료 계정은 토큰 인증 없이 항상 이용 가능합니다.",
         "priceUnavailable": "토큰 가격을 불러올 수 없습니다 — 나중에 다시 시도하세요.",
+        "restricted": {
+          "eyebrow": "지갑",
+          "title": "내 지갑.",
+          "intro": "에이전트의 지갑이 여기에 표시됩니다.",
+        },
         "buyToken": {
           "ariaLabel": "$HermesOS 구매",
           "eyebrow": "$HermesOS 구하기",
@@ -6751,8 +4254,8 @@ const LOCALE_COPY_OVERRIDES = {
         "agentWallets": {
           "ariaLabel": "에이전트 지갑",
           "title": "에이전트 지갑.",
-          "subtitle": "에이전트당 하나 · Bankr 관리 · Base 전용",
-          "emptyNoAgents": "첫 번째 에이전트를 실행하면 Bankr 지갑이 자동으로 프로비저닝됩니다.",
+          "subtitle": "에이전트당 하나 · Bankr · Base 전용",
+          "emptyNoAgents": "에이전트를 실행한 뒤 내 Bankr 계정을 연결해 지갑을 설정하세요.",
           "deployAgent": "에이전트 배포",
           "runningEmpty": "실행 중인 에이전트가 여기에 표시됩니다."
         }
@@ -6837,7 +4340,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "무제한",
           "agents": "에이전트",
           "active": "활성",
-          "guarantee": "48시간 환불 정책 · 업그레이드 전용 플랜"
+          "guarantee": "7일 환불 정책 · 업그레이드 전용 플랜"
         },
         "noSubscription": {
           "title": "활성 구독 없음"
@@ -6929,7 +4432,7 @@ const LOCALE_COPY_OVERRIDES = {
           },
           "rows": {
             "billing": { "description": "요금제, 결제 수단, 크레딧, 청구서" },
-            "wallets": { "title": "지갑", "description": "에이전트 지갑과 $HermesOS 이용 권한" },
+            "wallets": { "title": "지갑", "description": "에이전트 지갑" },
             "apiKeys": { "title": "API 키", "description": "제공업체 키와 이를 쓰는 에이전트" },
             "infrastructure": { "description": "에이전트가 실행되는 머신과 클라우드 계정" },
             "memory": { "title": "공유 에이전트 메모리", "description": "새 에이전트가 처음부터 알고 있는 내용" },
@@ -6977,7 +4480,7 @@ const LOCALE_COPY_OVERRIDES = {
         },
         "cta": {
           "button": "에이전트 배포 →",
-          "subtitle": "무료 플랜 — 에이전트 1개, 0.5 vCPU, 1 GB RAM, 항상 활성"
+          "subtitle": "오픈 소스. Hivra Cloud 또는 내 서버에서 실행"
         }
       }
     },

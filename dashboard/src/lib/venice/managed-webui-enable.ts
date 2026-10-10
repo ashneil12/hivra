@@ -4,7 +4,7 @@ import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import { buildHermesWebConfigPayload } from "@/lib/hermes-web";
 import { putHermesConfigWithBindMountFallback } from "@/lib/hermes-config-write";
 import { resolveHermesHomeDirFromConfig } from "@/lib/hermes-home";
-import { sshExec } from "@/lib/hetzner/ssh";
+import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import { log } from "@/lib/logger";
 import { formatStoredProviderSecretPreview } from "@/lib/codex-oauth";
 import { buildProviderEnvResetMap } from "@/lib/services/hetzner-instance-service";
@@ -271,6 +271,7 @@ async function applyManagedVeniceToRunningWebUI(params: {
   instanceId: string;
   userId: string;
   ip: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   proxyKey: string;
   proxyBaseUrl: string;
   model: string;
@@ -299,6 +300,7 @@ async function applyManagedVeniceToRunningWebUI(params: {
     containerName: `agent-${sanitizeDockerName(params.instanceId)}`,
     hermesHomeDir: params.hermesHomeDir,
     ip: params.ip,
+    guestTarget: params.guestTarget,
     instanceId: params.instanceId,
     userId: params.userId,
     timeoutMs: 20_000,
@@ -321,7 +323,7 @@ async function applyManagedVeniceToRunningWebUI(params: {
 ${envPatch}
 cd /opt/hermes/instances/${params.instanceId}
 docker compose up -d --force-recreate 2>&1 | tail -5`,
-    { timeoutMs: 45_000 }
+    { timeoutMs: 45_000, ...(params.guestTarget ? { proxmoxHostConfig: params.guestTarget } : {}) }
   );
 
   if (!result.ok) {
@@ -458,6 +460,7 @@ export async function enableManagedVeniceForWebUIInstance(
           instanceId: params.instanceId,
           userId: params.userId,
           ip: secure.instanceIpv4,
+          guestTarget: secure.guestTarget ?? null,
           proxyKey: plaintextKey,
           proxyBaseUrl,
           model,
@@ -571,6 +574,7 @@ async function applyVeniceByokToRunningWebUI(params: {
   instanceId: string;
   userId: string;
   ip: string;
+  guestTarget: ProxmoxSshHostConfig | null;
   apiKey: string;
   model: string;
   hermesHomeDir: string;
@@ -594,6 +598,7 @@ async function applyVeniceByokToRunningWebUI(params: {
     containerName: `agent-${sanitizeDockerName(params.instanceId)}`,
     hermesHomeDir: params.hermesHomeDir,
     ip: params.ip,
+    guestTarget: params.guestTarget,
     instanceId: params.instanceId,
     userId: params.userId,
     timeoutMs: 20_000,
@@ -614,7 +619,7 @@ async function applyVeniceByokToRunningWebUI(params: {
 ${envPatch}
 cd /opt/hermes/instances/${params.instanceId}
 docker compose up -d --force-recreate 2>&1 | tail -5`,
-    { timeoutMs: 45_000 }
+    { timeoutMs: 45_000, ...(params.guestTarget ? { proxmoxHostConfig: params.guestTarget } : {}) }
   );
 
   if (!result.ok) {
@@ -781,6 +786,7 @@ export async function disableManagedVeniceForWebUIInstance(
           instanceId: params.instanceId,
           userId: params.userId,
           ip: secure.instanceIpv4,
+          guestTarget: secure.guestTarget ?? null,
           apiKey: trimmedKey,
           model,
           hermesHomeDir: resolveHermesHomeDirFromConfig(config),

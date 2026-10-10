@@ -11,6 +11,8 @@ import {
   createWalletVerificationChallenge,
   isWalletClaimedByAnotherAccount,
 } from "@/lib/billing/wallet-verification";
+import { hasExistingTokenHolderAccess, resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
+import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const WalletChallengeRequestSchema = z.object({
@@ -32,6 +34,19 @@ export async function POST(req: NextRequest) {
       ...RATE_LIMIT_PRESETS.settingsWrite,
     });
     if (rateLimitError) return rateLimitError;
+
+    // Token geo-policy: verifying a wallet is the way into token tiers, so a
+    // blocked user may not start one — unless they already hold token access,
+    // which a wallet change must never cost them.
+    const geo = await resolveTokenGeoBlock(req, { userId });
+    if (geo.blocked && !(await hasExistingTokenHolderAccess(userId))) {
+      return tokenGeoBlockedResponse(geo, {
+        source: "billing/wallet-challenge",
+        route: "/api/billing/wallet/challenge",
+        method: "POST",
+        userId,
+      });
+    }
 
     let body: unknown;
     try {

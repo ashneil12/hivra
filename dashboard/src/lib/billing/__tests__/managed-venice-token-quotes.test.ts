@@ -81,7 +81,7 @@ describe("managed Venice token deposit quotes", () => {
     ).rejects.toBeInstanceOf(ManagedVeniceTokenQuotePriceError);
   });
 
-  it("refuses quotes when primary and cross-check prices disagree by more than 5%", async () => {
+  it("refuses quotes when the price is more than 5% above the cross-check", async () => {
     const { db } = createMemoryDb();
 
     await expect(
@@ -92,13 +92,29 @@ describe("managed Venice token deposit quotes", () => {
           depositAddress: "0xmanagedvenice",
           now,
           priceQuote: freshPrimary,
-          crossCheckQuote: { ...freshCrossCheck, priceUsd: "0.053" },
+          crossCheckQuote: { ...freshCrossCheck, priceUsd: "0.047" },
         },
         db
       )
     ).rejects.toBeInstanceOf(ManagedVeniceTokenQuotePriceError);
 
     expect(MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS).toBe(500);
+  });
+
+  it("keeps deposits open on a real drop: a price 8% below the cross-check is the conservative side", async () => {
+    const { db } = createMemoryDb();
+    const quote = await createManagedVeniceTokenQuote(
+      {
+        userId: "user_1",
+        tokenAmountRaw,
+        depositAddress: "0xmanagedvenice",
+        now,
+        priceQuote: { ...freshPrimary, priceUsd: "0.046" },
+        crossCheckQuote: { ...freshCrossCheck, priceUsd: "0.05" },
+      },
+      db
+    );
+    expect(quote.snapshotPriceUsd).toBe("0.046");
   });
 
   it("creates quotes from the DEXScreener Hivra price while the cross-check source is not live", async () => {

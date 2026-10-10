@@ -4,7 +4,8 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
-import RoadmapPage from "../page";
+import RoadmapPage, { metadata } from "../page";
+import { roadmapContent } from "@/lib/roadmap-content";
 
 jest.mock("next/link", () => {
   const MockLink = ({
@@ -109,12 +110,13 @@ describe("/roadmap page", () => {
       })
     ).toBeInTheDocument();
 
-    expect(screen.getByText("APRIL 2026 · HERMESOS.CLOUD")).toBeInTheDocument();
+    expect(screen.getByText("APRIL 2026 · HIVRA.CLOUD")).toBeInTheDocument();
     expect(screen.getByText("The operating system for autonomous agents.")).toBeInTheDocument();
 
     expect(screen.queryByRole("link", { name: /download roadmap/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /read it here/i })).toHaveAttribute("href", "#what-is-hermesos");
-    expect(screen.getByRole("link", { name: /deploy hivra/i })).toHaveAttribute("href", "/get-started?plan=operator");
+    // FTUE-16: a generic start link goes to sign-up and Launch, not Pro checkout.
+    expect(screen.getByRole("link", { name: /deploy hivra/i })).toHaveAttribute("href", "/sign-up");
 
     const roadmapNav = screen.getByRole("navigation", { name: /roadmap navigation/i });
     expect(within(roadmapNav).getAllByRole("link", { name: /token verification/i }).length).toBeGreaterThanOrEqual(1);
@@ -122,17 +124,11 @@ describe("/roadmap page", () => {
     expect(within(roadmapNav).queryByRole("link", { name: /compare/i })).not.toBeInTheDocument();
     expect(within(roadmapNav).queryByRole("link", { name: /blog/i })).not.toBeInTheDocument();
 
+    expect(screen.getByText("Both paths give access to the same platform.")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Both paths give access to the same platform and the same features. Whichever way you choose to enter, $HermesOS powers the underlying infrastructure either way."
-      )
+      screen.getByText("Card users never need a wallet or a token. Self-hosting needs neither a token nor a Hivra account.")
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "For users paying by card, the platform operates on two layers. The first layer is the one users interact with: a simple credits system. Top up, spend credits, run agents. No wallets, no tokens, no complexity. The second layer is the underlying infrastructure: the platform uses a shared pool to settle platform operations on-chain using $HermesOS. Card users are funding the infrastructure that runs their agents. They are not buying tokens, and the tokens are not theirs. They are simply using a platform whose backend runs on-chain settlement, the same way most apps run on infrastructure their users never see."
-      )
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/Free plan access \(0\.5 vCPU, 1GB RAM\)/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/qualify for a compute tier/i).length).toBeGreaterThanOrEqual(2);
 
     expect(
       screen.getByRole("heading", {
@@ -185,12 +181,7 @@ describe("/roadmap page", () => {
     expect(screen.getByText("TOKEN UTILITY")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "$HermesOS is the utility token of the Hivra platform. The token is not a financial instrument. It is functional infrastructure for access, payments, and platform participation. Token utility is being introduced in phases as the platform matures."
-      )
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Hold even a single \$HermesOS token and get Free plan access: 0\.5 vCPU, 1GB RAM\./i
+        "Compute access (01) is live today. The other uses below were proposals in April 2026. Some have changed since, and none is a commitment. The current proposal is in the tokenomics."
       )
     ).toBeInTheDocument();
     expect(
@@ -208,5 +199,89 @@ describe("/roadmap page", () => {
     expect(bankrLink).toHaveAttribute("href", "https://bankr.bot");
     expect(bankrLink).toHaveAttribute("target", "_blank");
     expect(bankrLink).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("is unmistakably Hivra's roadmap, not the Hermes Agent roadmap that searchers may expect", () => {
+    // Search Console shows "hermes agent roadmap" landing on this page. Hermes
+    // Agent is Nous Research's project, so the title, description and hero all
+    // say whose roadmap this is.
+    const title = String(metadata.title);
+    const description = String(metadata.description);
+    expect(title).toMatch(/^Hivra Roadmap/);
+    // The root layout template already appends " | Hivra".
+    expect(title).not.toMatch(/\| Hivra$/);
+    expect(title.length).toBeLessThanOrEqual(58);
+    expect(description).toMatch(/^The Hivra roadmap \(hivra\.cloud, formerly HermesOS\)/);
+    expect(description).toContain("Not the Hermes Agent roadmap.");
+    expect(description.length).toBeLessThanOrEqual(160);
+    expect(title + description).not.toMatch(/[\u2013\u2014]/);
+
+    const { container } = render(<RoadmapPage />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Hivra Product Roadmap 2026$/);
+    expect(container).toHaveTextContent(
+      /This is the roadmap for Hivra \(hivra\.cloud, formerly HermesOS\), not for Hermes Agent, which is a Nous Research project\./,
+    );
+  });
+
+  it("does not promise token holders a governance vote while governance is undecided", () => {
+    const { container } = render(<RoadmapPage />);
+    expect(container).not.toHaveTextContent(/holders vote/i);
+    expect(container).not.toHaveTextContent(/Token holders participate in decisions/i);
+    expect(screen.getByText(/No governance model has been chosen/)).toBeInTheDocument();
+  });
+
+  it("presents the April 2026 plan as history and keeps present-tense claims true", () => {
+    const { container } = render(<RoadmapPage />);
+    expect(screen.getByText(/This is Hivra's April 2026 roadmap, kept for the record\./)).toBeInTheDocument();
+    for (const stale of [
+      /hermesos\.cloud/i,
+      /launched into production two weeks ago/i,
+      /Never more than 24 hours from a clean restore/i,
+      /guaranteed early access/i,
+      /moving from a subscription-based model to a token-based access system/i,
+      /Hold even a single \$HermesOS token/i,
+      /Phase 1 ships in six weeks/i,
+      /[\u2013\u2014]/,
+    ]) {
+      expect(container).not.toHaveTextContent(stale);
+    }
+    expect(screen.getAllByText(/hivra\.cloud\/token/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Agents on their own computers")).toBeInTheDocument();
+  });
+
+  it("makes no speed claim anywhere, including in planned Marketplace items", () => {
+    // The shared public-copy rules ban unmeasured speed claims ("one click",
+    // "instantly", "in N minutes"). The roadmap is a labelled plan, but a plan
+    // that promises a speed is still a speed claim once it is indexed.
+    const SPEED_CLAIM = /one[- ]click|\binstant(?:ly)?\b|\bin \d+ (?:minutes|seconds)\b|\bwithin (?:minutes|seconds)\b|live in minutes|deploy in \d/i;
+    const strings: string[] = [];
+    const collect = (value: unknown): void => {
+      if (typeof value === "string") strings.push(value);
+      else if (Array.isArray(value)) value.forEach(collect);
+      else if (value && typeof value === "object") Object.values(value).forEach(collect);
+    };
+    collect(roadmapContent);
+    expect(strings.length).toBeGreaterThan(100);
+    expect(strings.filter((text) => SPEED_CLAIM.test(text))).toEqual([]);
+
+    const { container } = render(<RoadmapPage />);
+    expect(container.textContent ?? "").not.toMatch(SPEED_CLAIM);
+    expect(container).toHaveTextContent("Browse, install, and deploy community-built operator packs.");
+  });
+
+  it("labels every token use that is not live as proposed", () => {
+    const [live, ...rest] = roadmapContent.token.utilities;
+    expect(live.description).toMatch(/^Live today\./);
+    for (const utility of rest) {
+      if (utility.icon === "governance") continue;
+      expect(utility.description).toMatch(/^Proposed: /);
+    }
+    const phaseBullets = roadmapContent.roadmap.phases.flatMap((phase) =>
+      phase.sections.flatMap((section): readonly string[] => ("bullets" in section && section.bullets ? section.bullets : [])),
+    );
+    for (const bullet of phaseBullets.filter((text) => /\$HermesOS|in the token|token balance|token-based|token spendable/i.test(text))) {
+      if (/^Token path: /.test(bullet)) continue;
+      expect(bullet).toMatch(/^Proposed: /);
+    }
   });
 });

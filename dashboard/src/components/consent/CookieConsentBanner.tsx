@@ -137,6 +137,7 @@ export function CookieConsentBanner() {
   const isRequired = mode === 'required';
 
   const secondaryButtonStyle: React.CSSProperties = {
+    minHeight: 44,
     padding: '8px 14px',
     fontSize: 12,
     letterSpacing: '0.05em',
@@ -144,8 +145,17 @@ export function CookieConsentBanner() {
     background: 'transparent',
     color: 'var(--text-secondary)',
     border: '1px solid var(--etched-border)',
-    borderRadius: 6,
+    borderRadius: 0,
     whiteSpace: 'nowrap',
+  };
+  const primaryButtonStyle: React.CSSProperties = {
+    minHeight: 44,
+    padding: '8px 16px',
+    fontSize: 12,
+    letterSpacing: '0.05em',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    borderRadius: 0,
   };
 
   return (
@@ -153,18 +163,23 @@ export function CookieConsentBanner() {
       role="dialog"
       aria-label="Cookie consent"
       aria-live="polite"
+      className="hivra-cookie-consent"
       style={{
         position: 'fixed',
         left: '1rem',
         right: '1rem',
-        bottom: '1rem',
+        // --hivra-bottom-chrome is the phone bottom bar's height when it is shown.
+        bottom: 'calc(var(--hivra-bottom-chrome, 0px) + 1rem + env(safe-area-inset-bottom, 0px))',
         zIndex: 1000,
         maxWidth: 720,
+        maxHeight: 'calc(100dvh - var(--hivra-bottom-chrome, 0px) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
         margin: '0 auto',
         background: 'var(--overlay-bg)',
         border: '1px solid var(--etched-border)',
         backdropFilter: 'blur(12px)',
-        borderRadius: 8,
+        borderRadius: 0,
         padding: '1rem 1.25rem',
         display: 'flex',
         flexDirection: 'column',
@@ -217,6 +232,7 @@ export function CookieConsentBanner() {
       ) : null}
 
       <div
+        className="hivra-cookie-consent__actions"
         style={{
           display: 'flex',
           flexWrap: 'wrap',
@@ -225,6 +241,11 @@ export function CookieConsentBanner() {
           alignItems: 'center',
         }}
       >
+        <style>{`
+          @media (max-width: 480px) {
+            .hivra-cookie-consent__actions > button { flex: 1 1 auto; }
+          }
+        `}</style>
         {showPrefs ? (
           <>
             <button
@@ -248,13 +269,7 @@ export function CookieConsentBanner() {
               onClick={savePreferences}
               aria-label="Save cookie preferences"
               className="action-button"
-              style={{
-                padding: '8px 16px',
-                fontSize: 12,
-                letterSpacing: '0.05em',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
+              style={primaryButtonStyle}
             >
               Save preferences
             </button>
@@ -285,13 +300,7 @@ export function CookieConsentBanner() {
               onClick={acceptAll}
               aria-label={isRequired ? 'Accept all cookies' : 'Accept cookies'}
               className="action-button"
-              style={{
-                padding: '8px 16px',
-                fontSize: 12,
-                letterSpacing: '0.05em',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
+              style={primaryButtonStyle}
             >
               {isRequired ? 'Accept all' : 'Accept'}
             </button>
@@ -352,7 +361,7 @@ function ConsentCategory({
             textTransform: 'uppercase',
             color: 'var(--text-muted)',
             border: '1px solid var(--etched-border)',
-            borderRadius: 999,
+            borderRadius: 0,
             padding: '3px 8px',
             whiteSpace: 'nowrap',
           }}
@@ -367,31 +376,44 @@ function ConsentCategory({
           aria-label={`${title}: ${checked ? 'on' : 'off'}`}
           onClick={onToggle}
           style={{
+            // 44x44 hit area around the 40x22 track.
             flex: '0 0 auto',
-            width: 40,
-            height: 22,
-            borderRadius: 999,
-            border: '1px solid var(--etched-border)',
-            background: checked ? 'var(--ink-black)' : 'var(--bg-surface)',
-            position: 'relative',
-            cursor: 'pointer',
-            transition: 'background 0.15s ease',
+            display: 'grid',
+            placeItems: 'center',
+            minWidth: 44,
+            minHeight: 44,
+            margin: '-11px -2px',
             padding: 0,
+            background: 'transparent',
+            border: 0,
+            cursor: 'pointer',
           }}
         >
           <span
             aria-hidden="true"
             style={{
-              position: 'absolute',
-              top: 2,
-              left: checked ? 20 : 2,
-              width: 16,
-              height: 16,
-              borderRadius: '50%',
-              background: checked ? 'var(--bg-surface)' : 'var(--text-muted)',
-              transition: 'left 0.15s ease',
+              position: 'relative',
+              width: 40,
+              height: 22,
+              borderRadius: 0,
+              border: '1px solid var(--etched-border)',
+              background: checked ? 'var(--ink-black)' : 'var(--bg-surface)',
+              transition: 'background 0.15s ease',
             }}
-          />
+          >
+            <span
+              style={{
+                position: 'absolute',
+                top: 2,
+                left: checked ? 20 : 2,
+                width: 16,
+                height: 16,
+                borderRadius: 0,
+                background: checked ? 'var(--bg-surface)' : 'var(--text-muted)',
+                transition: 'left 0.15s ease',
+              }}
+            />
+          </span>
         </button>
       )}
     </div>

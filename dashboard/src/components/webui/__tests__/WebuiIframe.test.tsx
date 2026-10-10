@@ -565,7 +565,7 @@ describe('WebuiIframe', () => {
       expect.objectContaining({ source: 'open_new_tab' }),
     );
 
-    const link = await waitFor(() => screen.getByRole('link', { name: /click here to open/i }));
+    const link = await waitFor(() => screen.getByRole('link', { name: /open it here/i }));
     expect(link).toHaveAttribute('href', 'https://agent.example.com/_sidecar/webui-login?blocked=1');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));

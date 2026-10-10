@@ -1,97 +1,136 @@
 import type { MetadataRoute } from "next";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
+import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "@/lib/seo-lastmod";
+import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
+import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
+import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
 export const SITE_URL = "https://hivra.cloud";
 
-// Last substantive update to the core marketing surfaces (brand-bridge metadata
-// refresh, 2026-07). Bump this when the key pages genuinely change — blog posts
-// carry their own real per-article dates below and are NOT tied to this.
-const CORE_PAGES_LAST_MODIFIED = new Date("2026-07-07");
+// Sitemap lastmod values come from lib/seo-lastmod.ts (the last real content
+// change per page) and from each blog article's own lastModified. They are never
+// bumped site-wide and never set to a release date: Google uses lastmod only when
+// it is consistently accurate.
 
-export function getSiteUrls(): MetadataRoute.Sitemap {
-  // Core public pages
+// The pages the cutover rewrote (the homepage, the blog index, the privacy
+// policy, /pricing, /agents, /tools, /features and /compare) carry at least this
+// date. Google compares lastmod with its last crawl of production, which is the
+// retired build, so a page that differs from that build must not look older than
+// the cutover. If the cutover ships well after this date, move it to the Promote
+// date. Pages whose real change is later keep the later date.
+export const CUTOVER_LAST_MODIFIED = new Date("2026-09-24");
+
+function cutoverPage(day: string | Date): Date {
+  const real = typeof day === "string" ? dayToDate(day) : day;
+  return real.getTime() < CUTOVER_LAST_MODIFIED.getTime() ? CUTOVER_LAST_MODIFIED : real;
+}
+
+/** The newest real date among the blog articles: what changed on the index. */
+function newestArticleDate(): Date {
+  return BLOG_ARTICLES_LIST.reduce((newest, article) => {
+    const date = new Date(article.lastModified || article.publishedDate);
+    return date.getTime() > newest.getTime() ? date : newest;
+  }, new Date(0));
+}
+
+export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean } = {}): MetadataRoute.Sitemap {
+  // Core public pages. The changelog RSS feed is deliberately not listed: a
+  // feed is not a page, and it is discovered from /changelog.
   const corePages: MetadataRoute.Sitemap = [
     {
       url: SITE_URL,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: cutoverPage(PAGE_LAST_MODIFIED.home),
       changeFrequency: "weekly",
       priority: 1.0,
     },
     {
+      // The index changes when an article does.
       url: `${SITE_URL}/blog`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: cutoverPage(newestArticleDate()),
       changeFrequency: "weekly",
       priority: 0.9,
     },
     {
       url: `${SITE_URL}/features`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: cutoverPage(PAGE_LAST_MODIFIED.featuresHub),
       changeFrequency: "weekly",
       priority: 0.9,
     },
     {
       url: `${SITE_URL}/compare`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: cutoverPage(PAGE_LAST_MODIFIED.compareHub),
       changeFrequency: "weekly",
       priority: 0.8,
     },
-    {
-      url: `${SITE_URL}/token`,
-      lastModified: new Date("2026-04-17"),
-      changeFrequency: "monthly",
-      priority: 0.2,
-    },
+    ...(tokenSurfaces
+      ? [
+          {
+            url: `${SITE_URL}/token`,
+            lastModified: dayToDate(PAGE_LAST_MODIFIED.token),
+            changeFrequency: "monthly" as const,
+            priority: 0.2,
+          },
+        ]
+      : []),
     {
       url: `${SITE_URL}/why-hivra`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.whyHivra),
       changeFrequency: "monthly",
       priority: 0.6,
     },
     {
       // Public roadmap page.
       url: `${SITE_URL}/roadmap`,
-      lastModified: CORE_PAGES_LAST_MODIFIED,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.roadmap),
       changeFrequency: "monthly",
       priority: 0.6,
     },
     {
-      // Public changelog page (the HTML view; the RSS feed below is separate).
+      // Public changelog page (the HTML view).
       url: `${SITE_URL}/changelog`,
-      lastModified: new Date("2026-06-22"),
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.changelog),
       changeFrequency: "weekly",
       priority: 0.7,
     },
     {
-      // Public RSS feed for the changelog (auto-discovered from /changelog too).
-      url: `${SITE_URL}/changelog/rss.xml`,
-      lastModified: new Date("2026-06-21"),
-      changeFrequency: "weekly",
-      priority: 0.4,
-    },
-    {
       // Live platform-health page (public, signed-out accessible).
       url: `${SITE_URL}/status`,
-      lastModified: new Date("2026-06-22"),
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.status),
       changeFrequency: "weekly",
       priority: 0.4,
     },
     {
       // Live deploy-counter / public stats page.
       url: `${SITE_URL}/stats`,
-      lastModified: new Date("2026-06-22"),
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.stats),
       changeFrequency: "weekly",
       priority: 0.4,
     },
     {
+      // The entity home: who and what Hivra is, formerly HermesOS, contact.
+      url: `${SITE_URL}/about`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.about),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      // How to report a vulnerability; /.well-known/security.txt points here.
+      url: `${SITE_URL}/security`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.security),
+      changeFrequency: "monthly",
+      priority: 0.3,
+    },
+    {
       url: `${SITE_URL}/privacy`,
-      lastModified: new Date("2026-03-01"),
+      lastModified: cutoverPage(PAGE_LAST_MODIFIED.privacy),
       changeFrequency: "monthly",
       priority: 0.3,
     },
     {
       url: `${SITE_URL}/terms`,
-      lastModified: new Date("2026-03-01"),
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.terms),
       changeFrequency: "monthly",
       priority: 0.3,
     },
@@ -109,7 +148,7 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
 
   const featurePages: MetadataRoute.Sitemap = featureSlugs.map((slug) => ({
     url: `${SITE_URL}/features/${slug}`,
-    lastModified: new Date("2026-04-01"),
+    lastModified: cutoverPage(PAGE_LAST_MODIFIED.featureDetail),
     changeFrequency: "monthly" as const,
     priority: 0.8,
   }));
@@ -123,14 +162,25 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     "ai-agent-hosting-alternatives",
   ];
 
-  const comparePages: MetadataRoute.Sitemap = compareSlugs.map((slug) => ({
-    url: `${SITE_URL}/compare/${slug}`,
-    lastModified: new Date("2026-04-01"),
-    changeFrequency: "monthly" as const,
-    priority: 0.75,
-  }));
+  const comparePages: MetadataRoute.Sitemap = [
+    ...compareSlugs.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: cutoverPage(PAGE_LAST_MODIFIED.compareDetail),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+    // The host comparisons carry the date their competitor numbers were read
+    // (lib/compare/competitor-facts.ts), so a refreshed check moves them.
+    ...HOST_COMPARISON_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: cutoverPage(COMPETITOR_FACTS_CHECKED),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+  ];
 
-  // Blog articles — pulled live from the article registry (always up to date)
+  // Blog articles: pulled live from the article registry. Each carries its own
+  // real lastModified (or its publish date), so none is tied to a release.
   const blogPages: MetadataRoute.Sitemap = BLOG_ARTICLES_LIST.map((article) => ({
     url: `${SITE_URL}/blog/${article.slug}`,
     lastModified: new Date(article.lastModified || article.publishedDate),
@@ -138,5 +188,34 @@ export function getSiteUrls(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
-  return [...corePages, ...featurePages, ...comparePages, ...blogPages];
+  // Pricing, agent and tool pages were indexed on the retired site and were
+  // restored on 2026-09-24 so the cutover does not drop them.
+  const pricingPage: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/pricing`, lastModified: cutoverPage(PAGE_LAST_MODIFIED.pricing), changeFrequency: "weekly", priority: 0.9 },
+  ];
+
+  const agentPagesLastModified = cutoverPage(AGENT_PAGES_LAST_MODIFIED);
+  const agentPages: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/agents`, lastModified: agentPagesLastModified, changeFrequency: "weekly", priority: 0.9 },
+    ...AGENT_SEO_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/agents/${slug}`,
+      lastModified: agentPagesLastModified,
+      changeFrequency: "weekly" as const,
+      priority: 0.85,
+    })),
+  ];
+
+  // The hub lists every tool; each tool page carries the date of its own content.
+  const toolHubLastModified = cutoverPage(PAGE_LAST_MODIFIED.tools);
+  const toolPages: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/tools`, lastModified: toolHubLastModified, changeFrequency: "monthly", priority: 0.8 },
+    ...TOOL_ENTRIES.map((entry) => ({
+      url: `${SITE_URL}/tools/${entry.slug}`,
+      lastModified: cutoverPage(TOOL_PAGE_LAST_MODIFIED[entry.slug] ?? PAGE_LAST_MODIFIED.tools),
+      changeFrequency: "monthly" as const,
+      priority: 0.8,
+    })),
+  ];
+
+  return [...corePages, ...pricingPage, ...agentPages, ...toolPages, ...featurePages, ...comparePages, ...blogPages];
 }

@@ -43,9 +43,12 @@ function Workspace({ computerId, boxOrigin, surface, active }: Props) {
       <div role="status" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", fontSize: 12,
         color: "var(--text-secondary)", borderBottom: "1px solid var(--etched-border)" }}>
         <span style={{ flex: 1 }}>{message}</span>
-        {!busy && phase === "disconnected" ? <button type="button" onClick={() => void bridge.connect()}>Reconnect {surface === "files" ? "Files" : "Terminal"}</button> : null}
+        {!busy && phase === "disconnected" ? <button type="button" onClick={() => void bridge.connect()} className="mono"
+          style={{ flexShrink: 0, minHeight: 44, paddingInline: 12, border: "1px solid var(--etched-border)", background: "transparent",
+            color: "var(--ink-black)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
+          Reconnect {surface === "files" ? "Files" : "Terminal"}</button> : null}
       </div>
-      {target ? <iframe key={target.id} ref={frame} src={target.url} title={surface === "files" ? "Secure Files connection" : "Box Terminal"}
+      {target ? <iframe key={target.id} ref={frame} src={target.url} title={surface === "files" ? "Secure Files connection" : "Terminal"}
         referrerPolicy="no-referrer" allow={surface === "box-terminal" ? "clipboard-read; clipboard-write" : undefined}
         hidden={surface === "files"} style={{ border: 0, width: "100%", flex: 1, minHeight: 0 }} /> : null}
       {surface === "files" && filesOpened ? <HivraFiles boxUrl={boxOrigin} access={bridge.files} /> : null}

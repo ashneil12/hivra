@@ -8,7 +8,10 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import {
+  hostOperationLimitedResponse,
+  reserveAuthenticatedRouteRateLimit,
+} from "@/lib/authenticated-rate-limit";
 import {
   prepareSimpleProxmoxConnection,
   type InfrastructurePreparationErrorCode,
@@ -31,6 +34,9 @@ const ERROR_STATUS: Record<InfrastructurePreparationErrorCode, number> = {
   PREPARATION_INTERNAL_ERROR: 500,
 };
 
+/** Failed setups allowed per host in 15 minutes before the next must wait. */
+const SETUP_FAILURE_LIMIT = 5;
+
 function noStore(response: Response): Response {
   response.headers.set("Cache-Control", "no-store");
   return response;
@@ -47,16 +53,37 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // Host preparation mutates a Proxmox server and may download a large base
-    // image. Keep this considerably tighter than ordinary settings writes.
-    const rateLimitError = enforceAuthenticatedRouteRateLimit(request, {
+    // image. Keep this considerably tighter than ordinary settings writes, but
+    // count only a run that is still going or that succeeded: a person who
+    // fixes a failure's cause can try again at once. Failures still open an
+    // SSH connection to the server, so they have their own cap.
+    const reservation = reserveAuthenticatedRouteRateLimit(request, {
       routeKey: `infrastructure_connection_prepare:${parsedId.data}`,
       userId,
       limit: 1,
       windowMs: 15 * 60_000,
+      failureLimit: SETUP_FAILURE_LIMIT,
     });
-    if (rateLimitError) return noStore(rateLimitError);
+    if (reservation.limited) {
+      return noStore(hostOperationLimitedResponse(reservation.limited, {
+        inFlight: "Setup is already running on this server. Wait for it to finish, then check the result.",
+        recent: "This server was set up in the last 15 minutes.",
+        failures: `Setup failed on this server ${SETUP_FAILURE_LIMIT} times in the last 15 minutes.`,
+      }));
+    }
 
-    const preparation = await prepareSimpleProxmoxConnection(userId, parsedId.data);
+    let preparation: Awaited<ReturnType<typeof prepareSimpleProxmoxConnection>>;
+    try {
+      preparation = await prepareSimpleProxmoxConnection(userId, parsedId.data);
+    } catch (error) {
+      reservation.settle("failed");
+      throw error;
+    }
+    // Setup that ran but left the server not ready for agents (a bridge or
+    // provisioner problem the check names) counts as a failure: its fix text
+    // asks the owner to set up again, which a "succeeded" slot would block.
+    reservation.settle(preparation.ok && preparation.preflight.ok && preparation.preflight.target.launchReady
+      ? "succeeded" : "failed");
     if (!preparation.ok) {
       const status = ERROR_STATUS[preparation.error.code];
       return noStore(
@@ -64,7 +91,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
           preparation.error.message,
           status,
           { failureType: preparation.error.code.toLowerCase() },
-          { code: preparation.error.code },
+          {
+            code: preparation.error.code,
+            ...(preparation.error.cause ? { cause: preparation.error.cause } : {}),
+          },
           {
             source: "infrastructure/connections/[id]/prepare",
             route: "/api/infrastructure/connections/[id]/prepare",

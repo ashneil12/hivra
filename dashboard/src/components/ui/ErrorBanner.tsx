@@ -156,21 +156,25 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
         padding: "12px 16px",
         borderRadius: 0,
         display: "flex",
+        flexWrap: "wrap",
         gap: 10,
         color: "var(--red)",
         alignItems: "flex-start",
       }}
     >
       <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-      <div style={{ fontSize: 13, lineHeight: 1.5, flex: 1, wordBreak: "break-word" }}>
+      {/* The button wraps below the message on narrow screens instead of
+          squeezing it into a sliver beside it. */}
+      <div style={{ fontSize: 13, lineHeight: 1.5, flex: "1 1 220px", minWidth: 0, wordBreak: "break-word" }}>
         {headline ? (
           <>
             <div style={{ fontWeight: 600 }}>{headline}</div>
             {agentError?.hint && (
               <div style={{ marginTop: 4, opacity: 0.85 }}>{agentError.hint}</div>
             )}
-            <details style={{ marginTop: 6, fontSize: 11, opacity: 0.7 }}>
-              <summary style={{ cursor: "pointer" }}>Details</summary>
+            <details style={{ fontSize: 11, opacity: 0.7 }}>
+              {/* Default list-item display keeps the disclosure marker; padding makes a 40px target. */}
+              <summary style={{ cursor: "pointer", padding: "12px 0" }}>Details</summary>
               <div style={{ marginTop: 4, fontFamily: "var(--font-mono), monospace" }}>
                 {error}
                 {agentError?.code && (
@@ -192,7 +196,9 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
           display: "inline-flex",
           alignItems: "center",
           gap: 6,
-          padding: "4px 10px",
+          minHeight: 40,
+          marginLeft: "auto",
+          padding: "8px 12px",
           fontSize: 11,
           fontFamily: "var(--font-mono), monospace",
           letterSpacing: "0.05em",
@@ -206,7 +212,7 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
         }}
       >
         {copied ? <Check size={12} /> : <Copy size={12} />}
-        {copied ? "Copied" : "Copy report"}
+        {copied ? "Copied" : "Copy report for support"}
       </button>
     </div>
   );

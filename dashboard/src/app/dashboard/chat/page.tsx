@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cookies } from "next/headers";
 import { log } from "@/lib/logger";
+import { resolveDefaultHivraResource } from "@/lib/workspace/default-resource";
 import {
   getDefaultInstanceSurfacePreference,
   getInstanceSurfaceHref,
@@ -106,6 +107,23 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
       }
       redirect(`${getInstanceSurfaceHref(data.id, preferredSurface)}${searchStr}`);
     }
+
+    // No Hermes instance: an owner whose resources are all Hivra agents or
+    // computers lands on the best of those instead of a dead end.
+    let hivraId: string | null = null;
+    try {
+      hivraId = await resolveDefaultHivraResource({ userId, supabase: supabaseAdmin });
+    } catch (error) {
+      log.warn("chat resolver could not look up Hivra agents", {
+        source: "dashboard.chat.surface",
+        route: "/dashboard/chat",
+        userId,
+        failureType: "chat_resolver_hivra_lookup_failed",
+      }, error);
+    }
+    if (hivraId) {
+      redirect(`/dashboard/agent/${encodeURIComponent(hivraId)}?tab=chat`);
+    }
   }
 
   return (
@@ -114,7 +132,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
         minHeight: "100%",
         display: "grid",
         placeItems: "center",
-        padding: "2rem",
+        padding: "clamp(16px, 5vw, 2rem)",
       }}
     >
       <div
@@ -123,7 +141,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
           maxWidth: 540,
           border: "1px solid var(--etched-border)",
           background: "var(--bg-surface)",
-          padding: "2rem",
+          padding: "clamp(16px, 5vw, 2rem)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.06)",
           display: "grid",
           gap: "1rem",
@@ -133,7 +151,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
           <span
             className="mono"
             style={{
-              fontSize: 10,
+              fontSize: 11,
               textTransform: "uppercase",
               letterSpacing: "0.18em",
               opacity: 0.55,
@@ -150,7 +168,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
               margin: 0,
             }}
           >
-            Chat needs an agent workspace first.
+            Chat needs an agent first.
           </h1>
           <p
             style={{
@@ -160,18 +178,19 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
               margin: 0,
             }}
           >
-            We couldn&apos;t find an active Hermes instance for this account yet. If you just deployed one,
-            it may still be syncing. Open the command center to check its status, then try chat again.
+            There&apos;s no agent on this account yet. Launch one to start chatting. If you just launched
+            one, it will appear on Home once it finishes starting.
           </p>
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
           <Link
-            href="/dashboard"
+            href="/dashboard/launch"
             style={{
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
+              minHeight: 44,
               padding: "12px 16px",
               background: "var(--ink-black)",
               color: "var(--bg-surface)",
@@ -183,14 +202,15 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
               letterSpacing: "0.12em",
             }}
           >
-            Open Command Center
+            Launch an agent
           </Link>
           <Link
-            href={`/dashboard/chat${searchStr}`}
+            href="/dashboard"
             style={{
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
+              minHeight: 44,
               padding: "12px 16px",
               border: "1px solid var(--etched-border)",
               color: "var(--ink-black)",
@@ -202,7 +222,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
               letterSpacing: "0.12em",
             }}
           >
-            Retry Chat
+            Go to Home
           </Link>
         </div>
       </div>

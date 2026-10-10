@@ -1,5 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +29,7 @@ import {
 } from "../webui-instance-builder";
 import { OPERATOROS_AUTONOMY_SOUL_IMAGE_PATH } from "@/lib/operatoros-flavor";
 import {
+  WEBUI_BANKR_RUNTIME_ENV_KEYS,
   WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
   WEBUI_MANAGED_RUNTIME_ENV_KEYS,
 } from "../webui-runtime-env";
@@ -3740,5 +3752,912 @@ describe("clearing managed runtime env keys the user removed", () => {
 
     expect(clearLine).toBeDefined();
     expect(clearLine).not.toContain("BANKR");
+  });
+});
+
+describe("BANKR_* reconcile for user-connected wallets (bankrRuntimeReconcile)", () => {
+  const hivraWallet = {
+    walletAddress: "0x000000000000000000000000000000000000ba5e",
+    apiKey: "bk_test_hivra_wallet_key",
+    walletId: "wlt_1",
+    withdrawalDestination: "0x00000000000000000000000000000000000c0ffe",
+  };
+  const userWallet = {
+    walletAddress: "0x00000000000000000000000000000000000c0ffe",
+    apiKey: "bk_test_user_connected_key",
+    walletId: "user:0x00000000000000000000000000000000000c0ffe",
+    withdrawalDestination: null,
+  };
+  const otherWalletAddress = "0x0000000000000000000000000000000000000abc";
+  // Earlier wallets from the user's own Bankr account that reconnects replaced.
+  const priorWallet = {
+    walletAddress: "0x0000000000000000000000000000000000000a11",
+    apiKey: "bk_test_prior_user_key_k1",
+    walletId: "user:0x0000000000000000000000000000000000000a11",
+    withdrawalDestination: null,
+  };
+  const olderWallet = {
+    walletAddress: "0x0000000000000000000000000000000000000b22",
+    apiKey: "bk_test_older_user_key",
+    walletId: "user:0x0000000000000000000000000000000000000b22",
+    withdrawalDestination: null,
+  };
+  const clearUserWallet = {
+    action: "clear_user_disconnected" as const,
+    walletAddresses: [userWallet.walletAddress],
+  };
+  const replaceUserWallet = { action: "replace_user_connected" as const, walletAddresses: [userWallet.walletAddress] };
+  const RECONCILE_MARKER = "\n# BANKR_* reconcile for a wallet from the user's own Bankr account.";
+  const STRIP_MARKER = "for bankr_cfg in /state/config.yaml /state/profiles/*/config.yaml";
+  const PROFILE_ENV_MARKER = "for bankr_profile_env in /state/profiles/*/.env; do";
+  const SEED_COPY = "\nif [ -f /state/config.yaml ]; then\n  cp /state/config.yaml /seed/config.yaml";
+  const ADDRESS_GUARD = 'if bankr_wallet_address_in_set "$(bankr_env_wallet_address /state/.env)"; then';
+  const CLEAR_COMMENT =
+    "\n# Except on this run: the user disconnected a wallet from their own Bankr account,\n# so BANKR_* is appended below, but only when /state/.env holds one of the wallets\n# that agent's row delivered (bankr_clear_state, set before config.yaml is copied).";
+  const REPLACE_COMMENT =
+    "\n# Except on this run: it delivers a wallet from the user's own Bankr account, so\n# BANKR_* is listed too. The loop skips every key that wallet sets, so only a\n# BANKR_* key it doesn't set (such as a replaced wallet's withdrawal destination)\n# is dropped.";
+  const CLEAR_KEYS_APPEND = `\nif [ "$bankr_clear_state" = 1 ]; then\n  clearable_env_keys="$clearable_env_keys ${WEBUI_BANKR_RUNTIME_ENV_KEYS.join(" ")}"\nfi`;
+  const staticClearLine = `clearable_env_keys='${WEBUI_CLEARABLE_RUNTIME_ENV_KEYS.join(" ")}'`;
+  const replaceClearLine = `clearable_env_keys='${[...WEBUI_CLEARABLE_RUNTIME_ENV_KEYS, ...WEBUI_BANKR_RUNTIME_ENV_KEYS].join(" ")}'`;
+
+  function script(p: WebUIDeployParams, mode: "update" | "provision" = "update"): string {
+    return buildWebUIBootstrapScript(buildWebUIProvisioningArtifacts(p), p, { mode });
+  }
+
+  function reconcileBlock(s: string): string {
+    const start = s.indexOf(RECONCILE_MARKER);
+    expect(start).toBeGreaterThan(-1);
+    const end = s.indexOf(SEED_COPY, start);
+    expect(end).toBeGreaterThan(start);
+    return s.slice(start, end);
+  }
+
+  describe("keeps every other run's script byte-for-byte unchanged", () => {
+    it.each([
+      ["no wallet or a failed lookup (bankr null)", null],
+      ["a Hivra-provisioned or other deliverable wallet (bankr set)", hivraWallet],
+    ])("when the flag is absent: %s", (_label, bankr) => {
+      const withoutKey = script({ ...baseParams, bankr });
+      expect(script({ ...baseParams, bankr, bankrRuntimeReconcile: undefined })).toBe(withoutKey);
+      expect(withoutKey).not.toContain("bankr_cfg");
+      expect(withoutKey).not.toContain("bankr_profile_env");
+      expect(withoutKey).not.toContain("bankr_clear_state");
+      expect(withoutKey).toContain(`${staticClearLine}\n`);
+    });
+
+    it("ignores the flag when it doesn't match the delivered wallet, and on fresh provision", () => {
+      // A set `bankr` always wins over a clear: never delete keys this run delivers.
+      expect(script({ ...baseParams, bankr: hivraWallet, bankrRuntimeReconcile: clearUserWallet })).toBe(
+        script({ ...baseParams, bankr: hivraWallet })
+      );
+      expect(script({ ...baseParams, bankr: null, bankrRuntimeReconcile: replaceUserWallet })).toBe(
+        script({ ...baseParams, bankr: null })
+      );
+      expect(
+        script({ ...baseParams, bankr: userWallet, bankrRuntimeReconcile: replaceUserWallet }, "provision")
+      ).toBe(script({ ...baseParams, bankr: userWallet }, "provision"));
+      expect(
+        script({ ...baseParams, bankr: null, bankrRuntimeReconcile: clearUserWallet }, "provision")
+      ).toBe(script({ ...baseParams, bankr: null }, "provision"));
+    });
+
+    it.each([
+      [[]],
+      [[""]],
+      [["not-an-address", "0x1234"]],
+      [[`${userWallet.walletAddress}00`, "0x00000000000000000000000000000000000c0ffe'; rm -rf /state; '"]],
+    ])("clears nothing when none of the row's wallet addresses is usable (%j)", (walletAddresses) => {
+      // Without an address nothing proves which BANKR_* lines are the row's.
+      expect(
+        script({ ...baseParams, bankr: null, bankrRuntimeReconcile: { action: "clear_user_disconnected", walletAddresses } })
+      ).toBe(script({ ...baseParams, bankr: null }));
+    });
+
+    it("clears nothing for a flag without an address list (the old single-address shape)", () => {
+      const legacy = { action: "clear_user_disconnected", walletAddress: userWallet.walletAddress } as unknown as WebUIDeployParams["bankrRuntimeReconcile"];
+      expect(script({ ...baseParams, bankr: null, bankrRuntimeReconcile: legacy })).toBe(script({ ...baseParams, bankr: null }));
+    });
+
+    // Snapshot of the heredoc the update runs inside the state volume, where every
+    // BANKR_* reconcile piece lives, for every run that must not reconcile: no
+    // wallet row or a failed lookup (bankr null), a Hivra-provisioned wallet, a
+    // user wallet delivered without the flag, and flags the builder must ignore.
+    // Pinned to the bytes the script had before the reconcile existed (commit
+    // 046a85c4), so any change here shows up. Unlike the full script it does not
+    // depend on the deployment env. If you change the state-seed script on
+    // purpose, check the new body with this test's `body` and re-pin the hash.
+    describe("pins the state-seed script of every run without a reconcile", () => {
+      const PRESERVE_BODY_SHA256 = "654642d45d4ef878201bbf37c1b63014e77dae40d75a8f073f9ef9ef2303a2f8";
+      const PRESERVE_BODY_LENGTH = 10377;
+      const MANAGED_VENICE_PRESERVE_BODY_SHA256 = "381e94468e0c4070b2f9715774e2ab25bc69cd80250b6eb08b79a83d322511f0";
+      const MANAGED_VENICE_PRESERVE_BODY_LENGTH = 14415;
+
+      function body(p: WebUIDeployParams): string {
+        const full = script(p);
+        const anchor = full.indexOf("# Preserve existing WebUI state during update");
+        const start = full.indexOf("busybox sh <<'SH'\n", anchor) + "busybox sh <<'SH'\n".length;
+        const end = full.indexOf("\nSH\n", start);
+        expect(anchor).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        return full.slice(start, end);
+      }
+      const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+      it.each([
+        ["no wallet row or a failed lookup", { bankr: null }],
+        ["no bankr param at all", {}],
+        ["a Hivra-provisioned wallet", { bankr: hivraWallet }],
+        ["a user wallet delivered without the flag", { bankr: userWallet }],
+        ["a clear flag on a run that delivers a wallet", { bankr: hivraWallet, bankrRuntimeReconcile: clearUserWallet }],
+        ["a replace flag on a run that delivers nothing", { bankr: null, bankrRuntimeReconcile: replaceUserWallet }],
+        [
+          "a clear flag without a usable address",
+          { bankr: null, bankrRuntimeReconcile: { action: "clear_user_disconnected" as const, walletAddresses: ["0x1234"] } },
+        ],
+      ] as Array<[string, Partial<WebUIDeployParams>]>)("%s", (_label, overrides) => {
+        const b = body({ ...baseParams, ...overrides });
+        expect(b.length).toBe(PRESERVE_BODY_LENGTH);
+        expect(sha256(b)).toBe(PRESERVE_BODY_SHA256);
+      });
+
+      it("a managed-Venice box with no wallet", () => {
+        const b = body({
+          ...baseParams,
+          dashboardProvider: "venice",
+          baseUrl: "https://hivra.cloud/api/managed-venice/v1",
+          bankr: null,
+        });
+        expect(b.length).toBe(MANAGED_VENICE_PRESERVE_BODY_LENGTH);
+        expect(sha256(b)).toBe(MANAGED_VENICE_PRESERVE_BODY_SHA256);
+      });
+    });
+
+    it("adds only the reconcile block and the guarded BANKR_* append on a disconnect run", () => {
+      const baseline = script({ ...baseParams, bankr: null });
+      const clear = script({ ...baseParams, bankr: null, bankrRuntimeReconcile: clearUserWallet });
+      const restored = clear
+        .replace(reconcileBlock(clear), "")
+        .replace(CLEAR_COMMENT, "")
+        .replace(CLEAR_KEYS_APPEND, "");
+      expect(restored).toBe(baseline);
+    });
+
+    it("adds only the reconcile block and the BANKR_* clear keys on a user-connected upsert run", () => {
+      const baseline = script({ ...baseParams, bankr: userWallet });
+      const replace = script({ ...baseParams, bankr: userWallet, bankrRuntimeReconcile: replaceUserWallet });
+      const restored = replace
+        .replace(reconcileBlock(replace), "")
+        .replace(REPLACE_COMMENT, "")
+        .replace(replaceClearLine, staticClearLine);
+      expect(restored).toBe(baseline);
+    });
+  });
+
+  it("clears BANKR_* only when /state/.env holds one of the row's wallet addresses", () => {
+    const s = script({
+      ...baseParams,
+      bankr: null,
+      bankrRuntimeReconcile: {
+        action: "clear_user_disconnected",
+        walletAddresses: ["0x00000000000000000000000000000000000C0FFE", priorWallet.walletAddress.toUpperCase().replace("0X", "0x"), userWallet.walletAddress],
+      },
+    });
+    const block = reconcileBlock(s);
+    // Lower-cased and de-duplicated so a checksummed row address still matches the delivered line.
+    expect(block).toContain(
+      `bankr_reconcile_wallet_addresses='${userWallet.walletAddress} ${priorWallet.walletAddress}'\n`
+    );
+    expect(block).toContain(ADDRESS_GUARD);
+    // The static clear line never carries BANKR_*: only the guarded append does.
+    expect(s).toContain(`${staticClearLine}${CLEAR_KEYS_APPEND}\n`);
+    expect(s.split("\n").find((l) => l.startsWith("clearable_env_keys='"))).not.toContain("BANKR");
+    // The yaml strip is gated too, and the profile pass matches the same set.
+    expect(block).toContain('bankr_strip_config="$bankr_clear_state"');
+    expect(block).toContain('bankr_wallet_address_in_set "$(bankr_env_wallet_address "$bankr_profile_env")" || continue');
+  });
+
+  it("strips config.yaml after the managed-Venice repair and before it is copied to the host", () => {
+    const venice: WebUIDeployParams = {
+      ...baseParams,
+      dashboardProvider: "venice",
+      baseUrl: "https://hivra.cloud/api/managed-venice/v1",
+      bankr: null,
+      bankrRuntimeReconcile: clearUserWallet,
+    };
+    const s = script(venice);
+    const veniceRepair = s.indexOf("managed Venice config already matches managed proxy contract");
+    const decision = s.indexOf(ADDRESS_GUARD);
+    const strip = s.indexOf(STRIP_MARKER);
+    const profileEnvs = s.indexOf(PROFILE_ENV_MARKER);
+    const seedCopy = s.indexOf("  cp /state/config.yaml /seed/config.yaml");
+    const clearPass = s.indexOf(CLEAR_KEYS_APPEND);
+    expect(veniceRepair).toBeGreaterThan(-1);
+    expect(decision).toBeGreaterThan(veniceRepair);
+    expect(strip).toBeGreaterThan(decision);
+    expect(profileEnvs).toBeGreaterThan(strip);
+    expect(seedCopy).toBeGreaterThan(profileEnvs);
+    expect(clearPass).toBeGreaterThan(seedCopy);
+    expect(s).toContain("/state/config.yaml.pre-managed-venice-repair.*");
+  });
+
+  it("lists every BANKR_* key for the clear pass when a user-connected key is upserted", () => {
+    const s = script({ ...baseParams, bankr: userWallet, bankrRuntimeReconcile: replaceUserWallet });
+    expect(s).toContain(`${replaceClearLine}\n`);
+    expect(s).toContain(STRIP_MARKER);
+    expect(s).toContain(`bankr_reconcile_wallet_addresses='${userWallet.walletAddress}'\n`);
+    expect(s).not.toContain("bankr_clear_state");
+  });
+
+  it("always puts the delivered wallet in a replace run's set, ahead of the row's earlier wallets", () => {
+    const s = script({
+      ...baseParams,
+      bankr: { ...userWallet, walletAddress: "0x00000000000000000000000000000000000C0FFE" },
+      bankrRuntimeReconcile: { action: "replace_user_connected", walletAddresses: [priorWallet.walletAddress, "junk", olderWallet.walletAddress] },
+    });
+    expect(s).toContain(
+      `bankr_reconcile_wallet_addresses='${userWallet.walletAddress} ${priorWallet.walletAddress} ${olderWallet.walletAddress}'\n`
+    );
+  });
+
+  it("generates shell that parses, on every reconcile mode", () => {
+    for (const p of [
+      { ...baseParams, bankr: null },
+      { ...baseParams, bankr: null, bankrRuntimeReconcile: { action: "clear_user_disconnected" as const, walletAddresses: [userWallet.walletAddress, priorWallet.walletAddress] } },
+      { ...baseParams, bankr: userWallet, bankrRuntimeReconcile: { action: "replace_user_connected" as const, walletAddresses: [priorWallet.walletAddress] } },
+    ]) {
+      const full = script(p);
+      const outer = spawnSync("bash", ["-n"], { input: full, encoding: "utf8" });
+      expect(outer.stderr).toBe("");
+      expect(outer.status).toBe(0);
+      // The state-seed heredoc is quoted data to bash; parse it as the sh it runs as.
+      const start = full.indexOf("busybox sh <<'SH'\n") + "busybox sh <<'SH'\n".length;
+      const inner = spawnSync("/bin/sh", ["-n"], { input: full.slice(start, full.indexOf("\nSH\n", start)), encoding: "utf8" });
+      expect(inner.stderr).toBe("");
+      expect(inner.status).toBe(0);
+    }
+  });
+
+  it("logs only file paths from the reconcile block, never wallet values", () => {
+    for (const p of [
+      { ...baseParams, bankr: userWallet, bankrRuntimeReconcile: replaceUserWallet },
+      { ...baseParams, bankr: null, bankrRuntimeReconcile: clearUserWallet },
+    ]) {
+      const block = reconcileBlock(script(p));
+      expect(block).not.toContain(userWallet.apiKey);
+      const echoes = block.split("\n").filter((line) => line.includes("echo "));
+      expect(echoes.length).toBeGreaterThanOrEqual(4);
+      for (const line of echoes) {
+        for (const variable of line.match(/\$[A-Za-z_{(]+/g) ?? []) {
+          expect(["$bankr_cfg", "$bankr_profile_env"]).toContain(variable);
+        }
+      }
+    }
+  });
+
+  describe("running the update state-seed script", () => {
+    const envLines = (wallet: { walletAddress: string; apiKey: string; walletId: string; withdrawalDestination: string | null }) => [
+      `BANKR_AGENT_WALLET_ADDRESS=${wallet.walletAddress}`,
+      `BANKR_WALLET_ADDRESS=${wallet.walletAddress}`,
+      `BANKR_AGENT_API_KEY=${wallet.apiKey}`,
+      `BANKR_API_KEY=${wallet.apiKey}`,
+      `BANKR_AGENT_WALLET_ID=${wallet.walletId}`,
+      ...(wallet.withdrawalDestination ? [`BANKR_AGENT_WITHDRAWAL_DESTINATION=${wallet.withdrawalDestination}`] : []),
+    ];
+    const seededEnvWith = (lines: string[]) =>
+      [
+        "# persisted runtime env",
+        "HERMES_TIMEZONE=UTC",
+        "OPENAI_API_KEY=live-openai-key",
+        "TAVILY_API_KEY=live-tavily-key",
+        ...lines,
+        "BANKR_API_KEY_EXTRA=unrelated-user-value",
+        "# trailing comment",
+        "",
+      ].join("\n");
+    // A box on a Hivra-created wallet (the destination is set) ...
+    const hivraSeededEnv = seededEnvWith(envLines(hivraWallet));
+    // ... and a box on the user's own wallet, as a user-connected upsert leaves it.
+    const userSeededEnv = seededEnvWith(envLines(userWallet));
+    const profileEnvWith = (lines: string[]) =>
+      ["API_SERVER_PORT=8651", "PROFILE_NAME=research", "OPENAI_API_KEY=live-openai-key", ...lines, ""].join("\n");
+    const configWithoutBankr = [
+      "model:",
+      '  default: "deepseek-v3.2"',
+      "display:",
+      "  interim_assistant_messages: true",
+      "toolsets:",
+      "- hermes-cli",
+      "agent:",
+      "  max_turns: 999",
+      "",
+    ].join("\n");
+    const bankrBlock = [
+      "bankr:",
+      `  walletAddress: "${hivraWallet.walletAddress}"`,
+      `  apiKey: "${hivraWallet.apiKey}"`,
+      `  walletId: "${hivraWallet.walletId}"`,
+      "  withdrawalDestination: null",
+    ].join("\n");
+    const configWithBankr = configWithoutBankr.replace("toolsets:", `${bankrBlock}\ntoolsets:`);
+    const flowStyleConfig = `${configWithoutBankr}bankr: {walletAddress: "${hivraWallet.walletAddress}", apiKey: "${hivraWallet.apiKey}"}\n`;
+    const VENICE_BACKUP = "config.yaml.pre-managed-venice-repair.20260901T000000Z";
+
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "hivra-bankr-reconcile-"));
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    interface Box {
+      stateEnv: string;
+      base: string;
+      profile?: string;
+      backup?: string;
+      /** Profile name -> that profile's .env. */
+      profileEnvs?: Record<string, string>;
+    }
+
+    function stateSeedBody(p: WebUIDeployParams) {
+      const artifacts = buildWebUIProvisioningArtifacts(p);
+      const full = buildWebUIBootstrapScript(artifacts, p, { mode: "update" });
+      const anchor = full.indexOf("# Preserve existing WebUI state during update");
+      const open = full.indexOf("busybox sh <<'SH'\n", anchor);
+      const start = open + "busybox sh <<'SH'\n".length;
+      const end = full.indexOf("\nSH\n", start);
+      expect(anchor).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      return { artifacts, body: full.slice(start, end) };
+    }
+
+    function seed(p: WebUIDeployParams, box: Box) {
+      const { artifacts } = stateSeedBody(p);
+      mkdirSync(join(dir, "state", "profiles", "research"), { recursive: true });
+      mkdirSync(join(dir, "seed"), { recursive: true });
+      mkdirSync(join(dir, "tmp"), { recursive: true });
+      writeFileSync(join(dir, "state", ".env"), box.stateEnv);
+      writeFileSync(join(dir, "state", "config.yaml"), box.base);
+      if (box.profile) writeFileSync(join(dir, "state", "profiles", "research", "config.yaml"), box.profile);
+      if (box.backup) writeFileSync(join(dir, "state", VENICE_BACKUP), box.backup);
+      for (const [name, env] of Object.entries(box.profileEnvs ?? {})) {
+        mkdirSync(join(dir, "state", "profiles", name), { recursive: true });
+        writeFileSync(join(dir, "state", "profiles", name, ".env"), env);
+      }
+      writeFileSync(join(dir, "seed", "hermes.env"), artifacts.hermesEnvFile);
+      writeFileSync(join(dir, "seed", ".env"), artifacts.envFile);
+    }
+
+    // Runs the script against whatever is on disk under dir (seed() first).
+    function runOnDisk(p: WebUIDeployParams) {
+      // One pass, so a rewritten path is never rewritten again: on Linux dir
+      // itself lives under /tmp, and a second /tmp/ pass would nest it twice.
+      const body = stateSeedBody(p).body.replace(
+        /(^|[^A-Za-z0-9_.-])\/(?:(state|seed)(?=[/\s'"]|$)|tmp\/)/gm,
+        (_m, pre: string, name: string | undefined) => `${pre}${dir}/${name ?? "tmp/"}`,
+      );
+      // The box runs busybox; GNU and busybox sed take a bare `sed -i`. BSD sed
+      // (macOS) needs an explicit empty suffix, so shim it there rather than skip.
+      const harness = `sed --version >/dev/null 2>&1 || sed() { if [ "$1" = "-i" ]; then shift; command sed -i '' "$@"; else command sed "$@"; fi; }
+chown() { :; }
+${body}
+`;
+      const result = spawnSync("/bin/sh", ["-c", harness], { encoding: "utf8", timeout: 20_000 });
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).not.toContain("could not strip");
+      expect(result.stderr).not.toContain("could not remove");
+      expect(result.status).toBe(0);
+      return result;
+    }
+
+    const read = (...parts: string[]) => readFileSync(join(dir, ...parts), "utf8");
+
+    function run(p: WebUIDeployParams, box: Box, beforeRun: () => void = () => {}) {
+      seed(p, box);
+      beforeRun();
+      return { result: runOnDisk(p), read };
+    }
+
+    const bankrLines = (env: string) =>
+      env.split("\n").filter((l) => /^BANKR_[A-Z_]+=/.test(l) && !l.startsWith("BANKR_API_KEY_EXTRA="));
+    const params = { ...baseParams, tavilyApiKey: "live-tavily-key" };
+    const disconnect = { ...params, bankr: null, bankrRuntimeReconcile: clearUserWallet };
+    const connect = { ...params, bankr: userWallet, bankrRuntimeReconcile: replaceUserWallet };
+    const allConfigs = { base: configWithBankr, profile: configWithBankr, backup: flowStyleConfig };
+
+    it("removes the disconnected wallet's BANKR_* and every bankr: block, leaving everything else as a failed lookup would", () => {
+      const preserved = run({ ...params, bankr: null }, { stateEnv: userSeededEnv, ...allConfigs });
+      const preservedEnv = preserved.read("state", ".env");
+      rmSync(dir, { recursive: true, force: true });
+      dir = mkdtempSync(join(tmpdir(), "hivra-bankr-reconcile-"));
+
+      const cleared = run(disconnect, { stateEnv: userSeededEnv, ...allConfigs }, () =>
+        chmodSync(join(dir, "state", "config.yaml"), 0o600)
+      );
+      const env = cleared.read("state", ".env");
+
+      expect(bankrLines(preservedEnv)).toHaveLength(5);
+      expect(bankrLines(env)).toEqual([]);
+      expect(bankrLines(cleared.read("seed", ".env"))).toEqual([]);
+      expect(bankrLines(cleared.read("seed", "hermes.env"))).toEqual([]);
+      // Exactly the wallet's lines went; the rest is what an unflagged run leaves.
+      expect(env).toBe(
+        preservedEnv
+          .split("\n")
+          .filter((l) => !bankrLines(preservedEnv).includes(l))
+          .join("\n")
+      );
+      expect(env).toContain("BANKR_API_KEY_EXTRA=unrelated-user-value");
+      expect(env).toContain("OPENAI_API_KEY=live-openai-key");
+      expect(env).toContain("TAVILY_API_KEY=live-tavily-key");
+
+      expect(cleared.read("state", "config.yaml")).toBe(configWithoutBankr);
+      // The rewrite keeps the file's mode: config.yaml also holds the model key.
+      expect(statSync(join(dir, "state", "config.yaml")).mode & 0o777).toBe(0o600);
+      expect(readdirSync(join(dir, "state")).filter((name) => name.includes("bankr-strip"))).toEqual([]);
+      expect(cleared.read("seed", "config.yaml")).toBe(configWithoutBankr);
+      expect(cleared.read("state", "profiles", "research", "config.yaml")).toBe(configWithoutBankr);
+      expect(cleared.read("state", VENICE_BACKUP)).toBe(configWithoutBankr);
+      expect(cleared.result.stdout).toContain("stripped bankr: block from");
+      expect(cleared.result.stdout + cleared.result.stderr).not.toContain(userWallet.apiKey);
+      expect(cleared.result.stdout + cleared.result.stderr).not.toContain(hivraWallet.apiKey);
+    });
+
+    it("strips the bankr: block from the terminal.cwd repair's timestamped backups too", () => {
+      const terminalCwdBackup = "config.yaml.bak.20261007T101500Z";
+      const cleared = run(disconnect, { stateEnv: userSeededEnv, ...allConfigs }, () =>
+        writeFileSync(join(dir, "state", terminalCwdBackup), configWithBankr)
+      );
+
+      expect(cleared.read("state", terminalCwdBackup)).toBe(configWithoutBankr);
+      expect(cleared.result.stdout).toContain(`stripped bankr: block from ${dir}/state/${terminalCwdBackup}`);
+    });
+
+    it("leaves BANKR_* and config.yaml alone when /state/.env holds a different wallet", () => {
+      const ownKeyEnv = seededEnvWith([
+        `BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`,
+        "BANKR_API_KEY=users-own-llm-gateway-key",
+      ]);
+      const { result, read } = run(disconnect, { stateEnv: ownKeyEnv, ...allConfigs });
+
+      expect(bankrLines(read("state", ".env"))).toEqual(bankrLines(ownKeyEnv));
+      expect(read("state", "config.yaml")).toBe(configWithBankr);
+      expect(read("state", "profiles", "research", "config.yaml")).toBe(configWithBankr);
+      expect(read("state", VENICE_BACKUP)).toBe(flowStyleConfig);
+      expect(result.stdout).toContain("/state/.env holds no disconnected Bankr wallet");
+      expect(result.stdout).not.toContain("drop BANKR_");
+    });
+
+    it("changes nothing on later updates once the first clear has run, even BANKR_* the user adds afterwards", () => {
+      seed(disconnect, { stateEnv: userSeededEnv, ...allConfigs });
+      runOnDisk(disconnect);
+      expect(bankrLines(read("state", ".env"))).toEqual([]);
+
+      // The row stays revoked, so every later update carries the same clear
+      // flag. The user now sets their own Bankr LLM gateway key and adds a
+      // bankr: block of their own.
+      const ownConfig = `${configWithoutBankr}bankr:\n  apiKey: "users-own-config-key"\n`;
+      writeFileSync(join(dir, "state", ".env"), `${read("state", ".env")}BANKR_API_KEY=users-own-llm-gateway-key\n`);
+      writeFileSync(join(dir, "state", "config.yaml"), ownConfig);
+      const second = runOnDisk(disconnect);
+
+      expect(read("state", ".env")).toContain("BANKR_API_KEY=users-own-llm-gateway-key\n");
+      expect(read("state", "config.yaml")).toBe(ownConfig);
+      expect(second.stdout).not.toContain("drop BANKR_");
+      expect(second.stdout).not.toContain("stripped bankr: block");
+    });
+
+    it("removes BANKR_* from cloned profile .env files holding the disconnected wallet, and from no other", () => {
+      const clonedEnv = profileEnvWith(envLines(userWallet));
+      const otherEnv = profileEnvWith([`BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`, "BANKR_API_KEY=other-profile-key"]);
+      const plainEnv = profileEnvWith([]);
+      const old = new Date("2026-01-01T00:00:00Z");
+      const { result } = run(
+        disconnect,
+        {
+          stateEnv: userSeededEnv,
+          base: configWithoutBankr,
+          profileEnvs: { research: clonedEnv, trading: otherEnv, plain: plainEnv },
+        },
+        () => {
+          chmodSync(join(dir, "state", "profiles", "research", ".env"), 0o600);
+          for (const name of ["trading", "plain"]) {
+            utimesSync(join(dir, "state", "profiles", name, ".env"), old, old);
+          }
+        }
+      );
+
+      expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+      // Mode-preserving rewrite, no temp file left behind.
+      expect(statSync(join(dir, "state", "profiles", "research", ".env")).mode & 0o777).toBe(0o600);
+      expect(readdirSync(join(dir, "state", "profiles", "research")).filter((name) => name.includes("bankr-clear"))).toEqual([]);
+      for (const [name, env] of [["trading", otherEnv], ["plain", plainEnv]] as const) {
+        expect(read("state", "profiles", name, ".env")).toBe(env);
+        expect(statSync(join(dir, "state", "profiles", name, ".env")).mtime.getTime()).toBe(old.getTime());
+      }
+      expect(result.stdout).toContain(`removed BANKR_* from ${dir}/state/profiles/research/.env`);
+      expect(result.stdout).not.toContain("profiles/trading/.env");
+      expect(result.stdout + result.stderr).not.toContain(userWallet.apiKey);
+    });
+
+    it("cleans a profile .env holding the disconnected wallet even when /state/.env no longer does", () => {
+      const clonedEnv = profileEnvWith(envLines(userWallet));
+      run(disconnect, {
+        stateEnv: seededEnvWith([]),
+        base: configWithBankr,
+        profileEnvs: { research: clonedEnv },
+      });
+
+      expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+      // The base config belongs to no disconnected wallet here, so it stays.
+      expect(read("state", "config.yaml")).toBe(configWithBankr);
+    });
+
+    it("leaves the key and the yaml untouched when the lookup failed or found no wallet", () => {
+      const clonedEnv = profileEnvWith(envLines(userWallet));
+      const { read: readBox } = run(
+        { ...params, bankr: null },
+        { stateEnv: userSeededEnv, ...allConfigs, profileEnvs: { research: clonedEnv } }
+      );
+
+      expect(bankrLines(readBox("state", ".env"))).toEqual(bankrLines(userSeededEnv));
+      expect(readBox("state", "config.yaml")).toBe(configWithBankr);
+      expect(readBox("state", "profiles", "research", "config.yaml")).toBe(configWithBankr);
+      expect(readBox("state", "profiles", "research", ".env")).toBe(clonedEnv);
+      expect(readBox("state", VENICE_BACKUP)).toBe(flowStyleConfig);
+    });
+
+    it("replaces BANKR_* in place, drops the replaced wallet's withdrawal destination and strips the old block", () => {
+      const { read: readBox } = run(connect, { stateEnv: hivraSeededEnv, ...allConfigs });
+      const env = readBox("state", ".env");
+
+      expect(env).toContain(`BANKR_API_KEY=${userWallet.apiKey}`);
+      expect(env).toContain(`BANKR_AGENT_API_KEY=${userWallet.apiKey}`);
+      expect(env).toContain(`BANKR_AGENT_WALLET_ADDRESS=${userWallet.walletAddress}`);
+      expect(env).not.toContain(hivraWallet.apiKey);
+      // The user's own wallet sets no destination, so the Hivra wallet's goes.
+      expect(env).not.toContain("BANKR_AGENT_WITHDRAWAL_DESTINATION=");
+      expect(bankrLines(env)).toEqual(envLines(userWallet));
+      expect(env).toContain("BANKR_API_KEY_EXTRA=unrelated-user-value");
+      expect(env.indexOf("BANKR_AGENT_WALLET_ADDRESS=")).toBe(hivraSeededEnv.indexOf("BANKR_AGENT_WALLET_ADDRESS="));
+      expect(readBox("state", "config.yaml")).toBe(configWithoutBankr);
+      expect(readBox("state", "profiles", "research", "config.yaml")).toBe(configWithoutBankr);
+      expect(readBox("state", VENICE_BACKUP)).toBe(configWithoutBankr);
+    });
+
+    it("drops BANKR_* from profile .env copies of the Hivra-created wallet a connect replaced, and only those", () => {
+      // The row records the Hivra-created wallet it replaced, so the orchestrator
+      // puts that address in the set.
+      const switchedFromHivra = {
+        ...connect,
+        bankrRuntimeReconcile: {
+          action: "replace_user_connected" as const,
+          walletAddresses: [userWallet.walletAddress, hivraWallet.walletAddress],
+        },
+      };
+      const replacedCopy = profileEnvWith(envLines(hivraWallet));
+      const otherEnv = profileEnvWith([`BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`, "BANKR_API_KEY=other-profile-key"]);
+      const { result } = run(switchedFromHivra, {
+        stateEnv: hivraSeededEnv,
+        base: configWithoutBankr,
+        profileEnvs: { research: replacedCopy, trading: otherEnv },
+      });
+
+      expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+      expect(read("state", "profiles", "trading", ".env")).toBe(otherEnv);
+      expect(result.stdout + result.stderr).not.toContain(hivraWallet.apiKey);
+    });
+
+    it("replaces a profile copy of an older key for the same wallet (K1 -> K2 on one address)", () => {
+      // The user connected K1 for this wallet, a profile cloned it, and the user
+      // then connected a new key K2 for the very same wallet address.
+      const k1 = { ...userWallet, apiKey: "bk_test_user_key_k1_same_wallet" };
+      const k2 = { ...userWallet, apiKey: "bk_test_user_key_k2_same_wallet" };
+      const otherEnv = profileEnvWith([`BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`, "BANKR_API_KEY=other-profile-key"]);
+      const { result } = run(
+        { ...params, bankr: k2, bankrRuntimeReconcile: { action: "replace_user_connected", walletAddresses: [userWallet.walletAddress] } },
+        {
+          stateEnv: seededEnvWith(envLines(k1)),
+          base: configWithoutBankr,
+          profileEnvs: { research: profileEnvWith(envLines(k1)), trading: otherEnv },
+        }
+      );
+
+      const stateEnv = read("state", ".env");
+      expect(bankrLines(stateEnv)).toEqual(envLines(k2));
+      expect(stateEnv).not.toContain(k1.apiKey);
+      // The profile no longer overrides the container env with K1: it now uses
+      // the K2 this run delivers.
+      expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+      expect(read("state", "profiles", "trading", ".env")).toBe(otherEnv);
+      for (const file of ["state/.env", "seed/.env", "seed/hermes.env", "state/profiles/research/.env"]) {
+        expect(read(...file.split("/"))).not.toContain(k1.apiKey);
+      }
+      expect(result.stdout + result.stderr).not.toContain(k1.apiKey);
+      expect(result.stdout + result.stderr).not.toContain(k2.apiKey);
+    });
+
+    it("drops a profile copy of the delivered wallet even when its key is unchanged, so it inherits the delivered env", () => {
+      run(connect, {
+        stateEnv: userSeededEnv,
+        base: configWithoutBankr,
+        profileEnvs: { research: profileEnvWith(envLines(userWallet)) },
+      });
+
+      expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+      expect(bankrLines(read("state", ".env"))).toEqual(envLines(userWallet));
+    });
+
+    describe("wallets a reconnect replaced on a box that was never restarted", () => {
+      // K1 (priorWallet) was delivered with a restart. The user then disconnected
+      // and connected K2 for another wallet (userWallet), both without a restart,
+      // so the box still holds K1 and the row now only names userWallet; it
+      // records priorWallet (and an even older olderWallet) as earlier wallets.
+      const rowWallets = [userWallet.walletAddress, priorWallet.walletAddress, olderWallet.walletAddress];
+      const otherEnv = profileEnvWith([`BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`, "BANKR_API_KEY=other-profile-key"]);
+      const box = () => ({
+        stateEnv: seededEnvWith(envLines(priorWallet)),
+        ...allConfigs,
+        profileEnvs: {
+          research: profileEnvWith(envLines(priorWallet)),
+          archive: profileEnvWith(envLines(olderWallet)),
+          trading: otherEnv,
+        },
+      });
+
+      it("a disconnect clears K1 from /state/.env, config.yaml and every profile copy", () => {
+        const { result } = run(
+          { ...params, bankr: null, bankrRuntimeReconcile: { action: "clear_user_disconnected", walletAddresses: rowWallets } },
+          box()
+        );
+
+        for (const file of ["state/.env", "seed/.env", "seed/hermes.env"]) {
+          expect(bankrLines(read(...file.split("/")))).toEqual([]);
+        }
+        expect(read("state", ".env")).toContain("BANKR_API_KEY_EXTRA=unrelated-user-value");
+        expect(read("state", "config.yaml")).toBe(configWithoutBankr);
+        expect(read("state", "profiles", "research", "config.yaml")).toBe(configWithoutBankr);
+        expect(read("state", VENICE_BACKUP)).toBe(configWithoutBankr);
+        expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+        expect(read("state", "profiles", "archive", ".env")).toBe(profileEnvWith([]));
+        expect(read("state", "profiles", "trading", ".env")).toBe(otherEnv);
+        expect(result.stdout).toContain("/state/.env holds a disconnected Bankr wallet");
+        expect(result.stdout + result.stderr).not.toContain(priorWallet.apiKey);
+      });
+
+      it("a set holding only the row's current wallet leaves K1 on the box (the bug the earlier wallets fix)", () => {
+        // What the row's current address alone does (the bug this set fixes).
+        run(
+          { ...params, bankr: null, bankrRuntimeReconcile: { action: "clear_user_disconnected", walletAddresses: [userWallet.walletAddress] } },
+          box()
+        );
+
+        expect(bankrLines(read("state", ".env"))).toEqual(envLines(priorWallet));
+        expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith(envLines(priorWallet)));
+      });
+
+      it("a later connect delivers the new key and drops every profile copy of the row's wallets", () => {
+        const { result } = run(
+          { ...params, bankr: userWallet, bankrRuntimeReconcile: { action: "replace_user_connected", walletAddresses: rowWallets } },
+          box()
+        );
+
+        expect(bankrLines(read("state", ".env"))).toEqual(envLines(userWallet));
+        expect(read("state", ".env")).not.toContain(priorWallet.apiKey);
+        expect(read("state", "config.yaml")).toBe(configWithoutBankr);
+        expect(read("state", "profiles", "research", ".env")).toBe(profileEnvWith([]));
+        // Never delivered by this run and never on /state/.env this run: only
+        // the row's record of it proves it is the row's.
+        expect(read("state", "profiles", "archive", ".env")).toBe(profileEnvWith([]));
+        expect(read("state", "profiles", "trading", ".env")).toBe(otherEnv);
+        expect(result.stdout + result.stderr).not.toContain(priorWallet.apiKey);
+        expect(result.stdout + result.stderr).not.toContain(olderWallet.apiKey);
+      });
+    });
+
+    it("never touches a profile holding an address outside the row's set, even the one /state/.env held before the run", () => {
+      // The user's own Bankr config, set by hand before connecting a wallet.
+      const ownLines = [`BANKR_AGENT_WALLET_ADDRESS=${otherWalletAddress}`, "BANKR_API_KEY=users-own-llm-gateway-key"];
+      const ownProfile = profileEnvWith(ownLines);
+      const old = new Date("2026-01-01T00:00:00Z");
+      run(
+        connect,
+        { stateEnv: seededEnvWith(ownLines), base: configWithoutBankr, profileEnvs: { research: ownProfile } },
+        () => utimesSync(join(dir, "state", "profiles", "research", ".env"), old, old)
+      );
+
+      expect(read("state", "profiles", "research", ".env")).toBe(ownProfile);
+      expect(statSync(join(dir, "state", "profiles", "research", ".env")).mtime.getTime()).toBe(old.getTime());
+    });
+
+    it("does not rewrite a config that has no bankr: block", () => {
+      const old = new Date("2026-01-01T00:00:00Z");
+      const { result, read: readBox } = run(connect, { stateEnv: hivraSeededEnv, base: configWithoutBankr }, () =>
+        utimesSync(join(dir, "state", "config.yaml"), old, old)
+      );
+
+      expect(result.stdout).not.toContain("stripped bankr: block");
+      expect(readBox("state", "config.yaml")).toBe(configWithoutBankr);
+      expect(statSync(join(dir, "state", "config.yaml")).mtime.getTime()).toBe(old.getTime());
+    });
+  });
+});
+
+describe("terminal.cwd points the file tree at the workspace volume", () => {
+  // Upstream's _fs_default_cwd reads terminal.cwd before TERMINAL_CWD and the
+  // agent default "." opens its install directory, so Hivra has to write it.
+  const python = process.env.HERMES_CONFIG_TEST_PYTHON || "python3";
+  const REPAIR_MARKER = "<<'HERMES_TERMINAL_CWD_PY'";
+
+  function parsedTerminal(source: string) {
+    const parsed = spawnSync(
+      python,
+      ["-c", "import json, sys, yaml; print(json.dumps(yaml.safe_load(sys.stdin.read()).get('terminal')))"],
+      { input: source, encoding: "utf8", timeout: 10_000 },
+    );
+    expect(parsed.stderr).toBe("");
+    return JSON.parse(parsed.stdout);
+  }
+
+  describe("fresh provisions", () => {
+    it.each([
+      [undefined, undefined, undefined, "local"],
+      ["local", true, undefined, "local"],
+      ["docker", true, undefined, "docker"],
+      ["modal", false, undefined, "modal"],
+      ["daytona", false, "key", "daytona"],
+    ] as const)("seeds terminal.cwd only for the local backend (%s)", (terminalBackend, gatewayDockerAccess, daytonaApiKey, expected) => {
+      const yaml = buildWebUIConfigYaml({ ...baseParams, terminalBackend, gatewayDockerAccess, daytonaApiKey });
+      expect(parsedTerminal(yaml)).toEqual(
+        expected === "local" ? { backend: "local", cwd: "/workspace" } : { backend: expected },
+      );
+    });
+  });
+
+  describe("update-mode repair", () => {
+    let directory: string;
+    let state: string;
+    let seed: string;
+
+    beforeAll(() => {
+      const result = spawnSync(python, ["-c", "import yaml"], { encoding: "utf8", timeout: 10_000 });
+      if (result.error || result.status !== 0) {
+        throw new Error(
+          "terminal.cwd behavioral tests require Python 3 with PyYAML (set HERMES_CONFIG_TEST_PYTHON). " +
+            (result.error?.message || result.stderr),
+        );
+      }
+    });
+
+    beforeEach(() => {
+      directory = mkdtempSync(join(tmpdir(), "hermes-terminal-cwd-test-"));
+      state = join(directory, "state-config.yaml");
+      seed = join(directory, "seed-config.yaml");
+    });
+
+    afterEach(() => {
+      rmSync(directory, { recursive: true, force: true });
+    });
+
+    function updateScript(params: WebUIDeployParams = { ...baseParams, agentImage: "agent:test" }) {
+      return buildWebUIBootstrapScript(buildWebUIProvisioningArtifacts(params), params, { mode: "update" });
+    }
+
+    // The Python and arguments exactly as the generated update script hands
+    // them to the agent image; run here against local files instead of /state.
+    function generatedRepair() {
+      const script = updateScript();
+      const heredocStart = script.indexOf(REPAIR_MARKER);
+      expect(heredocStart).toBeGreaterThan(-1);
+      const commandLine = script.slice(script.lastIndexOf("agent:test - ", heredocStart), heredocStart).trim();
+      const args = [...commandLine.matchAll(/'([^']*)'|(\S+)/g)].map((match) => match[1] ?? match[2]).slice(2);
+      expect(args).toEqual(["/workspace", ".bak.", "/state/config.yaml", "/seed/config.yaml"]);
+      const code = script.slice(script.indexOf("\n", heredocStart) + 1, script.indexOf("\nHERMES_TERMINAL_CWD_PY\n", heredocStart));
+      return { code, desired: args[0], infix: args[1] };
+    }
+
+    function runRepair() {
+      const { code, desired, infix } = generatedRepair();
+      return spawnSync(python, ["-c", code, desired, infix, state, seed], { encoding: "utf8", timeout: 10_000 });
+    }
+
+    function repair(stateSource: string, seedSource = "model: seed-copy\n") {
+      writeFileSync(state, stateSource, { mode: 0o640 });
+      writeFileSync(seed, seedSource, { mode: 0o600 });
+      return runRepair();
+    }
+
+    const backups = () => readdirSync(directory).filter((name) => name.startsWith("state-config.yaml.bak."));
+
+    it("runs after the agent image pull and before compose recreates the stack, in update mode only", () => {
+      const params = { ...baseParams, agentImage: "agent:test" };
+      const script = updateScript(params);
+      const offset = script.indexOf(REPAIR_MARKER);
+      expect(script).toContain("agent:test - '/workspace' '.bak.' /state/config.yaml /seed/config.yaml <<'HERMES_TERMINAL_CWD_PY'");
+      expect(script).toContain("--entrypoint /opt/hermes/.venv/bin/python");
+      expect(offset).toBeGreaterThan(script.indexOf("docker pull agent:test"));
+      expect(offset).toBeLessThan(script.indexOf("timeout 180s docker compose up -d"));
+      // A failed repair warns but never fails the update.
+      expect(script).toContain("could not set terminal.cwd; config.yaml left as it was");
+
+      const provision = buildWebUIBootstrapScript(buildWebUIProvisioningArtifacts(params), params, { mode: "provision" });
+      expect(provision).not.toContain("HERMES_TERMINAL_CWD_PY");
+    });
+
+    it("adds terminal.cwd to a box whose config has no terminal section, with a timestamped backup", () => {
+      const original = "# owner comment\nmodel:\n  default: m\n";
+      const result = repair(original);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      const repaired = readFileSync(state, "utf8");
+      expect(repaired).toContain("# owner comment");
+      expect(parsedTerminal(repaired)).toEqual({ cwd: "/workspace" });
+      expect(backups()).toHaveLength(1);
+      expect(backups()[0]).toMatch(/^state-config\.yaml\.bak\.\d{8}T\d{6}Z$/);
+      expect(readFileSync(join(directory, backups()[0]), "utf8")).toBe(original);
+      // The instance-dir copy is repaired too, without a second backup.
+      expect(parsedTerminal(readFileSync(seed, "utf8"))).toEqual({ cwd: "/workspace" });
+      expect(readdirSync(directory)).toHaveLength(3);
+      expect(result.stdout).toContain("terminal.cwd set_from_missing");
+      expect(statSync(state).mode & 0o777).toBe(0o640);
+    });
+
+    it.each([
+      ["a terminal section with only a backend", 'terminal:\n  backend: "local"\n', { backend: "local", cwd: "/workspace" }],
+      ["a stock unquoted dot", "terminal:\n  backend: local\n  cwd: .\n  timeout: 90\n", { backend: "local", cwd: "/workspace", timeout: 90 }],
+      ["a stock quoted dot", "terminal:\n  cwd: '.'\n  timeout: 90\n", { cwd: "/workspace", timeout: 90 }],
+      ["an empty cwd", "terminal:\n  backend: local\n  cwd:\n  timeout: 90\n", { backend: "local", cwd: "/workspace", timeout: 90 }],
+      ["a null cwd", "terminal:\n  cwd: null\n", { cwd: "/workspace" }],
+      ["a flow-style terminal mapping", "terminal: {backend: local}\nmodel: x\n", { backend: "local", cwd: "/workspace" }],
+      ["an empty terminal section", "terminal:\nmodel: x\n", { cwd: "/workspace" }],
+      ["an empty terminal section at the end of the file", "model: x\nterminal:\n", { cwd: "/workspace" }],
+    ])("sets it for %s", (_label, source, expected) => {
+      const result = repair(source);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(parsedTerminal(readFileSync(state, "utf8"))).toEqual(expected);
+      expect(backups()).toHaveLength(1);
+      expect(readFileSync(join(directory, backups()[0]), "utf8")).toBe(source);
+    });
+
+    it.each([
+      ["an owner-chosen directory", 'terminal:\n  backend: "local"\n  cwd: "/home/hermes/projects"\n'],
+      ["a relative owner directory", "terminal:\n  cwd: ./notes\n"],
+      ["the value already set", 'terminal:\n  backend: "local"\n  cwd: "/workspace"\n'],
+      ["a docker backend", 'terminal:\n  backend: "docker"\n  cwd: "."\n'],
+      ["a modal backend with no cwd", 'terminal:\n  backend: "modal"\n'],
+    ])("keeps %s and takes no backup", (_label, source) => {
+      const result = repair(source, source);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(readFileSync(state, "utf8")).toBe(source);
+      expect(readFileSync(seed, "utf8")).toBe(source);
+      expect(backups()).toEqual([]);
+    });
+
+    it("is idempotent: the second run changes nothing and takes no second backup", () => {
+      repair('model:\n  default: m\nterminal:\n  backend: "local"\n');
+      const firstPass = readFileSync(state, "utf8");
+      const second = runRepair();
+      expect(second.status).toBe(0);
+      expect(second.stdout).toContain("terminal.cwd kept_owner_value");
+      expect(readFileSync(state, "utf8")).toBe(firstPass);
+      expect(backups()).toHaveLength(1);
+    });
+
+    it("leaves a config it cannot safely edit exactly as it was", () => {
+      const duplicated = "terminal:\n  cwd: .\nterminal:\n  backend: local\n";
+      const result = repair(duplicated);
+      expect(result.status).toBe(1);
+      expect(readFileSync(state, "utf8")).toBe(duplicated);
+      expect(backups()).toEqual([]);
+
+      const unparsable = "terminal: [unclosed\nsecret_key: hunter2\n";
+      const broken = repair(unparsable);
+      expect(broken.status).toBe(1);
+      expect(readFileSync(state, "utf8")).toBe(unparsable);
+      expect(broken.stderr).not.toContain("hunter2");
+      expect(backups()).toEqual([]);
+    });
   });
 });
