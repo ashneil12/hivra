@@ -400,7 +400,7 @@ not read; those are marked and also listed under **Needs Ash**.
 ## Needs Ash (decisions / prod / secrets — with steps)
 
 1. **Apply the security-relevant migrations prod is missing, before/at Promote.** Prod
-   (`prvdajgvxnkunvpmitbt`) is missing ~162–173 repo migrations by name, including
+   (the production Supabase project; ref in the private ops notes) is missing ~162–173 repo migrations by name, including
    `20260923001301_revoke_api_execute_on_definer_functions.sql` (closes the 5 anon-executable definer
    functions) and `20260922172439_enable_rls_remaining_public_tables.sql`. **Reconcile by name first**
    (many prod migrations were recorded under different version numbers, and prod has drift not in the repo),

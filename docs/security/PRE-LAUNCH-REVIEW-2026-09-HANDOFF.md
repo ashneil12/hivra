@@ -15,7 +15,7 @@ Updated 2026-09-25. Companion to `docs/security/PRE-LAUNCH-REVIEW-2026-09.md`, w
 
 Do these before promoting canary to hivra.cloud. None can be done from a Claude session.
 
-1. **Apply the missing migrations to prod** (`prvdajgvxnkunvpmitbt`), reconciling by
+1. **Apply the missing migrations to prod** (the production Supabase project; ref in the private ops notes), reconciling by
    *name* first: several prod migrations were recorded under different version numbers,
    and prod has drift that isn't in the repo, so do not blind `db push`. Security-critical:
    - `20260923001301_revoke_api_execute_on_definer_functions.sql` — closes 5 functions anon
