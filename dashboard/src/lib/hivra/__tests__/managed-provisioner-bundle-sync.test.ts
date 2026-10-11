@@ -196,6 +196,47 @@ HIVRA_SWAP_RESULT`;
     expect(runHostScript).not.toHaveBeenCalled();
   });
 
+  // The sticky Hivra host holds most customer computers but is deliberately
+  // outside HERMES_PROXMOX_TARGETS. A rotation-only check refused to prepare
+  // exactly the host that needed preparing.
+  it("accepts a host outside the declared rotation that carries its own target configuration", async () => {
+    process.env = {
+      ...process.env,
+      HERMES_PROXMOX_TARGETS: "fixturenode12",
+      PROXMOX_FIXTURENODE21_SSH_HOST: "192.0.2.21",
+      PROXMOX_FIXTURENODE21_SSH_USER: "root",
+      PROXMOX_FIXTURENODE21_SSH_PRIVATE_KEY_B64: "dGVzdA==",
+    };
+    const runHostScript = jest.fn().mockResolvedValue({ ok: true, stdout: "VERSION=missing\n", stderr: "" });
+    const checkReadiness = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      message: "not prepared yet",
+      error: {},
+    });
+
+    const result = await inspectManagedProvisionerBundle("default", "fixturenode21", {
+      runHostScript,
+      checkReadiness,
+    } as never);
+
+    expect(runHostScript).toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, targetId: "fixturenode21" });
+    expect(result.error).not.toBe("Target is not in the configured managed host rotation.");
+  });
+
+  it("still refuses an id that carries no configuration of its own", async () => {
+    const runHostScript = jest.fn();
+
+    const result = await inspectManagedProvisionerBundle("default", "ghostnode", {
+      runHostScript,
+    } as never);
+
+    expect(runHostScript).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, targetId: "ghostnode", changed: false });
+    expect(result.error).toBe("Target is not in the configured managed host rotation.");
+  });
+
   it("returns a changed receipt only after the bound host reports the update marker", async () => {
     const runHostScript = jest.fn().mockResolvedValue({
       ok: true,
