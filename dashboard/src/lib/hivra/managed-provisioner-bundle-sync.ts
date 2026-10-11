@@ -317,8 +317,34 @@ function parsePreservationReceipt(
   };
 }
 
+/**
+ * A host this route may touch: either a host in the declared Hermes rotation,
+ * or one that carries its own explicit PROXMOX_<SLUG>_* configuration.
+ *
+ * The second case is not optional. The sticky Hivra host that holds most
+ * customer computers sits outside HERMES_PROXMOX_TARGETS (it is deliberately
+ * drained for Hermes placement), so a rotation-only check made the one host
+ * that needed preparing the one host the repair tool refused to reach.
+ * Nothing is written on the strength of this check alone: the sync script
+ * still proves `hostname -s` equals the target id before it touches the
+ * provisioner directory, preserves the VM inventory, Caddy state and storage
+ * readings, and rolls back on any mismatch. An id with no configuration of
+ * its own is still refused before any SSH.
+ */
 function targetIsConfigured(targetId: string, env: NodeJS.ProcessEnv): boolean {
-  return resolveProxmoxTargetCandidateIds(env).includes(targetId);
+  if (resolveProxmoxTargetCandidateIds(env).includes(targetId)) return true;
+  return hasExplicitTargetScopedIdentity(env, targetId);
+}
+
+function hasExplicitTargetScopedIdentity(env: NodeJS.ProcessEnv, targetId: string): boolean {
+  const prefix = targetId.toUpperCase();
+  const prefixes = [`PROXMOX_HOST_${prefix}_`, `PROXMOX_${prefix}_`, `${prefix}_PROXMOX_`];
+  return ["PUBLIC_IP", "SSH_HOST"].some((suffix) =>
+    prefixes.some((candidate) => {
+      const value = env[`${candidate}${suffix}`];
+      return typeof value === "string" && value.trim().length > 0;
+    }),
+  );
 }
 
 export async function inspectManagedProvisionerBundle(

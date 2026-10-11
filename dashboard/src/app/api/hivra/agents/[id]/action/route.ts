@@ -650,7 +650,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         purpose: action === "update_runtime" ? "runtime-update" : "lifecycle",
       });
       if (!readiness.ok) {
-        log.warn("hivra managed lifecycle blocked by stale host provisioner", {
+        // error, not warn: a blocked start/restart/resize is a customer-visible
+        // outage, and only error level is mirrored into ops_events. Without
+        // this the whole failure surfaced as one anonymous "API 503
+        // Deployment target is temporarily unavailable…" row with no host and
+        // no missing-prerequisite list, which cost a hand probe of every host
+        // to diagnose.
+        log.error("hivra managed lifecycle blocked by stale host provisioner", new Error(readiness.message), {
           source: "hivra/agents/[id]/action",
           failureType: "hivra_agent_lifecycle_host_readiness_failed",
           userId,
