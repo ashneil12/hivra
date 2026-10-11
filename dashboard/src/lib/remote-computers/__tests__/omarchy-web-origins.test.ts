@@ -2,6 +2,9 @@ jest.mock("server-only", () => ({}));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import {
   resolveOmarchyWebBrokerOrigin,
   resolveOmarchyWebControlOrigin,
@@ -89,5 +92,27 @@ describe("Omarchy desktop web origins", () => {
     expect(resolveOmarchyWebBrokerOrigin(envOf({ HIVRA_OMARCHY_WEB_BROKER_ORIGIN: "https://omarchy.hivra.cloud" })))
       .toBe("https://omarchy.hivra.cloud");
     expect(resolveOmarchyWebControlOrigin(envOf({}))).toBe(CANARY_CONTROL_ORIGIN);
+  });
+
+  // The guest-side installer and the capability probe each run inside the guest,
+  // so each carried its own copy of the Canary pair. A desktop on any other
+  // deployment was refused by the installer ("input_origin") or failed its probe
+  // even after the host script had been given the right origins.
+  it("keeps the guest-side installer and probe deployment-neutral", () => {
+    const installer = readFileSync(
+      path.join(process.cwd(), "provisioner", "remote-desktop", "install-omarchy-web.py"), "utf8");
+    expect(installer).not.toContain('!= "https://canary.hermesos.cloud"');
+    expect(installer).not.toContain('Host: omarchy-canary.hermesos.cloud');
+    expect(installer).toMatch(/own_origin = r"https:\/\/.*\(hermesos\|hivra\)/);
+    expect(installer).toContain('public_host = request["publicOrigin"].split("//", 1)[-1]');
+  });
+
+  it("makes the capability probe deployment-specific", () => {
+    const retained = loadWith({}).capability.OMARCHY_NATIVE_INSPECTION_REVISION;
+    const production = loadWith({
+      HIVRA_OMARCHY_WEB_BROKER_ORIGIN: "https://omarchy.hermesos.cloud",
+      HIVRA_OMARCHY_WEB_CONTROL_ORIGIN: "https://hivra.cloud",
+    }).capability.OMARCHY_NATIVE_INSPECTION_REVISION;
+    expect(production).not.toBe(retained);
   });
 });
