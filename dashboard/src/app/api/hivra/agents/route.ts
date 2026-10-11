@@ -1288,7 +1288,11 @@ async function launchAgent(request: NextRequest) {
             }),
       });
       if (!placement.ok) {
-        log.warn("hivra launch blocked: no Proxmox placement target available", {
+        // error, not warn: a blocked launch is customer-visible and only error
+        // level reaches ops_events. The reason (which host, which prerequisite)
+        // is the difference between a self-describing incident and an hour of
+        // hand probing.
+        log.error("hivra launch blocked: no Proxmox placement target available", new Error(placement.message), {
           source: "hivra/agents",
           failureType: "hivra_agent_no_proxmox_placement_target",
           userId,
