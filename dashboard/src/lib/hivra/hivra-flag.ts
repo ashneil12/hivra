@@ -15,15 +15,15 @@ export function isHivraEnabled(): boolean {
   return false;
 }
 
-// Whether this deployment can actually serve the prepared desktop computers
-// (Omarchy, and Windows' prepared claim). Those are two retained guests that
-// exist only on the Canary fleet: the claim route reads
+// Whether this deployment can serve the prepared Canary desktop computer
+// (Omarchy). It is a retained guest that exists only on the Canary fleet: the
+// claim route (POST /api/hivra/prepared-computers, Omarchy only) reads
 // HIVRA_MANAGED_PROVISIONER_CHANNEL === "canary" plus
-// HIVRA_CANARY_PREPARED_COMPUTERS_JSON, and neither is set on prod. Offering
-// the profile anywhere else ends at a 503 ("not configured on Canary") on the
-// uncertain launch screen (first prod user, 2026-10-10). Keyed on the canary
+// HIVRA_CANARY_PREPARED_COMPUTERS_JSON, and production sets neither. Offering
+// the profile anywhere else ends at a 503 ("not configured on Canary") shown as
+// an uncertain launch (first production user, 2026-10-10). Keyed on the Canary
 // hostname like the rest of the Hivra surface, deliberately NOT on
-// NEXT_PUBLIC_HIVRA_AGENTS, which is on in production too.
+// NEXT_PUBLIC_HIVRA_AGENTS, which production sets too.
 export function preparedCanarySurfaceAvailable(): boolean {
   if (process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY === "1") return true;
   if (typeof window === "undefined") return false;
