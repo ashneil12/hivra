@@ -41,6 +41,14 @@ const OMARCHY_WEB_ORIGIN_PATTERN =
  * values are the defaults. An origin outside our own domains is refused instead
  * of being written into a guest, and a deployment that names one must also
  * serve it (the guest reports it back and the receipt is checked against it).
+ *
+ * The broker sets its session cookie SameSite=Strict, so the broker origin must
+ * be SAME SITE with the deployment that frames it: a browser withholds that
+ * cookie from a cross-site frame, and every session then authorises and dies
+ * without a media connection. Canary frames canary.hermesos.cloud into
+ * omarchy-canary.hermesos.cloud and is same-site; a deployment whose dashboard
+ * is on hivra.cloud needs its broker origin under hivra.cloud too, not under
+ * hermesos.cloud.
  */
 export function resolveOmarchyWebBrokerOrigin(env: NodeJS.ProcessEnv = process.env): string {
   const raw = (env.HIVRA_OMARCHY_WEB_BROKER_ORIGIN ?? "").trim();
