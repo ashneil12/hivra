@@ -347,6 +347,11 @@ def main():
 
     ensure_image(SELKIES_IMAGE)
     ensure_image(NODE_IMAGE)
+    # The broker serves the desktop on this guest's own address, where the host
+    # firewall governs it (a published container port would bypass that check).
+    # Allow exactly that one port; the Sunshine rules carry their own scopes.
+    subprocess.run(["/usr/bin/ufw", "allow", "8090/tcp"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     if subprocess.run(["/usr/bin/docker", "network", "inspect", NETWORK], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
         run(["/usr/bin/docker", "network", "create", "--label", "hivra.omarchy-web=v1", NETWORK])
     runtime = str(socket_path.parent)
