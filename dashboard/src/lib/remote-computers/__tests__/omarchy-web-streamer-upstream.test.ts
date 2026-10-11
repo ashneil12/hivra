@@ -44,4 +44,13 @@ describe("Omarchy desktop stream reachability", () => {
     // listener and the host firewall has to permit it for the gateway's hop.
     expect(read("install-omarchy-web.py")).toContain('"allow", "8090/tcp"');
   });
+
+  it("lets the desktop user update the machine from inside it", () => {
+    // Updating is safe now that the platform accepts every validated build, so
+    // the installer grants the update commands (and only those).
+    const installer = read("install-omarchy-web.py");
+    expect(installer).toContain("/etc/sudoers.d/90-hivra-desktop");
+    expect(installer).toContain("/usr/bin/omarchy-update");
+    expect(installer).toContain('"/usr/bin/visudo", "-cf"');
+  });
 });
