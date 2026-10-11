@@ -175,6 +175,21 @@ const storedDraftJson = () => JSON.parse(window.localStorage.getItem(DRAFT_KEY) 
 
 type TileName = "Codex" | "Ubuntu Desktop" | "Linux Sandbox" | "Windows" | "Omarchy";
 
+// The prepared Canary computer (Omarchy) is offered only where a prepared slot
+// exists: its claim route reads the Canary provisioner env, which production
+// does not set. Tests opt in exactly the way the Canary deployment does.
+const PRIOR_PREPARED_FLAG = process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+function allowPreparedCanary() {
+  process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = "1";
+}
+afterEach(() => {
+  delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+});
+afterAll(() => {
+  if (PRIOR_PREPARED_FLAG === undefined) delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+  else process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = PRIOR_PREPARED_FLAG;
+});
+
 /** Choose goes straight to the plan: there is no Continue step. */
 function chooseTile(name: TileName) {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
@@ -353,6 +368,7 @@ describe("LaunchPage", () => {
   });
 
   it("shows agents and computers on one Choose screen and goes straight to the plan", async () => {
+    allowPreparedCanary();
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     render(<LaunchPage />);
 
@@ -608,7 +624,20 @@ describe("LaunchPage", () => {
     expect(screen.getByRole("button", { name: "Resume same launch" })).toBeEnabled();
   });
 
+  it("does not offer the prepared Canary computer where it cannot be claimed", async () => {
+    // Production shape: the Hivra surfaces are on, but no prepared slot exists,
+    // so the claim route answers 503. The tile must not be offered at all.
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+
+    const computers = screen.getByRole("region", { name: "A computer" });
+    expect(within(computers).queryByRole("button", { name: /^Omarchy/ })).not.toBeInTheDocument();
+    expect(within(computers).getByRole("button", { name: /^Ubuntu Desktop/ })).toBeInTheDocument();
+    expect(within(computers).getByRole("button", { name: /^Windows/ })).toBeInTheDocument();
+  });
+
   it("launches Ubuntu as a computer and exposes prepared Canary operating systems", async () => {
+    allowPreparedCanary();
     createAgentMock.mockResolvedValue({
       id: "44444444-4444-4444-8444-444444444444",
       type: "linux-desktop",

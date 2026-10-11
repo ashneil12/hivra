@@ -26,6 +26,7 @@ import {
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
+import { usePreparedCanarySurface } from "@/hooks/usePreparedCanarySurface";
 import {
   OMARCHY_TEMPLATE,
   UBUNTU_DESKTOP_TEMPLATE,
@@ -126,6 +127,9 @@ export function ComputerCatalogPage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<InventoryFilter>("all");
   const [catalogOpen, setCatalogOpen] = useState(false);
+  // The prepared Canary computer exists only where the Canary fleet does, so it
+  // is offered only on a deployment that can actually claim it (prod cannot).
+  const preparedCanaryAvailable = usePreparedCanarySurface();
   const osGridRef = useRef<HTMLDivElement>(null);
   const addAgentRequested = searchParams?.get("addAgent") === "1";
   // ?addAgent=1 changes this list only where attach is offered (Canary), and
@@ -405,37 +409,39 @@ export function ComputerCatalogPage() {
             </Link>
           </article>
 
-          <article
-            id="omarchy"
-            className={`${styles.osCard} ${styles.previewCard}`}
-          >
-            <div className={styles.osIcon}>O.</div>
-            <span className={styles.previewBadge}>Preview</span>
-            <h3>Omarchy</h3>
-            <p>{OMARCHY_TEMPLATE.summary}</p>
-            <div className={styles.osFacts}>
-              <span>{OMARCHY_TEMPLATE.requirements.cpu} CPU</span>
-              <span>{OMARCHY_TEMPLATE.requirements.ramGb} GB RAM</span>
-              <span>Full Linux desktop in your browser</span>
-            </div>
-            <details className={styles.technical}>
-              <summary>Technical details</summary>
-              <div className={styles.omarchyTruth}>
-                <ShieldCheck size={15} aria-hidden />
-                <span>
-                  <strong>Prepared computer.</strong> Opens the pinned{" "}
-                  {OMARCHY_TEMPLATE.upstream.release} desktop through an
-                  interactive browser setup console. Runs on Proxmox KVM.
-                </span>
-              </div>
-            </details>
-            <Link
-              className={styles.primaryButton}
-              href={profileLaunchHref("omarchy")}
+          {preparedCanaryAvailable ? (
+            <article
+              id="omarchy"
+              className={`${styles.osCard} ${styles.previewCard}`}
             >
-              Launch Omarchy <ArrowRight size={14} />
-            </Link>
-          </article>
+              <div className={styles.osIcon}>O.</div>
+              <span className={styles.previewBadge}>Preview</span>
+              <h3>Omarchy</h3>
+              <p>{OMARCHY_TEMPLATE.summary}</p>
+              <div className={styles.osFacts}>
+                <span>{OMARCHY_TEMPLATE.requirements.cpu} CPU</span>
+                <span>{OMARCHY_TEMPLATE.requirements.ramGb} GB RAM</span>
+                <span>Full Linux desktop in your browser</span>
+              </div>
+              <details className={styles.technical}>
+                <summary>Technical details</summary>
+                <div className={styles.omarchyTruth}>
+                  <ShieldCheck size={15} aria-hidden />
+                  <span>
+                    <strong>Prepared computer.</strong> Opens the pinned{" "}
+                    {OMARCHY_TEMPLATE.upstream.release} desktop through an
+                    interactive browser setup console. Runs on Proxmox KVM.
+                  </span>
+                </div>
+              </details>
+              <Link
+                className={styles.primaryButton}
+                href={profileLaunchHref("omarchy")}
+              >
+                Launch Omarchy <ArrowRight size={14} />
+              </Link>
+            </article>
+          ) : null}
 
           <article
             id="windows"
