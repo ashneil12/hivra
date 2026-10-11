@@ -288,7 +288,11 @@ def main():
         raise RuntimeError("input_network")
     if not re.fullmatch(r"wayland-[0-9]{1,3}", str(request["waylandDisplay"])):
         raise RuntimeError("input_wayland")
-    if request["controlOrigin"] != "https://canary.hermesos.cloud" or request["publicOrigin"] != "https://omarchy-canary.hermesos.cloud":
+    # Both origins must be one of our own deployments; the guest is fronted on
+    # its deployment's broker hostname, so hard-coding one deployment's pair here
+    # would refuse every other one.
+    own_origin = r"https://([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*(hermesos|hivra)\.cloud"
+    if not re.fullmatch(own_origin, str(request["controlOrigin"])) or not re.fullmatch(own_origin, str(request["publicOrigin"])):
         raise RuntimeError("input_origin")
     owner = pwd.getpwuid(request["ownerUid"])
     socket_path = Path("/run/user") / str(owner.pw_uid) / request["waylandDisplay"]
@@ -361,8 +365,9 @@ def main():
     run(["/usr/bin/systemctl", "restart", "hivra-omarchy-layout.service"])
     run(["/usr/bin/systemctl", "enable", "--now", "hivra-omarchy-layout.service", "hivra-omarchy-web.service", "hivra-omarchy-web-broker.service"])
     run(["/usr/bin/systemctl", "restart", "hivra-omarchy-web.service", "hivra-omarchy-web-broker.service"])
+    public_host = request["publicOrigin"].split("//", 1)[-1]
     for _ in range(45):
-        probe = subprocess.run(["/usr/bin/curl", "-fsS", "-H", "Host: omarchy-canary.hermesos.cloud", "-o", "/dev/null", "-w", "%{http_code}",
+        probe = subprocess.run(["/usr/bin/curl", "-fsS", "-H", f"Host: {public_host}", "-o", "/dev/null", "-w", "%{http_code}",
                                 f"http://{request['guestPrivateIpv4']}:8090/desktop/health"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         if probe.stdout in (b"200", b"401", b"404"):
             break

@@ -25,7 +25,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 export const OMARCHY_NATIVE_GUARDIAN_SHA256 = "48c453debfb0fc703e180aaddbae5e4b1ac89a1a23db1a35bb3a9b3a03f614ca";
 export const OMARCHY_NATIVE_PREVIOUS_GUARDIAN_SHA256 = "24a89a6d4368971048d9f8d180b2fdb05531f1ae5ba9b574fd8eeaea0925791f";
 export const OMARCHY_NATIVE_OWNERSHIP_SHA256 = "0f988ab03729e381531c923e835f0eaca80d23a77339cb1d13f234780b27f950";
-export const OMARCHY_WEB_INSTALLER_SHA256 = "c8e8987b03be4df32a2decc1ee9344ae8f32191a683f4b2ee9c6ac1a6e0776ed";
+export const OMARCHY_WEB_INSTALLER_SHA256 = "0d22a255ff63443a08e6edc032cd4eb10ef4ea279b360644437f5b1c1f7c8fa1";
 export const OMARCHY_WEB_BROKER_SHA256 = "3bdd0ec4626392ef977eff7cab7765c1f6e6bfe412729e75ffc3bd411f3e997d";
 export const OMARCHY_WEB_ADAPTER_SHA256 = "9272e47af4146a593120d1fea711563449843a0ed8367661b03f54f72ca8c4d1";
 export const OMARCHY_WEB_SERVER_SHA256 = "4b7db0d78a176757374b8567b0680e559e93254fb1adaee9848f0f80c9dff034";
@@ -62,6 +62,13 @@ export function resolveOmarchyWebControlOrigin(env: NodeJS.ProcessEnv = process.
 
 export const OMARCHY_WEB_BROKER_ORIGIN = resolveOmarchyWebBrokerOrigin();
 export const OMARCHY_WEB_CONTROL_ORIGIN = resolveOmarchyWebControlOrigin();
+
+/**
+ * The host the guest's broker answers on. The capability probe runs inside the
+ * guest and must present the Host that this deployment's broker is fronted on,
+ * so it comes from the same resolved origin as everything else.
+ */
+const OMARCHY_WEB_BROKER_HOST = OMARCHY_WEB_BROKER_ORIGIN.replace(/^https:\/\//, "");
 
 export const LEGACY_OMARCHY_NATIVE_INSPECTION_PROGRAM = String.raw`import datetime,hashlib,http.client,ipaddress,json,os,pathlib,pwd,re,socket,ssl,stat,subprocess,sys
 def fail(code):
@@ -434,7 +441,7 @@ for name,image in (('hivra-omarchy-web',selkies_image),('hivra-omarchy-web-broke
    matches=[m for m in rows[0].get('Mounts',[]) if m.get('Destination')==destination]
    if len(matches)!=1 or matches[0].get('Type')!='bind' or matches[0].get('Source')!=source or matches[0].get('RW') is not False: fail('web_layout_mount_mismatch')
 try:
- connection=__import__('http.client').client.HTTPConnection(str(expected_ip),8090,timeout=3); connection.request('GET','/desktop/handoff',headers={'Host':'omarchy-canary.hermesos.cloud'}); response=connection.getresponse(); web_status=response.status; response.read(1024); connection.close()
+ connection=__import__('http.client').client.HTTPConnection(str(expected_ip),8090,timeout=3); connection.request('GET','/desktop/handoff',headers={'Host':'${OMARCHY_WEB_BROKER_HOST}'}); response=connection.getresponse(); web_status=response.status; response.read(1024); connection.close()
 except Exception: fail('web_broker_unreachable')
 if web_status!=200: fail('web_broker_unready')
 boot_id=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
