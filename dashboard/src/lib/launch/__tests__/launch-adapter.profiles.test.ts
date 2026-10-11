@@ -426,3 +426,41 @@ describe("each runtime opens its own surface", () => {
     expect(opensOnAcceptance("claude-code")).toBe(true);
   });
 });
+
+describe("the prepared Canary computer", () => {
+  const claim = (status: number, body: unknown) => route(
+    (url, init) => url === "/api/hivra/prepared-computers" && init?.method === "POST",
+    () => json(status, body),
+  );
+
+  it("claims the prepared computer on a deployment that has one", async () => {
+    claim(201, { success: true, data: { agent: created("linux-desktop", { computer_profile: "omarchy" }) } });
+
+    await expect(submitLaunchDraft(draftFor("omarchy"), MANAGED)).resolves.toMatchObject({ id: AGENT_ID });
+    expect(bodyOf(fetchCalls[0])).toEqual({ profile: "omarchy", name: "Omarchy 1" });
+  });
+
+  it("reports a deployment with no prepared slot as stopped, never as uncertain", async () => {
+    // The claim decides this before any host work or row insert, so the request
+    // cannot have reached the provisioner: telling the owner to resume a
+    // receipt that does not exist leaves the launch stuck on that screen.
+    claim(503, {
+      success: false,
+      error: "This prepared computer is not configured on Canary.",
+      code: "prepared_profile_unavailable",
+    });
+
+    const error = await submitLaunchDraft(draftFor("omarchy"), MANAGED).catch(caught => caught);
+
+    expect(error).toBeInstanceOf(HivraLaunchRejectedError);
+    expect(error).toMatchObject({ status: 503, code: "prepared_profile_unavailable" });
+    expect(error.message).toBe("Omarchy is not available on this site. Choose another computer.");
+    expect(fetchCalls).toHaveLength(1);
+  });
+
+  it("never claims it on a server the owner connected", async () => {
+    await expect(submitLaunchDraft(draftFor("omarchy"), SELF_MANAGED))
+      .rejects.toMatchObject({ code: "prepared_managed_only" });
+    expect(fetchCalls).toHaveLength(0);
+  });
+});
