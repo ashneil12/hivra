@@ -39,9 +39,32 @@ describe("Omarchy desktop stream reachability", () => {
     expect(read("omarchy-web-server.cjs")).toContain("upstreamPort: 8080");
   });
 
+  it("does not redirect that loopback onto a container name", () => {
+    // This lane's adapter used to rewrite 127.0.0.1:8080 to the stream's Docker
+    // network name, which was right when the broker sat on its own bridge. Now
+    // that the stream publishes on the guest loopback and the broker shares the
+    // guest's network namespace, that rewrite sends every session to an address
+    // the stream does not serve: the broker waits for a reply, the gateway times
+    // out, and the desktop shows a 502 instead of opening. The adapter must stay
+    // a pass-through to the shared broker.
+    const adapter = read("omarchy-web-broker.cjs");
+    expect(adapter).toContain("module.exports = require('./broker.cjs')");
+    expect(adapter).not.toContain("http.request =");
+    expect(adapter).not.toContain("hivra-omarchy-web'");
+  });
+
   it("allows the gateway's port through the guest firewall", () => {
     // The broker is in the guest's network namespace, so this port is a guest
     // listener and the host firewall has to permit it for the gateway's hop.
     expect(read("install-omarchy-web.py")).toContain('"allow", "8090/tcp"');
+  });
+
+  it("lets the desktop user update the machine from inside it", () => {
+    // Updating is safe now that the platform accepts every validated build, so
+    // the installer grants the update commands (and only those).
+    const installer = read("install-omarchy-web.py");
+    expect(installer).toContain("/etc/sudoers.d/90-hivra-desktop");
+    expect(installer).toContain("/usr/bin/omarchy-update");
+    expect(installer).toContain('"/usr/bin/visudo", "-cf"');
   });
 });

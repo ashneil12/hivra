@@ -352,6 +352,20 @@ def main():
     # Allow exactly that one port; the Sunshine rules carry their own scopes.
     subprocess.run(["/usr/bin/ufw", "allow", "8090/tcp"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    # The desktop user updates the machine from inside it. Every build the
+    # platform validates is accepted, so an update keeps the desktop verifiable
+    # instead of making it stop opening. Only the update commands are granted,
+    # and the file is validated before it is installed.
+    sudoers = ROOT / 'desktop-update.sudoers'
+    write(sudoers, (
+        f"{owner.pw_name} ALL=(root) NOPASSWD: "
+        "/usr/bin/omarchy-update, /usr/bin/omarchy-update-*, "
+        "/usr/bin/pacman -S*, /usr/bin/yay -S*, /usr/bin/checkupdates\n"
+    ).encode(), 0o440)
+    run(["/usr/bin/visudo", "-cf", str(sudoers)])
+    run(["/usr/bin/install", "-o", "root", "-g", "root", "-m", "0440",
+         str(sudoers), "/etc/sudoers.d/90-hivra-desktop"])
+    sudoers.unlink()
     if subprocess.run(["/usr/bin/docker", "network", "inspect", NETWORK], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
         run(["/usr/bin/docker", "network", "create", "--label", "hivra.omarchy-web=v1", NETWORK])
     runtime = str(socket_path.parent)
