@@ -175,19 +175,33 @@ const storedDraftJson = () => JSON.parse(window.localStorage.getItem(DRAFT_KEY) 
 
 type TileName = "Codex" | "Ubuntu Desktop" | "Linux Sandbox" | "Windows" | "Omarchy";
 
-// The prepared Canary computer (Omarchy) is offered only where a prepared slot
-// exists: its claim route reads the Canary provisioner env, which production
-// does not set. Tests opt in exactly the way the Canary deployment does.
-const PRIOR_PREPARED_FLAG = process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+// The prepared desktop computer (Omarchy) is offered only where this deployment
+// holds a prepared slot: the page reads that from the same server configuration
+// the claim route reads. Tests opt in exactly the way a deployment does.
+const PREPARED_ENV = {
+  HIVRA_PREPARED_COMPUTERS_JSON: JSON.stringify({
+    omarchy: {
+      host: "pve11", node: "pve11", vmid: 2099, ip: "10.70.20.99",
+      claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1",
+    },
+  }),
+  PROXMOX_PVE11_SSH_HOST: "198.51.100.11",
+  PROXMOX_PVE11_SSH_USER: "root",
+} as const;
+const PRIOR_PREPARED_ENV = Object.fromEntries(
+  Object.keys(PREPARED_ENV).map((key) => [key, process.env[key]]),
+) as Record<keyof typeof PREPARED_ENV, string | undefined>;
 function allowPreparedCanary() {
-  process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = "1";
+  for (const [key, value] of Object.entries(PREPARED_ENV)) process.env[key] = value;
 }
 afterEach(() => {
-  delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+  for (const key of Object.keys(PREPARED_ENV)) delete process.env[key];
 });
 afterAll(() => {
-  if (PRIOR_PREPARED_FLAG === undefined) delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
-  else process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = PRIOR_PREPARED_FLAG;
+  for (const [key, value] of Object.entries(PRIOR_PREPARED_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 /** Choose goes straight to the plan: there is no Continue step. */

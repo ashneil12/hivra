@@ -11,19 +11,15 @@ import {
 
 import { ComputerCatalogPage } from "../ComputerCatalogPage";
 
-// The prepared Canary computer (Omarchy) is offered only where a prepared slot
-// exists: its claim route reads the Canary provisioner env, which production
-// does not set. Tests opt in exactly the way the Canary deployment does.
-const PRIOR_PREPARED_FLAG = process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+// The prepared desktop computer (Omarchy) is offered only where the deployment
+// holds a prepared slot, which the page passes down from server configuration.
+let preparedProfiles: ("omarchy" | "windows")[] = [];
 function allowPreparedCanary() {
-  process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = "1";
+  preparedProfiles = ["omarchy"];
 }
+const renderCatalog = () => render(<ComputerCatalogPage preparedProfiles={preparedProfiles} />);
 afterEach(() => {
-  delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
-});
-afterAll(() => {
-  if (PRIOR_PREPARED_FLAG === undefined) delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
-  else process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = PRIOR_PREPARED_FLAG;
+  preparedProfiles = [];
 });
 
 const mockSearchParamsGet = jest.fn();
@@ -57,7 +53,7 @@ describe("ComputerCatalogPage", () => {
   });
 
   it("routes both computer launch actions through the unified journey", async () => {
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     await screen.findByText("No computers yet");
     expect(
@@ -85,7 +81,7 @@ describe("ComputerCatalogPage", () => {
     const original = HTMLElement.prototype.scrollIntoView;
     HTMLElement.prototype.scrollIntoView = scroll;
     try {
-      render(<ComputerCatalogPage />);
+      renderCatalog();
       await screen.findByText("No computers yet");
       const details = screen
         .getByText("Browse operating systems")
@@ -121,7 +117,7 @@ describe("ComputerCatalogPage", () => {
     HTMLElement.prototype.scrollIntoView = scroll;
     window.history.replaceState(null, "", "#omarchy");
     try {
-      render(<ComputerCatalogPage />);
+      renderCatalog();
       await screen.findByText("No computers yet");
       const details = screen
         .getByText("Browse operating systems")
@@ -138,7 +134,7 @@ describe("ComputerCatalogPage", () => {
 
   it("keeps Omarchy's prepared path while presenting Windows as needing your own server", async () => {
     allowPreparedCanary();
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     await screen.findByText("No computers yet");
     fireEvent.click(screen.getByText("Browse operating systems"));
@@ -187,7 +183,7 @@ describe("ComputerCatalogPage", () => {
   it("does not offer the prepared Canary computer where it cannot be claimed", async () => {
     // Production shape: the Hivra surfaces are on, but no prepared slot exists,
     // so the claim route answers 503. The card must not be offered at all.
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     await screen.findByText("No computers yet");
     fireEvent.click(screen.getByText("Browse operating systems"));
@@ -206,7 +202,7 @@ describe("ComputerCatalogPage", () => {
     mockSearchParamsGetAll.mockImplementation((key: string) =>
       key === "targetId" ? ["22222222-2222-4222-8222-222222222222"] : [],
     );
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     await screen.findByText("No computers yet");
     expect(
@@ -224,7 +220,7 @@ describe("ComputerCatalogPage", () => {
     mockSearchParamsGetAll.mockImplementation((key: string) =>
       key === "targetId" ? ["22222222-2222-4222-8222-222222222222"] : [],
     );
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     await waitFor(() =>
       expect(mockRouterReplace).toHaveBeenCalledWith(
@@ -271,7 +267,7 @@ describe("ComputerCatalogPage", () => {
       },
     );
 
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     expect(await screen.findByText("Ubuntu Workstation")).toBeInTheDocument();
     expect(screen.queryByText("Code Agent")).not.toBeInTheDocument();
@@ -283,7 +279,7 @@ describe("ComputerCatalogPage", () => {
   });
 
   it("keeps capacity and agent inventories as separate destinations", async () => {
-    render(<ComputerCatalogPage />);
+    renderCatalog();
 
     await screen.findByText("No computers yet");
     expect(
@@ -338,7 +334,7 @@ describe("ComputerCatalogPage", () => {
         },
       }),
     });
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     await screen.findByText("Design workstation");
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search computers" }),
@@ -373,7 +369,7 @@ describe("ComputerCatalogPage", () => {
 
   it("keeps the operating-system catalog out of daily inventory until requested", async () => {
     allowPreparedCanary();
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     await screen.findByText("No computers yet");
     expect(
       screen.getByRole("link", { name: /Launch Ubuntu Desktop/i }),
@@ -432,7 +428,7 @@ describe("ComputerCatalogPage", () => {
         },
       }),
     });
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     const fresh = await screen.findByRole("link", { name: /Fresh desktop/ });
     expect(fresh).toHaveTextContent("Starting");
     expect(fresh).not.toHaveTextContent(/provisioning/i);
@@ -454,7 +450,7 @@ describe("ComputerCatalogPage", () => {
       status: 503,
       json: async () => ({ success: false, error: "Inventory unavailable" }),
     });
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Inventory unavailable",
     );
@@ -473,7 +469,7 @@ describe("ComputerCatalogPage", () => {
       json: async () => String(input).includes("/api/hivra/attached-agents")
         ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [desk.id] } }
         : { success: true, data: { agents: [desk, windows, unbound] } } }) as Response);
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
     await waitFor(() => expect(row).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage&addAgent=1`));
     expect(within(row).getByText("Adds a new Codex to MY_UBUNTU_DESKTOP. Your other agents stay as they are.")).toBeInTheDocument();
@@ -494,7 +490,7 @@ describe("ComputerCatalogPage", () => {
         ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [],
           computerReasons: { [desk.id]: "Start the computer to add Codex.", [busy.id]: "Codex is already on this computer." } } }
         : { success: true, data: { agents: [desk, busy] } } }) as Response);
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     const stopped = await screen.findByRole("link", { name: /STOPPED_DESK/ });
     await waitFor(() => expect(within(stopped).getByText("Start the computer to add Codex.")).toBeInTheDocument());
     expect(stopped).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage`);
@@ -511,7 +507,7 @@ describe("ComputerCatalogPage", () => {
       json: async () => String(input).includes("/api/hivra/attached-agents")
         ? { success: true, data: { enabled: false, agents: [], eligibleComputerIds: [] } }
         : { success: true, data: { agents: [desk] } } }) as Response);
-    render(<ComputerCatalogPage />);
+    renderCatalog();
     const row = await screen.findByRole("link", { name: /MY_UBUNTU_DESKTOP/ });
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/attached-agents", expect.anything()));
     expect(within(row).queryByText(/Adds a new Codex|Not available to add/)).not.toBeInTheDocument();

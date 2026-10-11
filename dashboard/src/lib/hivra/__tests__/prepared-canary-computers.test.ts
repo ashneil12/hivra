@@ -5,7 +5,9 @@ import {
   preparedCanaryBindingScript,
   preparedCanaryLifecycleScript,
   preparedConsoleHostPreparationScript,
-  readPreparedCanarySlot,
+  preparedConsoleOrigin,
+  preparedProfilesForDeployment,
+  readPreparedSlot,
 } from "../prepared-canary-computers";
 
 const CONFIG = JSON.stringify({
@@ -13,22 +15,40 @@ const CONFIG = JSON.stringify({
   windows: { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" },
 });
 
-describe("prepared Canary computers", () => {
-  const priorChannel = process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL;
-  const priorConfig = process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
-  beforeEach(() => {
-    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
-    process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = CONFIG;
-  });
+// A deployment may serve a slot only where it holds that host's own
+// credentials; without them the configuration is ignored (there is no
+// cross-host key fallback).
+const HOST_ENV = { PROXMOX_NODE_B_SSH_HOST: "198.51.100.11", PROXMOX_NODE_B_SSH_USER: "root" } as const;
+const MANAGED_ENV_KEYS = [
+  "HIVRA_MANAGED_PROVISIONER_CHANNEL",
+  "HIVRA_CANARY_PREPARED_COMPUTERS_JSON",
+  "HIVRA_PREPARED_COMPUTERS_JSON",
+  ...Object.keys(HOST_ENV),
+] as const;
+const PRIOR_MANAGED_ENV = Object.fromEntries(
+  MANAGED_ENV_KEYS.map((key) => [key, process.env[key]]),
+) as Record<string, string | undefined>;
+
+/** The retained Canary deployment shape: its own lane, its own slot config. */
+function retainedCanaryDeployment() {
+  for (const key of MANAGED_ENV_KEYS) delete process.env[key];
+  process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
+  process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = CONFIG;
+  Object.assign(process.env, HOST_ENV);
+}
+
+describe("prepared computers", () => {
+  beforeEach(retainedCanaryDeployment);
   afterAll(() => {
-    if (priorChannel === undefined) delete process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL;
-    else process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = priorChannel;
-    if (priorConfig === undefined) delete process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
-    else process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = priorConfig;
+    for (const key of MANAGED_ENV_KEYS) {
+      const prior = PRIOR_MANAGED_ENV[key];
+      if (prior === undefined) delete process.env[key];
+      else process.env[key] = prior;
+    }
   });
 
   it("keeps the exact profile, VM, IP and claim in server-only configuration", () => {
-    expect(readPreparedCanarySlot("windows")).toEqual({
+    expect(readPreparedSlot("windows")).toEqual({
       host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005",
     });
   });
@@ -68,7 +88,7 @@ describe("prepared Canary computers", () => {
     ["force_stop", 0, "qm stop \"$VMID\" --overrule-shutdown 1 --timeout 30 || qm stop \"$VMID\" --timeout 30\nfi\nEXPECTED_STATUS=stopped"],
     ["force_restart", 1, "qm stop \"$VMID\" --overrule-shutdown 1 --timeout 30 || qm stop \"$VMID\" --timeout 30\nfi\nqm start \"$VMID\" 8>&-"],
   ] as const)("builds an identity-bound %s lifecycle with persistent onboot=%i", (action, onboot, transition) => {
-    const slot = readPreparedCanarySlot("windows");
+    const slot = readPreparedSlot("windows");
     expect(slot).not.toBeNull();
     const script = preparedCanaryLifecycleScript("windows", slot!, action);
     expect(script).toContain("hivra-windows-operation%3A00000000-0000-4000-8000-000000001005");
@@ -80,7 +100,7 @@ describe("prepared Canary computers", () => {
   });
 
   it.each(["start", "restart"] as const)("holds the parent lock but excludes it from %s daemon children", action => {
-    const script = preparedCanaryLifecycleScript("omarchy", readPreparedCanarySlot("omarchy")!, action);
+    const script = preparedCanaryLifecycleScript("omarchy", readPreparedSlot("omarchy")!, action);
     const start = script.match(/qm start "\$VMID"[^;\n]*/)?.[0];
     expect(start).toBe('qm start "$VMID" 8>&-');
     const result = spawnSync("python3", ["-c", `import errno, fcntl, os, signal, subprocess, sys, tempfile
@@ -115,7 +135,7 @@ with tempfile.NamedTemporaryFile() as lock, tempfile.TemporaryDirectory() as com
   });
 
   it.each(["force_stop", "force_restart"] as const)("never asks the computer to shut down for %s", action => {
-    const script = preparedCanaryLifecycleScript("windows", readPreparedCanarySlot("windows")!, action);
+    const script = preparedCanaryLifecycleScript("windows", readPreparedSlot("windows")!, action);
     expect(script).not.toContain("qm shutdown");
     expect(script).not.toContain("HIVRA_STOP_MODE");
   });
@@ -129,7 +149,7 @@ with tempfile.NamedTemporaryFile() as lock, tempfile.TemporaryDirectory() as com
     ["1", 60, "forced 60 60"],
     ["1", 2, "forced 2 60"],
   ] as const)("a Stop whose shutdown exits %s after %i s reports %s", (shutdownExit, seconds, mode) => {
-    const script = preparedCanaryLifecycleScript("windows", readPreparedCanarySlot("windows")!, "stop");
+    const script = preparedCanaryLifecycleScript("windows", readPreparedSlot("windows")!, "stop");
     const transition = script.slice(script.indexOf('if [ "$CURRENT_STATUS" != stopped ]'), script.indexOf("EXPECTED_STATUS=stopped"));
     const result = spawnSync("bash", ["-euo", "pipefail", "-c", `NOW=1000
 date() { echo "$NOW"; }
@@ -141,7 +161,7 @@ ${transition}`], { encoding: "utf8" });
   });
 
   it.each(["start", "stop", "restart", "force_stop", "force_restart"] as const)("emits a newline-delimited %s receipt", action => {
-    const script = preparedCanaryLifecycleScript("omarchy", readPreparedCanarySlot("omarchy")!, action);
+    const script = preparedCanaryLifecycleScript("omarchy", readPreparedSlot("omarchy")!, action);
     const receipt = script.split("\n").find(line => line.includes("printf 'HIVRA_PREPARED_LIFECYCLE"))!;
     const status = action === "stop" || action === "force_stop" ? "stopped" : "running";
     const result = spawnSync("bash", ["-s"], { encoding: "utf8", input: `CURRENT_STATUS=${status}\n${receipt}\n` });
@@ -219,7 +239,7 @@ ${transition}`], { encoding: "utf8" });
   });
 
   it("refuses to replace a different prepared binding tag", () => {
-    const slot = readPreparedCanarySlot("windows")!;
+    const slot = readPreparedSlot("windows")!;
     const script = preparedCanaryBindingScript("windows", slot, "a".repeat(64));
     expect(script).toContain("grep -Eq '^hivra-bind-[a-f0-9]{32}$'");
     expect(script).toContain("exit 43");
@@ -234,5 +254,84 @@ ${transition}`], { encoding: "utf8" });
       insert: jest.fn() as never,
       markBindingEnforced: jest.fn(),
     })).rejects.toThrow("prepared_slot_claimed");
+  });
+
+  // A deployment serves the fixture it configures, on the delivery lane it
+  // provisions on: production's lane is "default", and it recognises the row it
+  // wrote there. The Canary channel gate is gone with it.
+  it("serves a deployment's own prepared slot with no Canary channel gate", () => {
+    delete process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "default";
+    process.env.HIVRA_PREPARED_COMPUTERS_JSON = CONFIG;
+
+    expect(readPreparedSlot("omarchy")).toEqual(expect.objectContaining({ host: "node-b", vmid: 2099 }));
+    expect([...preparedProfilesForDeployment()].sort()).toEqual(["omarchy", "windows"]);
+    expect(matchPreparedCanaryComputer({
+      type: "linux-desktop", computer_profile: "omarchy", managed_provisioner_channel: "default",
+      proxmox_host: "node-b", vmid: 2099, ip: "10.240.20.99",
+    })).toEqual({ profile: "omarchy", slot: expect.objectContaining({ vmid: 2099 }) });
+    // Its own row on the Canary lane is not its fixture.
+    expect(matchPreparedCanaryComputer({
+      type: "linux-desktop", computer_profile: "omarchy", managed_provisioner_channel: "canary",
+      proxmox_host: "node-b", vmid: 2099, ip: "10.240.20.99",
+    })).toBeNull();
+  });
+
+  it("serves only the profiles its configuration names", () => {
+    process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({
+      omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
+    });
+    expect(preparedProfilesForDeployment()).toEqual(["omarchy"]);
+    expect(readPreparedSlot("windows")).toBeNull();
+  });
+
+  it("ignores a slot on a host this deployment holds no credentials for", () => {
+    process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({
+      omarchy: { host: "node-z", node: "node-z", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
+    });
+    expect(readPreparedSlot("omarchy")).toBeNull();
+    expect(preparedProfilesForDeployment()).toEqual([]);
+  });
+
+  it("asserts the guest name its configuration gives instead of assuming Canary", () => {
+    process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({
+      omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99",
+        claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1", name: "hivra-omarchy-prod" },
+    });
+    const script = preparedCanaryLifecycleScript("omarchy", readPreparedSlot("omarchy")!, "start");
+    expect(script).toContain("name: hivra-omarchy-prod");
+    expect(script).not.toContain("name: hivra-omarchy-canary");
+  });
+
+  it("writes the claimed row on the deployment's own delivery lane", async () => {
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "default";
+    const insert = jest.fn(async (row: Record<string, unknown>) => ({ ...row,
+      id: "44444444-4444-4444-8444-444444444444", infrastructure_binding_token_hash: "a".repeat(64) }));
+    const runHost = jest.fn(async (script: string) => ({
+      ok: true,
+      stdout: script.includes("HIVRA_PREPARED_BINDING_READY")
+        ? "HIVRA_PREPARED_BINDING_READY\n" : "HIVRA_PREPARED_COMPUTER_READY\n",
+      stderr: "",
+    }));
+    await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
+      findOwnerProfile: async () => null,
+      findSlotOwner: async () => null,
+      runHost,
+      insert: insert as never,
+      markBindingEnforced: async (row) => ({ ...row, infrastructure_binding_token_enforced: true }),
+    });
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ managed_provisioner_channel: "default" }));
+  });
+
+  it("accepts only a Hivra console origin, and none at all when unset", () => {
+    const envOf = (vars: Record<string, string | undefined>) => (
+      { NODE_ENV: "test" as const, ...vars });
+    expect(preparedConsoleOrigin(envOf({}))).toBeNull();
+    expect(preparedConsoleOrigin(envOf({ HIVRA_CANARY_CONSOLE_ORIGIN: "https://console-canary.hermesos.cloud" })))
+      .toBe("https://console-canary.hermesos.cloud");
+    expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "https://console.hermesos.cloud/" })))
+      .toBe("https://console.hermesos.cloud");
+    expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "http://console.hermesos.cloud" }))).toBeNull();
+    expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "https://console.evil.example" }))).toBeNull();
   });
 });
