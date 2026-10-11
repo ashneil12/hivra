@@ -245,7 +245,7 @@
         "percent": 76.3
       },
       "providerSeedScript": {
-        "bytes": 283347,
+        "bytes": 282839,
         "limit": "provider-guest-seed",
         "percent": 27
       }
@@ -271,12 +271,12 @@
     },
     "omarchy-preparation": {
       "script": {
-        "bytes": 245603,
+        "bytes": 245879,
         "limit": "sudo-transport-script",
         "percent": 24.6
       },
       "stdin": {
-        "bytes": 231708,
+        "bytes": 231984,
         "limit": "guest-exec-stdin",
         "percent": 22.1
       },
