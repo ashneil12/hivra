@@ -228,9 +228,14 @@ def preflight(request, fresh):
                       '--property=' + ','.join(unit_properties(request, owner.pw_gid))])
     state = parse_unit_state(unit_state)
     check_unit_state(state, request, owner.pw_gid, fresh)
-    for name, version in [('omarchy', '4.0.2-1'), ('sunshine', '2026.516.143833-4')]:
-        if run(['/usr/bin/pacman', '-Q', name]).strip() != name + ' ' + version:
-            raise Refused('package_pin_mismatch')
+    # The desktop may be updated from upstream, so accept any validated build
+    # pair, not one fixed build; an unknown or half-updated pair is refused.
+    accepted_builds = [('4.0.2-1', '2026.516.143833-4'), ('4.0.4-1', '2026.516.143833-4.1')]
+    observed_build = tuple(
+        run(['/usr/bin/pacman', '-Q', name]).strip().rpartition(' ')[2]
+        for name in ('omarchy', 'sunshine'))
+    if observed_build not in accepted_builds:
+        raise Refused('package_pin_mismatch')
     executable, info = regular(Path('/usr/bin/sunshine'), 0, 268435456)
     if info.st_mode & 0o022 or not info.st_mode & 0o111:
         raise Refused('sunshine_executable_unsafe')

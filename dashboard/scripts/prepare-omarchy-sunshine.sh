@@ -7,8 +7,19 @@
 
 set -euo pipefail
 
-readonly EXPECTED_OMARCHY_VERSION="4.0.2-1"
-readonly EXPECTED_SUNSHINE_VERSION="2026.516.143833-4"
+readonly ACCEPTED_OMARCHY_VERSIONS=("4.0.2-1" "4.0.4-1")
+readonly ACCEPTED_SUNSHINE_VERSIONS=("2026.516.143833-4" "2026.516.143833-4.1")
+
+# The desktop may be updated from upstream, so every validated build is
+# accepted; anything else is still refused.
+in_accepted_builds() {
+  local needle="$1"; shift
+  local candidate
+  for candidate in "$@"; do
+    [[ "$candidate" == "$needle" ]] && return 0
+  done
+  return 1
+}
 readonly SUNSHINE_UNIT="app-dev.lizardbyte.app.Sunshine.service"
 readonly UNIT_DIRECTORY="${HIVRA_SYSTEMD_USER_UNIT_DIR:-/usr/lib/systemd/user}"
 
@@ -97,8 +108,8 @@ done
 [[ "$(id -u)" -ne 0 ]] || { echo "Run as the enrolled Omarchy desktop owner, not root" >&2; exit 3; }
 
 omarchy_version="$(pacman -Q omarchy | awk '{print $2}')"
-[[ "$omarchy_version" == "$EXPECTED_OMARCHY_VERSION" ]] || {
-  echo "Unsupported Omarchy package: ${omarchy_version:-missing}; expected $EXPECTED_OMARCHY_VERSION" >&2
+in_accepted_builds "$omarchy_version" "${ACCEPTED_OMARCHY_VERSIONS[@]}" || {
+  echo "Unsupported Omarchy package: ${omarchy_version:-missing}; accepted: ${ACCEPTED_OMARCHY_VERSIONS[*]}" >&2
   exit 4
 }
 
@@ -111,8 +122,8 @@ if ! pacman -Q sunshine >/dev/null 2>&1; then
 fi
 
 sunshine_version="$(pacman -Q sunshine | awk '{print $2}')"
-[[ "$sunshine_version" == "$EXPECTED_SUNSHINE_VERSION" ]] || {
-  echo "Unsupported Sunshine package: ${sunshine_version:-missing}; expected $EXPECTED_SUNSHINE_VERSION" >&2
+in_accepted_builds "$sunshine_version" "${ACCEPTED_SUNSHINE_VERSIONS[@]}" || {
+  echo "Unsupported Sunshine package: ${sunshine_version:-missing}; accepted: ${ACCEPTED_SUNSHINE_VERSIONS[*]}" >&2
   exit 5
 }
 [[ -f "$UNIT_DIRECTORY/$SUNSHINE_UNIT" ]] || {
