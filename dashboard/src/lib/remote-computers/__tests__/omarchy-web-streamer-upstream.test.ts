@@ -38,4 +38,10 @@ describe("Omarchy desktop stream reachability", () => {
     expect(read("broker.cjs")).toContain("`http://127.0.0.1:${options.upstreamPort}`");
     expect(read("omarchy-web-server.cjs")).toContain("upstreamPort: 8080");
   });
+
+  it("allows the gateway's port through the guest firewall", () => {
+    // The broker is in the guest's network namespace, so this port is a guest
+    // listener and the host firewall has to permit it for the gateway's hop.
+    expect(read("install-omarchy-web.py")).toContain('"allow", "8090/tcp"');
+  });
 });
