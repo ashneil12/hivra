@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       const code = error instanceof Error ? error.message : "prepared_guest_unavailable";
       if (["profile_already_claimed", "prepared_slot_claimed"].includes(code)) {
-        return apiError("This prepared Canary computer is already claimed.", 409, undefined, { code });
+        return apiError("This prepared computer is already claimed.", 409, undefined, { code });
       }
       if (code === "plan_agent_limit" || code === "plan_access_required") {
         return apiError(code === "plan_agent_limit"
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
         return apiError(HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, 403, undefined, { code });
       }
       if (code === "prepared_profile_unavailable") {
-        return apiError("This prepared computer is not configured on Canary.", 503, undefined, { code });
+        return apiError("This prepared computer is not configured on this site.", 503, undefined, { code });
       }
       return apiError("The prepared computer could not be verified and was not claimed.", 503, undefined, { code });
     }

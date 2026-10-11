@@ -10,6 +10,7 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { ComputerTemplateId } from "./computer-catalog";
+import { managedHivraProvisionerChannelForServerEnvironment } from "./managed-provisioner-channel";
 import { resolvePlanAgentSlots } from "./resource-gate";
 
 const Slot = z.object({
@@ -18,11 +19,25 @@ const Slot = z.object({
   vmid: z.number().int().min(100).max(999999999),
   ip: z.string().ip({ version: "v4" }),
   claim: z.string().uuid(),
+  // The guest's Proxmox name. It is asserted on the host before any lifecycle
+  // work, and it defaults to the retained Canary naming so a configuration
+  // written before this field existed keeps working unchanged.
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/).optional(),
 }).strict();
-const Slots = z.object({ omarchy: Slot, windows: Slot }).strict();
+const Slots = z.object({ omarchy: Slot.optional(), windows: Slot.optional() }).strict()
+  .refine((slots) => slots.omarchy !== undefined || slots.windows !== undefined, {
+    message: "A prepared-computer configuration needs at least one profile.",
+  });
 export type PreparedCanaryProfile = "omarchy" | "windows";
 export type PreparedCanarySlot = z.infer<typeof Slot>;
 export type PreparedCanaryLifecycleAction = "start" | "stop" | "restart" | "force_stop" | "force_restart";
+
+const PREPARED_PROFILES: readonly PreparedCanaryProfile[] = ["omarchy", "windows"];
+
+/** The guest name the host scripts assert before they touch anything. */
+export function preparedSlotName(profile: PreparedCanaryProfile, slot: PreparedCanarySlot): string {
+  return slot.name ?? `hivra-${profile}-canary`;
+}
 
 type PreparedCanaryComputerRow = {
   type?: unknown;
@@ -43,10 +58,12 @@ export function matchPreparedCanaryComputer(
 ): { profile: PreparedCanaryProfile; slot: PreparedCanarySlot } | null {
   const profile = row.computer_profile;
   if (profile !== "omarchy" && profile !== "windows") return null;
-  const slot = readPreparedCanarySlot(profile, env);
+  const slot = readPreparedSlot(profile, env);
+  const channel = deploymentChannel(env);
   if (!slot
+    || !channel
     || row.type !== "linux-desktop"
-    || row.managed_provisioner_channel !== "canary"
+    || row.managed_provisioner_channel !== channel
     || row.proxmox_host !== slot.host
     || row.vmid !== slot.vmid
     || row.ip !== slot.ip) return null;
@@ -104,7 +121,7 @@ exec 8>/run/lock/hivra-prepared-${slot.vmid}.lock
 flock -w 60 8 || { echo "prepared computer lifecycle is busy" >&2; exit 70; }
 CONFIG="$(qm config "$VMID")"
 case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) exit 71 ;; esac
-printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: hivra-${profile}-canary`)} >/dev/null || exit 72
+printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null || exit 72
 qm set "$VMID" --onboot ${desiredOnboot} --startup order=30,up=15,down=60 >/dev/null
 CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
 ${transition}
@@ -132,17 +149,77 @@ done
 ${displayWake}`;
 }
 
-export function readPreparedCanarySlot(
-  profile: PreparedCanaryProfile,
+/**
+ * The prepared desktop slots this deployment can serve, or null when it serves
+ * none. The configuration is the switch: a deployment offers (and can claim)
+ * exactly the fixtures it names here, and the claim route fails closed when a
+ * profile is absent or its host carries no credentials for this deployment.
+ */
+export function readPreparedSlots(
   env: NodeJS.ProcessEnv = process.env,
-): PreparedCanarySlot | null {
-  if (env.HIVRA_MANAGED_PROVISIONER_CHANNEL !== "canary") return null;
+): Partial<Record<PreparedCanaryProfile, PreparedCanarySlot>> | null {
+  const raw = env.HIVRA_PREPARED_COMPUTERS_JSON ?? env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
+  if (!raw) return null;
+  let parsed: z.infer<typeof Slots>;
   try {
-    const parsed = Slots.parse(JSON.parse(env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON ?? ""));
-    return parsed[profile];
+    parsed = Slots.parse(JSON.parse(raw));
   } catch {
     return null;
   }
+  const usable: Partial<Record<PreparedCanaryProfile, PreparedCanarySlot>> = {};
+  for (const profile of PREPARED_PROFILES) {
+    const slot = parsed[profile];
+    if (slot && proxmoxHostConfigured(env, slot.host)) usable[profile] = slot;
+  }
+  return usable;
+}
+
+export function readPreparedSlot(
+  profile: PreparedCanaryProfile,
+  env: NodeJS.ProcessEnv = process.env,
+): PreparedCanarySlot | null {
+  return readPreparedSlots(env)?.[profile] ?? null;
+}
+
+/** The profiles this deployment can claim, for the surfaces that offer them. */
+export function preparedProfilesForDeployment(
+  env: NodeJS.ProcessEnv = process.env,
+): PreparedCanaryProfile[] {
+  const slots = readPreparedSlots(env);
+  if (!slots) return [];
+  return PREPARED_PROFILES.filter((profile) => slots[profile] !== undefined);
+}
+
+/** A slot host is usable only where this deployment holds that host's own
+ * credentials. An unknown host must never fall back to another host's key, so
+ * the per-host pair is required and there is no generic fallback. */
+function proxmoxHostConfigured(env: NodeJS.ProcessEnv, host: string): boolean {
+  const upper = host.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  return Boolean(env[`PROXMOX_${upper}_SSH_HOST`]?.trim() && env[`PROXMOX_${upper}_SSH_USER`]?.trim());
+}
+
+/** The delivery lane this deployment provisions on. A prepared row carries it
+ * so the deployment recognises its own fixture; an unreadable lane matches
+ * nothing rather than guessing. */
+function deploymentChannel(env: NodeJS.ProcessEnv): "default" | "canary" | null {
+  try {
+    return managedHivraProvisionerChannelForServerEnvironment(env as Record<string, string | undefined>);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The gateway origin an admitted desktop console may be opened through. Only a
+ * Hivra console host is accepted, and an unset or foreign origin fails closed.
+ */
+export function preparedConsoleOrigin(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = (env.HIVRA_PREPARED_CONSOLE_ORIGIN ?? env.HIVRA_CANARY_CONSOLE_ORIGIN ?? "")
+    .trim().replace(/\/+$/, "");
+  if (!/^https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.hermesos\.cloud$/i.test(raw)) {
+    return null;
+  }
+  return raw;
 }
 
 type AgentRow = Record<string, unknown> & {
@@ -217,7 +294,7 @@ function verificationScript(profile: PreparedCanaryProfile, slot: PreparedCanary
 VMID=${slot.vmid}
 CONFIG="$(qm config "$VMID")"
 case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) exit 31 ;; esac
-printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: hivra-${profile}-canary`)} >/dev/null
+printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null
 qm set "$VMID" --onboot 1 --startup order=30,up=15,down=60 >/dev/null
 STATUS="$(qm status "$VMID" | awk '{print $2}')"
 if [ "$STATUS" = stopped ]; then qm start "$VMID" >/dev/null; fi
@@ -246,7 +323,7 @@ export function preparedCanaryBindingScript(
 VMID=${slot.vmid}
 CONFIG="$(qm config "$VMID")"
 case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) exit 41 ;; esac
-printf '%s\n' "$CONFIG" | grep -F -- ${shellQuote(`name: hivra-${profile}-canary`)} >/dev/null || exit 42
+printf '%s\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null || exit 42
 TAGS="$(printf '%s\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
 EXPECTED_TAG=${shellQuote(bindingTag)}
 if printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq "$EXPECTED_TAG"; then
@@ -284,7 +361,7 @@ export async function claimPreparedCanaryComputer(
   dependencies: Partial<Dependencies> = {},
 ): Promise<AgentRow> {
   const deps = { ...defaults, ...dependencies };
-  const slot = readPreparedCanarySlot(input.profile);
+  const slot = readPreparedSlot(input.profile);
   if (!slot) throw new Error("prepared_profile_unavailable");
   const name = input.name.trim().slice(0, 80);
   if (!name) throw new Error("invalid_name");
@@ -315,7 +392,7 @@ export async function claimPreparedCanaryComputer(
     desired_state: "running",
     deployment_mode: "hivra-managed",
     computer_substrate: "proxmox-kvm",
-    managed_provisioner_channel: "canary",
+    managed_provisioner_channel: deploymentChannel(process.env) ?? "canary",
     proxmox_host: slot.host,
     vmid: slot.vmid,
     ip: slot.ip,

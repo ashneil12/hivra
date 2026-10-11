@@ -13,7 +13,8 @@ import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connection
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   preparedConsoleHostPreparationScript,
-  readPreparedCanarySlot,
+  preparedConsoleOrigin,
+  readPreparedSlot,
   type PreparedCanaryProfile,
 } from "@/lib/hivra/prepared-canary-computers";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
@@ -56,9 +57,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       || data.status !== "running" || data.desired_state !== "running") {
       return response({ error: "This computer is not ready for its setup console." }, 409);
     }
-    const slot = readPreparedCanarySlot(profile);
+    const slot = readPreparedSlot(profile);
     if (!slot || data.proxmox_host !== slot.host || data.vmid !== slot.vmid || data.ip !== slot.ip) {
-      return response({ error: "This computer is not bound to an admitted Canary console." }, 409);
+      return response({ error: "This computer is not bound to an admitted console." }, 409);
     }
     const encodedMarker = `hivra-${profile}-operation%3A${slot.claim}`;
     const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
@@ -87,9 +88,9 @@ printf '%s' "$TICKET"`;
     } catch {
       return response({ error: "The computer console returned an invalid handoff." }, 503);
     }
-    const base = process.env.HIVRA_CANARY_CONSOLE_ORIGIN?.trim();
-    if (base !== "https://console-canary.hermesos.cloud") {
-      return response({ error: "The Canary console gateway is not configured." }, 503);
+    const base = preparedConsoleOrigin();
+    if (!base) {
+      return response({ error: "The desktop console gateway is not configured." }, 503);
     }
     const path = `/console/${slot.vmid}`;
     const websocketUrl = `${base.replace(/^https:/, "wss:")}${path}?token=${bridgeToken}`;

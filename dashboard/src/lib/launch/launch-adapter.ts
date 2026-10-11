@@ -456,7 +456,7 @@ export async function submitLaunchDraft(
   const profileId = draft.profileId;
   if (profileId === "omarchy") {
     if (deployment.mode !== "hivra-managed") {
-      throw new HivraLaunchCorrectableError("This prepared Canary computer currently runs on Hivra Cloud.", 409, "prepared_managed_only");
+      throw new HivraLaunchCorrectableError("This prepared computer currently runs on Hivra Cloud.", 409, "prepared_managed_only");
     }
     const response = await fetch("/api/hivra/prepared-computers", {
       method: "POST",
