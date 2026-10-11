@@ -26,7 +26,6 @@ import {
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
-import { usePreparedCanarySurface } from "@/hooks/usePreparedCanarySurface";
 import {
   OMARCHY_TEMPLATE,
   UBUNTU_DESKTOP_TEMPLATE,
@@ -107,7 +106,9 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, atta
   );
 }
 
-export function ComputerCatalogPage() {
+export function ComputerCatalogPage(
+  { preparedProfiles = [] }: { preparedProfiles?: readonly ("omarchy" | "windows")[] },
+) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const launchQuery = new URLSearchParams({ kind: "computer", start: "1" });
@@ -127,9 +128,9 @@ export function ComputerCatalogPage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<InventoryFilter>("all");
   const [catalogOpen, setCatalogOpen] = useState(false);
-  // The prepared Canary computer exists only where the Canary fleet does, so it
-  // is offered only on a deployment that can actually claim it (prod cannot).
-  const preparedCanaryAvailable = usePreparedCanarySurface();
+  // The prepared desktop computer is offered only where this deployment has a
+  // slot it can claim: anywhere else the claim would answer 503.
+  const preparedCanaryAvailable = preparedProfiles.includes("omarchy");
   const osGridRef = useRef<HTMLDivElement>(null);
   const addAgentRequested = searchParams?.get("addAgent") === "1";
   // ?addAgent=1 changes this list only where attach is offered (Canary), and

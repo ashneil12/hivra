@@ -860,11 +860,17 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     async (profile, action) => {
       const priorChannel = process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL;
       const priorSlots = process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
+      const priorHost = process.env.PROXMOX_NODE_B_SSH_HOST;
+      const priorUser = process.env.PROXMOX_NODE_B_SSH_USER;
       process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
       process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = JSON.stringify({
         omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
         windows: { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" },
       });
+      // A deployment serves a slot only where it holds that host's own
+      // credentials, so the fixture needs them too.
+      process.env.PROXMOX_NODE_B_SSH_HOST = "198.51.100.11";
+      process.env.PROXMOX_NODE_B_SSH_USER = "root";
       try {
         mockAgent = {
           ...mockAgent,
@@ -921,6 +927,10 @@ describe("POST /api/hivra/agents/[id]/action", () => {
         else process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = priorChannel;
         if (priorSlots === undefined) delete process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
         else process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = priorSlots;
+        if (priorHost === undefined) delete process.env.PROXMOX_NODE_B_SSH_HOST;
+        else process.env.PROXMOX_NODE_B_SSH_HOST = priorHost;
+        if (priorUser === undefined) delete process.env.PROXMOX_NODE_B_SSH_USER;
+        else process.env.PROXMOX_NODE_B_SSH_USER = priorUser;
       }
     },
   );

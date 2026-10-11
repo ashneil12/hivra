@@ -211,9 +211,9 @@ describe("LaunchJourney", () => {
     expect(name).not.toHaveFocus();
   });
 
-  it("does not offer the prepared Canary computer where it cannot be claimed", async () => {
-    // Production shape: prepared Canary computers exist only on the Canary
-    // fleet, so choosing this one here could only end at a 503.
+  it("does not offer the prepared desktop computer where this deployment has no slot", async () => {
+    // Production shape before a slot is configured: choosing this one here
+    // could only end at a 503.
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
@@ -222,15 +222,10 @@ describe("LaunchJourney", () => {
     expect(screen.getByRole("button", { name: /^Windows/ })).toBeInTheDocument();
   });
 
-  it("offers the prepared Canary computer on the Canary deployment", async () => {
-    process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = "1";
-    try {
-      render(<LaunchJourney />);
-      await screen.findByRole("heading", { name: "What do you want to launch?" });
+  it("offers the prepared desktop computer where this deployment holds a slot", async () => {
+    render(<LaunchJourney preparedProfiles={["omarchy"]} />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
 
-      expect(await screen.findByRole("button", { name: /^Omarchy/ })).toBeInTheDocument();
-    } finally {
-      delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
-    }
+    expect(await screen.findByRole("button", { name: /^Omarchy/ })).toBeInTheDocument();
   });
 });

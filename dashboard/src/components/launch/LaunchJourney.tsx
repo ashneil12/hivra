@@ -66,8 +66,6 @@ import {
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
-import { preparedCanarySurfaceAvailable } from "@/lib/hivra/hivra-flag";
-import { usePreparedCanarySurface } from "@/hooks/usePreparedCanarySurface";
 import {
   HERMES_NAME_MAX_LENGTH,
   isLaunchProfileId,
@@ -657,7 +655,9 @@ function HermesLaunched({
   );
 }
 
-export function LaunchJourney() {
+export function LaunchJourney(
+  { preparedProfiles = [] }: { preparedProfiles?: readonly ("omarchy" | "windows")[] },
+) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isLoaded: authLoaded, userId } = useAuth();
@@ -711,10 +711,11 @@ export function LaunchJourney() {
   const [now, setNow] = useState(() => Date.now());
   const [reconciling, setReconciling] = useState(false);
   const [reconcileNote, setReconcileNote] = useState<string | null>(null);
-  // The prepared Canary computers exist only where the Canary fleet does, so the
-  // profile is offered only on a deployment with a prepared slot (prod has none,
-  // so the claim would answer 503).
-  const preparedCanaryAvailable = usePreparedCanarySurface();
+  // The prepared desktop computer (Omarchy) is offered only where this
+  // deployment holds a slot it can claim. The page reads that from the same
+  // server configuration the claim route uses, so the tile cannot appear where
+  // the claim would answer 503.
+  const preparedCanaryAvailable = preparedProfiles.includes("omarchy");
   // The name Hivra picked for a draft before the owner's existing names had
   // loaded, so it can be renumbered once they do if the owner kept it.
   const autoNameRef = useRef<{ launchRequestId: string; name: string } | null>(null);
@@ -939,7 +940,7 @@ export function LaunchJourney() {
     // be claimed, so the link lands on Choose instead of an unusable profile.
     // Read directly: this effect only ever runs on the client.
     const requestedProfile = linkedTemplate?.profileId
-      ?? (requestedProfileId === "omarchy" && !preparedCanarySurfaceAvailable() ? null : requestedProfileId);
+      ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -984,7 +985,7 @@ export function LaunchJourney() {
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [linkedTemplate, ownerId, requestedProfileParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
 
   useEffect(() => {
     let active = true;
@@ -2016,8 +2017,8 @@ export function LaunchJourney() {
       {selfHosted ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
-  // The prepared Canary computer is not offered on a deployment with no
-  // prepared slot: the claim route would answer 503.
+  // The prepared desktop computer is offered only where this deployment has a
+  // slot it can claim: the claim route would answer 503 anywhere else.
   const computerTiles = preparedCanaryAvailable
     ? COMPUTER_TILES
     : COMPUTER_TILES.filter(tile => tile.id !== "omarchy");
