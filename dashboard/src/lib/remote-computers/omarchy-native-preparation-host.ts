@@ -15,8 +15,10 @@ import {
   OMARCHY_NATIVE_GUARDIAN_SHA256,
   OMARCHY_NATIVE_OWNERSHIP_SHA256,
   OMARCHY_NATIVE_PREVIOUS_GUARDIAN_SHA256,
+  OMARCHY_WEB_BROKER_ORIGIN,
   OMARCHY_WEB_BROKER_SHA256,
   OMARCHY_WEB_ADAPTER_SHA256,
+  OMARCHY_WEB_CONTROL_ORIGIN,
   OMARCHY_WEB_INSTALLER_SHA256,
   OMARCHY_WEB_SERVER_SHA256,
 } from "@/lib/remote-computers/omarchy-native-capability";
@@ -251,12 +253,12 @@ if observed!=expected: fail('guardian_result_mismatch')
 web_request={
  'computerId':binding['computerId'],'guestPrivateIpv4':binding['guestPrivateIpv4'],
  'ownerUid':binding['ownerUid'],'waylandDisplay':binding['waylandDisplay'],
- 'controlOrigin':'https://canary.hermesos.cloud','publicOrigin':'https://omarchy-canary.hermesos.cloud'}
+ 'controlOrigin':'${OMARCHY_WEB_CONTROL_ORIGIN}','publicOrigin':'${OMARCHY_WEB_BROKER_ORIGIN}'}
 web_result=subprocess.run(['/usr/bin/python3','-I','-B',str(web_installer_path)],input=json.dumps(web_request,separators=(',',':')).encode(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=600,check=False,env={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LC_ALL':'C'})
 if web_result.returncode!=0 or len(web_result.stdout)>32768: fail('web_prepare_failed')
 try: web_observed=json.loads(web_result.stdout,object_pairs_hook=unique)
 except Exception: fail('web_result_invalid')
-if web_observed.get('protocol')!='hivra-omarchy-web-prepared-v1' or web_observed.get('browserReady') is not True or web_observed.get('brokerOrigin')!='https://omarchy-canary.hermesos.cloud': fail('web_result_mismatch')
+if web_observed.get('protocol')!='hivra-omarchy-web-prepared-v1' or web_observed.get('browserReady') is not True or web_observed.get('brokerOrigin')!='${OMARCHY_WEB_BROKER_ORIGIN}': fail('web_result_mismatch')
 print('${MARKER}'+json.dumps(observed,sort_keys=True,separators=(',',':'))) `;
 
 export function buildOmarchyNativePreparationHostScript(
