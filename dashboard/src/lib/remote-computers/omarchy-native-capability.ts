@@ -10,11 +10,23 @@ import type { RemoteDesktopCapabilityReceipt } from "@/lib/remote-computers/sess
 
 export const OMARCHY_NATIVE_PREPARED_MARKER = "HIVRA_OMARCHY_NATIVE_PREPARED_V1 ";
 
-// The pinned v4.0.2 lab installer requests the package-backed Omarchy release.
-// Keep the observed package version explicit: legacy Git checkouts are not
-// equivalent evidence and must not be admitted by this inspector.
-const EXPECTED_OMARCHY_PACKAGE_VERSION = "4.0.2-1";
-const EXPECTED_SUNSHINE_VERSION = "2026.516.143833-4";
+// (marker constant above)
+//
+// The Omarchy builds this platform has validated, as exact package pairs. The
+// desktop's own image mirrors Omarchy upstream and the desktop user may update
+// from inside it, so this is a SET rather than one build: an update must not be
+// able to make a desktop unverifiable, and previously validated builds must
+// keep working. Anything outside the set is still refused, and the pairing is
+// enforced, so a half-updated guest does not pass either.
+export const ACCEPTED_OMARCHY_BUILDS = [
+  { omarchy: "4.0.2-1", sunshine: "2026.516.143833-4" },
+  { omarchy: "4.0.4-1", sunshine: "2026.516.143833-4.1" },
+] as const;
+export const EXPECTED_OMARCHY_PACKAGE_VERSIONS = ["4.0.2-1", "4.0.4-1"] as const;
+export const EXPECTED_SUNSHINE_VERSIONS = ["2026.516.143833-4", "2026.516.143833-4.1"] as const;
+/** The same set, as a literal the guest programs can compare against. */
+const ACCEPTED_BUILDS_LITERAL = JSON.stringify(
+  ACCEPTED_OMARCHY_BUILDS.map(build => [build.omarchy, build.sunshine]));
 const EXPECTED_SUNSHINE_UNIT = "app-dev.lizardbyte.app.Sunshine.service";
 const EXPECTED_TCP_PORTS = [47984, 47989, 48010] as const;
 const EXPECTED_UDP_PORTS = [5353, 47998, 47999, 48000, 48002, 48010] as const;
@@ -24,7 +36,7 @@ const IPV4_SOURCE_CIDR = /^(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}\/
 const SHA256 = /^[a-f0-9]{64}$/;
 export const OMARCHY_NATIVE_GUARDIAN_SHA256 = "48c453debfb0fc703e180aaddbae5e4b1ac89a1a23db1a35bb3a9b3a03f614ca";
 export const OMARCHY_NATIVE_PREVIOUS_GUARDIAN_SHA256 = "24a89a6d4368971048d9f8d180b2fdb05531f1ae5ba9b574fd8eeaea0925791f";
-export const OMARCHY_NATIVE_OWNERSHIP_SHA256 = "0f988ab03729e381531c923e835f0eaca80d23a77339cb1d13f234780b27f950";
+export const OMARCHY_NATIVE_OWNERSHIP_SHA256 = "6dfa4c90dea85a482ef4ad70410a721aab7db548bc6989c8ede8f769a8b1474a";
 export const OMARCHY_WEB_INSTALLER_SHA256 = "d4a8ff01ac714e9cd5f56a5080aeb62b10bc4a2872a6851727580bb150e5aaf8";
 export const OMARCHY_WEB_BROKER_SHA256 = "3bdd0ec4626392ef977eff7cab7765c1f6e6bfe412729e75ffc3bd411f3e997d";
 export const OMARCHY_WEB_ADAPTER_SHA256 = "9272e47af4146a593120d1fea711563449843a0ed8367661b03f54f72ca8c4d1";
@@ -159,7 +171,7 @@ for interface in addresses:
 if observed_ips.count(str(expected_ip))!=1: fail('guest_ip_mismatch')
 omarchy_package_version=package('omarchy','omarchy_package')
 sunshine_version=package('sunshine','sunshine_package')
-if omarchy_package_version!='${EXPECTED_OMARCHY_PACKAGE_VERSION}' or sunshine_version!='${EXPECTED_SUNSHINE_VERSION}': fail('package_pin_mismatch')
+if [omarchy_package_version,sunshine_version] not in ${ACCEPTED_BUILDS_LITERAL}: fail('package_pin_mismatch')
 pids=[]
 for candidate in pathlib.Path('/proc').iterdir():
  if not candidate.name.isdigit(): continue
@@ -400,7 +412,7 @@ for protocol,ports in (('tcp',protected_tcp),('udp',protected_udp)):
 active=pathlib.Path('/var/lib/hivra/omarchy-native-v3-leases')/expected['computerId']/'active.json'
 if os.path.lexists(active): fail('guardian_active_lease_conflict')
 omarchy_version=package('omarchy','omarchy_package'); sunshine_version=package('sunshine','sunshine_package')
-if omarchy_version!='${EXPECTED_OMARCHY_PACKAGE_VERSION}' or sunshine_version!='${EXPECTED_SUNSHINE_VERSION}': fail('package_pin_mismatch')
+if [omarchy_version,sunshine_version] not in ${ACCEPTED_BUILDS_LITERAL}: fail('package_pin_mismatch')
 sunshine_raw=read_regular(pathlib.Path('/usr/bin/sunshine'),0,'sunshine_binary',268435456,True)
 sunshine_sha=hashlib.sha256(sunshine_raw).hexdigest()
 firewall_verbose=run(['/usr/bin/ufw','status','verbose'],'firewall_status',timeout=5).decode()
@@ -506,8 +518,8 @@ const Descriptor = z.object({
   preparationOperationId: z.string().uuid(),
   serviceOwnerUid: z.number().int().min(1000),
   waylandDisplay: z.string().regex(/^wayland-[0-9]{1,3}$/),
-  omarchyPackageVersion: z.literal(EXPECTED_OMARCHY_PACKAGE_VERSION),
-  sunshineVersion: z.literal(EXPECTED_SUNSHINE_VERSION),
+  omarchyPackageVersion: z.enum(EXPECTED_OMARCHY_PACKAGE_VERSIONS),
+  sunshineVersion: z.enum(EXPECTED_SUNSHINE_VERSIONS),
   guardianSha256: z.literal(OMARCHY_NATIVE_GUARDIAN_SHA256),
   ownershipSha256: z.literal(OMARCHY_NATIVE_OWNERSHIP_SHA256),
   sunshineSha256: z.string().regex(SHA256),

@@ -12,6 +12,7 @@ import {
   REMOTE_DESKTOP_SESSION_REVISIONS,
 } from "@/lib/remote-computers/capability-inspection";
 import {
+  ACCEPTED_OMARCHY_BUILDS,
   buildPreparedOmarchyNativeCapabilityInspectionScript,
   OMARCHY_NATIVE_GUARDIAN_SHA256,
   OMARCHY_NATIVE_INSPECTION_REVISION,
@@ -461,6 +462,23 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
       .update(image, "ascii")
       .digest("hex");
     expect(REMOTE_DESKTOP_BUNDLE_REVISION).toBe(digest);
+  });
+
+  // The desktop's own image mirrors Omarchy upstream and its user may update
+  // from inside it, so an updated desktop must stay verifiable. Previously
+  // validated builds keep working too, and anything else is still refused.
+  it("accepts every validated build pair and refuses one outside the set", () => {
+    const expected = { computerId: AGENT_ID, vmid: 1112, guestIp: "10.250.20.62" };
+    const parse = (overrides: Record<string, unknown>) => parsePreparedOmarchyNativeCapability(
+      `${OMARCHY_NATIVE_PREPARED_MARKER}${JSON.stringify(omarchyDescriptor(overrides))}\n`, expected);
+    expect(ACCEPTED_OMARCHY_BUILDS.length).toBeGreaterThan(1);
+    for (const build of ACCEPTED_OMARCHY_BUILDS) {
+      const parsed = parse({ omarchyPackageVersion: build.omarchy, sunshineVersion: build.sunshine });
+      expect(parsed?.descriptor.omarchyPackageVersion).toBe(build.omarchy);
+      expect(parsed?.descriptor.sunshineVersion).toBe(build.sunshine);
+    }
+    expect(parse({ omarchyPackageVersion: "9.9.9-9" })).toBeNull();
+    expect(parse({ sunshineVersion: "2026.999.1-1" })).toBeNull();
   });
 
   it("admits only brokers that bind the selected mode before their first frame", () => {
