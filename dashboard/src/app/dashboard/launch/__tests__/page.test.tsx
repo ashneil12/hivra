@@ -181,12 +181,12 @@ type TileName = "Codex" | "Ubuntu Desktop" | "Linux Sandbox" | "Windows" | "Omar
 const PREPARED_ENV = {
   HIVRA_PREPARED_COMPUTERS_JSON: JSON.stringify({
     omarchy: {
-      host: "pve11", node: "pve11", vmid: 2099, ip: "10.70.20.99",
+      host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99",
       claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1",
     },
   }),
-  PROXMOX_PVE11_SSH_HOST: "198.51.100.11",
-  PROXMOX_PVE11_SSH_USER: "root",
+  PROXMOX_NODE_B_SSH_HOST: "198.51.100.11",
+  PROXMOX_NODE_B_SSH_USER: "root",
 } as const;
 const PRIOR_PREPARED_ENV = Object.fromEntries(
   Object.keys(PREPARED_ENV).map((key) => [key, process.env[key]]),
