@@ -29,7 +29,39 @@ export const OMARCHY_WEB_INSTALLER_SHA256 = "c8e8987b03be4df32a2decc1ee9344ae8f3
 export const OMARCHY_WEB_BROKER_SHA256 = "3bdd0ec4626392ef977eff7cab7765c1f6e6bfe412729e75ffc3bd411f3e997d";
 export const OMARCHY_WEB_ADAPTER_SHA256 = "9272e47af4146a593120d1fea711563449843a0ed8367661b03f54f72ca8c4d1";
 export const OMARCHY_WEB_SERVER_SHA256 = "4b7db0d78a176757374b8567b0680e559e93254fb1adaee9848f0f80c9dff034";
-export const OMARCHY_WEB_BROKER_ORIGIN = "https://omarchy-canary.hermesos.cloud";
+const OMARCHY_WEB_DEFAULT_BROKER_ORIGIN = "https://omarchy-canary.hermesos.cloud";
+const OMARCHY_WEB_DEFAULT_CONTROL_ORIGIN = "https://canary.hermesos.cloud";
+const OMARCHY_WEB_ORIGIN_PATTERN =
+  /^https:\/\/([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*(hermesos|hivra)\.cloud$/;
+
+/**
+ * The public origin the guest's Omarchy broker is fronted on, and the Hivra
+ * origin its control channel trusts. Each deployment fronts its own guest, so
+ * both are configuration rather than part of the release; the retained Canary
+ * values are the defaults. An origin outside our own domains is refused instead
+ * of being written into a guest, and a deployment that names one must also
+ * serve it (the guest reports it back and the receipt is checked against it).
+ */
+export function resolveOmarchyWebBrokerOrigin(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = (env.HIVRA_OMARCHY_WEB_BROKER_ORIGIN ?? "").trim();
+  if (!raw) return OMARCHY_WEB_DEFAULT_BROKER_ORIGIN;
+  if (!OMARCHY_WEB_ORIGIN_PATTERN.test(raw)) {
+    throw new Error("HIVRA_OMARCHY_WEB_BROKER_ORIGIN must be an https origin under hermesos.cloud or hivra.cloud.");
+  }
+  return raw;
+}
+
+export function resolveOmarchyWebControlOrigin(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = (env.HIVRA_OMARCHY_WEB_CONTROL_ORIGIN ?? "").trim();
+  if (!raw) return OMARCHY_WEB_DEFAULT_CONTROL_ORIGIN;
+  if (!OMARCHY_WEB_ORIGIN_PATTERN.test(raw)) {
+    throw new Error("HIVRA_OMARCHY_WEB_CONTROL_ORIGIN must be an https origin under hermesos.cloud or hivra.cloud.");
+  }
+  return raw;
+}
+
+export const OMARCHY_WEB_BROKER_ORIGIN = resolveOmarchyWebBrokerOrigin();
+export const OMARCHY_WEB_CONTROL_ORIGIN = resolveOmarchyWebControlOrigin();
 
 export const LEGACY_OMARCHY_NATIVE_INSPECTION_PROGRAM = String.raw`import datetime,hashlib,http.client,ipaddress,json,os,pathlib,pwd,re,socket,ssl,stat,subprocess,sys
 def fail(code):
