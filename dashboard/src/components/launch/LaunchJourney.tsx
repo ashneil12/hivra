@@ -66,6 +66,8 @@ import {
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
+import { preparedCanarySurfaceAvailable } from "@/lib/hivra/hivra-flag";
+import { usePreparedCanarySurface } from "@/hooks/usePreparedCanarySurface";
 import {
   HERMES_NAME_MAX_LENGTH,
   isLaunchProfileId,
@@ -709,6 +711,10 @@ export function LaunchJourney() {
   const [now, setNow] = useState(() => Date.now());
   const [reconciling, setReconciling] = useState(false);
   const [reconcileNote, setReconcileNote] = useState<string | null>(null);
+  // The prepared Canary computers exist only where the Canary fleet does, so the
+  // profile is offered only on a deployment with a prepared slot (prod has none,
+  // so the claim would answer 503).
+  const preparedCanaryAvailable = usePreparedCanarySurface();
   // The name Hivra picked for a draft before the owner's existing names had
   // loaded, so it can be renumbered once they do if the owner kept it.
   const autoNameRef = useRef<{ launchRequestId: string; name: string } | null>(null);
@@ -928,8 +934,12 @@ export function LaunchJourney() {
     // A template link decides once the template has been read.
     if (templateParam && !templateResult) return;
     const stored = readLaunchDraft(ownerId);
+    const requestedProfileId = isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null;
+    // A deep link to the prepared Canary computer is ignored where it cannot
+    // be claimed, so the link lands on Choose instead of an unusable profile.
+    // Read directly: this effect only ever runs on the client.
     const requestedProfile = linkedTemplate?.profileId
-      ?? (isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null);
+      ?? (requestedProfileId === "omarchy" && !preparedCanarySurfaceAvailable() ? null : requestedProfileId);
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -2006,13 +2016,18 @@ export function LaunchJourney() {
       {selfHosted ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
+  // The prepared Canary computer is not offered on a deployment with no
+  // prepared slot: the claim route would answer 503.
+  const computerTiles = preparedCanaryAvailable
+    ? COMPUTER_TILES
+    : COMPUTER_TILES.filter(tile => tile.id !== "omarchy");
   const computerSection = (
     <section key="computers" className={styles.chooseSection} aria-labelledby="launch-computers-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-computers-heading">A computer</h2>
         <p>A machine you use yourself. It runs on its own, without an agent.</p>
       </div>
-      <div className={styles.tileGrid}>{COMPUTER_TILES.map(renderTile)}</div>
+      <div className={styles.tileGrid}>{computerTiles.map(renderTile)}</div>
     </section>
   );
 

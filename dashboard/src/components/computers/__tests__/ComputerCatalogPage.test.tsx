@@ -11,6 +11,21 @@ import {
 
 import { ComputerCatalogPage } from "../ComputerCatalogPage";
 
+// The prepared Canary computer (Omarchy) is offered only where a prepared slot
+// exists: its claim route reads the Canary provisioner env, which production
+// does not set. Tests opt in exactly the way the Canary deployment does.
+const PRIOR_PREPARED_FLAG = process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+function allowPreparedCanary() {
+  process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = "1";
+}
+afterEach(() => {
+  delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+});
+afterAll(() => {
+  if (PRIOR_PREPARED_FLAG === undefined) delete process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY;
+  else process.env.NEXT_PUBLIC_HIVRA_PREPARED_CANARY = PRIOR_PREPARED_FLAG;
+});
+
 const mockSearchParamsGet = jest.fn();
 const mockSearchParamsGetAll = jest.fn();
 const mockRouterReplace = jest.fn();
@@ -100,6 +115,7 @@ describe("ComputerCatalogPage", () => {
   });
 
   it("brings a linked profile card into view when the catalog opens", async () => {
+    allowPreparedCanary();
     const scroll = jest.fn();
     const original = HTMLElement.prototype.scrollIntoView;
     HTMLElement.prototype.scrollIntoView = scroll;
@@ -121,6 +137,7 @@ describe("ComputerCatalogPage", () => {
   });
 
   it("keeps Omarchy's prepared path while presenting Windows as needing your own server", async () => {
+    allowPreparedCanary();
     render(<ComputerCatalogPage />);
 
     await screen.findByText("No computers yet");
@@ -165,6 +182,24 @@ describe("ComputerCatalogPage", () => {
     expect(
       screen.getByRole("heading", { name: "Windows" }).closest("article"),
     ).toHaveAttribute("id", "windows");
+  });
+
+  it("does not offer the prepared Canary computer where it cannot be claimed", async () => {
+    // Production shape: the Hivra surfaces are on, but no prepared slot exists,
+    // so the claim route answers 503. The card must not be offered at all.
+    render(<ComputerCatalogPage />);
+
+    await screen.findByText("No computers yet");
+    fireEvent.click(screen.getByText("Browse operating systems"));
+
+    expect(screen.queryByRole("heading", { name: "Omarchy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Launch Omarchy/i })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Launch Ubuntu Desktop/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Launch Windows/i }),
+    ).toBeInTheDocument();
   });
 
   it("preserves an infrastructure target handoff in the unified launch link", async () => {
@@ -337,6 +372,7 @@ describe("ComputerCatalogPage", () => {
   });
 
   it("keeps the operating-system catalog out of daily inventory until requested", async () => {
+    allowPreparedCanary();
     render(<ComputerCatalogPage />);
     await screen.findByText("No computers yet");
     expect(
