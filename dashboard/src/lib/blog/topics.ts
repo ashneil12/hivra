@@ -71,6 +71,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
     blurb: "How to run OpenClaw and Agent Zero, what to do when one breaks, and how they compare with Hermes.",
     articles: [
       "how-to-self-host-openclaw",
+      "is-openclaw-free-what-it-costs-to-run",
       "openclaw-broken-after-update",
       "agent-zero-vs-openclaw-hosting",
       "hermes-vs-openclaw",

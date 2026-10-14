@@ -43,6 +43,7 @@ import { article as codexPricingByChatgptPlan } from "./blog/articles/codex-pric
 import { article as codexResumeSession } from "./blog/articles/codex-resume-session";
 import { article as cursorCloudAgents } from "./blog/articles/cursor-cloud-agents";
 import { article as cursorVsClaudeCode } from "./blog/articles/cursor-vs-claude-code";
+import { article as isOpenclawFree } from "./blog/articles/is-openclaw-free-what-it-costs-to-run";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -90,6 +91,7 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "codex-resume-session": codexResumeSession,
   "cursor-cloud-agents": cursorCloudAgents,
   "cursor-vs-claude-code": cursorVsClaudeCode,
+  "is-openclaw-free-what-it-costs-to-run": isOpenclawFree,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(
