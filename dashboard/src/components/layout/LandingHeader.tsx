@@ -11,6 +11,7 @@ import SourceLink from "../public-site/SourceLink";
 import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { SHOW_FOUNDER_SECTION } from "@/components/landing/home/content";
 
 interface LandingHeaderProps {
   /**
@@ -181,7 +182,9 @@ export default function LandingHeader({ isSignedIn: isSignedInProp, tokenSurface
           ))}
         </nav>
         <div className={styles.mobileExtras}>
-          <Link href="/#founder" onClick={() => setMenuOpen(false)}>Why I’m building Hivra</Link>
+          {SHOW_FOUNDER_SECTION ? (
+            <Link href="/#founder" onClick={() => setMenuOpen(false)}>Why I’m building Hivra</Link>
+          ) : null}
           {/* Phones already list the litepaper in the menu links above. */}
           {tokenSurfaces && !phoneMenu && <PublicLink href={LITEPAPER_HREF} onClick={() => setMenuOpen(false)}>Read the litepaper</PublicLink>}
           {PUBLIC_PROJECT_LINKS.repository.status === "published" && <SourceLink />}

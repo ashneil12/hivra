@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { PUBLIC_PROJECT_LINKS } from "@/lib/public-project-links";
 import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
+import { SHOW_FOUNDER_SECTION } from "./home/content";
 import styles from "../public-site/public-site.module.css";
 
 const COLUMNS = [
@@ -27,7 +28,7 @@ const COLUMNS = [
   ] },
   { title: "Company", links: [
     { label: "About", href: "/about" },
-    { label: "Why I’m building Hivra", href: "/why-hivra" },
+    ...(SHOW_FOUNDER_SECTION ? [{ label: "Why I’m building Hivra", href: "/why-hivra" }] : []),
     { label: "Stats", href: "/stats" },
     { label: "Contact", href: "mailto:info@hivra.cloud" },
     { label: "Security", href: "/security" },
