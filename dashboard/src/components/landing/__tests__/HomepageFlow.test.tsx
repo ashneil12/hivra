@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import LandingPage from "@/app/page";
 import DownloadPage from "@/app/download/page";
-import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, HOME_AGENTS, REACH } from "@/components/landing/home/content";
+import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, HOME_AGENTS, REACH, SHOW_FOUNDER_SECTION } from "@/components/landing/home/content";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: null }) }));
 jest.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }), headers: async () => ({ get: () => null }) }));
@@ -39,8 +39,14 @@ test("the reach picture describes the same things its labels show", async () => 
 
 test("every section the header and footer link to is still on the page", async () => {
   await renderHome();
-  for (const id of ["why", "fit", "launch", "agents", "computers", "workspace", "open-source", "pricing", "hosting", "founder", "faq", "start"]) {
+  const sectionIds = ["why", "fit", "launch", "agents", "computers", "workspace", "open-source", "pricing", "hosting", "faq", "start"];
+  if (SHOW_FOUNDER_SECTION) sectionIds.splice(sectionIds.indexOf("faq"), 0, "founder");
+  for (const id of sectionIds) {
     expect(document.getElementById(id)).not.toBeNull();
+  }
+  if (!SHOW_FOUNDER_SECTION) {
+    expect(document.getElementById("founder")).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Why I'm building Hivra/i })).not.toBeInTheDocument();
   }
 });
 

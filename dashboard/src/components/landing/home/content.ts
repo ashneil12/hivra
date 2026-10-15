@@ -272,6 +272,13 @@ export const FOUNDER = {
   href: "/why-hivra",
 } as const;
 
+/**
+ * Homepage founder / personal-background section and chrome links to it.
+ * Off until Ash finishes the page. Flip to true to restore the section,
+ * header/footer links, and the #founder anchor. Content above stays intact.
+ */
+export const SHOW_FOUNDER_SECTION = false;
+
 export const HOMEPAGE_FAQ: { q: string; a: string }[] = [
   {
     q: "What is Hivra?",
