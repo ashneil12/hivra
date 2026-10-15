@@ -1,9 +1,10 @@
 import { ArrowRight } from "lucide-react";
 import LitWords from "./LitWords";
-import { FOUNDER } from "./content";
+import { FOUNDER, SHOW_FOUNDER_SECTION } from "./content";
 import styles from "./home.module.css";
 
 export default function Founder() {
+  if (!SHOW_FOUNDER_SECTION) return null;
   return (
     <section id="founder" className={styles.founder} aria-labelledby="founder-heading">
       <span className={styles.founderRule} aria-hidden="true" />

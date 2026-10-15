@@ -26,7 +26,7 @@ import Faq from "@/components/landing/home/Faq";
 import Closing from "@/components/landing/home/Closing";
 import StickyCta from "@/components/landing/home/StickyCta";
 import HomeAnalytics from "@/components/landing/home/HomeAnalytics";
-import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, STICKY } from "@/components/landing/home/content";
+import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, SHOW_FOUNDER_SECTION, STICKY } from "@/components/landing/home/content";
 import styles from "@/components/landing/home/home.module.css";
 
 // "Hermes OS" stays at the front of the homepage title and description: in
@@ -193,7 +193,7 @@ export default async function LandingPage(_props: { searchParams?: Promise<{ lan
           <How />
           <OpenSource />
           <Pricing />
-          <Founder />
+          {SHOW_FOUNDER_SECTION ? <Founder /> : null}
           <Faq />
           <Closing />
           <StickyCta href={AGENT_LAUNCH_HREF} label={STICKY.cta} note={STICKY.note} />
