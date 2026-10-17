@@ -81,7 +81,7 @@ export type InstanceShutdownFn = (
 
 export async function listLiveInstances(
   supabase: SupabaseClient,
-  filter?: { instanceId?: string | null },
+  filter?: { instanceId?: string | null; userId?: string },
 ): Promise<OrphanedInstanceRow[]> {
   const columns =
     "id, user_id, name, status, backend, infrastructure_provider, hetzner_server_id, host_id, proxmox_node, proxmox_vmid, config, created_at";
@@ -100,6 +100,9 @@ export async function listLiveInstances(
       .neq("status", "deleted");
     if (filter?.instanceId) {
       query = query.eq("id", filter.instanceId);
+    }
+    if (filter?.userId) {
+      query = query.eq("user_id", filter.userId);
     }
     if (cursor) {
       query = query.gt("id", cursor);
@@ -256,7 +259,7 @@ export interface RunOrphanSweepOptions {
   supabase: SupabaseClient;
   clerk: ClerkUserLookup;
   apply: boolean;
-  filter?: { instanceId?: string | null };
+  filter?: { instanceId?: string | null; userId?: string };
   /** Hours of grace before purge-expired tears down the VM. Defaults to 72 (3 days). */
   graceHours?: number;
   /**

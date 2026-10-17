@@ -1,4 +1,7 @@
 import { NextRequest, after } from "next/server";
+import { stopDeletedUserInstances } from "@/lib/recovery/stop-deleted-user-instances";
+
+export const maxDuration = 300;
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyClerkWebhookSignature } from "@/lib/email/clerk-webhook-signature";
@@ -90,6 +93,22 @@ export async function POST(req: NextRequest) {
     return apiError("Invalid JSON body", 400, {
       failureType: "clerk_webhook_invalid_json",
     });
+  }
+
+  if (event.type === "user.deleted") {
+    const userId = event.data?.id;
+    if (typeof userId !== "string" || !/^user_[a-zA-Z0-9]+$/.test(userId)) {
+      return apiError("Invalid deleted user identity", 400);
+    }
+    try {
+      const result = await stopDeletedUserInstances(userId);
+      return apiSuccess({ received: true, ...result });
+    } catch {
+      log.error("Deleted account runtime shutdown incomplete", new Error("Shutdown not confirmed"), {
+        source: "clerk-webhook", failureType: "deleted_user_runtime_shutdown_incomplete", userId,
+      });
+      return apiError("Account runtime shutdown is incomplete; retry delivery", 503);
+    }
   }
 
   if (event.type !== "user.created" && event.type !== "user.updated") {

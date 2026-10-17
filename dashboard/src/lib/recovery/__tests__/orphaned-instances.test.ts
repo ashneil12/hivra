@@ -57,7 +57,7 @@ function buildSupabaseMock({ rows }: SupabaseMockSetup) {
     })),
   } as unknown as SupabaseClient;
 
-  return { supabase, updates };
+  return { supabase, updates, queryChain };
 }
 
 describe("runOrphanSweep", () => {
@@ -97,6 +97,12 @@ describe("runOrphanSweep", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("filters legacy runtime discovery by user identity", async () => {
+    const { supabase, queryChain } = buildSupabaseMock({ rows: [] });
+    await runOrphanSweep({ supabase, clerk: buildClerk(new Set()), apply: false, filter: { userId: "user_old" } });
+    expect(queryChain.eq).toHaveBeenCalledWith("user_id", "user_old");
   });
 
   it("dry-run reports counts but neither calls shutdown nor writes Supabase", async () => {
