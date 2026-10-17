@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import { stopDeletedUserInstances } from "@/lib/recovery/stop-deleted-user-instances";
+jest.mock("@/lib/recovery/stop-deleted-user-instances", () => ({ stopDeletedUserInstances: jest.fn() }));
 import { NextRequest } from "next/server";
 
 import { POST } from "../route";
@@ -92,6 +94,28 @@ describe("POST /api/webhooks/clerk", () => {
 
     expect(response.status).toBe(400);
     expect(mockedSync).not.toHaveBeenCalled();
+  });
+
+  it("stops only the deleted identity before acknowledging the signed event", async () => {
+    (stopDeletedUserInstances as jest.Mock).mockResolvedValue({ stopped: 1 });
+    const response = await POST(makeRequest({ type: "user.deleted", data: { id: "user_old" } }));
+    expect(response.status).toBe(200);
+    expect(stopDeletedUserInstances).toHaveBeenCalledWith("user_old");
+    expect(mockedSync).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 on shutdown failure so Clerk retries delivery", async () => {
+    (stopDeletedUserInstances as jest.Mock).mockRejectedValue(new Error("provider unavailable"));
+    const response = await POST(makeRequest({ type: "user.deleted", data: { id: "user_old" } }));
+    expect(response.status).toBe(503);
+  });
+
+  it("rejects unsigned deletion and invalid identities without touching runtimes", async () => {
+    const unsigned = await POST(makeRequest({ type: "user.deleted", data: { id: "user_old" } }, { "svix-signature": "v1,bad" }));
+    const invalid = await POST(makeRequest({ type: "user.deleted", data: {} }));
+    expect(unsigned.status).toBe(400);
+    expect(invalid.status).toBe(400);
+    expect(stopDeletedUserInstances).not.toHaveBeenCalled();
   });
 
   it("ignores unsupported Clerk events", async () => {

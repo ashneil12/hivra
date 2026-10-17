@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   ORPHAN_GRACE_HOURS,
+  rotatingContainmentBatch,
   runOrphanSweep,
   type InstanceShutdownFn,
   type OrphanedInstanceRow,
@@ -36,6 +37,7 @@ function buildSupabaseMock({ rows }: SupabaseMockSetup) {
   // Return all rows on the first page; rows.length < pageSize ends the loop.
   const result = { data: rows, error: null };
   const queryChain: Record<string, jest.Mock> = {};
+  queryChain.or = jest.fn(() => queryChain);
   queryChain.neq = jest.fn(() => queryChain);
   queryChain.eq = jest.fn(() => queryChain);
   queryChain.gt = jest.fn(() => queryChain);
@@ -43,12 +45,14 @@ function buildSupabaseMock({ rows }: SupabaseMockSetup) {
   queryChain.limit = jest.fn(async () => result);
   const select = jest.fn(() => queryChain);
 
-  const update = jest.fn((patch: Record<string, unknown>) => ({
-    eq: jest.fn(async (_col: string, id: string) => {
-      updates.push({ id, patch });
-      return { error: null };
-    }),
-  }));
+  const update = jest.fn((patch: Record<string, unknown>) => {
+    let id = "";
+    const chain: { eq: jest.Mock; select: jest.Mock } = {
+      eq: jest.fn((column: string, value: string) => { if (column === "id") id = value; return chain; }),
+      select: jest.fn(async () => { updates.push({ id, patch }); return { data: [{ id }], error: null }; }),
+    };
+    return chain;
+  });
 
   const supabase = {
     from: jest.fn(() => ({
@@ -57,7 +61,7 @@ function buildSupabaseMock({ rows }: SupabaseMockSetup) {
     })),
   } as unknown as SupabaseClient;
 
-  return { supabase, updates };
+  return { supabase, updates, queryChain, update };
 }
 
 describe("runOrphanSweep", () => {
@@ -85,7 +89,7 @@ describe("runOrphanSweep", () => {
   };
   const alreadyFlaggedOrphan: OrphanedInstanceRow = {
     id: "orphan-2",
-    user_id: "user_also_gone",
+    user_id: "user_alsoGone",
     name: "Orion",
     status: "scheduled_for_deletion",
     backend: "webui",
@@ -97,6 +101,12 @@ describe("runOrphanSweep", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("filters legacy runtime discovery by user identity", async () => {
+    const { supabase, queryChain } = buildSupabaseMock({ rows: [] });
+    await runOrphanSweep({ supabase, clerk: buildClerk(new Set()), apply: false, filter: { userId: "user_old" } });
+    expect(queryChain.eq).toHaveBeenCalledWith("user_id", "user_old");
   });
 
   it("dry-run reports counts but neither calls shutdown nor writes Supabase", async () => {
@@ -148,12 +158,12 @@ describe("runOrphanSweep", () => {
     // Caller's shutdownInstance receives the orphan row, not just an ID — that
     // is what lets the cron route branch on Proxmox vs. shared-host vs. legacy
     // Hetzner without the helper having to know any of those rules.
-    expect(shutdownInstance).toHaveBeenCalledTimes(1);
+    expect(shutdownInstance).toHaveBeenCalledTimes(2);
     expect(shutdownInstance).toHaveBeenCalledWith(orphanRow);
 
-    // Already-flagged row must NOT be re-disabled — that would refresh
-    // its scheduled_deletion_at and reset the grace clock.
-    expect(updates).toHaveLength(1);
+    // Previously flagged rows must be checked without resetting the grace clock.
+    expect(updates[1].patch).not.toHaveProperty("scheduled_deletion_at");
+    expect(updates).toHaveLength(2);
     expect(updates[0].id).toBe("orphan-1");
     expect(updates[0].patch).toMatchObject({
       status: "scheduled_for_deletion",
@@ -162,7 +172,7 @@ describe("runOrphanSweep", () => {
       config: expect.objectContaining({ owner_orphaned: true }),
     });
 
-    expect(reportOpsEvent).toHaveBeenCalledTimes(1);
+    expect(reportOpsEvent).toHaveBeenCalledTimes(2);
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         instanceId: "orphan-1",
@@ -213,7 +223,7 @@ describe("runOrphanSweep", () => {
     consoleWarnSpy.mockRestore();
   });
 
-  it("skipped shutdown (shared host) doesn't count as a shutdown failure but still flags the row", async () => {
+  it("shared-host shutdown refusal remains an unresolved containment failure", async () => {
     const { supabase, updates } = buildSupabaseMock({ rows: [orphanRow] });
     const clerk = buildClerk(new Set());
     const shutdownInstance: InstanceShutdownFn = jest.fn().mockResolvedValue({
@@ -233,7 +243,7 @@ describe("runOrphanSweep", () => {
     // separately so the operator can tell "we backed off on purpose" from
     // "Hetzner errored" in the cron summary.
     expect(summary.newlyDisabled).toBe(1);
-    expect(summary.shutdownFailures).toBe(0);
+    expect(summary.shutdownFailures).toBe(1);
     expect(updates).toHaveLength(1);
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -297,4 +307,34 @@ describe("runOrphanSweep", () => {
       expect.objectContaining({ orphans: 1, lookupFailures: 0 }),
     );
   });
+});
+
+it("rotates a bounded batch so repeated failures cannot starve later rows", () => {
+  const rows = ["a", "b", "c", "d", "e"];
+  const seen = new Set<string>();
+  for (let tick = 0; tick < 5; tick++) {
+    const selected = rotatingContainmentBatch(rows, 2, new Date(tick * 15 * 60_000));
+    expect(selected).toHaveLength(2);
+    selected.forEach((id) => seen.add(id));
+  }
+  expect([...seen].sort()).toEqual(rows);
+});
+
+it("does not persist stale orphan config after concurrent terminal deletion", async () => {
+  const row = { id: "row", user_id: "user_gone", status: "running", config: {}, created_at: "2026-01-01", updated_at: "version-before-delete" } as OrphanedInstanceRow;
+  const { supabase, updates, update } = buildSupabaseMock({ rows: [row] });
+  const chain: { eq: jest.Mock; select: jest.Mock } = { eq: jest.fn(() => chain), select: jest.fn().mockResolvedValue({ data: [], error: null }) };
+  update.mockReturnValue(chain);
+  const result = await runOrphanSweep({ supabase, clerk: buildClerk(new Set()), apply: true, shutdownInstance: jest.fn().mockResolvedValue({ ok: true }) });
+  expect(chain.eq).toHaveBeenCalledWith("user_id", row.user_id);
+  expect(chain.eq).toHaveBeenCalledWith("status", "running");
+  expect(chain.eq).toHaveBeenCalledWith("updated_at", row.updated_at);
+  expect(result.newlyDisabled).toBe(0);
+  expect(result.shutdownFailures).toBe(1);
+  expect(updates).toHaveLength(0);
+});
+
+it("keeps the missed-webhook ownership check on a fifteen-minute schedule", () => {
+  const config = require("../../../../vercel.json");
+  expect(config.crons.find((entry: { path: string }) => entry.path === "/api/cron/check-orphaned-instances").schedule).toBe("*/15 * * * *");
 });

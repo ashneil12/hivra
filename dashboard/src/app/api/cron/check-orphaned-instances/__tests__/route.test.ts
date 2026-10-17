@@ -1,3 +1,4 @@
+jest.mock("@/lib/recovery/stop-deleted-user-computers", () => ({ runDeletedOwnerComputerSweep: jest.fn().mockResolvedValue({ checked: 0, orphaned: 0, stopped: 0, failures: 0, lookupFailures: 0 }) }));
 import { NextRequest } from "next/server";
 
 import { GET } from "../route";
@@ -147,7 +148,7 @@ describe("GET /api/cron/check-orphaned-instances", () => {
 
     expect(shutdownProxmoxInstance).toHaveBeenCalledWith(
       { vmid: 209, node: "fixturenode2" },
-      { expectedInstanceId: "inst_orphan", hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
+      { expectedInstanceId: "inst_orphan", setOnboot: 0, verifyOnboot: true, shutdownTimeoutSeconds: 30, hostConfig: { hostId: null, hostSlug: "fixturenode2", envPrefix: null, failClosed: true } }
     );
   });
 
