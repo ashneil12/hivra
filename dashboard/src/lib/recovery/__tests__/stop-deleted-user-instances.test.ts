@@ -1,10 +1,11 @@
 import { stopDeletedUserInstances } from "../stop-deleted-user-instances";
-import { listLiveInstances, classifyByClerkOwnership } from "../orphaned-instances";
+import { listLiveInstances, listLiveComputers, classifyByClerkOwnership } from "../orphaned-instances";
 import { buildShutdownInstance } from "../orphan-instance-shutdown";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@clerk/nextjs/server", () => ({ clerkClient: jest.fn().mockResolvedValue({ users: {} }) }));
-jest.mock("../orphaned-instances", () => ({ listLiveInstances: jest.fn(), classifyByClerkOwnership: jest.fn() }));
+jest.mock("../orphaned-instances", () => ({ listLiveInstances: jest.fn(), listLiveComputers: jest.fn(), classifyByClerkOwnership: jest.fn() }));
+jest.mock("../stop-deleted-user-computers", () => ({ stopDeletedUserComputer: jest.fn() }));
 jest.mock("../orphan-instance-shutdown", () => ({ buildShutdownInstance: jest.fn() }));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: jest.fn() } }));
 
@@ -16,7 +17,8 @@ const update = jest.fn();
 beforeEach(() => {
   jest.clearAllMocks();
   (listLiveInstances as jest.Mock).mockResolvedValue([row]);
-  (classifyByClerkOwnership as jest.Mock).mockResolvedValue([{ row, status: "orphan" }]);
+  (listLiveComputers as jest.Mock).mockResolvedValue([]);
+  (classifyByClerkOwnership as jest.Mock).mockImplementation(async (rows: unknown[]) => rows.length ? [{ row, status: "orphan" }] : []);
   (buildShutdownInstance as jest.Mock).mockReturnValue(shutdown);
   shutdown.mockResolvedValue({ ok: true });
   eq.mockReturnValue({ eq: jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ select: jest.fn().mockResolvedValue({ data: [{ id: row.id }], error: null }) }) }) });
