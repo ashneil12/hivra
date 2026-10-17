@@ -2,7 +2,8 @@ import "server-only";
 import { clerkClient } from "@clerk/nextjs/server";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
-import { listLiveInstances, classifyByClerkOwnership } from "@/lib/recovery/orphaned-instances";
+import { listLiveInstances, listLiveComputers, classifyByClerkOwnership } from "@/lib/recovery/orphaned-instances";
+import { stopDeletedUserComputer } from "./stop-deleted-user-computers";
 import { buildShutdownInstance } from "@/lib/recovery/orphan-instance-shutdown";
 
 // Clerk account removal does not destroy a runtime. Stop legacy instances
@@ -12,9 +13,11 @@ export async function stopDeletedUserInstances(userId: string): Promise<{ stoppe
   if (!/^user_[a-zA-Z0-9]+$/.test(userId)) throw new Error("Invalid deleted user identity");
   if (!supabaseAdmin) throw new Error("Database not configured");
   const rows = await listLiveInstances(supabaseAdmin, { userId });
+  const computers = await listLiveComputers(supabaseAdmin, userId);
   const clerk = await clerkClient();
   const checks = await classifyByClerkOwnership(rows, clerk.users);
-  if (checks.some((check) => check.status !== "orphan")) {
+  const computerChecks = await classifyByClerkOwnership(computers, clerk.users);
+  if ([...checks, ...computerChecks].some((check) => check.status !== "orphan")) {
     throw new Error("Deleted owner absence could not be confirmed");
   }
   const shutdown = buildShutdownInstance(supabaseAdmin);
@@ -41,6 +44,11 @@ export async function stopDeletedUserInstances(userId: string): Promise<{ stoppe
     } catch {
       failed = true;
     }
+  }
+  for (const { row } of computerChecks) {
+    if (row.user_id !== userId) throw new Error("Computer owner mismatch");
+    try { await stopDeletedUserComputer(userId, row.id); stopped += 1; }
+    catch { failed = true; }
   }
   if (failed) throw new Error("Deleted owner's runtime shutdown is incomplete");
   return { stopped };

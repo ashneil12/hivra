@@ -1,3 +1,4 @@
+import { runDeletedOwnerComputerSweep } from "@/lib/recovery/stop-deleted-user-computers";
 import { NextRequest } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 
@@ -14,7 +15,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 const SOURCE = "cron/check-orphaned-instances";
 
 /**
- * Weekly cron sweep: find hermes_instances whose Clerk owner has been
+ * Frequent cron sweep: find hermes_instances whose Clerk owner has been
  * deleted, shut down their VMs, and schedule them for deletion in 3 days.
  *
  * The 3-day grace gives a window for the user (or someone in their org)
@@ -22,7 +23,7 @@ const SOURCE = "cron/check-orphaned-instances";
  * `/api/cron/purge-expired` route does the actual teardown when the
  * deadline passes.
  *
- * Schedule: Monday 09:00 UTC via vercel.json.
+ * Schedule: every 15 minutes via vercel.json.
  *
  * Why a Vercel cron and not a remote agent: prod CLERK_SECRET_KEY +
  * SUPABASE_SERVICE_ROLE_KEY are already in the Vercel env. A remote
@@ -62,8 +63,17 @@ export async function GET(req: NextRequest) {
       supabase: supabaseAdmin,
       clerk: clerk.users,
       apply: true,
+      maxCandidates: 2,
       shutdownInstance: buildShutdownInstance(supabaseAdmin),
     });
+
+    if (summary.lookupFailures) {
+      log.error("Legacy owner checks are incomplete", new Error("Owner lookup unavailable"), { source: SOURCE, lookupFailures: summary.lookupFailures });
+    }
+    const computers = await runDeletedOwnerComputerSweep();
+    if (computers.failures || computers.lookupFailures) {
+      log.error("Deleted-owner computer containment is incomplete", new Error("Computer containment unconfirmed"), { source: SOURCE, ...computers });
+    }
 
     log.info("orphan sweep complete", {
       source: SOURCE,
@@ -117,7 +127,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return apiSuccess(summary);
+    return apiSuccess({ ...summary, computers });
   } catch (err) {
     log.error("orphan sweep failed", err, {
       source: SOURCE,

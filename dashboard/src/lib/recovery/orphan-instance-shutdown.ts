@@ -45,6 +45,8 @@ export function buildShutdownInstance(
       const result = await shutdownProxmoxInstance(proxmox, {
         expectedInstanceId: row.id,
         setOnboot: 0,
+        verifyOnboot: true,
+        shutdownTimeoutSeconds: 30,
         hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(proxmox, { host_id: row.host_id ?? null }),
       });
       if (result.ok) return { ok: true };
