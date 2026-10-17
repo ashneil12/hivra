@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { runOrphanSweep } from "@/lib/recovery/orphaned-instances";
-import { shutdownServer } from "@/lib/hetzner/client";
+import { getServer, shutdownServer, waitForAction } from "@/lib/hetzner/client";
 
 jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn(),
@@ -10,11 +10,11 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/hetzner/client", () => ({
-  shutdownServer: jest.fn(),
+  shutdownServer: jest.fn(), getServer: jest.fn(), waitForAction: jest.fn(),
 }));
 
 jest.mock("@/lib/recovery/orphaned-instances", () => ({
-  runOrphanSweep: jest.fn(),
+  runOrphanSweep: jest.fn(), listLiveComputers: jest.fn().mockResolvedValue([]), classifyByClerkOwnership: jest.fn().mockResolvedValue([]), rotatingContainmentBatch: jest.fn((rows) => rows),
 }));
 
 describe("check-orphaned-instances Proxmox import boundary", () => {
@@ -25,6 +25,8 @@ describe("check-orphaned-instances Proxmox import boundary", () => {
     process.env = { ...originalEnv, CRON_SECRET: "cron-secret" };
     (clerkClient as unknown as jest.Mock).mockResolvedValue({ users: { getUser: jest.fn() } });
     (shutdownServer as jest.Mock).mockResolvedValue({ action: { id: 1 } });
+    (getServer as jest.Mock).mockReset().mockResolvedValueOnce({ server: { status: "running" } }).mockResolvedValueOnce({ server: { status: "off" } });
+    (waitForAction as jest.Mock).mockResolvedValue(undefined);
     (runOrphanSweep as jest.Mock).mockImplementation(async ({ shutdownInstance }) => {
       const result = await shutdownInstance({
         id: "inst_hetz",

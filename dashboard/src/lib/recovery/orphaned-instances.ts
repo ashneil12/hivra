@@ -22,12 +22,14 @@ export interface OrphanedInstanceRow {
   proxmox_vmid?: number | null;
   config: Record<string, unknown> | null;
   created_at: string;
+  updated_at?: string;
+  scheduled_deletion_at?: string | null;
 }
 
 type OrphanCheckStatus = "alive" | "orphan" | "lookup-failed";
 
-export interface OrphanCheck {
-  row: OrphanedInstanceRow;
+export interface OrphanCheck<T = OrphanedInstanceRow> {
+  row: T;
   status: OrphanCheckStatus;
   detail?: string;
 }
@@ -81,10 +83,10 @@ export type InstanceShutdownFn = (
 
 export async function listLiveInstances(
   supabase: SupabaseClient,
-  filter?: { instanceId?: string | null },
+  filter?: { instanceId?: string | null; userId?: string },
 ): Promise<OrphanedInstanceRow[]> {
   const columns =
-    "id, user_id, name, status, backend, infrastructure_provider, hetzner_server_id, host_id, proxmox_node, proxmox_vmid, config, created_at";
+    "id, user_id, name, status, lifecycle_state, backend, infrastructure_provider, hetzner_server_id, host_id, proxmox_node, proxmox_vmid, config, created_at, updated_at, scheduled_deletion_at";
   // Keyset-paginate by id. PostgREST caps a single response (~1000 rows) — the
   // sweep previously relied on that implicit cap and so SILENTLY classified
   // only the first page on a >1000-row fleet (~1600 today), leaving the rest of
@@ -97,9 +99,12 @@ export async function listLiveInstances(
     let query = supabase
       .from("hermes_instances")
       .select(columns)
-      .neq("status", "deleted");
+      .or("status.neq.deleted,lifecycle_state.neq.deleted,lifecycle_state.is.null");
     if (filter?.instanceId) {
       query = query.eq("id", filter.instanceId);
+    }
+    if (filter?.userId) {
+      query = query.eq("user_id", filter.userId);
     }
     if (cursor) {
       query = query.gt("id", cursor);
@@ -115,10 +120,10 @@ export async function listLiveInstances(
   return rows;
 }
 
-export async function classifyByClerkOwnership(
-  rows: OrphanedInstanceRow[],
+export async function classifyByClerkOwnership<T extends { user_id: string }>(
+  rows: T[],
   clerk: ClerkUserLookup,
-): Promise<OrphanCheck[]> {
+): Promise<OrphanCheck<T>[]> {
   // Resolve ownership per DISTINCT user via batched Clerk lookups instead of
   // one sequential getUser per instance. The old loop was N sequential Clerk
   // round-trips over the whole live fleet, keyed per-INSTANCE (a user with 5
@@ -126,7 +131,7 @@ export async function classifyByClerkOwnership(
   // serial network wall time that grows with the fleet. getUserList resolves up
   // to ~500 ids per call, so this collapses to a handful of batch calls keyed
   // per distinct owner.
-  const distinctUserIds = [...new Set(rows.map((r) => r.user_id))];
+  const distinctUserIds = [...new Set(rows.map((r) => r.user_id).filter((id) => /^user_[a-zA-Z0-9]+$/.test(id)))];
   const ownerStatus = new Map<string, OrphanCheckStatus>();
   const ownerDetail = new Map<string, string>();
   const CHUNK = 100;
@@ -169,6 +174,7 @@ interface DisableOrphanResult {
   shutdownOk: boolean;
   shutdownSkipped: boolean;
   shutdownDetail?: string;
+  persisted: boolean;
 }
 
 /**
@@ -190,7 +196,7 @@ async function disableOrphanedInstance(params: {
 }): Promise<DisableOrphanResult> {
   const { supabase, row, graceHours, shutdownInstance } = params;
 
-  let shutdownOk = true;
+  let shutdownOk = false;
   let shutdownSkipped = false;
   let shutdownDetail: string | undefined;
   if (shutdownInstance) {
@@ -226,39 +232,46 @@ async function disableOrphanedInstance(params: {
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const scheduledDeletionAt = new Date(
+  const scheduledDeletionAt = row.scheduled_deletion_at || new Date(
     now.getTime() + graceHours * 60 * 60 * 1000,
   ).toISOString();
 
+  const wasFlagged = alreadyFlagged(row);
   const nextConfig = {
     ...(row.config || {}),
     owner_orphaned: true,
-    owner_orphaned_at: nowIso,
+    owner_orphaned_at: row.config?.owner_orphaned_at || nowIso,
+    owner_orphaned_shutdown_ok: shutdownOk,
+    owner_orphaned_shutdown_checked_at: nowIso,
   };
 
-  const { error } = await supabase
+  let update = supabase
     .from("hermes_instances")
     .update({
       config: nextConfig,
       status: "scheduled_for_deletion",
-      scheduled_deletion_at: scheduledDeletionAt,
+      ...(!wasFlagged ? { scheduled_deletion_at: scheduledDeletionAt } : {}),
       updated_at: nowIso,
     })
-    .eq("id", row.id);
+    .eq("id", row.id).eq("user_id", row.user_id).eq("status", row.status);
+  if (row.updated_at) update = update.eq("updated_at", row.updated_at);
+  const { data, error } = await update.select("id");
   if (error) {
     throw new Error(`Failed to mark ${row.id} for deletion: ${error.message}`);
   }
 
-  return { shutdownOk, shutdownSkipped, shutdownDetail };
+  return { shutdownOk: Boolean(data?.length) && shutdownOk, shutdownSkipped, shutdownDetail, persisted: Boolean(data?.length) };
 }
 
 export interface RunOrphanSweepOptions {
   supabase: SupabaseClient;
   clerk: ClerkUserLookup;
   apply: boolean;
-  filter?: { instanceId?: string | null };
+  filter?: { instanceId?: string | null; userId?: string };
   /** Hours of grace before purge-expired tears down the VM. Defaults to 72 (3 days). */
   graceHours?: number;
+  maxCandidates?: number;
+  now?: Date;
   /**
    * Caller-provided shutdown for the per-row runtime. Optional so the script
    * CLI can no-op shutdowns in dry-run. The function MUST be safe with
@@ -281,9 +294,8 @@ export interface RunOrphanSweepOptions {
  * deadline passes (3 days by default) and runs the actual `deleteServer`
  * + `status='deleted'` teardown.
  *
- * Already-flagged rows are intentionally skipped — once a row is in the
- * deletion queue we don't keep resetting its scheduled_deletion_at, so
- * grace counts from first detection, not from the latest sweep.
+ * Previously flagged rows are checked again without resetting their deadline.
+ * A failed shutdown or a restarted VM must not remain live until erasure.
  *
  * The function distinguishes "orphan" (Clerk 404 — owner really gone)
  * from "lookup-failed" (network / rate-limit / 5xx — Clerk is just
@@ -300,6 +312,8 @@ export async function runOrphanSweep(
     filter,
     graceHours = ORPHAN_GRACE_HOURS,
     shutdownInstance,
+    maxCandidates = Number.MAX_SAFE_INTEGER,
+    now = new Date(),
   } = options;
   const rows = await listLiveInstances(supabase, filter);
   const checks = await classifyByClerkOwnership(rows, clerk);
@@ -310,17 +324,20 @@ export async function runOrphanSweep(
   let newlyDisabled = 0;
   let shutdownFailures = 0;
   if (apply) {
-    for (const orphan of orphans) {
-      if (alreadyFlagged(orphan.row)) continue;
-      const { shutdownOk, shutdownSkipped, shutdownDetail } =
+    // Rotate a bounded window on each scheduled tick, including failures, so
+    // one unreachable host cannot keep later orphans out of the sweep forever.
+    const candidates = rotatingContainmentBatch(orphans, maxCandidates, now);
+    for (const orphan of candidates) {
+      const wasFlagged = alreadyFlagged(orphan.row);
+      const { shutdownOk, shutdownSkipped, shutdownDetail, persisted } =
         await disableOrphanedInstance({
           supabase,
           row: orphan.row,
           graceHours,
           shutdownInstance,
         });
-      newlyDisabled += 1;
-      if (!shutdownOk && !shutdownSkipped) shutdownFailures += 1;
+      if (!wasFlagged && persisted) newlyDisabled += 1;
+      if (!shutdownOk) shutdownFailures += 1;
 
       const messagePrefix = shutdownOk
         ? "VM shut down."
@@ -359,4 +376,27 @@ export async function runOrphanSweep(
     shutdownFailures,
     orphanIds: orphans.map((c) => c.row.id),
   };
+}
+
+export function rotatingContainmentBatch<T>(rows: T[], limit: number, now = new Date()): T[] {
+  if (rows.length <= limit) return rows;
+  const size = Math.max(1, Math.floor(limit));
+  const offset = (Math.floor(now.getTime() / (15 * 60_000)) * size) % rows.length;
+  return Array.from({ length: Math.min(size, rows.length) }, (_, index) => rows[(offset + index) % rows.length]);
+}
+
+export type OrphanComputerRow = { id: string; user_id: string; status: string };
+export async function listLiveComputers(supabase: SupabaseClient, userId?: string): Promise<OrphanComputerRow[]> {
+  const out: OrphanComputerRow[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    let query = supabase.from("hivra_agents").select("id,user_id,status").neq("status", "deleted").order("id").limit(500);
+    if (userId) query = query.eq("user_id", userId);
+    if (cursor) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    if (error) throw new Error(`Computer inventory unavailable: ${error.message}`);
+    out.push(...(data || []));
+    if (!data || data.length < 500) return out;
+    cursor = data[data.length - 1].id;
+  }
 }
