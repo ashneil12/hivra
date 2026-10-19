@@ -14,7 +14,11 @@ import { resolveGhcrTag } from "./registry";
  */
 
 const CACHE_TTL_MS = 5 * 60_000;
-const cache = new Map<string, { digest: string; at: number }>();
+// A failed lookup is remembered briefly, so a GHCR outage costs one slow
+// request per minute per tag instead of one per page view.
+const FAILURE_TTL_MS = 60_000;
+const cache = new Map<string, { digest: string | null; at: number }>();
+const inFlight = new Map<string, Promise<string | null>>();
 
 export interface FloatingImageTarget {
   imageRepo: string;
@@ -47,23 +51,35 @@ export async function resolveFloatingImageTarget(
   const now = options.now ?? Date.now;
   const key = `${imageRepo}:${tag}`;
   const cached = cache.get(key);
-  if (cached && now() - cached.at < CACHE_TTL_MS) return { imageRepo, tag, digest: cached.digest };
-  try {
-    const resolved = await resolveGhcrTag(imageRepo, tag, options.fetchImpl);
-    cache.set(key, { digest: resolved, at: now() });
-    return { imageRepo, tag, digest: resolved };
-  } catch (err) {
-    log.warn("floating image tag lookup failed", {
-      source: "hermes-releases/floating",
-      imageRepo,
-      tag,
-      errorMessage: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+  if (cached && now() - cached.at < (cached.digest ? CACHE_TTL_MS : FAILURE_TTL_MS)) {
+    return cached.digest ? { imageRepo, tag, digest: cached.digest } : null;
   }
+  // Page views that arrive together share one lookup.
+  let lookup = inFlight.get(key);
+  if (!lookup) {
+    lookup = resolveGhcrTag(imageRepo, tag, options.fetchImpl)
+      .catch((err) => {
+        log.warn("floating image tag lookup failed", {
+          source: "hermes-releases/floating",
+          imageRepo,
+          tag,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      })
+      .then((digest) => {
+        cache.set(key, { digest, at: now() });
+        return digest;
+      })
+      .finally(() => inFlight.delete(key));
+    inFlight.set(key, lookup);
+  }
+  const resolved = await lookup;
+  return resolved ? { imageRepo, tag, digest: resolved } : null;
 }
 
 /** Test seam: forget cached tag lookups. */
 export function clearFloatingImageCache(): void {
   cache.clear();
+  inFlight.clear();
 }

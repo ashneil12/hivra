@@ -11,6 +11,8 @@ export type ReleaseUpdateHealth = 'ok' | 'paused' | 'failed' | 'rolled_back';
 
 export interface ReleaseStatus {
   channel: string | null;
+  /** The agent is running, so an update can start now. */
+  running?: boolean;
   /** The release registry decides what this agent runs. */
   governed?: boolean;
   /**

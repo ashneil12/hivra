@@ -35,7 +35,7 @@ export async function GET(
 
     const { data: row, error } = await supabaseAdmin
       .from("hermes_instances")
-      .select(`${BOX_RELEASE_COLUMNS}, user_id, update_health_detail, update_health_at, update_stack_version, agent_image_reported_at`)
+      .select(`${BOX_RELEASE_COLUMNS}, user_id, status, update_health_detail, update_health_at, update_stack_version, agent_image_reported_at`)
       .eq("id", id)
       .eq("user_id", userId)
       .neq("status", "deleted")
@@ -44,6 +44,7 @@ export async function GET(
     if (!row) return apiError("Instance not found or unauthorized", 404);
 
     const extra = row as unknown as {
+      status: string | null;
       update_health_detail: string | null;
       update_health_at: string | null;
       update_stack_version: number | null;
@@ -66,6 +67,9 @@ export async function GET(
 
     return apiSuccess({
       channel: state.channel,
+      // An update runs on the agent's machine, so it can only start while the
+      // agent is running; the page says so instead of a button that fails.
+      running: extra.status === "running",
       governed: state.governed,
       source: state.governed ? "release" : floating ? "floating" : null,
       currentVersion: state.currentVersion,

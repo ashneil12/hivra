@@ -42,3 +42,28 @@ describe("floating image targets", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 });
+
+describe("floating image lookup failures and bursts", () => {
+  it("remembers a failed lookup for a minute so an outage isn't paid on every view", async () => {
+    let clock = 5_000_000;
+    const now = () => clock;
+    const fetchImpl = jest.fn(async () => new Response("", { status: 503 })) as unknown as jest.Mock & typeof fetch;
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(resolveFloatingImageTarget("ghcr.io/o/agent:stable", { fetchImpl, now })).resolves.toBeNull();
+    await expect(resolveFloatingImageTarget("ghcr.io/o/agent:stable", { fetchImpl, now })).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    clock += 61_000;
+    await resolveFloatingImageTarget("ghcr.io/o/agent:stable", { fetchImpl, now });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one lookup between views that arrive together", async () => {
+    const fetchImpl = ghcr();
+    const [a, b] = await Promise.all([
+      resolveFloatingImageTarget("ghcr.io/o/agent:stable", { fetchImpl }),
+      resolveFloatingImageTarget("ghcr.io/o/agent:stable", { fetchImpl }),
+    ]);
+    expect(a).toEqual(b);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});

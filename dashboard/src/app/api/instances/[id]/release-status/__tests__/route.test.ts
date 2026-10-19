@@ -16,11 +16,22 @@ jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
 jest.mock("@/lib/hermes-releases/store", () => ({ loadReleases: jest.fn() }));
 
 const row: { current: Record<string, unknown> | null } = { current: null };
+// A small filter-aware stand-in: the row comes back only when every .eq/.neq
+// the route applies matches it, so dropping the ownership filter fails a test.
 jest.mock("@/lib/supabase", () => {
-  const chain: Record<string, unknown> = {};
-  for (const name of ["select", "eq", "neq"]) chain[name] = jest.fn(() => chain);
-  chain.maybeSingle = jest.fn(async () => ({ data: row.current, error: null }));
-  return { supabaseAdmin: { from: jest.fn(() => chain) }, __chain: chain };
+  const from = jest.fn(() => {
+    const filters: Array<(r: Record<string, unknown>) => boolean> = [];
+    const chain: Record<string, unknown> = {};
+    chain.select = jest.fn(() => chain);
+    chain.eq = jest.fn((column: string, value: unknown) => { filters.push((r) => r[column] === value); return chain; });
+    chain.neq = jest.fn((column: string, value: unknown) => { filters.push((r) => r[column] !== value); return chain; });
+    chain.maybeSingle = jest.fn(async () => ({
+      data: row.current && filters.every((match) => match(row.current!)) ? row.current : null,
+      error: null,
+    }));
+    return chain;
+  });
+  return { supabaseAdmin: { from } };
 });
 
 const OLD = `sha256:${"a".repeat(64)}`;
@@ -31,6 +42,7 @@ function box(overrides: Record<string, unknown> = {}) {
   return {
     id: "inst_1",
     user_id: "user_1",
+    status: "running",
     config: {},
     release_channel: "stable",
     agent_image_digest: OLD,
@@ -79,6 +91,7 @@ describe("GET /api/instances/[id]/release-status", () => {
     const { status, body } = await read();
     expect(status).toBe(200);
     expect(body.data).toMatchObject({
+      running: true,
       governed: false,
       source: "floating",
       updateAvailable: true,
@@ -134,11 +147,19 @@ describe("GET /api/instances/[id]/release-status", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("answers 404 for a box the caller does not own", async () => {
-    row.current = null;
+  it("answers 404 for a box the caller does not own, or one that was deleted", async () => {
     ghcr(NEW);
-    const { status } = await read();
-    expect(status).toBe(404);
+    row.current = box({ user_id: "someone_else" });
+    expect((await read()).status).toBe(404);
+    row.current = box({ status: "deleted" });
+    expect((await read()).status).toBe(404);
+  });
+
+  it("tells the page a stopped box can't start an update yet", async () => {
+    row.current = box({ status: "stopped" });
+    ghcr(NEW);
+    const { body } = await read();
+    expect(body.data).toMatchObject({ running: false, updateAvailable: true });
   });
 
   it("answers 401 without a session", async () => {

@@ -107,6 +107,13 @@ describe("UpdateAvailableBanner", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
+  it("asks for a running agent instead of offering an update that would fail", async () => {
+    mockFetch({ status: statusOf(status({ running: false, updateHealth: "failed", updateHealthDetail: "Image pull failed." })) });
+    await renderBanner();
+    expect(screen.getByRole("status")).toHaveTextContent("Start this agent to update it.");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   // No release is registered yet, so the agent follows its update channel's
   // floating build. A newer build there is offered without a version name.
   it("offers a newer build of the agent's update channel without a registered release", async () => {
@@ -117,7 +124,7 @@ describe("UpdateAvailableBanner", () => {
     await renderBanner({ onUpdate: undefined, selfConfirm: true });
     const notice = screen.getByRole("status");
     expect(notice).toHaveTextContent("Update available");
-    expect(notice).toHaveTextContent("A newer Hermes build is ready for this agent.");
+    expect(notice).toHaveTextContent("The latest Hermes build is ready for this agent.");
     expect(notice).not.toHaveTextContent("Hermes stable");
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
     fireEvent.click(screen.getByRole("button", { name: "Update now" }));
