@@ -39,6 +39,7 @@ import {
   getSelfCustodyPrimaryWallet,
   waitForTransferReceipt,
   withdrawAllHermesTokensForUser,
+  type LockWalletWithdrawAsset,
 } from "@/lib/billing/bankr-withdraw";
 import {
   evaluateAndRecordTokenTierEligibility,
@@ -62,6 +63,11 @@ interface WithdrawRequestBody {
    * no breach starts. Default: the saved withdraw address (an exit).
    */
   destination?: "withdraw_address" | "verified_wallet";
+  /**
+   * Token to send: "HERMESOS" (default) or "HIVRA". $HIVRA is refused until
+   * it is live in the token registry.
+   */
+  asset?: LockWalletWithdrawAsset;
 }
 
 // In-process per-user lock so two near-simultaneous POSTs from the same
@@ -131,6 +137,7 @@ export async function POST(req: NextRequest) {
 
     let result;
     let destination: "withdraw_address" | "verified_wallet" = "withdraw_address";
+    let asset: LockWalletWithdrawAsset = "HERMESOS";
     // The breach hold this attempt wrote (keyed by its withdrawal claim), if any.
     let holdId: string | null = null;
     try {
@@ -147,16 +154,27 @@ export async function POST(req: NextRequest) {
         });
       }
       destination = body.destination ?? "withdraw_address";
+      if (body.asset !== undefined && body.asset !== "HERMESOS" && body.asset !== "HIVRA") {
+        return apiError("Invalid asset. Use 'HERMESOS' or 'HIVRA'.", 400, {
+          failureType: "withdraw_bad_asset",
+        });
+      }
+      asset = body.asset ?? "HERMESOS";
       result = await withdrawAllHermesTokensForUser({
         userId,
         expectedRecipient: body.expectedRecipient,
         destination,
+        // The original call never named an asset: keep it that way for
+        // $HERMESOS so its behaviour is unchanged.
+        ...(asset === "HIVRA" ? { asset } : {}),
         // A move, not an exit: before anything is sent, hold off new breaches
         // for exactly the amount in flight. Whatever reads balances in the next
         // minutes (a cron tick, a slow RPC node) may see the tokens in neither
         // wallet. If the hold cannot be written, nothing is sent.
+        // The breach hold counts $HERMESOS units against $HERMESOS rows only,
+        // so a $HIVRA move writes none: a dip it causes gets the normal grace.
         beforeTransfer:
-          destination === "verified_wallet"
+          destination === "verified_wallet" && asset === "HERMESOS"
             ? async (amountRaw, claimId) => {
                 // Set first: a hold that fails half-way still gets cleared.
                 holdId = claimId;
@@ -187,6 +205,11 @@ export async function POST(req: NextRequest) {
       releaseLock();
     }
 
+    if (result.status === "asset_unavailable") {
+      return apiError(result.errorMessage ?? "$HIVRA withdrawals open once $HIVRA is live.", 400, {
+        failureType: "withdraw_asset_unavailable",
+      });
+    }
     if (result.status === "already_in_flight") {
       // Cross-process lock fired — another Node instance is already
       // mid-withdrawal for this user. The route's in-process lock
@@ -212,7 +235,7 @@ export async function POST(req: NextRequest) {
       });
     }
     if (result.status === "no_balance") {
-      return apiError("No $HERMESOS balance to withdraw.", 422, {
+      return apiError(asset === "HIVRA" ? "No $HIVRA balance to withdraw." : "No $HERMESOS balance to withdraw.", 422, {
         failureType: "withdraw_no_balance",
       });
     }
@@ -241,6 +264,7 @@ export async function POST(req: NextRequest) {
         userId,
         failureType: "withdraw_transfer_failed",
         gasTopupStatus: result.gasTopup?.status ?? null,
+        ...(asset === "HIVRA" ? { asset } : {}),
         reportOpsEvent: false,
       });
       return apiError("Withdraw transfer failed. Try again in a moment.", 502, {
@@ -291,11 +315,12 @@ export async function POST(req: NextRequest) {
             // the moved amount is visible in the verified wallet.
             const moved = BigInt(result.amountRaw ?? "0");
             let refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
-            for (let attempt = 0; attempt < 3 && refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) < moved; attempt++) {
+            const movedKey = asset === "HIVRA" ? "hivra" : "hermesos";
+            for (let attempt = 0; attempt < 3 && refreshed.status === "refreshed" && (refreshed.balances[movedKey] ?? 0n) < moved; attempt++) {
               await new Promise((resolve) => setTimeout(resolve, 2_000));
               refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
             }
-            if (refreshed.status === "refreshed" && (refreshed.balances.hermesos ?? 0n) >= moved) {
+            if (refreshed.status === "refreshed" && (refreshed.balances[movedKey] ?? 0n) >= moved) {
               await evaluateAndRecordTokenTierEligibility({ userId, balances: refreshed.balances });
               // The hold is left to lapse: another reader (a cron tick on a
               // lagging RPC node) may still see the tokens in neither wallet.
@@ -328,6 +353,41 @@ export async function POST(req: NextRequest) {
       return apiSuccess({
         status: result.status,
         destination,
+        ...(asset === "HIVRA" ? { asset } : {}),
+        txHash: result.txHash ?? null,
+        amountRaw: result.amountRaw,
+        amountDisplay: result.amountDisplay,
+        recipientAddress: result.recipientAddress,
+        postWithdrawEligibility,
+      });
+    }
+    if (asset === "HIVRA") {
+      // A $HIVRA exit: refresh every live platform token for the tier wallet
+      // and evaluate on all of them, so the $HIVRA rows see the new balance.
+      // No single-token fallback: evaluating on $HIVRA alone would read the
+      // user's $HermesOS as zero. The cron catches up if this cannot run.
+      try {
+        const refresh = await refreshPrimaryVerifiedTokenHoldings({ userId });
+        if (refresh.status === "refreshed") {
+          await evaluateAndRecordTokenTierEligibility({ userId, balances: refresh.balances });
+          postWithdrawEligibility = {
+            evaluated: true,
+            balanceRaw: (refresh.balances.hivra ?? 0n).toString(),
+          };
+        } else {
+          postWithdrawEligibility = { evaluated: false, reason: "no_tier_wallet" };
+        }
+      } catch (eligErr) {
+        log.warn("post-withdraw eligibility re-check failed", {
+          ...LOG_CONTEXT,
+          userId,
+          asset,
+          failureType: "withdraw_post_eligibility_failed",
+        }, eligErr);
+      }
+      return apiSuccess({
+        status: result.status,
+        asset,
         txHash: result.txHash ?? null,
         amountRaw: result.amountRaw,
         amountDisplay: result.amountDisplay,

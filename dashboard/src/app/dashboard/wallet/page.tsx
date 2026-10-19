@@ -36,6 +36,7 @@ import {
   isRecord,
   lockedQuantityForTier,
   lockedThresholdFor,
+  lockWalletHivraToShow,
   nextSelfCustodyLockTier,
   readChallengeData,
   readWalletAccounts,
@@ -100,6 +101,17 @@ interface WalletApiPayload {
   depositWallet: BankrDepositWalletSummary | null;
   creditDepositWallet: BankrDepositWalletSummary | null;
   tokenLockWallet: BankrDepositWalletSummary | null;
+  /**
+   * The lock wallet's live $HIVRA balance. Present only once $HIVRA is live
+   * (null when the wallet holds none); absent while it is dormant.
+   */
+  tokenLockHivra?: {
+    tokenSymbol: string;
+    tokenAddress: string;
+    tokenDecimals: number;
+    balanceRaw: string;
+    balanceDisplay: string;
+  } | null;
 }
 
 
@@ -763,6 +775,9 @@ export default function WalletPage() {
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
   const isLegacyCustody = Boolean(data?.custodyMode === 'legacy_custody' || data?.tokenLockWallet);
   const isSelfCustody = Boolean(data?.custodyMode === 'self_custody' || (status === 'ready' && !isLegacyCustody));
+  // The lock wallet's $HIVRA, shown only when the server reports a non-zero
+  // balance of the token this build knows as live $HIVRA.
+  const lockWalletHivra = lockWalletHivraToShow(data?.tokenLockHivra);
   // Token geo-policy: the panels that invite a NEW token action (verify a wallet to
   // qualify, lock a price, tier thresholds, the hold-to-unlock prompt, deposit) are
   // for a viewer the server allows and for a blocked user who already holds token
@@ -1111,6 +1126,22 @@ export default function WalletPage() {
               }, 60_000);
             }}
           />
+          {lockWalletHivra && (
+            <WithdrawSection
+              asset="HIVRA"
+              tokenSymbol={lockWalletHivra.tokenSymbol}
+              balanceDisplay={lockWalletHivra.balanceDisplay}
+              withdrawAddress={withdrawAddress}
+              withdrawAvailableAt={withdrawAvailableAt}
+              onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
+              onWithdrew={() => {
+                void load({ silent: true });
+                window.setTimeout(() => {
+                  void load({ silent: true });
+                }, 60_000);
+              }}
+            />
+          )}
         </section>
       )}
 
