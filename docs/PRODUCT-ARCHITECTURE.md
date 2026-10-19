@@ -489,8 +489,8 @@ holds a computer, the page reads it again every 5 s so the controls it blocks
 come back when it ends. Not built: disk grow, Hetzner power-off, and power or resize for Windows on My
 server. The Agents section holds the attach work's ComputerAgentsPanel.
 
-**Claude Code and Codex updates (2026-09-25, code on this branch, not yet
-accepted live).** Vendor self-updaters stay off on Hivra computers; the release
+**Claude Code and Codex updates (built 2026-09-25, ported to canary
+2026-10-20; the automatic sweep ships off).** Vendor self-updaters stay off on Hivra computers; the release
 pins a tested version per CLI (`provisioner/agent-cli-versions.json`,
 `AGENT_CLI_VERSIONS`), and the in-place connection-service update moves the CLI
 to it once no reply is being written, putting the previous version back if the
@@ -511,7 +511,11 @@ new one doesn't install. What an owner sees:
   2026.09.24.2 until the gateway reports its release) is asked to update the
   connection service instead. Aeon, OpenClaw and Agent Zero get only that
   older-connection-service line: their own versions are not reported anywhere
-  a dashboard can read. DeepSeek, computers, attached Codex, DigitalOcean
+  a dashboard can read, and nothing updates them. Each is pinned once at
+  provision (`provision-claude-code-box.sh`: Aeon a git commit, `AEON_REF`;
+  OpenClaw an npm version, `OPENCLAW_VERSION`; Agent Zero an image digest,
+  `AGENT_ZERO_IMAGE_DIGEST`), and the connection-service update refreshes only
+  Hivra's own chat service on the computer, not these apps. DeepSeek, computers, attached Codex, DigitalOcean
   sessions, My cloud and Linux Sandboxes are not covered.
 - *Update now* is the lifecycle route's `update_runtime`, now one shared
   function (`lib/hivra/agent-runtime-update.ts`) with the same host readiness,
@@ -555,7 +559,7 @@ can't be updated yet, and neither can the connection service on DeepSeek or
 My cloud computers; Manage says so rather than offering a control.
 
 **Live usage, Force off and a truthful Stop (2026-09-25, code on this branch,
-not yet accepted live; the cache migration is applied to the Canary DB only).**
+not yet accepted live; the cache migration is not applied anywhere).**
 Overview shows a Proxmox computer's power state, uptime, CPU, memory and disk
 (`GET /api/hivra/agents/[id]/usage`). One read-only host script runs
 `qm config`, `pvesh get /cluster/resources` and the guest agent's
