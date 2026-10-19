@@ -1,6 +1,6 @@
 /** @jest-environment node */
-import { runAgentCliAutoUpdateSweep, UPDATE_START_BUDGET_MS, AUTO_UPDATE_FUNCTION_LIMIT_MS } from "../agent-cli-auto-update";
-import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "../lifecycle-timeouts";
+import { runAgentCliAutoUpdateSweep, UPDATE_READ_BUDGET_MS, UPDATE_START_BUDGET_MS, AUTO_UPDATE_FUNCTION_LIMIT_MS } from "../agent-cli-auto-update";
+import { AGENT_COMPUTER_READ_TIMEOUT_MS, HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "../lifecycle-timeouts";
 import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 
 const TESTED = AGENT_CLI_VERSIONS.codex;
@@ -15,6 +15,8 @@ const mockIdle = jest.fn();
 const mockUpdate = jest.fn();
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) } }));
+const mockUserList = jest.fn();
+jest.mock("@clerk/nextjs/server", () => ({ clerkClient: async () => ({ users: { getUserList: (...args: unknown[]) => mockUserList(...args) } }) }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 jest.mock("../agent-software-service", () => ({
   ...jest.requireActual("../agent-software-service"),
@@ -71,6 +73,7 @@ beforeEach(() => {
   mockReadRecords.mockImplementation(async () => new Map());
   mockObserve.mockImplementation(async (agent: Row) => ({ agent_id: agent.id, user_id: "owner", ...(records.get(agent.id) ?? {}) }));
   mockIdle.mockResolvedValue(idle);
+  mockUserList.mockImplementation(async ({ userId }: { userId: string[] }) => ({ data: userId.map((id) => ({ id })) }));
   mockClaim.mockResolvedValue(true);
   mockUpdate.mockResolvedValue({ ok: true, agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } });
 });
@@ -167,6 +170,16 @@ it("counts an unreadable activity record as in use", async () => {
   expect(mockIdle).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["the owner's account was deleted", async () => ({ data: [] })],
+  ["Hivra couldn't confirm the owner's account", async () => { throw new Error("clerk down"); }],
+])("leaves a computer alone when %s", async (_case, lookup) => {
+  mockUserList.mockImplementation(lookup);
+  expect((await run("on")).skipped).toEqual({ owner_unconfirmed: 1 });
+  expect(mockClaim).not.toHaveBeenCalled();
+  expect(mockUpdate).not.toHaveBeenCalled();
+});
+
 it("doesn't repeat a target inside its cooldown", async () => {
   mockClaim.mockResolvedValue(false);
   expect((await run("on")).skipped).toEqual({ cooldown: 1 });
@@ -221,6 +234,31 @@ describe("time", () => {
     expect(summary.skipped).toEqual({ out_of_time: 1 });
     expect(mockClaim).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("stops starting reads early enough that the last read, the checks and an idle read still fit before claims end", () => {
+    expect(UPDATE_READ_BUDGET_MS + 2 * AGENT_COMPUTER_READ_TIMEOUT_MS).toBeLessThan(UPDATE_START_BUDGET_MS);
+    expect(UPDATE_READ_BUDGET_MS).toBeGreaterThan(0);
+  });
+
+  it("stops reading once the read budget is gone in a run that updates, so the agents it read can still be updated", async () => {
+    let clock = NOW;
+    rows = Array.from({ length: 20 }, (_, index) => row(`s${index}`));
+    for (const entry of rows) records.set(entry.id, observed("0.140.0"));
+    // Every read takes 1 s of the run: twenty of them would leave nothing time to start.
+    mockObserve.mockImplementation(async (agent: Row) => { clock += 1_000; return { agent_id: agent.id, user_id: "owner", ...(records.get(agent.id) ?? {}) }; });
+    const summary = await runAgentCliAutoUpdateSweep({ env: { HIVRA_AGENT_CLI_AUTO_UPDATE: "on" }, now: () => clock });
+    expect(summary.observed).toBeLessThanOrEqual(UPDATE_READ_BUDGET_MS / 1_000 + 1);
+    expect(summary.skipped.out_of_time).toBe(20 - summary.observed);
+    expect(summary.updated).toBe(5);
+  });
+
+  it("reads every candidate in a run that only reports", async () => {
+    let clock = NOW;
+    rows = Array.from({ length: 20 }, (_, index) => row(`s${index}`));
+    mockObserve.mockImplementation(async (agent: Row) => { clock += 1_000; return { agent_id: agent.id, user_id: "owner", ...(records.get(agent.id) ?? {}) }; });
+    const summary = await runAgentCliAutoUpdateSweep({ env: { HIVRA_AGENT_CLI_AUTO_UPDATE: "preview" }, now: () => clock });
+    expect(summary.observed).toBe(20);
   });
 
   it("doesn't read whether an agent is idle once the start budget is gone", async () => {

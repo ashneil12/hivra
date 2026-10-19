@@ -45,6 +45,8 @@ jest.mock("@/lib/supabase", () => ({
     },
   },
 }));
+const mockUserList = jest.fn();
+jest.mock("@clerk/nextjs/server", () => ({ clerkClient: async () => ({ users: { getUserList: (...args: unknown[]) => mockUserList(...args) } }) }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 jest.mock("../agent-events", () => ({ logHivraAgentEvent: jest.fn(async () => undefined) }));
 jest.mock("../agent-cli-meta", () => ({
@@ -73,6 +75,7 @@ beforeEach(() => {
   mockReadBox.mockResolvedValue({ observation: "reported", report: { name: "codex", version: "0.140.0", update: null } });
   mockIdle.mockResolvedValue({ runningReplies: 0, lastReplyActivityAt: NOW - 2 * 60 * 60_000, terminalAttached: false });
   mockRpc.mockResolvedValue({ data: true, error: null });
+  mockUserList.mockImplementation(async ({ userId }: { userId: string[] }) => ({ data: userId.map((id) => ({ id })) }));
   mockUpdate.mockResolvedValue({ ok: true, agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } });
 });
 

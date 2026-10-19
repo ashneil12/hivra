@@ -20,6 +20,9 @@ import "server-only";
 //   - that target isn't paused after an automatic update to it failed;
 //   - no reply is being written, no agent terminal is attached, and nothing
 //     was used for 30 minutes (anything unreadable counts as in use);
+//   - the owner's account still exists (a computer whose owner was deleted
+//     waits for the deleted-owner containment instead; an owner Hivra
+//     couldn't confirm counts as deleted);
 //   - the claim for this target succeeds: one per target every 20 hours, and
 //     the database refuses it on its own when the owner's stored choice (or
 //     Hivra's default for My server) is off or the target is paused, so a
@@ -48,15 +51,17 @@ import {
 } from "./agent-cli-store";
 import { configuredAgentCliAutoUpdateMode, observeAgentSoftware, type AgentSoftwareAgentRow } from "./agent-software-service";
 import { runHivraAgentRuntimeUpdate } from "./agent-runtime-update";
-import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "./lifecycle-timeouts";
+import { AGENT_COMPUTER_READ_TIMEOUT_MS, HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "./lifecycle-timeouts";
 
 const SOURCE = "cron/update-hivra-agent-clis";
 const CANDIDATE_SCAN_LIMIT = 500;
 export const AUTO_UPDATE_READS_PER_RUN = 40;
 export const AUTO_UPDATE_UPDATES_PER_RUN = 5;
-const READ_CONCURRENCY = 4;
-/** No new computer read after this. */
-const READ_BUDGET_MS = 150_000;
+const READ_CONCURRENCY = 8;
+/** No new computer read after this in a run that only reports (preview, ?dryRun=1). */
+const REPORT_READ_BUDGET_MS = 150_000;
+/** The activity query and the owner check around a claim. */
+const CLAIM_CHECKS_ALLOWANCE_MS = 2_000;
 /** The cron function's limit: maxDuration in app/api/cron/update-hivra-agent-clis. */
 export const AUTO_UPDATE_FUNCTION_LIMIT_MS = 300_000;
 /** The claim, the operation lease and the records around the host work. */
@@ -68,6 +73,14 @@ const UPDATE_OVERHEAD_MS = 15_000;
  * the lease and the claim left behind and nothing recorded. 25 s.
  */
 export const UPDATE_START_BUDGET_MS = AUTO_UPDATE_FUNCTION_LIMIT_MS - RUNTIME_UPDATE_TIMEOUT_MS - HOST_READINESS_TIMEOUT_MS - UPDATE_OVERHEAD_MS;
+/**
+ * No new computer read starts after this in a run that updates. Phase 2 waits
+ * for every read, so the last one (up to its deadline), the checks around a
+ * claim and each chosen agent's idle read (up to its deadline) must all fit
+ * inside UPDATE_START_BUDGET_MS; reading on for longer would leave every
+ * eligible agent out of time. 7 s.
+ */
+export const UPDATE_READ_BUDGET_MS = UPDATE_START_BUDGET_MS - 2 * AGENT_COMPUTER_READ_TIMEOUT_MS - CLAIM_CHECKS_ALLOWANCE_MS;
 export const AUTO_UPDATE_IDLE_MS = 30 * 60_000;
 
 type Row = AgentSoftwareAgentRow & Record<string, unknown>;
@@ -89,6 +102,7 @@ export type AutoUpdateSkip =
   | "run_limit"
   | "host_limit"
   | "out_of_time"
+  | "owner_unconfirmed"
   | "host_not_ready";
 
 export interface AgentCliAutoUpdateResult {
@@ -115,6 +129,22 @@ export interface AgentCliAutoUpdateOptions {
   dryRun?: boolean;
   env?: Record<string, string | undefined>;
   now?: () => number;
+  /** Which of these owners still have an account; null when that couldn't be checked. */
+  liveOwners?: (userIds: string[]) => Promise<Set<string> | null>;
+}
+
+/** The owners Clerk still has, or null when Clerk couldn't be asked. */
+async function clerkLiveOwners(userIds: string[]): Promise<Set<string> | null> {
+  if (userIds.length === 0) return new Set();
+  try {
+    const { clerkClient } = await import("@clerk/nextjs/server");
+    const clerk = await clerkClient();
+    const { data } = await clerk.users.getUserList({ userId: userIds, limit: userIds.length });
+    return new Set(data.map((user) => user.id));
+  } catch (error) {
+    log.warn("agent software update owners could not be confirmed", { source: SOURCE, failureType: "agent_cli_owner_lookup_failed", count: userIds.length, error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
 }
 
 function hostKey(row: Row): string {
@@ -199,11 +229,12 @@ export async function runAgentCliAutoUpdateSweep(options: AgentCliAutoUpdateOpti
   summary.scanned = candidates.length;
 
   // Phase 1: read every candidate's computer and decide from what it said.
+  const readBudget = dryRun ? REPORT_READ_BUDGET_MS : UPDATE_READ_BUDGET_MS;
   const eligible: Array<{ row: Row; record: StoredAgentSoftware; target: string }> = [];
   await inPool(candidates, READ_CONCURRENCY, async (row) => {
     const subject = agentSoftwareSubject(row);
     if (!subject?.cli) { skip(row.id, "not_supported"); return; }
-    if (now() - started > READ_BUDGET_MS) { skip(row.id, "out_of_time"); return; }
+    if (now() - started > readBudget) { skip(row.id, "out_of_time"); return; }
     const target = AGENT_CLI_VERSIONS[subject.cli];
     let record: StoredAgentSoftware;
     try {
@@ -224,6 +255,8 @@ export async function runAgentCliAutoUpdateSweep(options: AgentCliAutoUpdateOpti
 
   // Phase 2: at most 5 updates, one per host, each only while its agent is idle.
   const recentActivity = await lastReportedActivity(eligible.map((entry) => entry.row.id));
+  // A computer whose owner was deleted is left to the deleted-owner containment.
+  const liveOwners = await (options.liveOwners ?? clerkLiveOwners)([...new Set(eligible.map((entry) => String(entry.row.user_id)))]);
   const hosts = new Set<string>();
   const chosen: typeof eligible = [];
   for (const entry of eligible) {
@@ -235,6 +268,7 @@ export async function runAgentCliAutoUpdateSweep(options: AgentCliAutoUpdateOpti
   }
   await Promise.all(chosen.map(async ({ row, target }) => {
     if (now() - started > UPDATE_START_BUDGET_MS) { skip(row.id, "out_of_time", target); return; }
+    if (!liveOwners?.has(String(row.user_id))) { skip(row.id, "owner_unconfirmed", target); return; }
     if (!recentActivity) { skip(row.id, "activity_unreadable", target); return; }
     const reported = recentActivity.get(row.id);
     if (reported !== undefined && now() - reported < AUTO_UPDATE_IDLE_MS) { skip(row.id, "recently_used", target); return; }

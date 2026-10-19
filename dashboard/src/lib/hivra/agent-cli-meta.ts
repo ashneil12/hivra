@@ -16,8 +16,9 @@ import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 import { checkOutboundUrlSafety } from "@/lib/url-safety";
 import { validateHivraChatOrigin } from "./agent-host-result";
 import { parseAgentCliMeta, type AgentCliMetaReport, type AgentSoftwareSubject } from "./agent-cli-status";
+import { AGENT_COMPUTER_READ_TIMEOUT_MS } from "./lifecycle-timeouts";
 
-const DEADLINE_MS = 8_000;
+const DEADLINE_MS = AGENT_COMPUTER_READ_TIMEOUT_MS;
 const MAX_RESPONSE_BYTES = 8_192;
 /** Chat run lists hold up to a few dozen short summaries. */
 const MAX_RUNS_RESPONSE_BYTES = 64 * 1024;

@@ -530,9 +530,13 @@ new one doesn't install. What an owner sees:
   owner's choice (default on for Hivra Cloud, off for My server; the toggle is
   shown only while the switch is `on`) allows it, the version was reported and
   is behind (or ahead only because Hivra lowered its tested version after
-  installing it), the target isn't paused after an automatic failure, no reply
+  installing it; a newer version the owner installed after an update was
+  deferred or failed is theirs and is never moved back down), the target isn't paused after an automatic failure, no reply
   is being written, no agent terminal is attached, nothing was used for 30
-  minutes, and the per-target claim allows one request every 20 hours. The
+  minutes, the owner's account still exists (Hivra checks it; one it can't
+  confirm counts as deleted), and the per-target claim allows one request
+  every 20 hours. A run that updates stops starting computer reads after 7 s,
+  so the agents it read can still be checked and claimed in time. The
   claim function is the authority on the owner's choice and the pause, so a
   stale read can't override them, and a run that can't read the stored
   choices reads and updates nobody. Only `host_not_ready` and `busy` leave

@@ -12,3 +12,10 @@ export const HOST_READINESS_TIMEOUT_MS = 20_000;
  * function with nothing saved.
  */
 export const RUNTIME_UPDATE_TIMEOUT_MS = 240_000;
+
+/**
+ * One read of an agent's computer (its software meta, or whether it is idle),
+ * every request of it together. The automatic-update cron budgets its reads
+ * around this as well.
+ */
+export const AGENT_COMPUTER_READ_TIMEOUT_MS = 8_000;
