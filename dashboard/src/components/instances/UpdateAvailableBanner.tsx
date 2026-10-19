@@ -54,28 +54,41 @@ const SECONDARY_BUTTON = {
 
 function describe(status: ReleaseStatus) {
   const health = status.updateHealth;
-  const canUpdate = status.updateAvailable && Boolean(status.target);
+  const hasTarget = status.updateAvailable && Boolean(status.target);
   const rollback = status.direction === 'rollback';
+  // No registered release yet: the target is the newer build the agent's own
+  // update channel already points at, which has no version name to show.
+  const floating = status.source === 'floating';
   const version = status.target?.version ?? '';
-  const buttonLabel = rollback ? `Move to ${version}` : 'Update';
   const current = status.currentVersion ?? 'an earlier version';
-  const ready = canUpdate
-    ? rollback
-      ? `Hermes ${version} is the safer version. This agent runs ${current}.`
-      : `Hermes ${version} is ready. This agent runs ${current}.`
+  const ready = hasTarget
+    ? floating
+      ? 'The latest Hermes build is ready for this agent.'
+      : rollback
+        ? `Hermes ${version} is the safer version. This agent runs ${current}.`
+        : `Hermes ${version} is ready. This agent runs ${current}.`
     : null;
+  const warning = health === 'paused' || health === 'rolled_back' || health === 'failed';
+  // Updating is always the owner's own way out of a paused, failed or rolled
+  // back update: it reruns the same safe update (and a healthy one clears the
+  // pause), so a warning never leaves the owner without a button.
+  // Only a running agent can update; a stopped one is told to start first.
+  const stopped = status.running === false;
+  const canUpdate = (hasTarget || warning) && !stopped;
+  const startFirst = stopped && (hasTarget || warning) ? 'Start this agent to update it.' : null;
+  const buttonLabel = hasTarget ? (rollback && !floating ? `Move to ${version}` : 'Update') : 'Try again';
 
   if (health === 'paused') {
-    return { kind: 'warning', title: 'Automatic updates are paused on this agent.', detail: status.updateHealthDetail, canUpdate, buttonLabel, ready };
+    return { kind: 'warning', title: 'Automatic updates are paused on this agent.', detail: status.updateHealthDetail, canUpdate, buttonLabel, ready: startFirst ?? ready };
   }
   if (health === 'rolled_back') {
-    return { kind: 'warning', title: 'The last update did not stick and was rolled back.', detail: status.updateHealthDetail, canUpdate, buttonLabel, ready };
+    return { kind: 'warning', title: 'The last update did not stick and was rolled back.', detail: status.updateHealthDetail, canUpdate, buttonLabel, ready: startFirst ?? ready };
   }
   if (health === 'failed') {
-    return { kind: 'warning', title: 'The last update failed.', detail: status.updateHealthDetail, canUpdate, buttonLabel, ready };
+    return { kind: 'warning', title: 'The last update failed.', detail: status.updateHealthDetail, canUpdate, buttonLabel, ready: startFirst ?? ready };
   }
-  if (canUpdate) {
-    return { kind: 'update', title: rollback ? 'A safer version is available' : 'Update available', detail: null, canUpdate, buttonLabel, ready };
+  if (hasTarget) {
+    return { kind: 'update', title: rollback && !floating ? 'A safer version is available' : 'Update available', detail: null, canUpdate, buttonLabel, ready: startFirst ?? ready };
   }
   return null;
 }

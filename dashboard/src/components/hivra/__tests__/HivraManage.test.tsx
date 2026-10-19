@@ -571,15 +571,19 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByText(`${name} · Hivra Cloud`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Advanced"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Updates", "Advanced"]);
     openSection("Resources");
     expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent(`This ${name} preview has a fixed size of 2 CPU / 4 GB. Hivra can't resize prepared computers yet.`);
     expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create restore point" })).not.toBeInTheDocument();
+    openSection("Updates");
+    const updates = screen.getByTestId("manage-self-update");
+    expect(updates).toHaveTextContent(profile === "omarchy" ? "choose Update, then Omarchy" : "Windows Update");
+    expect(screen.getByRole("link", { name: "Open Desktop" })).toHaveAttribute("href", `/dashboard/agent/${agent.id}?tab=desktop`);
     openSection("Advanced");
     expect(screen.getByText("Prepared Windows and Omarchy computers don't have restore points yet.")).toBeVisible();
-    expect(screen.getByText("Hivra can't update prepared Windows and Omarchy computers yet.")).toBeVisible();
+    expect(screen.queryByText(/can't update prepared Windows and Omarchy/)).not.toBeInTheDocument();
     expect(screen.queryByText(/isolated Linux VM/i)).not.toBeInTheDocument();
   });
   it("creates and refreshes an honestly labelled same-host restore point", async () => {

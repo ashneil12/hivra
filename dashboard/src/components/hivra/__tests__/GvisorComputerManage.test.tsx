@@ -39,7 +39,7 @@ function armDestroy() {
 
 it("uses the shared Manage sections for a Linux Sandbox", async () => {
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Resources", "Run a command", "Advanced"]);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Resources", "Updates", "Run a command", "Advanced"]);
   expect(screen.getByText("Linux Sandbox · My server")).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled());
 });
@@ -183,4 +183,10 @@ describe("progress where the owner is", () => {
     finish({ success: true, data: {} });
     await waitFor(() => expect(within(panel).queryByRole("status")).not.toBeInTheDocument());
   });
+});
+
+it("says plainly in Updates that a Linux Sandbox's system image can't be updated yet", async () => {
+  render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+  expect(await screen.findByTestId("manage-self-update")).toHaveTextContent("runs a fixed, read-only system image");
 });

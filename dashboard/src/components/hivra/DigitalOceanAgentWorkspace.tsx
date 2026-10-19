@@ -294,6 +294,13 @@ function DigitalOceanManage({
       <ManagePanel id="resources" selected={selected}>
         <ManageFixedSize size={size} reason={manage?.resize.cap.state === "unavailable" ? manage.resize.cap.reason : "DigitalOcean set this session's size when it was created, and it can't be changed."} />
       </ManagePanel>
+      {manage?.selfUpdate ? (
+        <ManagePanel id="updates" selected={selected}>
+          <div style={manageCard} data-testid="manage-self-update">
+            {manage.selfUpdate.lines.map((line) => <div key={line} style={manageMuted}>{line}</div>)}
+          </div>
+        </ManagePanel>
+      ) : null}
       <ManagePanel id="advanced" selected={selected}>
         <div style={{ display: "grid", gap: 20 }}>
           <div style={manageCard}>
