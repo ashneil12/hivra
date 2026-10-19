@@ -9,6 +9,7 @@ import { windowsDesktopDimensions, type WindowsDesktopViewport } from "./windows
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IPV4_32 = /^(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}\/32$/;
+const CERTIFICATE_FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
 
 const Config = z.object({
   version: z.literal(1),
@@ -19,7 +20,7 @@ const Config = z.object({
   connectionName: z.string().min(1).max(128),
   rdpUsername: z.string().min(1).max(128),
   rdpPassword: z.string().min(16).max(256),
-  certificateFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  certificateFingerprint: z.string().regex(CERTIFICATE_FINGERPRINT),
   guacamoleSecretHex: z.string().regex(/^[a-f0-9]{32}$/),
 }).strict();
 
@@ -71,13 +72,26 @@ export function gatewaySourceCidrForWindowsComputer(params: {
   return octets.length === 4 ? `${octets[0]}.${octets[1]}.${octets[2]}.1/32` : null;
 }
 
+/**
+ * The RDP certificate a Windows computer's sessions pin. Windows renews its
+ * self-signed RDP certificate on its own, so owner preparation reads the
+ * current one from the guest and stores it on the computer
+ * (hivra_agents.windows_rdp_certificate_fingerprint). A computer prepared
+ * before Hivra stored it falls back to the gateway's configured one.
+ */
+export function windowsRdpCertificatePin(stored: unknown, config: WindowsRdpGatewayConfig): string {
+  return typeof stored === "string" && CERTIFICATE_FINGERPRINT.test(stored) ? stored : config.certificateFingerprint;
+}
+
 export function windowsDescriptorMatchesGateway(
   descriptor: PreparedWindowsRdpDescriptor,
   config: WindowsRdpGatewayConfig,
+  certificateFingerprint: string = config.certificateFingerprint,
 ): boolean {
   return descriptor.computerId === config.computerId
     && descriptor.guestPrivateIpv4 === config.guestPrivateIpv4
-    && descriptor.certificateFingerprint === config.certificateFingerprint
+    && CERTIFICATE_FINGERPRINT.test(certificateFingerprint)
+    && descriptor.certificateFingerprint === certificateFingerprint
     && descriptor.rdpServiceState === "running"
     && descriptor.rdpPort === 3389
     && descriptor.nla === true
@@ -93,6 +107,8 @@ export function guacamoleClientIdentifier(connectionName: string): string {
 
 export function buildWindowsGatewayToken(params: {
   config: WindowsRdpGatewayConfig;
+  /** The computer's pin (windowsRdpCertificatePin); the configured one when omitted. */
+  certificateFingerprint?: string;
   ownerId: string;
   streamingMode: DesktopStreamingMode;
   viewport?: WindowsDesktopViewport;
@@ -100,7 +116,9 @@ export function buildWindowsGatewayToken(params: {
 }, now = Date.now()): string | null {
   if (!params.ownerId || params.ownerId.length > 256 || !Number.isSafeInteger(params.expires)
     || params.expires <= now || params.expires > now + 60_000) return null;
-  const fingerprintHex = params.config.certificateFingerprint.slice("sha256:".length);
+  const pin = params.certificateFingerprint ?? params.config.certificateFingerprint;
+  if (!CERTIFICATE_FINGERPRINT.test(pin)) return null;
+  const fingerprintHex = pin.slice("sha256:".length);
   const profile = windowsDesktopDimensions(params.streamingMode, params.viewport);
   if (!profile) return null;
   const parameters: Record<string, string> = {

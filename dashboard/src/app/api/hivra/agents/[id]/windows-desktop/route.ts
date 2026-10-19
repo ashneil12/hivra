@@ -23,6 +23,7 @@ import {
   guacamoleClientIdentifier,
   readWindowsRdpGatewayConfig,
   windowsDescriptorMatchesGateway,
+  windowsRdpCertificatePin,
 } from "@/lib/remote-computers/windows-rdp-gateway";
 import { supabaseAdmin } from "@/lib/supabase";
 import { windowsDesktopDimensions } from "@/lib/remote-computers/windows-desktop-viewport";
@@ -38,6 +39,7 @@ const AGENT_FIELDS = [
   "provider_enrollment_attempt_id", "provider_server_id", "deployment_mode", "proxmox_host",
   "infrastructure_connection_id", "deployment_target_id", "infrastructure_connection_revision",
   "infrastructure_binding_token_hash", "infrastructure_binding_token_enforced", "managed_provisioner_channel",
+  "windows_rdp_certificate_fingerprint",
 ].join(",");
 
 function response(body: unknown, status: number) {
@@ -135,13 +137,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
     return response({ success: false, error: "Windows RDP inspection could not be confirmed. Try opening it again." }, 503);
   }
+  // A renewed Windows RDP certificate no longer matches the pin, so this asks
+  // for owner preparation, which reads and stores the current certificate.
+  const certificateFingerprint = windowsRdpCertificatePin(agent.windows_rdp_certificate_fingerprint, config);
   if (!inspected.ok || !inspected.windowsDescriptor
-    || !windowsDescriptorMatchesGateway(inspected.windowsDescriptor, config)) {
+    || !windowsDescriptorMatchesGateway(inspected.windowsDescriptor, config, certificateFingerprint)) {
     return response({ success: false, code: "windows_prepare_required", error: "Windows RDP needs to be prepared again." }, 409);
   }
 
   const expires = Date.now() + 45_000;
-  const encrypted = buildWindowsGatewayToken({ config, ownerId: userId,
+  const encrypted = buildWindowsGatewayToken({ config, certificateFingerprint, ownerId: userId,
     expires, streamingMode: parsedBody.data.streamingMode, viewport: parsedBody.data.viewport });
   if (!encrypted) return response({ success: false, error: "The Windows handoff could not be created." }, 503);
   let gatewayResponse: Response;
