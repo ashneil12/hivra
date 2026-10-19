@@ -131,7 +131,7 @@ export type RemoteDesktopCapabilityInspectionResult = {
   nativeDescriptor?: PreparedOmarchyNativeDescriptor;
   windowsDescriptor?: PreparedWindowsRdpDescriptor;
   error?: string;
-  code?: "desktop_upgrade_required";
+  code?: "desktop_upgrade_required" | "omarchy_major_unvalidated";
   runtimeVersion?: string;
   upgradeAvailable?: boolean;
 };
@@ -676,7 +676,8 @@ export async function inspectRemoteDesktopCapability(
       agentId,
       targetId: context.host,
       vmid,
-      ...(upgradeRequired ? { code: "desktop_upgrade_required" as const } : {}),
+      ...(upgradeRequired ? { code: "desktop_upgrade_required" as const }
+        : omarchyMajorUnvalidated ? { code: "omarchy_major_unvalidated" as const } : {}),
       error: upgradeRequired ? DESKTOP_UPGRADE_MESSAGE
         : omarchyMajorUnvalidated ? OMARCHY_MAJOR_UNVALIDATED_MESSAGE
           : "Remote desktop capability could not be verified (" + failureCode + ").",

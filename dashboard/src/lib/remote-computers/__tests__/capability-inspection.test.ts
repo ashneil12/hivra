@@ -478,6 +478,9 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
     const upstream = parse({ omarchyPackageVersion: "4.0.5-1", sunshineVersion: "2026.914.233613-1" });
     expect(upstream?.descriptor).toMatchObject({ omarchyPackageVersion: "4.0.5-1", sunshineVersion: "2026.914.233613-1" });
     expect(upstream?.receipt.observedRevision).toBe(OMARCHY_DESKTOP_SESSION_REVISION);
+    // Native Sunshine won't start on an unvalidated build, so it isn't offered.
+    expect(upstream?.receipt.installedTransports).toEqual(["selkies-websocket"]);
+    expect(parse({})?.receipt.installedTransports).toEqual(["sunshine-moonlight", "selkies-websocket"]);
     for (const build of ACCEPTED_OMARCHY_NATIVE_BUILDS) {
       expect(parse({ omarchyPackageVersion: build.omarchy, sunshineVersion: build.sunshine })).not.toBeNull();
     }
@@ -509,6 +512,12 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
       ["4.0.1-9", "2026.516.143833-4"],
       ["4.0.5", "2026.914.233613-1"],
       ["4.0.5-1", "$(id)"],
+      ["4.0.10-1", "2026.914.233613-1"],
+      ["4.0.2-0", "2026.516.143833-4"],
+      ["4.0.02-1", "2026.516.143833-4"],
+      ["1:4.0.5-1", "2026.914.233613-1"],
+      ["4.0.5-1\n", "2026.914.233613-1"],
+      ["3.9.9-1", "2026.516.143833-4"],
     ];
     const fixture = `import ast,json,re,sys
 tree=ast.parse(sys.stdin.read())
@@ -530,6 +539,10 @@ print(json.dumps(out))
       "HIVRA_CAPABILITY_FAILURE omarchy_version_unsupported",
       "HIVRA_CAPABILITY_FAILURE omarchy_version_invalid",
       "HIVRA_CAPABILITY_FAILURE sunshine_version_invalid",
+      "HIVRA_CAPABILITY_FAILURE omarchy_version_unsupported",
+      "HIVRA_CAPABILITY_FAILURE omarchy_version_invalid",
+      "HIVRA_CAPABILITY_FAILURE omarchy_version_invalid",
+      "HIVRA_CAPABILITY_FAILURE omarchy_major_unvalidated",
     ]);
     expect(guest).toEqual(cases.map(([omarchy, sunshine]) => omarchyDesktopVersionRefusal(omarchy, sunshine) ? "refused" : null));
     expect(guest.slice(0, 4)).toEqual([null, null, null, null]);

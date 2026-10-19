@@ -732,7 +732,10 @@ export function parsePreparedOmarchyNativeCapability(
       bootIdentitySha256: createHash("sha256").update(descriptor.guestBootId.toLowerCase()).digest("hex"),
       observedRevision: OMARCHY_DESKTOP_SESSION_REVISION,
       compositor: "wayland",
-      installedTransports: ["sunshine-moonlight", "selkies-websocket"],
+      // Native Sunshine starts only on an exact validated build (the grant
+      // refuses others), so only such a build advertises it.
+      installedTransports: isAcceptedOmarchyNativeBuild(descriptor.omarchyPackageVersion, descriptor.sunshineVersion)
+        ? ["sunshine-moonlight", "selkies-websocket"] : ["selkies-websocket"],
       privateNetworkReachable: true,
       supportsInputTakeover: true,
       brokerOrigin: OMARCHY_WEB_BROKER_ORIGIN,
