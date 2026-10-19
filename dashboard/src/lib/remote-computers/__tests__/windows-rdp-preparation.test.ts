@@ -65,6 +65,7 @@ function dependencies(loadAgent: jest.Mock) {
     completePrepare: jest.fn().mockResolvedValue(true),
     retainPrepare: jest.fn().mockResolvedValue(true),
     gatewaySourceCidr: jest.fn().mockReturnValue("10.240.20.1/32"),
+    recordCertificatePin: jest.fn().mockResolvedValue(true),
   };
 }
 
@@ -90,6 +91,39 @@ it("prepares and verifies Windows RDP for only the VM bridge gateway", async () 
     bootId: "c".repeat(64),
   }));
   expect(deps.retainPrepare).not.toHaveBeenCalled();
+});
+
+it("stores the RDP certificate the guest reports, under its own preparation lease, before completing", async () => {
+  // Windows renews its self-signed RDP certificate on its own. Preparation is
+  // how the owner repairs a session that no longer matches, so it must pin the
+  // certificate the guest has now.
+  const loadAgent = jest.fn()
+    .mockResolvedValueOnce(stable)
+    .mockResolvedValueOnce(operation)
+    .mockResolvedValueOnce(operation)
+    .mockResolvedValueOnce(stable);
+  const deps = dependencies(loadAgent);
+  const renewed = `sha256:${"e".repeat(64)}`;
+  deps.inspectCapability.mockResolvedValue({ ok: true, agentId: ID, targetId: "node-b", vmid: 2098,
+    windowsDescriptor: { ...descriptor(), certificateFingerprint: renewed } });
+
+  await expect(prepareWindowsRdpOnHivraAgent(ID, deps)).resolves.toMatchObject({ ok: true });
+  expect(deps.recordCertificatePin).toHaveBeenCalledWith({
+    userId: USER_ID, agentId: ID, operationId: OPERATION_ID, fingerprint: renewed,
+  });
+  expect(deps.recordCertificatePin.mock.invocationCallOrder[0]).toBeLessThan(deps.completePrepare.mock.invocationCallOrder[0]);
+});
+
+it("keeps the preparation pending when the certificate pin could not be stored", async () => {
+  const loadAgent = jest.fn().mockResolvedValueOnce(stable).mockResolvedValueOnce(operation).mockResolvedValueOnce(operation);
+  const deps = dependencies(loadAgent);
+  deps.recordCertificatePin.mockResolvedValue(false);
+
+  await expect(prepareWindowsRdpOnHivraAgent(ID, deps)).resolves.toMatchObject({
+    ok: false, code: "desktop_prepare_pending", error: expect.stringContaining("certificate_pin_unconfirmed"),
+  });
+  expect(deps.completePrepare).not.toHaveBeenCalled();
+  expect(deps.retainPrepare).toHaveBeenCalledTimes(1);
 });
 
 it("uses the configured private gateway for the exact Windows computer", async () => {

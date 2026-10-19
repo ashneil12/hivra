@@ -42,6 +42,7 @@ type Dependencies = {
   completePrepare: typeof completeDesktopPrepare;
   retainPrepare: typeof recordHivraAgentOperationFailure;
   gatewaySourceCidr: typeof gatewaySourceCidrForWindowsComputer;
+  recordCertificatePin: typeof recordWindowsRdpCertificatePin;
 };
 
 export type WindowsRdpPreparationResult = {
@@ -64,6 +65,27 @@ async function loadAgent(agentId: string): Promise<RemoteDesktopAgentRow | null>
   return (data as RemoteDesktopAgentRow | null) ?? null;
 }
 
+const CERTIFICATE_FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
+
+/**
+ * Store the RDP certificate this preparation read from the guest as the one
+ * the computer's sessions pin. Windows renews its self-signed certificate on
+ * its own; without this a renewed certificate could never match again. The
+ * write is fenced by this preparation's own operation lease, so it lands
+ * only while that preparation still owns the computer.
+ */
+async function recordWindowsRdpCertificatePin(input: {
+  userId: string; agentId: string; operationId: string; fingerprint: string;
+}): Promise<boolean> {
+  if (!supabaseAdmin || !CERTIFICATE_FINGERPRINT.test(input.fingerprint)) return false;
+  const { data, error } = await supabaseAdmin.from("hivra_agents")
+    .update({ windows_rdp_certificate_fingerprint: input.fingerprint, windows_rdp_certificate_observed_at: new Date().toISOString() })
+    .eq("id", input.agentId).eq("user_id", input.userId).eq("computer_profile", "windows")
+    .eq("operation_id", input.operationId).eq("operation_kind", DESKTOP_PREPARE_KIND)
+    .select("id");
+  return !error && Array.isArray(data) && data.length === 1;
+}
+
 const DEFAULT_DEPENDENCIES: Dependencies = {
   loadAgent,
   beginPrepare: beginDesktopPrepare,
@@ -74,6 +96,7 @@ const DEFAULT_DEPENDENCIES: Dependencies = {
   completePrepare: completeDesktopPrepare,
   retainPrepare: recordHivraAgentOperationFailure,
   gatewaySourceCidr: gatewaySourceCidrForWindowsComputer,
+  recordCertificatePin: recordWindowsRdpCertificatePin,
 };
 
 function privateIpv4(value: string): boolean {
@@ -189,6 +212,10 @@ export async function prepareWindowsRdpOnHivraAgent(
       || descriptor.privateNetworkReachable !== false
       || JSON.stringify(descriptor.route.sourceCidrs) !== JSON.stringify([target.gatewayCidr])) {
       return pending("capability_unverified");
+    }
+    if (!await deps.recordCertificatePin({ userId: agent.user_id, agentId, operationId: claim.operationId,
+      fingerprint: descriptor.certificateFingerprint })) {
+      return pending("certificate_pin_unconfirmed");
     }
     const receipt: DesktopPrepareReceipt = {
       version: 1,
