@@ -1,4 +1,4 @@
-// Apply every migration up to 20261020120000 in PostgreSQL/WASM (the new one
+// Apply every migration up to 20260925140000 in PostgreSQL/WASM (the new one
 // twice, proving it re-runs), then check what it adds:
 // - hivra_agent_cli_updates: one row per agent, versions only in x.y.z form,
 //   closed enums for observations, update states, request results and pauses,
@@ -18,7 +18,7 @@ const path = require("node:path");
 const { PGlite } = require("@electric-sql/pglite");
 
 const MIGRATIONS = path.resolve(__dirname, "../supabase/migrations");
-const TARGET = "20261020120000_hivra_agent_cli_updates.sql";
+const TARGET = "20260925140000_hivra_agent_cli_updates.sql";
 const CLAIM = "public.claim_hivra_agent_cli_update_request(uuid, text, text, text, text, interval)";
 
 async function rejects(db, sql, pattern, label) {

@@ -2,7 +2,7 @@ import "server-only";
 
 // public.hivra_agent_cli_updates: what Hivra last read about an agent's
 // Claude Code / Codex version, its update requests and the owner's
-// automatic-update choice (migration 20261020120000). Service role only.
+// automatic-update choice (migration 20260925140000). Service role only.
 //
 // Every write here is best effort: a failed write is logged and the caller
 // carries on with what it read, so the owner still sees the computer's current

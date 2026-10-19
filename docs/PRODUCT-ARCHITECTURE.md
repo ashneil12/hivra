@@ -522,7 +522,7 @@ new one doesn't install. What an owner sees:
   binding tag, operation lease and receipt; refusals carry a code
   (`host_not_ready`, `busy`, `not_running`, `unverified`) for Manage's copy.
   Readings, requests and the owner's choice live in `hivra_agent_cli_updates`
-  (migration 20261020120000, service role only).
+  (migration 20260925140000, service role only).
 - *Automatic updates* (`/api/cron/update-hivra-agent-clis`, every 30 minutes)
   ship dark: `HIVRA_AGENT_CLI_AUTO_UPDATE` unset or `off` reads nothing,
   `preview` reads agents and reports what it would update, `on` updates. Each
