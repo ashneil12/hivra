@@ -88,6 +88,9 @@ export const REMOTE_DESKTOP_COMPATIBILITY = {
 } as const;
 const LEGACY_DESKTOP_REVISION = "5a24955abe099ddbabaa66e01da0dc9cb395254d7b9ebcbb268539abcf2db38d";
 const DESKTOP_UPGRADE_MESSAGE = "This desktop needs an update to establish its shared-folder identity. This check did not install or change anything.";
+// An Omarchy owner updates from inside the desktop; a new major release is the
+// one update Hivra has to check first (omarchyDesktopVersionRefusal).
+const OMARCHY_MAJOR_UNVALIDATED_MESSAGE = "This computer was updated to a new major Omarchy release that Hivra hasn't checked yet, so the desktop can't open here yet. Your files and apps are unchanged.";
 
 function knownDesktopRevision(value: string): value is keyof typeof REMOTE_DESKTOP_COMPATIBILITY {
   return Object.prototype.hasOwnProperty.call(REMOTE_DESKTOP_COMPATIBILITY, value);
@@ -665,7 +668,9 @@ export async function inspectRemoteDesktopCapability(
     return { ok: false, agentId, targetId: context.host, vmid, error: "Remote desktop inspection failed." };
   }
   if (!result.ok) {
-    const upgradeRequired = !omarchy && safeCapabilityFailureCode(result, marker) === "guest_desktop_upgrade_required";
+    const failureCode = safeCapabilityFailureCode(result, marker);
+    const upgradeRequired = !omarchy && failureCode === "guest_desktop_upgrade_required";
+    const omarchyMajorUnvalidated = omarchy && failureCode === "guest_omarchy_major_unvalidated";
     return {
       ok: false,
       agentId,
@@ -673,7 +678,8 @@ export async function inspectRemoteDesktopCapability(
       vmid,
       ...(upgradeRequired ? { code: "desktop_upgrade_required" as const } : {}),
       error: upgradeRequired ? DESKTOP_UPGRADE_MESSAGE
-        : "Remote desktop capability could not be verified (" + safeCapabilityFailureCode(result, marker) + ").",
+        : omarchyMajorUnvalidated ? OMARCHY_MAJOR_UNVALIDATED_MESSAGE
+          : "Remote desktop capability could not be verified (" + failureCode + ").",
     };
   }
   const prepared = omarchy

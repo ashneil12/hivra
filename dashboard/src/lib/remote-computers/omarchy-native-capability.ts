@@ -12,21 +12,83 @@ export const OMARCHY_NATIVE_PREPARED_MARKER = "HIVRA_OMARCHY_NATIVE_PREPARED_V1 
 
 // (marker constant above)
 //
-// The Omarchy builds this platform has validated, as exact package pairs. The
-// desktop's own image mirrors Omarchy upstream and the desktop user may update
-// from inside it, so this is a SET rather than one build: an update must not be
-// able to make a desktop unverifiable, and previously validated builds must
-// keep working. Anything outside the set is still refused, and the pairing is
-// enforced, so a half-updated guest does not pass either.
-export const ACCEPTED_OMARCHY_BUILDS = [
+// The browser desktop follows Omarchy upstream. Its own user updates it from
+// inside (passwordless omarchy-update), whenever they like, from Omarchy's
+// stable repository, which moves every few weeks (4.0.5 shipped 2026-10-18).
+// An exact list of validated builds made every upstream release lock owners
+// out of their own desktop until Hivra added it, so the desktop accepts any
+// Omarchy release of the validated major from the first validated build on.
+// A new major release can change Hyprland and the session this desktop
+// attaches to, so it is refused with its own code until Hivra has checked it.
+// Sunshine's version is reported but not judged here: the browser desktop
+// never runs it (the inspection refuses a running Sunshine or its listeners).
+export const OMARCHY_DESKTOP_VALIDATED_MAJOR = 4;
+export const OMARCHY_DESKTOP_MINIMUM_VERSION = "4.0.2-1";
+
+// The native Sunshine/Moonlight lane does run Sunshine, with a configuration
+// written for one Sunshine release, so a native grant still needs one of these
+// exact validated pairs. A half-updated guest does not pass either.
+export const ACCEPTED_OMARCHY_NATIVE_BUILDS = [
   { omarchy: "4.0.2-1", sunshine: "2026.516.143833-4" },
   { omarchy: "4.0.4-1", sunshine: "2026.516.143833-4.1" },
 ] as const;
-export const EXPECTED_OMARCHY_PACKAGE_VERSIONS = ["4.0.2-1", "4.0.4-1"] as const;
-export const EXPECTED_SUNSHINE_VERSIONS = ["2026.516.143833-4", "2026.516.143833-4.1"] as const;
-/** The same set, as a literal the guest programs can compare against. */
+/** The native set, as a literal the guest programs can compare against. */
 const ACCEPTED_BUILDS_LITERAL = JSON.stringify(
-  ACCEPTED_OMARCHY_BUILDS.map(build => [build.omarchy, build.sunshine]));
+  ACCEPTED_OMARCHY_NATIVE_BUILDS.map(build => [build.omarchy, build.sunshine]));
+
+/** pacman's version shape for Omarchy packages: major.minor.patch-pkgrel[.subrel]. */
+const OMARCHY_PACKAGE_VERSION = /^([0-9]{1,4})\.([0-9]{1,4})\.([0-9]{1,4})-([0-9]{1,4})(?:\.([0-9]{1,4}))?$/;
+/** Any well-formed pacman version (no shell or path characters). */
+const PACMAN_PACKAGE_VERSION = /^[0-9A-Za-z][0-9A-Za-z._+~:-]{0,63}$/;
+
+function omarchyRelease(version: string): number[] | null {
+  const match = OMARCHY_PACKAGE_VERSION.exec(version);
+  return match ? match.slice(1).map(part => Number(part ?? 0)) : null;
+}
+
+function compareReleases(left: number[], right: number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+export type OmarchyDesktopVersionRefusal =
+  | "omarchy_version_invalid" | "omarchy_major_unvalidated" | "omarchy_version_unsupported" | "sunshine_version_invalid";
+
+/**
+ * Why the browser desktop refuses this Omarchy/Sunshine pair, or null when it
+ * accepts it. The guest inspection program applies the same rule
+ * (OMARCHY_DESKTOP_VERSION_POLICY below) and fails with the same code.
+ */
+export function omarchyDesktopVersionRefusal(omarchyVersion: string, sunshineVersion: string): OmarchyDesktopVersionRefusal | null {
+  const release = omarchyRelease(omarchyVersion);
+  if (!release) return "omarchy_version_invalid";
+  if (release[0] !== OMARCHY_DESKTOP_VALIDATED_MAJOR) return "omarchy_major_unvalidated";
+  if (compareReleases(release, omarchyRelease(OMARCHY_DESKTOP_MINIMUM_VERSION)!) < 0) return "omarchy_version_unsupported";
+  if (!PACMAN_PACKAGE_VERSION.test(sunshineVersion)) return "sunshine_version_invalid";
+  return null;
+}
+
+/** The native Sunshine/Moonlight lane admits only its exact validated pairs. */
+export function isAcceptedOmarchyNativeBuild(omarchyVersion: string, sunshineVersion: string): boolean {
+  return ACCEPTED_OMARCHY_NATIVE_BUILDS.some(build => build.omarchy === omarchyVersion && build.sunshine === sunshineVersion);
+}
+
+/**
+ * The guest half of omarchyDesktopVersionRefusal, as Python the inspection
+ * program embeds. It expects `re` and `fail` from the program around it.
+ */
+export const OMARCHY_DESKTOP_VERSION_POLICY = String.raw`def omarchy_release(version):
+ match=re.fullmatch(r'([0-9]{1,4})\.([0-9]{1,4})\.([0-9]{1,4})-([0-9]{1,4})(?:\.([0-9]{1,4}))?',version)
+ if not match: fail('omarchy_version_invalid')
+ return tuple(int(part or 0) for part in match.groups())
+def accept_desktop_build(omarchy_version,sunshine_version):
+ release=omarchy_release(omarchy_version)
+ if release[0]!=${OMARCHY_DESKTOP_VALIDATED_MAJOR}: fail('omarchy_major_unvalidated')
+ if release<omarchy_release('${OMARCHY_DESKTOP_MINIMUM_VERSION}'): fail('omarchy_version_unsupported')
+ if not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z._+~:-]{0,63}',sunshine_version): fail('sunshine_version_invalid')`;
 const EXPECTED_SUNSHINE_UNIT = "app-dev.lizardbyte.app.Sunshine.service";
 const EXPECTED_TCP_PORTS = [47984, 47989, 48010] as const;
 const EXPECTED_UDP_PORTS = [5353, 47998, 47999, 48000, 48002, 48010] as const;
@@ -336,6 +398,7 @@ def package(name,stage):
  parts=run(['/usr/bin/pacman','-Q',name],stage,timeout=5).decode('utf-8').strip().split()
  if len(parts)!=2 or parts[0]!=name: fail(stage+'_shape')
  return parts[1]
+${OMARCHY_DESKTOP_VERSION_POLICY}
 def private_source(value):
  try: network=ipaddress.ip_network(value if '/' in value else value+'/32',strict=True)
  except ValueError: fail('firewall_source_invalid')
@@ -412,7 +475,7 @@ for protocol,ports in (('tcp',protected_tcp),('udp',protected_udp)):
 active=pathlib.Path('/var/lib/hivra/omarchy-native-v3-leases')/expected['computerId']/'active.json'
 if os.path.lexists(active): fail('guardian_active_lease_conflict')
 omarchy_version=package('omarchy','omarchy_package'); sunshine_version=package('sunshine','sunshine_package')
-if [omarchy_version,sunshine_version] not in ${ACCEPTED_BUILDS_LITERAL}: fail('package_pin_mismatch')
+accept_desktop_build(omarchy_version,sunshine_version)
 sunshine_raw=read_regular(pathlib.Path('/usr/bin/sunshine'),0,'sunshine_binary',268435456,True)
 sunshine_sha=hashlib.sha256(sunshine_raw).hexdigest()
 firewall_verbose=run(['/usr/bin/ufw','status','verbose'],'firewall_status',timeout=5).decode()
@@ -518,8 +581,8 @@ const Descriptor = z.object({
   preparationOperationId: z.string().uuid(),
   serviceOwnerUid: z.number().int().min(1000),
   waylandDisplay: z.string().regex(/^wayland-[0-9]{1,3}$/),
-  omarchyPackageVersion: z.enum(EXPECTED_OMARCHY_PACKAGE_VERSIONS),
-  sunshineVersion: z.enum(EXPECTED_SUNSHINE_VERSIONS),
+  omarchyPackageVersion: z.string().regex(OMARCHY_PACKAGE_VERSION),
+  sunshineVersion: z.string().regex(PACMAN_PACKAGE_VERSION),
   guardianSha256: z.literal(OMARCHY_NATIVE_GUARDIAN_SHA256),
   ownershipSha256: z.literal(OMARCHY_NATIVE_OWNERSHIP_SHA256),
   sunshineSha256: z.string().regex(SHA256),
@@ -534,7 +597,7 @@ const Descriptor = z.object({
   privateNetworkReachable: z.literal(true),
   supportsInputTakeover: z.literal(true),
   observedAt: z.string().datetime({ offset: true }),
-}).strict();
+}).strict().refine(descriptor => omarchyDesktopVersionRefusal(descriptor.omarchyPackageVersion, descriptor.sunshineVersion) === null);
 
 export type PreparedOmarchyNativeDescriptor = z.infer<typeof Descriptor>;
 

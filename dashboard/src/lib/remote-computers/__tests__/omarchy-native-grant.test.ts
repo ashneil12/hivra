@@ -72,6 +72,18 @@ print(base64.b64encode(unit.encode()).decode())
   expect(Buffer.from(python.stdout.trim(), "base64").toString("utf8")).toBe(source);
 });
 
+it("starts native Sunshine only on an exact validated build, though the desktop accepts newer ones", () => {
+  // The owner may update to upstream Omarchy 4.0.5 (Sunshine 2026.914.233613);
+  // the browser desktop accepts it, but the native lane's Sunshine
+  // configuration was written for 2026.516.143833 and must not start on it.
+  expect(buildOmarchyNativeGuardianGrant({ session, nowMs,
+    descriptor: { ...descriptor, omarchyPackageVersion: "4.0.5-1", sunshineVersion: "2026.914.233613-1" } })).toBeNull();
+  expect(buildOmarchyNativeGuardianGrant({ session, nowMs,
+    descriptor: { ...descriptor, omarchyPackageVersion: "4.0.4-1", sunshineVersion: "2026.516.143833-4" } })).toBeNull();
+  expect(buildOmarchyNativeGuardianGrant({ session, nowMs,
+    descriptor: { ...descriptor, omarchyPackageVersion: "4.0.4-1", sunshineVersion: "2026.516.143833-4.1" } })).not.toBeNull();
+});
+
 it("fails closed when activation no longer fits inside the lease", () => {
   expect(buildOmarchyNativeGuardianGrant({ session: { ...session, expiresAt: "2026-09-08T06:00:59.999Z" },
     descriptor, nowMs })).toBeNull();

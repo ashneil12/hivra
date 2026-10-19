@@ -12,7 +12,7 @@ import {
   REMOTE_DESKTOP_SESSION_REVISIONS,
 } from "@/lib/remote-computers/capability-inspection";
 import {
-  ACCEPTED_OMARCHY_BUILDS,
+  ACCEPTED_OMARCHY_NATIVE_BUILDS,
   buildPreparedOmarchyNativeCapabilityInspectionScript,
   OMARCHY_NATIVE_GUARDIAN_SHA256,
   OMARCHY_NATIVE_INSPECTION_REVISION,
@@ -24,6 +24,7 @@ import {
   OMARCHY_WEB_ADAPTER_SHA256,
   OMARCHY_WEB_SERVER_SHA256,
   OMARCHY_WEB_BROKER_ORIGIN,
+  omarchyDesktopVersionRefusal,
   parsePreparedOmarchyNativeCapability,
 } from "@/lib/remote-computers/omarchy-native-capability";
 import {
@@ -464,21 +465,74 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
     expect(REMOTE_DESKTOP_BUNDLE_REVISION).toBe(digest);
   });
 
-  // The desktop's own image mirrors Omarchy upstream and its user may update
-  // from inside it, so an updated desktop must stay verifiable. Previously
-  // validated builds keep working too, and anything else is still refused.
-  it("accepts every validated build pair and refuses one outside the set", () => {
+  // The desktop's owner updates it from inside (Update > Omarchy) from
+  // Omarchy's stable repository. On 2026-10-18 that repository moved to
+  // omarchy 4.0.5-1 with sunshine 2026.914.233613-1, outside the two builds
+  // Hivra had listed, and an owner who updated lost their desktop with
+  // package_pin_mismatch. Any Omarchy 4 build from the first validated one on
+  // must stay verifiable; only a new major or a malformed version is refused.
+  it("keeps a desktop the owner updated from upstream Omarchy verifiable", () => {
     const expected = { computerId: AGENT_ID, vmid: 1112, guestIp: "10.250.20.62" };
     const parse = (overrides: Record<string, unknown>) => parsePreparedOmarchyNativeCapability(
       `${OMARCHY_NATIVE_PREPARED_MARKER}${JSON.stringify(omarchyDescriptor(overrides))}\n`, expected);
-    expect(ACCEPTED_OMARCHY_BUILDS.length).toBeGreaterThan(1);
-    for (const build of ACCEPTED_OMARCHY_BUILDS) {
-      const parsed = parse({ omarchyPackageVersion: build.omarchy, sunshineVersion: build.sunshine });
-      expect(parsed?.descriptor.omarchyPackageVersion).toBe(build.omarchy);
-      expect(parsed?.descriptor.sunshineVersion).toBe(build.sunshine);
+    const upstream = parse({ omarchyPackageVersion: "4.0.5-1", sunshineVersion: "2026.914.233613-1" });
+    expect(upstream?.descriptor).toMatchObject({ omarchyPackageVersion: "4.0.5-1", sunshineVersion: "2026.914.233613-1" });
+    expect(upstream?.receipt.observedRevision).toBe(OMARCHY_DESKTOP_SESSION_REVISION);
+    for (const build of ACCEPTED_OMARCHY_NATIVE_BUILDS) {
+      expect(parse({ omarchyPackageVersion: build.omarchy, sunshineVersion: build.sunshine })).not.toBeNull();
     }
-    expect(parse({ omarchyPackageVersion: "9.9.9-9" })).toBeNull();
-    expect(parse({ sunshineVersion: "2026.999.1-1" })).toBeNull();
+    expect(parse({ omarchyPackageVersion: "4.1.0-1", sunshineVersion: "2027.101.1-2" })).not.toBeNull();
+    expect(parse({ omarchyPackageVersion: "5.0.0-1" })).toBeNull();
+    expect(parse({ omarchyPackageVersion: "4.0.1-1" })).toBeNull();
+    expect(parse({ omarchyPackageVersion: "4.0.5" })).toBeNull();
+    expect(parse({ sunshineVersion: "../../bin/sh" })).toBeNull();
+  });
+
+  it("runs the same Omarchy version rule inside the guest as on the server", () => {
+    const script = buildPreparedOmarchyNativeCapabilityInspectionScript({
+      computerId: AGENT_ID,
+      vmid: 1112,
+      guestIp: "10.250.20.62",
+      publicIpv4: "198.51.100.11",
+      infrastructureBindingTag: `hivra-bind-${"b".repeat(32)}`,
+    });
+    const encoded = script.trim().split("\n").at(-1)!.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)'$/)![1];
+    const program = Buffer.from(encoded, "base64").toString("utf8");
+    expect(program).toContain("accept_desktop_build(omarchy_version,sunshine_version)");
+    expect(program).not.toContain("package_pin_mismatch");
+    const cases: Array<[string, string]> = [
+      ["4.0.5-1", "2026.914.233613-1"],
+      ["4.0.2-1", "2026.516.143833-4"],
+      ["4.0.4-1", "2026.516.143833-4.1"],
+      ["4.12.0-3.1", "2027.1.2-1"],
+      ["5.0.0-1", "2026.914.233613-1"],
+      ["4.0.1-9", "2026.516.143833-4"],
+      ["4.0.5", "2026.914.233613-1"],
+      ["4.0.5-1", "$(id)"],
+    ];
+    const fixture = `import ast,json,re,sys
+tree=ast.parse(sys.stdin.read())
+selected=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name in ('fail','omarchy_release','accept_desktop_build')]
+scope={'re':re,'sys':sys}
+exec(compile(ast.Module(body=selected,type_ignores=[]),'<omarchy-version-policy>','exec'),scope)
+out=[]
+for omarchy,sunshine in json.loads(sys.argv[1]):
+ try:
+  scope['accept_desktop_build'](omarchy,sunshine); out.append(None)
+ except SystemExit: out.append('refused')
+print(json.dumps(out))
+`;
+    const result = spawnSync("python3", ["-I", "-B", "-c", fixture, JSON.stringify(cases)], { encoding: "utf8", input: program });
+    expect(result.status).toBe(0);
+    const guest = JSON.parse(result.stdout) as Array<string | null>;
+    expect(result.stderr.trim().split("\n")).toEqual([
+      "HIVRA_CAPABILITY_FAILURE omarchy_major_unvalidated",
+      "HIVRA_CAPABILITY_FAILURE omarchy_version_unsupported",
+      "HIVRA_CAPABILITY_FAILURE omarchy_version_invalid",
+      "HIVRA_CAPABILITY_FAILURE sunshine_version_invalid",
+    ]);
+    expect(guest).toEqual(cases.map(([omarchy, sunshine]) => omarchyDesktopVersionRefusal(omarchy, sunshine) ? "refused" : null));
+    expect(guest.slice(0, 4)).toEqual([null, null, null, null]);
   });
 
   it("admits only brokers that bind the selected mode before their first frame", () => {
