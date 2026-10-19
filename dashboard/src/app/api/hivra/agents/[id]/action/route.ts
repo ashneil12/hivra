@@ -1,3 +1,4 @@
+import { lifecycleMutationPrelude, lifecycleVmAuthorityBody, verifiedStopVmBody, verifiedStopVmScript } from "@/lib/hivra/agent-power-scripts";
 // Hivra agent lifecycle: stop / start / restart / force_stop / force_restart /
 // update_runtime / resize / snapshot / restore / rename.
 // stop: qm shutdown (qm stop if it hasn't shut down after 50 s; the response
@@ -145,38 +146,6 @@ function clampStr(v: unknown, max: number): string | null {
   return s ? s.slice(0, max) : null;
 }
 
-function lifecycleBindingVerificationBody(): string {
-  return `if [ -n "$EXPECTED_BINDING_TAG" ]; then
-  TAGS="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')"
-  printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG" \
-    || { echo "refusing to mutate VMID $VMID without its exact Hivra binding tag" >&2; exit 1; }
-fi`;
-}
-
-function lifecycleVmAuthorityBody(): string {
-  return `qm status "$VMID" >/dev/null
-${lifecycleBindingVerificationBody()}`;
-}
-
-function lifecycleMutationPrelude(
-  vmid: number,
-  bindingTag: string | null,
-  allowMissingForManagedRestore = false,
-): string {
-  const vmAuthority = allowMissingForManagedRestore
-    ? `if qm status "$VMID" >/dev/null 2>&1; then
-  ${lifecycleBindingVerificationBody().replaceAll("\n", "\n  ")}
-fi`
-    : lifecycleVmAuthorityBody();
-  return `set -euo pipefail
-VMID=${vmid}
-EXPECTED_BINDING_TAG=${shellQuote(bindingTag ?? "")}
-install -d -m 0755 /run/lock
-exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8 || { echo "timed out waiting for the Hivra lifecycle lock" >&2; exit 1; }
-${vmAuthority}`;
-}
-
 // How a stop ended, printed by the host: "graceful" (the computer shut itself
 // down in time), "forced <waited> <budget>" (qm shutdown gave up after
 // <waited> seconds, measured on the host, of the <budget> it was given, so
@@ -207,30 +176,6 @@ function stopOutcomeEvent(outcome: StopOutcome | null): { detail?: { forced: tru
   return { detail: { forced: true, reason: outcome.waitedSeconds ? "shutdown_timeout" : "shutdown_failed" } };
 }
 
-function verifiedStopVmBody(vmid: number, timeoutSeconds: number): string {
-  return `VMID=${vmid}
-STOP_MODE=already
-CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
-if [ "$CURRENT_STATUS" != "stopped" ]; then
-  SHUTDOWN_STARTED="$(date +%s)"
-  if qm shutdown "$VMID" --timeout ${timeoutSeconds}; then
-    STOP_MODE=graceful
-  else
-    SHUTDOWN_WAITED="$(( $(date +%s) - SHUTDOWN_STARTED ))"
-    [ "$SHUTDOWN_WAITED" -ge 0 ] || SHUTDOWN_WAITED=0
-    qm stop "$VMID"
-    STOP_MODE="forced $SHUTDOWN_WAITED ${timeoutSeconds}"
-  fi
-fi
-FINAL_STATUS="$(qm status "$VMID" | awk '{print $2}')"
-if [ "$FINAL_STATUS" != "stopped" ]; then
-  echo "VMID $VMID did not stop (status=$FINAL_STATUS)" >&2
-  exit 1
-fi
-echo "stopped $VMID"
-echo "HIVRA_STOP_MODE $STOP_MODE"`;
-}
-
 // Force off: switch the computer off at once, without asking it to shut
 // down. --overrule-shutdown also ends a shutdown already under way (PVE 8.1
 // and later); an older host without that option still gets a plain qm stop.
@@ -252,11 +197,6 @@ if [ "$FINAL_STATUS" != "stopped" ]; then
   exit 1
 fi
 echo "${FORCE_STOPPED_RECEIPT} vmid=$VMID"`;
-}
-
-function verifiedStopVmScript(vmid: number, timeoutSeconds: number, bindingTag: string | null): string {
-  return `${lifecycleMutationPrelude(vmid, bindingTag)}
-${verifiedStopVmBody(vmid, timeoutSeconds)}`;
 }
 
 // Live browser-automation state for a box, read from the same source the UI uses

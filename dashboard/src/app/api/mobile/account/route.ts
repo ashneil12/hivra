@@ -76,14 +76,13 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Same visibility filter as the instances list: rows that are terminal on
-    // BOTH signals are already gone and need no teardown.
+    // Only rows terminal on both signals are excluded. A mismatched or NULL
+    // lifecycle may still own a runtime and must reach verified teardown.
     const { data: instanceRows, error: listError } = await supabaseAdmin
       .from("hermes_instances")
       .select("id, name")
       .eq("user_id", userId)
-      .neq("status", "deleted")
-      .neq("lifecycle_state", "deleted")
+      .or("status.neq.deleted,lifecycle_state.neq.deleted,status.is.null,lifecycle_state.is.null")
       .returns<InstanceIdRow[]>();
     if (listError) {
       return apiError("Failed to load your agents", 500, listError, undefined, {
@@ -93,6 +92,11 @@ export async function DELETE(request: NextRequest) {
         userId,
       });
     }
+
+    const { data: computers, error: computerError } = await supabaseAdmin
+      .from("hivra_agents").select("id").eq("user_id", userId).neq("status", "deleted");
+    if (computerError) return apiError("Failed to check your computers", 503);
+    if (computers?.length) return apiError("Remove your computers through their verified Delete action before closing your account.", 409);
 
     const deletedInstances: string[] = [];
     const failedInstances: Array<{ id: string; status: number }> = [];
