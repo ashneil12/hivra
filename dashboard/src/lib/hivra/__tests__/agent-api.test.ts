@@ -699,6 +699,32 @@ describe("telegram box calls are bounded (regression: silent hang)", () => {
   });
 });
 
+// Regression: the in-place update's answer said what it did about Claude Code
+// or Codex (agentCli), and why it refused (code), but the client dropped both,
+// so Manage could neither follow the update nor explain a refusal.
+describe("updateAgentRuntime", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("returns the agent CLI report the update came back with", async () => {
+    const agentCli = { name: "codex", version: "0.140.0", target: "0.149.1", state: "scheduled" };
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200,
+      json: async () => ({ success: true, data: { status: "running", agentCli } }) } as Response);
+    const { updateAgentRuntime } = jest.requireActual("../agent-api") as typeof import("../agent-api");
+    await expect(updateAgentRuntime("agent-1")).resolves.toEqual({ status: "running", agentCli });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({ action: "update_runtime" });
+  });
+
+  it("carries the refusal's code with its status", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503,
+      json: async () => ({ success: false, error: "The host isn't ready.", code: "host_not_ready" }) } as Response);
+    const { updateAgentRuntime, AgentActionError } = jest.requireActual("../agent-api") as typeof import("../agent-api");
+    const error = await updateAgentRuntime("agent-1").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AgentActionError);
+    expect(error).toMatchObject({ message: "The host isn't ready.", status: 503, code: "host_not_ready" });
+  });
+});
+
 describe("power actions and live usage", () => {
   const originalFetch = global.fetch;
   afterEach(() => { global.fetch = originalFetch; });

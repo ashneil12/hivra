@@ -255,6 +255,10 @@
     {
       "path": "/api/cron/reconcile-soul-seeds",
       "schedule": "*/20 * * * *"
+    },
+    {
+      "path": "/api/cron/update-hivra-agent-clis",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

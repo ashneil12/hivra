@@ -24,6 +24,7 @@ import {
   type HermesInstanceLite,
 } from "@/lib/hivra/unified-agent";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import type { AgentSoftwareBadge, AgentSoftwareSummary } from "@/lib/hivra/agent-cli-status";
 import styles from "../../agents/AgentsPage.module.css";
 
 export type { HermesInstanceLite };
@@ -288,6 +289,23 @@ export function HivraAgentsPanel({
   );
 }
 
+const SOFTWARE_TAG: Record<AgentSoftwareBadge, string> = {
+  update_available: "Update available",
+  updating: "Updating",
+  update_failed: "Update didn't finish",
+};
+
+/** The tag's longer explanation: behind Hivra's tested version, never "latest". */
+function softwareTitle(software: AgentSoftwareSummary, name: string): string {
+  if (software.badge === "update_available") {
+    return software.installed && software.tested
+      ? `${name} ${software.installed} is installed and Hivra has tested ${software.tested}. Open the agent, then Updates.`
+      : "An update is available for this agent's connection service. Open the agent, then Updates.";
+  }
+  if (software.badge === "updating") return `${name} is being updated to the version Hivra has tested.`;
+  return `The last ${name} update didn't finish. Open the agent, then Updates.`;
+}
+
 function AgentRow({
   agent,
   actionsOpen,
@@ -310,6 +328,8 @@ function AgentRow({
   const menuRef = useRef<HTMLDivElement>(null);
   const statusLabel = unifiedStateLabel(agent.state);
   const pair = agent.computerPair ?? null;
+  const software = agent.software?.badge ? agent.software : null;
+  const softwareLabel = agent.software?.badge ? SOFTWARE_TAG[agent.software.badge] : null;
   const { uid } = agent;
   const setActionsOpen = useCallback(
     (open: boolean) => onActionsOpenChange(uid, open),
@@ -355,7 +375,7 @@ function AgentRow({
         type="button"
         className={styles.agentPrimary}
         onClick={onOpen}
-        aria-label={`Open ${agent.name}, ${[agent.typeLabel, pair?.relation.toLowerCase(), pair?.placement, pair?.size, statusLabel].filter(Boolean).join(", ")}`}
+        aria-label={`Open ${agent.name}, ${[agent.typeLabel, pair?.relation.toLowerCase(), pair?.placement, pair?.size, statusLabel, softwareLabel].filter(Boolean).join(", ")}`}
       >
         <span className={styles.agentIcon} aria-hidden>
           <Bot size={17} />
@@ -368,6 +388,11 @@ function AgentRow({
             {/* The linked pair (ATT-11); its size sits in the resources column. */}
             {pair ? <span data-testid="agent-computer-pair"> · {[pair.relation, pair.placement].filter(Boolean).join(" · ")}</span> : null}
           </small>
+          {software && softwareLabel ? (
+            <span className={styles.agentSoftware} data-badge={software.badge} data-testid="agent-software-tag" title={softwareTitle(software, agent.typeLabel)}>
+              {softwareLabel}
+            </span>
+          ) : null}
         </span>
         <span className={styles.agentResources}>
           {pair?.size ?? (typeof agent.cpu === "number"

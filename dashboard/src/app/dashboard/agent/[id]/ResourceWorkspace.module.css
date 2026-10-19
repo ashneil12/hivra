@@ -12,6 +12,15 @@
 .identity .name { flex: 0 1 auto; font-size: 13px; font-weight: 600; }
 .identity .backButton { min-height: 30px; padding: 4px 8px; border-color: transparent; }
 .identity .status { font-size: 11px; }
+/* "Update available" beside the agent's name; empty when there is nothing to say. */
+.softwareChip { display: inline-flex; flex-shrink: 0; margin-left: 8px; }
+.softwareChip:empty { display: none; }
+/* With something to say, the identity takes the width of the name and the
+   chip together (up to 45% of the bar) instead of its fixed 280px, so the
+   chip never squeezes the agent's name. */
+@container resource-workspace (width > 900px) {
+  .identity:has(> .softwareChip:not(:empty)) { flex: 0 1 auto; max-width: 45%; }
+}
 .metadata { flex-shrink: 0; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .status { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; text-transform: capitalize; flex-shrink: 0; }
 .status > span { width: 6px; height: 6px; border-radius: 50%; }
@@ -68,6 +77,9 @@ textarea.personalizationField { padding: 10px; resize: vertical; }
   .identity > button > svg:first-child { width: 16px; height: 16px; }
   .identity > button strong { flex: 0 1 auto; min-width: 0; }
   .identity > button > svg:last-child { order: 2; }
+  /* The chip keeps its accessible name and a short word beside its icon. */
+  .softwareChip [data-chip-text] { display: none; }
+  .softwareChip [data-chip-short] { display: inline; }
   .identity > button small { order: 3; display: inline-flex; align-items: center; flex-shrink: 0; margin-left: auto; padding-left: 8px; }
   .identity [data-switcher-part="kind"], .identity [data-switcher-part="separator"] { display: none; }
   .identity [data-switcher-part="status"] { display: inline-flex; align-items: center; gap: 6px; }
