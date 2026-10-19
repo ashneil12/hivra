@@ -8,8 +8,9 @@ import { TOKEN_CONVERSION_GRACE_HOURS } from "@/lib/billing/token-registry";
 const FALLBACK_ERROR = "Couldn't confirm the switch. Reload this page to see whether it went through.";
 
 /**
- * Step 1 for a grandfathered holder: move their tier from $HermesOS to $HIVRA
- * before they swap, so the swap can't drop them below it. The switch itself is
+ * Optional for a grandfathered holder once the $HIVRA airdrop is sent: move
+ * their tier from $HermesOS to $HIVRA before they move $HermesOS out of their
+ * verified wallet, so that can't drop them below it. The switch itself is
  * lib/billing/token-access.ts (POST /api/billing/token-access).
  */
 export function SwitchAccessStep() {
@@ -50,15 +51,16 @@ export function SwitchAccessStep() {
   return (
     <div data-testid="convert-switch-access" style={{ display: "grid", gap: 12 }}>
       <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>
-        <strong>Step 1 of 2: switch your access to $HIVRA.</strong> Your tier counts the $HermesOS in your verified
-        wallet. Converting lowers that balance, so switch your access first.
+        <strong>Optional: switch your access to $HIVRA.</strong> Your tier counts the legacy $HermesOS in your
+        verified wallet. If you plan to move $HermesOS out of that wallet, switch your access first so your tier
+        counts $HIVRA instead.
       </p>
       <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>
         For {TOKEN_CONVERSION_GRACE_HOURS} hours after you switch, holding either token keeps your tier. After that,
         only $HIVRA counts. Switching can&apos;t be undone.
       </p>
       <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-        If you don&apos;t want to convert, you don&apos;t need to switch. Your $HermesOS access continues.
+        If you keep your $HermesOS where it is, you don&apos;t need to switch. Your $HermesOS access continues.
       </p>
       <label htmlFor={confirmId} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14, lineHeight: 1.5 }}>
         <input

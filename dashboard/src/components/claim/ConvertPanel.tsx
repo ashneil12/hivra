@@ -6,11 +6,21 @@ import { HERMESOS_CONTRACT_ADDRESS, type ConversionState } from "@/lib/claim/con
 import { SwitchAccessStep } from "./SwitchAccessStep";
 import { TokenAddressChecker } from "./TokenAddressChecker";
 
+// Dormant copy: exactly what the page said before $HIVRA launched. It must not
+// change until the launch block is filled in (it reveals nothing new).
 export const DORMANT_MESSAGE = "Conversion opens after $HIVRA launches; terms are published first.";
-export const ANNOUNCED_MESSAGE = "Conversion is not open yet. Terms are published before it opens.";
 export const PROPOSED_LABEL = "Proposed. Terms are published before conversion opens.";
-export const LIVE_LABEL = "Optional. Read the published terms before you convert.";
-export const GEO_BLOCKED_LABEL = "Conversion is not offered to you.";
+export const DORMANT_TITLE = "Convert $HermesOS to $HIVRA";
+
+// Launched copy: factual only (no price, returns or invitation to buy). It is
+// token-facing copy and needs UK financial-promotion / legal review before any Promote.
+export const LAUNCHED_TITLE = "$HIVRA for $HermesOS holders";
+export const AIRDROP_LABEL = "Sent automatically. There is nothing to claim.";
+export const GEO_BLOCKED_LABEL = "Token details are limited for you.";
+export const SNAPSHOT_PENDING_MESSAGE =
+  "The snapshot is not published yet. This page shows the snapshot block and links to the full list of wallets once it is.";
+export const NO_CLAIM_WARNING =
+  "Hivra never asks you to connect a wallet, sign a message, approve a transaction or pay anything to receive $HIVRA. Any site, message or account that does is not Hivra.";
 
 function formatUtc(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", {
@@ -52,13 +62,13 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-function ContractAddress({ label, address }: { label: string; address: string }) {
+function ContractAddress({ label, address, kind = "token" }: { label: string; address: string; kind?: "token" | "address" }) {
   return (
     <>
       <p style={body}>{label}</p>
       <code style={addressBox}>{address}</code>
       <p style={body}>
-        <a href={`https://basescan.org/token/${address}`} target="_blank" rel="noopener noreferrer">
+        <a href={`https://basescan.org/${kind}/${address}`} target="_blank" rel="noopener noreferrer">
           View on BaseScan
         </a>
       </p>
@@ -66,24 +76,9 @@ function ContractAddress({ label, address }: { label: string; address: string })
   );
 }
 
-/**
- * The optional $HermesOS → $HIVRA conversion page. It never builds or sends a
- * transaction: when conversion is open it links out to the conversion service
- * in lib/claim/conversion-links-config.ts. $HIVRA comes from the token registry.
- */
-export function ConvertPanel({
-  state,
-  geoNotice = null,
-}: {
-  state: ConversionState;
-  /**
-   * Set when the token geo-policy blocks this viewer: no conversion link or
-   * switch step, but their current access (and any post-switch deadline) is
-   * still shown.
-   */
-  geoNotice?: string | null;
-}) {
-  const live = state.status === "open" || state.status === "switch-access";
+type LaunchedState = Extract<ConversionState, { status: "launched" }>;
+
+function DormantPanel({ state, geoNotice }: { state: Extract<ConversionState, { status: "dormant" }>; geoNotice: string | null }) {
   return (
     <article style={{ maxWidth: 720 }}>
       <header style={{ marginBottom: "1.5rem" }}>
@@ -91,15 +86,11 @@ export function ConvertPanel({
           data-testid="convert-proposed-label"
           style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-secondary)", margin: 0 }}
         >
-          {live ? (geoNotice ? GEO_BLOCKED_LABEL : LIVE_LABEL) : PROPOSED_LABEL}
+          {PROPOSED_LABEL}
         </p>
-        <h1 style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", margin: "0.5rem 0 0.75rem" }}>Convert $HermesOS to $HIVRA</h1>
+        <h1 style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", margin: "0.5rem 0 0.75rem" }}>{DORMANT_TITLE}</h1>
         <p style={muted}>
-          {live
-            ? geoNotice
-              ? "Nothing converts automatically."
-              : "Converting is optional and nothing converts automatically. You choose whether to convert."
-            : "As proposed, converting is optional: nothing converts automatically, there is no deadline, and you choose whether to convert."}
+          As proposed, converting is optional: nothing converts automatically, there is no deadline, and you choose whether to convert.
         </p>
       </header>
 
@@ -108,79 +99,20 @@ export function ConvertPanel({
           <p data-testid="token-geo-notice" style={body}>
             {geoNotice}
           </p>
-        ) : state.status === "open" ? (
-          <>
-            <p style={body}>
-              Conversion happens on the service linked below, not inside Hivra.
-            </p>
-            <p style={body}>
-              Read the published terms before you convert. They set out the conversion rate, the fees and any
-              price-movement protection.
-            </p>
-            <p style={{ ...body, display: "flex", flexWrap: "wrap", gap: 16 }}>
-              <a href={state.termsUrl} target="_blank" rel="noopener noreferrer">
-                Read the conversion terms
-              </a>
-              <a href={state.conversionUrl} target="_blank" rel="noopener noreferrer">
-                Go to conversion
-              </a>
-            </p>
-          </>
-        ) : state.status === "switch-access" ? (
-          <>
-            <SwitchAccessStep />
-            <p style={{ ...body, marginTop: "0.75rem" }}>
-              <a href={state.termsUrl} target="_blank" rel="noopener noreferrer">
-                Read the conversion terms
-              </a>
-            </p>
-          </>
         ) : (
           <p data-testid="convert-closed" style={body}>
-            {state.status === "announced" ? ANNOUNCED_MESSAGE : DORMANT_MESSAGE}
+            {DORMANT_MESSAGE}
           </p>
         )}
       </Section>
 
-      {state.status === "dormant" ? (
-        <Section id="convert-access" title="Your access">
-          <p style={body}>
-            Today, platform access counts the $HermesOS in your verified wallet. Converting it, or moving it out of that
-            wallet, lowers that balance. The proposal is that existing holders keep their access and that keeping access
-            and converting stay separate decisions. The final terms will say how this works before conversion opens.
-          </p>
-        </Section>
-      ) : state.status === "announced" ? (
-        <Section id="convert-access" title="Your access">
-          <p style={body}>
-            Keeping access and converting tokens are separate decisions. Billing shows which token your tier counts.
-          </p>
-        </Section>
-      ) : state.status === "open" ? (
-        <Section id="convert-access" title="Your access">
-          {state.graceEndsAt ? (
-            <p style={body}>
-              You switched your access to $HIVRA. Until {formatUtc(state.graceEndsAt)}, holding either token keeps your
-              tier. After that, only $HIVRA counts.
-            </p>
-          ) : null}
-          {geoNotice ? (
-            <p style={body}>Your tier counts $HIVRA. Billing shows your tier.</p>
-          ) : (
-            <p style={body}>
-              Your tier counts $HIVRA. The $HIVRA you receive has to meet your tier&apos;s amount, so check what you will
-              receive before you convert. Billing shows your tier.
-            </p>
-          )}
-        </Section>
-      ) : state.status === "switch-access" && geoNotice ? (
-        <Section id="convert-access" title="Your access">
-          <p style={body}>
-            Your tier counts the $HermesOS in your verified wallet. Converting it, or moving it out of that wallet, lowers
-            that balance. Billing shows your tier.
-          </p>
-        </Section>
-      ) : null}
+      <Section id="convert-access" title="Your access">
+        <p style={body}>
+          Today, platform access counts the $HermesOS in your verified wallet. Converting it, or moving it out of that
+          wallet, lowers that balance. The proposal is that existing holders keep their access and that keeping access
+          and converting stay separate decisions. The final terms will say how this works before conversion opens.
+        </p>
+      </Section>
 
       <Section id="convert-platform-wallet" title="Tokens in a Hivra wallet">
         <p style={body}>
@@ -194,11 +126,7 @@ export function ConvertPanel({
 
       <Section id="convert-contracts" title="Official contracts">
         <ContractAddress label="$HermesOS on Base" address={HERMESOS_CONTRACT_ADDRESS} />
-        {state.status === "dormant" ? (
-          <p style={body}>$HIVRA has not launched. There is no official $HIVRA contract yet.</p>
-        ) : (
-          <ContractAddress label="$HIVRA on Base" address={state.hivraPublishedAddress} />
-        )}
+        <p style={body}>$HIVRA has not launched. There is no official $HIVRA contract yet.</p>
         <p style={muted}>
           Several tokens using the Hivra name already exist on Base. None of them is from Hivra. Hivra never sends
           contract addresses or conversion links in private messages.
@@ -211,4 +139,178 @@ export function ConvertPanel({
       </Section>
     </article>
   );
+}
+
+function AirdropStatus({ state }: { state: LaunchedState }) {
+  return (
+    <>
+      <p style={body}>
+        Every wallet that held $HermesOS at the snapshot block is sent $HIVRA in that same wallet, one $HIVRA for each
+        $HermesOS it held. There is nothing to claim or swap, and you don&apos;t need to do anything.
+      </p>
+      {state.snapshot ? (
+        <>
+          <p data-testid="convert-snapshot-block" style={body}>
+            Snapshot block:{" "}
+            <a href={`https://basescan.org/block/${state.snapshot.block}`} target="_blank" rel="noopener noreferrer">
+              {state.snapshot.block}
+            </a>
+          </p>
+          <p style={body}>
+            <a href={state.snapshot.url} target="_blank" rel="noopener noreferrer">
+              Open the published snapshot
+            </a>{" "}
+            to find your wallet and the $HIVRA it is sent.
+          </p>
+          {state.sentAt ? (
+            <p data-testid="convert-airdrop-sent" style={body}>
+              Every transfer in the snapshot was confirmed on Base by {formatUtc(state.sentAt)}. Your $HIVRA is in the
+              wallet that held your $HermesOS.
+            </p>
+          ) : (
+            <p data-testid="convert-airdrop-pending" style={body}>
+              The $HIVRA has not been sent yet. This page says when every transfer is confirmed.
+            </p>
+          )}
+        </>
+      ) : (
+        <p data-testid="convert-snapshot-pending" style={body}>
+          {SNAPSHOT_PENDING_MESSAGE}
+        </p>
+      )}
+      {state.senderAddress ? (
+        <ContractAddress label="The transfers come from Hivra's airdrop wallet:" address={state.senderAddress} kind="address" />
+      ) : null}
+    </>
+  );
+}
+
+function AccessSection({ state, geoNotice }: { state: LaunchedState; geoNotice: string | null }) {
+  const { access } = state;
+  if (access.kind === "unknown") {
+    return (
+      <Section id="convert-access" title="Your access">
+        <p style={body}>
+          Receiving $HIVRA does not change your access. Billing shows which token your tier counts.
+        </p>
+      </Section>
+    );
+  }
+  if (access.kind === "hivra") {
+    return (
+      <Section id="convert-access" title="Your access">
+        {access.graceEndsAt ? (
+          <p style={body}>
+            You switched your access to $HIVRA. Until {formatUtc(access.graceEndsAt)}, holding either token keeps your
+            tier. After that, only $HIVRA counts.
+          </p>
+        ) : null}
+        <p style={body}>Your tier counts the $HIVRA in your verified wallet. Billing shows your tier.</p>
+      </Section>
+    );
+  }
+  if (access.kind === "switch-available" && !geoNotice) {
+    return (
+      <Section id="convert-access" title="Your access">
+        <SwitchAccessStep />
+      </Section>
+    );
+  }
+  return (
+    <Section id="convert-access" title="Your access">
+      <p style={body}>
+        Your tier counts the legacy $HermesOS in your verified wallet, and that continues. Moving $HermesOS out of that
+        wallet lowers that balance. Billing shows your tier.
+      </p>
+      {access.kind === "hermesos" && !geoNotice ? (
+        <p style={muted}>Once the airdrop is sent, you can choose to switch your access to $HIVRA on this page.</p>
+      ) : null}
+    </Section>
+  );
+}
+
+function LaunchedPanel({ state, geoNotice }: { state: LaunchedState; geoNotice: string | null }) {
+  return (
+    <article style={{ maxWidth: 720 }}>
+      <header style={{ marginBottom: "1.5rem" }}>
+        <p
+          data-testid="convert-proposed-label"
+          style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-secondary)", margin: 0 }}
+        >
+          {geoNotice ? GEO_BLOCKED_LABEL : AIRDROP_LABEL}
+        </p>
+        <h1 style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", margin: "0.5rem 0 0.75rem" }}>{LAUNCHED_TITLE}</h1>
+        <p style={muted}>There is nothing to claim and nothing to swap.</p>
+      </header>
+
+      <Section id="convert-status" title={geoNotice ? "Status" : "The airdrop"}>
+        {geoNotice ? (
+          <p data-testid="token-geo-notice" style={body}>
+            {geoNotice}
+          </p>
+        ) : (
+          <AirdropStatus state={state} />
+        )}
+      </Section>
+
+      <Section id="convert-no-claim" title="Never connect a wallet to claim">
+        <p data-testid="convert-no-claim" style={body}>
+          {NO_CLAIM_WARNING}
+        </p>
+        <p style={muted}>
+          Fake airdrops send lookalike tokens and link to claim sites. Check a token&apos;s contract address against the
+          official contract below before you trust it.
+        </p>
+      </Section>
+
+      <AccessSection state={state} geoNotice={geoNotice} />
+
+      <Section id="convert-platform-wallet" title="Tokens in a Hivra wallet">
+        <p style={body}>
+          If your $HermesOS sits in a wallet Hivra manages for you, the published snapshot shows whether that wallet is
+          included. Wallet shows how to move your tokens to a wallet you control.
+        </p>
+        <p style={body}>
+          <Link href="/dashboard/wallet">Open Wallet</Link>
+        </p>
+      </Section>
+
+      <Section id="convert-contracts" title="Official contracts">
+        <ContractAddress label="$HIVRA on Base" address={state.hivraPublishedAddress} />
+        <ContractAddress label="$HermesOS on Base (legacy)" address={HERMESOS_CONTRACT_ADDRESS} />
+        <p style={muted}>
+          Several tokens using the Hivra name already exist on Base. None of them is from Hivra. Hivra never sends
+          contract addresses or claim links in private messages.
+        </p>
+      </Section>
+
+      <Section id="convert-check" title="Check a token address">
+        <p style={muted}>Paste a contract address to see whether it is one of Hivra&apos;s tokens.</p>
+        <TokenAddressChecker state={state} />
+      </Section>
+    </article>
+  );
+}
+
+/**
+ * The $HermesOS holder page at /dashboard/convert. Before $HIVRA launches it
+ * shows the old proposal copy unchanged. Once the registry names $HIVRA it
+ * explains the push airdrop: no claim, no swap, nothing to connect. It never
+ * builds or sends a transaction and links to no swap. $HIVRA comes from the
+ * token registry; the airdrop facts from lib/claim/hivra-airdrop-config.ts.
+ */
+export function ConvertPanel({
+  state,
+  geoNotice = null,
+}: {
+  state: ConversionState;
+  /**
+   * Set when the token geo-policy blocks this viewer: no airdrop explanation or
+   * switch step, but the official contracts, the no-claim warning and their
+   * current access (and any post-switch deadline) still show.
+   */
+  geoNotice?: string | null;
+}) {
+  if (state.status === "dormant") return <DormantPanel state={state} geoNotice={geoNotice} />;
+  return <LaunchedPanel state={state} geoNotice={geoNotice} />;
 }

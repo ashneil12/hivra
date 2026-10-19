@@ -199,54 +199,64 @@ describe("convert page panel", () => {
     activatesAt: "2026-10-01T16:00:00Z",
   });
   const hivra = validation.status === "configured" ? validation.token : null;
-  const openState = resolveConversionState({
+  const airdrop = {
+    senderAddress: "0x3333333333333333333333333333333333333333",
+    snapshotBlock: 36000000,
+    snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
+    sentAt: "2026-10-02T18:00:00Z",
+  };
+  const now = new Date("2026-10-03T12:00:00Z");
+  const hivraState = resolveConversionState({
     hivra,
     phase: "active",
-    links: { termsUrl: "https://hivra.cloud/token/conversion-terms", conversionUrl: "https://bankr.bot/convert/hivra" },
+    airdrop,
     access: { grandfathered: false, convertedAt: null, conversionGraceEndsAt: null },
+    now,
   });
 
-  it("never shows the conversion link or switch step to a blocked viewer, and keeps the contracts", () => {
-    expect(openState.status).toBe("open");
-    render(<ConvertPanel state={openState} geoNotice={GB_NOTICE} />);
+  it("never shows the airdrop details or switch step to a blocked viewer, and keeps the contracts and the warning", () => {
+    expect(hivraState.status).toBe("launched");
+    render(<ConvertPanel state={hivraState} geoNotice={GB_NOTICE} />);
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
-    expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open the published snapshot" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("convert-snapshot-block")).not.toBeInTheDocument();
     expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
-    expect(screen.queryByText(/check what you will receive before you convert/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("convert-no-claim")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Official contracts" })).toBeInTheDocument();
     expect(screen.getByText("0x1111111111111111111111111111111111111111")).toBeInTheDocument();
   });
 
-  it("still shows a blocked holder who already switched their grace deadline, without the link", () => {
+  it("still shows a blocked holder who already switched their grace deadline", () => {
     const switched = resolveConversionState({
       hivra,
       phase: "active",
-      links: { termsUrl: "https://hivra.cloud/token/conversion-terms", conversionUrl: "https://bankr.bot/convert/hivra" },
+      airdrop,
       access: { grandfathered: true, convertedAt: "2026-10-02T00:00:00.000Z", conversionGraceEndsAt: "2026-10-05T00:00:00.000Z" },
+      now,
     });
     render(<ConvertPanel state={switched} geoNotice={GB_NOTICE} />);
     expect(screen.getByText(/Until 5 October 2026.*holding either token keeps your tier/)).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
-    expect(screen.getByTestId("convert-proposed-label")).toHaveTextContent("Conversion is not offered to you.");
+    expect(screen.getByTestId("convert-proposed-label")).toHaveTextContent("Token details are limited for you.");
   });
 
   it("tells a blocked grandfathered holder what their tier counts, with no switch step", () => {
     const grandfathered = resolveConversionState({
       hivra,
       phase: "active",
-      links: { termsUrl: "https://hivra.cloud/token/conversion-terms", conversionUrl: "https://bankr.bot/convert/hivra" },
+      airdrop,
       access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null },
+      now,
     });
-    expect(grandfathered.status).toBe("switch-access");
+    expect(grandfathered).toMatchObject({ access: { kind: "switch-available" } });
     render(<ConvertPanel state={grandfathered} geoNotice={GB_NOTICE} />);
     expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
-    expect(screen.getByText(/Your tier counts the \$HermesOS in your verified wallet/)).toBeInTheDocument();
+    expect(screen.getByText(/Your tier counts the legacy \$HermesOS in your verified wallet/)).toBeInTheDocument();
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
   });
 
   it("is unchanged without a notice", () => {
-    render(<ConvertPanel state={openState} />);
-    expect(screen.getByRole("link", { name: /go to conversion/i })).toBeInTheDocument();
+    render(<ConvertPanel state={hivraState} />);
+    expect(screen.getByRole("link", { name: "Open the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
   });
 });
