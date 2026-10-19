@@ -405,6 +405,82 @@ fi
   };
 }
 
+const PROBE_MARKER = "HIVRA_MANAGED_BUNDLE_PROBE";
+
+export type ManagedProvisionerBundleProbe =
+  | { kind: "unconfigured"; targetId: string; error: string }
+  | { kind: "unreachable"; targetId: string; error: string }
+  | { kind: "missing"; targetId: string }
+  | {
+      kind: "present";
+      targetId: string;
+      observedVersion: string | null;
+      /** BUNDLE.sha256 is byte-identical to the manifest this deployment writes. */
+      manifestMatches: boolean;
+      /** Every file listed in the host's BUNDLE.sha256 still hashes correctly. */
+      intact: boolean;
+    };
+
+/** Read-only, one SSH call: does this channel's provisioner directory exist,
+ * which VERSION does it claim, is its manifest the one this deployment would
+ * write, and do its files still match that manifest. The convergence cron uses
+ * it to decide whether a host is behind without uploading the bundle. */
+export function managedProvisionerBundleProbeScript(channel: ManagedHivraProvisionerChannel): string {
+  const directory = managedHivraProvisionerChannelConfiguration(channel).runtime.provisionerDirectory;
+  return `set -euo pipefail
+export LC_ALL=C
+DIR=${shellQuote(directory)}
+if [ ! -d "$DIR" ]; then
+  printf '${PROBE_MARKER} present=0\\n'
+  exit 0
+fi
+VERSION_VALUE=""
+if [ -f "$DIR/VERSION" ]; then VERSION_VALUE="$(tr -d '[:space:]' < "$DIR/VERSION")"; fi
+MANIFEST_DIGEST=missing
+INTACT=0
+if [ -f "$DIR/BUNDLE.sha256" ]; then
+  MANIFEST_DIGEST="$(sha256sum < "$DIR/BUNDLE.sha256" | cut -d' ' -f1)"
+  if (cd "$DIR" && sha256sum -c --status BUNDLE.sha256) >/dev/null 2>&1; then INTACT=1; fi
+fi
+printf '${PROBE_MARKER} present=1 version=%s manifest=%s intact=%s\\n' "\${VERSION_VALUE:-missing}" "$MANIFEST_DIGEST" "$INTACT"
+`;
+}
+
+export async function probeManagedProvisionerBundle(
+  channel: ManagedHivraProvisionerChannel,
+  targetId: string,
+  expectedManifestDigest: string,
+  dependencies: Partial<Pick<SyncDependencies, "runHostScript">> = {},
+): Promise<ManagedProvisionerBundleProbe> {
+  const runHostScript = dependencies.runHostScript ?? DEFAULT_DEPENDENCIES.runHostScript;
+  if (!isSafeManagedProvisionerTargetId(targetId) || !targetIsConfigured(targetId, process.env)) {
+    return { kind: "unconfigured", targetId, error: "Target is not in the configured managed host rotation." };
+  }
+  const candidate = resolveProxmoxTargetConfiguration(process.env, targetId);
+  const result = await runHostScript(managedProvisionerBundleProbeScript(channel), candidate.env, {
+    timeoutMs: 20_000,
+    maxOutputBytes: 4096,
+  });
+  const line = result.stdout.split("\n").find((entry) => entry.startsWith(`${PROBE_MARKER} `));
+  if (!result.ok || !line) {
+    return {
+      kind: "unreachable",
+      targetId,
+      error: result.error ?? (result.stderr.slice(0, 300) || "Bundle probe marker was missing."),
+    };
+  }
+  if (line === `${PROBE_MARKER} present=0`) return { kind: "missing", targetId };
+  const match = line.match(/ present=1 version=(\S+) manifest=(\S+) intact=([01])$/);
+  if (!match) return { kind: "unreachable", targetId, error: "Bundle probe output was malformed." };
+  return {
+    kind: "present",
+    targetId,
+    observedVersion: match[1] === "missing" ? null : match[1],
+    manifestMatches: match[2] === expectedManifestDigest,
+    intact: match[3] === "1",
+  };
+}
+
 export async function syncManagedProvisionerBundle(
   channel: ManagedHivraProvisionerChannel,
   targetId: string,

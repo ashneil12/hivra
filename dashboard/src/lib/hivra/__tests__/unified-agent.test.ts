@@ -32,3 +32,14 @@ describe("unifyAll typeLabel", () => {
     expect(unifyAll([], [agent])[0].typeLabel).toBe("Codex");
   });
 });
+
+describe("unifyAll software", () => {
+  const codex = (agent_software: unknown) => ({ id: "a1", name: "CODEX_AGENT", type: "codex", status: "running", agent_software } as unknown as HivraAgent);
+
+  it("carries the list's software summary only when there is something to say", () => {
+    const behind = { badge: "update_available", cli: "codex", installed: "0.140.0", tested: "0.149.1" };
+    expect(unifyAll([], [codex(behind)])[0].software).toEqual(behind);
+    expect(unifyAll([], [codex({ badge: null, cli: "codex", installed: "0.149.1", tested: "0.149.1" })])[0].software).toBeNull();
+    expect(unifyAll([], [codex(undefined)])[0].software).toBeNull();
+  });
+});

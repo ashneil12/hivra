@@ -181,6 +181,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/sync-managed-provisioner-bundles",
+      "schedule": "*/10 * * * *"
+    },
+    {
       "path": "/api/cron/detect-proxmox-orphans",
       "schedule": "0 */6 * * *"
     },
@@ -255,6 +259,10 @@
     {
       "path": "/api/cron/reconcile-soul-seeds",
       "schedule": "*/20 * * * *"
+    },
+    {
+      "path": "/api/cron/update-hivra-agent-clis",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

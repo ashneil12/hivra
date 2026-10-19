@@ -14,6 +14,7 @@ import {
   type ManagedHivraProvisionerChannel,
 } from "./managed-provisioner-channel";
 import { shellQuote } from "./proxmox-target";
+import { HOST_READINESS_TIMEOUT_MS } from "./lifecycle-timeouts";
 
 export { MANAGED_HIVRA_RUNTIME_PATHS } from "./managed-provisioner-channel";
 
@@ -133,7 +134,7 @@ export async function checkManagedHivraHostReadiness(
     candidate.purpose,
     candidate.requireModelSettings,
   ), candidate.env, {
-    timeoutMs: 20_000,
+    timeoutMs: HOST_READINESS_TIMEOUT_MS,
   });
   if (result.ok && result.stdout.includes("HIVRA_HOST_READY")) return { ok: true };
 
