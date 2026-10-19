@@ -486,10 +486,69 @@ to a section (the launch's Open it to delete) opens it, while a launch's own
 landing (`?welcome=1`, a Linux Sandbox's `?tab=manage`) keeps the setup
 progress and opens Manage once the computer is ready. While another operation
 holds a computer, the page reads it again every 5 s so the controls it blocks
-come back when it ends. Not built: the Agents section's attach panel (its
-extension point is empty until attach lands), the agent-software version and
-automatic updates in Updates, disk grow, Hetzner power-off, and power or resize
-for Windows on My server.
+come back when it ends. Not built: disk grow, Hetzner power-off, and power or resize for Windows on My
+server. The Agents section holds the attach work's ComputerAgentsPanel.
+
+**Claude Code and Codex updates (built 2026-09-25, ported to canary
+2026-10-20; the automatic sweep ships off).** Vendor self-updaters stay off on Hivra computers; the release
+pins a tested version per CLI (`provisioner/agent-cli-versions.json`,
+`AGENT_CLI_VERSIONS`), and the in-place connection-service update moves the CLI
+to it once no reply is being written, putting the previous version back if the
+new one doesn't install. What an owner sees:
+
+- *Current.* Hivra reads the computer on the server only
+  (`lib/hivra/agent-cli-meta.ts`): the public `/api/meta` first, and only when
+  that proves a current connection service of the agent's kind, the same
+  endpoint with the computer's bearer, which never reaches the browser for
+  this. One interpretation (`lib/hivra/agent-cli-status.ts`) serves the owner
+  API (`GET/PATCH /api/hivra/agents/[id]/agent-software`), the agents list
+  (stored readings only, one query, no computer reads), the header chip beside
+  the agent's name and Manage › Updates. "Update available" means behind
+  Hivra's tested version, never behind the vendor's newest release; a newer
+  version the owner installed is shown as newer than tested and never
+  offered as an update. An agent whose connection service predates version
+  reporting (no `bootId` in its public meta, a proxy tied to release
+  2026.09.24.2 until the gateway reports its release) is asked to update the
+  connection service instead. Aeon, OpenClaw and Agent Zero get only that
+  older-connection-service line: their own versions are not reported anywhere
+  a dashboard can read, and nothing updates them. Each is pinned once at
+  provision (`provision-claude-code-box.sh`: Aeon a git commit, `AEON_REF`;
+  OpenClaw an npm version, `OPENCLAW_VERSION`; Agent Zero an image digest,
+  `AGENT_ZERO_IMAGE_DIGEST`), and the connection-service update refreshes only
+  Hivra's own chat service on the computer, not these apps. DeepSeek, computers, attached Codex, DigitalOcean
+  sessions, My cloud and Linux Sandboxes are not covered.
+- *Update now* is the lifecycle route's `update_runtime`, now one shared
+  function (`lib/hivra/agent-runtime-update.ts`) with the same host readiness,
+  binding tag, operation lease and receipt; refusals carry a code
+  (`host_not_ready`, `busy`, `not_running`, `unverified`) for Manage's copy.
+  Readings, requests and the owner's choice live in `hivra_agent_cli_updates`
+  (migration 20260925140000, service role only).
+- *Automatic updates* (`/api/cron/update-hivra-agent-clis`, every 30 minutes)
+  ship dark: `HIVRA_AGENT_CLI_AUTO_UPDATE` unset or `off` reads nothing,
+  `preview` reads agents and reports what it would update, `on` updates. Each
+  run reads up to 40 agents and updates at most 5, one per host, only when the
+  owner's choice (default on for Hivra Cloud, off for My server; the toggle is
+  shown only while the switch is `on`) allows it, the version was reported and
+  is behind (or ahead only because Hivra lowered its tested version after
+  installing it; a newer version the owner installed after an update was
+  deferred or failed is theirs and is never moved back down), the target isn't paused after an automatic failure, no reply
+  is being written, no agent terminal is attached, nothing was used for 30
+  minutes, the owner's account still exists (Hivra checks it; one it can't
+  confirm counts as deleted), and the per-target claim allows one request
+  every 20 hours. A run that updates stops starting computer reads after 7 s,
+  so the agents it read can still be checked and claimed in time. The
+  claim function is the authority on the owner's choice and the pause, so a
+  stale read can't override them, and a run that can't read the stored
+  choices reads and updates nobody. Only `host_not_ready` and `busy` leave
+  the 20-hour cooldown open; any other refusal holds it. No update is claimed
+  after 25 s into a run, so its host readiness check and 240 s host script
+  end inside the function's 300 s.
+- *Target / not built.* A `release` field and per-kind software versions in
+  authenticated meta (box side), updaters for Aeon, OpenClaw and Agent Zero, a
+  Home card, and a separate operation kind so an automatic update doesn't hold
+  the owner's Stop/Restart with "another action is running". Flipping the
+  switch to `on` is a fleet rollout decision: canary first, then production
+  after the migration, Promote and env.
 
 Updates says how every kind of computer is kept up to date (2026-10-19). Where
 Hivra's connection service runs, it offers Update connection service. Where it
