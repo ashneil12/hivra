@@ -125,6 +125,10 @@ export const config = {
      * - exactly /api/activity/collector/renew: the guest reporter renews that
      *   same collector capability with the capability itself; the route
      *   verifies it and the computer's ownership. Clerk cannot decode it.
+     * - exactly /api/agent-link: an agent's own CLI calls it with the agent's
+     *   link key, which the route verifies (the key names one agent, and that
+     *   agent's linked computers are read on every request). Clerk cannot
+     *   decode it. The owner routes under /api/hivra/agent-links stay covered.
      * - exactly /api/infrastructure/server-enrollments/report: the server
      *   setup script's one-time code is authenticated by the receiver, not as
      *   a Clerk token. The owner routes beside it stay covered by Clerk.
@@ -162,8 +166,8 @@ export const config = {
      * the box's own dashboard in a cross-origin iframe (WebuiIframe). No SSE
      * route needs a bypass, so there is no SSE bypass list.
      */
-    "/((?!_next|api/instances/[^/]+/aeon-gate$|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/api/((?!instances/[^/]+/aeon-gate$|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$).*)",
+    "/((?!_next|api/instances/[^/]+/aeon-gate$|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|api/agent-link$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/api/((?!instances/[^/]+/aeon-gate$|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$|agent-link$).*)",
     "/trpc/(.*)",
     "/((?!_next/).*%[0-9A-Fa-f]{2}.*)",
   ],

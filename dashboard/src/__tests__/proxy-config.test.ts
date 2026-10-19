@@ -80,7 +80,7 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$", "agent-link$"]);
   });
 
   // The exclusion used to end at "aeon-gate" with no `$`, unlike every other
@@ -138,6 +138,14 @@ describe("proxy config", () => {
     const { config } = await import("@/proxy");
     expect(unstable_doesMiddlewareMatch({ config, url: "/api/activity/collector/renew" })).toBe(false);
     for (const url of ["/api/activity/collector", "/api/activity/collector/renew/extra", "/api/activity/collector/renew-other", "/api/activity/collector/other"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("lets an agent's CLI use its link key without exempting the owner's link routes", async () => {
+    const { config } = await import("@/proxy");
+    expect(unstable_doesMiddlewareMatch({ config, url: "/api/agent-link" })).toBe(false);
+    for (const url of ["/api/agent-link/extra", "/api/agent-links", "/api/hivra/agent-links", "/api/agent-link-other"]) {
       expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
     }
   });

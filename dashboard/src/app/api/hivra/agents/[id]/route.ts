@@ -76,6 +76,9 @@ import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
+import { isAgentLinksEnabled } from "@/lib/agent-links/flag";
+import { agentLinkEndpoint, syncAgentLinkKit } from "@/lib/agent-links/kit-delivery";
+import { loadKeyRecord } from "@/lib/agent-links/store";
 import {
   parseActivityCollectorMarker,
   recordCollectorInstallResult,
@@ -1005,6 +1008,16 @@ fi` : ""}`;
           { deadline: pollStartedAt + BACKGROUND_UPKEEP_DEADLINE_MS }),
         { source: "hivra/agents/[id]", failureType: "computer_contract_step_skipped", userId, agentId: String(snapshot.id) },
       );
+    }
+
+    // Linked computers: a link that changed while this agent was stopped
+    // reaches it now. Only an agent whose kit is marked out of date is read.
+    if (isAgentLinksEnabled() && current.status === "running" && current.ip) {
+      const linkAgentId = String(current.id), endpoint = agentLinkEndpoint(req.nextUrl.origin);
+      runAfterResponse(async () => {
+        const record = await loadKeyRecord(linkAgentId);
+        if (record && record.kit_sha256 === null) await syncAgentLinkKit(userId, linkAgentId, endpoint);
+      }, { source: "hivra/agents/[id]", failureType: "agent_link_kit_sync_skipped", userId, agentId: linkAgentId });
     }
 
     return apiSuccess({ agent: publicAgent(current) });
