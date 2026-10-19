@@ -450,14 +450,26 @@ function resolveWebUIAgentImage(
 export function resolveInstanceAgentImageRepo(
   config: Record<string, unknown> | null | undefined
 ): string | null {
+  const image = resolveInstanceAgentUpdateImage(config);
+  return image ? imageRepoOf(image) : null;
+}
+
+/**
+ * The full image reference (with its tag or digest) an UPDATE of this stored
+ * instance config pulls when the release registry does not govern the box:
+ * the same reference the update script's `docker pull` uses. Null when the
+ * row has no resolvable image.
+ */
+export function resolveInstanceAgentUpdateImage(
+  config: Record<string, unknown> | null | undefined
+): string | null {
   let stored: string | undefined;
   try {
     stored = resolveAgentImageForStoredConfig(config);
   } catch {
     return null;
   }
-  const image = resolveWebUIAgentImage({ agentImage: stored } as WebUIDeployParams, "update");
-  return imageRepoOf(image);
+  return resolveWebUIAgentImage({ agentImage: stored } as WebUIDeployParams, "update");
 }
 
 function shellSingleQuote(value: string): string {

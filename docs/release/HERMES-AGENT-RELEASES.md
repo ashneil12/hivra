@@ -37,7 +37,11 @@ runs.
 
 A repository the registry has no release of yet is not governed: its boxes follow
 `:stable` exactly as before. The first registered release of a repository switches it
-over. From then on, a lookup the box cannot complete (dashboard unreachable, nothing
+over. While a box is not governed, the agent page compares the digest the box reported
+with the digest its floating tag points at now (looked up on GHCR, cached for five
+minutes) and offers Update when they differ, so owners can take a newer `:stable`
+build as soon as it is published instead of waiting for the idle roller. A paused,
+failed or rolled-back update always offers Try again, which reruns the same update. From then on, a lookup the box cannot complete (dashboard unreachable, nothing
 offered) leaves the box where it is. It never falls back to a floating tag.
 
 ## Registering and promoting a release
