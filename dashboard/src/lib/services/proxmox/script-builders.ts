@@ -1627,12 +1627,13 @@ export function buildProxmoxPowerScript(params: {
    * action — onboot drift is self-healing via the fleet-status-reconcile cron.
    */
   setOnboot?: 0 | 1;
+  verifyOnboot?: boolean;
 }): string {
   const timeout = Math.max(
     1,
     Math.min(600, Math.floor(params.shutdownTimeoutSeconds ?? 90))
   );
-  const onbootScript =
+  let onbootScript =
     params.setOnboot === undefined
       ? ""
       : `qm set ${params.vmid} --onboot ${params.setOnboot} >/dev/null 2>&1 || true
@@ -1677,6 +1678,19 @@ qm reboot ${params.vmid} --timeout ${timeout} || {
   qm shutdown ${params.vmid} --timeout ${timeout} || qm stop ${params.vmid} --skiplock 1
   qm start ${params.vmid}
 }
+`;
+  }
+
+  if (params.verifyOnboot) {
+    if (params.setOnboot === undefined) throw new Error("Strict autostart verification needs a desired value");
+    onbootScript = `ONBOOT_FAILED=0
+qm set ${params.vmid} --onboot ${params.setOnboot} >/dev/null 2>&1 || ONBOOT_FAILED=1
+`;
+    actionScript = `perform_power_action() {
+${actionScript.replaceAll("exit 0", "return 0").replaceAll("exit 65", "return 65")}}
+perform_power_action
+ONBOOT="$(qm config ${params.vmid} | sed -n 's/^onboot:[[:space:]]*//p')"
+[ "$ONBOOT_FAILED" = "0" ] && [ "\${ONBOOT:-0}" = "${params.setOnboot}" ] || { echo "HERMES_ONBOOT_UNCONFIRMED" >&2; exit 66; }
 `;
   }
 

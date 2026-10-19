@@ -42,28 +42,26 @@ function accountRequest(body: unknown) {
   });
 }
 
-function buildDb(instances: Array<{ id: string; name: string | null }>) {
+function buildDb(instances: Array<{ id: string; name: string | null }>, computers: { id: string }[] = []) {
   const tokensDeleteEq = jest.fn().mockResolvedValue({ error: null });
+  const listOr = jest.fn().mockReturnValue({ returns: jest.fn().mockResolvedValue({ data: instances, error: null }) });
   mockedFrom.mockImplementation((table: string) => {
     if (table === "hermes_instances") {
       return {
         select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            neq: jest.fn().mockReturnValue({
-              neq: jest.fn().mockReturnValue({
-                returns: jest.fn().mockResolvedValue({ data: instances, error: null }),
-              }),
-            }),
+            or: listOr,
           }),
         }),
       };
     }
+    if (table === "hivra_agents") return { select: jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ neq: jest.fn().mockResolvedValue({ data: computers, error: null }) }) }) };
     if (table === "device_tokens") {
       return { delete: jest.fn().mockReturnValue({ eq: tokensDeleteEq }) };
     }
     throw new Error(`unexpected table ${table}`);
   });
-  return { tokensDeleteEq };
+  return { tokensDeleteEq, listOr };
 }
 
 beforeEach(() => {
@@ -167,4 +165,20 @@ describe("DELETE /api/mobile/account", () => {
     expect(response.status).toBe(502);
     expect(deleteUserMock).not.toHaveBeenCalled();
   });
+});
+
+it("refuses account closure before live Hivra computers are removed", async () => {
+  buildDb([], [{ id: "computer-1" }]);
+  const response = await DELETE(accountRequest({ confirm: "DELETE_MY_ACCOUNT" }));
+  expect(response.status).toBe(409);
+  expect(deleteUserMock).not.toHaveBeenCalled();
+});
+
+it("includes inconsistent and null lifecycle rows in verified teardown", async () => {
+  const rows = [{ id: "drift-1", name: "Drift", status: "deleted", lifecycle_state: "active" }, { id: "drift-2", name: "Unknown", status: "running", lifecycle_state: null }];
+  const { listOr } = buildDb(rows);
+  const response = await DELETE(accountRequest({ confirm: "DELETE_MY_ACCOUNT" }));
+  expect(response.status).toBe(200);
+  expect(listOr).toHaveBeenCalledWith("status.neq.deleted,lifecycle_state.neq.deleted,status.is.null,lifecycle_state.is.null");
+  expect(mockedDeleteInstance).toHaveBeenCalledTimes(2);
 });

@@ -146,7 +146,7 @@
     },
     {
       "path": "/api/cron/check-orphaned-instances",
-      "schedule": "0 9 * * 1"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/warn-stale-suspended-instances",

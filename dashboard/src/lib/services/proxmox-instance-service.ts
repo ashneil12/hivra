@@ -2576,6 +2576,7 @@ export async function shutdownProxmoxInstance(
     /** Pass 0 when pausing for inactivity/capacity so a host reboot doesn't
      * auto-start the paused VM. Undefined leaves onboot untouched. */
     setOnboot?: 0 | 1;
+    verifyOnboot?: boolean;
   }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
@@ -2587,6 +2588,7 @@ export async function shutdownProxmoxInstance(
     action: "shutdown",
     shutdownTimeoutSeconds: deps.shutdownTimeoutSeconds,
     setOnboot: deps.setOnboot,
+    verifyOnboot: deps.verifyOnboot,
   });
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
   return runner(script);
