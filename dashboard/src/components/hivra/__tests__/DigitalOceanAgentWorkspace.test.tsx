@@ -40,6 +40,7 @@ jest.mock("@/lib/hivra/managed-session-client", () => {
 });
 
 import { DigitalOceanAgentWorkspace, setupNoteReminder } from "../DigitalOceanAgentWorkspace";
+import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import { formatContractTime } from "../ComputerContractPanel";
 import { ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
 import type { ManagedSessionDto } from "@/lib/hivra/managed-session-contracts";
@@ -308,5 +309,21 @@ describe("Manage on the shared sections", () => {
     fireEvent.click(confirm);
     await waitFor(() => expect(mockChange).toHaveBeenCalledWith(AGENT, "delete"));
     await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+  });
+});
+
+// The real capability map adds Updates for a DigitalOcean session; its tab
+// must open a panel that says why there is nothing to update, not a blank one.
+describe("Updates for a DigitalOcean session", () => {
+  it("says the software is DigitalOcean's", async () => {
+    const manage = manageCapabilitiesFor({ id: AGENT, name: "Codex", type: "codex", status: "running",
+      computer_substrate: "do-managed-session", deployment_mode: "self-managed", cpu: 2, ram: 4 }, { preparedMatch: false });
+    mockGetWithExpiry.mockResolvedValue({ session, credentialExpiry: null });
+    window.history.replaceState(null, "", "/dashboard/agent/do-agent");
+    render(<DigitalOceanAgentWorkspace agentId={AGENT} manage={manage} onDeleted={jest.fn()} />);
+    await screen.findByText("chat surface");
+    fireEvent.click(screen.getByRole("tab", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+    expect(screen.getByTestId("manage-self-update")).toHaveTextContent("DigitalOcean runs this session's agent software");
   });
 });

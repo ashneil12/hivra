@@ -191,6 +191,14 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
         </section>
       </ManagePanel>
 
+      {manage?.selfUpdate ? (
+        <ManagePanel id="updates" selected={selected}>
+          <section style={box} data-testid="manage-self-update">
+            {manage.selfUpdate.lines.map(line => <span key={line}>{line}</span>)}
+          </section>
+        </ManagePanel>
+      ) : null}
+
       <ManagePanel id="command" selected={selected}>
         <section style={box}>
           <label style={field}>Command<textarea aria-label="Terminal command" value={command} onChange={event => setCommand(event.target.value)}
