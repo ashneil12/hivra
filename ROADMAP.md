@@ -43,9 +43,9 @@ existing computer stays Canary-only even then (see Next, item 5).
 3. **Hivra desktop app for Mac, Windows and Linux.** The current Mac alpha stays
    until the new app matches it. Needs: engineering, code signing for each
    platform, and the separate release approval Slice 7 requires.
-4. **Better testing.** First, in progress: Dashboard checks on every merge into
+4. **Better testing.** Done on `canary`: Dashboard checks on every merge into
    `canary`, a check that every test file runs somewhere, and size limits for
-   what Hivra sends to a computer. Then fixtures for computers made by older
+   what Hivra sends to a computer. Next: fixtures for computers made by older
    releases, browser journeys on Canary, and a nightly check on real Canary
    computers. Needs: engineering, and the owner for required-check settings and
    a nightly test account.
