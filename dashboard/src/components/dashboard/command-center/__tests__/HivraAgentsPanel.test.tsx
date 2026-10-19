@@ -59,6 +59,29 @@ describe("HivraAgentsPanel", () => {
     expect(within(provider).getByTestId("agent-computer-pair")).toHaveTextContent("· On its own computer · My cloud");
   });
 
+  it("tags an agent whose Codex is behind Hivra's tested version, from the list alone", async () => {
+    listAgentsResultMock.mockResolvedValue({
+      agents: [
+        { ...codeAgent, agent_software: { badge: "update_available", cli: "codex", installed: "0.140.0", tested: "0.149.1" } },
+        { ...codeAgent, id: "agent-2", name: "Fresh Agent", agent_software: { badge: null, cli: "codex", installed: "0.149.1", tested: "0.149.1" } },
+        { ...codeAgent, id: "agent-3", name: "Busy Agent", agent_software: { badge: "updating", cli: "codex", installed: "0.140.0", tested: "0.149.1" } },
+        { ...codeAgent, id: "agent-4", name: "Stuck Agent", agent_software: { badge: "update_failed", cli: "codex", installed: "0.140.0", tested: "0.149.1" } },
+      ],
+      error: null,
+    });
+    render(<HivraAgentsPanel />);
+    const behind = (await screen.findByText("Code Agent")).closest("button")!;
+    const tag = within(behind).getByTestId("agent-software-tag");
+    expect(tag).toHaveTextContent("Update available");
+    expect(tag).toHaveAttribute("title", "Codex 0.140.0 is installed and Hivra has tested 0.149.1. Open the agent, then Updates.");
+    expect(behind).toHaveAccessibleName("Open Code Agent, Codex, on its own computer, 2 CPU / 4 GB, Running, Update available");
+    expect(within(screen.getByText("Fresh Agent").closest("button")!).queryByTestId("agent-software-tag")).not.toBeInTheDocument();
+    expect(within(screen.getByText("Busy Agent").closest("button")!).getByTestId("agent-software-tag")).toHaveTextContent("Updating");
+    expect(within(screen.getByText("Stuck Agent").closest("button")!).getByTestId("agent-software-tag")).toHaveTextContent("Update didn't finish");
+    // The list never reads a computer for this.
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("agent-software"), expect.anything());
+  });
+
   it("keeps computers and deleted resources out of the agent inventory", async () => {
     listAgentsResultMock.mockResolvedValue({
       agents: [

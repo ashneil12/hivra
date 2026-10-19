@@ -1,0 +1,4 @@
+/* The chip's short word ("Update") is for phone-width pages, which swap it in
+   for the full one (the agent page's ResourceWorkspace.module.css); everywhere
+   else the full words show. */
+.short { display: none; }
