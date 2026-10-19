@@ -11,6 +11,13 @@ export type ReleaseUpdateHealth = 'ok' | 'paused' | 'failed' | 'rolled_back';
 
 export interface ReleaseStatus {
   channel: string | null;
+  /** The release registry decides what this agent runs. */
+  governed?: boolean;
+  /**
+   * Where `target` comes from: a registered release, or (while the registry
+   * does not govern the agent) the floating tag its update pulls.
+   */
+  source?: 'release' | 'floating' | null;
   currentVersion: string | null;
   currentDigest: string | null;
   reportedAt: string | null;
