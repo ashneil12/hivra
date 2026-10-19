@@ -7,6 +7,7 @@ import {
   type OmarchyGuardianGrant as GuardianGrant,
 } from "@/lib/remote-computers/omarchy-native-guardian-host";
 import {
+  isAcceptedOmarchyNativeBuild,
   OMARCHY_DESKTOP_SESSION_REVISION,
   type PreparedOmarchyNativeDescriptor,
 } from "@/lib/remote-computers/omarchy-native-capability";
@@ -61,6 +62,10 @@ export function buildOmarchyNativeGuardianGrant(params: {
   nowMs?: number;
   leaseId?: string;
 }): GuardianGrant | null {
+  // The browser desktop accepts any Omarchy 4 build its owner updates to, but
+  // a native grant starts Sunshine with a configuration written for one
+  // release, so it still needs an exact validated build.
+  if (!isAcceptedOmarchyNativeBuild(params.descriptor.omarchyPackageVersion, params.descriptor.sunshineVersion)) return null;
   const nowMs = params.nowMs ?? Date.now();
   const observedAtMs = Date.parse(params.descriptor.observedAt);
   const expiresAtMs = Date.parse(params.session.expiresAt);

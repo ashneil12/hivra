@@ -193,6 +193,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // and exact-computer authority boundary as installation.
     loadAgent: async candidateId => candidateId === id ? ownerAgent : null,
   });
+  // The owner updated this Omarchy desktop to a new major release Hivra has
+  // not checked. Preparing would only reinstall Hivra's files and fail the
+  // same check, so say why and change nothing, for refresh and prepare alike.
+  if (inspected.code === "omarchy_major_unvalidated") {
+    return response({ success: false, error: inspected.error, code: "omarchy_major_unvalidated" }, 409);
+  }
   const omarchyDescriptorReady = inspectionRuntime.runtime.profile !== "omarchy"
     || inspected.nativeDescriptor != null;
   const windowsDescriptorReady = inspectionRuntime.runtime.profile !== "windows"

@@ -307,6 +307,21 @@ describe("POST /api/hivra/agents/[id]/remote-desktop", () => {
     expect(mockInstall).not.toHaveBeenCalled();
   });
 
+  // An owner who updates Omarchy to a new major release Hivra hasn't checked
+  // must be told why the desktop won't open, and preparing must not run: it
+  // would only reinstall Hivra's files and fail the same check every time.
+  it.each(["prepare", "refresh"])("explains an unvalidated Omarchy major on %s and prepares nothing", async action => {
+    agent = { ...agent, computer_profile: "omarchy" };
+    mockInspect.mockResolvedValue({ ok: false, agentId: ID, targetId: "fixturenode11", vmid: 1112,
+      code: "omarchy_major_unvalidated", error: "This computer was updated to a new major Omarchy release that Hivra hasn't checked yet." });
+    const response = await POST(request({ action }), params);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ success: false, code: "omarchy_major_unvalidated",
+      error: "This computer was updated to a new major Omarchy release that Hivra hasn't checked yet." });
+    expect(mockPrepareOmarchy).not.toHaveBeenCalled();
+    expect(mockInstall).not.toHaveBeenCalled();
+  });
+
   it("returns the exact pending Omarchy operation without replaying it in the route", async () => {
     agent = { ...agent, computer_profile: "omarchy" };
     mockPrepareOmarchy.mockResolvedValue({ ok: false, agentId: ID, targetId: "fixturenode11", vmid: 1112,

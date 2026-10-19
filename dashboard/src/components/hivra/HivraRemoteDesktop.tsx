@@ -686,7 +686,8 @@ export function HivraRemoteDesktop({
           setState("desktop-upgrade-required");
           setMessage(scrubDesktopUserMessage(refreshPayload.error || "This desktop needs an update to establish its shared-folder identity. This check did not install or change anything."));
           return;
-        } else if (refreshPayload?.code === "legacy_identity_unbound" || refreshPayload?.code === "unsupported_computer") {
+        } else if (refreshPayload?.code === "legacy_identity_unbound" || refreshPayload?.code === "unsupported_computer"
+          || refreshPayload?.code === "omarchy_major_unvalidated") {
           setState("upgrade-required");
           setMessage(scrubDesktopUserMessage(refreshPayload.error || "This computer needs a current launch before Desktop can open."));
           return;
@@ -785,7 +786,8 @@ export function HivraRemoteDesktop({
               fail(preparePayload?.code);
               if (isLifecycleBlocked(preparePayload?.code)) {
                 setState("blocked");
-              } else if (preparePayload?.code === "legacy_identity_unbound" || preparePayload?.code === "unsupported_computer") {
+              } else if (preparePayload?.code === "legacy_identity_unbound" || preparePayload?.code === "unsupported_computer"
+                || preparePayload?.code === "omarchy_major_unvalidated") {
                 setState("upgrade-required");
               } else if (
                 preparePayload?.code === "provider_desktop_refresh_required"
@@ -1399,7 +1401,8 @@ export function HivraRemoteDesktop({
       if (!preparedOk) {
         if (isLifecycleBlocked(payload?.code)) {
           setState("blocked");
-        } else if (payload?.code === "legacy_identity_unbound" || payload?.code === "unsupported_computer") {
+        } else if (payload?.code === "legacy_identity_unbound" || payload?.code === "unsupported_computer"
+          || payload?.code === "omarchy_major_unvalidated") {
           setState("upgrade-required");
         } else {
           setState(payload?.code === "canary_desktop_prepare_paused" ? "prepare-paused"
