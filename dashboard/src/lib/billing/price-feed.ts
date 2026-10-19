@@ -464,7 +464,7 @@ async function readPoolMedianCloseNative(
       observed: { stage: "reference", poolId, quoteAddress: quote },
     });
   }
-  const list =Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
+  const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
   const nowSec = Math.floor(nowMs / 1000);
   const candles = list
     .filter((c): c is number[] => Array.isArray(c) && c.length >= 5)
