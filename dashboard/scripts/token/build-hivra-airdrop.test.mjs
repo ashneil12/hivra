@@ -75,7 +75,7 @@ test("share of supply rounds up to 2 decimals", () => {
 
 test("exclusions, zero balances and remaps shape the public document", () => {
   const { publicDocument, summary, warnings } = fixture();
-  assert.deepEqual(summary, { holders: 5, remapped: 1, excluded: 1, zeroBalance: 1, batches: 3, sentBatches: 0 });
+  assert.deepEqual(summary, { holders: 5, recipients: 5, remapped: 1, excluded: 1, zeroBalance: 1, batches: 3, sentBatches: 0 });
   assert.deepEqual(publicDocument.excluded, [{ address: POOL, label: "Uniswap pool" }]);
   assert.equal(publicDocument.totals.excludedWei, "5000000000000000000000");
   assert.match(warnings.join("\n"), /exclusion 0x0+63 is not in the snapshot/);
@@ -168,4 +168,86 @@ test("main writes the files, passes the totals check, and refuses private files 
   assert.equal(main(["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson, "--batches-dir", path.join(dir, "b")], quiet, dir), 2);
   assert.match(errors.join("\n"), /--batches-dir must be outside the repository/);
   assert.equal(main(["--snapshot", snapshot], quiet, dir), 2);
+});
+
+test("a destination shared by several holders gets one Disperse line with the exact sum", () => {
+  const SECOND = A(0xa3);
+  const rows = parseSnapshotCsv(
+    [
+      "address,balance_wei",
+      `${A(1)},1000000000000000001`, // 1.000000000000000001, also a managed wallet's owner
+      `${MANAGED},2500000000000000000`, // send_to A(1)
+      `${SECOND},3`, // send_to OWNER
+      `${KEPT},4`, // send_to OWNER too
+    ].join("\n"),
+  );
+  const result = buildAirdrop({
+    rows,
+    remap: parseRemap({
+      [MANAGED]: { send_to: A(1), kind: "remap" },
+      [SECOND]: { send_to: OWNER, kind: "remap" },
+      [KEPT]: { send_to: OWNER.toUpperCase().replace("0X", "0x"), kind: "remap" },
+    }),
+    snapshotBlock: 1,
+    batchSize: 1,
+  });
+  assert.equal(result.summary.holders, 4);
+  assert.equal(result.summary.recipients, 2);
+  assert.deepEqual(result.batches.map((b) => b.lines), [[`${A(1)} 3.500000000000000001`], [`${OWNER} 0.000000000000000007`]]);
+  assert.equal(result.batches.reduce((sum, b) => sum + b.totalWei, 0n), result.includedWei);
+  assert.equal(result.includedWei, 3500000000000000008n);
+  // Every holder still has its own exact public amount, and points at the merged line's batch.
+  const holders = Object.fromEntries(result.publicDocument.holders.map((h) => [h.address, h]));
+  assert.deepEqual(holders[A(1)], { address: A(1), amountWei: "1000000000000000001", batch: 1 });
+  assert.equal(holders[MANAGED].remapped, true);
+  assert.deepEqual(result.publicDocument.batches.map((b) => [b.recipients, b.totalWei]), [[1, "3500000000000000001"], [1, "7"]]);
+  const sent = buildAirdrop({ rows, remap: parseRemap({ [MANAGED]: { send_to: A(1) } }), snapshotBlock: 1, batchSize: 1, sentTxs: { 1: HASH } });
+  assert.equal(sent.publicDocument.holders.find((h) => h.address === MANAGED).sent, true);
+});
+
+test("the max total guard refuses an airdrop larger than the wallet's allocation", () => {
+  const rows = parseSnapshotCsv(`address,balance_wei\n${A(1)},600\n${A(2)},400`);
+  assert.equal(buildAirdrop({ rows, snapshotBlock: 1, maxTotalWei: 1000n }).includedWei, 1000n);
+  assert.throws(() => buildAirdrop({ rows, snapshotBlock: 1, maxTotalWei: 999n }), (error) => error instanceof InputError && /more than the airdrop wallet's allocation/.test(error.message));
+  assert.throws(() => buildAirdrop({ rows, snapshotBlock: 1, maxTotalWei: 0n }), /positive/);
+  // Excluded wallets do not count against the allocation.
+  assert.equal(buildAirdrop({ rows, exclusions: parseExclusions({ [A(1)]: "Pool" }), snapshotBlock: 1, maxTotalWei: 400n }).includedWei, 400n);
+});
+
+test("main enforces --max-total-wei and --max-total-tokens before writing anything", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "hivra-airdrop-max-"));
+  const snapshot = path.join(dir, "snapshot.csv");
+  writeFileSync(snapshot, `address,balance_wei\n${A(1)},1500000000000000000\n${A(2)},1`);
+  const publicJson = path.join(dir, "public.json");
+  const batchesDir = path.join(dir, "batches");
+  const base = ["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson, "--batches-dir", batchesDir];
+  const errors = [];
+  const logs = [];
+  const io = { log: (line) => logs.push(line), error: (line) => errors.push(line) };
+  const repo = path.join(dir, "repo");
+
+  assert.equal(main([...base, "--max-total-tokens", "1.5"], io, repo), 2);
+  assert.match(errors.join("\n"), /more than the airdrop wallet's allocation 1\.5 HIVRA/);
+  assert.throws(() => readdirSync(batchesDir), /ENOENT/, "nothing is written when the guard refuses");
+  assert.equal(main([...base, "--max-total-wei", "1500000000000000000"], io, repo), 2);
+
+  assert.equal(main([...base, "--max-total-wei", "1500000000000000001"], io, repo), 0);
+  assert.equal(main([...base, "--max-total-tokens", "1.500000000000000001"], io, repo), 0);
+  assert.match(logs.join("\n"), /within the airdrop wallet's allocation of 1\.500000000000000001 HIVRA/);
+
+  errors.length = 0;
+  assert.equal(main([...base, "--max-total-wei", "1", "--max-total-tokens", "1"], io, repo), 2);
+  assert.match(errors.join("\n"), /not both/);
+  assert.equal(main([...base, "--max-total-wei", "1.5"], io, repo), 2);
+  assert.equal(main([...base, "--max-total-tokens", "0"], io, repo), 2);
+  assert.equal(main([...base, "--max-total-tokens", "1e9"], io, repo), 2);
+});
+
+test("the batch check fails when a destination appears on two lines", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "hivra-airdrop-dup-"));
+  writeFileSync(path.join(dir, "hivra-airdrop-batch-001.txt"), `${A(1)} 1\n`);
+  writeFileSync(path.join(dir, "hivra-airdrop-batch-002.txt"), `${A(1).toUpperCase().replace("0X", "0x")} 1\n`);
+  const check = checkBatchFiles(dir, 2n * 10n ** 18n, 2);
+  assert.equal(check.duplicates, 1);
+  assert.equal(check.ok, false);
 });

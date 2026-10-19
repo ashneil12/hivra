@@ -22,6 +22,11 @@
  *                           (or kind is "keep") it is an ordinary holder. Only
  *                           send_to and kind are read; any other field is ignored.
  *   --batch-size <n>        recipients per Disperse batch (default 300).
+ *   --max-total-wei <n>     optional guard: the airdrop wallet's $HIVRA allocation,
+ *                           in wei. When given, the run refuses (exit 2, no files
+ *                           written) if the included total is larger.
+ *   --max-total-tokens <n>  the same guard in whole $HIVRA ("2500000000" or
+ *                           "2500000000.5"); give one of the two, not both.
  *   --sent-txs <json>       optional {"1": "0x<tx hash>", ...}: the Disperse
  *                           transaction of each batch once it confirmed on Base.
  *                           Re-run with it after sending to mark holders as sent.
@@ -35,11 +40,14 @@
  *   --batches-dir <dir>     PRIVATE: one disperse.app text file per batch, lines
  *                           "address amount" in whole $HIVRA, exact to the wei.
  *                           Managed wallets appear under their send_to address, so
- *                           this directory must be outside the repository.
+ *                           this directory must be outside the repository. Each
+ *                           destination gets ONE line: when a send_to equals
+ *                           another holder's address (or two managed wallets share
+ *                           an owner), their amounts are added together exactly.
  *
  * Every amount is BigInt arithmetic on wei: there is no float anywhere. The
  * check at the end reads the batch files back, and fails unless their sum
- * equals the included total exactly, in wei.
+ * equals the included total exactly, in wei, with one line per destination.
  *
  * Usage (from dashboard/):
  *   node scripts/token/build-hivra-airdrop.mjs --snapshot ~/airdrop/snapshot.csv \
@@ -185,9 +193,10 @@ export function parseSentTxs(raw, batchCount) {
  * The whole airdrop from parsed inputs. Pure: returns the public document, the
  * batches (with the real recipients) and warnings; writes nothing.
  */
-export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), snapshotBlock, batchSize = DEFAULT_BATCH_SIZE, sentTxs = {} }) {
+export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), snapshotBlock, batchSize = DEFAULT_BATCH_SIZE, sentTxs = {}, maxTotalWei }) {
   if (!Number.isSafeInteger(snapshotBlock) || snapshotBlock <= 0) fail("snapshot block must be a positive whole number");
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) fail("batch size must be a positive whole number");
+  if (maxTotalWei !== undefined && (typeof maxTotalWei !== "bigint" || maxTotalWei <= 0n)) fail("max total must be a positive whole number of wei");
   const warnings = [];
   const inSnapshot = new Set(rows.map((row) => row.address));
   for (const address of exclusions.keys()) {
@@ -224,20 +233,38 @@ export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), 
     includedWei += row.balanceWei;
   }
   if (included.length === 0) fail("no holder is left after the exclusions");
+  if (maxTotalWei !== undefined && includedWei > maxTotalWei) {
+    fail(
+      `the included total ${weiToDecimal(includedWei)} HIVRA (${includedWei} wei) is more than the airdrop wallet's ` +
+        `allocation ${weiToDecimal(maxTotalWei)} HIVRA (${maxTotalWei} wei); check the snapshot and exclusions`,
+    );
+  }
 
-  // Largest first, then by address: the same inputs always give the same batches.
-  included.sort((a, b) => (a.amountWei === b.amountWei ? (a.address < b.address ? -1 : 1) : a.amountWei > b.amountWei ? -1 : 1));
+  // Largest first, then by address/destination: the same inputs always give the same batches.
+  const byAmountThen = (key) => (a, b) => (a.amountWei === b.amountWei ? (a[key] < b[key] ? -1 : 1) : a.amountWei > b.amountWei ? -1 : 1);
+  included.sort(byAmountThen("address"));
   excluded.sort((a, b) => (a.address < b.address ? -1 : 1));
 
+  // One Disperse line per destination: a managed wallet whose send_to is another
+  // holder (or shares an owner with another managed wallet) is added to that line.
+  const recipientsByDestination = new Map();
+  for (const member of included) {
+    const recipient = recipientsByDestination.get(member.sendTo) ?? { sendTo: member.sendTo, amountWei: 0n, members: [] };
+    recipient.amountWei += member.amountWei;
+    recipient.members.push(member);
+    recipientsByDestination.set(member.sendTo, recipient);
+  }
+  const recipients = [...recipientsByDestination.values()].sort(byAmountThen("sendTo"));
+
   const batches = [];
-  for (let start = 0; start < included.length; start += batchSize) {
-    const members = included.slice(start, start + batchSize);
+  for (let start = 0; start < recipients.length; start += batchSize) {
+    const slice = recipients.slice(start, start + batchSize);
     const index = batches.length + 1;
-    for (const member of members) member.batch = index;
+    for (const recipient of slice) for (const member of recipient.members) member.batch = index;
     batches.push({
       index,
-      lines: members.map((member) => `${member.sendTo} ${weiToDecimal(member.amountWei)}`),
-      totalWei: members.reduce((sum, member) => sum + member.amountWei, 0n),
+      lines: slice.map((recipient) => `${recipient.sendTo} ${weiToDecimal(recipient.amountWei)}`),
+      totalWei: slice.reduce((sum, recipient) => sum + recipient.amountWei, 0n),
     });
   }
   const sent = parseSentTxs(sentTxs, batches.length);
@@ -275,6 +302,7 @@ export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), 
     includedWei,
     summary: {
       holders: included.length,
+      recipients: recipients.length,
       remapped: included.filter((member) => member.remapped).length,
       excluded: excluded.length,
       zeroBalance,
@@ -285,10 +313,15 @@ export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), 
   };
 }
 
-/** Reads the written batch files back and checks them against the included total, in wei. */
+/**
+ * Reads the written batch files back and checks them against the included total,
+ * in wei, the expected number of lines, and one line per destination.
+ */
 export function checkBatchFiles(batchesDir, expectedWei, expectedLines) {
   let total = 0n;
   let lines = 0;
+  const destinations = new Set();
+  let duplicates = 0;
   const files = readdirSync(batchesDir).filter((name) => BATCH_FILE.test(name)).sort();
   for (const name of files) {
     for (const line of readFileSync(path.join(batchesDir, name), "utf8").split("\n")) {
@@ -297,9 +330,12 @@ export function checkBatchFiles(batchesDir, expectedWei, expectedLines) {
       if (extra !== undefined || !ADDRESS.test(address ?? "")) throw new InputError(`${name}: malformed line "${line}"`);
       total += decimalToWei(amount ?? "");
       lines += 1;
+      const destination = address.toLowerCase();
+      if (destinations.has(destination)) duplicates += 1;
+      destinations.add(destination);
     }
   }
-  return { ok: total === expectedWei && lines === expectedLines, totalWei: total, lines, files: files.length };
+  return { ok: total === expectedWei && lines === expectedLines && duplicates === 0, totalWei: total, lines, duplicates, files: files.length };
 }
 
 function isInside(child, parent) {
@@ -329,6 +365,8 @@ export function parseArgs(argv) {
     "--sent-txs": "sentTxs",
     "--public-json": "publicJson",
     "--batches-dir": "batchesDir",
+    "--max-total-wei": "maxTotalWei",
+    "--max-total-tokens": "maxTotalTokens",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const key = names[argv[index]];
@@ -345,6 +383,15 @@ export function parseArgs(argv) {
     if (!/^\d+$/.test(value)) fail(`--${numeric.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)} must be a positive whole number`);
     args[numeric] = Number(value);
   }
+  if (args.maxTotalWei !== undefined && args.maxTotalTokens !== undefined) fail("give --max-total-wei or --max-total-tokens, not both");
+  if (args.maxTotalWei !== undefined) {
+    if (!/^\d+$/.test(args.maxTotalWei)) fail("--max-total-wei must be a whole number of wei");
+    args.maxTotalWei = BigInt(args.maxTotalWei);
+  } else if (args.maxTotalTokens !== undefined) {
+    args.maxTotalWei = decimalToWei(args.maxTotalTokens);
+  }
+  delete args.maxTotalTokens;
+  if (args.maxTotalWei !== undefined && args.maxTotalWei <= 0n) fail("the max total must be more than zero");
   return args;
 }
 
@@ -371,6 +418,7 @@ export function main(argv, io = { log: console.log, error: console.error }, repo
       snapshotBlock: args.snapshotBlock,
       batchSize: args.batchSize,
       sentTxs: args.sentTxs ? readJson(args.sentTxs, "sent-txs") : {},
+      maxTotalWei: args.maxTotalWei,
     });
 
     mkdirSync(args.batchesDir, { recursive: true });
@@ -384,14 +432,16 @@ export function main(argv, io = { log: console.log, error: console.error }, repo
     writeFileSync(args.publicJson, `${JSON.stringify(result.publicDocument, null, 2)}\n`);
 
     for (const warning of result.warnings) io.error(`warning: ${warning}`);
-    const check = checkBatchFiles(args.batchesDir, result.includedWei, result.summary.holders);
+    const check = checkBatchFiles(args.batchesDir, result.includedWei, result.summary.recipients);
     const s = result.summary;
     io.log(`snapshot block ${args.snapshotBlock}`);
     io.log(`holders ${s.holders} (Hivra-managed ${s.remapped}), excluded ${s.excluded}, zero balance skipped ${s.zeroBalance}`);
+    io.log(`Disperse lines ${s.recipients} (${s.holders - s.recipients} merged into a shared destination)`);
     io.log(`batches ${s.batches} of up to ${args.batchSize}, marked sent ${s.sentBatches}`);
     io.log(`included ${weiToDecimal(result.includedWei)} HIVRA (${result.includedWei} wei)`);
     io.log(`batches  ${weiToDecimal(check.totalWei)} HIVRA (${check.totalWei} wei) in ${check.lines} lines`);
     io.log(`share of the 100B supply: ${result.publicDocument.totals.percentOfSupply}% (rounded up)`);
+    if (args.maxTotalWei !== undefined) io.log(`within the airdrop wallet's allocation of ${weiToDecimal(args.maxTotalWei)} HIVRA`);
     if (!check.ok) {
       io.error("TOTALS CHECK FAILED: the batch files do not add up to the included total");
       return 1;
