@@ -354,16 +354,13 @@ describe("HivraManage lifecycle guidance", () => {
     expect(onConnectionServiceRestarted).toHaveBeenCalledTimes(calls);
   });
 
-  it("does not offer an in-place update to a DeepSeek computer, which the server refuses", () => {
+  it("offers a DeepSeek computer its own update and says it restarts DeepSeek", () => {
     render(<HivraManage agent={{ ...agent, type: "deepseek-harness", computer_substrate: "proxmox-kvm" }} def={getAgent("deepseek-harness")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
 
-    expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/brings Hivra’s connection service up to date/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    // Nothing disappears silently: Advanced says why.
-    expect(screen.queryByRole("tab", { name: "Updates" })).not.toBeInTheDocument();
-    openSection("Advanced");
-    expect(screen.getByText("DeepSeek computers can't update their connection service here yet.")).toBeVisible();
+    openSection("Updates");
+    expect(screen.getByRole("button", { name: "Update connection service" })).toBeEnabled();
+    expect(screen.getByText(/It restarts DeepSeek, which ends a task DeepSeek is working on/)).toBeVisible();
+    expect(screen.queryByText("DeepSeek computers can't update their connection service here yet.")).not.toBeInTheDocument();
   });
 
   describe("replies in progress before an action that powers the computer off", () => {

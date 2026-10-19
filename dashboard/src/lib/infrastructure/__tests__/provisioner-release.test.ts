@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.10.07.1.json";
+import release from "../../../../provisioner-releases/2026.10.20.1.json";
+import claudeAppRelease from "../../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../../provisioner-releases/2026.09.24.4.json";
 import terminalSocketsRelease from "../../../../provisioner-releases/2026.09.24.3.json";
 import persistentSessionsRelease from "../../../../provisioner-releases/2026.09.24.2.json";
@@ -86,7 +87,8 @@ it("ships the detached chat-run supervisor with the gateway, never into the seal
 
 it("ships the socket-aware terminal checks in 2026.09.24.4, keeping 2026.09.24.3 admitted", () => {
   expect(terminalFollowupsRelease.version).toBe("2026.09.24.4");
-  const updater = readFileSync(path.join(process.cwd(), "provisioner/hivra-update-guest-runtime.sh"), "utf8");
+  // The guest half of the updater moved into its own file in 2026.10.20.1.
+  const updater = readFileSync(path.join(process.cwd(), "provisioner/hivra-guest-runtime-update.sh"), "utf8");
   expect(updater).toContain("terminal_idle 7681 /run/hivra-terminal/ttyd.sock && RESTART_AGENT_TTYD=1");
   const server = readFileSync(path.join(process.cwd(), "provisioner/hivra-chat/server.js"), "utf8");
   expect(server).toContain("return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };");
@@ -99,9 +101,36 @@ it("ships the socket-aware terminal checks in 2026.09.24.4, keeping 2026.09.24.3
   expect(provisionerSupportsActivityTelemetry("2026.09.24.3")).toBe(true);
 });
 
-it("ships the optional Claude app (helper, inert unit, pin) in 2026.10.07.1 without touching the desktop container's assets", () => {
-  expect(release.version).toBe("2026.10.07.1");
+it("ships the owned DeepSeek update and the updater's guest half in 2026.10.20.1 without touching desktop assets", () => {
+  expect(release.version).toBe("2026.10.20.1");
   const paths = release.files.map(file => file.path);
+  for (const file of ["deepseek-harness/update-guest.py", "hivra-guest-runtime-update.sh"]) {
+    expect(paths).toContain(file);
+    expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
+    expect(claudeAppRelease.files.map(entry => entry.path)).not.toContain(file);
+  }
+  // The isolation proof and the remote-desktop bundle revision are preserved,
+  // and the DeepSeek install, its package pins and the gateway are unchanged.
+  for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs",
+    "deepseek-harness/install-guest.py", "deepseek-harness/install-native.py", "deepseek-harness/service-owner.py",
+    "deepseek-harness/package.json", "deepseek-harness/package-lock.json", "hivra-chat/server.js", "provision-claude-code-box.sh"]) {
+    const current = release.files.find(entry => entry.path === file)!;
+    const prior = claudeAppRelease.files.find(entry => entry.path === file)!;
+    expect(current.sha256).toBe(prior.sha256);
+  }
+  expect(release.files.find(entry => entry.path === "hivra-update-guest-runtime.sh")!.sha256)
+    .not.toBe(claudeAppRelease.files.find(entry => entry.path === "hivra-update-guest-runtime.sh")!.sha256);
+  // The previous release stays admitted everywhere it was.
+  expect(isCompatibleProxmoxProvisionerVersion("2026.10.07.1")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.10.07.1")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.10.07.1")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.10.07.1")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.10.07.1")).toBe(true);
+});
+
+it("ships the optional Claude app (helper, inert unit, pin) in 2026.10.07.1 without touching the desktop container's assets", () => {
+  expect(claudeAppRelease.version).toBe("2026.10.07.1");
+  const paths = claudeAppRelease.files.map(file => file.path);
   for (const file of ["hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json"]) {
     expect(paths).toContain(file);
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
@@ -110,13 +139,13 @@ it("ships the optional Claude app (helper, inert unit, pin) in 2026.10.07.1 with
   // The isolation proof and the remote-desktop bundle revision are preserved:
   // the sealed desktop installer, broker and server are byte-identical.
   for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs"]) {
-    const current = release.files.find(entry => entry.path === file)!;
+    const current = claudeAppRelease.files.find(entry => entry.path === file)!;
     const prior = terminalFollowupsRelease.files.find(entry => entry.path === file)!;
     expect(current.sha256).toBe(prior.sha256);
   }
   // The gateway, both lanes that install the helper, and the vetted CLI pin moved.
   for (const file of ["hivra-chat/server.js", "hivra-update-guest-runtime.sh", "provision-claude-code-box.sh", "agent-cli-versions.json"]) {
-    const current = release.files.find(entry => entry.path === file)!;
+    const current = claudeAppRelease.files.find(entry => entry.path === file)!;
     const prior = terminalFollowupsRelease.files.find(entry => entry.path === file)!;
     expect(current.sha256).not.toBe(prior.sha256);
   }
@@ -195,9 +224,10 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   // never be admitted or keep a valid identity.
   const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
-    "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql"]
+    "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
+    "20261020110000_provider_release_admission_2026_10_20_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])

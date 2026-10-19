@@ -177,19 +177,18 @@ export function folderRecoveryEligible(row: LifecycleSupportRow): boolean {
 
 // ── In-place connection-service update ─────────────────────────────────────
 
-export type RuntimeUpdateRefusal = "digitalocean" | "linux-sandbox" | "prepared" | "my-cloud" | "deepseek";
+export type RuntimeUpdateRefusal = "digitalocean" | "linux-sandbox" | "prepared" | "my-cloud";
 
 /**
  * Why update_runtime is refused for this row, before any lease or host call,
  * or null when the route accepts it. The order is the route's: DigitalOcean
- * and gVisor branches first, then the DeepSeek refusal (a DeepSeek guest also
- * runs a native service the gateway-only updater cannot replace), then the
- * prepared and My cloud branches.
+ * and gVisor branches first, then the prepared and My cloud branches. A
+ * DeepSeek computer on Proxmox gets its own owned update in the guest
+ * (deepseek-harness/update-guest.py); on My cloud it is refused with the rest.
  */
 export function runtimeUpdateRefusal(row: LifecycleSupportRow): RuntimeUpdateRefusal | null {
   if (row.computer_substrate === "do-managed-session") return "digitalocean";
   if (row.computer_substrate === "gvisor") return "linux-sandbox";
-  if (row.type === "deepseek-harness") return "deepseek";
   if (isPreparedProfile(row)) return "prepared";
   if (row.computer_substrate === "provider-vm") return "my-cloud";
   return null;

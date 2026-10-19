@@ -28,6 +28,10 @@ import {
 const bundleRoot = path.join(process.cwd(), PORTABLE_HIVRA_PROVISIONER_BUNDLE_DIRECTORY);
 const source = (relativePath: string) =>
   readFileSync(path.join(bundleRoot, relativePath), "utf8");
+// The runtime updater: its host half, then the guest half it sends on stdin
+// (one file until 2026.10.20.1).
+const updaterSource = () =>
+  `${source("hivra-update-guest-runtime.sh")}\n${source("hivra-guest-runtime-update.sh")}`;
 const LEGACY_RUNTIME_IDS = [
   "claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness",
 ];
@@ -351,7 +355,7 @@ describe("portable provisioner source contract", () => {
 
     const identityHelper = source("hivra-guest-ssh-known-hosts");
     const startScript = source("hivra-start-on-host.sh");
-    const updateScript = source("hivra-update-guest-runtime.sh");
+    const updateScript = updaterSource();
     expect(identityHelper).toContain('qm guest exec "$VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub');
     expect(identityHelper).toContain('qm config "$VMID"');
     for (const lifecycleScript of [startScript, updateScript]) {
@@ -395,7 +399,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("ships a bounded guest runtime updater that preserves identity and rolls back failed gateway assets", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-update-guest-runtime.sh");
     expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)");
     expect(updater).toContain('ARCHIVE_SHA256="$(sha256sum "$ARCHIVE"');
@@ -412,7 +416,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("delivers persistent terminal sessions to running computers without ending open shells", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     expect(updater).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\s/);
     expect(updater).toContain('AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf');
     expect(updater).toContain('BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service');
@@ -431,7 +435,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("keeps in-flight chat runs alive across gateway restarts on new and updated guests", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     const installer = source("provision-claude-code-box.sh");
     const dropIn = "/etc/systemd/system/bux-hivra-chat.service.d/10-hivra-detached-runs.conf";
     for (const script of [installer, updater]) expect(script).toContain("'[Service]' 'KillMode=process'");
@@ -447,7 +451,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("refreshes the root-owned Telegram helper on running guests with backup and rollback", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     const installer = source("provision-claude-code-box.sh");
     // New guests and updated guests end up with the same root-owned helper.
     expect(installer).toContain('install -o root -g root -m 0755 "$SRC_DIR/hivra-tg-apply" /usr/local/bin/hivra-tg-apply');
@@ -472,7 +476,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("installs the optional Claude app helper on Ubuntu Desktop computers only, through both lanes, with rollback and no restart of a running app", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     const installer = source("provision-claude-code-box.sh");
     for (const file of ["hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json"]) {
       expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
