@@ -139,6 +139,12 @@ describe("deriveAgentSoftware", () => {
   ])("says how an update ended: %s (%s)", (state, reason, expected) => {
     expect(view(reported("0.149.0", { update_state: state, update_target: TESTED, update_reason: reason, update_updated_at: ago(MIN) }))).toEqual(expected);
   });
+  it.each(["deferred", "rolled_back", "failed"])("lets a newer version the owner installed after a %s update decide, so it is never moved back down", (state) => {
+    const ended = { update_state: state, update_target: TESTED, update_reason: "install_failed", update_updated_at: ago(MIN) };
+    const owners = view(reported("0.150.0", ended));
+    expect(owners).toEqual({ kind: "ahead_custom", installed: "0.150.0" });
+    expect(agentCliAutoUpdateGate(owners, null, TESTED)).toEqual({ ok: false, skip: "owner_version" });
+  });
   it("shows a request the computer hasn't reported yet as starting, and one that couldn't start as failed", () => {
     const request = { requested_at: ago(MIN), requested_target: TESTED, requested_by: "owner" };
     expect(view(reported("0.149.0", { ...request, request_result: "scheduled" }))).toEqual({ kind: "updating", phase: "starting", target: TESTED, installed: "0.149.0" });

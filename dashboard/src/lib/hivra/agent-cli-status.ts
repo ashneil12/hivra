@@ -327,6 +327,11 @@ export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftw
 
   if (update) {
     const reachedTarget = installed === update.target;
+    // A deferred, rolled-back or failed update only still applies while the
+    // computer has an older version (or none it can read). Once it reports
+    // a newer one, the owner installed it after the update stopped: the
+    // version decides, so automatic updates never move it back down.
+    const stillBelowTarget = installed === null || compareCliVersions(installed, update.target) < 0;
     switch (update.state) {
       case "downloading":
       case "waiting":
@@ -355,13 +360,13 @@ export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftw
         if (installed === null) return { kind: "checking" };
         break;
       case "deferred":
-        if (!reachedTarget) return { kind: "update_deferred", target: update.target, installed };
+        if (stillBelowTarget) return { kind: "update_deferred", target: update.target, installed };
         break;
       case "rolled_back":
-        if (!reachedTarget) return { kind: "update_rolled_back", target: update.target, installed };
+        if (stillBelowTarget) return { kind: "update_rolled_back", target: update.target, installed };
         break;
       case "failed":
-        if (!reachedTarget) {
+        if (stillBelowTarget) {
           return { kind: "update_failed", reason: update.reason === "download_failed" ? "download_failed" : "install_failed", target: update.target, installed };
         }
         break;
