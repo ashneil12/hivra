@@ -21,6 +21,7 @@ import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
 import { ComputerContractPanel } from "./ComputerContractPanel";
 import { ComputerAgentsPanel } from "./ComputerAgentsPanel";
+import { AgentLinksPanel } from "./AgentLinksPanel";
 import { ManageLayout, ManageNotice, ManagePanel, type ManageFeedback } from "./ManageLayout";
 import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
@@ -919,6 +920,11 @@ function HivraManageContent({
           {isComputerOnly ? null : (
             <ComputerContractPanel agent={agent} runtimeName={def?.name || "This agent"} />
           )}
+          {/* Which of the owner's computers this agent may use (or, on a
+              computer with no Agents section, which agents may use it). */}
+          {!isComputerOnly || !sections.includes("agents") ? (
+            <AgentLinksPanel subjectId={agent.id} subjectName={agent.name} />
+          ) : null}
         </div>
       </ManagePanel>
 
@@ -927,6 +933,7 @@ function HivraManageContent({
       {sections.includes("agents") ? (
         <ManagePanel id="agents" selected={selected}>
           <ComputerAgentsPanel computerId={agent.id} computerName={agent.name} autoOpenAdd={addAgentRequested} />
+          <AgentLinksPanel subjectId={agent.id} subjectName={agent.name} />
         </ManagePanel>
       ) : null}
 

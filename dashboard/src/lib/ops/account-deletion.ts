@@ -101,6 +101,22 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     // Newer than the activity tables; a database without it has nothing to delete.
     optionalIfMissing: true,
   },
+  // Agent ↔ computer links and each agent's link key hash. Their rows go with
+  // a soft-deleted computer by trigger, so only an account deletion needs this.
+  {
+    table: "hivra_agent_computer_links",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "which of the owner's agents may use which of the owner's computers",
+    optionalIfMissing: true,
+  },
+  {
+    table: "hivra_agent_link_keys",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "the hash of each agent's key for using linked computers",
+    optionalIfMissing: true,
+  },
   {
     table: "hermes_conversations",
     filterColumn: "user_id",
