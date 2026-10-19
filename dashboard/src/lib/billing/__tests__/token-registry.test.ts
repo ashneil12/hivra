@@ -1,7 +1,11 @@
 import { HIVRA_TOKEN_LAUNCH } from "@/lib/billing/hivra-token-launch";
 import {
   HERMESOS_TOKEN,
+  HIVRA_MIN_PRICE_LIQUIDITY_USD,
+  HIVRA_MIN_QUOTE_LIQUIDITY_USD,
+  NATIVE_ETH_ADDRESS,
   getActiveHivraToken,
+  isEthQuoteAddress,
   getHivraTokenPhase,
   isHivraActive,
   livePlatformTokens,
@@ -68,8 +72,23 @@ describe("platform token registry", () => {
     expect(platformTokenByAddress(HERMESOS_TOKEN.publishedAddress, TEST_HIVRA)).toBe(HERMESOS_TOKEN);
   });
 
+  it("prices $HIVRA only against ETH, with an ETH-side floor; $HermesOS keeps its floors as they were", () => {
+    expect(isEthQuoteAddress(NATIVE_ETH_ADDRESS)).toBe(true);
+    expect(isEthQuoteAddress("0x4200000000000000000000000000000000000006")).toBe(true);
+    expect(isEthQuoteAddress(" 0x4200000000000000000000000000000000000006 ".toUpperCase().replace("0X", "0x"))).toBe(true);
+    expect(isEthQuoteAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")).toBe(false); // USDC
+    expect(isEthQuoteAddress("")).toBe(false);
+    expect(isEthQuoteAddress(null)).toBe(false);
+    const hivra = getActiveHivraToken(AFTER, TEST_HIVRA);
+    expect(hivra?.minPriceLiquidityUsd).toBe(HIVRA_MIN_PRICE_LIQUIDITY_USD);
+    expect(hivra?.minQuoteLiquidityUsd).toBe(HIVRA_MIN_QUOTE_LIQUIDITY_USD);
+    expect(HIVRA_MIN_QUOTE_LIQUIDITY_USD).toBeGreaterThan(0);
+    expect(HERMESOS_TOKEN.minPriceLiquidityUsd).toBe(10_000);
+    expect(HERMESOS_TOKEN.minQuoteLiquidityUsd).toBeNull();
+  });
+
   it.each([
-    ["address only", { ...TEST_HIVRA, poolId: "", activatesAt: "" }],
+    ["address only",{ ...TEST_HIVRA, poolId: "", activatesAt: "" }],
     ["bad address", { ...TEST_HIVRA, contractAddress: "0x123" }],
     ["zero address", { ...TEST_HIVRA, contractAddress: `0x${"0".repeat(40)}` }],
     ["the $HermesOS address", { ...TEST_HIVRA, contractAddress: HERMESOS_TOKEN.publishedAddress }],
