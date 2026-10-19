@@ -83,7 +83,7 @@ const LAUNCHED_PROPOSAL_NOTE =
 const DORMANT_SUPPLY_LINE =
   "No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.";
 const LAUNCHED_SUPPLY_LINE =
-  "The $HIVRA supply is fixed in its contract, and BaseScan shows the total. Check the contract address on the token page.";
+  "BaseScan shows the total $HIVRA supply. Check the contract address on the token page.";
 const LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL =
   "contract addresses on Base and understand current holder access. A wallet is optional.";
 const LAUNCHED_TOKENOMICS_DESCRIPTION =
@@ -94,7 +94,7 @@ const LAUNCHED_TOKEN_PAGE_MIGRATION = {
   migrationEyebrow: "NOTHING TO CLAIM. NO WALLET TO CONNECT.",
   migrationHeading: "$HIVRA for $HermesOS holders",
   migrationParagraphs: [
-    "Every wallet that held $HermesOS at the snapshot block is sent $HIVRA in that same wallet, one $HIVRA for each $HermesOS. There is nothing to claim or swap. Holders of legacy $HermesOS keep their existing access.",
+    "Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot block, to the same wallet. Wallets Hivra manages for you are listed separately. There is nothing to claim or swap. Holders of legacy $HermesOS keep their existing access.",
     "Hivra publishes the snapshot block and the full list of wallets on this page. Hivra never asks anyone to connect a wallet, sign a message or pay to receive $HIVRA. Anyone who does is not Hivra.",
   ],
 } as const;
@@ -107,7 +107,7 @@ const LAUNCHED_TOKENOMICS_MIGRATION = {
   supplyLine: LAUNCHED_SUPPLY_LINE,
 } as const;
 const LAUNCHED_TOKENOMICS_MIGRATION_INTRO =
-  "$HIVRA is live on Base. Every wallet that held $HermesOS at the snapshot block is sent $HIVRA in that same wallet, one $HIVRA for each $HermesOS, with nothing to claim or swap.";
+  "$HIVRA is live on Base. Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot block, with nothing to claim or swap.";
 const DORMANT_TOKENOMICS_MIGRATION_TERMS =
   "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.";
 const LAUNCHED_TOKENOMICS_MIGRATION_TERMS =

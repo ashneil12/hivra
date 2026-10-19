@@ -395,7 +395,9 @@ The earlier plan (a Bankr launch, then an active claim that sold $HermesOS
 into its pool and bought $HIVRA with the ETH, run by Bankr) is replaced. The
 launch runs on Doppler, and holders get $HIVRA by a **push airdrop**: one
 $HIVRA for each $HermesOS held at a snapshot block, sent to the same wallet.
-Holders do nothing. Hivra never asks anyone to connect a wallet, sign or pay
+The published list excludes pools, launch contracts, burn addresses and Ash's
+own wallet, and lists wallets Hivra manages for users separately (their
+$HIVRA goes to the user's own wallet). Holders do nothing. Hivra never asks anyone to connect a wallet, sign or pay
 to receive it. What changed in this runbook:
 
 - Precondition 6 no longer waits on a `termsUrl` and a `bankr.bot`

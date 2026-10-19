@@ -88,7 +88,8 @@ describe("ConvertPanel once $HIVRA is launched", () => {
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(LAUNCHED_TITLE);
     expect(screen.getByTestId("convert-proposed-label")).toHaveTextContent(AIRDROP_LABEL);
-    expect(screen.getByText(/one \$HIVRA for each\s+\$HermesOS it held/)).toBeInTheDocument();
+    expect(screen.getByText(/one \$HIVRA for each \$HermesOS they held at the snapshot\s+block/)).toBeInTheDocument();
+    expect(screen.getByText(/Wallets Hivra manages for you are listed separately/)).toBeInTheDocument();
     expect(screen.getByTestId("convert-no-claim")).toHaveTextContent(NO_CLAIM_WARNING);
     expect(screen.queryByText(DORMANT_MESSAGE)).not.toBeInTheDocument();
     expect(screen.queryByText(/As proposed/)).not.toBeInTheDocument();

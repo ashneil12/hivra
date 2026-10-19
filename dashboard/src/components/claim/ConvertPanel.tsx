@@ -145,8 +145,9 @@ function AirdropStatus({ state }: { state: LaunchedState }) {
   return (
     <>
       <p style={body}>
-        Every wallet that held $HermesOS at the snapshot block is sent $HIVRA in that same wallet, one $HIVRA for each
-        $HermesOS it held. There is nothing to claim or swap, and you don&apos;t need to do anything.
+        Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot
+        block, to the same wallet. Wallets Hivra manages for you are listed separately. There is nothing to claim or
+        swap, and you don&apos;t need to do anything.
       </p>
       {state.snapshot ? (
         <>
