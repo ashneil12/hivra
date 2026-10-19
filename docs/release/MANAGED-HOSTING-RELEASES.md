@@ -125,6 +125,17 @@ one: hosts install the newest sealed bundle and a runtime update moves a
 computer to it, so an older-numbered bundle released later would take back what
 the higher release shipped.
 
+An owner's runtime update needs the host's bundle for that deployment's channel
+to be exactly the version the deployment ships. With
+`HIVRA_MANAGED_BUNDLE_SYNC_ENABLED=true`, the `sync-managed-provisioner-bundles`
+cron (every 10 minutes) brings managed hosts up to it, one host per run, busiest
+host first, through the same identity-checked, preserving, rolled-back sync as
+`POST /api/ops/hivra/provisioner-bundle`. It only upgrades an existing bundle
+directory: it never prepares a new host and never replaces a newer bundle, and
+it reports those hosts and failed syncs to the ops feed. Off by default; with
+it off, every host still needs that operator route after each release.
+`?dryRun=1` reports which hosts are behind without changing any.
+
 Last pair: #124 (persistent sessions, 2026.09.24.2) merged first, so the
 attach release (`claude/agent-computer`) is sealed again as 2026.09.24.3 on top
 of it. Had the attach release merged first, #124 would have become 2026.09.24.4.
