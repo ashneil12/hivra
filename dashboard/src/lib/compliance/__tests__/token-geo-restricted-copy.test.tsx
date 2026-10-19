@@ -149,7 +149,7 @@ describe.each(PHASES)("%s $HIVRA, a viewer from elsewhere", (phase) => {
     const token = await renderPage(TokenVerificationPage);
     expect(token.container.textContent).toContain(copy.tokenPage.heroLead);
     expect(token.container.textContent).toContain("OPTIONAL TOKEN");
-    expect(token.container.textContent).toContain("Eligible $HermesOS holdings are one way to qualify for compute access.");
+    expect(token.container.textContent).toContain(copy.tokenPage.accessParagraph);
 
     const tokenomics = await renderPage(TokenomicsPage);
     expect(tokenomics.container.textContent).toContain(copy.tokenomics.headerLead);

@@ -25,7 +25,7 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
   geckoterminalUrl: "https://api.geckoterminal.com/api/v2",
 });
 
-/** What the Bankr launch must have produced. The platform code expects exactly these. */
+/** What the $HIVRA launch must have produced. The platform code expects exactly these. */
 export const EXPECTED_TOKEN = Object.freeze({
   name: "Hivra",
   symbol: "HIVRA",

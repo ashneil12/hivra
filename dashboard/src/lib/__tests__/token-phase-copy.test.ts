@@ -20,6 +20,8 @@ const DORMANT: TokenPhaseCopy = {
       "The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.",
       "The proposed claim would sell the old tokens into their existing pool and use the ETH proceeds to buy from the new pool. Conversion terms, fees and price protections must be published with the contract before claims open. No migration action is offered on this page.",
     ],
+    accessParagraph:
+      "Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.",
   },
   tokenomics: {
     metadataTitle: "Proposed $HIVRA tokenomics",
@@ -27,10 +29,18 @@ const DORMANT: TokenPhaseCopy = {
       "Existing token access and the proposed migration, uses and treasury. Final terms are published before proposals take effect.",
     headerLead:
       "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.",
+    migrationEyebrow: "Proposed migration",
+    migrationHeading: "Keeping access and converting tokens are separate decisions.",
     migrationParagraphs: [
       "The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.",
       "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.",
     ],
+    flowLabel: "Proposed claim flow",
+    flowSteps: ["$HermesOS", "ETH proceeds", "$HIVRA"],
+    proposalNote:
+      "The migration, new uses and treasury plans are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.",
+    supplyLine:
+      "No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.",
   },
   evolution: {
     hivraStatus: "$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.",
@@ -87,9 +97,25 @@ describe("token phase copy", () => {
     const { tokenPage, evolution, llmsTxt } = getTokenPhaseCopy(phase);
     expect(tokenPage.heroLead).toContain("$HIVRA is live on Base.");
     expect(evolution.hivraDetails).toContain(
-      "Holders of $HermesOS keep their existing access. Conversion terms are published before conversion opens."
+      "Holders of legacy $HermesOS keep their existing access. Wallets that held $HermesOS at the snapshot block are sent $HIVRA automatically, with nothing to claim."
     );
     expect(llmsTxt.tokenStatus).toMatch(/^\$HIVRA is live on Base/);
+  });
+
+  it.each(["scheduled", "active"] as const)("describes the push airdrop, not a Bankr claim or swap (%s)", (phase) => {
+    const text = strings(getTokenPhaseCopy(phase)).join("\n");
+    expect(text).not.toMatch(/Bankr|active claim|ETH proceeds|claims open|conversion terms|Go to conversion/i);
+    expect(text).toMatch(/snapshot block/);
+    expect(getTokenPhaseCopy(phase).tokenPage.migrationParagraphs[1]).toMatch(/never asks anyone to connect a wallet/);
+    expect(getTokenPhaseCopy(phase).tokenomics.flowSteps).toEqual(["$HermesOS", "Snapshot block", "$HIVRA"]);
+  });
+
+  it("calls $HermesOS legacy once $HIVRA is active, and keeps the token access line until then", () => {
+    const active = getTokenPhaseCopy("active");
+    expect(active.evolution.relationship).toBe("$HIVRA is the live token. $HermesOS is the legacy token, and its holders keep their existing access.");
+    expect(active.llmsTxt.tokenStatus).toContain("$HermesOS is the legacy token");
+    expect(active.tokenPage.accessParagraph).toMatch(/^Eligible \$HIVRA holdings/);
+    expect(getTokenPhaseCopy("scheduled").tokenPage.accessParagraph).toBe(DORMANT.tokenPage.accessParagraph);
   });
 
   it("tells a scheduled reader when Hivra switches, and an active reader that it has", () => {

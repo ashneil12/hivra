@@ -8,6 +8,8 @@ import PublicSite from "@/components/public-site/PublicSite";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
 import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import { HIVRA_AIRDROP } from "@/lib/claim/hivra-airdrop-config";
+import { resolveAirdropFacts } from "@/lib/claim/conversion-state";
 import {
   formatLaunchInstantUtc,
   tokenPhaseFromEntries,
@@ -50,6 +52,30 @@ function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
     }
   }
   return ENTRY_NOTE[entry.key][entry.status];
+}
+
+/**
+ * The published airdrop facts (lib/claim/hivra-airdrop-config.ts): the snapshot
+ * block, the link to the full list and the sender wallet. Shown only once the
+ * registry names $HIVRA and the snapshot is published; it reads no clock.
+ */
+function AirdropDetails({ entries }: { entries: readonly TokenPageEntry[] }) {
+  const hivraAddress = entries.find((entry) => entry.key === "hivra")?.contractAddress;
+  if (!hivraAddress) return null;
+  const { snapshot, senderAddress } = resolveAirdropFacts(HIVRA_AIRDROP, hivraAddress, null);
+  if (!snapshot) return null;
+  return <div data-testid="token-airdrop-details">
+    <p>
+      Snapshot block:{" "}
+      <a href={`https://basescan.org/block/${snapshot.block}`} target="_blank" rel="noopener noreferrer">{snapshot.block}</a>.{" "}
+      <a href={snapshot.url} target="_blank" rel="noopener noreferrer">Open the published snapshot</a>
+    </p>
+    {senderAddress ? <p>
+      The transfers come from Hivra&apos;s airdrop wallet:{" "}
+      <code style={{ overflowWrap: "anywhere" }}>{senderAddress}</code>{" "}
+      <a href={`https://basescan.org/address/${senderAddress}`} target="_blank" rel="noopener noreferrer">View on BaseScan</a>
+    </p> : null}
+  </div>;
 }
 
 type CopyState = "idle" | "copied" | "failed";
@@ -149,7 +175,7 @@ export default function TokenPageClient({
         <h2 id="access-title">Existing holder access</h2>
         {restricted
           ? <p>{restricted.accessParagraph}</p>
-          : <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>}
+          : <p>{phaseCopy.accessParagraph}</p>}
         <p>Open Billing to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
@@ -159,6 +185,7 @@ export default function TokenPageClient({
         <h2 id="proposals-title">{copy.migrationHeading}</h2>
         <p>{copy.migrationParagraphs[0]}</p>
         <p>{copy.migrationParagraphs[1]}</p>
+        <AirdropDetails entries={entries} />
         <h3>Utility and treasury proposals</h3>
         <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
         <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>

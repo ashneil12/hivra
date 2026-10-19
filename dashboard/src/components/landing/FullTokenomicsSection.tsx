@@ -48,8 +48,9 @@ function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLev
 
 /**
  * `phase` is the $HIVRA phase to write the copy for; the page passes the one it
- * rendered with, and it defaults to the phase now. Only the header and the
- * migration paragraphs change with it; dormant, they are the copy from before.
+ * rendered with, and it defaults to the phase now. Only the header, the
+ * migration article, the proposal note and the supply line change with it;
+ * dormant, they are the copy from before.
  */
 export default function FullTokenomicsSection({
   headingLevel = 2,
@@ -73,15 +74,15 @@ export default function FullTokenomicsSection({
         <p>You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final, except where the law gives you a right to cancel. Self-hosting Hivra requires neither the token nor a Hivra account.</p>
       </article>
       <article className={styles.migration}>
-        <span className={styles.eyebrow}>Proposed migration</span>
-        <h3>Keeping access and converting tokens are separate decisions.</h3>
+        <span className={styles.eyebrow}>{copy.migrationEyebrow}</span>
+        <h3>{copy.migrationHeading}</h3>
         <p>{glossify(copy.migrationParagraphs[0], { token: true })}</p>
-        <ol className={styles.claimFlow} aria-label="Proposed claim flow"><li><span>01</span>$HermesOS</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>ETH proceeds</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>$HIVRA</li></ol>
+        <ol className={styles.claimFlow} aria-label={copy.flowLabel}><li><span>01</span>{copy.flowSteps[0]}</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>{copy.flowSteps[1]}</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>{copy.flowSteps[2]}</li></ol>
         <p>{glossify(copy.migrationParagraphs[1], { token: true })}</p>
       </article>
     </div>
 
-    <div className={styles.proposalNote}><span>What comes next</span><p>The migration, new uses and treasury plans are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.</p></div>
+    <div className={styles.proposalNote}><span>What comes next</span><p>{copy.proposalNote}</p></div>
     <div className={styles.uses}>{USES.map(({ name, text }, index) => <article key={name}><span>{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><p>{glossify(text, { token: true })}</p></article>)}</div>
 
     <div className={styles.treasury}>
@@ -89,6 +90,6 @@ export default function FullTokenomicsSection({
       <div><p>Trading fees and platform revenue would fund maintenance, independent audits, sponsored compute and security bounties. Contributors choose stablecoin or $HIVRA at equivalent value.</p><p>The treasury would sell to cover bills and contributor payments, and buy only when the $HIVRA it holds falls below what contributors have chosen to be paid in $HIVRA. Purchases, sales and payments would all be published, with what each one funded. Tokens held in the treasury aren&apos;t burned. They get paid out again.</p><p>No price target, holder payout or claim on revenue. No fixed share of revenue committed to buying tokens.</p></div>
     </div>
     <div className={styles.rules}><span>No staking or yield.</span><span>No company ownership.</span><span>No buying extra authority.</span></div>
-    <div className={styles.economyEnding}><p>No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+    <div className={styles.economyEnding}><p>{copy.supplyLine}</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
   </section>;
 }

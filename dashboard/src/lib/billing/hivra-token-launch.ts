@@ -9,8 +9,8 @@
  *
  *   contractAddress  the $HIVRA ERC-20 on Base, as published: EIP-55
  *                    checksummed (as BaseScan shows it) or all lowercase. Read
- *                    it from the Bankr launch, then confirm it on BaseScan.
- *   decimals         read on-chain (`decimals()`); Bankr tokens use 18.
+ *                    it from the launch (Doppler), then confirm it on BaseScan.
+ *   decimals         read on-chain (`decimals()`); the platform expects 18.
  *   poolId           the canonical Uniswap v4 pool id (0x + 64 hex) or pair
  *                    address (0x + 40 hex) that prices $HIVRA. The price feed
  *                    only accepts this pool.

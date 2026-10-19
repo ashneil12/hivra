@@ -50,14 +50,17 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    live on each target (the Canary build; for production, the Promote).
    Otherwise a user who arrives between the instant and the deploy sees a
    $HermesOS-only site but is not grandfathered.
-6. **Conversion links (separate from activation):** the /dashboard/convert
-   page (PR #68) reads the $HIVRA contract from the same registry, so it needs
-   no address of its own. It stays closed until `termsUrl` (on hivra.cloud)
-   and `conversionUrl` (exact host `bankr.bot`, or widen its allowlist in a
-   reviewed change) are set in
-   `dashboard/src/lib/claim/conversion-links-config.ts`, in its own reviewed
-   PR. That page also needs the legal review named on PR #68 before any
-   Promote. Activation does not depend on it.
+6. **Holder airdrop (separate from activation):** there is no claim and no
+   swap. $HermesOS holders at a snapshot block are sent $HIVRA directly, one
+   for one, by a push airdrop after the launch (section 9). The
+   /dashboard/convert page reads the $HIVRA contract from the same registry,
+   so it needs no address of its own, and it stays on its pre-launch copy
+   until the launch block is filled in. The airdrop facts (sender wallet,
+   snapshot block, snapshot list, sent time) live in
+   `dashboard/src/lib/claim/hivra-airdrop-config.ts` and each goes in by its
+   own reviewed PR. The page and the launched /token, /tokenomics,
+   /why-hivra/evolution and /llms.txt copy need the UK financial-promotion /
+   legal review before any Promote. Activation does not depend on them.
 
 ## 2. The one file to edit
 
@@ -134,7 +137,7 @@ How to get each value by hand (the helper does these checks for you):
 
 | Field | Source | Check |
 |---|---|---|
-| `contractAddress` | the Bankr launch | Open `https://basescan.org/token/<address>`: name, symbol and total supply match the launch. Paste the checksummed form. |
+| `contractAddress` | the launch (Doppler) | Open `https://basescan.org/token/<address>`: name, symbol and total supply match the launch. Paste the checksummed form. |
 | `decimals` | on-chain `decimals()` | `curl -s https://mainnet.base.org -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"<address>","data":"0x313ce567"},"latest"]}'`. `0x…12` = 18. |
 | `poolId` | DEXScreener `https://api.dexscreener.com/latest/dex/tokens/<address>` | Use the `pairAddress` of the $HIVRA/WETH Uniswap v4 pool with the most liquidity. The price feed accepts only this pool. |
 | `activatesAt` | Ash's decision | A future instant, later than the deploy on every target (precondition 5). Until then /token shows $HIVRA as "launching soon". Never paste a past instant. |
@@ -385,3 +388,77 @@ and keep $HermesOS with no deadline. On 2026-09-23 (read-only counts):
 
 Their yearly subscriptions run to expiry and renew in $HermesOS if they
 choose.
+
+## 9. Holder airdrop ($HermesOS to $HIVRA)
+
+The earlier plan (a Bankr launch, then an active claim that sold $HermesOS
+into its pool and bought $HIVRA with the ETH, run by Bankr) is replaced. The
+launch runs on Doppler, and holders get $HIVRA by a **push airdrop**: one
+$HIVRA for each $HermesOS held at a snapshot block, sent to the same wallet.
+Holders do nothing. Hivra never asks anyone to connect a wallet, sign or pay
+to receive it. What changed in this runbook:
+
+- Precondition 6 no longer waits on a `termsUrl` and a `bankr.bot`
+  `conversionUrl`. `conversion-links-config.ts` is gone; the page reads
+  `hivra-airdrop-config.ts` and links to no claim or swap site at all.
+- The `contractAddress` source is the Doppler launch, checked on BaseScan as
+  before. The helper's checks are unchanged: name `Hivra`, symbol `HIVRA`, 18
+  decimals, a total supply of exactly 100,000,000,000, and a HIVRA/WETH pool
+  on DEXScreener. If the Doppler launch differs on any of these (supply, or a
+  pool quoted in native ETH rather than WETH), the helper fails and `--write`
+  refuses; change the expectation in a reviewed PR first, never by hand.
+- Doppler may move liquidity to another pool after its sale (migration). The
+  price feed accepts only `poolId`. If the liquidity moves, the old pool
+  falls under the floor and every $HIVRA quote fails closed until a reviewed
+  PR names the new pool. Changing `poolId` after `activatesAt` is allowed
+  (the activation record pins only the address and the instant).
+- The $HIVRA liquidity floor stays at $25,000
+  (`HIVRA_MIN_PRICE_LIQUIDITY_USD`). Nothing in this change lowers it. Until
+  the pool holds that much, $HIVRA quotes fail closed (section 5), while
+  holding $HIVRA for a tier and receiving the airdrop are unaffected.
+- The conversion rule in section 4 (switch access, 72-hour grace) still
+  applies. The convert page offers the switch to a grandfathered holder only
+  once `sentAt` is set, because after the grace only $HIVRA counts.
+
+### The airdrop config
+
+`dashboard/src/lib/claim/hivra-airdrop-config.ts`:
+
+```ts
+export const HIVRA_AIRDROP: HivraAirdropConfig = {
+  senderAddress: "0x3B95…",          // the wallet every airdrop transfer comes from (EIP-55)
+  snapshotBlock: null,               // the Base block whose $HermesOS balances decide the airdrop
+  snapshotUrl: null,                 // the published list: every wallet and the $HIVRA it is sent
+  sentAt: null,                      // UTC instant by which every transfer was confirmed
+};
+```
+
+Nothing in it shows anywhere until the launch block in section 2 is filled
+in. Then, in order, each by its own reviewed PR:
+
+1. **With the activation PR (or after):** the sender wallet is already set.
+   The page shows it so holders can check an incoming transfer.
+2. **When the snapshot is taken and published:** `snapshotBlock` and
+   `snapshotUrl` together. The list must be public at that URL first, on
+   `hivra.cloud`, `canary.hermesos.cloud` or under
+   `github.com/ashneil12/hivra/`; anything else is rejected and logged
+   (`HIVRA airdrop config rejected`). The snapshot shows only when both are
+   set and valid.
+3. **When the last transfer is confirmed on Base:** `sentAt`. A future
+   instant, or one without a published snapshot, is rejected. Setting it
+   opens the optional "switch your access" step for grandfathered holders.
+
+Decide and publish, with the snapshot, which wallets it leaves out (for
+example pools, contracts, and wallets Hivra manages: the legacy
+`hermesos_lock` wallets can only withdraw $HermesOS from the app today, so
+$HIVRA sent to one could not be withdrawn there). The page tells holders that
+the published snapshot says whether a Hivra-managed wallet is included.
+
+### Still Bankr-era (not changed here)
+
+- `LITEPAPER.md`, `docs/litepaper/index.html` and `TOKENOMICS.md` still
+  describe the Bankr launch and the active claim. They are Ash's text and
+  need his rewrite and the legal review.
+- The dormant copy (before the launch block is filled in) still describes
+  the old proposal on purpose, so nothing visible changes before the launch.
+

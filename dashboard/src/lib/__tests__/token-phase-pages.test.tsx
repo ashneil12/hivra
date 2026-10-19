@@ -123,8 +123,10 @@ describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
     const { container } = renderPage(TokenVerificationPage);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(copy.tokenPage.heroTitle);
     expect(screen.getByText(copy.tokenPage.heroLead)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Converting from $HermesOS" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "$HIVRA for $HermesOS holders" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "The proposed $HIVRA migration" })).not.toBeInTheDocument();
+    // No claim or swap step anywhere, and nothing that names Bankr as the launcher.
+    expect(container.textContent).not.toMatch(/Bankr|active claim|ETH proceeds|claims open/);
     const hivra = within(container.querySelector('[data-token="hivra"]') as HTMLElement);
     expect(hivra.getByText(HIVRA_ADDRESS)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\$HIVRA has not launched|There is no \$HIVRA contract yet|proposed \$HIVRA token/);

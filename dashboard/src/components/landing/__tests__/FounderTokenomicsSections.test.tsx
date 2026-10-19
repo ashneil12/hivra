@@ -66,3 +66,11 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
   expect(container.textContent).toContain("Token payments are final, except where the law gives you a right to cancel.");
   expect(container.textContent).not.toMatch(/Nibbii|remain to be settled|fixed at deposit|own wallet|market quote/);
 });
+test.each(["scheduled", "active"] as const)("a launched (%s) section describes the push airdrop, not a Bankr claim", (phase) => {
+  const { container } = render(<TokenomicsSection phase={phase} />);
+  expect(screen.getByRole("heading", { name: "Nothing to claim. Nothing to swap." })).toBeVisible();
+  expect(screen.getByRole("list", { name: "Airdrop flow" })).toHaveTextContent("Snapshot block");
+  expect(container.textContent).not.toMatch(/Bankr|ETH proceeds|active claim|claims open|migration, new uses/);
+  expect(container.textContent).toContain("The new uses and treasury plans are proposals.");
+  expect(container.textContent).toContain("The $HIVRA supply is fixed in its contract, and BaseScan shows the total.");
+});
