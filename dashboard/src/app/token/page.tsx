@@ -5,6 +5,7 @@ import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
+import { hivraMigrationHref } from "@/lib/claim/hivra-migration";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import { getTokenPageEntries } from "@/lib/token-verification-content";
@@ -34,7 +35,7 @@ export default function TokenVerificationPage() {
   // No country is listed (the list is empty, so the policy is dormant): the
   // page renders as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) {
-    return <TokenPageClient entries={getTokenPageEntries()} airdropLookupHref={hivraAirdropLookupHref()} />;
+    return <TokenPageClient entries={getTokenPageEntries()} airdropLookupHref={hivraAirdropLookupHref()} migrationHref={hivraMigrationHref()} />;
   }
   // A country is listed (GB today): render per request, with the notice for a blocked viewer.
   return renderForViewer();
@@ -42,12 +43,13 @@ export default function TokenVerificationPage() {
 
 async function renderForViewer() {
   const geo = await resolveTokenGeoBlockForPage();
-  // A blocked viewer gets no link to the airdrop lookup.
+  // A blocked viewer gets no link to the airdrop lookup or the migration page.
   return (
     <TokenPageClient
       entries={getTokenPageEntries()}
       geoNotice={geo.blocked ? geo.message : null}
       airdropLookupHref={geo.blocked ? null : hivraAirdropLookupHref()}
+      migrationHref={geo.blocked ? null : hivraMigrationHref()}
     />
   );
 }

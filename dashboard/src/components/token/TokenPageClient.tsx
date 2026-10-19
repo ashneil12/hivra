@@ -111,11 +111,14 @@ export default function TokenPageClient({
   entries,
   geoNotice = null,
   airdropLookupHref = null,
+  migrationHref = null,
 }: {
   entries: TokenPageEntry[];
   geoNotice?: string | null;
   /** /token/airdrop, set by the server only when that lookup is served and the viewer is not blocked. */
   airdropLookupHref?: string | null;
+  /** /token/migration, set by the server only when that page is served and the viewer is not blocked. */
+  migrationHref?: string | null;
 }) {
   const phase = tokenPhaseFromEntries(entries);
   const phaseCopy = getTokenPhaseCopy(phase).tokenPage;
@@ -193,6 +196,9 @@ export default function TokenPageClient({
         <p>{copy.migrationParagraphs[0]}</p>
         <p>{copy.migrationParagraphs[1]}</p>
         <AirdropDetails entries={entries} lookupHref={geoNotice ? null : airdropLookupHref} />
+        {migrationHref ? <p data-testid="token-migration-link">
+          <Link href={migrationHref}>Read about the $HermesOS to $HIVRA migration</Link>
+        </p> : null}
         <h3>Utility and treasury proposals</h3>
         <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
         <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>

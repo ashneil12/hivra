@@ -239,10 +239,12 @@ function LaunchedPanel({
   state,
   geoNotice,
   airdropLookupHref,
+  migrationHref,
 }: {
   state: LaunchedState;
   geoNotice: string | null;
   airdropLookupHref: string | null;
+  migrationHref: string | null;
 }) {
   return (
     <article style={{ maxWidth: 720 }}>
@@ -263,7 +265,14 @@ function LaunchedPanel({
             {geoNotice}
           </p>
         ) : (
-          <AirdropStatus state={state} lookupHref={airdropLookupHref} />
+          <>
+            <AirdropStatus state={state} lookupHref={airdropLookupHref} />
+            {migrationHref ? (
+              <p data-testid="convert-migration-link" style={body}>
+                <Link href={migrationHref}>Read about the $HermesOS to $HIVRA migration</Link>
+              </p>
+            ) : null}
+          </>
         )}
       </Section>
 
@@ -317,6 +326,7 @@ export function ConvertPanel({
   state,
   geoNotice = null,
   airdropLookupHref = null,
+  migrationHref = null,
 }: {
   state: ConversionState;
   /**
@@ -327,7 +337,16 @@ export function ConvertPanel({
   geoNotice?: string | null;
   /** /token/airdrop, set by the server only when that lookup is served and the viewer is not blocked. */
   airdropLookupHref?: string | null;
+  /** /token/migration, set by the server only when that page is served and the viewer is not blocked. */
+  migrationHref?: string | null;
 }) {
   if (state.status === "dormant") return <DormantPanel state={state} geoNotice={geoNotice} />;
-  return <LaunchedPanel state={state} geoNotice={geoNotice} airdropLookupHref={geoNotice ? null : airdropLookupHref} />;
+  return (
+    <LaunchedPanel
+      state={state}
+      geoNotice={geoNotice}
+      airdropLookupHref={geoNotice ? null : airdropLookupHref}
+      migrationHref={geoNotice ? null : migrationHref}
+    />
+  );
 }

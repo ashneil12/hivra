@@ -543,6 +543,34 @@ batch by hand on disperse.app. Every amount is whole wei (BigInt, no float).
    public list then shows that batch as sent; commit it by a reviewed PR.
    After the last batch, set `sentAt`.
 
+### The migration page (/token/migration)
+
+A public page that explains the move: what changed, the contracts, where the
+$HIVRA pool's trading fees go, the founder's legacy $HermesOS and the planned
+rules for them, on-chain receipts, and how to stay safe. It reads
+`dashboard/src/lib/claim/hivra-migration-config.ts`, plus the $HIVRA contract
+from the registry and the snapshot block from the airdrop config (it keeps no
+copy of either).
+
+It is a 404, and /token and /dashboard/convert do not link to it, until
+`HIVRA_NEW_TOKEN_SURFACES` is on, the launch block is filled in, and
+`published` is `true` (one check, `getServedHivraMigration` in
+`hivra-migration.ts`). A viewer the token geo-policy blocks gets the notice
+and no details, and no link.
+
+Filled in already: `treasurySafe`, `fee`, and the founder's `wallet`,
+`heldTokens`, `migrated: false`, `headStartDays`, `weeklyCapTokens`,
+`maxPriceImpactPct`, `weeks` and `burnAddress`. Filled in at launch, each by a
+reviewed PR: `announcedAt` (UTC instant), the founder's `saleStart`,
+`saleDay` (the weekday, matching `saleStart`) and `burnDate`, `receipts` as
+transactions confirm, and `published: true` last. Every value is checked
+(EIP-55 addresses, 0x + 64 hex transaction hashes, real UTC dates in order:
+`saleStart` after the no-sale period, `burnDate` after the last sale week, no
+receipt in the future, no founder sale or burn before `saleStart`). A bad
+value is dropped and logged (`HIVRA migration config rejected`), and the page
+leaves out the section that needed it. The page copy needs the UK
+financial-promotion / legal review before release.
+
 ### Still Bankr-era (not changed here)
 
 - `LITEPAPER.md`, `docs/litepaper/index.html` and `TOKENOMICS.md` still
