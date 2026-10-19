@@ -21,6 +21,7 @@ import "server-only";
 import rawAirdropList from "@/data/token/hivra-airdrop.json";
 import { getConfiguredHivraToken, getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { log } from "@/lib/logger";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 import { HIVRA_AIRDROP, type HivraAirdropConfig } from "./hivra-airdrop-config";
 import { resolveAirdropFacts, type AirdropSnapshot } from "./conversion-state";
@@ -87,4 +88,30 @@ export function getOpenHivraAirdrop(inputs: HivraAirdropLookupInputs = {}): Open
     return null;
   }
   return { airdrop: parsed.airdrop, snapshot, senderAddress };
+}
+
+/** Where the lookup is served. */
+export const HIVRA_AIRDROP_LOOKUP_PATH = "/token/airdrop";
+
+/**
+ * The lookup's data when /token/airdrop actually serves it: the new token
+ * surfaces are switched on (HIVRA_NEW_TOKEN_SURFACES) and the list is open
+ * (getOpenHivraAirdrop). This is the page's own 404 check, so a link built
+ * from it never points at a 404.
+ */
+export function getServedHivraAirdrop(
+  inputs: HivraAirdropLookupInputs & { env?: Record<string, string | undefined> } = {},
+): OpenHivraAirdrop | null {
+  if (!newTokenSurfacesEnabled(inputs.env)) return null;
+  return getOpenHivraAirdrop(inputs);
+}
+
+/**
+ * The lookup link for another page, or null when the lookup is not served. The
+ * caller passes null instead for a viewer the token geo-policy blocks.
+ */
+export function hivraAirdropLookupHref(
+  inputs: HivraAirdropLookupInputs & { env?: Record<string, string | undefined> } = {},
+): string | null {
+  return getServedHivraAirdrop(inputs) ? HIVRA_AIRDROP_LOOKUP_PATH : null;
 }

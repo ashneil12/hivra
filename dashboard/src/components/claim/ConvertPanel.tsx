@@ -141,7 +141,7 @@ function DormantPanel({ state, geoNotice }: { state: Extract<ConversionState, { 
   );
 }
 
-function AirdropStatus({ state }: { state: LaunchedState }) {
+function AirdropStatus({ state, lookupHref }: { state: LaunchedState; lookupHref: string | null }) {
   return (
     <>
       <p style={body}>
@@ -163,6 +163,11 @@ function AirdropStatus({ state }: { state: LaunchedState }) {
             </a>{" "}
             to find your wallet and the $HIVRA it is sent.
           </p>
+          {lookupHref ? (
+            <p data-testid="convert-airdrop-lookup" style={body}>
+              <Link href={lookupHref}>Check a wallet for the $HIVRA airdrop</Link>
+            </p>
+          ) : null}
           {state.sentAt ? (
             <p data-testid="convert-airdrop-sent" style={body}>
               Every transfer in the snapshot was confirmed on Base by {formatUtc(state.sentAt)}. Your $HIVRA is in the
@@ -230,7 +235,15 @@ function AccessSection({ state, geoNotice }: { state: LaunchedState; geoNotice: 
   );
 }
 
-function LaunchedPanel({ state, geoNotice }: { state: LaunchedState; geoNotice: string | null }) {
+function LaunchedPanel({
+  state,
+  geoNotice,
+  airdropLookupHref,
+}: {
+  state: LaunchedState;
+  geoNotice: string | null;
+  airdropLookupHref: string | null;
+}) {
   return (
     <article style={{ maxWidth: 720 }}>
       <header style={{ marginBottom: "1.5rem" }}>
@@ -250,7 +263,7 @@ function LaunchedPanel({ state, geoNotice }: { state: LaunchedState; geoNotice: 
             {geoNotice}
           </p>
         ) : (
-          <AirdropStatus state={state} />
+          <AirdropStatus state={state} lookupHref={airdropLookupHref} />
         )}
       </Section>
 
@@ -303,6 +316,7 @@ function LaunchedPanel({ state, geoNotice }: { state: LaunchedState; geoNotice: 
 export function ConvertPanel({
   state,
   geoNotice = null,
+  airdropLookupHref = null,
 }: {
   state: ConversionState;
   /**
@@ -311,7 +325,9 @@ export function ConvertPanel({
    * current access (and any post-switch deadline) still show.
    */
   geoNotice?: string | null;
+  /** /token/airdrop, set by the server only when that lookup is served and the viewer is not blocked. */
+  airdropLookupHref?: string | null;
 }) {
   if (state.status === "dormant") return <DormantPanel state={state} geoNotice={geoNotice} />;
-  return <LaunchedPanel state={state} geoNotice={geoNotice} />;
+  return <LaunchedPanel state={state} geoNotice={geoNotice} airdropLookupHref={geoNotice ? null : airdropLookupHref} />;
 }

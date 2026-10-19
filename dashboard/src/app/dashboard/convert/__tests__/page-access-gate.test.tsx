@@ -47,6 +47,20 @@ describe("/dashboard/convert access gate", () => {
     expect(screen.getByText(/Billing shows which token your tier counts/)).toBeInTheDocument();
   });
 
+  it("does not link to the wallet lookup while the committed list is not published", async () => {
+    gate.mockResolvedValue(null);
+    const previous = process.env.HIVRA_NEW_TOKEN_SURFACES;
+    process.env.HIVRA_NEW_TOKEN_SURFACES = "1";
+    try {
+      const { container } = render(await ConvertPage());
+      expect(screen.getByTestId("convert-snapshot-block")).toBeInTheDocument();
+      expect(container.querySelector('a[href="/token/airdrop"]')).toBeNull();
+    } finally {
+      if (previous === undefined) delete process.env.HIVRA_NEW_TOKEN_SURFACES;
+      else process.env.HIVRA_NEW_TOKEN_SURFACES = previous;
+    }
+  });
+
   it("offers the switch step to a grandfathered holder who hasn't switched", async () => {
     gate.mockResolvedValue({ grandfathered: true, convertedAt: null, conversionGraceEndsAt: null });
     render(await ConvertPage());

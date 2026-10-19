@@ -58,8 +58,9 @@ function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
  * The published airdrop facts (lib/claim/hivra-airdrop-config.ts): the snapshot
  * block, the link to the full list and the sender wallet. Shown only once the
  * registry names $HIVRA and the snapshot is published; it reads no clock.
+ * `lookupHref` is set by the server only when /token/airdrop is served.
  */
-function AirdropDetails({ entries }: { entries: readonly TokenPageEntry[] }) {
+function AirdropDetails({ entries, lookupHref }: { entries: readonly TokenPageEntry[]; lookupHref: string | null }) {
   const hivraAddress = entries.find((entry) => entry.key === "hivra")?.contractAddress;
   if (!hivraAddress) return null;
   const { snapshot, senderAddress } = resolveAirdropFacts(HIVRA_AIRDROP, hivraAddress, null);
@@ -70,6 +71,9 @@ function AirdropDetails({ entries }: { entries: readonly TokenPageEntry[] }) {
       <a href={`https://basescan.org/block/${snapshot.block}`} target="_blank" rel="noopener noreferrer">{snapshot.block}</a>.{" "}
       <a href={snapshot.url} target="_blank" rel="noopener noreferrer">Open the published snapshot</a>
     </p>
+    {lookupHref ? <p>
+      <Link href={lookupHref}>Check a wallet for the $HIVRA airdrop</Link>
+    </p> : null}
     {senderAddress ? <p>
       The transfers come from Hivra&apos;s airdrop wallet:{" "}
       <code style={{ overflowWrap: "anywhere" }}>{senderAddress}</code>{" "}
@@ -106,9 +110,12 @@ function CopyAddressButton({ value }: { value: string }) {
 export default function TokenPageClient({
   entries,
   geoNotice = null,
+  airdropLookupHref = null,
 }: {
   entries: TokenPageEntry[];
   geoNotice?: string | null;
+  /** /token/airdrop, set by the server only when that lookup is served and the viewer is not blocked. */
+  airdropLookupHref?: string | null;
 }) {
   const phase = tokenPhaseFromEntries(entries);
   const phaseCopy = getTokenPhaseCopy(phase).tokenPage;
@@ -185,7 +192,7 @@ export default function TokenPageClient({
         <h2 id="proposals-title">{copy.migrationHeading}</h2>
         <p>{copy.migrationParagraphs[0]}</p>
         <p>{copy.migrationParagraphs[1]}</p>
-        <AirdropDetails entries={entries} />
+        <AirdropDetails entries={entries} lookupHref={geoNotice ? null : airdropLookupHref} />
         <h3>Utility and treasury proposals</h3>
         <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
         <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>

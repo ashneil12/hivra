@@ -71,6 +71,22 @@ describe("/token airdrop details", () => {
     expect(screen.queryByTestId("token-airdrop-details")).not.toBeInTheDocument();
   });
 
+  it("links to the wallet lookup only when the server says it is served", () => {
+    const { rerender } = render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} airdropLookupHref="/token/airdrop" />);
+    expect(screen.getByRole("link", { name: "Check a wallet for the $HIVRA airdrop" })).toHaveAttribute("href", "/token/airdrop");
+
+    rerender(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
+    expect(screen.getByTestId("token-airdrop-details")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /check a wallet/i })).not.toBeInTheDocument();
+  });
+
+  it("never links a blocked viewer to the lookup, whatever is passed", () => {
+    const { container } = render(
+      <TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} geoNotice="Token features aren't available to you." airdropLookupHref="/token/airdrop" />,
+    );
+    expect(container.querySelector('a[href="/token/airdrop"]')).toBeNull();
+  });
+
   it("hides the details from a viewer the token geo-policy blocks", () => {
     render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} geoNotice="Token features aren't available to you." />);
 

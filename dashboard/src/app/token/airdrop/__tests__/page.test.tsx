@@ -25,7 +25,11 @@ jest.mock("next/navigation", () => ({
 }));
 
 let mockOpen: OpenHivraAirdrop | null = null;
-jest.mock("@/lib/claim/hivra-airdrop-data", () => ({ getOpenHivraAirdrop: () => mockOpen }));
+// The real served check is "surfaces on AND list open"; only the list is faked here.
+jest.mock("@/lib/claim/hivra-airdrop-data", () => ({
+  getServedHivraAirdrop: () =>
+    jest.requireActual<typeof import("@/lib/token-surfaces")>("@/lib/token-surfaces").newTokenSurfacesEnabled() ? mockOpen : null,
+}));
 let mockGeo: TokenGeoDecision = { blocked: false };
 jest.mock("@/lib/compliance/token-geo-page", () => ({ resolveTokenGeoBlockForPage: async () => mockGeo }));
 

@@ -124,6 +124,23 @@ describe("ConvertPanel once $HIVRA is launched", () => {
     expect(screen.queryByTestId("convert-airdrop-sent")).not.toBeInTheDocument();
   });
 
+  it("links to the wallet lookup only when the server says it is served, never for a blocked viewer", () => {
+    const state = resolveConversionState({ ...DORMANT, ...LIVE, airdrop: PUBLISHED, access: null });
+    const { rerender } = render(<ConvertPanel state={state} airdropLookupHref="/token/airdrop" />);
+    expect(screen.getByRole("link", { name: "Check a wallet for the $HIVRA airdrop" })).toHaveAttribute("href", "/token/airdrop");
+
+    rerender(<ConvertPanel state={state} />);
+    expect(screen.queryByTestId("convert-airdrop-lookup")).not.toBeInTheDocument();
+
+    rerender(<ConvertPanel state={state} geoNotice="Token features aren't available to you." airdropLookupHref="/token/airdrop" />);
+    expect(hrefs()).not.toContain("/token/airdrop");
+  });
+
+  it("gives no lookup link while $HIVRA is dormant", () => {
+    render(<ConvertPanel state={resolveConversionState(DORMANT)} airdropLookupHref="/token/airdrop" />);
+    expect(hrefs()).not.toContain("/token/airdrop");
+  });
+
   it("says when every transfer was confirmed", () => {
     renderState({ ...LIVE, airdrop: SENT, access: null });
 

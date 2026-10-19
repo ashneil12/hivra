@@ -5,6 +5,7 @@ import { ConvertPanel } from "@/components/claim/ConvertPanel";
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { readConversionAccessGate } from "@/lib/claim/conversion-access.server";
+import { hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { readConversionInputs, resolveConversionState } from "@/lib/claim/conversion-state";
 import { log } from "@/lib/logger";
@@ -35,7 +36,12 @@ export default async function ConvertPage() {
 
   return (
     <DashboardPageShell maxWidth={900}>
-      <ConvertPanel state={state} geoNotice={geo.blocked ? geo.message : null} />
+      <ConvertPanel
+        state={state}
+        geoNotice={geo.blocked ? geo.message : null}
+        // Only when /token/airdrop is served (the page's own check), never for a blocked viewer.
+        airdropLookupHref={geo.blocked ? null : hivraAirdropLookupHref({ now })}
+      />
     </DashboardPageShell>
   );
 }

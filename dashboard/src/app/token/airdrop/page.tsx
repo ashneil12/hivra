@@ -2,12 +2,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import AirdropLookupView, { type AirdropLookupViewState } from "@/components/token/AirdropLookupView";
-import { getOpenHivraAirdrop } from "@/lib/claim/hivra-airdrop-data";
+import { getServedHivraAirdrop } from "@/lib/claim/hivra-airdrop-data";
 import { lookupHivraAirdrop } from "@/lib/claim/hivra-airdrop-lookup";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { RESTRICTED_TOKEN_METADATA } from "@/lib/token-phase-copy";
-import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 // Per request: the lookup reads the query, the geo decision and the $HIVRA phase.
 export const dynamic = "force-dynamic";
@@ -23,7 +22,7 @@ function firstValue(value: string | string[] | undefined): string | null {
 }
 
 export async function generateMetadata({ searchParams }: { searchParams: SearchParams }): Promise<Metadata> {
-  if (!newTokenSurfacesEnabled() || !getOpenHivraAirdrop()) return { robots: { index: false, follow: false } };
+  if (!getServedHivraAirdrop()) return { robots: { index: false, follow: false } };
   const restricted = (await resolveTokenGeoBlockForPage()).blocked;
   const { title, description } = restricted ? RESTRICTED_TOKEN_METADATA : { title: TITLE, description: DESCRIPTION };
   const looked = firstValue((await searchParams).address) !== null;
@@ -37,16 +36,18 @@ export async function generateMetadata({ searchParams }: { searchParams: SearchP
 }
 
 /**
- * Hidden (404) until $HIVRA's launch block, the published snapshot and the
- * committed list are all in place (lib/claim/hivra-airdrop-data.ts). The proxy
- * also holds back everything under /token while HIVRA_NEW_TOKEN_SURFACES is off.
+ * Hidden (404) until HIVRA_NEW_TOKEN_SURFACES is on and $HIVRA's launch block,
+ * the published snapshot and the committed list are all in place
+ * (getServedHivraAirdrop in lib/claim/hivra-airdrop-data.ts; the links on /token
+ * and /dashboard/convert use the same check). The proxy also holds back
+ * everything under /token while HIVRA_NEW_TOKEN_SURFACES is off.
  */
 export default async function HivraAirdropLookupPage({ searchParams }: { searchParams: SearchParams }) {
-  if (!newTokenSurfacesEnabled()) notFound();
-  const open = getOpenHivraAirdrop();
+  const open = getServedHivraAirdrop();
   if (!open) notFound();
 
-  // With the dormant (empty) geo list this returns "not blocked" without reading the request.
+  // The token geo list names GB (token-geo-list.ts), so this reads the viewer's
+  // country; a blocked viewer gets the notice and the query is never read.
   const geo = await resolveTokenGeoBlockForPage();
   let state: AirdropLookupViewState;
   if (geo.blocked) {
