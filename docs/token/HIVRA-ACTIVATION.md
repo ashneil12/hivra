@@ -29,11 +29,19 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
           exists (select 1 from pg_indexes where indexname = 'uq_managed_venice_token_lots_token_deposit_quote') as lot_index;
    ```
    All four must be `true`.
-3. **Market:** the $HIVRA pool must pass the price gates from day one, or
-   every $HIVRA quote fails closed (see section 5):
+3. **Market:** $HIVRA launches on Doppler into a Uniswap v4 pool quoted in
+   **native ETH** (currency0 = `address(0)`, the Doppler hook sets the fee),
+   not a HIVRA/WETH pair. The price feed accepts a pool quoted in native ETH
+   or WETH and nothing else. The pool must pass the price gates, or every
+   $HIVRA quote and every new $HIVRA tier qualification fails closed (see
+   section 5):
    - DEXScreener lists the canonical pool with at least
-     `HIVRA_MIN_PRICE_LIQUIDITY_USD` of liquidity (default $25,000; see
-     `dashboard/src/lib/billing/token-registry.ts`).
+     `HIVRA_MIN_PRICE_LIQUIDITY_USD` of total liquidity ($25,000) **and** at
+     least `HIVRA_MIN_QUOTE_LIQUIDITY_USD` of ETH on its ETH side ($12,500;
+     both in `dashboard/src/lib/billing/token-registry.ts`). A Doppler pool
+     starts almost entirely $HIVRA, and DEXScreener values that side at the
+     pool's own price, so the total alone can look healthy while the pool
+     holds next to no ETH. The ETH-side floor is the one a fresh pool fails.
    - GeckoTerminal has indexed the pool, its first completed five-minute
      candle is at least four hours old, it has traded in at least 24
      five-minute periods, and the price has not risen more than 10% in the
@@ -70,7 +78,7 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
 export const HIVRA_TOKEN_LAUNCH: HivraTokenLaunchConfig = {
   contractAddress: "0x…",                 // $HIVRA on Base, EIP-55 checksummed as BaseScan shows it
   decimals: 18,                           // read on-chain, see below
-  poolId: "0x…",                          // canonical Uniswap v4 pool id (64 hex) or pair address (40 hex)
+  poolId: "0x…",                          // the Doppler Uniswap v4 pool id (0x + 64 hex)
   activatesAt: "2026-10-01T16:00:00Z",    // UTC, to the second
 };
 ```
@@ -88,9 +96,10 @@ financial-promotion / legal review before any Promote.
 ### The activation helper
 
 `dashboard/scripts/token/prepare-hivra-activation.mjs` checks a launch and
-fills in the block. It is **read-only**: it reads Base (`eth_getCode` and
-`eth_call` to `name()`, `symbol()`, `decimals()` and `totalSupply()` on the
-public RPC `https://mainnet.base.org`), DEXScreener and GeckoTerminal. It
+fills in the block. It is **read-only**: it reads Base on the public RPC
+`https://mainnet.base.org` (`eth_getCode`, and `eth_call` to `name()`,
+`symbol()`, `decimals()`, `totalSupply()`, `yearlyMintRate()` and Doppler's
+`DopplerHookInitializer.getState(token)`), DEXScreener and GeckoTerminal. It
 signs nothing, sends no transaction and posts to no service.
 
 ```sh
@@ -101,8 +110,8 @@ node scripts/token/prepare-hivra-activation.mjs \
   --address 0x… --activates-at 2026-10-01T16:00:00Z --write  # also fill in the block
 ```
 
-Options: `--pool-id 0x…` uses that HIVRA/WETH pool instead of the deepest
-one; `--json` prints the result as JSON. Exit code 0 means every check passed,
+Options: `--pool-id 0x…` uses that ETH-quoted pool instead of the one Doppler
+recorded (or the deepest); `--json` prints the result as JSON. Exit code 0 means every check passed,
 1 means one failed, 2 means bad usage.
 
 It checks, and `--write` refuses unless every FAIL-level check passes:
@@ -113,15 +122,26 @@ It checks, and `--write` refuses unless every FAIL-level check passes:
 | `address.checksum` | a mixed-case address has a valid EIP-55 checksum (a lowercase one is written in its EIP-55 form) |
 | `activatesAt.format`, `activatesAt.future` | a real UTC instant to the second, in the future |
 | `chain.code`, `chain.name`, `chain.symbol`, `chain.decimals`, `chain.total_supply` | contract code on Base, `name()` is `Hivra`, `symbol()` is `HIVRA`, `decimals()` is 18, `totalSupply()` is 100,000,000,000 whole tokens |
-| `pool.found`, `pool.id_format` | DEXScreener lists a HIVRA/WETH pool on Base (the deepest, or `--pool-id`), with an id `token-registry.ts` accepts |
-| `pool.liquidity` | the pool holds at least `HIVRA_MIN_PRICE_LIQUIDITY_USD` (read from `token-registry.ts`) |
-| `candles.pool_token`, `candles.present` | GeckoTerminal prices the pool for this address and has at least one five-minute candle |
+| `chain.implementation` | the token is an EIP-1167 clone of the DopplerERC20V1 implementation on Base: a clone cannot be upgraded, and DopplerERC20V1 mints only at launch |
+| `chain.no_mint` | the code that runs has no mint entry point (`mint(address,uint256)`, `mint(uint256)`, `mintTo(address,uint256)`, `mintInflation()`) |
+| `chain.inflation` | there is no `yearlyMintRate()`, or it is 0 |
+| `doppler.state` | Doppler's `DopplerHookInitializer` holds a pool for this token that is `Initialized` or `Locked` (not missing, not `Graduated` or `Exited`) |
+| `doppler.numeraire` | the pool's numeraire is native ETH; WETH is a WARN (the price feed accepts it), anything else fails |
+| `pool.found`, `pool.id_format` | DEXScreener lists an ETH-quoted (native ETH or WETH) $HIVRA pool on Base (the Doppler pool, or `--pool-id`), with an id `token-registry.ts` accepts |
+| `pool.doppler_key` | that pool is the one Doppler recorded: its id is the hash of Doppler's pool key, with this token on one side and the Doppler hook |
+| `pool.liquidity` | the pool holds at least `HIVRA_MIN_PRICE_LIQUIDITY_USD` in total ($25,000) |
+| `pool.eth_liquidity` | the pool's ETH side holds at least `HIVRA_MIN_QUOTE_LIQUIDITY_USD` ($12,500) |
+| `candles.pool_token`, `candles.quote`, `candles.present` | GeckoTerminal prices the pool for this address, in ETH, and has at least one five-minute candle |
+
+Both liquidity floors are read from `token-registry.ts`, so the helper and the
+price feed use the same numbers.
 
 It also warns (WARN, does not block) when `activatesAt` is less than two hours
-away, when there is more than one HIVRA/WETH pool, when the pool has less than
-four hours of candle history (quotes stay closed with `insufficient_history`
-until it has; section 5), and when the spot is more than 10% above the
-four-hour median (quotes pause until the median catches up; section 5).
+away (`activatesAt.lead`), when there is more than one ETH-quoted $HIVRA pool
+(`pool.single`), when the pool has less than four hours of candle history
+(`candles.history`: quotes stay closed with `insufficient_history` until it
+has; section 5), and when the spot is more than 10% above the four-hour median
+(`candles.deviation`: quotes pause until the median catches up; section 5).
 
 `--write` fills in only the four fields, with the checksummed address, the
 on-chain decimals and the lowercase pool id, and changes nothing else in the
@@ -139,7 +159,7 @@ How to get each value by hand (the helper does these checks for you):
 |---|---|---|
 | `contractAddress` | the launch (Doppler) | Open `https://basescan.org/token/<address>`: name, symbol and total supply match the launch. Paste the checksummed form. |
 | `decimals` | on-chain `decimals()` | `curl -s https://mainnet.base.org -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"<address>","data":"0x313ce567"},"latest"]}'`. `0x…12` = 18. |
-| `poolId` | DEXScreener `https://api.dexscreener.com/latest/dex/tokens/<address>` | Use the `pairAddress` of the $HIVRA/WETH Uniswap v4 pool with the most liquidity. The price feed accepts only this pool. |
+| `poolId` | Doppler's `DopplerHookInitializer.getState(<address>)` on Base, and DEXScreener `https://api.dexscreener.com/latest/dex/tokens/<address>` | The Uniswap v4 pool id (0x + 64 hex) of the Doppler pool, quoted in native ETH (DEXScreener shows the quote token as ETH at `0x000…000`). The price feed accepts only this pool. |
 | `activatesAt` | Ash's decision | A future instant, later than the deploy on every target (precondition 5). Until then /token shows $HIVRA as "launching soon". Never paste a past instant. |
 
 The build fails on a bad paste: `token-registry.test.ts` rejects a partial or
@@ -265,7 +285,15 @@ Every price used for a quote or a new tier threshold passes these gates, or the
 quote fails closed with a 503 "try again later":
 
 1. **Liquidity floor:** the canonical pool holds at least the token's
-   `minPriceLiquidityUsd` ($HermesOS $10,000, $HIVRA $25,000).
+   `minPriceLiquidityUsd` ($HermesOS $10,000, $HIVRA $25,000). For $HIVRA
+   the pool's ETH side must also hold at least `minQuoteLiquidityUsd`
+   (`HIVRA_MIN_QUOTE_LIQUIDITY_USD`, $12,500), valued at ETH's USD rate.
+   $HermesOS has no ETH-side floor. Until the Doppler pool holds that much
+   ETH, these fail closed for $HIVRA: hold-for-tier, yearly and
+   managed-Venice $HIVRA quotes, and any new $HIVRA tier qualification (it
+   needs a live threshold). These do not depend on it: receiving the
+   airdrop, holding $HIVRA, and keeping a tier already qualified (breach and
+   grace compare balances, not prices).
 2. **Median cross-check:** the reference is the median price over the last
    `PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES` (4 hours) of five-minute buckets
    from GeckoTerminal, compared with the DEXScreener spot in the pool's
@@ -404,20 +432,28 @@ to receive it. What changed in this runbook:
   `conversionUrl`. `conversion-links-config.ts` is gone; the page reads
   `hivra-airdrop-config.ts` and links to no claim or swap site at all.
 - The `contractAddress` source is the Doppler launch, checked on BaseScan as
-  before. The helper's checks are unchanged: name `Hivra`, symbol `HIVRA`, 18
-  decimals, a total supply of exactly 100,000,000,000, and a HIVRA/WETH pool
-  on DEXScreener. If the Doppler launch differs on any of these (supply, or a
-  pool quoted in native ETH rather than WETH), the helper fails and `--write`
-  refuses; change the expectation in a reviewed PR first, never by hand.
+  before. The helper expects name `Hivra`, symbol `HIVRA`, 18 decimals, a
+  total supply of exactly 100,000,000,000, a fixed supply (a DopplerERC20V1
+  clone with no mint entry point and no inflation), and the Doppler v4 pool
+  quoted in native ETH (section 2). If the launch differs on any of these, the
+  helper fails and `--write` refuses; change the expectation in a reviewed PR
+  first, never by hand.
+- $HermesOS is different: it is an older Doppler DERC20 with `mintInflation()`
+  and `yearlyMintRate()`. On Base its `yearlyMintRate()` reads 2% a year
+  (0.02 in WAD) and `currentYearStart()` reads 0 (read on 2026-10-19), so its
+  supply can grow by up to 2% a year once inflation starts. $HIVRA's
+  `chain.no_mint` and `chain.inflation` checks exist to refuse a token like
+  that.
 - Doppler may move liquidity to another pool after its sale (migration). The
   price feed accepts only `poolId`. If the liquidity moves, the old pool
   falls under the floor and every $HIVRA quote fails closed until a reviewed
   PR names the new pool. Changing `poolId` after `activatesAt` is allowed
   (the activation record pins only the address and the instant).
-- The $HIVRA liquidity floor stays at $25,000
-  (`HIVRA_MIN_PRICE_LIQUIDITY_USD`). Nothing in this change lowers it. Until
-  the pool holds that much, $HIVRA quotes fail closed (section 5), while
-  holding $HIVRA for a tier and receiving the airdrop are unaffected.
+- The $HIVRA floors are $25,000 total (`HIVRA_MIN_PRICE_LIQUIDITY_USD`) and
+  $12,500 of ETH (`HIVRA_MIN_QUOTE_LIQUIDITY_USD`). Until the pool holds both,
+  $HIVRA quotes and new $HIVRA tier qualification fail closed (section 5),
+  while receiving the airdrop, holding $HIVRA and keeping an existing tier
+  are unaffected.
 - The conversion rule in section 4 (switch access, 72-hour grace) still
   applies. The convert page offers the switch to a grandfathered holder only
   once `sentAt` is set, because after the grace only $HIVRA counts.
@@ -451,10 +487,61 @@ in. Then, in order, each by its own reviewed PR:
    opens the optional "switch your access" step for grandfathered holders.
 
 Decide and publish, with the snapshot, which wallets it leaves out (for
-example pools, contracts, and wallets Hivra manages: the legacy
-`hermesos_lock` wallets can only withdraw $HermesOS from the app today, so
-$HIVRA sent to one could not be withdrawn there). The page tells holders that
-the published snapshot says whether a Hivra-managed wallet is included.
+example pools, launch contracts and Ash's own wallet). Wallets Hivra manages
+(the legacy `hermesos_lock` wallets) are included but flagged: the generator
+below sends their $HIVRA to the owner's own wallet when a private remap names
+one. A lock wallet that still receives $HIVRA can withdraw it from Wallet once
+$HIVRA is live; one that holds only $HIVRA shows just that withdraw. The page
+tells holders that the published snapshot says whether a Hivra-managed wallet
+is included.
+
+### Building the airdrop list and the Disperse batches
+
+`dashboard/scripts/token/build-hivra-airdrop.mjs` turns the snapshot into the
+public list and the send batches. It is offline: it reads and writes local
+files only, signs nothing and sends nothing. The airdrop wallet sends each
+batch by hand on disperse.app. Every amount is whole wei (BigInt, no float).
+
+1. **Snapshot CSV.** One row per $HermesOS holder at `snapshotBlock`, with an
+   `address` and a `balance_wei` column. Keep it outside the repository.
+2. **Exclusions** (optional, `--exclusions`): `{"0xaddress": "public reason"}`.
+   The reason is published, so it must not name a person, an email or a user
+   id (the generator refuses ones that look like either).
+3. **Remap** (optional, `--remap`, PRIVATE): `{"0xaddress": {"send_to":
+   "0x…", "kind": "…"}}` for Hivra-managed wallets whose $HIVRA goes to the
+   owner's own wallet. It must sit outside the repository (the generator
+   refuses a path inside it) and is never committed.
+4. **Allocation guard** (`--max-total-wei` or `--max-total-tokens`, give one):
+   the airdrop wallet's $HIVRA allocation. The run refuses, writing nothing,
+   when the included total is larger.
+5. **Run it:**
+   ```sh
+   cd dashboard
+   node scripts/token/build-hivra-airdrop.mjs --snapshot ~/airdrop/snapshot.csv \
+     --snapshot-block <block> --exclusions ~/airdrop/exclusions.json \
+     --remap ~/airdrop/remap.json --max-total-tokens <allocation> \
+     --public-json src/data/token/hivra-airdrop.json --batches-dir ~/airdrop/batches
+   ```
+   It writes the public list to `src/data/token/hivra-airdrop.json` (holders
+   and exact amounts, excluded wallets with their reason, managed wallets
+   flagged with no destination and no batch) and one disperse.app text file
+   per batch to `--batches-dir`, which must also be outside the repository
+   (the batches carry the private destinations). Each destination gets one
+   line: when a remap's `send_to` is another holder, or two managed wallets
+   share an owner, their amounts are added together exactly. It then reads
+   the batch files back and exits 1 unless they add up to the included total
+   to the wei, with one line per destination.
+6. **Publish** the snapshot list (precondition for `snapshotUrl`), then commit
+   `hivra-airdrop.json` and set `snapshotBlock` and `snapshotUrl` in reviewed
+   PRs. The /token/airdrop lookup opens only when `HIVRA_NEW_TOKEN_SURFACES` is
+   on, the launch block is filled in, the snapshot is published, and the
+   committed list passes its checks and is for the same block. /token and
+   /dashboard/convert link to it only under that same check, and never for a
+   viewer the token geo-policy blocks.
+7. **After each batch confirms on Base**, add its transaction to a sent file
+   (`{"1": "0x<tx hash>", ...}`) and re-run with `--sent-txs <file>`. The
+   public list then shows that batch as sent; commit it by a reviewed PR.
+   After the last batch, set `sentAt`.
 
 ### Still Bankr-era (not changed here)
 
