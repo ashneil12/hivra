@@ -233,17 +233,38 @@ function privateNetworkCap(row: ManageCapabilitiesRow, isComputer: boolean): Man
 }
 
 function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCap | null {
-  if (variant === "linux-sandbox" || variant === "digitalocean") return null;
-  if (variant === "windows-my-server") return unavailable("windows_my_server", "Hivra can't update Windows computers on your own server yet.");
+  // These run no Hivra connection service, so there is none to update; Updates
+  // says how their own software is updated instead (selfUpdateFor).
+  if (variant === "linux-sandbox" || variant === "digitalocean" || variant === "windows-my-server" || variant === "prepared") return null;
   switch (runtimeUpdateRefusal(row)) {
     case "deepseek": return unavailable("deepseek", "DeepSeek computers can't update their connection service here yet.");
-    case "prepared": return unavailable("prepared", "Hivra can't update prepared Windows and Omarchy computers yet.");
     case "my-cloud": return unavailable("my_cloud", "Hivra can't update the connection service on My cloud computers yet.");
     default: break;
   }
   if (operationInProgress(row)) return blocked("operation_in_progress", WAIT);
   if (row.status !== "running") return blocked("not_running", "Start this computer to update it.");
   return available;
+}
+
+const OMARCHY_SELF_UPDATE = "Omarchy updates come straight from Omarchy. Open the Omarchy menu on the desktop and choose Update, then Omarchy, whenever you like.";
+const OMARCHY_DESKTOP_UPDATE = "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.";
+const WINDOWS_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, on the desktop.";
+const WINDOWS_DESKTOP_UPDATE = "Hivra connects to Windows from outside it, so there's nothing of Hivra's inside Windows to update.";
+const DIGITALOCEAN_UPDATE = "DigitalOcean runs this session's agent software, so there's nothing for Hivra or you to update in it.";
+const SANDBOX_UPDATE = "This Linux Sandbox runs a fixed, read-only system image, and only its workspace folder changes. Updating that image isn't available yet.";
+
+/** How the computer's own software is updated where no connection service runs. */
+function selfUpdateFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["selfUpdate"] {
+  if (variant === "prepared" && row.computer_profile === "omarchy") {
+    return { lines: [OMARCHY_SELF_UPDATE, OMARCHY_DESKTOP_UPDATE], openDesktop: true };
+  }
+  if (variant === "prepared" && row.computer_profile === "windows") {
+    return { lines: [WINDOWS_SELF_UPDATE, WINDOWS_DESKTOP_UPDATE], openDesktop: true };
+  }
+  if (variant === "windows-my-server") return { lines: [WINDOWS_SELF_UPDATE], openDesktop: false };
+  if (variant === "digitalocean") return { lines: [DIGITALOCEAN_UPDATE], openDesktop: false };
+  if (variant === "linux-sandbox") return { lines: [SANDBOX_UPDATE], openDesktop: false };
+  return null;
 }
 
 function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentCli"] {
@@ -320,6 +341,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
   const folderRecovery = folderRecoveryCap(row, variant);
   const privateNetwork = privateNetworkCap(row, isComputer);
   const connectionServiceUpdate = connectionServiceCap(row, variant);
+  const selfUpdate = selfUpdateFor(row, variant);
   const agentCli = agentCliFor(row, variant);
   const attachAgents = isComputer && variant === "ubuntu-proxmox" && ctx.attachAgents === true;
   const kind = isComputer ? "computer" : "agent";
@@ -346,7 +368,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     resources: true,
     recovery: capShown(restorePoints) || capShown(folderRecovery),
     network: capShown(privateNetwork),
-    updates: capShown(connectionServiceUpdate) || agentCli !== null,
+    updates: capShown(connectionServiceUpdate) || agentCli !== null || selfUpdate !== null,
     command: variant === "linux-sandbox",
     advanced: true,
   };
@@ -366,6 +388,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     folderRecovery,
     privateNetwork,
     connectionServiceUpdate,
+    selfUpdate,
     agentCli,
     attachAgents,
     // Every agent is told about its computer; a computer on its own is not.

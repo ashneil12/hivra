@@ -491,6 +491,17 @@ extension point is empty until attach lands), the agent-software version and
 automatic updates in Updates, disk grow, Hetzner power-off, and power or resize
 for Windows on My server.
 
+Updates says how every kind of computer is kept up to date (2026-10-19). Where
+Hivra's connection service runs, it offers Update connection service. Where it
+doesn't, it says how the owner updates the computer themselves
+(`selfUpdate` in the capability map): Omarchy from its own menu (Update, then
+Omarchy; the desktop accepts any Omarchy 4 release, see
+`omarchyDesktopVersionRefusal`), Windows through Windows Update, and for both,
+Hivra's own desktop part reinstalls itself the next time Desktop opens. A
+DigitalOcean session's software is DigitalOcean's. A Linux Sandbox's image
+can't be updated yet, and neither can the connection service on DeepSeek or
+My cloud computers; Manage says so rather than offering a control.
+
 **Live usage, Force off and a truthful Stop (2026-09-25, code on this branch,
 not yet accepted live; the cache migration is not applied anywhere).**
 Overview shows a Proxmox computer's power state, uptime, CPU, memory and disk

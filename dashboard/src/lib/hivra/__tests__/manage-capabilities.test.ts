@@ -55,12 +55,12 @@ describe("manageCapabilitiesFor", () => {
     ["ubuntu", "ubuntu-proxmox", ["overview", "agents", "resources", "recovery", "network", "updates", "advanced"]],
     ["ubuntuUnbound", "ubuntu-proxmox", ["overview", "agents", "resources", "updates", "advanced"]],
     ["ubuntuMyServer", "ubuntu-proxmox", ["overview", "agents", "resources", "recovery", "network", "updates", "advanced"]],
-    ["preparedWindows", "prepared", ["overview", "agents", "resources", "advanced"]],
-    ["preparedOmarchy", "prepared", ["overview", "agents", "resources", "advanced"]],
-    ["windowsMyServer", "windows-my-server", ["overview", "agents", "resources", "advanced"]],
+    ["preparedWindows", "prepared", ["overview", "agents", "resources", "updates", "advanced"]],
+    ["preparedOmarchy", "prepared", ["overview", "agents", "resources", "updates", "advanced"]],
+    ["windowsMyServer", "windows-my-server", ["overview", "agents", "resources", "updates", "advanced"]],
     ["hetznerUbuntu", "my-cloud", ["overview", "agents", "resources", "advanced"]],
-    ["gvisor", "linux-sandbox", ["overview", "resources", "command", "advanced"]],
-    ["digitalocean", "digitalocean", ["overview", "resources", "advanced"]],
+    ["gvisor", "linux-sandbox", ["overview", "resources", "updates", "command", "advanced"]],
+    ["digitalocean", "digitalocean", ["overview", "resources", "updates", "advanced"]],
     ["codex", "chat-agent", ["overview", "model", "resources", "recovery", "updates", "advanced"]],
     ["codexUnbound", "chat-agent", ["overview", "model", "resources", "updates", "advanced"]],
     ["claude", "chat-agent", ["overview", "model", "resources", "recovery", "updates", "advanced"]],
@@ -288,9 +288,40 @@ describe("manageCapabilitiesFor", () => {
     });
 
     it.each([
-      ["deepseek", "deepseek"], ["preparedWindows", "prepared"], ["hetznerUbuntu", "my_cloud"], ["windowsMyServer", "windows_my_server"],
+      ["deepseek", "deepseek"], ["hetznerUbuntu", "my_cloud"],
     ] as const)("is unavailable on %s (%s)", (name, code) => {
       expect(map(name).connectionServiceUpdate).toMatchObject({ state: "unavailable", code });
+    });
+
+    // Omarchy and Windows computers, DigitalOcean sessions and Linux
+    // Sandboxes run no Hivra connection service. Manage used to say "Hivra
+    // can't update prepared Windows and Omarchy computers yet" (or nothing at
+    // all), although their owners can update them; it now says how.
+    it.each([
+      ["preparedOmarchy", /Update, then Omarchy/, true],
+      ["preparedWindows", /Windows Update/, true],
+      ["windowsMyServer", /Windows Update/, false],
+      ["digitalocean", /DigitalOcean runs this session's agent software/, false],
+      ["gvisor", /fixed, read-only system image/, false],
+    ] as const)("says how %s is updated instead of offering a connection service", (name, text, openDesktop) => {
+      const manage = map(name);
+      expect(manage.connectionServiceUpdate).toBeNull();
+      expect(manage.sections).toContain("updates");
+      expect(manage.selfUpdate?.lines.join(" ")).toMatch(text);
+      expect(manage.selfUpdate?.openDesktop).toBe(openDesktop);
+      expect(manage.notAvailable.map((item) => item.capability)).not.toContain("Connection service updates");
+    });
+
+    it("tells an Omarchy owner the desktop connection updates itself", () => {
+      expect(map("preparedOmarchy").selfUpdate?.lines).toContain(
+        "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.");
+    });
+
+    it("keeps the connection service update, and no self-update note, everywhere it runs", () => {
+      for (const name of ["ubuntu", "ubuntuMyServer", "codex", "claude", "aeon"]) {
+        expect(map(name).selfUpdate).toBeNull();
+        expect(map(name).connectionServiceUpdate).toEqual({ state: "available" });
+      }
     });
   });
 

@@ -94,6 +94,14 @@ export interface ManageCapabilities {
   /** Static eligibility; the panel still reports the live connection. */
   privateNetwork: ManageCap | null;
   connectionServiceUpdate: ManageCap | null;
+  /**
+   * How this computer's own software is kept up to date where Hivra's
+   * connection-service update doesn't apply (Omarchy, Windows, DigitalOcean,
+   * Linux Sandbox): one plain-English line per part, the owner's own step
+   * first. `openDesktop` adds a link to the Desktop tab, where those steps
+   * happen. null: nothing to say beyond the connection service.
+   */
+  selfUpdate: { lines: string[]; openDesktop: boolean } | null;
   /** Claude Code or Codex and the version Hivra has tested, for the Updates section. */
   agentCli: { name: "claude-code" | "codex"; vetted: string } | null;
   /** The Agents section (adding an agent to this computer). */

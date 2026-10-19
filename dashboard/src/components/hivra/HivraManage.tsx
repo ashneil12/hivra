@@ -9,6 +9,7 @@
 // Sections stay mounted while hidden, so drafts survive switching.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Power, RefreshCw, Trash2, Check, Copy, ExternalLink, Loader2,
   AlertTriangle, Cpu, MemoryStick, Globe, Server, ShieldCheck, KeyRound, Wrench, LogIn,
@@ -1464,6 +1465,19 @@ function HivraManageContent({
       {sections.includes("updates") ? (
         <ManagePanel id="updates" selected={selected}>
           <div style={{ display: "grid", gap: 20 }}>
+            {manage?.selfUpdate ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div className="mono" style={label}>This computer&apos;s software</div>
+                <div style={card} data-testid="manage-self-update">
+                  {manage.selfUpdate.lines.map((line) => (
+                    <div key={line} style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>{line}</div>
+                  ))}
+                  {manage.selfUpdate.openDesktop ? (
+                    <Link href={`/dashboard/agent/${encodeURIComponent(agent.id)}?tab=desktop`} style={{ color: "var(--ink-black)", fontSize: 14, textDecoration: "underline" }}>Open Desktop</Link>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             {connectionUpdate ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div className="mono" style={label}>Connection service</div>
