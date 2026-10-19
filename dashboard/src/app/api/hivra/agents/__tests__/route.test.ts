@@ -3556,6 +3556,51 @@ describe("GET /api/hivra/agents", () => {
     ]);
   });
 
+  it("tags Claude Code / Codex agents from one read of their stored software observations, never their computers", async () => {
+    const { AGENT_CLI_VERSIONS } = jest.requireActual("@/lib/infrastructure/portable-provisioner-contract") as typeof import("@/lib/infrastructure/portable-provisioner-contract");
+    mockExistingAgents = [
+      { id: "agent-behind", user_id: "user-free", type: "codex", name: "BEHIND", status: "running", cpu: 2, ram: 4, computer_substrate: "proxmox-kvm", api_token: "box-token" },
+      { id: "agent-current", user_id: "user-free", type: "codex", name: "CURRENT", status: "running", cpu: 2, ram: 4, computer_substrate: "proxmox-kvm" },
+      { id: "computer-1", user_id: "user-free", type: "linux-desktop", computer_profile: "ubuntu-desktop", name: "DESK", status: "running", cpu: 2, ram: 4 },
+    ];
+    const softwareReads: Array<{ in?: unknown[]; eq: unknown[] }> = [];
+    const base = mockSupabaseFrom.getMockImplementation() as (table: string) => unknown;
+    mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table !== "hivra_agent_cli_updates") return base(table);
+      const read: { in?: unknown[]; eq: unknown[] } = { eq: [] };
+      softwareReads.push(read);
+      const chain = {
+        select: () => chain,
+        eq: (...args: unknown[]) => { read.eq.push(args); return chain; },
+        in: async (...args: unknown[]) => {
+          read.in = args;
+          return { data: [
+            { agent_id: "agent-behind", user_id: "user-free", observation: "reported", installed_version: "0.100.0", observed_at: new Date().toISOString() },
+            { agent_id: "agent-current", user_id: "user-free", observation: "reported", installed_version: AGENT_CLI_VERSIONS.codex, observed_at: new Date().toISOString() },
+          ], error: null };
+        },
+      };
+      return chain;
+    });
+    const fetchSpy = jest.spyOn(global, "fetch");
+
+    const body = await (await GET(makeGetRequest() as never)).json();
+    const byId = Object.fromEntries(body.data.agents.map((agent: { id: string }) => [agent.id, agent]));
+    expect(byId["agent-behind"].agent_software).toEqual({ badge: "update_available", cli: "codex", installed: "0.100.0", tested: AGENT_CLI_VERSIONS.codex });
+    expect(byId["agent-current"].agent_software).toEqual({ badge: null, cli: "codex", installed: AGENT_CLI_VERSIONS.codex, tested: AGENT_CLI_VERSIONS.codex });
+    expect(byId["computer-1"]).not.toHaveProperty("agent_software");
+    expect(softwareReads).toEqual([{ eq: [["user_id", "user-free"]], in: ["agent_id", ["agent-behind", "agent-current"]] }]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("still lists agents when their software observations can't be read", async () => {
+    mockExistingAgents = [{ id: "agent-running", type: "codex", name: "RUNNING", status: "running", cpu: 2, ram: 4 }];
+    const response = await GET(makeGetRequest() as never);
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.agents).toEqual([expect.not.objectContaining({ agent_software: expect.anything() })]);
+  });
+
   it("does not send internal host topology to the browser", async () => {
     mockExistingAgents = [{
       id: "agent-running", type: "claude-code", name: "RUNNING_AGENT", status: "running",

@@ -1073,6 +1073,19 @@ describe("POST /api/hivra/agents/[id]/action", () => {
       expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
     });
 
+    // Manage's Updates section says what happened in the owner's words, by code.
+    it.each([
+      ["not_running", () => { mockAgent = { ...mockAgent, status: "stopped" }; }, 409],
+      ["host_not_ready", () => { mockCheckManagedHivraHostReadiness.mockResolvedValue({ ok: false, status: 503, message: "Host not ready", error: {} }); }, 503],
+      ["busy", () => { mockSupabaseRpc.mockImplementation(async (name: string) => ({ data: name !== "claim_hivra_agent_operation", error: null })); }, 409],
+      ["unverified", () => { mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: "", stderr: "" }); }, 502],
+    ])("answers a refusal with its code: %s", async (code, arrange, status) => {
+      arrange();
+      const response = await POST(updateRequest(), params());
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ success: false, code });
+    });
+
     it("updates a DeepSeek computer through the same helper, whose guest half runs its owned update", async () => {
       // The regression: the route refused every DeepSeek computer.
       mockAgent = { ...mockAgent, type: "deepseek-harness" };
