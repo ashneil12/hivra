@@ -253,7 +253,7 @@ const WINDOWS_SELF_UPDATE = "Windows keeps itself up to date with Windows Update
 // Hivra can't open a Windows computer on the owner's own server yet, so its
 // owner reaches Windows Update through that server's console.
 const WINDOWS_MY_SERVER_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, from your server's own console.";
-const WINDOWS_DESKTOP_UPDATE = "Hivra connects to Windows from outside it, so there's nothing of Hivra's inside Windows to update.";
+const WINDOWS_DESKTOP_UPDATE = "Hivra connects to Windows from outside it, so there's nothing of Hivra's inside Windows to update. When Windows renews its remote desktop certificate, opening Desktop checks the computer again and reconnects.";
 const DIGITALOCEAN_UPDATE = "DigitalOcean runs this session's agent software, so there's nothing for Hivra or you to update in it.";
 const SANDBOX_UPDATE = "This Linux Sandbox runs a fixed, read-only system image, and only its workspace folder changes. Updating that image isn't available yet.";
 

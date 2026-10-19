@@ -389,5 +389,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261007130000", name: "provider_release_admission_2026_10_07_1" },
   { version: "20261008100000", name: "agent_network_identity_policy" },
   { version: "20261019160000", name: "hivra_agent_computer_links" },
+  { version: "20261020100000", name: "windows_rdp_certificate_pin" },
   { version: "20261020110000", name: "provider_release_admission_2026_10_20_1" },
 ];
