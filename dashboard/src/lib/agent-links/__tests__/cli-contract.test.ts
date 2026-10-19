@@ -46,7 +46,7 @@ maybe("hivra-computers against the agent API", () => {
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
   const run = (args: string[]) => new Promise<{ code: number | null; stdout: Buffer; stderr: string }>((resolve) => {
-    const child = spawn("python3", [cli, ...args], { cwd: home, env: { PATH: process.env.PATH ?? "", HOME: home } });
+    const child = spawn("python3", [cli, ...args], { cwd: home, env: { ...process.env, HOME: home } });
     const out: Buffer[] = []; let err = "";
     child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => { err += chunk; });
