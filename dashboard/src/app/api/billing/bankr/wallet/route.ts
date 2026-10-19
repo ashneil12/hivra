@@ -88,8 +88,10 @@ async function lockWalletHivraBalance(
 /**
  * The lock wallet the page shows, plus its $HIVRA balance once $HIVRA is live.
  * A lock wallet that holds only $HIVRA still shows, so its owner can withdraw
- * it. While $HIVRA is dormant this is exactly the $HermesOS-only check and the
- * response gains no field.
+ * it, but it is not legacy custody: custody (and every $HermesOS panel) follows
+ * the lock wallet's $HermesOS alone, and `tokenLockHoldsHermes` tells the page
+ * whether to offer the $HermesOS withdraw. While $HIVRA is dormant this is
+ * exactly the $HermesOS-only check and the response gains no field.
  */
 async function lockWalletState(userId: string, credential: BankrDepositWalletCredential | null) {
   const [hermesCredential, hivraBalance] = await Promise.all([
@@ -97,9 +99,14 @@ async function lockWalletState(userId: string, credential: BankrDepositWalletCre
     lockWalletHivraBalance(userId, credential),
   ]);
   const holdsHivra = Boolean(hivraBalance && BigInt(hivraBalance.balanceRaw) > 0n);
+  const holdsHermes = Boolean(hermesCredential);
   return {
     activeCredential: hermesCredential ?? (holdsHivra ? credential : null),
-    hivraFields: getActiveHivraToken() ? { tokenLockHivra: holdsHivra ? hivraBalance : null } : {},
+    custodyMode: holdsHermes ? ("legacy_custody" as const) : ("self_custody" as const),
+    status: holdsHermes ? ("existing" as const) : ("self_custody_required" as const),
+    hivraFields: getActiveHivraToken()
+      ? { tokenLockHivra: holdsHivra ? hivraBalance : null, tokenLockHoldsHermes: holdsHermes }
+      : {},
   };
 }
 
@@ -111,11 +118,10 @@ async function loadBankrWalletStatus(userId: string) {
   ]);
   const lock = await lockWalletState(userId, tokenLockCredential);
   const activeTokenLockCredential = lock.activeCredential;
-  const custodyMode = activeTokenLockCredential ? "legacy_custody" : "self_custody";
 
   return {
-    status: activeTokenLockCredential ? "existing" : "self_custody_required",
-    custodyMode,
+    status: lock.status,
+    custodyMode: lock.custodyMode,
     wallet,
     depositWallet: bankrDepositWalletPublicSummary(creditCredential),
     creditDepositWallet: bankrDepositWalletPublicSummary(creditCredential),
@@ -139,11 +145,10 @@ async function provisionCreditDepositWalletStatus(userId: string) {
 
   const lock = await lockWalletState(userId, tokenLockCredential);
   const activeTokenLockCredential = lock.activeCredential;
-  const custodyMode = activeTokenLockCredential ? "legacy_custody" : "self_custody";
 
   return {
-    status: activeTokenLockCredential ? "existing" : "self_custody_required",
-    custodyMode,
+    status: lock.status,
+    custodyMode: lock.custodyMode,
     wallet: creditResult.wallet,
     bankrWallet: creditResult.bankrWallet,
     depositWallet: bankrDepositWalletPublicSummary(creditResult.credential),

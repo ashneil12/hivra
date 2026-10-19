@@ -75,6 +75,7 @@ beforeEach(() => {
 it("reads no $HIVRA and adds no field while $HIVRA is dormant", async () => {
   const data = await getData();
   expect(data).not.toHaveProperty("tokenLockHivra");
+  expect(data).not.toHaveProperty("tokenLockHoldsHermes");
   expect(data.tokenLockWallet).toBeNull();
   expect(data.custodyMode).toBe("self_custody");
   expect(fetchTokenBalance).not.toHaveBeenCalled();
@@ -93,7 +94,10 @@ it("once live, shows a lock wallet that holds only $HIVRA, with its exact balanc
     token: expect.objectContaining({ tokenAddress: HIVRA_PUBLISHED.toLowerCase(), tokenSymbol: "HIVRA" }),
     walletAddress: LOCK_ADDRESS,
   });
-  expect(data.custodyMode).toBe("legacy_custody");
+  // Not legacy custody: no $HermesOS panels, only the $HIVRA withdraw.
+  expect(data.custodyMode).toBe("self_custody");
+  expect(data.status).toBe("self_custody_required");
+  expect(data.tokenLockHoldsHermes).toBe(false);
   expect(data.tokenLockWallet).toEqual({ address: LOCK_ADDRESS });
   expect(data.tokenLockHivra).toEqual({
     tokenSymbol: "HIVRA",
@@ -119,4 +123,26 @@ it("still loads the page when the $HIVRA read fails", async () => {
   const data = await getData();
   expect(data.tokenLockHivra).toBeNull();
   expect(data.custodyMode).toBe("legacy_custody");
+  expect(data.tokenLockHoldsHermes).toBe(true);
+});
+
+it("once live, a lock wallet holding both tokens stays legacy custody and reports both", async () => {
+  goLive();
+  (getLatestHermesTokenHoldingSnapshotForWallet as jest.Mock).mockResolvedValue({ balanceRaw: "5" });
+  (fetchTokenBalance as jest.Mock).mockResolvedValue({ balanceRaw: "7", balanceDisplay: "0.000000000000000007" });
+  const data = await getData();
+  expect(data.custodyMode).toBe("legacy_custody");
+  expect(data.status).toBe("existing");
+  expect(data.tokenLockHoldsHermes).toBe(true);
+  expect(data.tokenLockWallet).toEqual({ address: LOCK_ADDRESS });
+  expect(data.tokenLockHivra).toEqual(expect.objectContaining({ balanceRaw: "7" }));
+});
+
+it("while dormant, a lock wallet holding $HermesOS is legacy custody with no new field", async () => {
+  (getLatestHermesTokenHoldingSnapshotForWallet as jest.Mock).mockResolvedValue({ balanceRaw: "5" });
+  const data = await getData();
+  expect(data.custodyMode).toBe("legacy_custody");
+  expect(data.status).toBe("existing");
+  expect(data).not.toHaveProperty("tokenLockHoldsHermes");
+  expect(fetchTokenBalance).not.toHaveBeenCalled();
 });

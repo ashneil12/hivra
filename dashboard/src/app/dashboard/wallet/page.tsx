@@ -112,6 +112,12 @@ interface WalletApiPayload {
     balanceRaw: string;
     balanceDisplay: string;
   } | null;
+  /**
+   * Whether the lock wallet holds any $HermesOS. Present only once $HIVRA is
+   * live; false for a lock wallet that holds only $HIVRA, which then shows its
+   * $HIVRA withdraw and none of the $HermesOS panels.
+   */
+  tokenLockHoldsHermes?: boolean;
 }
 
 
@@ -773,11 +779,18 @@ export default function WalletPage() {
   }, []);
 
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
-  const isLegacyCustody = Boolean(data?.custodyMode === 'legacy_custody' || data?.tokenLockWallet);
+  // Legacy custody follows the lock wallet's $HermesOS. A lock wallet that holds
+  // only $HIVRA (tokenLockHoldsHermes false, sent only once $HIVRA is live) is
+  // not legacy custody: it gets its $HIVRA withdraw and no $HermesOS panels.
+  const isLegacyCustody = Boolean(
+    data?.custodyMode === 'legacy_custody' || (data?.tokenLockWallet && data?.tokenLockHoldsHermes !== false)
+  );
   const isSelfCustody = Boolean(data?.custodyMode === 'self_custody' || (status === 'ready' && !isLegacyCustody));
   // The lock wallet's $HIVRA, shown only when the server reports a non-zero
   // balance of the token this build knows as live $HIVRA.
   const lockWalletHivra = lockWalletHivraToShow(data?.tokenLockHivra);
+  // The withdraw rows: $HermesOS for legacy custody, $HIVRA whenever the lock wallet holds it.
+  const showLockWalletActions = isLegacyCustody || Boolean(lockWalletHivra && tokenLockAddress);
   // Token geo-policy: the panels that invite a NEW token action (verify a wallet to
   // qualify, lock a price, tier thresholds, the hold-to-unlock prompt, deposit) are
   // for a viewer the server allows and for a blocked user who already holds token
@@ -822,9 +835,15 @@ export default function WalletPage() {
       return;
     }
 
-    setWithdrawAddress(null);
-    setWithdrawAddressLoading(false);
-    setWithdrawAddressFormOpen(false);
+    if (showLockWalletActions) {
+      // A lock wallet holding only $HIVRA still withdraws to the saved address.
+      setWithdrawAddressLoading(true);
+      void loadWithdrawAddress();
+    } else {
+      setWithdrawAddress(null);
+      setWithdrawAddressLoading(false);
+      setWithdrawAddressFormOpen(false);
+    }
     setQuoteError(null);
 
     if (isSelfCustody && connectedSelfCustodyAddress) {
@@ -833,7 +852,7 @@ export default function WalletPage() {
     }
 
     setQuotes({ pro: null, power: null });
-  }, [connectedSelfCustodyAddress, isLegacyCustody, isSelfCustody, loadWithdrawAddress, loadQuotes]);
+  }, [connectedSelfCustodyAddress, isLegacyCustody, isSelfCustody, showLockWalletActions, loadWithdrawAddress, loadQuotes]);
 
   // Auto-refresh eligibility + quotes on a 5-min cadence so the live-priced
   // threshold and the lock countdown stay current without a manual refresh
@@ -1094,7 +1113,7 @@ export default function WalletPage() {
         <p style={{ fontSize: 12, color: '#dc2626', margin: '0 0 1rem' }}>{error}</p>
       )}
 
-      {isLegacyCustody && (
+      {showLockWalletActions && (
         <section aria-label="Wallet actions" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.5rem' }}>
           <WithdrawDestinationCard
             address={withdrawAddress}
@@ -1102,30 +1121,32 @@ export default function WalletPage() {
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
-          {tokenPanels && (
+          {tokenPanels && isLegacyCustody && (
             <ActionRow
               icon={<ArrowDownToLine size={14} />}
               label="Deposit"
               description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
             />
           )}
-          <WithdrawSection
-            tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
-            balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
-            withdrawAddress={withdrawAddress}
-            withdrawAvailableAt={withdrawAvailableAt}
-            onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
-            onWithdrew={() => {
-              // Refresh once now (the post-withdraw eligibility re-check
-              // already wrote a fresh snapshot) and again 60s later — by
-              // which time Base has definitely confirmed the tx and the
-              // chain read is authoritative.
-              void load({ silent: true });
-              window.setTimeout(() => {
+          {isLegacyCustody && (
+            <WithdrawSection
+              tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
+              balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
+              withdrawAddress={withdrawAddress}
+              withdrawAvailableAt={withdrawAvailableAt}
+              onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
+              onWithdrew={() => {
+                // Refresh once now (the post-withdraw eligibility re-check
+                // already wrote a fresh snapshot) and again 60s later — by
+                // which time Base has definitely confirmed the tx and the
+                // chain read is authoritative.
                 void load({ silent: true });
-              }, 60_000);
-            }}
-          />
+                window.setTimeout(() => {
+                  void load({ silent: true });
+                }, 60_000);
+              }}
+            />
+          )}
           {lockWalletHivra && (
             <WithdrawSection
               asset="HIVRA"
@@ -1145,7 +1166,7 @@ export default function WalletPage() {
         </section>
       )}
 
-      {isLegacyCustody && withdrawAddressFormOpen && (
+      {showLockWalletActions && withdrawAddressFormOpen && (
         <WithdrawAddressForm
           initialAddress={withdrawAddress}
           onCancel={() => setWithdrawAddressFormOpen(false)}
