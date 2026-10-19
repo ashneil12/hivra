@@ -72,5 +72,5 @@ test.each(["scheduled", "active"] as const)("a launched (%s) section describes t
   expect(screen.getByRole("list", { name: "Airdrop flow" })).toHaveTextContent("Snapshot block");
   expect(container.textContent).not.toMatch(/Bankr|ETH proceeds|active claim|claims open|migration, new uses/);
   expect(container.textContent).toContain("The new uses and treasury plans are proposals.");
-  expect(container.textContent).toContain("The $HIVRA supply is fixed in its contract, and BaseScan shows the total.");
+  expect(container.textContent).toContain("BaseScan shows the total $HIVRA supply.");
 });
