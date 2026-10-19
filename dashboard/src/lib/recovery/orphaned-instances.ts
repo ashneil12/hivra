@@ -99,7 +99,11 @@ export async function listLiveInstances(
     let query = supabase
       .from("hermes_instances")
       .select(columns)
-      .or("status.neq.deleted,lifecycle_state.neq.deleted,lifecycle_state.is.null");
+      // status='deleted' is terminal for the sweep even when lifecycle_state
+      // was never flipped: older delete handlers left such rows behind (see
+      // 20260429082221), and re-flagging them would resurrect a deleted row as
+      // scheduled_for_deletion and retry a shutdown of a server that is gone.
+      .neq("status", "deleted");
     if (filter?.instanceId) {
       query = query.eq("id", filter.instanceId);
     }

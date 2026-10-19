@@ -109,6 +109,13 @@ describe("runOrphanSweep", () => {
     expect(queryChain.eq).toHaveBeenCalledWith("user_id", "user_old");
   });
 
+  it("never lists rows whose status is already deleted, whatever their lifecycle_state", async () => {
+    const { supabase, queryChain } = buildSupabaseMock({ rows: [] });
+    await runOrphanSweep({ supabase, clerk: buildClerk(new Set()), apply: true, shutdownInstance: jest.fn() });
+    expect(queryChain.neq).toHaveBeenCalledWith("status", "deleted");
+    expect(queryChain.or).not.toHaveBeenCalled();
+  });
+
   it("dry-run reports counts but neither calls shutdown nor writes Supabase", async () => {
     const { supabase, updates } = buildSupabaseMock({
       rows: [aliveRow, orphanRow, alreadyFlaggedOrphan],
