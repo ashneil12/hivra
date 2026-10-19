@@ -11,6 +11,7 @@ import { withdrawDestinationCooldownHours } from '@/lib/billing/withdraw-destina
 import { STEP_UP_CANCELLED_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import {
   agentBaseEthBalance,
+  agentHivraBalance,
   agentWalletWithdrawableBalances,
   defaultWithdrawAmountForBalance,
   heldUntilLabel,
@@ -1164,6 +1165,7 @@ export function AgentWalletCard({
   const hivraCreated = Boolean(address) && !connected;
   const ethBalance = agentBaseEthBalance(card);
   const hermesOsBalance = card.balances.find((balance) => balance.tokenSymbol === 'HERMESOS') ?? null;
+  const hivraBalance = agentHivraBalance(card);
   // Payouts exist only for wallets Hivra created (both lanes route by
   // agentWalletApiBase). A user's own Bankr account is managed at bankr.bot:
   // Hivra never initiates transfers from it, and its withdraw routes refuse.
@@ -1173,6 +1175,9 @@ export function AgentWalletCard({
   const headlineBalances = [
     ethBalance ? { key: 'ETH', label: 'Base ETH', balance: ethBalance } : null,
     hermesOsBalance ? { key: 'HERMESOS', label: 'Base HERMESOS', balance: hermesOsBalance } : null,
+    // $HIVRA joins the headline only once it is live (the server lists it
+    // only then too). Withdraw it like any other Base token below.
+    hivraBalance ? { key: 'HIVRA', label: 'Base HIVRA', balance: hivraBalance } : null,
   ].filter((entry): entry is { key: string; label: string; balance: AgentWalletBalance } => Boolean(entry));
 
   return (

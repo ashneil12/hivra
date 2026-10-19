@@ -288,6 +288,7 @@ export function WithdrawSection({
   withdrawAvailableAt = null,
   onWithdrew,
   onRequestSetAddress,
+  asset,
 }: {
   tokenSymbol: string;
   balanceDisplay: string;
@@ -296,7 +297,14 @@ export function WithdrawSection({
   withdrawAvailableAt?: string | null;
   onWithdrew: () => void;
   onRequestSetAddress: () => void;
+  /**
+   * "HIVRA": withdraw the lock wallet's $HIVRA instead of its $HERMESOS. The
+   * page passes it only once $HIVRA is live; the server refuses it before.
+   * Omitted: the original $HERMESOS withdraw, unchanged.
+   */
+  asset?: 'HIVRA';
 }) {
+  const hivra = asset === 'HIVRA';
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -309,7 +317,7 @@ export function WithdrawSection({
       const response = await fetch('/api/billing/bankr/wallet/withdraw', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body: hivra ? JSON.stringify({ asset: 'HIVRA' }) : '{}',
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok || !body?.success) {
@@ -331,7 +339,7 @@ export function WithdrawSection({
     } finally {
       setSubmitting(false);
     }
-  }, [balanceDisplay, onWithdrew]);
+  }, [balanceDisplay, hivra, onWithdrew]);
 
   if (success) {
     return (
@@ -351,7 +359,9 @@ export function WithdrawSection({
         <p style={{ fontSize: 13, lineHeight: 1.55, margin: 0 }}>
           {success.amountDisplay} {displayTokenUnit(tokenSymbol)} sent to{' '}
           <code className="mono" style={{ fontSize: 12 }}>{shorten(success.recipientAddress)}</code>.
-          Your tier eligibility stays active for 24 hours from the breach detection. After that, the tier ends and re-qualifying requires depositing at the current standard rate.
+          {hivra
+            ? ' It can take a minute to show in your wallet.'
+            : ' Your tier eligibility stays active for 24 hours from the breach detection. After that, the tier ends and re-qualifying requires depositing at the current standard rate.'}
         </p>
         {success.txHash && (
           <a
@@ -377,12 +387,14 @@ export function WithdrawSection({
     <>
       <ActionRow
         icon={<ArrowUpFromLine size={14} />}
-        label="Withdraw"
+        label={hivra ? 'Withdraw $HIVRA' : 'Withdraw'}
         description={
           heldUntil
             ? `Your withdraw address was saved recently. For your safety, withdrawals to it open ${heldUntil}.`
             : hasAddress
-            ? 'Withdraw your full $HERMESOS balance to your saved withdraw address. Your tier eligibility runs a 24-hour grace clock from breach detection before ending.'
+            ? hivra
+              ? `This wallet holds ${balanceDisplay} $HIVRA. Withdraw all of it to your saved withdraw address.`
+              : 'Withdraw your full $HERMESOS balance to your saved withdraw address. Your tier eligibility runs a 24-hour grace clock from breach detection before ending.'
             : 'Set a withdraw destination first — withdraws send your tokens there, and you cannot withdraw without one set.'
         }
         action={
@@ -434,7 +446,7 @@ export function WithdrawSection({
       />
       {confirmOpen && (
         <ConfirmDialog
-          title="Withdraw all $HERMESOS"
+          title={hivra ? 'Withdraw all $HIVRA' : 'Withdraw all $HERMESOS'}
           body={
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ margin: 0, lineHeight: 1.55, fontSize: 14 }}>
@@ -483,12 +495,19 @@ export function WithdrawSection({
                   the live balance and records the withdrawal before submitting it.
                 </p>
               </div>
-              <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13, color: 'var(--text-secondary)' }}>
-                After the on-chain transfer confirms, your Pro/Power tier eligibility runs a
-                24-hour grace clock. Once grace expires, the tier ends. To regain it, you&apos;ll
-                need to deposit at the <strong>current standard rate</strong> (no longer the
-                launch promo rate).
-              </p>
+              {hivra ? (
+                <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  If this $HIVRA counts toward a Pro or Power tier, the tier&apos;s normal grace period
+                  starts once the transfer confirms.
+                </p>
+              ) : (
+                <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  After the on-chain transfer confirms, your Pro/Power tier eligibility runs a
+                  24-hour grace clock. Once grace expires, the tier ends. To regain it, you&apos;ll
+                  need to deposit at the <strong>current standard rate</strong> (no longer the
+                  launch promo rate).
+                </p>
+              )}
               {error && (
                 <p style={{ margin: 0, fontSize: 12, color: '#dc2626' }}>{error}</p>
               )}
