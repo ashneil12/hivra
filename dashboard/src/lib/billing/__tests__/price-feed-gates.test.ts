@@ -12,7 +12,16 @@ import {
   toDecimalString,
 } from "@/lib/billing/price-feed";
 import { LivePriceUnavailableError } from "@/lib/billing/live-thresholds";
-import { HERMESOS_POOL_ID, HERMESOS_TOKEN } from "@/lib/billing/token-registry";
+import {
+  BASE_WETH_ADDRESS,
+  HERMESOS_POOL_ID,
+  HERMESOS_TOKEN,
+  HIVRA_MIN_PRICE_LIQUIDITY_USD,
+  HIVRA_MIN_QUOTE_LIQUIDITY_USD,
+  NATIVE_ETH_ADDRESS,
+  validateHivraLaunchConfig,
+  type PlatformToken,
+} from "@/lib/billing/token-registry";
 
 const TOKEN = HERMESOS_TOKEN.address;
 const SATELLITE = `0x${"99".repeat(32)}`;
@@ -28,7 +37,7 @@ function pair(pairAddress: string, priceUsd: string, liquidityUsd: number, usdPe
     chainId: "base",
     pairAddress,
     baseToken: { address: TOKEN },
-    quoteToken: { address: "0xweth" },
+    quoteToken: { address: BASE_WETH_ADDRESS, symbol: "WETH" },
     priceUsd,
     priceNative: String(Number(priceUsd) / usdPerNative),
     liquidity: { usd: liquidityUsd },
@@ -387,5 +396,171 @@ describe("price gate refusals name the token, the reason and what was observed",
     expect(priceGateRefusalFromError(new Error("unrelated"))).toBeNull();
     expect(priceGateRefusalFromError(new LivePriceUnavailableError("down", new Error("socket hang up")))).toBeNull();
     expect(priceGateRefusalFromError(undefined)).toBeNull();
+  });
+});
+
+describe("$HIVRA in a Doppler Uniswap v4 pool quoted in native ETH", () => {
+  const HIVRA_ADDRESS = "0x1111111111111111111111111111111111111111";
+  const HIVRA_POOL = `0x${"ab".repeat(32)}`;
+  const configured = validateHivraLaunchConfig({
+    contractAddress: HIVRA_ADDRESS,
+    decimals: 18,
+    poolId: HIVRA_POOL,
+    activatesAt: "2026-10-01T16:00:00Z",
+  });
+  if (configured.status !== "configured") throw new Error("test $HIVRA launch block must validate");
+  const HIVRA: PlatformToken = configured.token;
+  const ETH_USD = 2_400;
+  const SPOT_NATIVE = 0.000001 / ETH_USD;
+
+  /**
+   * The shape DEXScreener returns for a native-ETH v4 pool on Base (recorded
+   * from /latest/dex/pairs/base/<pool>): quote token 0x000...000 "ETH", the
+   * pool id as pairAddress, priceNative in ETH, and liquidity.quote in ETH.
+   */
+  function nativePair(
+    opts: { priceUsd?: string; liquidityUsd?: number; quoteEth?: number | null; quote?: { address: string; symbol: string } } = {}
+  ) {
+    const priceUsd = opts.priceUsd ?? "0.000001";
+    return {
+      chainId: "base",
+      dexId: "uniswap",
+      labels: ["v4"],
+      pairAddress: HIVRA_POOL,
+      baseToken: { address: HIVRA_ADDRESS, name: "Hivra", symbol: "HIVRA" },
+      quoteToken: opts.quote ?? { address: NATIVE_ETH_ADDRESS, name: "Ether", symbol: "ETH" },
+      priceUsd,
+      priceNative: String(Number(priceUsd) / ETH_USD),
+      liquidity: {
+        usd: opts.liquidityUsd ?? 2_000_000,
+        base: 1_990_000_000_000,
+        ...(opts.quoteEth === null ? {} : { quote: opts.quoteEth ?? 6 }),
+      },
+    };
+  }
+
+  /** GeckoTerminal OHLCV for the pool, priced in ETH (meta.quote 0x000...000, as recorded live). */
+  function hivraFetch(opts: { pairs: unknown[]; candles?: [number, number][]; quoteAddress?: string }) {
+    return jest.fn(async (url: string) => {
+      if (url.includes("dexscreener")) {
+        return { ok: true, status: 200, json: async () => ({ pairs: opts.pairs }) } as unknown as Response;
+      }
+      const candles = opts.candles ?? Array.from({ length: 60 }, (_, i): [number, number] => [5 + i * 5, SPOT_NATIVE]);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { attributes: { ohlcv_list: candles.map(([age, close]) => [nowSec() - age * 60, close, close, close, close, 1]) } },
+          meta: {
+            base: { address: HIVRA_ADDRESS, symbol: "HIVRA" },
+            quote: { address: opts.quoteAddress ?? NATIVE_ETH_ADDRESS, symbol: "ETH" },
+          },
+        }),
+      } as unknown as Response;
+    });
+  }
+
+  it("prices $HIVRA from its native-ETH pool, comparing spot and median in ETH", async () => {
+    const fetchImpl = hivraFetch({ pairs: [nativePair()] });
+    const quote = await fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: fetchImpl as never, env: env() });
+    expect(Number(quote.priceUsd)).toBeCloseTo(0.000001, 12);
+    expect(quote.raw).toMatchObject({ gates: { aboveMedianBps: 0, pricedAt: "spot", minLiquidityUsd: HIVRA_MIN_PRICE_LIQUIDITY_USD } });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining(`/pools/${HIVRA_POOL}/ohlcv/minute?aggregate=5&limit=1000&currency=token&token=${HIVRA_ADDRESS}`),
+      expect.anything()
+    );
+    const cross = await fetchPlatformTokenPriceCrossCheck(HIVRA, { fetchImpl: fetchImpl as never, env: env() });
+    expect(Number(cross.priceUsd)).toBeCloseTo(0.000001, 12);
+  });
+
+  it("accepts the same pool reported as WETH-quoted", async () => {
+    const weth = { address: BASE_WETH_ADDRESS, symbol: "WETH" };
+    const fetchImpl = hivraFetch({ pairs: [nativePair({ quote: weth })], quoteAddress: BASE_WETH_ADDRESS });
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: fetchImpl as never, env: env() })).resolves.toMatchObject({
+      source: "dexscreener",
+    });
+  });
+
+  it("fails closed when the ETH side is thin, however large the token-heavy total looks", async () => {
+    // A fresh Doppler pool: $2M of "liquidity", almost all of it $HIVRA, and 5 ETH ($12,000).
+    const fetchImpl = hivraFetch({ pairs: [nativePair({ quoteEth: 5 })] });
+    const error = await fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: fetchImpl as never, env: env() }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PlatformTokenPriceGateError);
+    expect((error as PlatformTokenPriceGateError).refusal).toEqual({
+      assetKey: "hivra",
+      asset: "$HIVRA",
+      reason: "liquidity_floor",
+      gate: "liquidity",
+      observed: {
+        quoteLiquidityUsd: expect.closeTo(12_000, 6),
+        minQuoteLiquidityUsd: HIVRA_MIN_QUOTE_LIQUIDITY_USD,
+        liquidityUsd: 2_000_000,
+        minLiquidityUsd: HIVRA_MIN_PRICE_LIQUIDITY_USD,
+        poolId: HIVRA_POOL,
+      },
+    });
+    // The median source is never asked: the pool is refused first.
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).includes("geckoterminal"))).toBe(false);
+  });
+
+  it("fails closed when DEXScreener does not report the ETH side at all", async () => {
+    const fetchImpl = hivraFetch({ pairs: [nativePair({ quoteEth: null })] });
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "liquidity",
+      observed: { quoteLiquidityUsd: 0 },
+    });
+  });
+
+  it("keeps the total floor too", async () => {
+    const fetchImpl = hivraFetch({ pairs: [nativePair({ liquidityUsd: 24_999, quoteEth: 100 })] });
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "liquidity",
+      observed: { liquidityUsd: 24_999, minLiquidityUsd: HIVRA_MIN_PRICE_LIQUIDITY_USD },
+    });
+  });
+
+  it("keeps the 10% band and the four-hour history gate on the native-ETH pool", async () => {
+    const pumped = hivraFetch({ pairs: [nativePair({ priceUsd: "0.0000012" })] }); // +20% vs the ETH median
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: pumped as never, env: env() })).rejects.toMatchObject({
+      gate: "deviation",
+      assetKey: "hivra",
+    });
+    _resetPlatformPriceReferenceCacheForTests();
+    const young = hivraFetch({
+      pairs: [nativePair()],
+      candles: Array.from({ length: 30 }, (_, i): [number, number] => [5 + i * 5, SPOT_NATIVE]),
+    });
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: young as never, env: env() })).rejects.toMatchObject({
+      gate: "history",
+      reason: "insufficient_history",
+    });
+  });
+
+  it("refuses a pool quoted in anything but ETH, on either source", async () => {
+    const usdc = { address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" };
+    const spot = hivraFetch({ pairs: [nativePair({ quote: usdc })] });
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: spot as never, env: env() })).rejects.toMatchObject({
+      gate: "pool_missing",
+      reason: "feed_error",
+      observed: { stage: "spot", poolId: HIVRA_POOL, quoteAddress: usdc.address },
+    });
+    await expect(fetchPlatformTokenPriceCrossCheck(HIVRA, { fetchImpl: spot as never, env: env() })).rejects.toMatchObject({
+      gate: "pool_missing",
+    });
+    const reference = hivraFetch({ pairs: [nativePair()], quoteAddress: usdc.address });
+    await expect(fetchPlatformTokenPriceUsd(HIVRA, { fetchImpl: reference as never, env: env() })).rejects.toMatchObject({
+      gate: "pool_missing",
+      assetKey: "hivra",
+      observed: { stage: "reference", poolId: HIVRA_POOL, quoteAddress: usdc.address },
+    });
+  });
+
+  it("refuses a $HermesOS pair quoted in anything but ETH, and leaves its floor as it was", async () => {
+    const usdcPair = { ...pair(HERMESOS_POOL_ID, "0.0000011", 80_000), quoteToken: { address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" } };
+    const fetchImpl = fakeFetch({ pairs: [usdcPair], closes: [0.0000011] });
+    await expect(fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() })).rejects.toMatchObject({
+      gate: "pool_missing",
+    });
+    expect(HERMESOS_TOKEN.minQuoteLiquidityUsd).toBeNull();
   });
 });
