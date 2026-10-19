@@ -238,6 +238,8 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
   if (variant === "linux-sandbox" || variant === "digitalocean" || variant === "windows-my-server" || variant === "prepared") return null;
   switch (runtimeUpdateRefusal(row)) {
     case "deepseek": return unavailable("deepseek", "DeepSeek computers can't update their connection service here yet.");
+    // An Omarchy or Windows profile anywhere else still runs no connection service.
+    case "prepared": return null;
     case "my-cloud": return unavailable("my_cloud", "Hivra can't update the connection service on My cloud computers yet.");
     default: break;
   }
@@ -246,9 +248,12 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
   return available;
 }
 
-const OMARCHY_SELF_UPDATE = "Omarchy updates come straight from Omarchy. Open the Omarchy menu on the desktop and choose Update, then Omarchy, whenever you like.";
+const OMARCHY_SELF_UPDATE = "Omarchy updates come straight from Omarchy. Open the Omarchy menu on the desktop and choose Update, then Omarchy. Every Omarchy 4 release works here; a new major version needs Hivra to check it first.";
 const OMARCHY_DESKTOP_UPDATE = "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.";
 const WINDOWS_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, on the desktop.";
+// Hivra can't open a Windows computer on the owner's own server yet, so its
+// owner reaches Windows Update through that server's console.
+const WINDOWS_MY_SERVER_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, from your server's own console.";
 const WINDOWS_DESKTOP_UPDATE = "Hivra connects to Windows from outside it, so there's nothing of Hivra's inside Windows to update.";
 const DIGITALOCEAN_UPDATE = "DigitalOcean runs this session's agent software, so there's nothing for Hivra or you to update in it.";
 const SANDBOX_UPDATE = "This Linux Sandbox runs a fixed, read-only system image, and only its workspace folder changes. Updating that image isn't available yet.";
@@ -261,7 +266,7 @@ function selfUpdateFor(row: ManageCapabilitiesRow, variant: ManageVariant): Mana
   if (variant === "prepared" && row.computer_profile === "windows") {
     return { lines: [WINDOWS_SELF_UPDATE, WINDOWS_DESKTOP_UPDATE], openDesktop: true };
   }
-  if (variant === "windows-my-server") return { lines: [WINDOWS_SELF_UPDATE], openDesktop: false };
+  if (variant === "windows-my-server") return { lines: [WINDOWS_MY_SERVER_SELF_UPDATE], openDesktop: false };
   if (variant === "digitalocean") return { lines: [DIGITALOCEAN_UPDATE], openDesktop: false };
   if (variant === "linux-sandbox") return { lines: [SANDBOX_UPDATE], openDesktop: false };
   return null;

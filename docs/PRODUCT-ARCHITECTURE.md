@@ -494,11 +494,12 @@ for Windows on My server.
 Updates says how every kind of computer is kept up to date (2026-10-19). Where
 Hivra's connection service runs, it offers Update connection service. Where it
 doesn't, it says how the owner updates the computer themselves
-(`selfUpdate` in the capability map): Omarchy from its own menu (Update, then
-Omarchy; the desktop accepts any Omarchy 4 release, see
-`omarchyDesktopVersionRefusal`), Windows through Windows Update, and for both,
-Hivra's own desktop part reinstalls itself the next time Desktop opens. A
-DigitalOcean session's software is DigitalOcean's. A Linux Sandbox's image
+(`selfUpdate` in the capability map). Omarchy updates from its own menu
+(Update, then Omarchy; the desktop accepts any Omarchy 4 release, see
+`omarchyDesktopVersionRefusal`), and Hivra's desktop files on it reinstall
+themselves the next time Desktop opens. Windows updates through Windows
+Update; Hivra connects to it from outside, so nothing of Hivra's runs inside
+Windows. A DigitalOcean session's software is DigitalOcean's. A Linux Sandbox's image
 can't be updated yet, and neither can the connection service on DeepSeek or
 My cloud computers; Manage says so rather than offering a control.
 

@@ -300,7 +300,7 @@ describe("manageCapabilitiesFor", () => {
     it.each([
       ["preparedOmarchy", /Update, then Omarchy/, true],
       ["preparedWindows", /Windows Update/, true],
-      ["windowsMyServer", /Windows Update/, false],
+      ["windowsMyServer", /from your server's own console/, false],
       ["digitalocean", /DigitalOcean runs this session's agent software/, false],
       ["gvisor", /fixed, read-only system image/, false],
     ] as const)("says how %s is updated instead of offering a connection service", (name, text, openDesktop) => {
@@ -315,6 +315,11 @@ describe("manageCapabilitiesFor", () => {
     it("tells an Omarchy owner the desktop connection updates itself", () => {
       expect(map("preparedOmarchy").selfUpdate?.lines).toContain(
         "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.");
+    });
+
+    it("never offers a connection service on an Omarchy or Windows profile placed on My cloud", () => {
+      const omarchyMyCloud = manageCapabilitiesFor({ ...rows.hetznerUbuntu, computer_profile: "omarchy" }, { preparedMatch: false });
+      expect(omarchyMyCloud.connectionServiceUpdate).toBeNull();
     });
 
     it("keeps the connection service update, and no self-update note, everywhere it runs", () => {

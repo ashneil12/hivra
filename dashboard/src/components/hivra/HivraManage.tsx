@@ -1473,7 +1473,7 @@ function HivraManageContent({
                     <div key={line} style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>{line}</div>
                   ))}
                   {manage.selfUpdate.openDesktop ? (
-                    <Link href={`/dashboard/agent/${encodeURIComponent(agent.id)}?tab=desktop`} style={{ color: "var(--ink-black)", fontSize: 14, textDecoration: "underline" }}>Open Desktop</Link>
+                    <Link href={`/dashboard/agent/${encodeURIComponent(agent.id)}?tab=desktop`} style={{ color: "var(--ink-black)", fontSize: 14, textDecoration: "underline", display: "inline-flex", alignItems: "center", minHeight: 40, width: "fit-content" }}>Open Desktop</Link>
                   ) : null}
                 </div>
               </div>
