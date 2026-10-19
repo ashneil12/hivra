@@ -117,7 +117,7 @@ describe("/token/migration", () => {
     for (const name of ["What changed", "Check your wallet", "Contracts", "Where trading fees go", "The founder's tokens", "Receipts", "Stay safe"]) {
       expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
     }
-    expect(screen.getByTestId("migration-one-for-one")).toHaveTextContent("Every wallet that held $HermesOS at Base block 36000000 is sent one $HIVRA for each $HermesOS it held.");
+    expect(screen.getByTestId("migration-one-for-one")).toHaveTextContent("Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at Base block 36000000. Pools, launch contracts and the founder's wallet are not on the list.");
     expect(screen.getByRole("link", { name: "Check a wallet for the $HIVRA airdrop" })).toHaveAttribute("href", "/token/airdrop");
     expect(screen.getByRole("link", { name: "View the $HIVRA contract on BaseScan" })).toHaveAttribute("href", `https://basescan.org/token/${HIVRA}`);
     expect(screen.getByRole("link", { name: "View the $HermesOS contract on BaseScan" })).toHaveAttribute("href", "https://basescan.org/token/0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3");

@@ -62,10 +62,9 @@ function WhatChanged({ migration }: { migration: ServedHivraMigration }) {
     <p>$HermesOS moved to $HIVRA, a new token on Base.</p>
     <p data-testid="migration-one-for-one">
       {snapshot
-        ? <>Every wallet that held $HermesOS at Base block{" "}
-            <a href={`https://basescan.org/block/${snapshot.block}`} target="_blank" rel="noopener noreferrer">{snapshot.block}</a>{" "}
-            is sent one $HIVRA for each $HermesOS it held.</>
-        : <>Every wallet that held $HermesOS at the snapshot block is sent one $HIVRA for each $HermesOS it held.</>}
+        ? <>Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at Base block{" "}
+            <a href={`https://basescan.org/block/${snapshot.block}`} target="_blank" rel="noopener noreferrer">{snapshot.block}</a>. Pools, launch contracts and the founder&apos;s wallet are not on the list.</>
+        : <>Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot block. Pools, launch contracts and the founder&apos;s wallet are not on the list.</>}
     </p>
     <p>It is sent automatically. There is nothing to claim.</p>
     <p>The old $HermesOS contract is now legacy.</p>
