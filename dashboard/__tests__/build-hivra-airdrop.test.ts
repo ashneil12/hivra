@@ -55,7 +55,7 @@ describe("build-hivra-airdrop.mjs", () => {
   }
 
   it("writes a list the /token/airdrop lookup accepts and answers from, plus the Sablier file", () => {
-    const { publicJson, sablierCsv, stdout } = run(["--final"]);
+    const { publicJson, sablierCsv, stdout } = run(["--final", "--max-total-tokens", "1000"]);
     expect(stdout).toMatch(/totals check passed/);
     expect(stdout).toMatch(/public list is FINAL/);
     expect(readFileSync(sablierCsv, "utf8")).toBe([
@@ -82,6 +82,10 @@ describe("build-hivra-airdrop.mjs", () => {
     expect(lookupHivraAirdrop(airdrop, A(0xa1))).toEqual({ kind: "managed", address: A(0xa1), amountWei: "3000000000000000000" });
     expect(lookupHivraAirdrop(airdrop, A(0xbeef))).toEqual({ kind: "excluded", address: A(0xbeef), label: "Uniswap pool" });
     expect(lookupHivraAirdrop(airdrop, OWNER)).toEqual({ kind: "absent", address: OWNER });
+  }, 60_000);
+
+  it("refuses a --final run with no guard, and writes nothing", () => {
+    expect(() => run(["--final"])).toThrow(/final needs a guard|--final needs a guard/);
   }, 60_000);
 
   it("writes a dry-run list (final: false) unless --final is given, and the page parser reads it as not final", () => {

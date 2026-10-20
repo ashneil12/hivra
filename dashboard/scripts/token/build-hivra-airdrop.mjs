@@ -27,14 +27,18 @@
  *                           send_to is the same address (or kind is "keep") it is
  *                           an ordinary holder. Only send_to and kind are read;
  *                           any other field is ignored.
- *   --max-total-wei <n>     optional guard: the Airdrop wallet's $HIVRA allocation,
- *                           in wei. When given, the run refuses (exit 2, no files
- *                           written) if the included total is larger. Always give
- *                           one of the two guards on a --final run.
+ *   --max-total-wei <n>     the guard: the Airdrop wallet's $HIVRA allocation, in
+ *                           wei. The run refuses (exit 2, no files written) if
+ *                           the included total is larger. REQUIRED with --final
+ *                           (give this or --max-total-tokens); optional on a dry
+ *                           run. Neither may exceed the 100B supply, and the
+ *                           included total never may.
  *   --max-total-tokens <n>  the same guard in whole $HIVRA ("2500000000" or
  *                           "2500000000.5"); give one of the two, not both.
  *   --final                 mark the public list as the verified final list
- *                           (`final: true`). /token/airdrop shows the eligible
+ *                           (`final: true`); it needs a guard (see above), so a
+ *                           final list is always checked against the Airdrop
+ *                           wallet's allocation. /token/airdrop shows the eligible
  *                           wallet count, the total allocated and the percentage of
  *                           supply ONLY for a final list; a run without it writes
  *                           `final: false`, and its counts are never shown.
@@ -207,6 +211,11 @@ export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), 
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) fail("batch size must be a positive whole number");
   if (maxTotalWei !== undefined && (typeof maxTotalWei !== "bigint" || maxTotalWei <= 0n)) fail("max total must be a positive whole number of wei");
   if (typeof final !== "boolean") fail("final must be true or false");
+  if (maxTotalWei !== undefined && maxTotalWei > HIVRA_TOTAL_SUPPLY_WEI) {
+    fail(`the max total ${weiToDecimal(maxTotalWei)} HIVRA is more than the whole supply of ${weiToDecimal(HIVRA_TOTAL_SUPPLY_WEI)} HIVRA`);
+  }
+  // A final list is published as verified: it must have been checked against the Airdrop wallet's allocation.
+  if (final && maxTotalWei === undefined) fail("a final list needs a guard: give --max-total-wei or --max-total-tokens (the Airdrop wallet's allocation)");
   const warnings = [];
   const inSnapshot = new Set(rows.map((row) => row.address));
   for (const address of exclusions.keys()) {
@@ -243,6 +252,12 @@ export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), 
     includedWei += row.balanceWei;
   }
   if (included.length === 0) fail("no holder is left after the exclusions");
+  if (includedWei > HIVRA_TOTAL_SUPPLY_WEI) {
+    fail(
+      `the included total ${weiToDecimal(includedWei)} HIVRA (${includedWei} wei) is more than the whole supply of ` +
+        `${weiToDecimal(HIVRA_TOTAL_SUPPLY_WEI)} HIVRA; check the snapshot's balance_wei column and its decimals`,
+    );
+  }
   if (maxTotalWei !== undefined && includedWei > maxTotalWei) {
     fail(
       `the included total ${weiToDecimal(includedWei)} HIVRA (${includedWei} wei) is more than the airdrop wallet's ` +
@@ -265,6 +280,19 @@ export function buildAirdrop({ rows, exclusions = new Map(), remap = new Map(), 
     recipientsByDestination.set(member.sendTo, recipient);
   }
   const recipients = [...recipientsByDestination.values()].sort(byAmountThen("sendTo"));
+
+  // The public list never shows where a Hivra-managed wallet's allocation goes, so a destination
+  // that receives one differs from what /token/airdrop shows for that address. Name each one.
+  for (const recipient of recipients) {
+    const managed = recipient.members.filter((member) => member.remapped);
+    if (managed.length === 0) continue;
+    const own = recipient.members.find((member) => !member.remapped);
+    warnings.push(
+      own
+        ? `${recipient.sendTo} is a holder AND the destination of ${managed.length} Hivra-managed wallet(s): Sablier will show ${weiToDecimal(recipient.amountWei)} HIVRA, /token/airdrop shows only its own ${weiToDecimal(own.amountWei)}`
+        : `${recipient.sendTo} is not a holder but the destination of ${managed.length} Hivra-managed wallet(s) (${weiToDecimal(recipient.amountWei)} HIVRA): /token/airdrop will not list it`,
+    );
+  }
 
   // The Sablier upload file: the primary output.
   const sablierLines = recipients.map((recipient) => `${recipient.sendTo},${weiToDecimal(recipient.amountWei)}`);
@@ -436,6 +464,7 @@ export function parseArgs(argv) {
   }
   delete args.maxTotalTokens;
   if (args.maxTotalWei !== undefined && args.maxTotalWei <= 0n) fail("the max total must be more than zero");
+  if (args.final && args.maxTotalWei === undefined) fail("--final needs a guard: give --max-total-wei or --max-total-tokens (the Airdrop wallet's allocation)");
   return args;
 }
 

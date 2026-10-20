@@ -39,7 +39,7 @@ const CSV = [
   `${KEPT},700000000000000000,`,
 ].join("\n");
 
-function fixture({ batchSize = 2, final } = {}) {
+function fixture({ batchSize = 2, final, maxTotalWei } = {}) {
   return buildAirdrop({
     rows: parseSnapshotCsv(CSV),
     exclusions: parseExclusions({ [POOL]: "Uniswap pool", [A(99)]: "Not a holder" }),
@@ -50,6 +50,7 @@ function fixture({ batchSize = 2, final } = {}) {
     snapshotBlock: 36_000_000,
     batchSize,
     final,
+    maxTotalWei,
   });
 }
 
@@ -98,10 +99,37 @@ test("exclusions, zero balances and remaps shape the public document, with no ba
 });
 
 test("final is false unless the final flag is given", () => {
+  const guard = HIVRA_TOTAL_SUPPLY_WEI;
   assert.equal(fixture().publicDocument.final, false);
   assert.equal(fixture({ final: false }).publicDocument.final, false);
-  assert.equal(fixture({ final: true }).publicDocument.final, true);
-  assert.throws(() => fixture({ final: "yes" }), /final must be true or false/);
+  assert.equal(fixture({ final: true, maxTotalWei: guard }).publicDocument.final, true);
+  assert.throws(() => fixture({ final: "yes", maxTotalWei: guard }), /final must be true or false/);
+});
+
+test("a final list needs the guard, and nothing may exceed the whole supply", () => {
+  assert.throws(() => fixture({ final: true }), (error) => error instanceof InputError && /a final list needs a guard/.test(error.message));
+  // The guard may not be more than the supply, with or without --final.
+  assert.throws(() => fixture({ maxTotalWei: HIVRA_TOTAL_SUPPLY_WEI + 1n }), /more than the whole supply/);
+  assert.throws(() => fixture({ final: true, maxTotalWei: HIVRA_TOTAL_SUPPLY_WEI + 1n }), /more than the whole supply/);
+  assert.equal(fixture({ final: true, maxTotalWei: HIVRA_TOTAL_SUPPLY_WEI }).publicDocument.final, true);
+  // A snapshot that adds up to more than 100B tokens is refused even on a dry run with no guard.
+  const rows = parseSnapshotCsv(`address,balance_wei\n${A(1)},${HIVRA_TOTAL_SUPPLY_WEI}\n${A(2)},1`);
+  assert.throws(() => buildAirdrop({ rows, snapshotBlock: 1 }), (error) => error instanceof InputError && /more than the whole supply/.test(error.message));
+  assert.equal(buildAirdrop({ rows: rows.slice(0, 1), snapshotBlock: 1 }).includedWei, HIVRA_TOTAL_SUPPLY_WEI);
+});
+
+test("a destination that gets a Hivra-managed wallet's allocation is named in a warning", () => {
+  // OWNER is not a holder: it receives MANAGED's 2.5 tokens, which /token/airdrop will not list under it.
+  const first = fixture().warnings.join("\n");
+  assert.match(first, new RegExp(`${OWNER} is not a holder but the destination of 1 Hivra-managed wallet\\(s\\) \\(2\\.5 HIVRA\\)`));
+  // OWNER is also a holder: Sablier shows the sum, the page only the holder's own amount.
+  const rows = parseSnapshotCsv(`address,balance_wei\n${OWNER},1000000000000000000\n${MANAGED},2500000000000000000`);
+  const remap = parseRemap({ [MANAGED]: { send_to: OWNER, kind: "remap" } });
+  const { warnings, sablierCsv } = buildAirdrop({ rows, remap, snapshotBlock: 1 });
+  assert.match(warnings.join("\n"), /is a holder AND the destination of 1 Hivra-managed wallet\(s\): Sablier will show 3\.5 HIVRA, \/token\/airdrop shows only its own 1/);
+  assert.equal(sablierCsv, `address,amount\n${OWNER},3.5\n`);
+  // A plain holder, or a managed wallet kept at its own address, warns about nothing.
+  assert.deepEqual(buildAirdrop({ rows: parseSnapshotCsv(`address,balance_wei\n${A(1)},5`), snapshotBlock: 1 }).warnings, []);
 });
 
 test("the Sablier file has the header and one exact line per destination, merged and sorted", () => {
@@ -187,7 +215,9 @@ test("main writes all three files, passes the totals check, and refuses private 
   assert.equal(JSON.parse(readFileSync(publicJson, "utf8")).final, false);
 
   // A first run with small batches, then a re-run with one batch: stale files go.
-  assert.equal(main([...base, "--sablier-csv", sablierCsv, "--batches-dir", batchesDir, "--batch-size", "2", "--final"], io, path.join(dir, "repo")), 0);
+  assert.equal(main([...base, "--sablier-csv", sablierCsv, "--batches-dir", batchesDir, "--batch-size", "2", "--final"], io, path.join(dir, "repo")), 2, "--final without a guard is refused");
+  assert.match(logs.join("\n"), /--final needs a guard/);
+  assert.equal(main([...base, "--sablier-csv", sablierCsv, "--batches-dir", batchesDir, "--batch-size", "2", "--final", "--max-total-tokens", "1000"], io, path.join(dir, "repo")), 0);
   assert.equal(readdirSync(batchesDir).length, 3);
   assert.equal(JSON.parse(readFileSync(publicJson, "utf8")).final, true);
   assert.match(logs.join("\n"), /public list is FINAL/);
