@@ -247,7 +247,7 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
   return available;
 }
 
-const OMARCHY_SELF_UPDATE = "Omarchy updates come straight from Omarchy. Open the Omarchy menu on the desktop and choose Update, then Omarchy. Every Omarchy 4 release works here; a new major version needs Hivra to check it first.";
+const OMARCHY_SELF_UPDATE = "Omarchy updates come straight from Omarchy. Open the Omarchy menu on the desktop and choose Update, then Omarchy. You have admin (sudo) on this computer, so it won't ask for a password. Every Omarchy 4 release works here; a new major version needs Hivra to check it first.";
 const OMARCHY_DESKTOP_UPDATE = "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.";
 const WINDOWS_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, on the desktop.";
 // Hivra can't open a Windows computer on the owner's own server yet, so its
