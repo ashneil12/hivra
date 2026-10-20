@@ -129,7 +129,9 @@ function BillingPageContent() {
 
   // The full-page loader is for the first load only. Later refreshes keep
   // the page (and tab, and any open disclosure) mounted.
-  const showInitialLoader = c.status.loading && !c.data;
+  // After $HIVRA launches the first load also waits for whether token
+  // payments can be offered, so token options never flash in or out.
+  const showInitialLoader = (c.status.loading && !c.data) || c.tokenPayments.pending;
   const refreshing = c.status.loading && !!c.data;
 
   // Plan changes happen deep in the Plans tab, but their result shows in the
@@ -255,6 +257,7 @@ function BillingPageContent() {
         checkingNow={c.yearly.checkingNow}
         onResume={c.handleResumeYearlyQuote}
         onCheckNow={() => void c.handleCheckNow()}
+        tokenUnit={c.tokenPayments.displayUnit}
       />
 
       <div ref={tabsTopRef} style={{ scrollMarginTop: 72 }}>

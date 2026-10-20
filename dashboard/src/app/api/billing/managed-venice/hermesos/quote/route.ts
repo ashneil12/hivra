@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
-import { TokenNotAllowedError } from "@/lib/billing/token-access";
-import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
+import { TokenNotAllowedError, resolveUserTokenAccess } from "@/lib/billing/token-access";
+import { HivraNotReadyError, assertHivraReadyFor } from "@/lib/billing/hivra-readiness";
 import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
@@ -164,6 +164,24 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // A new $HIVRA top-up needs $HIVRA usable. Checked before any deposit
+    // wallet is looked up or provisioned, so a refusal has no side effect.
+    // The quote below re-checks with the same access (served from cache).
+    const access = await resolveUserTokenAccess(userId);
+    try {
+      await assertHivraReadyFor(access, parsed.data.token ?? access.paymentToken);
+    } catch (error) {
+      if (error instanceof HivraNotReadyError) {
+        return hivraNotReadyResponse({
+          source: "billing/managed-venice/hermesos/quote",
+          route: "/api/billing/managed-venice/hermesos/quote",
+          method: "POST",
+          userId,
+        });
+      }
+      throw error;
+    }
+
     let credential;
     try {
       credential = await getBankrDepositWalletCredentialForUser({
@@ -250,12 +268,14 @@ export async function POST(req: NextRequest) {
               userId,
               targetMicroUsd: parsed.data.targetPaidMicroUsd,
               depositAddress,
+              access,
               ...(parsed.data.token ? { token: parsed.data.token } : {}),
             })
           : await createManagedVeniceTokenQuote({
               userId,
               tokenAmountRaw: parsed.data.tokenAmountRaw,
               depositAddress,
+              access,
               ...(parsed.data.token ? { token: parsed.data.token } : {}),
             });
     } catch (error) {

@@ -366,10 +366,13 @@ cohort see card (and USDC credit) payments only; `/api/billing/token-payments`
 reports `available: false`; new yearly, hold-for-tier and managed-Venice
 $HIVRA quotes, `/api/billing/token-holding` and a no-tier
 `/api/billing/wallet/eligibility` answer 503 "Token payments aren't available
-yet." (`reason: hivra_not_ready`); and the tier evaluator records no new
-$HIVRA tier, as in a price outage. Grandfathered accounts, quotes already
-issued and their settlement, tiers already held and withdrawals are not
-affected.
+yet." (`reason: hivra_not_ready`), and /dashboard/wallet says so and offers no
+price lock; the tier evaluator records no new $HIVRA tier, as in a price
+outage; and neither the token-tier cron nor wallet unlock grants the 1-token
+base tier to an account not already on a token tier. Grandfathered accounts,
+quotes already issued and their settlement, tiers and holdings already held
+(still shown and refreshable in Billing), breach and grace, and withdrawals
+are not affected.
 
 ## 6. Verify
 

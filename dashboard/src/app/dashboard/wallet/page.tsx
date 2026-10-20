@@ -350,6 +350,10 @@ export default function WalletPage() {
   const [data, setData] = useState<WalletApiPayload | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityPayload | null>(null);
   const [priceUnavailable, setPriceUnavailable] = useState(false);
+  // New $HIVRA tiers are off for this account until $HIVRA passes the price
+  // gate (eligibility answers reason "hivra_not_ready", or reports
+  // newTiersAvailable: false for a tier already held). Not a price outage.
+  const [hivraNotReady, setHivraNotReady] = useState(false);
   const [status, setStatus] = useState<WalletStatus>('loading');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -514,13 +518,21 @@ export default function WalletPage() {
             const nextWalletAddress = walletAddressFromEligibility(nextEligibility);
             if (nextWalletAddress) setVerifiedWalletAddress(nextWalletAddress);
             setPriceUnavailable(false);
+            setHivraNotReady(nextEligibility.tokenAccess?.newTiersAvailable === false);
           }
         } catch {
           // ignore — eligibility section just won't render
         }
       } else if (eligibilityResponse.status === 503) {
+        const failure = await eligibilityResponse.json().catch(() => ({}));
         setEligibility(null);
-        setPriceUnavailable(true);
+        if (failure?.reason === 'hivra_not_ready') {
+          setHivraNotReady(true);
+          setPriceUnavailable(false);
+        } else {
+          setHivraNotReady(false);
+          setPriceUnavailable(true);
+        }
       }
     } catch (err) {
       setStatus('error');
@@ -1027,11 +1039,13 @@ export default function WalletPage() {
           error={walletConnectError}
           success={walletConnectSuccess}
           onConnect={handleConnectWallet}
-          onLockPrice={handleLockPrice}
+          onLockPrice={hivraNotReady ? undefined : handleLockPrice}
         />
       )}
 
-      {tokenPanels && isReady && isLegacyCustody && (
+      {/* While new $HIVRA tiers are off, no new price lock is offered; a
+          quote already locked stays visible. */}
+      {tokenPanels && isReady && isLegacyCustody && (!hivraNotReady || quotes.pro || quotes.power) && (
         <QuotePanel
           proQuote={quotes.pro}
           powerQuote={quotes.power}
@@ -1048,6 +1062,27 @@ export default function WalletPage() {
         <p style={{ fontSize: 12, color: '#dc2626', marginTop: '-0.5rem', marginBottom: '1rem' }}>
           {quoteError}
         </p>
+      )}
+
+      {tokenPanels && hivraNotReady && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            border: '1px solid var(--etched-border)',
+            background: 'var(--bg-surface)',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <AlertTriangle size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span>{walletCopy.tokenPaymentsNotReady}</span>
+        </div>
       )}
 
       {tokenPanels && !eligibility && priceUnavailable && (

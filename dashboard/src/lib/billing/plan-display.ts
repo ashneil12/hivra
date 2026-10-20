@@ -211,17 +211,20 @@ export function activePlanPriceLine(params: {
   source: PlanSource | null | undefined;
   currentPeriodEnd: string | null | undefined;
   formatDate?: (iso: string) => string | null;
+  /** The account's platform token, e.g. "$HIVRA". Defaults to $HermesOS. */
+  tokenUnit?: string;
 }): string {
   const formatDate = params.formatDate ?? defaultFormatDate;
+  const tokenUnit = params.tokenUnit ?? HERMESOS_DISPLAY_UNIT;
   const date = params.currentPeriodEnd ? formatDate(params.currentPeriodEnd) : null;
 
   switch (params.source) {
     case "token_yearly":
       return date
-        ? `Paid with $HermesOS · active until ${date} · doesn't renew automatically`
-        : "Paid with $HermesOS · doesn't renew automatically";
+        ? `Paid with ${tokenUnit} · active until ${date} · doesn't renew automatically`
+        : `Paid with ${tokenUnit} · doesn't renew automatically`;
     case "token_holding":
-      return "Unlocked by holding $HermesOS · active while you hold";
+      return `Unlocked by holding ${tokenUnit} · active while you hold`;
     case "apple_iap":
       return date
         ? `Billed through the App Store · current billing period ends ${date}`

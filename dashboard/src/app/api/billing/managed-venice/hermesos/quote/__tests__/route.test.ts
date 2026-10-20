@@ -58,6 +58,12 @@ jest.mock("@/lib/billing/price-gate-alerts", () => ({
   reportPriceGateRefusal: (...args: unknown[]) => mockReportPriceGateRefusal(...args),
 }));
 
+const mockAssertHivraReady = jest.fn(async () => undefined);
+jest.mock("@/lib/billing/hivra-readiness", () => ({
+  ...jest.requireActual("@/lib/billing/hivra-readiness"),
+  assertHivraReadyFor: (...args: unknown[]) => mockAssertHivraReady(...(args as [])),
+}));
+
 import { auth } from "@clerk/nextjs/server";
 import { ManagedVeniceTokenQuotePriceError } from "@/lib/billing/managed-venice-token-quotes";
 import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
@@ -140,6 +146,8 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       userId: "user_a",
       targetMicroUsd: 50_000_000,
       depositAddress: "0xmanagedvenice",
+      // The access the route resolved before provisioning, passed on.
+      access: expect.objectContaining({ phase: "dormant" }),
     });
   });
 
@@ -185,6 +193,8 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       userId: "user_a",
       tokenAmountRaw: stubQuote.tokenAmountRaw,
       depositAddress: "0xfreshmanagedvenice",
+      // The access the route resolved before provisioning, passed on.
+      access: expect.objectContaining({ phase: "dormant" }),
     });
   });
 
@@ -235,6 +245,8 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       userId: "user_a",
       targetMicroUsd: 50_000_000,
       depositAddress: "0xmanagedvenice",
+      // The access the route resolved before provisioning, passed on.
+      access: expect.objectContaining({ phase: "dormant" }),
     });
   });
 
@@ -280,6 +292,17 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
     expect(body.error).toMatch(/pricing is temporarily unavailable/i);
     expect(body.reason).toBe("pricing_unavailable");
     expect(JSON.stringify(body)).not.toContain("dexscreener_uniswap_internal_detail");
+  });
+
+  it("refuses a $HIVRA top-up before looking up or provisioning a deposit wallet", async () => {
+    mockAssertHivraReady.mockRejectedValueOnce(new HivraNotReadyError());
+    const response = await POST(makeReq({ targetPaidMicroUsd: 50_000_000 }));
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.reason).toBe("hivra_not_ready");
+    expect(mockGetCredential).not.toHaveBeenCalled();
+    expect(mockEnsureWallet).not.toHaveBeenCalled();
+    expect(mockCreateQuoteForUsdTarget).not.toHaveBeenCalled();
   });
 
   it("answers 'not available yet' (not a price-gate error) while $HIVRA is not usable", async () => {

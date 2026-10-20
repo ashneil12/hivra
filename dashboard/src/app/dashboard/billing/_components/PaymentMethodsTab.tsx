@@ -12,6 +12,7 @@ import {
 } from "@/lib/billing/plan-display";
 import { PLANS } from "@/lib/subscription";
 import {
+  HERMESOS_DISPLAY_UNIT,
   YEARLY_TOKEN_TIER_PLAN,
   YEARLY_TOKEN_USD,
   type YearlyTokenTier,
@@ -52,7 +53,10 @@ export function tokenYearButtonLabel(tier: YearlyTokenTier, renewal: boolean): s
  * whether a card is saved (free-tier verification can save one), so the
  * copy talks about the plan's billing, never "no card on file".
  */
-export function cardStatus(plan: { key: string; source?: PlanSource } | null): {
+export function cardStatus(
+  plan: { key: string; source?: PlanSource } | null,
+  tokenUnit: string = HERMESOS_DISPLAY_UNIT
+): {
   text: string;
   action: "portal" | "apple" | null;
 } {
@@ -64,7 +68,7 @@ export function cardStatus(plan: { key: string; source?: PlanSource } | null): {
     return { text: "You pay through the App Store. Apple keeps your payment details.", action: "apple" };
   }
   if (source === "token_yearly" || source === "token_holding") {
-    return { text: "Your plan is paid with $HermesOS, not a card.", action: null };
+    return { text: `Your plan is paid with ${tokenUnit}, not a card.`, action: null };
   }
   if (source === "workspace_cloud") {
     return { text: "Your plan is billed with Workspace Cloud.", action: null };
@@ -85,7 +89,7 @@ export function PaymentMethodsTab({
   const { copy } = useLocale();
   const plan = c.data?.subscribed ? c.data.plan : null;
   const source = (plan?.source ?? null) as PlanSource | null;
-  const card = cardStatus(plan ? { key: plan.key, source: plan.source } : null);
+  const card = cardStatus(plan ? { key: plan.key, source: plan.source } : null, c.tokenPayments.displayUnit);
   const canPayYearWithToken = !hasPaidCardOrAppleSubscription({ planKey: plan?.key ?? null, source });
   // Same rule as the Plans tab: never a smaller $HermesOS year than the
   // plan the user already has (entitlement goes to the highest tier and
@@ -196,14 +200,48 @@ export function PaymentMethodsTab({
               </button>
             )}
             <Link className={styles.link} href="/token">
-              About $HermesOS access
+              About {c.tokenPayments.displayUnit} access
               <ArrowRight size={13} aria-hidden="true" />
             </Link>
           </p>
         ) : !tokenPaymentsOn ? (
-          <div className={styles.methodBlocks}>
-            <UsdcTopUpBlock onGoTo={onGoTo} />
-          </div>
+          // No new token payment or holder tier, but a holding the account
+          // already has stays visible, refreshable and manageable.
+          <>
+            <div className={styles.methodBlocks}>
+              {c.tokenHolding && (
+                <div className={styles.methodBlock}>
+                  <h3 className={styles.blockTitle}>Your {unit} holding</h3>
+                  {source === "token_holding" && (
+                    <p className={styles.blockStatus}>
+                      <ShieldCheck size={14} aria-hidden="true" />
+                      Your plan is active while you hold.
+                    </p>
+                  )}
+                  <div className={styles.nested}>
+                    <TokenHoldingPanel
+                      embedded
+                      readOnly
+                      tokenHolding={c.tokenHolding}
+                      loading={c.tokenLoading}
+                      refreshing={c.tokenRefreshing}
+                      connectingWallet={false}
+                      error={c.tokenError}
+                      onRefresh={c.handleRefreshTokenHolding}
+                      onConnectWallet={() => undefined}
+                    />
+                  </div>
+                </div>
+              )}
+              <UsdcTopUpBlock onGoTo={onGoTo} />
+            </div>
+            <p className={styles.quietLine}>
+              <Link className={styles.link} href="/dashboard/wallet?from=billing">
+                Manage an existing token holding
+                <ArrowRight size={13} aria-hidden="true" />
+              </Link>
+            </p>
+          </>
         ) : (
           <>
             <div className={styles.methodBlocks}>

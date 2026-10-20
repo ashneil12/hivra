@@ -71,3 +71,32 @@ describe("billing ManagedVeniceDepositModal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+describe("an open token top-up while new token payments are off", () => {
+  const openQuote = {
+    id: "mvq_open",
+    tokenAmountRaw: "1000000000000000000000",
+    tokenSymbol: "HIVRA",
+    tokenDecimals: 18,
+    snapshotPriceUsd: "0.05",
+    lockedValueMicroUsd: 50_000_000,
+    paidValueMicroUsd: 50_000_000,
+    creditValueMicroUsd: 60_000_000,
+    bonusValueMicroUsd: 10_000_000,
+    depositAddress: "0x000000000000000000000000000000000000feed",
+    expiresAt: "2099-05-13T09:01:00.000Z",
+    status: "active",
+  } as unknown as NonNullable<Parameters<typeof ManagedVeniceDepositModal>[0]["quote"]>;
+
+  it("stays visible, in its own token, so it can still be paid and checked", () => {
+    renderModal({ tokenPaymentsEnabled: false, walletType: "hermesos", quote: openQuote, tokenUnit: "$HIVRA" });
+    expect(screen.getByRole("button", { name: /pay with \$HIVRA/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Use verify payment above")).toBeInTheDocument();
+  });
+
+  it("offers no token top-up when none is open", () => {
+    renderModal({ tokenPaymentsEnabled: false, walletType: "hermesos", quote: null, tokenUnit: "$HIVRA" });
+    expect(screen.queryByRole("button", { name: /pay with \$HIVRA/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start card checkout/i })).toBeInTheDocument();
+  });
+});

@@ -20,10 +20,14 @@ jest.mock("@/lib/billing/token-access", () => ({
   resolveUserTokenAccess: (...args: unknown[]) => mockResolveAccess(...args),
 }));
 const mockIsHivraUsable = jest.fn(async () => true);
-jest.mock("@/lib/billing/hivra-readiness", () => ({
-  ...jest.requireActual("@/lib/billing/hivra-readiness"),
-  isHivraUsable: () => mockIsHivraUsable(),
-}));
+jest.mock("@/lib/billing/hivra-readiness", () => {
+  const actual = jest.requireActual("@/lib/billing/hivra-readiness");
+  return {
+    ...actual,
+    newHivraTiersAllowed: async (access: { phase: string; grandfathered: boolean }) =>
+      actual.accessDependsOnHivraReadiness(access) ? mockIsHivraUsable() : true,
+  };
+});
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -223,12 +227,15 @@ describe("GET /api/billing/wallet/eligibility", () => {
     ];
     const response = await GET();
     expect(response.status).toBe(200);
+    // The page is told not to offer a new price lock.
+    expect((await response.json()).data.tokenAccess.newTiersAvailable).toBe(false);
   });
 
   it("never consults readiness before $HIVRA is active", async () => {
     const response = await GET();
     expect(response.status).toBe(200);
     expect(mockIsHivraUsable).not.toHaveBeenCalled();
+    expect((await response.json()).data.tokenAccess.newTiersAvailable).toBe(true);
   });
 
   it("queries token_holding_snapshots by checked_at (NOT captured_at — that column does not exist)", async () => {

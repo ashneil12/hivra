@@ -20,7 +20,9 @@ import {
   accessDependsOnHivraReadiness,
   assertHivraReadyFor,
   getHivraReadiness,
+  hasExistingTokenTier,
   isHivraUsable,
+  newHivraTiersAllowed,
   resolveTokenPaymentAvailability,
 } from "../hivra-readiness";
 import { LIVE_TTL_MS, _resetLivePriceCacheForTests, getLiveActiveThresholds } from "../live-thresholds";
@@ -151,5 +153,35 @@ describe("who readiness applies to", () => {
       paymentToken: "hermesos",
       displayUnit: "$HermesOS",
     });
+  });
+});
+
+describe("new tiers versus tiers already held", () => {
+  it("allows new $HIVRA tiers only while usable, and never gates a grandfathered account", async () => {
+    expect(await newHivraTiersAllowed(newUser, { now: ACTIVE_NOW, fetchImpl: gateRefuses() })).toBe(false);
+    _resetHivraReadinessForTests();
+    expect(await newHivraTiersAllowed(newUser, { now: ACTIVE_NOW, fetchImpl: pass() })).toBe(true);
+    expect(await newHivraTiersAllowed(grandfathered, { now: ACTIVE_NOW, fetchImpl: gateRefuses() })).toBe(true);
+  });
+
+  function fakeDb(rows: { quals: unknown[]; instances: unknown[]; error?: boolean }) {
+    const chain = (data: unknown[]) => {
+      const builder: Record<string, unknown> = {};
+      for (const m of ["select", "eq", "in", "not", "limit"]) builder[m] = () => builder;
+      builder.then = (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ data, error: rows.error ? { message: "down" } : null }).then(resolve);
+      return builder;
+    };
+    return { from: (name: string) => chain(name === "token_tier_qualifications" ? rows.quals : rows.instances) };
+  }
+
+  it("counts a qualification row or a computer on a token tier as a tier already held", async () => {
+    expect(await hasExistingTokenTier("u", fakeDb({ quals: [{ id: 1 }], instances: [] }))).toBe(true);
+    expect(await hasExistingTokenTier("u", fakeDb({ quals: [], instances: [{ id: 2 }] }))).toBe(true);
+    expect(await hasExistingTokenTier("u", fakeDb({ quals: [], instances: [] }))).toBe(false);
+  });
+
+  it("throws on a read error, so a refusal that depends on it fails closed", async () => {
+    await expect(hasExistingTokenTier("u", fakeDb({ quals: [], instances: [], error: true }))).rejects.toThrow();
   });
 });

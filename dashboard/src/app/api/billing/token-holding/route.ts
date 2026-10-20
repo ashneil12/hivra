@@ -22,7 +22,7 @@ import {
   resolveUserTokenAccess,
 } from "@/lib/billing/token-access";
 import { platformTokenByAddress, requirePlatformToken, type PlatformToken } from "@/lib/billing/token-registry";
-import { accessDependsOnHivraReadiness, isHivraUsable } from "@/lib/billing/hivra-readiness";
+import { hasExistingTokenTier, newHivraTiersAllowed } from "@/lib/billing/hivra-readiness";
 import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 
 function tokenConfigPayload(token: PlatformToken) {
@@ -59,8 +59,9 @@ export async function GET() {
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
     const access = await resolveUserTokenAccess(userId, { recordMembership: false });
-    // $HIVRA holder tiers are offered only once $HIVRA is usable.
-    if (accessDependsOnHivraReadiness(access) && !(await isHivraUsable())) {
+    // A new $HIVRA holder tier is offered only once $HIVRA is usable. An
+    // account that already holds a token tier keeps seeing its holding.
+    if (!(await newHivraTiersAllowed(access)) && !(await hasExistingTokenTier(userId))) {
       return hivraNotReadyResponse({
         source: "billing/token-holding",
         route: "/api/billing/token-holding",
@@ -112,8 +113,10 @@ export async function POST(req: NextRequest) {
     if (rateLimited) return rateLimited;
 
     const access = await resolveUserTokenAccess(userId, { recordMembership: false });
-    // $HIVRA holder tiers are offered only once $HIVRA is usable.
-    if (accessDependsOnHivraReadiness(access) && !(await isHivraUsable())) {
+    // A new $HIVRA holder tier is offered only once $HIVRA is usable. An
+    // account that already holds a token tier can still refresh its balance
+    // (a chain read; this route records no tier).
+    if (!(await newHivraTiersAllowed(access)) && !(await hasExistingTokenTier(userId))) {
       return hivraNotReadyResponse({
         source: "billing/token-holding",
         route: "/api/billing/token-holding",

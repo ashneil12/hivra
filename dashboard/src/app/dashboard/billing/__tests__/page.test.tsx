@@ -2762,6 +2762,26 @@ describe("BillingPage", () => {
       expect(screen.queryByText("Optional token top-ups")).not.toBeInTheDocument();
     });
 
+    it("still shows a holding the account already has, read-only, while $HIVRA is not usable", async () => {
+      subscribedAs({ key: "operator", name: "Operator", source: "token_holding" });
+      serveTokenPayments({ available: false, paymentToken: "hivra", displayUnit: "$HIVRA" });
+      render(<BillingPage />);
+      await openTab("Payment methods");
+
+      const heading = await screen.findByRole("heading", { name: "Your $HIVRA holding" });
+      const block = heading.parentElement as HTMLElement;
+      expect(within(block).getByText("Your plan is active while you hold.")).toBeInTheDocument();
+      expect(await within(block).findByText("0x000000000000000000000000000000000000dEaD")).toBeInTheDocument();
+      // Refresh stays; no new wallet verification, and no new tier offer.
+      expect(within(block).getByRole("button", { name: /refresh/i })).toBeInTheDocument();
+      expect(within(block).queryByRole("button", { name: /connect wallet|verify a different/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /Hold .* for ongoing access/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /Manage an existing token holding/ })).toHaveAttribute(
+        "href",
+        "/dashboard/wallet?from=billing"
+      );
+    });
+
     it("keeps the managed Venice token top-up out of a deep link while $HIVRA is not usable", async () => {
       serveTokenPayments({ available: false, paymentToken: "hivra", displayUnit: "$HIVRA" });
       mockGet.mockImplementation((key: string) =>

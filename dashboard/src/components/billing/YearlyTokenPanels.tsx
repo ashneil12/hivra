@@ -75,8 +75,11 @@ export function YearlyPaymentProgress({
   onResume,
   onCheckNow,
   checkingNow,
+  tokenUnit: accountTokenUnit = HERMESOS_DISPLAY_UNIT,
 }: {
   tier: "pro" | "power";
+  /** The account's payment token, used when there is no quote to name it. */
+  tokenUnit?: string;
   quote: YearlyTokenQuotePayload | null;
   subscription: YearlyTokenSubscriptionPayload | null;
   onResume: () => void;
@@ -91,7 +94,7 @@ export function YearlyPaymentProgress({
 
   const tierName = tier === "power" ? "Power" : "Pro";
   // The token this payment is in, from the quote (the registry names it).
-  const tokenUnit = quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : HERMESOS_DISPLAY_UNIT;
+  const tokenUnit = quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : accountTokenUnit;
   const formatted = quote ? quote.tokensRequiredDisplay.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "—";
   const remainingMs = quote ? Math.max(0, Date.parse(quote.expiresAt) - now) : 0;
   const minutes = Math.floor(remainingMs / 60000);
@@ -350,7 +353,13 @@ export function ManagedVeniceDepositModal({
   // With token payments off (billing v2 off, or the token geo-policy blocks
   // this viewer) the dialog is card-only: no $HermesOS start button or bonus
   // copy, whatever a deep link selected.
-  const shownWalletType: ManagedVeniceWalletType = tokenPaymentsEnabled ? walletType : "card";
+  // A token top-up already issued stays visible (and checkable) even when new
+  // token payments are off: it is in flight, and checking it is never refused.
+  const openTokenQuote = Boolean(
+    quote && walletType === "hermesos" && (quote.status === "active" || quote.status === "settled")
+  );
+  const tokenOptionShown = tokenPaymentsEnabled || openTokenQuote;
+  const shownWalletType: ManagedVeniceWalletType = tokenOptionShown ? walletType : "card";
   const quoteActive = Boolean(quote && shownWalletType === "hermesos" && quote.status === "active");
   const quoteSettled = Boolean(quote && shownWalletType === "hermesos" && quote.status === "settled");
 
@@ -360,7 +369,7 @@ export function ManagedVeniceDepositModal({
       description="Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay."
       // $HermesOS stays reachable only for a flow that already chose it
       // (a deep link into a token top-up) and only while token payments are on.
-      walletOptions={tokenPaymentsEnabled && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
+      walletOptions={tokenOptionShown && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
       tokenUnit={quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : tokenUnit}
       walletType={shownWalletType}
       onWalletTypeChange={onWalletTypeChange}

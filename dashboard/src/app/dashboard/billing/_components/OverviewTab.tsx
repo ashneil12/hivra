@@ -100,6 +100,7 @@ export function OverviewTab({
             planKey: plan.key,
             source: plan.source,
             currentPeriodEnd: plan.currentPeriodEnd,
+            tokenUnit: c.tokenPayments.displayUnit,
           })}
           specLabels={copy.plate}
           idlePolicy={

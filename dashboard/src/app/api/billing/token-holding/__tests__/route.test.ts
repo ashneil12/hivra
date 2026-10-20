@@ -53,10 +53,16 @@ jest.mock("@/lib/billing/token-access", () => {
 
 // $HIVRA readiness: usable unless a test says otherwise.
 const mockIsHivraUsable = jest.fn(async () => true);
-jest.mock("@/lib/billing/hivra-readiness", () => ({
-  ...jest.requireActual("@/lib/billing/hivra-readiness"),
-  isHivraUsable: () => mockIsHivraUsable(),
-}));
+const mockHasExistingTokenTier = jest.fn(async () => false);
+jest.mock("@/lib/billing/hivra-readiness", () => {
+  const actual = jest.requireActual("@/lib/billing/hivra-readiness");
+  return {
+    ...actual,
+    newHivraTiersAllowed: async (access: { phase: string; grandfathered: boolean }) =>
+      actual.accessDependsOnHivraReadiness(access) ? mockIsHivraUsable() : true,
+    hasExistingTokenTier: () => mockHasExistingTokenTier(),
+  };
+});
 
 describe("/api/billing/token-holding", () => {
   const userId = "user_123";
@@ -145,6 +151,25 @@ describe("/api/billing/token-holding", () => {
       expect(response.status).toBe(503);
       expect(body.reason).toBe("hivra_not_ready");
       expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
+    });
+
+    it("still shows and refreshes the holding of an account that already holds a token tier", async () => {
+      mockIsHivraUsable.mockResolvedValue(false);
+      mockHasExistingTokenTier.mockResolvedValue(true);
+      // $HIVRA is dormant in this file's registry, so the held snapshot names
+      // a registered token; the route only reads it.
+      (getLatestHermesTokenHoldingSnapshot as jest.Mock).mockResolvedValue({
+        id: "snapshot_held",
+        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        balanceDisplay: "1",
+        qualifiesBaseTier: true,
+        checkedAt: "2026-04-24T12:01:00.000Z",
+      });
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(getTokenVerificationWallet).toHaveBeenCalled();
+      mockIsHivraUsable.mockResolvedValue(true);
+      mockHasExistingTokenTier.mockResolvedValue(false);
     });
 
     it("never consults readiness for a grandfathered account", async () => {

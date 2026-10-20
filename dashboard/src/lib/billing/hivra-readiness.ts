@@ -25,6 +25,7 @@
  *
  * Server only.
  */
+import { supabaseAdmin } from "@/lib/supabase";
 import { getGatedPlatformTokenPrice } from "./live-thresholds";
 import { HERMESOS_TOKEN, getActiveHivraToken, type PlatformToken, type PlatformTokenKey } from "./token-registry";
 import type { UserTokenAccess } from "./token-access";
@@ -140,4 +141,65 @@ export async function resolveTokenPaymentAvailability(
     paymentToken === "hivra" ? getActiveHivraToken(now)?.displayUnit ?? "$HIVRA" : HERMESOS_TOKEN.displayUnit;
   if (!accessDependsOnHivraReadiness(access)) return { available: true, paymentToken, displayUnit };
   return { available: await isHivraUsable(options), paymentToken, displayUnit };
+}
+
+/**
+ * Compute tiers a token holding already gives (or a grace keeps). An account
+ * whose computers are on one of these already holds a token tier: keeping it
+ * is not a new tier. The same set the token-tier cron's downgrade grace uses.
+ */
+export const TOKEN_DERIVED_COMPUTE_TIERS: readonly string[] = ["token_base", "operator", "fleet"];
+
+export function isTokenDerivedComputeTier(tier: string | null | undefined): boolean {
+  return !!tier && TOKEN_DERIVED_COMPUTE_TIERS.includes(tier);
+}
+
+type ExistingTierDb = { from: (name: string) => unknown };
+type ExistingTierQuery = PromiseLike<{ data: unknown; error: { message?: string } | null }> & {
+  select: (...args: unknown[]) => ExistingTierQuery;
+  eq: (...args: unknown[]) => ExistingTierQuery;
+  in: (...args: unknown[]) => ExistingTierQuery;
+  not: (...args: unknown[]) => ExistingTierQuery;
+  limit: (...args: unknown[]) => ExistingTierQuery;
+};
+
+/**
+ * True when the account already holds a token tier: a Pro/Power qualification
+ * row (in any state), or computers on a token-derived compute tier (the
+ * 1-token base tier has no row of its own). Such an account keeps seeing and
+ * refreshing its holding while new $HIVRA tiers are off. Throws on a read
+ * error, so a caller that refuses on "no tier" fails closed.
+ */
+export async function hasExistingTokenTier(userId: string, db: ExistingTierDb | null = supabaseAdmin): Promise<boolean> {
+  if (!db) throw new Error("Database not configured");
+  const from = (name: string) => db.from(name) as ExistingTierQuery;
+  const [quals, instances] = await Promise.all([
+    from("token_tier_qualifications").select("id").eq("user_id", userId).limit(1),
+    from("hermes_instances")
+      .select("id")
+      .eq("user_id", userId)
+      .in("resource_tier", [...TOKEN_DERIVED_COMPUTE_TIERS])
+      .not("status", "in", '("deleted","scheduled_for_deletion")')
+      .limit(1),
+  ]);
+  if (quals.error || instances.error) throw new Error("Failed to read the account's token tiers");
+  return (
+    (Array.isArray(quals.data) && quals.data.length > 0) ||
+    (Array.isArray(instances.data) && instances.data.length > 0)
+  );
+}
+
+/**
+ * Whether a $HIVRA balance may grant a token tier the account does not
+ * already have. False only for an account that depends on $HIVRA readiness
+ * while $HIVRA is not usable: such an account keeps a token tier it already
+ * holds (breach and grace run as always) but gains no new one, including the
+ * price-free 1-token base tier.
+ */
+export async function newHivraTiersAllowed(
+  access: Pick<UserTokenAccess, "phase" | "grandfathered">,
+  options: ReadinessOptions = {}
+): Promise<boolean> {
+  if (!accessDependsOnHivraReadiness(access)) return true;
+  return isHivraUsable(options);
 }

@@ -44,6 +44,8 @@ export interface EligibilityPayload {
     epoch?: "launch" | "standard";
   };
   tiers: { pro: EligibilityTierState; power: EligibilityTierState };
+  /** The account's token access. newTiersAvailable is false while new $HIVRA tiers are off. */
+  tokenAccess?: { newTiersAvailable?: boolean };
   /**
    * Venice compute boost: hold ≥ thresholdUsd of VVV to add cpuBonus vCPU /
    * ramBonusMb RAM per instance on top of a PAID tier. Optional so older API

@@ -93,7 +93,7 @@ export function ManagedVeniceWalletPanel({
         />
         {showHermesWallet && (
           <BalanceBlock
-            title="$HermesOS wallet"
+            title={`${tokenUnit} wallet`}
             primary={hermesos.tokenDisplay}
             secondary={`${formatMicroUsd(hermesos.lockedValueMicroUsd, 4)} Venice credit`}
             reserveText={`${formatMicroUsd(hermesos.availableMicroUsd, 4)} available · ${formatMicroUsd(hermesos.reservedMicroUsd, 4)} reserved`}

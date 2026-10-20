@@ -357,6 +357,7 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Your free account always works without token verification.",
         priceUnavailable: "Token price unavailable — please try again later.",
+        tokenPaymentsNotReady: "Token payments aren't available yet.",
         restricted: {
           eyebrow: "Wallet",
           title: "Your wallets.",
@@ -913,6 +914,7 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "自行持有 $HermesOS 和 VVV，然后签名验证所有权。你的免费账户始终无需代币验证即可使用。",
         priceUnavailable: "代币价格暂不可用，请稍后重试。",
+        tokenPaymentsNotReady: "代币支付暂未开放。",
         restricted: {
           eyebrow: "钱包",
           title: "你的钱包。",
@@ -1498,6 +1500,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecta tu propia billetera",
         "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. Tu cuenta gratuita siempre funciona sin verificación de token.",
         "priceUnavailable": "El precio del token no está disponible. Inténtalo de nuevo más tarde.",
+        "tokenPaymentsNotReady": "Los pagos con token aún no están disponibles.",
         "restricted": {
           "eyebrow": "Billetera",
           "title": "Tus billeteras.",
@@ -2036,6 +2039,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecte sua própria carteira",
         "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. Sua conta gratuita sempre funciona sem verificação de token.",
         "priceUnavailable": "Preço do token indisponível — tente novamente mais tarde.",
+        "tokenPaymentsNotReady": "Os pagamentos com token ainda não estão disponíveis.",
         "restricted": {
           "eyebrow": "Carteira",
           "title": "Suas carteiras.",
@@ -2574,6 +2578,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Connectez votre propre portefeuille",
         "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Votre compte gratuit fonctionne toujours sans vérification de token.",
         "priceUnavailable": "Prix du token indisponible — veuillez réessayer plus tard.",
+        "tokenPaymentsNotReady": "Les paiements en token ne sont pas encore disponibles.",
         "restricted": {
           "eyebrow": "Portefeuille",
           "title": "Vos portefeuilles.",
@@ -3112,6 +3117,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Verbinde deine eigene Wallet",
         "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Dein kostenloses Konto funktioniert immer ohne Token-Verifizierung.",
         "priceUnavailable": "Token-Preis nicht verfügbar — bitte später erneut versuchen.",
+        "tokenPaymentsNotReady": "Token-Zahlungen sind noch nicht verfügbar.",
         "restricted": {
           "eyebrow": "Krypto-Wallet",
           "title": "Deine Wallets.",
@@ -3650,6 +3656,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "自分のウォレットを接続",
         "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。無料アカウントはトークン認証なしで常時利用可能です。",
         "priceUnavailable": "トークン価格を取得できません —— しばらくしてから再試行してください。",
+        "tokenPaymentsNotReady": "トークンでの支払いはまだご利用いただけません。",
         "restricted": {
           "eyebrow": "ウォレット",
           "title": "あなたのウォレット。",
@@ -4188,6 +4195,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "내 지갑 연결",
         "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. 무료 계정은 토큰 인증 없이 항상 이용 가능합니다.",
         "priceUnavailable": "토큰 가격을 불러올 수 없습니다 — 나중에 다시 시도하세요.",
+        "tokenPaymentsNotReady": "토큰 결제는 아직 이용할 수 없습니다.",
         "restricted": {
           "eyebrow": "지갑",
           "title": "내 지갑.",
