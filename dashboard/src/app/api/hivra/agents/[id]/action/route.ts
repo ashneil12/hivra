@@ -91,7 +91,6 @@ import {
   isProxmoxAction,
   isWindowsOnMyServer,
   providerRefusalFor,
-  runtimeUpdateRefusal,
 } from "@/lib/hivra/lifecycle-support";
 import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
@@ -343,15 +342,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if ((["update_runtime", "snapshot", "restore"].includes(action) || isForcePowerAction(action)) && !isSameOriginMutationRequest(req)) {
       return apiError("Same-origin request required.", 403);
     }
-    // A DeepSeek guest also runs a native adapter and service generation that
-    // the gateway-only updater cannot replace, so the guest step refuses before
-    // changing anything. Refuse here, before any lease or host call: sent to
-    // the host, that refusal would read as an unverified outcome and hold the
-    // lease (blocking Stop, Restart and Resize) until the reconciler clears it.
-    if (action === "update_runtime" && runtimeUpdateRefusal(agent) === "deepseek") {
-      return apiError("DeepSeek computers can’t update their connection service here yet. Nothing was changed.", 409);
-    }
-
     const invalidateDesktopBeforePower = async (operationId: string) => {
       // Fence the previous boot's attestation under the claimed power operation.
       // The existing revocation contract preserves controller release ACKs.

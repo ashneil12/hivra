@@ -244,7 +244,6 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
     return available;
   }
   switch (runtimeUpdateRefusal(row)) {
-    case "deepseek": return unavailable("deepseek", "DeepSeek computers can't update their connection service here yet.");
     // An Omarchy or Windows profile anywhere else still runs no connection service.
     case "prepared": return null;
     case "my-cloud": return unavailable("my_cloud", "Hivra can't update the connection service on My cloud computers yet.");

@@ -228,6 +228,7 @@ is the alternative long-lived-token path.
    process environments, and they never claim release approval.
 
 For an already-running Proxmox computer, `hivra-update-guest-runtime.sh VMID IP`
+(its guest half is `hivra-guest-runtime-update.sh`, sent on stdin)
 updates the Hivra Chat connection-service assets in place, together with the
 root-owned `hivra-agent-shell` and `hivra-tg-apply` helpers, both terminal
 units and the agent CLI pins (all backed up and rolled back with them), and
@@ -321,9 +322,12 @@ update them yet.
   DeepSeek surface for the native root waits for `nativeReady: true` before
   it bootstraps, and waits again whenever a loaded one reports it false; the
   wait ends after 3 minutes (or 20 s of an unreachable gateway) with an
-  honest failure and Try again. `hivra-update-guest-runtime.sh` refuses
-  DeepSeek, so a DeepSeek computer only gets saved sign-ins and `bootId` from a
-  fresh DeepSeek install of a bundle that contains them.
+  honest failure and Try again. A DeepSeek computer gets saved sign-ins and
+  `bootId` from a fresh install, or from the runtime updater's owned DeepSeek
+  update (`deepseek-harness/update-guest.py`): it replaces the gateway (and
+  the pinned package when its pins move) only on a computer that is exactly
+  what its reference bundle installed, restarts the DeepSeek service (ending a
+  task in flight), and rolls back on any failure.
 - **Aeon fork sync.** The Aeon dashboard saves every config edit into `~/aeon`
   and pushes it with a plain `git push`. After GitHub connect, and on every
   gateway start, the gateway makes that clone push-capable against the user's

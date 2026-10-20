@@ -271,14 +271,14 @@
     },
     "omarchy-preparation": {
       "script": {
-        "bytes": 248635,
+        "bytes": 249795,
         "limit": "sudo-transport-script",
-        "percent": 24.9
+        "percent": 25
       },
       "stdin": {
-        "bytes": 234740,
+        "bytes": 235900,
         "limit": "guest-exec-stdin",
-        "percent": 22.4
+        "percent": 22.5
       },
       "guestProgram": {
         "bytes": 9311,

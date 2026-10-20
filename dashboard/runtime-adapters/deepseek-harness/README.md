@@ -315,9 +315,13 @@ would otherwise trip the 401 first). `VMID` and `IP` come from the ledger.
 2. **Typed BYOK delivery.** Hivra's launch accepts no model credentials for this
    kind, so neither a saved key nor Hivra credits reach it. Today the key is added
    in DeepSeek Harness's own settings on the computer.
-3. **Owned runtime updater.** `hivra-update-guest-runtime.sh` refuses DeepSeek
-   computers. A bundle fix, including the session renewal above, reaches only
-   newly launched DeepSeek computers.
+3. **Owned runtime updater.** Shipped in release `2026.10.20.1` for DeepSeek
+   computers on Proxmox: Manage › Updates runs `deepseek-harness/update-guest.py`
+   through the runtime updater's guest half. It refuses a computer that is not
+   exactly what its reference bundle installed, swaps the gateway (and the pinned
+   package when its pins move), and rolls back on any failure. DeepSeek computers
+   in the owner's own cloud are not covered yet, and a package change must fit
+   one update request.
 4. **Gateway/runtime unit split.** The gateway spawns the runtime inside one
    `bux-hivra-chat.service` control group (`KillMode=control-group`), and an
    unexpected runtime exit stops the gateway. Any gateway restart therefore ends

@@ -116,8 +116,11 @@ async function updateInPlace(input: RuntimeUpdateInput): Promise<HivraAgentRunti
   const { userId, agent, trigger } = input;
   const source = input.source ?? "hivra/agents/[id]/action";
   // The route refuses these before calling; the sweep never selects them.
-  // A Linux Sandbox updates through its adapter (mutateGvisorComputer), never this Proxmox helper.
-  if (runtimeUpdateRefusal(agent) || isPreparedProfile(agent) || agent.computer_substrate === "gvisor") {
+  // A DeepSeek update restarts DeepSeek and ends a task it is working on, so
+  // only its owner starts one; the automatic sweep never does. A Linux Sandbox
+  // updates through its adapter (mutateGvisorComputer), never this Proxmox helper.
+  if (runtimeUpdateRefusal(agent) || isPreparedProfile(agent) || agent.computer_substrate === "gvisor"
+    || (agent.type === "deepseek-harness" && trigger === "auto")) {
     return failure("unsupported", 409, "This computer can't update its connection service here. Nothing was changed.");
   }
 

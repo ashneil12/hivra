@@ -697,7 +697,7 @@ function HivraManageContent({
     ?? (providerComputer ? "hetzner-server-type" : preparedComputer ? "fixed" : "proxmox-envelope");
   const connectionUpdate: ManageCap | null = manage
     ? manage.connectionServiceUpdate
-    : !providerComputer && !preparedComputer && agent.type !== "deepseek-harness"
+    : !providerComputer && !preparedComputer
       ? agent.status === "running" ? { state: "available" } : { state: "blocked", code: "not_running", reason: "Start this computer to update it." }
       : null;
   // Update connection service, with the route's refusals in the same words
@@ -1580,7 +1580,9 @@ function HivraManageContent({
                       </div>
                       <CapReasonLine cap={connectionUpdate} />
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                        {isComputerOnly
+                        {agent.type === "deepseek-harness"
+                          ? "Update connection service brings Hivra’s DeepSeek service up to date without restarting the computer. It restarts DeepSeek, which ends a task DeepSeek is working on; your files, chats and model settings stay as they are. If the new version doesn’t start cleanly, the previous one comes back. Terminals open on this page reconnect when it finishes."
+                          : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
                         {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}

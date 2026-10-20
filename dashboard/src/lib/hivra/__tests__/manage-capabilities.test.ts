@@ -64,7 +64,7 @@ describe("manageCapabilitiesFor", () => {
     ["codex", "chat-agent", ["overview", "model", "resources", "recovery", "updates", "advanced"]],
     ["codexUnbound", "chat-agent", ["overview", "model", "resources", "updates", "advanced"]],
     ["claude", "chat-agent", ["overview", "model", "resources", "recovery", "updates", "advanced"]],
-    ["deepseek", "dashboard-agent", ["overview", "resources", "recovery", "advanced"]],
+    ["deepseek", "dashboard-agent", ["overview", "resources", "recovery", "updates", "advanced"]],
     ["aeon", "dashboard-agent", ["overview", "resources", "recovery", "updates", "advanced"]],
     ["codexMyCloud", "my-cloud-agent", ["overview", "model", "resources", "advanced"]],
   ] as const)("%s is a %s with sections %j", (name, variant, sections) => {
@@ -288,9 +288,15 @@ describe("manageCapabilitiesFor", () => {
     });
 
     it.each([
-      ["deepseek", "deepseek"], ["hetznerUbuntu", "my_cloud"],
+      ["hetznerUbuntu", "my_cloud"],
     ] as const)("is unavailable on %s (%s)", (name, code) => {
       expect(map(name).connectionServiceUpdate).toMatchObject({ state: "unavailable", code });
+    });
+
+    it("offers a DeepSeek computer on Proxmox its own update", () => {
+      expect(map("deepseek").connectionServiceUpdate).toEqual({ state: "available" });
+      const myCloud = manageCapabilitiesFor({ ...rows.deepseek, computer_substrate: "provider-vm" }, { preparedMatch: true });
+      expect(myCloud.connectionServiceUpdate).toMatchObject({ state: "unavailable", code: "my_cloud" });
     });
 
     // Omarchy and Windows computers, DigitalOcean sessions and Linux
