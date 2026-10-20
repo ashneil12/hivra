@@ -333,7 +333,10 @@ function BillingPageContent() {
 
       <ManagedVeniceDepositModal
         isOpen={c.managedVeniceDeposit.open}
-        tokenPaymentsEnabled={c.flags.billingV2Enabled && c.tokenGeo.status === "allowed"}
+        tokenPaymentsEnabled={
+          c.flags.billingV2Enabled && c.tokenGeo.status === "allowed" && c.tokenPayments.available
+        }
+        tokenUnit={c.tokenPayments.displayUnit}
         walletType={c.managedVeniceDeposit.wallet}
         amountUsd={c.managedVeniceDeposit.amountUsd}
         loading={c.managedVeniceDeposit.loading}
@@ -368,6 +371,7 @@ function BillingPageContent() {
         quote={c.yearly.quote}
         onClose={c.handleYearlyTokenClose}
         reviewPending={c.yearly.reviewPending}
+        tokenUnit={c.tokenPayments.displayUnit}
       />
     </motion.div>
   );

@@ -51,6 +51,13 @@ jest.mock("@/lib/billing/token-access", () => {
   };
 });
 
+// $HIVRA readiness: usable unless a test says otherwise.
+const mockIsHivraUsable = jest.fn(async () => true);
+jest.mock("@/lib/billing/hivra-readiness", () => ({
+  ...jest.requireActual("@/lib/billing/hivra-readiness"),
+  isHivraUsable: () => mockIsHivraUsable(),
+}));
+
 describe("/api/billing/token-holding", () => {
   const userId = "user_123";
   const originalNodeEnv = process.env.NODE_ENV;
@@ -106,6 +113,53 @@ describe("/api/billing/token-holding", () => {
     expect(auth).not.toHaveBeenCalled();
     expect(getTokenVerificationWallet).not.toHaveBeenCalled();
     expect(getLatestHermesTokenHoldingSnapshot).not.toHaveBeenCalled();
+  });
+
+  describe("after $HIVRA activation, for an account outside the $HermesOS cohort", () => {
+    const { computeUserTokenAccess, resolveUserTokenAccess } = jest.requireMock("@/lib/billing/token-access");
+    beforeEach(() => {
+      (resolveUserTokenAccess as jest.Mock).mockResolvedValue(
+        computeUserTokenAccess({ phase: "active", cohort: null, now: new Date() })
+      );
+    });
+    afterEach(() => {
+      (resolveUserTokenAccess as jest.Mock).mockImplementation(async () =>
+        computeUserTokenAccess({ phase: "dormant", cohort: null, now: new Date() })
+      );
+    });
+
+    it("GET answers 'not available yet' while $HIVRA is not usable, reading nothing", async () => {
+      mockIsHivraUsable.mockResolvedValueOnce(false);
+      const response = await GET();
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.error).toBe("Token payments aren't available yet.");
+      expect(body.reason).toBe("hivra_not_ready");
+      expect(getTokenVerificationWallet).not.toHaveBeenCalled();
+    });
+
+    it("POST answers 'not available yet' while $HIVRA is not usable, without a chain read", async () => {
+      mockIsHivraUsable.mockResolvedValueOnce(false);
+      const response = await POST(createPostRequest());
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.reason).toBe("hivra_not_ready");
+      expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
+    });
+
+    it("never consults readiness for a grandfathered account", async () => {
+      (resolveUserTokenAccess as jest.Mock).mockResolvedValue(
+        computeUserTokenAccess({
+          phase: "active",
+          cohort: { user_id: userId, converted_at: null, conversion_grace_ends_at: null, metadata: {} },
+          now: new Date(),
+        })
+      );
+      mockIsHivraUsable.mockClear();
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(mockIsHivraUsable).not.toHaveBeenCalled();
+    });
   });
 
   it("returns the current verified wallet and latest token snapshot", async () => {

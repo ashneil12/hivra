@@ -69,6 +69,7 @@ jest.mock("@/lib/billing/price-gate-alerts", () => ({
 
 import { auth } from "@clerk/nextjs/server";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
 import { GET, POST } from "../route";
 
 function makeReq(url: string, body?: unknown): NextRequest {
@@ -310,6 +311,18 @@ describe("/api/billing/yearly-token-quote", () => {
       expect(response.status).toBe(503);
       const body = await response.json();
       expect(body.error).toMatch(/try again later/i);
+    });
+
+    it("answers 'not available yet' (not a price-gate error) while $HIVRA is not usable", async () => {
+      mockCreateYearlyQuote.mockRejectedValueOnce(new HivraNotReadyError());
+      const response = await POST(
+        makeReq("http://localhost/api/billing/yearly-token-quote", { tier: "pro" })
+      );
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.error).toBe("Token payments aren't available yet.");
+      expect(body.reason).toBe("hivra_not_ready");
+      expect(mockReportPriceGateRefusal).not.toHaveBeenCalled();
     });
 
     it("reports a refused price gate once and answers 503 without an error-level log", async () => {

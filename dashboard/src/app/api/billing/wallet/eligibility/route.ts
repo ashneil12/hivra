@@ -32,6 +32,8 @@ import {
 } from "@/lib/billing/token-holdings";
 import { requirePlatformToken, type PlatformTokenKey } from "@/lib/billing/token-registry";
 import { resolveUserTokenAccess } from "@/lib/billing/token-access";
+import { accessDependsOnHivraReadiness, isHivraUsable } from "@/lib/billing/hivra-readiness";
+import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 import {
   VENICE_BOOST_CPU,
   VENICE_BOOST_RAM_MB,
@@ -153,6 +155,12 @@ export async function GET() {
     // first token this user may newly qualify in.
     const access = await resolveUserTokenAccess(userId, { recordMembership: false });
     const heldTokenKey = (powerQual ?? proQual)?.token_key;
+    // With no tier held yet, the readout is the amount to hold for a NEW
+    // $HIVRA tier: offered only once $HIVRA is usable. A tier already held
+    // keeps its readout.
+    if (!(powerQual ?? proQual) && accessDependsOnHivraReadiness(access) && !(await isHivraUsable())) {
+      return hivraNotReadyResponse({ ...LOG_CONTEXT, userId });
+    }
     const tokenKey: PlatformTokenKey = heldTokenKey
       ? heldTokenKey === "hivra" ? "hivra" : "hermesos"
       : access.qualifyTokens[0];

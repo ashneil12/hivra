@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
+import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { tokenGeoBlockedResponse } from "@/lib/compliance/token-geo-response";
 import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
@@ -257,6 +259,14 @@ export async function POST(req: NextRequest) {
               ...(parsed.data.token ? { token: parsed.data.token } : {}),
             });
     } catch (error) {
+      if (error instanceof HivraNotReadyError) {
+        return hivraNotReadyResponse({
+          source: "billing/managed-venice/hermesos/quote",
+          route: "/api/billing/managed-venice/hermesos/quote",
+          method: "POST",
+          userId,
+        });
+      }
       if (error instanceof TokenNotAllowedError) {
         return apiError(error.message, 403, {
           failureType: "token_not_allowed",

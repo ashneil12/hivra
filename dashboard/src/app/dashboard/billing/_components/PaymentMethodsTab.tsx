@@ -22,6 +22,9 @@ import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import type { BillingTabId } from "./billing-tabs";
 import styles from "../Billing.module.css";
 
+/** Shown while token payments can't be offered to this account yet. */
+export const TOKEN_PAYMENTS_NOT_AVAILABLE = "Token payments aren't available yet.";
+
 /** Verified, existing crypto rules, stated once next to every crypto path. */
 export const CRYPTO_PAYMENT_RULES = [
   "Base network only.",
@@ -94,7 +97,12 @@ export function PaymentMethodsTab({
   // while that button is there.
   // Token geo-policy: "allowed" at once while the policy is dormant.
   const tokenFeatures = c.tokenGeo.status === "allowed";
-  const hermesCreditTopUpsOffered = c.flags.billingV2Enabled && tokenFeatures && Boolean(c.managedVeniceSummary);
+  // After $HIVRA launches, accounts that pay in $HIVRA get token payments and
+  // new holder tiers only once $HIVRA is usable. USDC and card are unaffected.
+  const tokenPaymentsOn = c.tokenPayments.available;
+  const unit = c.tokenPayments.displayUnit;
+  const hermesCreditTopUpsOffered =
+    c.flags.billingV2Enabled && tokenFeatures && tokenPaymentsOn && Boolean(c.managedVeniceSummary);
 
   return (
     <div className={styles.stack}>
@@ -141,16 +149,22 @@ export function PaymentMethodsTab({
             <Coins size={18} />
           </span>
           <div className={styles.methodBody}>
-            <h2 className={styles.panelTitle} id="billing-method-crypto">$HermesOS and USDC on Base</h2>
+            <h2 className={styles.panelTitle} id="billing-method-crypto">
+              {tokenPaymentsOn ? `${unit} and USDC on Base` : "USDC on Base"}
+            </h2>
             {!c.flags.cryptoBillingEnabled || !tokenFeatures ? (
               <p className={styles.panelText}>
                 {hermesCreditTopUpsOffered
-                  ? "Paying for your plan with $HermesOS or USDC isn't available right now. You can still top up model credits with $HermesOS in Credits."
+                  ? `Paying for your plan with ${unit} or USDC isn't available right now. You can still top up model credits with ${unit} in Credits.`
                   : "Crypto payments aren't available right now. Card payments work as usual."}
+              </p>
+            ) : !tokenPaymentsOn ? (
+              <p className={styles.panelText}>
+                {TOKEN_PAYMENTS_NOT_AVAILABLE} You can top up credits with USDC, and card payments work as usual.
               </p>
             ) : (
               <p className={styles.panelText}>
-                Pay for a year, hold $HermesOS for ongoing access, or top up credits with USDC.
+                Pay for a year, hold {unit} for ongoing access, or top up credits with USDC.
               </p>
             )}
           </div>
@@ -186,11 +200,15 @@ export function PaymentMethodsTab({
               <ArrowRight size={13} aria-hidden="true" />
             </Link>
           </p>
+        ) : !tokenPaymentsOn ? (
+          <div className={styles.methodBlocks}>
+            <UsdcTopUpBlock onGoTo={onGoTo} />
+          </div>
         ) : (
           <>
             <div className={styles.methodBlocks}>
               <div className={styles.methodBlock}>
-                <h3 className={styles.blockTitle}>Pay a year with $HermesOS</h3>
+                <h3 className={styles.blockTitle}>Pay a year with {unit}</h3>
                 <p className={styles.blockText}>
                   One payment covers 365 days. It doesn&apos;t renew automatically; paying again adds another year.
                 </p>
@@ -228,9 +246,9 @@ export function PaymentMethodsTab({
               </div>
 
               <div className={styles.methodBlock}>
-                <h3 className={styles.blockTitle}>Hold $HermesOS for ongoing access</h3>
+                <h3 className={styles.blockTitle}>Hold {unit} for ongoing access</h3>
                 <p className={styles.blockText}>
-                  Hold enough $HermesOS in a verified wallet and Pro or Power stays unlocked while you hold. No
+                  Hold enough {unit} in a verified wallet and Pro or Power stays unlocked while you hold. No
                   payment, and you can move your tokens any time; access ends when the balance drops below the amount.
                 </p>
                 <HoldAmountsTable amounts={c.holdAmounts} />
@@ -260,20 +278,7 @@ export function PaymentMethodsTab({
                 </div>
               </div>
 
-              <div className={styles.methodBlock}>
-                <h3 className={styles.blockTitle}>Top up credits with USDC on Base</h3>
-                <p className={styles.blockText}>Buy account credits with USDC sent on the Base network.</p>
-                <div className={styles.panelActions}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.secondary}`}
-                    onClick={() => onGoTo("credits")}
-                  >
-                    Go to Credits
-                    <ArrowRight size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
+              <UsdcTopUpBlock onGoTo={onGoTo} />
             </div>
 
             <ul className={styles.rules} aria-label="Before you pay with crypto">
@@ -287,6 +292,25 @@ export function PaymentMethodsTab({
           </>
         )}
       </section>
+    </div>
+  );
+}
+
+function UsdcTopUpBlock({ onGoTo }: { onGoTo: (tab: BillingTabId) => void }) {
+  return (
+    <div className={styles.methodBlock}>
+      <h3 className={styles.blockTitle}>Top up credits with USDC on Base</h3>
+      <p className={styles.blockText}>Buy account credits with USDC sent on the Base network.</p>
+      <div className={styles.panelActions}>
+        <button
+          type="button"
+          className={`${styles.button} ${styles.secondary}`}
+          onClick={() => onGoTo("credits")}
+        >
+          Go to Credits
+          <ArrowRight size={14} aria-hidden="true" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -310,7 +334,7 @@ function HoldAmountsTable({ amounts }: { amounts: BillingController["holdAmounts
   return (
     <div className={styles.holdTable}>
       <table>
-        <caption className={styles.srOnly}>$HermesOS to hold for each plan</caption>
+        <caption className={styles.srOnly}>{amounts.tokenUnit} to hold for each plan</caption>
         <thead>
           <tr>
             <th scope="col">Plan</th>
@@ -323,7 +347,7 @@ function HoldAmountsTable({ amounts }: { amounts: BillingController["holdAmounts
           {rows.map(({ name, tier }) => (
             <tr key={name}>
               <th scope="row">{name}</th>
-              <td className={styles.holdAmount}>{tier.amountDisplay} $HermesOS</td>
+              <td className={styles.holdAmount}>{tier.amountDisplay} {amounts.tokenUnit}</td>
               <td>{tier.usdApprox !== null ? formatUsd(tier.usdApprox) : "—"}</td>
               <td>{tier.eligible ? "Unlocked" : "Not yet"}</td>
             </tr>
@@ -332,7 +356,7 @@ function HoldAmountsTable({ amounts }: { amounts: BillingController["holdAmounts
       </table>
       <p className={styles.blockText}>
         {amounts.balanceDisplay !== null
-          ? `Your verified balance: ${amounts.balanceDisplay} $HermesOS. `
+          ? `Your verified balance: ${amounts.balanceDisplay} ${amounts.tokenUnit}. `
           : "Verify a wallet below to count your balance. "}
         Amounts follow the token price, so they move as it does.
       </p>

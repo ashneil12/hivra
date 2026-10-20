@@ -1,5 +1,6 @@
 import { ManagedVeniceSubsidyBanner, formatMicroUsd, type ManagedVeniceDiscountRate } from "./ManagedVeniceSubsidyBanner";
 import type { ManagedVeniceWalletType } from "@/lib/venice/managed-credit-topup";
+import { HERMESOS_DISPLAY_UNIT } from "@/lib/billing/token-plan-prices";
 import styles from "./BillingPanels.module.css";
 
 export interface ManagedVeniceWalletSummary {
@@ -50,9 +51,12 @@ export function ManagedVeniceWalletPanel({
   summary,
   onDeposit,
   tokenPaymentsEnabled = false,
+  tokenUnit = HERMESOS_DISPLAY_UNIT,
 }: {
   summary: ManagedVeniceWalletSummary;
   tokenPaymentsEnabled?: boolean;
+  /** The token a token top-up is paid in, e.g. "$HIVRA". */
+  tokenUnit?: string;
   onDeposit?: (walletType: ManagedVeniceWalletType) => void;
 }) {
   const hermesos = summary.wallets.hermesos;
@@ -114,7 +118,7 @@ export function ManagedVeniceWalletPanel({
                 className={styles.button}
                 onClick={() => onDeposit("hermesos")}
               >
-                Top up with $HermesOS
+                Top up with {tokenUnit}
               </button>
             )}
           </div>

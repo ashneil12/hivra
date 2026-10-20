@@ -22,6 +22,8 @@ import {
   resolveUserTokenAccess,
 } from "@/lib/billing/token-access";
 import { platformTokenByAddress, requirePlatformToken, type PlatformToken } from "@/lib/billing/token-registry";
+import { accessDependsOnHivraReadiness, isHivraUsable } from "@/lib/billing/hivra-readiness";
+import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 
 function tokenConfigPayload(token: PlatformToken) {
   const config = platformTokenBalanceConfig(token);
@@ -56,10 +58,19 @@ export async function GET() {
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
-    const [wallet, snapshot, access] = await Promise.all([
+    const access = await resolveUserTokenAccess(userId, { recordMembership: false });
+    // $HIVRA holder tiers are offered only once $HIVRA is usable.
+    if (accessDependsOnHivraReadiness(access) && !(await isHivraUsable())) {
+      return hivraNotReadyResponse({
+        source: "billing/token-holding",
+        route: "/api/billing/token-holding",
+        method: "GET",
+        userId,
+      });
+    }
+    const [wallet, snapshot] = await Promise.all([
       getTokenVerificationWallet(userId),
       getLatestAccessTokenHoldingSnapshot(userId),
-      resolveUserTokenAccess(userId, { recordMembership: false }),
     ]);
     const token =
       platformTokenByAddress(snapshot?.tokenAddress) ?? requirePlatformToken(access.paymentToken);
@@ -100,8 +111,17 @@ export async function POST(req: NextRequest) {
     });
     if (rateLimited) return rateLimited;
 
-    const result = await refreshPrimaryHermesTokenHolding({ userId });
     const access = await resolveUserTokenAccess(userId, { recordMembership: false });
+    // $HIVRA holder tiers are offered only once $HIVRA is usable.
+    if (accessDependsOnHivraReadiness(access) && !(await isHivraUsable())) {
+      return hivraNotReadyResponse({
+        source: "billing/token-holding",
+        route: "/api/billing/token-holding",
+        method: "POST",
+        userId,
+      });
+    }
+    const result = await refreshPrimaryHermesTokenHolding({ userId });
     const isAllowedPlatformSnapshot = (tokenAddress: string | undefined) => {
       // A snapshot without an address predates the token dimension: $HermesOS.
       const key = tokenAddress ? platformTokenByAddress(tokenAddress)?.key : "hermesos";

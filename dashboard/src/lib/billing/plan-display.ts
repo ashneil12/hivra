@@ -17,6 +17,7 @@ import {
   type PlanKey,
 } from "@/lib/subscription/plans";
 import {
+  HERMESOS_DISPLAY_UNIT,
   YEARLY_TOKEN_TIER_PLAN,
   YEARLY_TOKEN_USD,
   yearlyTokenTierForPlan,
@@ -128,8 +129,11 @@ export function planPriceDisplay(
     tokenMode?: TokenPlanMode;
     /** Server hold amounts for this account; without them the card stays generic. */
     holdAmounts?: HoldAmounts | null;
+    /** The token the account pays and holds in, e.g. "$HIVRA". Defaults to $HermesOS. */
+    tokenUnit?: string;
   }
 ): PlanPriceDisplay {
+  const tokenUnit = options.tokenUnit ?? HERMESOS_DISPLAY_UNIT;
   if (key === "free") {
     return { amount: "$0", unit: "", subline: "Free · no charge" };
   }
@@ -142,20 +146,21 @@ export function planPriceDisplay(
       if (held) {
         return {
           amount: held.usdApprox !== null ? `≈$${held.usdApprox.toLocaleString("en-US")}` : "Hold",
-          unit: "held in $HermesOS",
-          subline: `Hold ${held.amountDisplay} $HermesOS in a verified wallet · move it any time`,
+          // The amounts are in the token the server priced them in.
+          unit: `held in ${options.holdAmounts?.tokenUnit ?? tokenUnit}`,
+          subline: `Hold ${held.amountDisplay} ${options.holdAmounts?.tokenUnit ?? tokenUnit} in a verified wallet · move it any time`,
         };
       }
       return {
         amount: "Hold",
-        unit: "$HermesOS",
-        subline: "Keep enough $HermesOS in a verified wallet · withdraw any time",
+        unit: tokenUnit,
+        subline: `Keep enough ${tokenUnit} in a verified wallet · withdraw any time`,
       };
     }
     return {
       amount: `$${YEARLY_TOKEN_USD[tier]}`,
       unit: "a year",
-      subline: "Paid once in $HermesOS · 365 days · final, doesn't renew automatically",
+      subline: `Paid once in ${tokenUnit} · 365 days · final, doesn't renew automatically`,
     };
   }
 
@@ -348,8 +353,11 @@ export function planCardCta(params: {
   cadence: BillingCadence;
   selfServeDowngradeEnabled: boolean;
   changePlanRequiresCheckout: boolean;
+  /** The token the account pays in, e.g. "$HIVRA". Defaults to $HermesOS. */
+  tokenUnit?: string;
 }): PlanCardCta {
   const { planKey } = params;
+  const tokenUnit = params.tokenUnit ?? HERMESOS_DISPLAY_UNIT;
   const plan = PLANS[planKey];
   const current = isPlanKey(params.currentPlanKey) ? params.currentPlanKey : null;
 
@@ -364,7 +372,7 @@ export function planCardCta(params: {
     ) {
       return {
         kind: "pay_yearly_token",
-        label: `Add a year · $${YEARLY_TOKEN_USD[tier]} in $HermesOS`,
+        label: `Add a year · $${YEARLY_TOKEN_USD[tier]} in ${tokenUnit}`,
         tier,
       };
     }
@@ -373,7 +381,7 @@ export function planCardCta(params: {
 
   if (params.path === "token") {
     const tier = yearlyTokenTierForPlan(planKey);
-    if (!tier) return { kind: "note", note: "Not available with $HermesOS" };
+    if (!tier) return { kind: "note", note: `Not available with ${tokenUnit}` };
     if (!tokenYearTierOffered(current, tier)) {
       return { kind: "note", note: "Your current plan already covers this" };
     }
@@ -387,7 +395,7 @@ export function planCardCta(params: {
     }
     return {
       kind: "pay_yearly_token",
-      label: `Pay a year · $${YEARLY_TOKEN_USD[tier]} in $HermesOS`,
+      label: `Pay a year · $${YEARLY_TOKEN_USD[tier]} in ${tokenUnit}`,
       tier,
     };
   }

@@ -10,6 +10,8 @@ import {
 } from "@/lib/billing/client";
 import { isPlanKey } from "@/lib/billing/plan-display";
 import { readHoldAmounts, type HoldAmounts } from "@/lib/billing/hold-amounts";
+import { getHivraTokenPhase } from "@/lib/billing/token-registry";
+import { HERMESOS_DISPLAY_UNIT } from "@/lib/billing/token-plan-prices";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
@@ -423,6 +425,43 @@ export function useBillingController() {
         return false;
       });
   }, []);
+
+  // Whether token payments and new holder tiers can be offered to this
+  // account, and in which token (GET /api/billing/token-payments). After
+  // $HIVRA launches, accounts outside the $HermesOS grandfather cohort get
+  // them only once $HIVRA passes the price gate; the server enforces the same
+  // rule on every quote. Until the answer arrives (or if it fails) the page
+  // falls back to the launch phase: before activation nothing changes, after
+  // it token options stay hidden.
+  const [tokenPaymentsState, setTokenPaymentsState] = useState<{ available: boolean; displayUnit: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/billing/token-payments", { cache: "no-store" })
+      .then(readApiPayload)
+      .then((payload) => {
+        const data = apiSuccessData(payload);
+        if (cancelled || !data || typeof data.available !== "boolean") return;
+        setTokenPaymentsState({
+          available: data.available,
+          displayUnit:
+            typeof data.displayUnit === "string" && data.displayUnit.trim() ? data.displayUnit : HERMESOS_DISPLAY_UNIT,
+        });
+      })
+      .catch((err) => {
+        clientLog.warn("Billing token payment availability fetch failed", {
+          source: "billing-page",
+          failureType: "billing_token_payments_fetch_failed",
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const tokenPayments = {
+    available: tokenPaymentsState?.available ?? getHivraTokenPhase() !== "active",
+    displayUnit: tokenPaymentsState?.displayUnit ?? HERMESOS_DISPLAY_UNIT,
+  };
 
   // Per-plan hold amounts for this user (epoch- and founders-aware), from the
   // wallet eligibility API. Refetched when the verified balance changes.
@@ -1174,6 +1213,8 @@ export function useBillingController() {
       selfServeDowngradeEnabled,
     },
     tokenGeo,
+    /** Token payments and new holder tiers for this account, and their token. */
+    tokenPayments,
     status: { loading, confirming },
     /** The page a plan change returns to, when one started elsewhere. */
     returnTo,

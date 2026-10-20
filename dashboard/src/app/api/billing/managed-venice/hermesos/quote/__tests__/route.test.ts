@@ -60,6 +60,7 @@ jest.mock("@/lib/billing/price-gate-alerts", () => ({
 
 import { auth } from "@clerk/nextjs/server";
 import { ManagedVeniceTokenQuotePriceError } from "@/lib/billing/managed-venice-token-quotes";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
 import { POST } from "../route";
 
 function makeReq(body?: unknown): NextRequest {
@@ -279,6 +280,16 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
     expect(body.error).toMatch(/pricing is temporarily unavailable/i);
     expect(body.reason).toBe("pricing_unavailable");
     expect(JSON.stringify(body)).not.toContain("dexscreener_uniswap_internal_detail");
+  });
+
+  it("answers 'not available yet' (not a price-gate error) while $HIVRA is not usable", async () => {
+    mockCreateQuoteForUsdTarget.mockRejectedValueOnce(new HivraNotReadyError());
+    const response = await POST(makeReq({ targetPaidMicroUsd: 50_000_000 }));
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.error).toBe("Token payments aren't available yet.");
+    expect(body.reason).toBe("hivra_not_ready");
+    expect(mockReportPriceGateRefusal).not.toHaveBeenCalled();
   });
 
   it("reports each price gate refusal to the rate-limited gate log and ops alert", async () => {

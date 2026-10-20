@@ -2722,6 +2722,90 @@ describe("BillingPage", () => {
     });
   });
 
+  describe("$HIVRA payments and holder tiers follow $HIVRA readiness", () => {
+    function serveTokenPayments(data: Record<string, unknown>, extra?: (url: string) => Response | null) {
+      const defaultFetch = fetchMock.getMockImplementation();
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(input);
+        if (url.includes("/api/billing/token-payments")) return Promise.resolve(jsonResponse(data));
+        const override = extra?.(url);
+        if (override) return Promise.resolve(override);
+        return defaultFetch?.(input, init) ?? Promise.resolve(jsonResponse({}));
+      });
+    }
+
+    it("hides every $HIVRA payment option and holder tier while $HIVRA is not usable, keeping card and USDC", async () => {
+      notSubscribed();
+      serveTokenPayments({ available: false, paymentToken: "hivra", displayUnit: "$HIVRA" });
+      render(<BillingPage />);
+
+      // Plans: card only, no token chip or token path.
+      await screen.findByRole("article", { name: "Pro" });
+      await waitFor(() => {
+        expect(screen.queryByRole("radiogroup", { name: "Payment method" })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole("button", { name: /in \$HIVRA|in \$HermesOS/ })).not.toBeInTheDocument();
+
+      // Payment methods: one plain line, no year payment and no hold-to-qualify UI.
+      await openTab("Payment methods");
+      expect(screen.getByRole("heading", { name: "USDC on Base" })).toBeInTheDocument();
+      expect(screen.getByText(/Token payments aren't available yet\./)).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /Pay a year with/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /Hold .* for ongoing access/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("table", { name: /to hold for each plan/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Top up credits with USDC on Base" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Card" })).toBeInTheDocument();
+
+      // Credits: no token top-up for managed Venice.
+      await openTab("Credits");
+      expect(screen.getByRole("button", { name: /top up by card/i })).toBeVisible();
+      expect(screen.queryByText("Optional token top-ups")).not.toBeInTheDocument();
+    });
+
+    it("keeps the managed Venice token top-up out of a deep link while $HIVRA is not usable", async () => {
+      serveTokenPayments({ available: false, paymentToken: "hivra", displayUnit: "$HIVRA" });
+      mockGet.mockImplementation((key: string) =>
+        ({ managedVenice: "deposit", wallet: "hermesos", amountUsd: "50" } as Record<string, string>)[key] ?? null
+      );
+      render(<BillingPage />);
+      const dialog = await screen.findByRole("dialog", { name: "Top up managed Venice credits" });
+      await waitFor(() => {
+        expect(within(dialog).queryByRole("button", { name: /Pay with \$HIVRA/ })).not.toBeInTheDocument();
+      });
+      expect(within(dialog).getByRole("button", { name: /Start card checkout/ })).toBeInTheDocument();
+    });
+
+    it("shows $HIVRA payments, labelled $HIVRA, once $HIVRA is usable", async () => {
+      notSubscribed();
+      serveTokenPayments({ available: true, paymentToken: "hivra", displayUnit: "$HIVRA" });
+      render(<BillingPage />);
+
+      fireEvent.click(await screen.findByRole("radio", { name: "$HIVRA" }));
+      expect(screen.getByRole("radiogroup", { name: "$HIVRA option" })).toBeInTheDocument();
+      const pro = screen.getByRole("article", { name: "Pro" });
+      expect(within(pro).getByRole("button", { name: "Pay a year · $49 in $HIVRA" })).toBeInTheDocument();
+      expect(pro).toHaveTextContent("Paid once in $HIVRA");
+
+      await openTab("Payment methods");
+      expect(screen.getByRole("heading", { name: "$HIVRA and USDC on Base" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Pay a year with $HIVRA" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Hold $HIVRA for ongoing access" })).toBeInTheDocument();
+    });
+
+    it("leaves a grandfathered $HermesOS account exactly as before", async () => {
+      notSubscribed();
+      serveTokenPayments({ available: true, paymentToken: "hermesos", displayUnit: "$HermesOS" });
+      render(<BillingPage />);
+
+      fireEvent.click(await screen.findByRole("radio", { name: "$HermesOS" }));
+      const pro = screen.getByRole("article", { name: "Pro" });
+      expect(within(pro).getByRole("button", { name: "Pay a year · $49 in $HermesOS" })).toBeInTheDocument();
+      await openTab("Payment methods");
+      expect(screen.getByRole("heading", { name: "$HermesOS and USDC on Base" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Hold $HermesOS for ongoing access" })).toBeInTheDocument();
+    });
+  });
+
   it("dismisses the success banner with a labelled close control", async () => {
     mockGet.mockImplementation((key: string) => (key === "credits" ? "success" : null));
 

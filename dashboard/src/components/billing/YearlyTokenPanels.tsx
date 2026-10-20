@@ -16,7 +16,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { clientLog } from '@/lib/client/logger';
 import { hermesosTransferUri } from '@/lib/billing/eip681';
 import type { ManagedVeniceTokenQuotePayload } from '@/lib/billing/managed-venice-client';
-import { YEARLY_TOKEN_USD, displayTokenUnit } from '@/lib/billing/token-plan-prices';
+import { HERMESOS_DISPLAY_UNIT, YEARLY_TOKEN_USD, displayTokenUnit } from '@/lib/billing/token-plan-prices';
 import type { ManagedVeniceWalletType } from '@/lib/venice/managed-credit-topup';
 import {
   type YearlyTokenQuotePayload,
@@ -90,6 +90,8 @@ export function YearlyPaymentProgress({
   }, []);
 
   const tierName = tier === "power" ? "Power" : "Pro";
+  // The token this payment is in, from the quote (the registry names it).
+  const tokenUnit = quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : HERMESOS_DISPLAY_UNIT;
   const formatted = quote ? quote.tokensRequiredDisplay.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "—";
   const remainingMs = quote ? Math.max(0, Date.parse(quote.expiresAt) - now) : 0;
   const minutes = Math.floor(remainingMs / 60000);
@@ -121,7 +123,7 @@ export function YearlyPaymentProgress({
     {
       key: "quote",
       label: "Quote locked",
-      sub: quote ? `Send ${formatted} ${displayTokenUnit(quote.tokenSymbol)}` : "Sent",
+      sub: quote ? `Send ${formatted} ${tokenUnit}` : "Sent",
       status: quote && !subActive ? "active" : "done",
     },
     {
@@ -170,7 +172,7 @@ export function YearlyPaymentProgress({
                 ? "Quote expired"
                 : subActive
                   ? `Activating ${tierName}`
-                  : `Yearly $HermesOS · ${tierName}`}
+                  : `Yearly ${tokenUnit} · ${tierName}`}
           </span>
           <span className={styles.message}>
             {allDone
@@ -278,6 +280,7 @@ export function ProgressStage({
 }
 export function ManagedVeniceDepositModal({
   tokenPaymentsEnabled = false,
+  tokenUnit = HERMESOS_DISPLAY_UNIT,
   isOpen,
   walletType,
   amountUsd,
@@ -294,6 +297,8 @@ export function ManagedVeniceDepositModal({
 }: {
   isOpen: boolean;
   tokenPaymentsEnabled?: boolean;
+  /** The account's payment token, e.g. "$HIVRA". */
+  tokenUnit?: string;
   walletType: ManagedVeniceWalletType;
   amountUsd: number;
   loading: boolean;
@@ -356,6 +361,7 @@ export function ManagedVeniceDepositModal({
       // $HermesOS stays reachable only for a flow that already chose it
       // (a deep link into a token top-up) and only while token payments are on.
       walletOptions={tokenPaymentsEnabled && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
+      tokenUnit={quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : tokenUnit}
       walletType={shownWalletType}
       onWalletTypeChange={onWalletTypeChange}
       calculatorId="managed-venice-billing-top-up"
@@ -394,9 +400,12 @@ export function YearlyTokenPaymentModal({
   quote,
   onClose,
   reviewPending = false,
+  tokenUnit = HERMESOS_DISPLAY_UNIT,
 }: {
   isOpen: boolean;
   tier: "pro" | "power" | null;
+  /** The account's payment token, e.g. "$HIVRA"; a loaded quote's own token wins. */
+  tokenUnit?: string;
   loading: boolean;
   error: string | null;
   /** A payment for this tier is already under manual review. */
@@ -429,6 +438,7 @@ export function YearlyTokenPaymentModal({
   if (!isOpen) return null;
 
   const tierName = tier === "power" ? "Power" : "Pro";
+  const unit = quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : tokenUnit;
   const remainingMs = quote ? Math.max(0, Date.parse(quote.expiresAt) - now) : 0;
   const expired = quote ? remainingMs <= 0 : false;
   const minutes = Math.floor(remainingMs / 60000);
@@ -456,8 +466,8 @@ export function YearlyTokenPaymentModal({
 
   return (
     <BillingDialog
-      ariaLabel={`Pay ${tierName} yearly with $HermesOS`}
-      eyebrow="Pay 1 year with $HermesOS"
+      ariaLabel={`Pay ${tierName} yearly with ${unit}`}
+      eyebrow={`Pay 1 year with ${unit}`}
       title={tier ? `${tierName} · $${YEARLY_TOKEN_USD[tier]}/yr` : tierName}
       onClose={onClose}
       footer={
@@ -517,7 +527,7 @@ export function YearlyTokenPaymentModal({
           <TransferAmountField
             label="Step 1 · Send exactly"
             amount={formatted}
-            unit={displayTokenUnit(quote.tokenSymbol)}
+            unit={unit}
             copyValue={quote.tokensRequiredDisplay}
             copyTitle="Copies the amount without separators, ready to paste into a wallet"
           >

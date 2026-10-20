@@ -68,6 +68,7 @@ function controller(tokenGeo: TokenGeoAccess): BillingController {
     data: null,
     flags: { billingV2Enabled: true, cryptoBillingEnabled: true, creditTopUpsEnabled: true, selfServeDowngradeEnabled: false },
     tokenGeo,
+    tokenPayments: { available: true, displayUnit: "$HermesOS" },
     changePlanRequiresCheckout: true,
     paidPath: "crypto",
     cryptoMode: "yearly",

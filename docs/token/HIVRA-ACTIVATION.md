@@ -355,6 +355,22 @@ band is one constant in `price-feed.ts` if Ash wants it wider.
 Breach, grace, recovery and suspension never need a live price. They compare
 balances with each row's fixed qualifying quantity.
 
+**$HIVRA readiness (what Billing offers).** Launching does not switch $HIVRA
+payments and holder tiers on by itself. `dashboard/src/lib/billing/hivra-readiness.ts`
+treats $HIVRA as usable only while it is live in the registry and its pool
+passes the same gate as a quote (`fetchPlatformTokenPriceUsd`: both liquidity
+floors, candle history and the 10% band), reusing the live-thresholds price
+cache (a pass for 5 minutes, a failure for 1 minute) and failing closed if the
+check cannot run. Until then, accounts outside the $HermesOS grandfather
+cohort see card (and USDC credit) payments only; `/api/billing/token-payments`
+reports `available: false`; new yearly, hold-for-tier and managed-Venice
+$HIVRA quotes, `/api/billing/token-holding` and a no-tier
+`/api/billing/wallet/eligibility` answer 503 "Token payments aren't available
+yet." (`reason: hivra_not_ready`); and the tier evaluator records no new
+$HIVRA tier, as in a price outage. Grandfathered accounts, quotes already
+issued and their settlement, tiers already held and withdrawals are not
+affected.
+
 ## 6. Verify
 
 Run on the target database (read-only) after `activatesAt`:
