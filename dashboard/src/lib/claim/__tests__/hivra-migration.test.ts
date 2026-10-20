@@ -45,6 +45,8 @@ function config(overrides: Partial<HivraMigrationConfig> = {}): HivraMigrationCo
     announcedAt: "2026-10-21T16:00:00Z",
     founder: {
       ...HIVRA_MIGRATION.founder!,
+      // These fixtures model a 13-week plan ending 28 Jan 2027; the shipped default plan is 12 weeks (see the 90-day test below).
+      weeks: 13,
       // 21 Oct 16:00 UTC + 14 days ends during 4 Nov, so a whole-day start is 5 Nov 2026, a Thursday.
       saleStart: "2026-11-05",
       saleDay: "Thursday",
@@ -447,5 +449,33 @@ describe("getServedHivraMigration / hivraMigrationHref", () => {
     getServedHivraMigration(bad);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith("HIVRA migration config rejected", expect.objectContaining({ failureType: "hivra_migration_config_rejected" }));
+  });
+});
+
+describe("the shipped plan: a 90-day claim window and 12 weekly sales", () => {
+  // Announcement 22 Oct, claim opens 23 Oct 11:00 UTC and closes 90 days later (21 Jan 2027, its last day).
+  // 12 weekly sales from Friday 6 Nov 2026 (just after the 14-day head start) end on Friday 22 Jan, the day after.
+  const CLAIM_CLOSES = "2027-01-21T11:00:00Z";
+  const plan = (overrides: Partial<NonNullable<HivraMigrationConfig["founder"]>> = {}) => ({
+    ...HIVRA_MIGRATION,
+    published: true,
+    announcedAt: "2026-10-22T10:00:00Z",
+    founder: { ...HIVRA_MIGRATION.founder!, saleStart: "2026-11-06", saleDay: "Friday", burnDate: "2027-02-05", ...overrides },
+  });
+
+  it("defaults to 12 weekly sales", () => {
+    expect(HIVRA_MIGRATION.founder?.weeks).toBe(12);
+  });
+
+  it("accepts the 12-week plan against the 90-day window", () => {
+    const { migration, problems } = validate(plan(), CLAIM_CLOSES);
+    expect(problems).toEqual([]);
+    expect(migration.founder?.saleStart).toMatchObject({ iso: "2026-11-06T00:00:00.000Z" });
+    expect(migration.founder?.burnDate).toMatchObject({ iso: "2027-02-05T00:00:00.000Z" });
+  });
+
+  it("does not accept 13 weekly sales against the same window", () => {
+    const { migration } = validate(plan({ weeks: 13 }), CLAIM_CLOSES);
+    expect(migration.founder?.saleStart).toBeNull();
   });
 });

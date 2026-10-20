@@ -95,7 +95,7 @@ function published(overrides: Partial<HivraMigrationConfig> = {}): HivraMigratio
     announcedAt: "2026-10-21T16:00:00Z",
     // 21 Oct 16:00 UTC + 14 days ends during 4 Nov, so 5 Nov 2026 (a Thursday) is the first sale day.
     // Thirteen weekly sales end on 28 Jan 2027, the day after the claim window's last day (27 Jan).
-    founder: { ...HIVRA_MIGRATION.founder!, saleStart: "2026-11-05", saleDay: "Thursday", burnDate: "2027-02-04" },
+    founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, saleStart: "2026-11-05", saleDay: "Thursday", burnDate: "2027-02-04" },
     receipts: [
       { date: "2026-11-12", kind: "liquidity", txHash: HASH(1), note: "Week 1 fees" },
       { date: "2026-11-05", kind: "founder-sale", txHash: HASH(2), note: null },
@@ -345,7 +345,7 @@ describe("/token/migration", () => {
         announcedAt: null,
         fee: null,
         treasurySafe: null,
-        founder: { ...HIVRA_MIGRATION.founder!, saleStart: null, saleDay: null, burnDate: null },
+        founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, saleStart: null, saleDay: null, burnDate: null },
         receipts: [],
       });
       const { container } = await renderPage();
@@ -514,7 +514,7 @@ describe("/token/migration", () => {
       mockMigration.current = published({
         treasurySafe: "0x4aCDa6e26929acd34b45beDaEE2f7b8a418ce10c", // bad checksum: dropped
         fee: null,
-        founder: { ...HIVRA_MIGRATION.founder!, wallet: null, burnAddress: null, saleStart: null, saleDay: null, burnDate: null },
+        founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, wallet: null, burnAddress: null, saleStart: null, saleDay: null, burnDate: null },
         receipts: [{ date: "2026-11-09", kind: "liquidity", txHash: "0xnot-a-hash", note: null }],
       });
       const { container } = await renderPage();
@@ -532,7 +532,7 @@ describe("/token/migration", () => {
 
     it("keeps the founder plan to the bullets it has data for, and drops the figure when the holding is missing", async () => {
       mockMigration.current = published({
-        founder: { ...HIVRA_MIGRATION.founder!, heldTokens: null, weeklyCapTokens: null, maxPriceImpactPct: null, headStartDays: null },
+        founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, heldTokens: null, weeklyCapTokens: null, maxPriceImpactPct: null, headStartDays: null },
       });
       const { container } = await renderPage();
       block(container, "There is no separate team allocation of $HIVRA in the current migration plan. The founder's $HermesOS are excluded from the eligible snapshot allocation, so those holdings do not receive $HIVRA through the migration.");
@@ -549,18 +549,18 @@ describe("/token/migration", () => {
     });
 
     it("shows only the sale start when there is no burn date, and only the burn date when there is no sale start", async () => {
-      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, saleStart: "2026-11-05", saleDay: null, burnDate: null } });
+      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, saleStart: "2026-11-05", saleDay: null, burnDate: null } });
       const startOnly = await renderPage();
       expect(lines(screen.getByTestId("migration-founder-dates"))).toEqual(["Sale start: 5 November 2026"]);
       startOnly.unmount();
-      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, saleStart: null, saleDay: null, burnDate: "2027-02-04" } });
+      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, saleStart: null, saleDay: null, burnDate: "2027-02-04" } });
       await renderPage();
       expect(lines(screen.getByTestId("migration-founder-dates"))).toEqual(["Final burn date: 4 February 2027"]);
     });
 
     it("drops a burn date that is not after the claim window closes, with no replacement copy", async () => {
       // With no sale start there is no last sale to check, so only the burn date is held to the window.
-      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, saleStart: null, saleDay: null, burnDate: "2027-02-04" } });
+      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, saleStart: null, saleDay: null, burnDate: "2027-02-04" } });
       mockAirdrop.current = airdrop({ claim: { ...OPEN_CLAIM, closesAt: "2027-02-04T12:00:00Z" } });
       const { container } = await renderPage();
       expect(screen.queryByText("Final burn date:")).not.toBeInTheDocument();

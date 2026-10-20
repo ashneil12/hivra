@@ -136,7 +136,7 @@ export const HIVRA_MIGRATION: HivraMigrationConfig = {
     headStartDays: 14,
     weeklyCapTokens: "500M",
     maxPriceImpactPct: 5,
-    weeks: 13,
+    weeks: 12,
     saleStart: null,
     saleDay: null,
     burnDate: null,
