@@ -32,8 +32,12 @@ export function doSessionActionFor(action: string): (typeof DO_SESSION_ACTIONS)[
     : null;
 }
 
-/** Linux Sandbox (gVisor): no restart, restore points or in-place update. */
-export const GVISOR_ACTIONS = ["start", "stop", "resize", "delete"] as const;
+/**
+ * Linux Sandbox (gVisor): no restart or restore points. update_runtime is
+ * the adapter's Update: the sandbox recreated on the pinned image, keeping
+ * /workspace.
+ */
+export const GVISOR_ACTIONS = ["start", "stop", "resize", "delete", "update_runtime"] as const;
 export type GvisorAction = (typeof GVISOR_ACTIONS)[number];
 
 export function isGvisorAction(action: string): action is GvisorAction {
@@ -176,7 +180,7 @@ export function folderRecoveryEligible(row: LifecycleSupportRow): boolean {
 
 // ── In-place connection-service update ─────────────────────────────────────
 
-export type RuntimeUpdateRefusal = "digitalocean" | "linux-sandbox" | "prepared" | "my-cloud";
+export type RuntimeUpdateRefusal = "digitalocean" | "prepared" | "my-cloud";
 
 /**
  * Agents on a My cloud computer whose runtime the provider lane updates
@@ -189,13 +193,12 @@ export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "o
 /**
  * Why update_runtime is refused for this row, before any lease or host call,
  * or null when the route accepts it. The order is the route's: DigitalOcean
- * and gVisor branches first, then the prepared and My cloud branches. A
- * DeepSeek computer on Proxmox gets its own owned update in the guest
- * (deepseek-harness/update-guest.py).
+ * first (a Linux Sandbox's update is its adapter's own), then the prepared
+ * and My cloud branches. A DeepSeek computer on Proxmox gets its own owned
+ * update in the guest (deepseek-harness/update-guest.py).
  */
 export function runtimeUpdateRefusal(row: LifecycleSupportRow): RuntimeUpdateRefusal | null {
   if (row.computer_substrate === "do-managed-session") return "digitalocean";
-  if (row.computer_substrate === "gvisor") return "linux-sandbox";
   if (isPreparedProfile(row)) return "prepared";
   if (row.computer_substrate === "provider-vm"
     && !(PROVIDER_RUNTIME_UPDATE_TYPES as readonly unknown[]).includes(row.type)) return "my-cloud";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Play, Square, TerminalSquare } from "lucide-react";
+import { AlertTriangle, Loader2, Play, RefreshCw, Square, TerminalSquare } from "lucide-react";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { gvisorIsolationDisclosure } from "@/lib/hivra/gvisor-computer-contract";
 import { COMPUTER_PLACEMENT_LABEL, computerPlacementFor } from "@/lib/agent-computers/agent-surfaces";
@@ -32,11 +32,11 @@ const errorStyle: React.CSSProperties = { display: "flex", gap: 8, alignItems: "
   background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 12.5, padding: "9px 13px", fontFamily: "var(--font-mono), monospace",
   lineHeight: 1.5, overflowWrap: "anywhere" };
 
-type Slot = "header" | "computer" | "terminal" | "resources" | "danger";
-const SLOT_SECTION: Record<Slot, ManageSectionId | null> = { header: null, computer: "overview", terminal: "command", resources: "resources", danger: "advanced" };
-const ACTION_SLOT: Record<"start" | "stop" | "resize" | "delete" | "rename", Slot> = { start: "computer", stop: "computer", resize: "resources", delete: "danger", rename: "header" };
+type Slot = "header" | "computer" | "terminal" | "resources" | "danger" | "updates";
+const SLOT_SECTION: Record<Slot, ManageSectionId | null> = { header: null, computer: "overview", terminal: "command", resources: "resources", danger: "advanced", updates: "updates" };
+const ACTION_SLOT: Record<"start" | "stop" | "resize" | "delete" | "rename" | "update_runtime", Slot> = { start: "computer", stop: "computer", resize: "resources", delete: "danger", rename: "header", update_runtime: "updates" };
 const FALLBACK_SECTIONS: ManageSectionId[] = ["overview", "resources", "command", "advanced"];
-type Busy = "start" | "stop" | "resize" | "delete" | "rename" | "exec";
+type Busy = "start" | "stop" | "resize" | "delete" | "rename" | "exec" | "update_runtime";
 // What an action is doing, shown in the section that started it and, while
 // another section is open, as a banner that opens it. A rename shows in the header.
 const PROGRESS: Record<Exclude<Busy, "rename">, { section: ManageSectionId; message: string }> = {
@@ -45,6 +45,7 @@ const PROGRESS: Record<Exclude<Busy, "rename">, { section: ManageSectionId; mess
   resize: { section: "resources", message: "Applying the new limits…" },
   exec: { section: "command", message: "Running the command…" },
   delete: { section: "advanced", message: "Deleting this sandbox…" },
+  update_runtime: { section: "updates", message: "Updating this sandbox…" },
 };
 
 // Shown under the control that failed and scrolled into view, so it never covers a field.
@@ -95,7 +96,9 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { setCpu(agent.cpu); setRam(agent.ram); }, [agent.cpu, agent.ram]);
 
-  const mutate = async (action: "start" | "stop" | "resize" | "delete") => {
+  const [confirmUpdate, setConfirmUpdate] = useState(false);
+  const mutate = async (action: "start" | "stop" | "resize" | "delete" | "update_runtime") => {
+    setConfirmUpdate(false);
     setBusy(action); setError(null);
     try {
       await jsonRequest(`/api/hivra/agents/${encodeURIComponent(agent.id)}/action`, { method: "POST",
@@ -191,10 +194,28 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
         </section>
       </ManagePanel>
 
-      {manage?.selfUpdate ? (
+      {manage?.selfUpdate || manage?.connectionServiceUpdate ? (
         <ManagePanel id="updates" selected={selected}>
           <section style={box} data-testid="manage-self-update">
-            {manage.selfUpdate.lines.map(line => <span key={line}>{line}</span>)}
+            {manage.selfUpdate?.lines.map(line => <span key={line}>{line}</span>)}
+            {manage.connectionServiceUpdate ? (
+              confirmUpdate ? (
+                <div role="group" aria-label="Confirm sandbox update" style={{ display: "grid", gap: 10 }}>
+                  <span>Updating stops anything running in this sandbox and starts it again on the current image. Files in /workspace stay.</span>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button style={button} disabled={Boolean(busy)} onClick={() => void mutate("update_runtime")}><RefreshCw size={14} />Update</button>
+                    <button style={button} onClick={() => setConfirmUpdate(false)}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div><button style={button} disabled={Boolean(busy) || manage.connectionServiceUpdate.state !== "available"}
+                  onClick={() => setConfirmUpdate(true)}><RefreshCw size={14} />Update sandbox</button></div>
+              )
+            ) : null}
+            {manage.connectionServiceUpdate && manage.connectionServiceUpdate.state !== "available" && "reason" in manage.connectionServiceUpdate
+              ? <small>{manage.connectionServiceUpdate.reason}</small> : null}
+            {progressIn("updates")}
+            {errorFor("updates")}
           </section>
         </ManagePanel>
       ) : null}

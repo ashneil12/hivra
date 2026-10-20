@@ -303,7 +303,7 @@ describe("InfrastructurePrepareDialog", () => {
   // Review of slice 5: Hivra's own adapter from an earlier release was blamed
   // on "a different gVisor install", with a retry that can't get past it.
   it.each([
-    ["installed-adapter-check", /Linux Sandbox setup from another Hivra release/],
+    ["installed-adapter-check", /Linux Sandbox setup Hivra doesn't recognize/],
     ["installed-identity-check", /already has gVisor, installed another way or at a different release/],
   ])("explains gVisor already on the server (%s) without offering a retry that can't work", async (stage, copy) => {
     (prepareGvisorConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError(

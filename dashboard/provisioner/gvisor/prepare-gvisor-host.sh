@@ -36,6 +36,9 @@ BUNDLE_URL="${HIVRA_GVISOR_BUNDLE_URL:?Pinned gVisor bundle URL is required}"
 BUNDLE_SHA256="${HIVRA_GVISOR_BUNDLE_SHA256:?Pinned gVisor bundle SHA-256 is required}"
 ADAPTER_SOURCE="${HIVRA_GVISOR_ADAPTER_SOURCE:?Adapter source is required}"
 ADAPTER_SHA256="${HIVRA_GVISOR_ADAPTER_SHA256:?Adapter SHA-256 is required}"
+# Hivra's own earlier adapter releases this one may replace (space-separated
+# SHA-256 digests); their sandboxes move to this adapter through Update.
+PREVIOUS_ADAPTER_SHA256S="${HIVRA_GVISOR_PREVIOUS_ADAPTER_SHA256S:-}"
 [ "$BUNDLE_URL" = 'https://github.com/google/gvisor/releases/download/release-20260907.0/gvisor-x86_64.tar.bz2' ]
 [ "$BUNDLE_SHA256" = '81416511897ab8abd4e723d66823c5b0461a2ee3311cfa70d152404ef9b860cf' ]
 [[ "$BUNDLE_SHA256:$ADAPTER_SHA256" =~ ^[0-9a-f]{64}:[0-9a-f]{64}$ ]]
@@ -72,12 +75,15 @@ done
 
 # Preparation may fill in a missing pinned bundle, but it never replaces a
 # different installed runtime identity behind existing sandbox bindings.
-# Hivra's own adapter from an earlier release is checked first and reported as
-# its own stage: existing Linux Sandbox computers pin its identity too, so it
-# is left in place, and the owner is told it is Hivra's, not someone else's.
+# The adapter is checked first and reported as its own stage: Hivra's own
+# adapter from an admitted earlier release is replaced (it manages the same
+# sandboxes, and each one's owner moves it over with Update); any other
+# adapter is left in place, and the owner is told so.
 prepare_stage="installed-adapter-check"
+for digest in $PREVIOUS_ADAPTER_SHA256S; do [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; done
 if [ -e /opt/hivra/gvisor-adapter/hivra-gvisor-adapter ]; then
-  [ "$(sha256sum /opt/hivra/gvisor-adapter/hivra-gvisor-adapter | awk '{print $1}')" = "$ADAPTER_SHA256" ]
+  installed_adapter="$(sha256sum /opt/hivra/gvisor-adapter/hivra-gvisor-adapter | awk '{print $1}')"
+  [ "$installed_adapter" = "$ADAPTER_SHA256" ] || [[ " $PREVIOUS_ADAPTER_SHA256S " == *" $installed_adapter "* ]]
 fi
 prepare_stage="installed-identity-check"
 if command -v runsc >/dev/null 2>&1; then

@@ -18,7 +18,7 @@ import {
 import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import {
   GvisorComputerReceiptSchema, GvisorComputerRequestSchema, GvisorExecReceiptSchema,
-  HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_BUNDLE_URL,
+  HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_BUNDLE_URL, HIVRA_GVISOR_PREVIOUS_ADAPTERS,
   isGvisorPendingBoundObservation, isGvisorPreflightFresh, isHivraGvisorPrepareStage,
   type GvisorComputerReceipt, type GvisorComputerRequest, type HivraGvisorPrepareStage,
 } from "./gvisor-computer-contract";
@@ -40,7 +40,7 @@ type GvisorAgent = {
   id: string; user_id: string; name: string; status: string; desired_state: string;
   operation_id: string | null; operation_kind: string | null; operation_payload: Record<string, unknown> | null;
   computer_substrate: string; gvisor_sandbox_id: string;
-  gvisor_adapter_sha256: string; gvisor_runtime_sha256: string;
+  gvisor_adapter_version: string; gvisor_adapter_sha256: string; gvisor_runtime_sha256: string;
   gvisor_observation: Record<string, unknown> | null;
   infrastructure_connection_id: string; deployment_target_id: string;
   infrastructure_connection_revision: number; cpu: number; ram: number;
@@ -87,7 +87,7 @@ function preparationFailureMessage(stage: HivraGvisorPrepareStage | null): strin
     "bundle-download": "The pinned gVisor bundle could not be downloaded.",
     "bundle-checksum": "The downloaded gVisor bundle did not match its pinned checksum.",
     "bundle-validation": "The pinned gVisor bundle did not contain the expected safe runtime files.",
-    "installed-adapter-check": "The host has Linux Sandbox setup from another Hivra release. Existing runtime files were not replaced.",
+    "installed-adapter-check": "The host has a Linux Sandbox adapter Hivra does not recognize. Existing runtime files were not replaced.",
     "installed-identity-check": "The host has a conflicting gVisor runtime identity. Existing runtime files were not replaced.",
     "asset-installation": "The pinned gVisor runtime files could not be installed.",
     "runtime-registration": "Docker did not confirm the exact runsc runtime path within 30 seconds of its configuration reload.",
@@ -98,9 +98,16 @@ function preparationFailureMessage(stage: HivraGvisorPrepareStage | null): strin
   return stage ? messages[stage] : "The gVisor host preparation could not be confirmed.";
 }
 
-async function executionAuthority(userId: string, targetId: string, binding?: Pick<GvisorAgent,
-  "infrastructure_connection_id" | "infrastructure_connection_revision" | "deployment_target_id"
-  | "gvisor_adapter_sha256" | "gvisor_runtime_sha256">, operation?: GvisorComputerRequest["operation"]) {
+type GvisorBinding = Pick<GvisorAgent, "infrastructure_connection_id" | "infrastructure_connection_revision"
+  | "deployment_target_id" | "gvisor_adapter_sha256" | "gvisor_runtime_sha256"> & { gvisor_adapter_version?: string };
+
+/** One of Hivra's own earlier adapter releases, by its exact identity. */
+function previousAdapter(version: unknown, sha256: unknown): boolean {
+  return HIVRA_GVISOR_PREVIOUS_ADAPTERS.some(entry => entry.version === version && entry.sha256 === sha256);
+}
+
+async function executionAuthority(userId: string, targetId: string, binding?: GvisorBinding,
+  operation?: GvisorComputerRequest["operation"]) {
   const { data, error } = await db().from("deployment_targets").select("id,connection_id,evidence_connection_revision,status,capabilities,supported_isolation_drivers,isolation_class,last_preflight_at")
     .eq("id", targetId).eq("user_id", userId).maybeSingle();
   if (error) throw new GvisorComputerError("database_failed", "The target could not be checked.");
@@ -117,8 +124,16 @@ async function executionAuthority(userId: string, targetId: string, binding?: Pi
   const compatibility = capabilities?.runtimeCompatibility as { contractVersion?: unknown; supportedWorkloadKinds?: unknown } | undefined;
   const resourcePolicy = capabilities?.resourcePolicy as { reservationEqualsMaximum?: unknown; aggregateAdmission?: unknown } | undefined;
   const access = capabilities?.access as { terminal?: unknown; publicPorts?: unknown } | undefined;
+  // A host still on an earlier Hivra adapter keeps running its sandboxes;
+  // launching one, or updating one, needs this release's adapter on the host.
+  const currentAdapter = adapter?.version === HIVRA_GVISOR_ADAPTER_VERSION;
+  if (adapter && !currentAdapter && previousAdapter(adapter.version, adapter.sha256)
+    && (!binding || operation === "create" || operation === "update")) {
+    throw new GvisorComputerError("not_ready", "Set up Linux Sandbox on this server again to use Hivra's current sandbox release. Your sandboxes keep running meanwhile.");
+  }
   if (capabilities?.kind !== "gvisor"
-    || adapter?.version !== HIVRA_GVISOR_ADAPTER_VERSION || typeof adapter.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(adapter.sha256)
+    || !(currentAdapter || previousAdapter(adapter?.version, adapter?.sha256))
+    || typeof adapter?.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(adapter.sha256)
     || runtime?.path !== "/usr/local/bin/runsc" || typeof runtime.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(runtime.sha256)
     || compatibility?.contractVersion !== 1 || !Array.isArray(compatibility.supportedWorkloadKinds)
     || compatibility.supportedWorkloadKinds.length !== 1 || compatibility.supportedWorkloadKinds[0] !== "linux-terminal"
@@ -127,7 +142,11 @@ async function executionAuthority(userId: string, targetId: string, binding?: Pi
     || capabilities.desktop !== false || capabilities.windows !== false) {
     throw new GvisorComputerError("not_ready", "Inspect or prepare this Linux host again before launching a sandbox.");
   }
-  if (binding && (binding.gvisor_adapter_sha256 !== adapter.sha256 || binding.gvisor_runtime_sha256 !== runtime.sha256)) {
+  // A sandbox pinned to an earlier Hivra adapter runs on the host's current
+  // one (it manages the same resources); its owner's Update re-pins it.
+  const adapterMoved = binding !== undefined && binding.gvisor_adapter_sha256 !== adapter.sha256
+    && currentAdapter && previousAdapter(binding.gvisor_adapter_version, binding.gvisor_adapter_sha256);
+  if (binding && ((binding.gvisor_adapter_sha256 !== adapter.sha256 && !adapterMoved) || binding.gvisor_runtime_sha256 !== runtime.sha256)) {
     throw new GvisorComputerError("not_ready", "This Computer's pinned gVisor adapter identity no longer matches the ready target.");
   }
   const connection = await loadInfrastructureConnectionSecret(userId, target.connection_id);
@@ -162,11 +181,15 @@ function parseReceipt(stdout: string, marker = RESULT): GvisorComputerReceipt | 
   } catch { throw new GvisorComputerError("remote_failed", "The host returned invalid gVisor evidence."); }
 }
 
-async function invoke(userId: string, targetId: string, request: GvisorComputerRequest,
-  binding?: Pick<GvisorAgent, "infrastructure_connection_id" | "infrastructure_connection_revision" | "deployment_target_id"
-    | "gvisor_adapter_sha256" | "gvisor_runtime_sha256">) {
+async function invoke(userId: string, targetId: string, request: GvisorComputerRequest, binding?: GvisorBinding) {
+  return (await invokeOnTarget(userId, targetId, request, binding)).receipt;
+}
+
+/** invoke, also answering which adapter the host ran (Update re-pins to it). */
+async function invokeOnTarget(userId: string, targetId: string, request: GvisorComputerRequest, binding?: GvisorBinding) {
   const authority = await executionAuthority(userId, targetId, binding, request.operation);
-  const parsed = GvisorComputerRequestSchema.parse((request.operation === "create" || request.operation === "start" || request.operation === "resize")
+  const parsed = GvisorComputerRequestSchema.parse((request.operation === "create" || request.operation === "start"
+    || request.operation === "resize" || request.operation === "update")
     ? { ...request, hostMemoryReserveMb: resolveProxmoxHostCapacityPolicy(authority.connection.configuration?.capacityPolicy).hostMemoryReserveMb }
     : request);
   const expectedAdapterSha = String((authority.target.capabilities.adapter as { sha256: string }).sha256);
@@ -181,7 +204,7 @@ identity_fail() { printf 'HIVRA_GVISOR_IDENTITY_MISMATCH\\n' >&2; exit 1; }
 (cd / && sha256sum -c /opt/hivra/gvisor-adapter/gvisor-bin.sha256 >/dev/null) || identity_fail
 exec '${ADAPTER}'`;
   const result = await runProxmoxHostScriptWithStdin(identityGuard, JSON.stringify(parsed), authority.env,
-    { timeoutMs: parsed.operation === "create" ? 360_000 : 90_000, maxOutputBytes: 96 * 1024 });
+    { timeoutMs: parsed.operation === "create" || parsed.operation === "update" ? 360_000 : 90_000, maxOutputBytes: 96 * 1024 });
   if (!result.ok) {
     const output = `${result.stdout}\n${result.stderr}`;
     if (output.includes("HIVRA_GVISOR_IDENTITY_MISMATCH")) {
@@ -193,12 +216,14 @@ exec '${ADAPTER}'`;
     }
     throw new GvisorComputerError("remote_failed", "The gVisor computer operation could not be confirmed.");
   }
-  return parseReceipt(result.stdout, parsed.operation === "exec" ? EXEC_RESULT : RESULT);
+  const adapter = authority.target.capabilities.adapter as { version: string; sha256: string };
+  return { receipt: parseReceipt(result.stdout, parsed.operation === "exec" ? EXEC_RESULT : RESULT),
+    adapter: { version: adapter.version, sha256: adapter.sha256 } };
 }
 
 async function loadAgent(userId: string, agentId: string): Promise<GvisorAgent> {
   if (!UUID.test(agentId)) throw new GvisorComputerError("not_found", "Computer not found.");
-  const { data, error } = await db().from("hivra_agents").select("id,user_id,name,status,desired_state,operation_id,operation_kind,operation_payload,computer_substrate,gvisor_sandbox_id,gvisor_adapter_sha256,gvisor_runtime_sha256,gvisor_observation,infrastructure_connection_id,deployment_target_id,infrastructure_connection_revision,cpu,ram")
+  const { data, error } = await db().from("hivra_agents").select("id,user_id,name,status,desired_state,operation_id,operation_kind,operation_payload,computer_substrate,gvisor_sandbox_id,gvisor_adapter_version,gvisor_adapter_sha256,gvisor_runtime_sha256,gvisor_observation,infrastructure_connection_id,deployment_target_id,infrastructure_connection_revision,cpu,ram")
     .eq("id", agentId).eq("user_id", userId).maybeSingle();
   if (error) throw new GvisorComputerError("database_failed", "The computer could not be read.");
   if (!data || data.computer_substrate !== "gvisor" || !UUID.test(String(data.gvisor_sandbox_id))) {
@@ -261,7 +286,8 @@ export async function prepareGvisorHost(userId: string, connectionId: string) {
     throw new GvisorComputerError("conflict", "Another infrastructure preparation or inspection is already running.");
   }
   try {
-    const remote = await runProxmoxHostScript(`export HIVRA_GVISOR_BUNDLE_URL='${HIVRA_GVISOR_BUNDLE_URL}'\nexport HIVRA_GVISOR_BUNDLE_SHA256='${HIVRA_GVISOR_BUNDLE_SHA256}'\nexport HIVRA_GVISOR_ADAPTER_SHA256='${adapterSha}'\nexport HIVRA_GVISOR_ADAPTER_SOURCE='${adapter.toString("base64")}'\n${script}`, env, {
+    const previous = HIVRA_GVISOR_PREVIOUS_ADAPTERS.map(entry => entry.sha256).join(" ");
+    const remote = await runProxmoxHostScript(`export HIVRA_GVISOR_BUNDLE_URL='${HIVRA_GVISOR_BUNDLE_URL}'\nexport HIVRA_GVISOR_BUNDLE_SHA256='${HIVRA_GVISOR_BUNDLE_SHA256}'\nexport HIVRA_GVISOR_ADAPTER_SHA256='${adapterSha}'\nexport HIVRA_GVISOR_PREVIOUS_ADAPTER_SHA256S='${previous}'\nexport HIVRA_GVISOR_ADAPTER_SOURCE='${adapter.toString("base64")}'\n${script}`, env, {
       // Prepare installs packages: under sudo it runs without the remote
       // TERM/KILL limit, so apt and dpkg are never killed mid-install.
       timeoutMs: 360_000, maxOutputBytes: 64 * 1024, remoteLimit: "none",
@@ -387,7 +413,13 @@ export async function executeGvisorComputerCommand(userId: string, agentId: stri
   return invoke(userId, agent.deployment_target_id, { operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id, argv }, agent);
 }
 
-export async function mutateGvisorComputer(userId: string, agentId: string, input: { action: "start" | "stop" | "resize" | "delete"; cpu?: number; ramGb?: number }) {
+/**
+ * Start, Stop, Resize, Delete, and Update: recreate the sandbox's container on
+ * the pinned image, keeping /workspace (the adapter's update). Update holds
+ * the runtime_update lease; on completion it also re-pins a sandbox created
+ * by an earlier Hivra adapter to the host's current one.
+ */
+export async function mutateGvisorComputer(userId: string, agentId: string, input: { action: "start" | "stop" | "resize" | "delete" | "update"; cpu?: number; ramGb?: number }) {
   const agent = await loadAgent(userId, agentId);
   const priorObservation = GvisorComputerReceiptSchema.safeParse(agent.gvisor_observation);
   if (input.action === "delete" && agent.status === "error" && !agent.operation_id
@@ -405,7 +437,8 @@ export async function mutateGvisorComputer(userId: string, agentId: string, inpu
     throw new GvisorComputerError("not_ready", "Choose both CPU and memory limits.");
   }
   const deletingUncertainProvision = input.action === "delete" && agent.operation_kind === "provision" && Boolean(agent.operation_id);
-  if (agent.operation_id && agent.operation_kind !== input.action && !deletingUncertainProvision) {
+  const kind = input.action === "update" ? "runtime_update" : input.action;
+  if (agent.operation_id && agent.operation_kind !== kind && !deletingUncertainProvision) {
     throw new GvisorComputerError("conflict", "Another computer operation is still running.");
   }
   if (agent.operation_id && input.action === "resize") {
@@ -415,9 +448,18 @@ export async function mutateGvisorComputer(userId: string, agentId: string, inpu
     }
   }
   const operationId = agent.operation_id ?? randomUUID(), startedAt = new Date().toISOString();
-  const desired = input.action === "stop" ? "stopped" : input.action === "delete" ? "deleted" : "running";
+  const desired = input.action === "stop" ? "stopped" : input.action === "delete" ? "deleted"
+    : input.action === "update" ? (agent.desired_state === "stopped" ? "stopped" : "running") : "running";
+  if (input.action === "update" && !agent.operation_id) {
+    if (agent.status !== "running" && agent.status !== "stopped") {
+      throw new GvisorComputerError("conflict", "Wait until this sandbox is running or stopped before updating it.");
+    }
+    // Refuse a host that can't run the update before taking the lease, so a
+    // refusal never leaves the sandbox locked against Start and Stop.
+    await executionAuthority(userId, agent.deployment_target_id, agent, "update");
+  }
   if (!agent.operation_id) {
-    const { data: claimed, error } = await db().from("hivra_agents").update({ operation_id: operationId, operation_kind: input.action,
+    const { data: claimed, error } = await db().from("hivra_agents").update({ operation_id: operationId, operation_kind: kind,
       operation_started_at: startedAt, operation_payload: input.action === "resize" ? { cpu: input.cpu, ram: input.ramGb,
         maximumCpu: input.cpu, maximumRam: input.ramGb } : {}, desired_state: desired, status: "provisioning" })
       .eq("id", agent.id).eq("user_id", userId).is("operation_id", null).select("id").maybeSingle();
@@ -426,12 +468,15 @@ export async function mutateGvisorComputer(userId: string, agentId: string, inpu
   try {
     const request: GvisorComputerRequest = { operation: input.action, ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id,
       ...(input.action === "resize" ? { cpu: input.cpu, memoryMb: input.ramGb === undefined ? undefined : input.ramGb * 1024 } : {}) };
-    const receipt = await invoke(userId, agent.deployment_target_id, request, agent);
+    const { receipt, adapter } = await invokeOnTarget(userId, agent.deployment_target_id, request, agent);
     const state = (receipt as GvisorComputerReceipt).state;
     const updates: Record<string, unknown> = { status: state === "absent" ? "deleted" : state, desired_state: desired,
       operation_id: null, operation_kind: null,
       operation_started_at: null, operation_payload: null, error: null, gvisor_observation: receipt };
     if (input.action === "resize") Object.assign(updates, { cpu: input.cpu, ram: input.ramGb, cpu_max: input.cpu, ram_max: input.ramGb });
+    if (input.action === "update" && adapter.sha256 !== agent.gvisor_adapter_sha256) {
+      Object.assign(updates, { gvisor_adapter_version: adapter.version, gvisor_adapter_sha256: adapter.sha256 });
+    }
     if (input.action === "delete") Object.assign(updates, {
       infrastructure_connection_id: null, deployment_target_id: null, infrastructure_connection_revision: null,
       gvisor_cleanup_receipt: cleanupReceipt(agent, receipt as GvisorComputerReceipt),
@@ -443,7 +488,7 @@ export async function mutateGvisorComputer(userId: string, agentId: string, inpu
   } catch (cause) {
     let rejectionReconciled = false;
     if (cause instanceof GvisorComputerError && cause.definiteAdmissionRejection
-      && (input.action === "resize" || input.action === "start")) {
+      && (input.action === "resize" || input.action === "start" || input.action === "update")) {
       try {
         const observation = await invoke(userId, agent.deployment_target_id, { operation: "status",
           ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id }, agent) as GvisorComputerReceipt;

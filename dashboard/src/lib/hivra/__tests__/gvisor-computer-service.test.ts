@@ -47,7 +47,7 @@ const launchRequestId = "55555555-5555-4555-8555-555555555555";
 let agent: Record<string, unknown>;
 
 function result(state: "running" | "stopped", cpu = 2, memoryMb = 2048) {
-  return { ok: true, stdout: `HIVRA_GVISOR_V1 ${JSON.stringify({ version: 1, adapterVersion: "2026.09.15.1",
+  return { ok: true, stdout: `HIVRA_GVISOR_V1 ${JSON.stringify({ version: 1, adapterVersion: "2026.10.20.1",
     computerId, sandboxId, state, isolationDriver: "gvisor-runsc", isolationClass: "application-kernel",
     outerHostBoundary: "operator-owned-host", runtime: "runsc", cpu, memoryMb,
     image: "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285",
@@ -82,7 +82,7 @@ const target = {
   id: targetId, connection_id: connectionId, evidence_connection_revision: 7, status: "ready",
   supported_isolation_drivers: ["gvisor-runsc"], isolation_class: "application-kernel",
   last_preflight_at: "2026-09-15T12:00:00.000Z",
-  capabilities: { kind: "gvisor", launchReady: true, adapter: { version: "2026.09.15.1", sha256: adapterSha },
+  capabilities: { kind: "gvisor", launchReady: true, adapter: { version: "2026.10.20.1", sha256: adapterSha },
     runtime: { path: "/usr/local/bin/runsc", sha256: runtimeSha },
     runtimeCompatibility: { contractVersion: 1, supportedWorkloadKinds: ["linux-terminal"] },
     resourcePolicy: { reservationEqualsMaximum: true, aggregateAdmission: "serialized-host-headroom-v1" },
@@ -93,7 +93,7 @@ beforeEach(() => {
   agent = { id: computerId, user_id: userId, type: "linux-terminal", computer_profile: "linux-terminal",
     name: "Sandbox", status: "running", desired_state: "running",
     operation_id: null, operation_kind: null, operation_payload: null, computer_substrate: "gvisor",
-    gvisor_sandbox_id: sandboxId, gvisor_adapter_sha256: adapterSha, gvisor_runtime_sha256: runtimeSha,
+    gvisor_sandbox_id: sandboxId, gvisor_adapter_version: "2026.10.20.1", gvisor_adapter_sha256: adapterSha, gvisor_runtime_sha256: runtimeSha,
     gvisor_observation: null, infrastructure_connection_id: connectionId, deployment_target_id: targetId,
     infrastructure_connection_revision: 7, cpu: 2, ram: 2 };
   agent.gvisor_launch_request_id = launchRequestId;
@@ -160,7 +160,7 @@ it("reports a sanitized Docker runtime-registration timeout from preparation", a
 // gVisor install". Each now stops in a stage of its own.
 it.each([
   ["bundle-checksum", "The downloaded gVisor bundle did not match its pinned checksum."],
-  ["installed-adapter-check", "The host has Linux Sandbox setup from another Hivra release. Existing runtime files were not replaced."],
+  ["installed-adapter-check", "The host has a Linux Sandbox adapter Hivra does not recognize. Existing runtime files were not replaced."],
 ])("reports the %s stage with its own message", async (stage, message) => {
   mockRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: `HIVRA_GVISOR_PREPARE_FAILED_V1 ${stage}\n` });
   await expect(prepareGvisorHost(userId, connectionId)).rejects.toMatchObject({ code: "remote_failed", message, stage });
@@ -298,5 +298,60 @@ describe("host authority (section 9.5)", () => {
     mockLoadConnection.mockResolvedValue(connectionAs("ubuntu"));
     await expect(prepareGvisorHost(userId, connectionId))
       .rejects.toThrow("Linux Sandbox needs root or passwordless sudo on this server.");
+  });
+});
+
+describe("Update (recreate on the pinned image, keeping /workspace)", () => {
+  const previousSha = "2bb8ce761b72a5fc5054b8dbf9f7c79684da478b74c5f1127a212c489539695d";
+  afterEach(() => { target.capabilities.adapter = { version: "2026.10.20.1", sha256: adapterSha }; });
+
+  it("runs the adapter's update under the runtime_update lease and keeps the sandbox's state", async () => {
+    // The regression: a Linux Sandbox could not be updated at all.
+    mockRunWithStdin.mockResolvedValueOnce(result("running"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" }))
+      .resolves.toMatchObject({ status: "running", desired_state: "running", operation_id: null, operation_kind: null });
+    const request = JSON.parse(mockRunWithStdin.mock.calls[0][1]);
+    expect(request).toMatchObject({ operation: "update", computerId, sandboxId, hostMemoryReserveMb: 2048 });
+    expect(mockRunWithStdin.mock.calls[0][3]).toMatchObject({ timeoutMs: 360_000 });
+  });
+
+  it("keeps a stopped sandbox stopped", async () => {
+    Object.assign(agent, { status: "stopped", desired_state: "stopped" });
+    mockRunWithStdin.mockResolvedValueOnce(result("stopped"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" }))
+      .resolves.toMatchObject({ status: "stopped", desired_state: "stopped" });
+  });
+
+  it("moves a sandbox from Hivra's earlier adapter to the host's current one, and only on Update", async () => {
+    Object.assign(agent, { gvisor_adapter_version: "2026.09.15.1", gvisor_adapter_sha256: previousSha });
+    // It keeps working on the upgraded host meanwhile.
+    mockRunWithStdin.mockResolvedValueOnce(result("stopped"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "stop" }))
+      .resolves.toMatchObject({ status: "stopped", gvisor_adapter_sha256: previousSha });
+    mockRunWithStdin.mockResolvedValueOnce(result("stopped"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" }))
+      .resolves.toMatchObject({ gvisor_adapter_version: "2026.10.20.1", gvisor_adapter_sha256: adapterSha });
+  });
+
+  it("refuses a sandbox pinned to an adapter Hivra does not recognize", async () => {
+    Object.assign(agent, { gvisor_adapter_version: "2026.09.15.1", gvisor_adapter_sha256: "d".repeat(64) });
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" })).rejects.toMatchObject({ code: "not_ready" });
+    expect(mockRunWithStdin).not.toHaveBeenCalled();
+  });
+
+  it("asks for the host to be set up again before an Update on Hivra's earlier adapter, without stopping its sandboxes", async () => {
+    target.capabilities.adapter = { version: "2026.09.15.1", sha256: previousSha };
+    Object.assign(agent, { gvisor_adapter_version: "2026.09.15.1", gvisor_adapter_sha256: previousSha });
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" }))
+      .rejects.toMatchObject({ code: "not_ready", message: expect.stringMatching(/Set up Linux Sandbox on this server again/) });
+    expect(mockRunWithStdin).not.toHaveBeenCalled();
+    mockRunWithStdin.mockResolvedValueOnce(result("stopped"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "stop" })).resolves.toMatchObject({ status: "stopped" });
+  });
+
+  it("keeps the lease and the reason when the update can't be confirmed", async () => {
+    mockRunWithStdin.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "boom" });
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" })).rejects.toMatchObject({ code: "remote_failed" });
+    expect(agent).toMatchObject({ operation_kind: "runtime_update", error: "gvisor_update_unconfirmed" });
   });
 });

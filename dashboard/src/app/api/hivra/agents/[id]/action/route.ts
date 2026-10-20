@@ -324,7 +324,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       try {
         const updated = await mutateGvisorComputer(userId, String(agent.id), {
-          action,
+          action: action === "update_runtime" ? "update" : action,
           ...(action === "resize" ? { cpu, ramGb } : {}),
         });
         return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
