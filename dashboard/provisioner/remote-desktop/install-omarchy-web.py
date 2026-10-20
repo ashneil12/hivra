@@ -352,15 +352,20 @@ def main():
     # Allow exactly that one port; the Sunshine rules carry their own scopes.
     subprocess.run(["/usr/bin/ufw", "allow", "8090/tcp"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    # The desktop user updates the machine from inside it. Every build the
-    # platform validates is accepted, so an update keeps the desktop verifiable
-    # instead of making it stop opening. Only the update commands are granted,
-    # and the file is validated before it is installed.
+    # The owner administers their own Omarchy computer and updates it from
+    # inside (Update > Omarchy), whenever they like. Omarchy's updater runs as
+    # the desktop user and calls sudo itself for a changing set of commands
+    # (pacman, pacman-key, paccache, snapshots, systemd-inhibit, sudo -v), so a
+    # list of commands broke on the first update tried. The previous list
+    # already allowed pacman -S*, which is root, so this changes no boundary:
+    # root on the owner's own computer still can't reach the control plane,
+    # other computers or platform credentials (docs/SECURITY-MODEL.md).
+    # verifypw=any lets `sudo -v` (the updater's keep-alive) pass without a
+    # password. Omarchy only; the file is validated before it is installed.
     sudoers = ROOT / 'desktop-update.sudoers'
     write(sudoers, (
-        f"{owner.pw_name} ALL=(root) NOPASSWD: "
-        "/usr/bin/omarchy-update, /usr/bin/omarchy-update-*, "
-        "/usr/bin/pacman -S*, /usr/bin/yay -S*, /usr/bin/checkupdates\n"
+        f"Defaults:{owner.pw_name} verifypw=any\n"
+        f"{owner.pw_name} ALL=(ALL) NOPASSWD: ALL\n"
     ).encode(), 0o440)
     run(["/usr/bin/visudo", "-cf", str(sudoers)])
     run(["/usr/bin/install", "-o", "root", "-g", "root", "-m", "0440",
