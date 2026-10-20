@@ -239,7 +239,9 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
   switch (runtimeUpdateRefusal(row)) {
     // An Omarchy or Windows profile anywhere else still runs no connection service.
     case "prepared": return null;
-    case "my-cloud": return unavailable("my_cloud", "Hivra can't update the connection service on My cloud computers yet.");
+    case "my-cloud": return unavailable("my_cloud", row.type === "deepseek-harness"
+      ? "Hivra can't update DeepSeek on My cloud computers yet."
+      : "Hivra can't update the desktop's connection service on My cloud computers yet.");
     default: break;
   }
   if (operationInProgress(row)) return blocked("operation_in_progress", WAIT);

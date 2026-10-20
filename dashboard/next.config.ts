@@ -177,6 +177,11 @@ const nextConfig: NextConfig = {
       "./provisioner/**/*",
       "./provisioner/.gitignore",
     ],
+    // A My cloud runtime update sends this release's runtime files to the computer.
+    "/api/hivra/agents/*/action": [
+      "./provisioner/**/*",
+      "./provisioner/.gitignore",
+    ],
     // Bundle sync uploads every allowlisted file to the host, the dotfile
     // included: the operator route, the convergence cron, and the operator
     // desktop prepare (it syncs the Canary bundle first). Without these,

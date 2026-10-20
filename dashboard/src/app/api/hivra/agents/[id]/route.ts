@@ -17,6 +17,7 @@ import { advanceProviderNativeReadiness } from "@/lib/hivra/provider-native-read
 import { advanceProviderDesktopReadiness } from "@/lib/hivra/provider-desktop-readiness";
 import type { ProviderAgentReadinessStage } from "@/lib/hivra/provider-readiness-contract";
 import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
+import { observeProviderRuntimeUpdate, type ProviderRuntimeUpdateStage } from "@/lib/hivra/provider-runtime-update";
 import type { ProviderAgentPowerStage } from "@/lib/hivra/provider-power-contract";
 import { advanceProviderResize } from "@/lib/hivra/provider-agent-resize";
 import type { ProviderResizeStage } from "@/lib/hivra/provider-agent-resize-contract";
@@ -367,8 +368,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       let readiness: ProviderAgentReadinessStage | undefined;
       let power: ProviderAgentPowerStage | undefined;
       let resize: ProviderResizeStage | "verification_unavailable" | undefined;
+      let runtimeUpdate: ProviderRuntimeUpdateStage | undefined;
       let latest = agent;
-      if (agent.status === "provisioning" && ["provision", "start", "stop", "restart", "resize"].includes(String(agent.operation_kind))) {
+      if (agent.status === "provisioning" && ["provision", "start", "stop", "restart", "resize", "runtime_update"].includes(String(agent.operation_kind))) {
         const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_readiness", userId, limit: 120, windowMs: 5 * 60_000 });
         if (limited) return limited;
         try {
@@ -382,10 +384,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
               : await advanceProviderAgentReadiness(operation);
           }
           else if (agent.operation_kind === "resize") resize = (await advanceProviderResize(operation, "observe")).stage;
+          else if (agent.operation_kind === "runtime_update") {
+            const observed = await observeProviderRuntimeUpdate(operation);
+            runtimeUpdate = observed.stage;
+            if (observed.stage === "updated") {
+              await logHivraAgentEvent({ userId, event: "runtime_updated", agentId: agent.id, agentType: agent.type,
+                detail: { inPlace: true, myCloud: true, ...(observed.agentCli ? { agentCli: observed.agentCli } : {}) } });
+            }
+          }
           else power = await advanceProviderAgentPower(operation, "observe");
         } catch {
           if (agent.operation_kind === "provision") readiness = "verification_unavailable";
           else if (agent.operation_kind === "resize") resize = "verification_unavailable";
+          else if (agent.operation_kind === "runtime_update") runtimeUpdate = "verification_unavailable";
           else power = "verification_unavailable";
           log.warn("provider lifecycle observation is unavailable", {
             source: "hivra/agents/[id]", failureType: "provider_agent_lifecycle_unverified", userId, agentId: agent.id, operationKind: agent.operation_kind,
@@ -411,7 +422,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const response = apiSuccess({ agent: publicAgent(latest, {
         ...(sameOperation && latest.status === "provisioning" && readiness ? { readiness_stage: readiness } : {}),
         ...(sameOperation && latest.status === "provisioning" && power ? { power_stage: power } : {}),
-        ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}) }) });
+        ...(sameOperation && latest.status === "provisioning" && resize ? { resize_stage: resize } : {}),
+        ...(runtimeUpdate && (runtimeUpdate === "updated" || runtimeUpdate === "failed" || (sameOperation && latest.status === "provisioning"))
+          ? { runtime_update_stage: runtimeUpdate } : {}) }) });
       response.headers.set("Cache-Control", "no-store");
       return response;
     }

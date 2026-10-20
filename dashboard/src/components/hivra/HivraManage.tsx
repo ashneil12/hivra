@@ -50,6 +50,7 @@ import { PoolMeter } from "./PoolMeter";
 import { resizeBudget } from "@/lib/hivra/resize-budget";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
+import { providerRuntimeUpdateMessage } from "@/lib/hivra/provider-runtime-update-contract";
 import { getComputerTemplate, type ComputerTemplateDefinition } from "@/lib/hivra/computer-catalog";
 import {
   COMPUTER_PLACEMENT_LABEL, agentComputerPairLabel, computerPlacementFor,
@@ -1579,6 +1580,10 @@ function HivraManageContent({
                         </button>
                       </div>
                       <CapReasonLine cap={connectionUpdate} />
+                      {providerComputer && providerRuntimeUpdateMessage(agent.runtime_update_stage, agent.error) ? <p
+                        role={agent.runtime_update_stage === "failed" ? "alert" : "status"}
+                        style={{ margin: 0, fontSize: 13, color: agent.runtime_update_stage === "failed" ? "var(--red)" : "var(--text-secondary)", lineHeight: 1.5 }}
+                      >{providerRuntimeUpdateMessage(agent.runtime_update_stage, agent.error)}</p> : null}
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                         {agent.type === "deepseek-harness"
                           ? "Update connection service brings Hivra’s DeepSeek service up to date without restarting the computer. It restarts DeepSeek, which ends a task DeepSeek is working on; your files, chats and model settings stay as they are. If the new version doesn’t start cleanly, the previous one comes back. Terminals open on this page reconnect when it finishes."
