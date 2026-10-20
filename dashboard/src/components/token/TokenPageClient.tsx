@@ -6,7 +6,6 @@ import PublicSite from "@/components/public-site/PublicSite";
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
 import { DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
 import {
-  formatLaunchInstantUtc,
   tokenPhaseFromEntries,
   tokenVerificationContent,
   type TokenPageEntry,
@@ -19,35 +18,32 @@ import TokenLaunchedView from "./TokenLaunchedView";
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
   legacy: "LEGACY",
-  // $HIVRA is on Base; the note under it names the instant Hivra starts using it.
+  // $HIVRA is on Base. Whether Hivra's token access and payments use it is a separate switch (see Billing).
   scheduled: "LIVE ON BASE",
   not_launched: "NOT LAUNCHED YET",
 };
 
+// Once $HIVRA is on Base, no note says new accounts use it or when Hivra starts to: new $HIVRA-based
+// access and payments appear in Billing only when their own published conditions are met.
 const ENTRY_NOTE: Record<"hermesos" | "hivra", Record<TokenPageEntryStatus, string>> = {
   hermesos: {
     live: "The existing $HermesOS contract. $HIVRA has not launched.",
-    legacy: "The legacy $HermesOS contract. Accounts that used it before $HIVRA launched can keep using it; new accounts use $HIVRA.",
+    legacy: "The legacy $HermesOS contract. Accounts that used it before $HIVRA launched can keep using it.",
     scheduled: "The existing $HermesOS contract.",
     not_launched: "The existing $HermesOS contract.",
   },
   hivra: {
-    live: "The $HIVRA contract. New token payments and holdings use it.",
+    live: "The $HIVRA contract.",
     legacy: "The $HIVRA contract.",
-    scheduled: "The $HIVRA contract. Hivra starts using it at the published switch time.",
+    scheduled: "The $HIVRA contract.",
     not_launched: "",
   },
 };
 
-/** The note under a listed contract. Only the scheduled phase needs more than the status. */
+/** The note under a listed contract. */
 function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
-  if (phase === "scheduled") {
-    // $HIVRA is on Base but Hivra has not switched yet: never say "$HIVRA has not launched".
-    if (entry.key === "hermesos") return ENTRY_NOTE.hermesos.scheduled;
-    if (entry.activatesAt) {
-      return `The $HIVRA contract. Hivra starts using it at ${formatLaunchInstantUtc(entry.activatesAt)}.`;
-    }
-  }
+  // $HIVRA is on Base but not necessarily in use yet: never say "$HIVRA has not launched".
+  if (phase === "scheduled" && entry.key === "hermesos") return ENTRY_NOTE.hermesos.scheduled;
   return ENTRY_NOTE[entry.key][entry.status];
 }
 
@@ -58,8 +54,9 @@ function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
  * factual contract, official account and access sections, adds the notice, and drops the proposals.
  *
  * Once $HIVRA is launched (scheduled or active), a viewer the geo-policy does not block reads
- * Ash's rewrite (TokenLaunchedView). The layout below is the dormant page, and the page a
- * blocked viewer reads in every phase, both unchanged.
+ * Ash's website pack page (TokenLaunchedView). The layout below is the dormant page, and the
+ * page a blocked viewer reads in every phase; only the note under a launched contract changed,
+ * which no longer says new accounts use $HIVRA.
  */
 export default function TokenPageClient({
   entries,

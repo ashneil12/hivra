@@ -1,8 +1,10 @@
 /** @jest-environment jsdom */
 /**
- * The launched /token (scheduled and active) is Ash's rewrite v2 of 20 October
- * 2026, verbatim. These tests pin his headings, paragraphs, bold and italic
- * runs and the order of sections and links, so a reword shows up in review.
+ * The launched /token (scheduled and active) is Ash's website pack page
+ * 01-token.md (v3, 20 October 2026), verbatim. These tests pin his headings,
+ * paragraphs, bold and italic runs and the order of sections and links, so a
+ * reword shows up in review. They also pin that every address, date and link
+ * target comes from data and that a line whose data is missing is left out.
  */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -25,13 +27,21 @@ jest.mock("next/link", () => {
   MockLink.displayName = "MockLink";
   return MockLink;
 });
+
+const SENDER = "0x3B954866d4329E19C1B9165774c88508f2fefA0c";
+const PUBLISHED_AIRDROP = {
+  senderAddress: SENDER,
+  snapshotBlock: 36000000,
+  snapshotTakenAt: "2026-10-20T16:00:00Z",
+  snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
+  claim: { campaignUrl: null, opensAt: null, closesAt: null },
+};
+// The claim core's config as the page reads it. The getter is read at render, so a test can swap the facts.
+let mockAirdrop: Record<string, unknown> = { ...PUBLISHED_AIRDROP };
 jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
   ...jest.requireActual("@/lib/claim/hivra-airdrop-config"),
-  HIVRA_AIRDROP: {
-    senderAddress: "0x3B954866d4329E19C1B9165774c88508f2fefA0c",
-    snapshotBlock: 36000000,
-    snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
-    sentAt: null,
+  get HIVRA_AIRDROP() {
+    return mockAirdrop;
   },
 }));
 
@@ -59,13 +69,20 @@ const PHASES = {
   scheduled: [{ ...HERMESOS, status: "live" }, { ...HIVRA, status: "scheduled", activatesAt: "2099-10-01T16:00:00.000Z" }],
 } as const satisfies Record<string, TokenPageEntry[]>;
 
-function renderLaunched(entries: readonly TokenPageEntry[] = PHASES.active) {
-  return render(<TokenPageClient entries={[...entries]} airdropLookupHref="/token/airdrop" migrationHref="/token/migration" />);
+function renderLaunched(
+  entries: readonly TokenPageEntry[] = PHASES.active,
+  hrefs: { airdropLookupHref: string | null; migrationHref: string | null } = { airdropLookupHref: "/token/airdrop", migrationHref: "/token/migration" },
+) {
+  return render(<TokenPageClient entries={[...entries]} {...hrefs} />);
 }
 
 /** Matches an element by its whole text, so a paragraph split by <strong> or <em> still matches. */
 const whole = (tag: string, text: string) => (_: string, element: Element | null) =>
   element?.tagName === tag && element.textContent === text;
+
+beforeEach(() => {
+  mockAirdrop = { ...PUBLISHED_AIRDROP };
+});
 
 describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) => {
   it("renders Ash's headings in order", () => {
@@ -96,7 +113,7 @@ describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) 
     expect(container.querySelector("header strong")).toHaveTextContent(/^THE HIVRA TOKEN$/);
     for (const text of [
       "Hivra started as HermesOS. The platform has grown beyond its original name, and $HIVRA is the new token for the wider ecosystem we're building.",
-      "The original $HermesOS token remains on Base. If you qualified for compute access through it before the transition, you keep that access under the existing rules. Eligible holders also receive $HIVRA based on a published snapshot.",
+      "The original $HermesOS token remains on Base. If you qualified for compute access through it before the transition, you keep that access under the existing rules. Eligible holders can claim $HIVRA through Sablier based on the snapshot already taken.",
       "You don't need a token to use Hivra. Pay by card for Hivra Cloud, or run the open-source platform yourself with no Hivra account or token.",
     ]) expect(screen.getByText(whole("P", text))).toBeInTheDocument();
     expect(screen.getByText("You don't need a token to use Hivra.").tagName).toBe("STRONG");
@@ -129,8 +146,8 @@ describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) 
     renderLaunched(entries);
     for (const text of [
       "Tokens can share a name or symbol without being connected to Hivra. Always compare the full address before interacting with one.",
-      "The new token is being distributed to wallets in the published snapshot at a 1:1 ratio: one $HIVRA for each eligible $HermesOS recorded at the snapshot block.",
-      "You don't have to claim anything. There is no swap form, wallet approval or payment required. The distribution is sent to eligible wallets automatically, and your original $HermesOS remains in your wallet.",
+      "The snapshot has already been taken. Eligible holders can claim $HIVRA through Sablier at a 1:1 ratio: one $HIVRA for each eligible $HermesOS recorded at the snapshot block.",
+      "This is not an automatic airdrop. You need to complete the claim through the official Sablier claim flow, and a small fee applies. Check the fee shown before confirming. You do not need to buy more $HermesOS to qualify: eligibility was determined by the completed snapshot. The treatment of your original $HermesOS is not described here until the claim mechanics are confirmed.",
       "Not every address holding $HermesOS is included. Exclusions, including liquidity pools, launch contracts and the founder's wallet, are documented with the snapshot. Hivra-managed wallets are handled separately as explained on the airdrop page.",
       "Holding a qualifying token amount has been one way to access Hivra compute since the HermesOS days. For existing qualifying $HermesOS accounts, the amount needed was fixed when the holding first qualified. That established access continues as long as the applicable holding rules are met.",
       "You can also subscribe by card without a wallet. If you self-host Hivra, neither a Hivra subscription nor a token is required; you provide your own infrastructure and pay any underlying costs.",
@@ -144,12 +161,20 @@ describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) 
       "Longer-term ideas such as Missions and Interchange explore how agents might pay for approved work within budgets set by a responsible person. An agent shouldn't gain more spending authority by handing a task to another agent.",
       "$HIVRA does not represent ownership of Hivra or a claim on its revenue. The published proposal does not include staking or yield, and a larger token balance cannot buy wider access to people's data or weaken Hivra's security controls.",
       "The treasury and other proposed uses are subject to separate published terms. Future products do not create present entitlements.",
-      "There is nothing to claim and no wallet to connect for the holder airdrop.",
-      "Hivra won't ask you in a DM to sign a message, approve a transaction or pay a fee to receive $HIVRA. Be wary of fake tokens, claim sites and accounts using a similar name.",
+      "Claims are made through the official Sablier flow, not through links sent in DMs.",
+      // The only curly apostrophe in the pack's /token page (Hivra’s), kept as Ash typed it.
+      "A small fee applies to the legitimate claim. Only follow the verified claim link published on Hivra’s official website. Check the destination and the transaction details before connecting your wallet or confirming anything. Be wary of lookalike tokens, fake claim sites and impersonators.",
       "Our official channels are:",
       "Hivra does not have an official Telegram group.",
     ]) expect(screen.getByText(whole("P", text))).toBeInTheDocument();
-    for (const bold of ["1:1 ratio", "These are plans, not promises of features available today.", "There is nothing to claim and no wallet to connect for the holder airdrop."]) {
+    for (const bold of [
+      "claim $HIVRA through Sablier",
+      "1:1 ratio",
+      "This is not an automatic airdrop.",
+      "a small fee applies",
+      "These are plans, not promises of features available today.",
+      "Claims are made through the official Sablier flow, not through links sent in DMs.",
+    ]) {
       expect(screen.getByText(bold).tagName).toBe("STRONG");
     }
   });
@@ -161,10 +186,10 @@ describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) 
       ["Ecosystem", "/ecosystem"],
       ["View on BaseScan", `https://basescan.org/token/${HIVRA_ADDRESS}`],
       ["View on BaseScan", `https://basescan.org/token/${HERMESOS_ADDRESS}`],
-      ["Check a wallet", "/token/airdrop"],
+      ["Check eligibility and claim through the official Sablier flow", "/token/airdrop"],
       ["Read the migration details", "/token/migration"],
       ["View the published snapshot", "https://hivra.cloud/token/airdrop-snapshot"],
-      ["View on BaseScan", "https://basescan.org/address/0x3B954866d4329E19C1B9165774c88508f2fefA0c"],
+      ["View on BaseScan", `https://basescan.org/address/${SENDER}`],
       ["Open Billing", "/dashboard/billing"],
       ["Explore the Hivra ecosystem", "/ecosystem"],
       ["Read the Litepaper", "/docs/litepaper"],
@@ -176,19 +201,100 @@ describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) 
     ]);
   });
 
+  it("never links straight to Sablier: the claim goes through the Hivra-owned airdrop page", () => {
+    const { container } = renderLaunched(entries);
+    expect(Array.from(container.querySelectorAll("a")).some((node) => /sablier\.com/i.test(node.getAttribute("href") ?? ""))).toBe(false);
+  });
+
+  it("shows the snapshot date, block and Airdrop wallet from the published facts", () => {
+    renderLaunched(entries);
+    const details = screen.getByTestId("token-airdrop-details");
+    expect(within(details).getByText(whole("P", "Snapshot date: 20 October 2026"))).toBeInTheDocument();
+    expect(within(details).getByText(whole("P", "Snapshot block: 36000000"))).toBeInTheDocument();
+    expect(within(details).getByText(whole("P", `Airdrop wallet: ${SENDER}`))).toBeInTheDocument();
+    expect(within(details).getByText("Snapshot date:").tagName).toBe("STRONG");
+    expect(within(details).getAllByRole("code").map((node) => node.textContent)).toEqual(["36000000", SENDER]);
+    // The three lines follow Ash's order.
+    expect(details.textContent).toMatch(/^Snapshot date:.*Snapshot block:.*Airdrop wallet:/);
+  });
+
   it("lists the official channels as Ash wrote them", () => {
     const { container } = renderLaunched(entries);
     const items = Array.from(container.querySelectorAll("#official-accounts li")).map((node) => node.textContent);
     expect(items).toEqual(["X: @HivraOS", "Discord: discord.gg/tDQZq8479F", "GitHub: github.com/ashneil12/hivra"]);
   });
 
-  it("has no placeholder, em dash or old launched copy", () => {
+  it("has no placeholder, em dash or obsolete automatic-airdrop copy", () => {
     const { container } = renderLaunched(entries);
     const text = container.textContent ?? "";
     expect(text).not.toMatch(/[–—]/);
-    expect(text).not.toMatch(/\[|\]|VERIFIED HIVRA CONTRACT|CONFIRM BASE BLOCK/);
+    expect(text).not.toMatch(/\[|\]|VERIFIED HIVRA CONTRACT|CONFIRM/);
     expect(text).not.toMatch(/OPTIONAL TOKEN|Verify the token contracts|\$HIVRA for \$HermesOS holders|Hivra starts using it at/);
+    expect(text).not.toMatch(/nothing to claim|sent automatically|sent to eligible wallets automatically|no wallet to connect|never connect a wallet|Check a wallet|distributed to wallets|Eligible holders also receive/i);
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
+  });
+});
+
+describe("launched /token leaves out whatever is not published", () => {
+  it("hides the links, snapshot facts and Airdrop wallet when nothing is published, and never shows a placeholder", () => {
+    mockAirdrop = { senderAddress: null, snapshotBlock: null, snapshotTakenAt: null, snapshotUrl: null, claim: { campaignUrl: null, opensAt: null, closesAt: null } };
+    const { container } = renderLaunched(PHASES.active, { airdropLookupHref: null, migrationHref: null });
+    expect(screen.queryByTestId("token-holder-links")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("token-airdrop-details")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("token-migration-link")).not.toBeInTheDocument();
+    for (const name of [/Check eligibility and claim/, /Read the migration details/, /View the published snapshot/]) {
+      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+    expect(container.textContent).not.toMatch(/Snapshot date|Snapshot block|Airdrop wallet|\[|\]/);
+    // The prose that does not depend on data is still there.
+    expect(screen.getByRole("heading", { name: "Already hold $HermesOS?" })).toBeInTheDocument();
+  });
+
+  it("shows the Airdrop wallet alone when only it is published", () => {
+    mockAirdrop = { ...PUBLISHED_AIRDROP, snapshotBlock: null, snapshotTakenAt: null, snapshotUrl: null };
+    renderLaunched(PHASES.active, { airdropLookupHref: null, migrationHref: null });
+    const details = screen.getByTestId("token-airdrop-details");
+    expect(details).toHaveTextContent(`Airdrop wallet: ${SENDER}`);
+    expect(details).not.toHaveTextContent(/Snapshot/);
+    expect(screen.queryByTestId("token-holder-links")).not.toBeInTheDocument();
+  });
+
+  it("shows the snapshot block without a date until snapshotTakenAt is set", () => {
+    mockAirdrop = { ...PUBLISHED_AIRDROP, snapshotTakenAt: null };
+    renderLaunched();
+    const details = screen.getByTestId("token-airdrop-details");
+    expect(details).toHaveTextContent("Snapshot block: 36000000");
+    expect(details).not.toHaveTextContent("Snapshot date");
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
+  });
+
+  it("hides the date, block and snapshot link when the published list is not on an allowed Hivra location", () => {
+    mockAirdrop = { ...PUBLISHED_AIRDROP, snapshotUrl: "https://example.com/snapshot" };
+    renderLaunched();
+    expect(screen.queryByRole("link", { name: "View the published snapshot" })).not.toBeInTheDocument();
+    const details = screen.getByTestId("token-airdrop-details");
+    expect(details).not.toHaveTextContent(/Snapshot/);
+    expect(details).toHaveTextContent("Airdrop wallet");
+  });
+
+  it("hides a snapshot date that is not a real UTC instant instead of printing it", () => {
+    mockAirdrop = { ...PUBLISHED_AIRDROP, snapshotTakenAt: "20 October 2026" };
+    renderLaunched();
+    expect(screen.getByTestId("token-airdrop-details")).not.toHaveTextContent("Snapshot date");
+    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent("Snapshot block: 36000000");
+  });
+
+  it("links the claim page only when the server says /token/airdrop is served", () => {
+    renderLaunched(PHASES.active, { airdropLookupHref: "/token/airdrop", migrationHref: null });
+    expect(screen.getByRole("link", { name: "Check eligibility and claim through the official Sablier flow" })).toHaveAttribute("href", "/token/airdrop");
+    expect(screen.queryByRole("link", { name: "Read the migration details" })).not.toBeInTheDocument();
+  });
+
+  it("links the migration page, in both places Ash put it, only when the server says /token/migration is served", () => {
+    renderLaunched(PHASES.active, { airdropLookupHref: null, migrationHref: "/token/migration" });
+    expect(screen.queryByRole("link", { name: "Check eligibility and claim through the official Sablier flow" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Read the migration details" })).toHaveLength(2);
+    expect(screen.getByTestId("token-migration-link")).toBeInTheDocument();
   });
 });
 

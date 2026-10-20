@@ -91,9 +91,19 @@ Everything else (balances, tiers, quotes, settlement, sweeps, the price feed,
 the /token page, emails and wallet links) reads this block through
 `token-registry.ts`. That includes the public token copy: /token, /tokenomics,
 /why-hivra/evolution and /llms.txt switch from their dormant wording to their
-launched wording (`dashboard/src/lib/token-phase-copy.ts`) when the block is
-filled in, and again at `activatesAt`. The launched wording needs the UK
-financial-promotion / legal review before any Promote.
+launched wording when the block is filled in. The launched wording is Ash's
+website pack, applied word for word: `/token` in
+`dashboard/src/components/token/TokenLaunchedView.tsx` (page 01-token.md),
+`/tokenomics` in `TokenomicsLaunchedView.tsx` (04-tokenomics.md), and the page
+heads, `/why-hivra/evolution` lines and `/llms.txt` lines in
+`dashboard/src/lib/token-phase-copy.ts`. A scheduled and an active $HIVRA read
+the same launched wording: the pack does not say when Hivra starts to use the
+token, only that new $HIVRA-based access and payments follow published
+activation conditions. The snapshot date, snapshot block, published snapshot,
+Airdrop wallet and the links to `/token/airdrop` and `/token/migration` come
+from `lib/claim/*` and show only once they are published and valid. The
+launched wording needs the UK financial-promotion / legal review before any
+Promote.
 
 ### The activation helper
 

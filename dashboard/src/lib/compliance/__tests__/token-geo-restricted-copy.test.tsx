@@ -39,14 +39,16 @@ import TokenVerificationPage from "@/app/token/page";
 import TokenomicsPage from "@/app/tokenomics/page";
 import WhyHivraEvolutionPage from "@/app/why-hivra/evolution/page";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
-import { DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
+import { DORMANT_TOKENOMICS_COPY, DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
 
 const HIVRA_ADDRESS = "0x1111111111111111111111111111111111111111";
 const HERMESOS_ADDRESS = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 const PHASES = ["dormant", "scheduled", "active"] as const;
-// The first line of the launched /token lead (Ash's rewrite v2, TokenLaunchedView.tsx).
+// The first line of the launched /token lead (Ash's website pack, TokenLaunchedView.tsx).
 const LAUNCHED_LEAD =
   "Hivra started as HermesOS. The platform has grown beyond its original name, and $HIVRA is the new token for the wider ecosystem we're building.";
+// The title of the launched /tokenomics (Ash's website pack, TokenomicsLaunchedView.tsx).
+const LAUNCHED_TOKENOMICS_TITLE = "$HIVRA: what it's for";
 
 function setPhase(phase: HivraTokenPhase) {
   if (phase === "dormant") {
@@ -128,7 +130,10 @@ describe.each(PHASES)("%s $HIVRA, a viewer in the United Kingdom", (phase) => {
     const text = container.textContent ?? "";
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tokencontracts.");
     expect(text).toContain(RESTRICTED_TOKEN_PAGE_COPY.tokenomicsLead);
-    expect(text).not.toContain(copy.tokenomics.headerLead);
+    // Neither the dormant lead nor Ash's launched page (its title and its Sablier claim section).
+    expect(text).not.toContain(DORMANT_TOKENOMICS_COPY.headerLead);
+    expect(text).not.toContain(LAUNCHED_TOKENOMICS_TITLE);
+    expect(text).not.toMatch(/Sablier|snapshot/i);
     expect(text).not.toMatch(STATUS_OR_PROPOSAL);
     expect(screen.getByTestId("tokenomics-contracts")).toHaveTextContent(HERMESOS_ADDRESS);
     expect(screen.getByRole("link", { name: /verify the token contracts/i })).toHaveAttribute("href", "/token");
@@ -163,7 +168,13 @@ describe.each(PHASES)("%s $HIVRA, a viewer from elsewhere", (phase) => {
     }
 
     const tokenomics = await renderPage(TokenomicsPage);
-    expect(tokenomics.container.textContent).toContain(copy.tokenomics.headerLead);
+    if (phase === "dormant") {
+      expect(tokenomics.container.textContent).toContain(DORMANT_TOKENOMICS_COPY.headerLead);
+    } else {
+      // Launched: Ash's pack page, with no geo notice.
+      expect(tokenomics.container.textContent).toContain(LAUNCHED_TOKENOMICS_TITLE);
+      expect(tokenomics.container.querySelector('[data-testid="token-geo-notice"]')).toBeNull();
+    }
   });
 });
 

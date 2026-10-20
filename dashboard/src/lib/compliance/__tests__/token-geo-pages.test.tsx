@@ -79,6 +79,8 @@ import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-
 import { TOKEN_GEO_POLICY } from "../token-geo-policy";
 
 const GB_NOTICE = "Token features aren't available to people in the United Kingdom.";
+// This file's mocked launch block puts $HIVRA in a live phase, so an unblocked viewer reads Ash's launched /tokenomics.
+const TOKENOMICS_LAUNCHED_HEADING = "A snapshot has been taken. Eligible holders can claim.";
 const gate = jest.mocked(readConversionAccessGate);
 
 function viewerFrom(country: string | null) {
@@ -124,7 +126,7 @@ describe("dormant policy", () => {
   it("keeps a GB viewer's /tokenomics, /why-hivra/evolution and airdrop details exactly as today", async () => {
     viewerFrom("GB");
     await renderPage(TokenomicsPage);
-    expect(screen.getByText(/a year of Pro is \$49 in the token against \$79 by card/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: TOKENOMICS_LAUNCHED_HEADING })).toBeInTheDocument();
     await renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
     await renderPage(ConvertPage);
@@ -222,7 +224,7 @@ describe("the committed country list (GB)", () => {
     it("sees every token page as an unblocked viewer does", async () => {
       viewerFrom("GB");
       await renderPage(TokenomicsPage);
-      expect(screen.getByText(/a year of Pro is \$49 in the token/)).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: TOKENOMICS_LAUNCHED_HEADING })).toBeInTheDocument();
       await renderPage(WhyHivraEvolutionPage);
       expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
       await renderPage(ConvertPage);
@@ -241,7 +243,7 @@ describe("the committed country list (GB)", () => {
   it("pages are unchanged for a viewer from elsewhere", async () => {
     viewerFrom("FR");
     await renderPage(TokenomicsPage);
-    expect(screen.getByText(/a year of Pro is \$49 in the token/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: TOKENOMICS_LAUNCHED_HEADING })).toBeInTheDocument();
     await renderPage(ConvertPage);
     expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();

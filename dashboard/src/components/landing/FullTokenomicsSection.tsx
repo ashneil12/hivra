@@ -1,7 +1,8 @@
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
-import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import TokenomicsLaunchedView from "@/components/token/TokenomicsLaunchedView";
+import { DORMANT_TOKENOMICS_COPY, RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
 import { glossify } from "@/components/gloss/glossify";
@@ -48,17 +49,32 @@ function RestrictedTokenomicsSection({ headingLevel, restriction }: { headingLev
 
 /**
  * `phase` is the $HIVRA phase to write the copy for; the page passes the one it
- * rendered with, and it defaults to the phase now. Only the header, the
- * migration article, the proposal note and the supply line change with it;
- * dormant, they are the copy from before.
+ * rendered with, and it defaults to the phase now. Dormant, this is the section
+ * as it was before $HIVRA launched. Once $HIVRA is launched (scheduled or
+ * active), an unblocked viewer reads Ash's website pack page instead
+ * (TokenomicsLaunchedView), with /token/airdrop and /token/migration linked only
+ * when the server says they are served.
  */
 export default function FullTokenomicsSection({
   headingLevel = 2,
   geoRestriction = null,
   phase = getHivraTokenPhase(),
-}: { headingLevel?: 1 | 2; geoRestriction?: TokenomicsGeoRestriction | null; phase?: HivraTokenPhase } = {}) {
-  const copy = getTokenPhaseCopy(phase).tokenomics;
+  airdropLookupHref = null,
+  migrationHref = null,
+}: {
+  headingLevel?: 1 | 2;
+  geoRestriction?: TokenomicsGeoRestriction | null;
+  phase?: HivraTokenPhase;
+  /** /token/airdrop, set by the server only when that page is served and the viewer is not blocked. */
+  airdropLookupHref?: string | null;
+  /** /token/migration, set by the server only when that page is served and the viewer is not blocked. */
+  migrationHref?: string | null;
+} = {}) {
   if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} />;
+  if (phase !== "dormant") {
+    return <TokenomicsLaunchedView headingLevel={headingLevel} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} />;
+  }
+  const copy = DORMANT_TOKENOMICS_COPY;
   const Heading = headingLevel === 1 ? "h1" : "h2";
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>

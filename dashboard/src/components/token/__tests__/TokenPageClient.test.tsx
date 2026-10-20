@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
 import TokenPageClient from "../TokenPageClient";
 import { SUPPORT_DISCORD_URL } from "@/lib/support-channels";
-import { formatLaunchInstantUtc, getTokenPageEntries } from "@/lib/token-verification-content";
+import { formatLaunchInstantUtc, formatSnapshotDateUtc, getTokenPageEntries } from "@/lib/token-verification-content";
 
 const mockCopy = jest.fn();
 jest.mock("@/lib/client/clipboard", () => ({ copyTextToClipboard: (value: string) => mockCopy(value) }));
@@ -80,6 +80,42 @@ describe("TokenPageClient impersonation and risk facts", () => {
     }
     expect(screen.getByTestId("token-lookalike-warning").textContent).not.toMatch(/[–—]/);
     expect(screen.getByTestId("token-risk-line").textContent).not.toMatch(/[–—]/);
+  });
+});
+
+describe("TokenPageClient notes under the contracts, for a viewer the geo-policy blocks, once $HIVRA is on Base", () => {
+  const HIVRA = "0x1111111111111111111111111111111111111111";
+  const entry = (key: "hivra" | "hermesos", status: "live" | "legacy" | "scheduled", activatesAt: string | null) => ({
+    key,
+    label: key === "hivra" ? "$HIVRA" : "$HermesOS",
+    status,
+    contractAddress: key === "hivra" ? HIVRA : "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3",
+    basescanUrl: "https://basescan.org/token/x",
+    activatesAt,
+  });
+
+  it.each([
+    ["active", [entry("hivra", "live", "2026-01-01T00:00:00.000Z"), entry("hermesos", "legacy", null)]],
+    ["scheduled", [entry("hermesos", "live", null), entry("hivra", "scheduled", "2099-10-01T16:00:00.000Z")]],
+  ] as const)("never say new accounts use $HIVRA, or when Hivra starts to (%s)", (_phase, entries) => {
+    const { container } = render(<TokenPageClient entries={[...entries]} geoNotice="Token features aren't available here." />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("The $HIVRA contract.");
+    expect(text).not.toMatch(/new accounts use|New token payments and holdings use it|starts using it|switch time|\$HIVRA has not launched/i);
+  });
+
+  it("still tells a holder of the legacy token that accounts which used it can keep using it", () => {
+    render(<TokenPageClient entries={[entry("hivra", "live", null), entry("hermesos", "legacy", null)]} geoNotice="Token features aren't available here." />);
+    expect(screen.getByText("The legacy $HermesOS contract. Accounts that used it before $HIVRA launched can keep using it.")).toBeInTheDocument();
+  });
+});
+
+describe("formatSnapshotDateUtc", () => {
+  it("writes the day of a UTC instant, not the time, the same way on server and client", () => {
+    expect(formatSnapshotDateUtc("2026-10-20T16:00:00.000Z")).toBe("20 October 2026");
+    // A late UTC evening stays on its UTC day, whatever the viewer's time zone.
+    expect(formatSnapshotDateUtc("2026-12-31T23:59:59.000Z")).toBe("31 December 2026");
+    expect(formatSnapshotDateUtc("not a date")).toBe("not a date");
   });
 });
 
