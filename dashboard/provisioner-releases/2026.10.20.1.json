@@ -249,13 +249,13 @@
     },
     {
       "path": "hivra-update-guest-runtime.sh",
-      "bytes": 14104,
-      "sha256": "c32734c1aa3c817248bedd991ed37e64af5316129db346f3aebf1a219bf9ea8e"
+      "bytes": 13984,
+      "sha256": "327ae477ade416fcc04816592ea3c0c56bb7810abc4f46e5974711c0ed156d6e"
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 20321,
-      "sha256": "490bef5e5d17a1b0f0e52142263f32ec83f81ee002f3f022d8815b34c2a5c87d"
+      "bytes": 20785,
+      "sha256": "b29f8ee8c65eaeefa430c5aca65ff98e28cd263041c7ecaf70291d05238ceb18"
     },
     {
       "path": "hivra-tg-apply",

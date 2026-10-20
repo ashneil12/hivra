@@ -51,6 +51,13 @@ if [ "$(cat "$KIND" 2>/dev/null || true)" = deepseek-harness ]; then
   install -d -o root -g root -m 0700 "$NATIVE_WORK/source"
   tar -xzf "$NATIVE_WORK/runtime.tar.gz" -C "$NATIVE_WORK/source" --no-same-owner --no-same-permissions
   rm -f -- "$NATIVE_WORK/runtime.tar.gz"
+  # The gateway in its bundle layout, as separate files (the updater refuses links).
+  install -d -o root -g root -m 0700 "$NATIVE_WORK/source/hivra-chat"
+  for asset in "${ASSETS[@]}"; do
+    [ -f "$NATIVE_WORK/source/$asset" ] && [ ! -L "$NATIVE_WORK/source/$asset" ] \
+      || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+    install -o root -g root -m 0600 "$NATIVE_WORK/source/$asset" "$NATIVE_WORK/source/hivra-chat/$asset"
+  done
   # The bundle the computer was installed from: Proxmox computers keep it at
   # the top level, My cloud computers in its current/ release directory.
   INSTALLED=/opt/hivra/provider-bundle

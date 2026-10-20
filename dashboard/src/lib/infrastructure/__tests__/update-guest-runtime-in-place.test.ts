@@ -44,6 +44,7 @@ esac
 `,
   scp: `#!/usr/bin/env bash
 printf '%s\\0' "$@" > "$FAKE_DIR/scp.argv"
+cp "\${@: -2:1}" "$FAKE_DIR/archive.tar.gz"
 exit "\${FAKE_SCP_EXIT:-0}"
 `,
   ssh: `#!/usr/bin/env bash
@@ -94,6 +95,8 @@ interface HelperRun {
   kinds: string[];
   qm: string[];
   credentialFileLeft: boolean;
+  /** `tar -tvzf` of the archive the helper sent, or null if none was sent. */
+  archiveListing: string | null;
   /** FD8 releases and guest calls, in order. */
   events: string[];
   sshCall: (index: number) => { argv: string[]; env: string; stdin: string };
@@ -186,6 +189,8 @@ function runHelper(options: {
       kinds: read("ssh.kinds").trim().split("\n").filter(Boolean),
       qm: read("qm.log").trim().split("\n").filter(Boolean),
       credentialFileLeft: existsSync(credentialFile),
+      archiveListing: existsSync(path.join(fakeDir, "archive.tar.gz"))
+        ? spawnSync("tar", ["-tvzf", path.join(fakeDir, "archive.tar.gz")], { encoding: "utf8" }).stdout : null,
       events: read("events").trim().split("\n").filter(Boolean),
       sshCall: (index) => {
         const call = calls.get(index);
@@ -292,6 +297,23 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     // The archive carries the DeepSeek package directory and the gateway in bundle layout.
     expect(UPDATE_SOURCE).toContain('NATIVE_ASSETS=(deepseek-harness)');
     expect(UPDATE_SOURCE).toContain('"${TERMINAL_ASSETS[@]}" "${NATIVE_ASSETS[@]}"');
+  });
+
+  it("archives every file once, so nothing reaches the guest as a hard link", () => {
+    // The regression: the gateway assets were archived a second time in their
+    // bundle layout; tar stored that copy as a hard link, and the DeepSeek
+    // updater (which accepts only single-link files) refused it on a real guest.
+    const run = runHelper();
+    expect(run.status).toBe(0);
+    const listing = run.archiveListing ?? "";
+    const entries = listing.trim().split("\n");
+    expect(entries.length).toBeGreaterThan(10);
+    expect(entries.filter(line => line.startsWith("h") || / link to /.test(line))).toEqual([]);
+    expect(listing).toContain("deepseek-harness/update-guest.py");
+    // Each gateway asset is archived once (GNU tar turns a second copy of the same file into a link).
+    for (const asset of RUNTIME_ASSETS) {
+      expect(entries.filter(line => line.endsWith(` ${asset}`) || line.endsWith(`/${asset}`))).toHaveLength(1);
+    }
   });
 
   it("ships the agent CLI pins and helpers, and schedules the swap only after the gateway commit", () => {

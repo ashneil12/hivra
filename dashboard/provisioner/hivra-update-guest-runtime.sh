@@ -139,16 +139,11 @@ GUEST_UPDATER="$PROVISIONER_DIR/hivra-guest-runtime-update.sh"
   || { echo "guest runtime updater is missing or unsafe" >&2; exit 1; }
 # A DeepSeek computer runs its own gateway generation and pinned package
 # (deepseek-harness/update-guest.py replaces them), so the archive also carries
-# that directory and the gateway assets in their bundle layout.
+# that directory. Its gateway assets are the ones above; the guest half lays
+# them out again, since one file archived twice would arrive as a hard link.
 NATIVE_ASSETS=(deepseek-harness)
-for asset in "${ASSETS[@]}"; do
-  [ "$asset" = chat-runs.cjs ] || NATIVE_ASSETS+=("hivra-chat/$asset")
-done
-for asset in "${NATIVE_ASSETS[@]}"; do
-  [ -e "$PROVISIONER_DIR/$asset" ] && [ ! -L "$PROVISIONER_DIR/$asset" ] \
-    || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
-done
-[ -z "$(find "$PROVISIONER_DIR/deepseek-harness" \( -type l -o \( ! -type f ! -type d \) \) -print -quit)" ] \
+[ -d "$PROVISIONER_DIR/deepseek-harness" ] && [ ! -L "$PROVISIONER_DIR/deepseek-harness" ] \
+  && [ -z "$(find "$PROVISIONER_DIR/deepseek-harness" \( -type l -o \( ! -type f ! -type d \) \) -print -quit)" ] \
   || { echo "runtime source asset is missing or unsafe: deepseek-harness" >&2; exit 1; }
 tar -czf "$ARCHIVE" -C "$PROVISIONER_DIR/hivra-chat" "${ASSETS[@]}" -C "$PROVISIONER_DIR" "${TERMINAL_ASSETS[@]}" "${NATIVE_ASSETS[@]}"
 ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
