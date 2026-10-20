@@ -23,6 +23,8 @@ import type { HivraClaimPhase } from "./hivra-claim";
 export const HIVRA_AIRDROP_DATA_VERSION = 2;
 const DECIMALS = 18;
 const WEI_PER_TOKEN = 10n ** BigInt(DECIMALS);
+/** $HIVRA's total supply (100B tokens): no list can allocate more than exists. */
+const TOTAL_SUPPLY_WEI = 100_000_000_000n * WEI_PER_TOKEN;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const ANY_CASE_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const WEI = /^\d+$/;
@@ -120,6 +122,8 @@ export function parseHivraAirdropData(raw: unknown): AirdropParseResult {
     excludedByAddress.set(item.address, item.label.trim());
     excluded.push({ address: item.address, label: item.label.trim() });
   }
+
+  if (includedWei > TOTAL_SUPPLY_WEI) problems.push("the holder amounts add up to more than the 100 billion $HIVRA supply");
 
   if (totals && problems.length === 0) {
     if (totals.holders !== holders.length) problems.push("totals.holders does not match the holder list");

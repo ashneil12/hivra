@@ -11,6 +11,7 @@ import {
   formatTokenCount,
   getServedHivraMigration,
   hivraMigrationHref,
+  readClaimRecordsUrl,
   validateHivraMigrationConfig,
 } from "../hivra-migration";
 import { HIVRA_MIGRATION, type HivraMigrationConfig } from "../hivra-migration-config";
@@ -160,6 +161,39 @@ describe("validateHivraMigrationConfig", () => {
     expect(problems).toContain("founder.burnDate is not after the last sale week");
   });
 
+  describe("the founder's last sale against the claim window", () => {
+    // 13 weekly sales from Thursday 5 Nov 2026 end on Thursday 28 Jan 2027: the day after the window's last day (27 Jan).
+    it.each([
+      ["a window that closes in the last second of its last day", "2027-01-27T23:59:59Z"],
+      ["a window that closes at the start of the day after", "2027-01-28T00:00:00Z"],
+      ["a window that closes at the start of its last day plus a second", "2027-01-27T00:00:01Z"],
+    ])("keeps the sale start for %s", (_why, closesAt) => {
+      const { migration, problems } = validate(config(), closesAt);
+      expect(problems).toEqual([]);
+      expect(migration.founder?.saleStart).toEqual({ iso: "2026-11-05T00:00:00.000Z", dateOnly: true });
+    });
+
+    it.each([
+      ["a window that closes the same day as the last sale", "2027-01-28T12:00:00Z"],
+      ["a window that closes a day early", "2027-01-26T23:59:59Z"],
+      ["a window that closes well after", "2027-02-10T16:00:00Z"],
+    ])("drops a sale start whose last sale is not the day after the claim window's last day (%s) and says why", (_why, closesAt) => {
+      const { migration, problems } = validate(config(), closesAt);
+      expect(migration.founder?.saleStart).toBeNull();
+      expect(problems).toContain("founder.saleStart plus weeks - 1 whole weeks (the last sale) is not the day after the claim window's last day");
+      // Everything else about the founder is kept.
+      expect(migration.founder?.weeks).toBe(13);
+    });
+
+    it("checks nothing without a closing time or a number of weeks", () => {
+      expect(validate(config(), null).problems).toEqual([]);
+      const founder = { ...config().founder!, weeks: null };
+      const { migration, problems } = validate(config({ founder }), "2027-03-01T00:00:00Z");
+      expect(problems.join()).not.toMatch(/last sale/);
+      expect(migration.founder?.saleStart).not.toBeNull();
+    });
+  });
+
   describe("the founder's burn date against the claim window", () => {
     // 13 weekly sales from 5 Nov 2026 end on 28 Jan 2027, the day after the window's last day.
     const CLOSES = "2027-01-27T23:59:59Z";
@@ -170,16 +204,18 @@ describe("validateHivraMigrationConfig", () => {
       expect(migration.founder?.burnDate).toEqual({ iso: "2027-02-04T00:00:00.000Z", dateOnly: true });
     });
 
+    // With no sale start there is no last sale to check, so only the burn date is held to the window.
+    const noSaleStart = () => ({ ...config().founder!, saleStart: null, saleDay: null });
+
     it.each([
       ["a window that closes after the burn day starts", "2027-02-04T12:00:00Z"],
       ["a window that closes at the burn instant", "2027-02-04T00:00:00Z"],
       ["a window that closes well after the burn date", "2027-02-10T16:00:00Z"],
     ])("drops a burn date that is not after claim.closesAt (%s) and says why", (_why, closesAt) => {
-      const { migration, problems } = validate(config(), closesAt);
+      const { migration, problems } = validate(config({ founder: noSaleStart() }), closesAt);
       expect(migration.founder?.burnDate).toBeNull();
       expect(problems).toContain("founder.burnDate is not after claim.closesAt");
       // Everything else about the founder is kept.
-      expect(migration.founder?.saleStart).toEqual({ iso: "2026-11-05T00:00:00.000Z", dateOnly: true });
       expect(migration.founder?.weeks).toBe(13);
     });
 
@@ -190,10 +226,43 @@ describe("validateHivraMigrationConfig", () => {
     });
 
     it("does nothing when there is no burn date to check", () => {
-      const founder = { ...config().founder!, burnDate: null };
+      const founder = { ...noSaleStart(), burnDate: null };
       const { migration, problems } = validate(config({ founder }), "2027-03-01T00:00:00Z");
       expect(migration.founder?.burnDate).toBeNull();
       expect(problems).toEqual([]);
+    });
+  });
+
+  describe("claimRecordsUrl", () => {
+    it.each([
+      ["a Sablier campaign page", "https://app.sablier.com/airdrops/campaign/0xabc123/"],
+      ["a BaseScan address page", "https://basescan.org/address/0x3333333333333333333333333333333333333333"],
+      ["a BaseScan transaction page", `https://basescan.org/tx/${HASH(7)}`],
+    ])("keeps %s", (_why, claimRecordsUrl) => {
+      const { migration, problems } = validate(config({ claimRecordsUrl }));
+      expect(problems).toEqual([]);
+      expect(migration.claimRecordsUrl).toBe(claimRecordsUrl);
+    });
+
+    it.each([
+      ["another host", "https://evil.example/airdrops/x"],
+      ["http", "http://app.sablier.com/airdrops/x"],
+      ["a lookalike BaseScan host", "https://basescan.org.evil.example/address/0x3333333333333333333333333333333333333333"],
+      ["a BaseScan page with a query", "https://basescan.org/address/0x3333333333333333333333333333333333333333?a=1"],
+      ["a BaseScan page that is not an address or transaction", "https://basescan.org/token/0x3333333333333333333333333333333333333333"],
+      ["a short BaseScan address", "https://basescan.org/address/0x1234"],
+      ["the Sablier front page", "https://app.sablier.com/"],
+    ])("drops %s and says why", (_why, claimRecordsUrl) => {
+      const { migration, problems } = validate(config({ claimRecordsUrl }));
+      expect(migration.claimRecordsUrl).toBeNull();
+      expect(problems).toContain("claimRecordsUrl must be a plain https link on app.sablier.com or a BaseScan address or transaction page");
+    });
+
+    it("is null when it is not set, and never read from anything but a string", () => {
+      expect(validate(config()).migration.claimRecordsUrl).toBeNull();
+      expect(validate(config({ claimRecordsUrl: undefined })).problems).toEqual([]);
+      expect(readClaimRecordsUrl(42)).toBeNull();
+      expect(readClaimRecordsUrl(null)).toBeNull();
     });
   });
 
@@ -279,13 +348,77 @@ describe("getServedHivraMigration / hivraMigrationHref", () => {
     const warn = jest.mocked(log.warn);
     warn.mockClear();
     const claim = { campaignUrl: "https://app.sablier.com/airdrops/campaign/0xabc/", opensAt: "2026-11-01T16:00:00Z", closesAt: "2027-02-10T16:00:00Z" };
-    const served = getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim } });
+    // No sale start, so only the burn date is held to the window.
+    const noSaleStart = config({ founder: { ...config().founder!, saleStart: null, saleDay: null } });
+    const served = getServedHivraMigration({ ...ready, config: noSaleStart, airdrop: { ...AIRDROP, claim } });
     expect(served?.founder?.burnDate).toBeNull();
-    expect(served?.founder?.saleStart).not.toBeNull();
     expect(warn).toHaveBeenCalledWith("HIVRA migration config rejected", expect.objectContaining({ problems: expect.stringContaining("founder.burnDate is not after claim.closesAt") }));
     // With a window that closes earlier, the date stays.
     const earlier = { ...claim, closesAt: "2027-01-27T23:59:59Z" };
     expect(getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim: earlier } })?.founder?.burnDate?.iso).toBe("2027-02-04T00:00:00.000Z");
+  });
+
+  it("drops the sale start, and logs it, when the last sale is not the day after the airdrop config's claim window ends", () => {
+    const warn = jest.mocked(log.warn);
+    warn.mockClear();
+    const claim = { campaignUrl: "https://app.sablier.com/airdrops/campaign/0xabc/", opensAt: "2026-11-01T16:00:00Z", closesAt: "2027-01-30T12:00:00Z" };
+    const served = getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim } });
+    expect(served?.founder?.saleStart).toBeNull();
+    expect(warn).toHaveBeenCalledWith("HIVRA migration config rejected", expect.objectContaining({ problems: expect.stringContaining("is not the day after the claim window's last day") }));
+  });
+
+  describe("the founder's wallet against the published airdrop list", () => {
+    const FOUNDER = "0x672b58b6d10413fe69ab0907db5b17712bd45f7a";
+    const address = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
+    const list = (overrides: Record<string, unknown> = {}) => ({
+      version: 2,
+      final: false,
+      snapshotBlock: 36_000_000,
+      decimals: 18,
+      totals: { holders: 1, includedWei: "5", percentOfSupply: "0.01" },
+      holders: [{ address: address(1), amountWei: "5" }],
+      excluded: [{ address: FOUNDER, label: "Founder wallet (not migrated)" }],
+      ...overrides,
+    });
+    const problemLogged = () => jest.mocked(log.warn).mock.calls.some(([message, meta]) =>
+      message === "HIVRA migration config rejected" && String((meta as { problems?: string }).problems).includes("founder.wallet is not an excluded wallet"));
+
+    beforeEach(() => jest.mocked(log.warn).mockClear());
+
+    it("keeps the founder section when his wallet is one of the list's excluded wallets", () => {
+      const served = getServedHivraMigration({ ...ready, airdropList: list() });
+      expect(served?.founder?.wallet).toBe("0x672b58B6d10413Fe69ab0907db5B17712BD45f7A");
+      expect(problemLogged()).toBe(false);
+    });
+
+    it.each([
+      ["a holder who can claim", { holders: [{ address: FOUNDER, amountWei: "5" }], excluded: [] }],
+      ["a Hivra-managed holder", { holders: [{ address: FOUNDER, amountWei: "5", remapped: true }], excluded: [] }],
+      ["not in the list at all", { excluded: [] }],
+    ])("leaves out the whole founder section, and logs why, when his wallet is %s", (_why, overrides) => {
+      const served = getServedHivraMigration({ ...ready, airdropList: list({ totals: { holders: 1, includedWei: "5", percentOfSupply: "0.01" }, ...overrides }) });
+      expect(served).not.toBeNull();
+      expect(served?.founder).toBeNull();
+      // The rest of the page is still served.
+      expect(served?.treasurySafe).not.toBeNull();
+      expect(problemLogged()).toBe(true);
+    });
+
+    it.each([
+      ["the list is not published yet (the committed null)", null],
+      ["the list is for another snapshot block", list({ snapshotBlock: 1 })],
+      ["the list is malformed", list({ decimals: 6 })],
+    ])("has nothing to check against when %s, so the section stays", (_why, airdropList) => {
+      expect(getServedHivraMigration({ ...ready, airdropList })?.founder?.wallet).not.toBeNull();
+      expect(problemLogged()).toBe(false);
+    });
+
+    it("checks nothing when the founder section has no wallet", () => {
+      const founder = { ...config().founder!, wallet: null };
+      const served = getServedHivraMigration({ ...ready, config: config({ founder }), airdropList: list({ excluded: [] }) });
+      expect(served?.founder).not.toBeNull();
+      expect(problemLogged()).toBe(false);
+    });
   });
 
   it("leaves out a snapshot time that is in the future, and keeps the snapshot", () => {

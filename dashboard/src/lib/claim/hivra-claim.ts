@@ -13,8 +13,10 @@
  *
  * Every set value is checked. The campaign link must be https on exactly
  * app.sablier.com, with no credentials, port, fragment, backslash, whitespace,
- * percent-encoding or dot segments, so a lookalike host, a redirect-style
- * trick or a path escape is never shown as Hivra's claim. The two instants
+ * percent-encoding, dot segments or empty path segment, and it must name a
+ * page (a path or a query), not just the site's front page: a lookalike host, a
+ * redirect-style trick or a path escape is never shown as Hivra's claim, and the
+ * link is safe to put in HTML, Markdown or an email as well as an href. The two instants
  * must be real UTC instants to the second, with opensAt before closesAt.
  *
  * A set but invalid value is reported in `problems` and the WHOLE claim stays
@@ -43,8 +45,11 @@ export const NO_CLAIM: ResolvedHivraClaim = { phase: "unpublished", campaignUrl:
 const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 // https://app.sablier.com, then an optional path and query of plain URL characters
 // and nothing else: no userinfo (@ before the host), port, fragment, backslash,
-// whitespace, percent-encoding or non-ASCII character can appear anywhere.
-const URL_CHARS = "A-Za-z0-9\\-._~!$&'()*+,;=:@";
+// whitespace, percent-encoding or non-ASCII character can appear anywhere. The
+// quote, bracket and delimiter characters (' ( ) * ! $ , ;) are left out: a real
+// campaign link has none, and without them the link cannot break out of an HTML,
+// Markdown or email context if it is ever printed there.
+const URL_CHARS = "A-Za-z0-9\\-._~&+=:@";
 const SABLIER_URL = new RegExp(`^https://app\\.sablier\\.com(?:/[${URL_CHARS}/]*)?(?:\\?[${URL_CHARS}/?]*)?$`, "i");
 const MAX_URL_LENGTH = 2048;
 
@@ -61,8 +66,14 @@ export function readUtcInstant(value: string): number | null {
 export function readSablierCampaignUrl(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_URL_LENGTH || !SABLIER_URL.test(value)) return null;
   // The raw path is checked, not the normalised one: "/a/../b" must not be quietly rewritten to "/b".
-  const rawPath = value.slice("https://app.sablier.com".length).split("?")[0];
+  const afterHost = value.slice("https://app.sablier.com".length);
+  const rawPath = afterHost.split("?")[0];
   if (rawPath.split("/").some((segment) => segment === "." || segment === "..")) return null;
+  // No empty segment ("//"): a leading "//" reads as a protocol-relative link in some contexts.
+  if (rawPath.includes("//")) return null;
+  // A campaign is a page: the bare front page (with no path, or "/", and no query) is not one.
+  const query = afterHost.includes("?") ? afterHost.slice(afterHost.indexOf("?") + 1) : "";
+  if ((rawPath === "" || rawPath === "/") && query === "") return null;
   let url: URL;
   try {
     url = new URL(value);

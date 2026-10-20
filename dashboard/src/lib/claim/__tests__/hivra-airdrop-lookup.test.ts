@@ -42,6 +42,15 @@ describe("parseHivraAirdropData", () => {
     expect(parsed().data.final).toBe(true);
   });
 
+  it("accepts amounts that add up to exactly the whole supply", () => {
+    const wholeSupply = "100000000000000000000000000000";
+    expect(parseHivraAirdropData({
+      ...validList(),
+      totals: { ...validList().totals, holders: 1, includedWei: wholeSupply },
+      holders: [{ address: A(1), amountWei: wholeSupply }],
+    }).ok).toBe(true);
+  });
+
   it("reads a list without a final flag as not final, and a dry run as not final", () => {
     const withoutFlag: Record<string, unknown> = { ...validList() };
     delete withoutFlag.final;
@@ -65,6 +74,11 @@ describe("parseHivraAirdropData", () => {
     ["a float amount", { ...validList(), holders: [{ ...validList().holders[0], amountWei: "4e18" }, ...validList().holders.slice(1)] }],
     ["a holder listed twice", { ...validList(), holders: [...validList().holders, validList().holders[0]] }],
     ["a wallet both included and excluded", { ...validList(), excluded: [{ address: A(1), label: "x" }] }],
+    ["amounts that add up to more than the 100 billion supply", {
+      ...validList(),
+      totals: { ...validList().totals, holders: 2, includedWei: "100000000000000000000000000001" },
+      holders: [{ address: A(1), amountWei: "100000000000000000000000000000" }, { address: A(2), amountWei: "1" }],
+    }],
   ])("rejects %s", (_name, raw) => {
     expect(parseHivraAirdropData(raw).ok).toBe(false);
   });

@@ -17,7 +17,7 @@ describe("readSablierCampaignUrl", () => {
     [CAMPAIGN, CAMPAIGN],
     ["https://app.sablier.com/airdrops/campaign/0xabc123/?c=base-8453", "https://app.sablier.com/airdrops/campaign/0xabc123/?c=base-8453"],
     ["https://APP.SABLIER.COM/x", "https://app.sablier.com/x"],
-    ["https://app.sablier.com", "https://app.sablier.com/"],
+    ["https://app.sablier.com/?c=base-8453", "https://app.sablier.com/?c=base-8453"],
     ["https://app.sablier.com/a/b.c/d-e_f~g", "https://app.sablier.com/a/b.c/d-e_f~g"],
   ])("accepts %s", (input, expected) => {
     expect(readSablierCampaignUrl(input)).toBe(expected);
@@ -53,6 +53,20 @@ describe("readSablierCampaignUrl", () => {
     ["a non-ASCII lookalike", "https://app.sablier.com/ａ"],
     ["a lookalike host", "https://app.sablіer.com/x"],
     ["an empty string", ""],
+    ["the bare front page", "https://app.sablier.com"],
+    ["the bare front page with a slash", "https://app.sablier.com/"],
+    ["the bare front page with an empty query", "https://app.sablier.com/?"],
+    ["a leading double slash", "https://app.sablier.com//evil.example/x"],
+    ["a double slash in the path", "https://app.sablier.com/a//b"],
+    ["a single quote", "https://app.sablier.com/a'b"],
+    ["parentheses", "https://app.sablier.com/a(b)"],
+    ["an asterisk", "https://app.sablier.com/a*b"],
+    ["an exclamation mark", "https://app.sablier.com/a!b"],
+    ["a dollar sign", "https://app.sablier.com/a$b"],
+    ["a comma", "https://app.sablier.com/a,b"],
+    ["a semicolon", "https://app.sablier.com/a;b"],
+    ["a double quote", "https://app.sablier.com/a\"b"],
+    ["angle brackets", "https://app.sablier.com/a<b>"],
   ])("rejects %s", (_why, input) => {
     expect(readSablierCampaignUrl(input)).toBeNull();
   });

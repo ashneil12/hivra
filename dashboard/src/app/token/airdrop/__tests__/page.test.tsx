@@ -194,9 +194,10 @@ describe("/token/airdrop", () => {
       expect(text).not.toMatch(/—/);
     });
 
-    it("adds only the one sentence about Hivra-managed wallets that the pack leaves unexplained", async () => {
+    it("adds only the one sentence about Hivra-managed wallets that the pack leaves unexplained, and makes no claim about how Sablier treats them", async () => {
       await renderPage();
-      expect(screen.getByText("Wallets that Hivra manages for a user, such as lock wallets and agent wallets, cannot connect to Sablier, so those allocations are handled separately.")).toBeInTheDocument();
+      expect(screen.getByText("Wallets that Hivra manages for a user, such as lock wallets and agent wallets, are handled separately.")).toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/cannot connect to Sablier/i);
     });
   });
 

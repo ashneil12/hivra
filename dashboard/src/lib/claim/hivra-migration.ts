@@ -12,7 +12,9 @@
  *
  * Every other field is checked here (validateHivraMigrationConfig). An invalid
  * value is dropped and logged, never rendered, and the page leaves out the
- * section or line that needed it.
+ * section or line that needed it. Once the airdrop list is open, the founder's
+ * wallet must be one of its excluded wallets: the page says his $HermesOS get
+ * no $HIVRA, so if the list says otherwise the founder section is left out.
  */
 import "server-only";
 
@@ -27,8 +29,10 @@ import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 import { readEip55Address } from "./eip55";
 import { HIVRA_AIRDROP, type HivraAirdropConfig } from "./hivra-airdrop-config";
+import { getOpenHivraAirdrop } from "./hivra-airdrop-data";
+import { lookupHivraAirdrop } from "./hivra-airdrop-lookup";
 import { resolveAirdropFacts, type AirdropSnapshot } from "./conversion-state";
-import { NO_CLAIM, readUtcInstant, type ResolvedHivraClaim } from "./hivra-claim";
+import { NO_CLAIM, readSablierCampaignUrl, readUtcInstant, type ResolvedHivraClaim } from "./hivra-claim";
 import {
   HIVRA_MIGRATION,
   type HivraMigrationConfig,
@@ -42,6 +46,8 @@ export const RECEIPT_KINDS: readonly HivraMigrationReceiptKind[] = ["claim", "li
 export const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
+// A BaseScan page for the campaign contract or one claim transaction: no query, fragment or other path.
+const BASESCAN_CLAIM_RECORDS = /^https:\/\/basescan\.org\/(?:address\/0x[0-9a-fA-F]{40}|tx\/0x[0-9a-fA-F]{64})$/;
 const ZERO_ADDRESS = /^0x0{40}$/i;
 const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const UTC_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -77,6 +83,8 @@ export type ResolvedMigrationReceipt = {
 
 export type ValidatedHivraMigration = {
   announcedAt: MigrationDate | null;
+  /** Where the claims made so far can be checked: https on app.sablier.com, or a BaseScan address or transaction page. */
+  claimRecordsUrl: string | null;
   /** EIP-55 checksummed. */
   treasurySafe: string | null;
   fee: HivraMigrationFee | null;
@@ -124,6 +132,12 @@ function readAddress(value: string | null | undefined, hivraAddress: string | nu
   return checksummed;
 }
 
+/** The claim-records link: a plain Sablier link (as the campaign link) or a BaseScan address or transaction page, else null. */
+export function readClaimRecordsUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return readSablierCampaignUrl(value) ?? (BASESCAN_CLAIM_RECORDS.test(value) ? value : null);
+}
+
 const UNIT_WORDS = { K: "thousand", M: "million", B: "billion" } as const;
 
 /** "11.34B" → "11.34 billion". Anything else is rejected. */
@@ -169,6 +183,12 @@ export function validateHivraMigrationConfig(
     announced = null;
   }
 
+  let claimRecordsUrl: string | null = null;
+  if (config.claimRecordsUrl !== undefined && config.claimRecordsUrl !== null) {
+    claimRecordsUrl = readClaimRecordsUrl(config.claimRecordsUrl);
+    if (claimRecordsUrl === null) problems.push("claimRecordsUrl must be a plain https link on app.sablier.com or a BaseScan address or transaction page");
+  }
+
   let treasurySafe: string | null = null;
   const safe = readAddress(config.treasurySafe, hivraAddress);
   if (safe === "invalid") problems.push("treasurySafe must be a non-zero EIP-55 address that is not a token contract");
@@ -205,6 +225,18 @@ export function validateHivraMigrationConfig(
       const earliest = announced.ms + (headStartDays ?? 0) * DAY_MS;
       if (saleStart.ms < earliest) {
         problems.push("founder.saleStart is before the no-sale period after announcedAt ends");
+        saleStart = null;
+      }
+    }
+
+    // The final planned sale is the day after the claim window's last day (the window ends at
+    // claim.closesAt, so its last day is the day of the last second before it).
+    if (saleStart && weeks !== null && claimClosesMs !== null) {
+      const dayStart = (ms: number) => ms - (ms % DAY_MS);
+      const lastSaleDay = dayStart(saleStart.ms + (weeks - 1) * 7 * DAY_MS);
+      const dayAfterClaims = dayStart(claimClosesMs - 1000) + DAY_MS;
+      if (lastSaleDay !== dayAfterClaims) {
+        problems.push("founder.saleStart plus weeks - 1 whole weeks (the last sale) is not the day after the claim window's last day");
         saleStart = null;
       }
     }
@@ -276,6 +308,7 @@ export function validateHivraMigrationConfig(
   return {
     migration: {
       announcedAt: publicDate(announced),
+      claimRecordsUrl,
       treasurySafe,
       fee,
       founder,
@@ -292,6 +325,8 @@ export type HivraMigrationInputs = {
   hivra?: PlatformToken | null;
   config?: HivraMigrationConfig;
   airdrop?: HivraAirdropConfig;
+  /** The committed airdrop list (null, or the parsed-JSON shape); defaults to src/data/token/hivra-airdrop.json. */
+  airdropList?: unknown;
 };
 
 const reported = new Set<string>();
@@ -306,6 +341,29 @@ function reportOnce(problems: string[]) {
     failureType: "hivra_migration_config_rejected",
     problems: problems.slice(0, 20).join("; "),
   });
+}
+
+/**
+ * The page says the founder's $HermesOS are excluded from the allocation. Once
+ * the published list is open, hold it to that: the founder's wallet must be one of
+ * its excluded wallets. A holder, a Hivra-managed wallet or a wallet the list does
+ * not mention would make the sentence untrue, so the founder section is left out
+ * (and the reason logged) instead of printing it. Before the list is open there is
+ * nothing to check against.
+ */
+function checkFounderWalletIsExcluded(
+  migration: ValidatedHivraMigration,
+  problems: string[],
+  list: Parameters<typeof getOpenHivraAirdrop>[0],
+) {
+  const wallet = migration.founder?.wallet;
+  if (!wallet) return;
+  const open = getOpenHivraAirdrop(list);
+  if (!open) return;
+  const found = lookupHivraAirdrop(open.airdrop, wallet);
+  if (found.kind === "excluded") return;
+  problems.push(`founder.wallet is not an excluded wallet in the published airdrop list (the list has it as: ${found.kind}); the founder section is left out`);
+  migration.founder = null;
 }
 
 /**
@@ -331,6 +389,12 @@ export function getServedHivraMigration(inputs: HivraMigrationInputs = {}): Serv
   });
   // `now` is passed so a snapshotTakenAt in the future is dropped and the claim phase is read; this page renders on the server.
   const { snapshot, claim } = resolveAirdropFacts(airdrop, hivra.address, now);
+  checkFounderWalletIsExcluded(migration, problems, {
+    now,
+    hivraAddress: hivra.address,
+    config: airdrop,
+    ...("airdropList" in inputs ? { raw: inputs.airdropList } : {}),
+  });
   if (problems.length > 0) reportOnce(problems);
   return {
     ...migration,

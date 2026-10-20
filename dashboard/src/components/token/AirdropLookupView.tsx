@@ -103,7 +103,9 @@ function LookupResult({ result, block, phase }: { result: AirdropLookupResult; b
  * the claim link (only while the claim is open), the snapshot link, the final
  * counts (only when the list is final) and the migration link (only when that
  * page is served). The pack's "Already claimed?" line is left out because the app
- * cannot verify claims. Rendered on the server for one request: a viewer the
+ * cannot verify claims. Two short lines are not in the pack: "(rounded up)" after the
+ * percentage of supply (the generator rounds it up) and the line about Hivra-managed
+ * wallets, which only repeats the pack's own "handled separately" from /token. Rendered on the server for one request: a viewer the
  * token geo-policy blocks gets the notice and a link to the contracts, never an
  * amount, a total or the lookup form.
  */
@@ -165,7 +167,7 @@ export default function AirdropLookupView({ state }: { state: AirdropLookupViewS
             <p><strong>Percentage of supply:</strong> {state.counts.percentOfSupply}% (rounded up)</p>
           </div> : null}
           <p>The published eligibility data should also explain exclusions, including liquidity pools, launch contracts and the founder&apos;s wallet, where applicable.</p>
-          <p>Wallets that Hivra manages for a user, such as lock wallets and agent wallets, cannot connect to Sablier, so those allocations are handled separately.</p>
+          <p>Wallets that Hivra manages for a user, such as lock wallets and agent wallets, are handled separately.</p>
         </section>
         <section aria-labelledby="claim-safely-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
           <h2 id="claim-safely-title">Claim safely</h2>

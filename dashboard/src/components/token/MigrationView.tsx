@@ -5,6 +5,7 @@ import PublicSite from "@/components/public-site/PublicSite";
 import type { HivraMigrationReceiptKind } from "@/lib/claim/hivra-migration-config";
 import type { MigrationDate, ServedHivraMigration } from "@/lib/claim/hivra-migration";
 import { RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
+import { formatUtcInstant } from "@/lib/claim/hivra-claim";
 import { formatLaunchInstantUtc } from "@/lib/token-verification-content";
 
 import styles from "./TokenFacts.module.css";
@@ -73,7 +74,7 @@ function WhatChanged({ migration }: { migration: ServedHivraMigration }) {
   </Section>;
 }
 
-function Eligibility({ airdropLookupHref, claimHref }: { airdropLookupHref: string | null; claimHref: string | null }) {
+function Eligibility({ airdropLookupHref, claimHref, claim }: { airdropLookupHref: string | null; claimHref: string | null; claim: ServedHivraMigration["claim"] }) {
   return <Section id="eligibility" title="Check your eligibility and claim">
     {airdropLookupHref ? <p>Not sure whether your wallet was included? Use the snapshot checker to look up a <strong>public wallet address</strong> and see the eligible allocation.</p> : null}
     <p>If you&apos;re eligible, follow the <strong>official Sablier claim link published by Hivra</strong>. Check the claim amount and any fees in your wallet before approving a transaction.</p>
@@ -81,6 +82,9 @@ function Eligibility({ airdropLookupHref, claimHref }: { airdropLookupHref: stri
       {airdropLookupHref ? <p style={LINK_LINE}><Link href={airdropLookupHref}>Check a wallet</Link></p> : null}
       {claimHref ? <p style={LINK_LINE}><ExternalLink href={claimHref}>Claim through Sablier</ExternalLink></p> : null}
     </div> : null}
+    {claim.opensAt && claim.closesAt ? <p data-testid="migration-claim-window">
+      <strong>Claim window:</strong> {formatUtcInstant(claim.opensAt)} to {formatUtcInstant(claim.closesAt)}
+    </p> : null}
     <p><strong>Important:</strong> A legitimate Sablier claim involves connecting a wallet and authorising the necessary claim transaction. Don&apos;t trust a claim link sent through a DM. Start from Hivra&apos;s official token page, and verify the destination before signing.</p>
   </Section>;
 }
@@ -188,16 +192,19 @@ function ReceiptGroup({ migration, kind, testId, title }: { migration: ServedHiv
  * its heading, and the pack's bracketed "link completed transactions here"
  * placeholders are never rendered.
  */
-function OnChainRecords({ migration }: { migration: ServedHivraMigration }) {
-  const { snapshot, claim } = migration;
+function OnChainRecords({ migration, claimHref }: { migration: ServedHivraMigration; claimHref: string | null }) {
+  const { snapshot, claim, claimRecordsUrl } = migration;
   const claimReceipts = migration.receipts.filter((receipt) => receipt.kind === "claim");
-  const hasSnapshotAndClaims = snapshot !== null || claim.campaignUrl !== null || claimReceipts.length > 0;
+  // Claim transactions only exist once claims have started, so the records link waits for that too.
+  const recordsHref = claim.phase === "open" || claim.phase === "closed" ? claimRecordsUrl : null;
+  const hasSnapshotAndClaims = snapshot !== null || claimHref !== null || recordsHref !== null || claimReceipts.length > 0;
   return <Section id="records" title="On-chain records">
     <p>The point of publishing addresses and transactions is straightforward: anyone should be able to check what has actually happened.</p>
     {hasSnapshotAndClaims ? <div data-testid="migration-records-snapshot">
       <h3>Snapshot and claims</h3>
       {snapshot ? <p style={LINK_LINE}><ExternalLink href={snapshot.url}>Published eligibility snapshot</ExternalLink></p> : null}
-      {claim.campaignUrl ? <p style={LINK_LINE}><ExternalLink href={claim.campaignUrl}>Official Sablier claim campaign / contract</ExternalLink></p> : null}
+      {claimHref ? <p style={LINK_LINE}><ExternalLink href={claimHref}>Official Sablier claim campaign / contract</ExternalLink></p> : null}
+      {recordsHref ? <p style={LINK_LINE}><ExternalLink href={recordsHref}>Verified claim transactions or claim dashboard</ExternalLink></p> : null}
       {claimReceipts.length > 0 ? <ReceiptItems receipts={claimReceipts} /> : null}
     </div> : null}
     <ReceiptGroup migration={migration} kind="liquidity" testId="migration-records-liquidity" title="Liquidity added and locked" />
@@ -215,7 +222,10 @@ function OnChainRecords({ migration }: { migration: ServedHivraMigration }) {
  * Every bracketed placeholder in the pack is data here, and the line, value or
  * link is left out until the data exists and validates: the snapshot block,
  * time and link (HIVRA_AIRDROP), "Check a wallet" (only when /token/airdrop is
- * served), "Claim through Sablier" (only while the claim is open), the $HIVRA
+ * served), "Claim through Sablier" and "Official Sablier claim campaign /
+ * contract" (both only while the claim is open: the Sablier link has no other
+ * home than the open window), "Verified claim transactions or claim dashboard"
+ * (a reviewed link, once claims have started), the $HIVRA
  * contract (the token registry), the Safe, the founder wallet and the burn
  * address, the sale start and burn dates, and every transaction link. Rendered
  * on the server for one request: a viewer the token geo-policy blocks gets the
@@ -241,11 +251,11 @@ export default function MigrationView({ state }: { state: MigrationViewState }) 
           <p data-testid="token-risk-line" style={MUTED}><em>Cryptoassets are high risk and can lose all their value. This page provides information about the transition, not an offer or invitation to buy.</em></p>
         </header>
         <WhatChanged migration={state.migration} />
-        <Eligibility airdropLookupHref={state.airdropLookupHref} claimHref={state.claimHref} />
+        <Eligibility airdropLookupHref={state.airdropLookupHref} claimHref={state.claimHref} claim={state.migration.claim} />
         <Contracts migration={state.migration} />
         <Fees migration={state.migration} />
         <Founder migration={state.migration} />
-        <OnChainRecords migration={state.migration} />
+        <OnChainRecords migration={state.migration} claimHref={state.claimHref} />
         <Section id="remember" title="A few things to remember">
           <ul>
             <li>The <strong>snapshot is complete</strong>. Buying or receiving $HermesOS after the snapshot does not add to the recorded allocation.</li>

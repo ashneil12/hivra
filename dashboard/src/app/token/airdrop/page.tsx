@@ -63,7 +63,7 @@ export default async function HivraAirdropLookupPage({ searchParams }: { searchP
     state = {
       kind: "open",
       snapshot,
-      // The Sablier link exists only while the claim is open (claimHrefOf, the rule behind hivraClaimHref).
+      // The Sablier link exists only while the claim is open (claimHrefOf).
       claim: { phase: claim.phase, href: claimHrefOf(claim), opensAt: claim.opensAt, closesAt: claim.closesAt },
       // Counts are shown only for the verified final list, never for dry-run data.
       counts: airdrop.data.final ? airdrop.data.totals : null,

@@ -20,8 +20,14 @@
  * Fields:
  *   published     false hides the page and every link to it.
  *   announcedAt   UTC instant the migration was announced, to the second,
- *                 e.g. "2026-10-21T16:00:00Z". The founder's no-sale period
+ *                 e.g. "2026-10-20T16:00:00Z". The founder's no-sale period
  *                 counts from it.
+ *   claimRecordsUrl  optional. Where anyone can check the claims that have been
+ *                 made: the Sablier campaign's claim dashboard (https on exactly
+ *                 app.sablier.com, like claim.campaignUrl) or the campaign
+ *                 contract's page on BaseScan (https://basescan.org/address/0x...).
+ *                 Shown as "Verified claim transactions or claim dashboard" once
+ *                 the claim is open or closed, never before.
  *   treasurySafe  the Safe that receives Hivra's share of the $HIVRA pool's
  *                 trading fees (EIP-55 checksummed or all lowercase).
  *   fee           the $HIVRA pool's trading fee and how it is split:
@@ -39,6 +45,10 @@
  *                   maxPriceImpactPct  most one sale may move the pool, in percent;
  *                   weeks              how many weeks the sales run;
  *                   saleStart          UTC date ("2026-11-04") or instant of the first sale;
+ *                                      it cannot be before the no-sale period ends. Once
+ *                                      claim.closesAt is set, the LAST weekly sale
+ *                                      (saleStart plus weeks - 1 whole weeks) must fall
+ *                                      on the day after the claim window's last day;
  *                   saleDay            the weekday sales happen, e.g. "Wednesday";
  *                                      must match saleStart's weekday. Checked, but
  *                                      the page has no wording for it;
@@ -59,10 +69,13 @@
  *
  * A set but invalid value is dropped and logged ("HIVRA migration config
  * rejected"), never rendered: a bad address, tx hash or date, or dates in the
- * wrong order (saleStart before the no-sale period ends, burnDate before the
- * last sale week or not after the claim window closes, a receipt in the future
- * or a founder sale before saleStart). The page shows only the sections and
- * lines whose data is valid.
+ * wrong order (saleStart before the no-sale period ends or a last sale that is not
+ * the day after the claim window's last day, burnDate before the last sale week or
+ * not after the claim window closes, a receipt in the future or a founder sale
+ * before saleStart). The page shows only the sections and lines whose data is
+ * valid. Once the published airdrop list is open, the founder's wallet must be
+ * one of its excluded wallets (and not a holder); if it is not, the whole founder
+ * section is left out, because the page says his tokens receive no $HIVRA.
  *
  * The page copy is Ash's pack page 02-token-migration.md, applied verbatim in
  * components/token/MigrationView.tsx. It is token-facing and needs UK
@@ -102,6 +115,8 @@ export type HivraMigrationFounder = {
 export type HivraMigrationConfig = {
   published: boolean;
   announcedAt: string | null;
+  /** Optional; see the header. Absent reads as null. */
+  claimRecordsUrl?: string | null;
   treasurySafe: string | null;
   fee: HivraMigrationFee | null;
   founder: HivraMigrationFounder | null;
@@ -111,6 +126,7 @@ export type HivraMigrationConfig = {
 export const HIVRA_MIGRATION: HivraMigrationConfig = {
   published: false,
   announcedAt: null,
+  claimRecordsUrl: null,
   treasurySafe: "0x4aCDa6e26929acd34b45beDaEE2f7b8a418ce10C",
   fee: { totalPct: 1.58, protocolSharePct: 5, liquiditySharePct: 20 },
   founder: {

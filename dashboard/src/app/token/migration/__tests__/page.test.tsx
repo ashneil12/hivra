@@ -55,7 +55,12 @@ jest.mock("@/lib/claim/hivra-airdrop-config", () => {
   };
 });
 let mockAirdropHref: string | null = null;
-jest.mock("@/lib/claim/hivra-airdrop-data", () => ({ hivraAirdropLookupHref: () => mockAirdropHref }));
+// The founder-wallet check reads the committed list through getOpenHivraAirdrop; null means no list is published yet.
+let mockOpenList: unknown = null;
+jest.mock("@/lib/claim/hivra-airdrop-data", () => ({
+  hivraAirdropLookupHref: () => mockAirdropHref,
+  getOpenHivraAirdrop: () => mockOpenList,
+}));
 let mockGeo: TokenGeoDecision = { blocked: false };
 jest.mock("@/lib/compliance/token-geo-page", () => ({ resolveTokenGeoBlockForPage: async () => mockGeo }));
 
@@ -403,17 +408,61 @@ describe("/token/migration", () => {
       }
     });
 
-    it("lists the official campaign under Snapshot and claims whenever the campaign link is valid, never when it is not", async () => {
-      for (const claim of [{ ...OPEN_CLAIM, opensAt: "2026-12-05T00:00:00Z" }, { ...OPEN_CLAIM, closesAt: "2026-11-30T00:00:00Z" }]) {
+    it("lists the official campaign under Snapshot and claims only while the claim is open, like Claim through Sablier", async () => {
+      const open = await renderPage();
+      expect(screen.getByRole("link", { name: "Official Sablier claim campaign / contract" })).toHaveAttribute("href", CAMPAIGN);
+      open.unmount();
+      // Before the window opens and after it closes the Sablier link has no home on this page.
+      for (const claim of [{ ...OPEN_CLAIM, opensAt: "2026-12-05T00:00:00Z" }, { ...OPEN_CLAIM, closesAt: "2026-11-30T00:00:00Z" }, NO_CLAIM_CONFIG]) {
         mockAirdrop.current = airdrop({ claim });
-        const { unmount } = await renderPage();
-        expect(screen.getByRole("link", { name: "Official Sablier claim campaign / contract" })).toHaveAttribute("href", CAMPAIGN);
+        const { container, unmount } = await renderPage();
+        expect(screen.queryByRole("link", { name: "Official Sablier claim campaign / contract" })).not.toBeInTheDocument();
+        expect(container.querySelector('a[href*="sablier"]')).toBeNull();
         unmount();
       }
       mockAirdrop.current = airdrop({ claim: { ...OPEN_CLAIM, campaignUrl: "https://evil.example/claim" } });
       const { container } = await renderPage();
       expect(screen.queryByRole("link", { name: "Official Sablier claim campaign / contract" })).not.toBeInTheDocument();
       expect(container.querySelector('a[href*="evil.example"]')).toBeNull();
+    });
+
+    it("lists Verified claim transactions or claim dashboard once claims have started, from a reviewed link, and never before", async () => {
+      const RECORDS = "https://basescan.org/address/0x3333333333333333333333333333333333333333";
+      mockMigration.current = published({ claimRecordsUrl: RECORDS });
+      const open = await renderPage();
+      const snapshot = screen.getByTestId("migration-records-snapshot");
+      expect(within(snapshot).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")]).slice(0, 3)).toEqual([
+        ["Published eligibility snapshot", SNAPSHOT_URL],
+        ["Official Sablier claim campaign / contract", CAMPAIGN],
+        ["Verified claim transactions or claim dashboard", RECORDS],
+      ]);
+      expect(screen.getByRole("link", { name: "Verified claim transactions or claim dashboard" })).toHaveAttribute("rel", "noopener noreferrer");
+      open.unmount();
+
+      // Closed: the campaign link is gone, the records link stays.
+      mockAirdrop.current = airdrop({ claim: { ...OPEN_CLAIM, closesAt: "2026-11-30T00:00:00Z" } });
+      const closed = await renderPage();
+      expect(screen.queryByRole("link", { name: "Official Sablier claim campaign / contract" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Verified claim transactions or claim dashboard" })).toHaveAttribute("href", RECORDS);
+      closed.unmount();
+
+      // Not open yet, or no claim at all: no claim transactions exist, so no link.
+      for (const claim of [{ ...OPEN_CLAIM, opensAt: "2026-12-05T00:00:00Z" }, NO_CLAIM_CONFIG]) {
+        mockAirdrop.current = airdrop({ claim });
+        const { unmount } = await renderPage();
+        expect(screen.queryByRole("link", { name: "Verified claim transactions or claim dashboard" })).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it("leaves the claim transactions link out when none is configured, or the configured one is not a Sablier or BaseScan page", async () => {
+      for (const claimRecordsUrl of [null, "https://evil.example/claims", "http://basescan.org/address/0x3333333333333333333333333333333333333333"]) {
+        mockMigration.current = published({ claimRecordsUrl });
+        const { container, unmount } = await renderPage();
+        expect(screen.queryByRole("link", { name: "Verified claim transactions or claim dashboard" })).not.toBeInTheDocument();
+        expect(container.querySelector('a[href*="evil.example"]')).toBeNull();
+        unmount();
+      }
     });
 
     it("prints nothing for a record group with no data, not even its heading", async () => {
@@ -510,12 +559,80 @@ describe("/token/migration", () => {
     });
 
     it("drops a burn date that is not after the claim window closes, with no replacement copy", async () => {
-      // Closes after the burn date: a sale on or after the day after the last claim day cannot be before it.
+      // With no sale start there is no last sale to check, so only the burn date is held to the window.
+      mockMigration.current = published({ founder: { ...HIVRA_MIGRATION.founder!, saleStart: null, saleDay: null, burnDate: "2027-02-04" } });
       mockAirdrop.current = airdrop({ claim: { ...OPEN_CLAIM, closesAt: "2027-02-04T12:00:00Z" } });
       const { container } = await renderPage();
       expect(screen.queryByText("Final burn date:")).not.toBeInTheDocument();
-      expect(container.textContent).not.toContain("4 February 2027");
-      expect(lines(screen.getByTestId("migration-founder-dates"))).toEqual(["Sale start: 5 November 2026"]);
+      expect(container.textContent).not.toContain("burn date");
+      expect(screen.queryByTestId("migration-founder-dates")).not.toBeInTheDocument();
+    });
+
+    it("drops the sale start when the last sale is not the day after the claim window's last day, and keeps the burn date", async () => {
+      // 13 weekly sales from 5 Nov 2026 end on 28 Jan 2027; a window that ends on 30 Jan does not match.
+      mockAirdrop.current = airdrop({ claim: { ...OPEN_CLAIM, closesAt: "2027-01-30T12:00:00Z" } });
+      await renderPage();
+      expect(screen.queryByText("Sale start:")).not.toBeInTheDocument();
+      expect(lines(screen.getByTestId("migration-founder-dates"))).toEqual(["Final burn date: 4 February 2027"]);
+    });
+  });
+
+  describe("the claim window", () => {
+    it("is printed under Check your eligibility and claim when both ends are set, whatever the phase", async () => {
+      for (const claim of [OPEN_CLAIM, { ...OPEN_CLAIM, opensAt: "2026-12-05T00:00:00Z" }, { ...OPEN_CLAIM, closesAt: "2026-11-30T00:00:00Z" }]) {
+        mockAirdrop.current = airdrop({ claim });
+        const { unmount } = await renderPage();
+        const section = screen.getByRole("heading", { level: 2, name: "Check your eligibility and claim" }).closest("section")!;
+        const line = within(section).getByTestId("migration-claim-window");
+        expect(line.querySelector("strong")).toHaveTextContent("Claim window:");
+        unmount();
+      }
+      mockAirdrop.current = airdrop();
+      await renderPage();
+      expect(screen.getByTestId("migration-claim-window")).toHaveTextContent("Claim window: 1 November 2026 at 16:00 UTC to 27 January 2027 at 23:59 UTC");
+    });
+
+    it("is left out when either end is missing, or the claim is not published", async () => {
+      for (const claim of [{ ...OPEN_CLAIM, opensAt: null }, { ...OPEN_CLAIM, closesAt: null }, NO_CLAIM_CONFIG, { ...OPEN_CLAIM, campaignUrl: "https://evil.example/x" }]) {
+        mockAirdrop.current = airdrop({ claim });
+        const { unmount } = await renderPage();
+        expect(screen.queryByTestId("migration-claim-window")).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+  });
+
+  describe("the founder's wallet against the published list", () => {
+    it("leaves out the founder section, and prints no claim about his tokens, when the list does not exclude his wallet", async () => {
+      const founder = HIVRA_MIGRATION.founder!.wallet as string;
+      const airdropList = {
+        data: {}, holdersByAddress: new Map([[founder, { address: founder, amountWei: "5" }]]), excludedByAddress: new Map(),
+      };
+      mockOpenList = { airdrop: airdropList, snapshot: { block: 36000000, url: SNAPSHOT_URL, takenAt: null }, senderAddress: null, claim: {} };
+      try {
+        const { container } = await renderPage();
+        expect(screen.queryByRole("heading", { name: "What happens to the founder's $HermesOS?" })).not.toBeInTheDocument();
+        expect(container.textContent).not.toMatch(/excluded from the eligible snapshot allocation|no separate team allocation|Founder wallet|Intended burn address/);
+        expect(container.querySelector(`a[href*="${founder}"]`)).toBeNull();
+        // The rest of the page is served.
+        expect(screen.getByRole("heading", { level: 2, name: "How trading fees are handled" })).toBeInTheDocument();
+      } finally {
+        mockOpenList = null;
+      }
+    });
+
+    it("keeps the founder section when the list excludes his wallet", async () => {
+      const founder = HIVRA_MIGRATION.founder!.wallet as string;
+      mockOpenList = {
+        airdrop: { data: {}, holdersByAddress: new Map(), excludedByAddress: new Map([[founder, "Founder wallet (not migrated)"]]) },
+        snapshot: { block: 36000000, url: SNAPSHOT_URL, takenAt: null }, senderAddress: null, claim: {},
+      };
+      try {
+        await renderPage();
+        expect(screen.getByRole("heading", { name: "What happens to the founder's $HermesOS?" })).toBeInTheDocument();
+      } finally {
+        mockOpenList = null;
+      }
     });
   });
 

@@ -49,7 +49,7 @@ export default async function HivraMigrationPage() {
         kind: "open",
         migration,
         airdropLookupHref: hivraAirdropLookupHref({ now }),
-        // The Sablier link exists only while the claim is open (claimHrefOf, the rule behind hivraClaimHref).
+        // The Sablier link exists only while the claim is open (claimHrefOf).
         claimHref: claimHrefOf(migration.claim),
       };
   return <MigrationView state={state} />;
