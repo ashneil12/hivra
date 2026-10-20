@@ -158,6 +158,7 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
 | `DUMMY_BU_KEY` | `local` | Dummy `BROWSER_USE_API_KEY` (installer requires one; we self-host). |
 | `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | from `agent-cli-versions.json` | Vetted CLI versions. Leave unset on managed computers so the installer, the runtime updater and the dashboard read the same pins. |
+| `AEON_REF` / `OPENCLAW_VERSION` / `AGENT_ZERO_IMAGE_DIGEST` | from `agent-app-versions.json` | Tested app versions (a full upstream commit, an x.y.z release, an image digest). Leave unset on managed computers for the same reason. |
 
 ### Agent CLI versions
 
@@ -176,6 +177,38 @@ waits until no chat run is in flight (up to 6 hours), holds new runs back for
 the few seconds of the swap, verifies the new version and restores the previous
 package on failure. The gateway reports the installed version and the swap's
 progress to the dashboard as `agentCli` on authenticated `GET /api/meta`.
+
+### Agent app versions
+
+Hivra owns the Aeon dashboard, OpenClaw and Agent Zero versions on their
+computers the same way. The tested versions ship as `agent-app-versions.json`
+(exported to the dashboard as `AGENT_APP_VERSIONS`, with each pin's owner-facing
+label and the earlier pins Hivra moved off). The installer records what it put
+on the computer in the root-owned `/var/lib/hivra/agent-app.json`.
+
+The runtime update reports the installed and tested versions
+(`HIVRA_AGENT_APP` line) and, when they differ, starts
+`hivra-agent-app-update.sh` as a transient unit (`hivra-agent-app-update`):
+
+| App | Prepared while it keeps running | Swap | Put back on failure |
+|---|---|---|---|
+| OpenClaw | `npm cache add openclaw@<version>` as `bux` | `npm install -g` as `bux`, restart `bux-openclaw` | the package copy taken before the swap |
+| Agent Zero | `docker pull agent0ai/agent-zero@<digest>` (needs 12 GB free) | stop, copy `/opt/a0/usr` aside, rewrite the unit's one image digest, start | the previous unit and the data copy; the old image is removed only after success |
+| Aeon | a fresh build of the upstream commit in `~bux/.hivra/aeon-dashboard/<commit>` (never the owner's fork clone) | a `bux-aeon` drop-in setting `WorkingDirectory` and `AEON_REPO_ROOT=~/aeon`, restart | the previous drop-in, or none (the build in the clone) |
+
+It waits (up to 6 hours, then `deferred`) until nobody has used the app
+through the gateway for 5 minutes and no app WebSocket is open (the gateway's
+authenticated `/api/meta` `agentApp.activity`), and the app has no work in
+flight: a git operation in the Aeon clone, an OpenClaw session transcript
+written in the last 5 minutes, or an Agent Zero task marked running or chat
+saved in the last 5 minutes. While it swaps it holds
+`/run/hivra-agent-app-update.lock`; the gateway then answers the app's surface
+with "being updated" (and counts the attempt as use). The swap is healthy when
+the app's service is active, its loopback port answers, and it reports the
+target version. A swap cut short leaves a journal in
+`/var/lib/hivra/agent-app-swap`, which the next run undoes first. Progress goes
+to `/var/lib/hivra/agent-app-update.json`; the gateway reports it with the
+installed version as `agentApp`.
 
 ## The one manual step
 

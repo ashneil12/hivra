@@ -8,6 +8,7 @@ import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import type { AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 import type { AgentSoftwareState } from "@/lib/hivra/agent-software-api";
+import { AGENT_APP_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 
 const mockGet = jest.fn();
 const mockSetAuto = jest.fn();
@@ -23,7 +24,7 @@ function agentOf(extra: Partial<HivraAgent> = {}): HivraAgent {
 }
 function stateOf(view: AgentSoftwareView, extra: Partial<Extract<AgentSoftwareState, { supported: true }>> = {}): AgentSoftwareState {
   return {
-    supported: true, cli: "codex", view, tested: TESTED, observedAt: "2026-09-25T11:58:00.000Z", update: null, lastRequest: null,
+    supported: true, cli: "codex", app: null, view, tested: TESTED, observedAt: "2026-09-25T11:58:00.000Z", update: null, lastRequest: null,
     autoUpdate: { mode: "off", enabled: true, source: "default", pausedFor: null }, ...extra,
   };
 }
@@ -202,16 +203,41 @@ describe("AgentSoftwarePanel", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
-  it("tells an agent without a CLI of its own only that its connection service is older", async () => {
-    mockGet.mockResolvedValue({ ...stateOf({ kind: "older_connection_service" }), cli: null, tested: null, autoUpdate: null });
-    const view = renderPanel({ agent: agentOf({ type: "aeon" }), name: "Aeon" });
-    expect(await stateText()).toMatch(/^This agent's connection service is older than Hivra's current one\. Update the connection service below/);
-    view.unmount();
-    resetAgentSoftwareForTests();
-    mockGet.mockResolvedValue({ ...stateOf({ kind: "not_reported" }), cli: null, tested: null, autoUpdate: null });
-    const { container } = renderPanel({ agent: agentOf({ type: "aeon" }), name: "Aeon" });
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
+  // Agent apps: the tested pin is named the way owners know it ("v2.14"),
+  // never by its image digest.
+  const ZERO = AGENT_APP_VERSIONS["agent-zero"];
+  // An image Hivra didn't name is shown by its short digest.
+  const OLD_ZERO = { version: `sha256:${"a".repeat(64)}`, label: "image aaaaaaaaaaaa" };
+  const appState = (view: AgentSoftwareView, app: "agent-zero" | "aeon" | "openclaw" = "agent-zero", tested: string = ZERO.version) =>
+    ({ ...stateOf(view), cli: null, app, tested, autoUpdate: null });
+  it.each<[string, AgentSoftwareView, RegExp, string | null]>([
+    ["behind", { kind: "behind", installed: OLD_ZERO.version }, new RegExp(`^An update is available\\. Agent Zero ${OLD_ZERO.label} is installed and Hivra has tested ${ZERO.label}\\.$`), "Update Agent Zero"],
+    ["current", { kind: "current", installed: ZERO.version }, /^Agent Zero is on the version Hivra has tested\.$/, null],
+    ["not recorded", { kind: "version_unreadable" }, new RegExp(`^Hivra hasn't recorded which Agent Zero version this agent runs\\. Updating installs ${ZERO.label}`), "Update Agent Zero"],
+    ["an untested image", { kind: "other_version", installed: `sha256:${"9".repeat(64)}` }, /^Agent Zero image 999999999999 is installed, which isn't a version Hivra has tested\./, "Update Agent Zero"],
+    ["an older connection service", { kind: "not_reported" }, new RegExp(`doesn't report its Agent Zero version\\. Update the connection service below: it also moves Agent Zero to ${ZERO.label}`), null],
+    ["waiting", { kind: "updating", phase: "waiting", target: ZERO.version, installed: OLD_ZERO.version }, /^Waiting until nobody is using Agent Zero\. It updates once Agent Zero has been idle for 5 minutes with no task running/, null],
+    ["installing", { kind: "updating", phase: "installing", target: ZERO.version, installed: OLD_ZERO.version }, /restarts and is back in about a minute\.$/, null],
+    ["deferred", { kind: "update_deferred", target: ZERO.version, installed: OLD_ZERO.version }, /still in use after 6 hours\. Nothing was changed\.$/, "Try again"],
+    ["rolled back", { kind: "update_rolled_back", target: ZERO.version, installed: OLD_ZERO.version }, new RegExp(`didn't start properly, so Hivra put Agent Zero ${OLD_ZERO.label} back`), "Try again"],
+    ["no disk space", { kind: "update_failed", reason: "no_space", target: ZERO.version, installed: OLD_ZERO.version }, /^There isn't enough free disk space/, null],
+  ])("says what is true for an Agent Zero agent when %s", async (_case, view, text, action) => {
+    mockGet.mockResolvedValue(appState(view));
+    renderPanel({ agent: agentOf({ type: "agent-zero" }), name: "Agent Zero" });
+    expect(await stateText()).toMatch(text);
+    if (action) expect(screen.getByRole("button", { name: action })).toBeEnabled();
+    else expect(screen.queryByRole("button", { name: /Update Agent Zero|Switch to|Try again/ })).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(ZERO.version);
+    expect(screen.getByText("Hivra's tested version").nextSibling).toHaveTextContent(ZERO.label);
+    expect(screen.queryByText(/Update automatically/)).not.toBeInTheDocument();
+  });
+
+  it("calls Aeon's part the dashboard Hivra hosts, building rather than downloading", async () => {
+    const aeon = AGENT_APP_VERSIONS.aeon.version;
+    mockGet.mockResolvedValue(appState({ kind: "updating", phase: "downloading", target: aeon, installed: null }, "aeon", aeon));
+    renderPanel({ agent: agentOf({ type: "aeon" }), name: "Aeon" });
+    expect(await stateText()).toMatch(new RegExp(`^Building Aeon dashboard ${AGENT_APP_VERSIONS.aeon.label}\\. Aeon dashboard keeps working while it builds`));
+    expect(screen.getByText(/Your Aeon skills and workflows live in your GitHub fork/)).toBeInTheDocument();
   });
 
   it("is not shown for agents Hivra doesn't check here", () => {

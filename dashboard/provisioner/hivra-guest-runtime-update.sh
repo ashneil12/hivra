@@ -124,7 +124,7 @@ for asset in bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.jso
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
-for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json; do
+for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json agent-app-versions.json hivra-agent-app-update.sh; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
@@ -171,6 +171,7 @@ node --check "$WORK/agent-zero-editor.cjs" >/dev/null
 node --check "$WORK/chat-runs.cjs" >/dev/null
 bash -n "$WORK/hivra-agent-shell"
 bash -n "$WORK/hivra-agent-cli-update.sh"
+bash -n "$WORK/hivra-agent-app-update.sh"
 bash -n "$WORK/hivra-tg-apply"
 python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-claude-app.py"
 python3 -I -B -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$WORK/claude-desktop-pin.json"
@@ -373,4 +374,70 @@ print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
   printf 'HIVRA_AGENT_CLI name=%s version=%s target=%s state=%s\n' "$name" "$version" "$target" "$state"
 }
 agent_cli_report || true
+
+# Agent app (Aeon dashboard, OpenClaw, Agent Zero computers). Hivra moves the
+# app to this release's tested version (agent-app-versions.json) the same way:
+# hivra-agent-app-update.sh runs as a transient unit that prepares the new
+# version next to the running one, waits until nobody is using the app, swaps,
+# checks it and puts the previous version back on failure. Nothing here can
+# fail the committed update above.
+AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
+AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
+agent_app_report() {
+  local name="$KIND_BEFORE" target version state
+  case "$name" in aeon|openclaw|agent-zero) ;; *) return 0 ;; esac
+  target="$(python3 -I -c 'import json, re, sys
+pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
+entry = json.load(open(sys.argv[1])).get(sys.argv[2])
+value = entry.get("version") if isinstance(entry, dict) else None
+if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
+print(value)' "$WORK/agent-app-versions.json" "$name")" || return 0
+  install -o root -g root -m 0700 "$WORK/hivra-agent-app-update.sh" "$AGENT_APP_HELPER"
+  case "$name" in
+    openclaw)
+      version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
+        timeout -k 5 30 /home/bux/.npm-global/bin/openclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
+      ;;
+    agent-zero)
+      version="$(docker inspect --format '{{.Config.Image}}' hivra-agent-zero 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n 1)" || version=""
+      ;;
+    aeon)
+      version="$(python3 -I -c 'import json, re, sys
+doc = json.load(open(sys.argv[1]))
+value = doc.get("version") if doc.get("name") == "aeon" else None
+if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value): sys.exit(1)
+print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
+      if [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; then
+        version="$(sed -n 's#^WorkingDirectory=/home/bux/.hivra/aeon-dashboard/\([0-9a-f]\{40\}\)/apps/dashboard$#\1#p' \
+          /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf | head -n 1)"
+      fi
+      ;;
+  esac
+  # Record what runs now whenever no update is moving it, so the gateway (which
+  # can't ask Docker itself) and the next update agree: computers provisioned
+  # before the record existed, and any swap that ended without recording.
+  if [ -n "$version" ] && ! systemctl is-active --quiet hivra-agent-app-update.service \
+    && { [ "$name" = agent-zero ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
+    install -d -o root -g root -m 0755 /var/lib/hivra
+    printf '{"name":"%s","version":"%s"}\n' "$name" "$version" > "$AGENT_APP_RECORD.next"
+    chmod 0644 "$AGENT_APP_RECORD.next"
+    mv -f -- "$AGENT_APP_RECORD.next" "$AGENT_APP_RECORD"
+  fi
+  [ -n "$version" ] || version=unknown
+  if [ "$version" = "$target" ]; then
+    state=current
+  elif systemctl is-active --quiet hivra-agent-app-update.service; then
+    state=running
+  else
+    systemctl reset-failed hivra-agent-app-update.service >/dev/null 2>&1 || true
+    if systemd-run --unit=hivra-agent-app-update --collect --no-block --quiet -p Nice=10 \
+      "$AGENT_APP_HELPER" "$name" "$target" >/dev/null 2>&1; then
+      state=scheduled
+    else
+      state=failed
+    fi
+  fi
+  printf 'HIVRA_AGENT_APP name=%s version=%s target=%s state=%s\n' "$name" "$version" "$target" "$state"
+}
+agent_app_report || true
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'

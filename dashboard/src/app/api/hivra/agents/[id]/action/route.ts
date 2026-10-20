@@ -523,7 +523,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (action === "update_runtime") {
       const outcome = await runHivraAgentRuntimeUpdate({ userId, agent, trigger: "owner" });
       if (!outcome.ok) return apiError(outcome.message, outcome.status, undefined, { code: outcome.code });
-      return apiSuccess({ status: "running", ...(outcome.agentCli ? { agentCli: outcome.agentCli } : {}) });
+      return apiSuccess({ status: "running", ...(outcome.agentCli ? { agentCli: outcome.agentCli } : {}), ...(outcome.agentApp ? { agentApp: outcome.agentApp } : {}) });
     }
 
     // The exact owner-bound host, VM and guest address (with the managed host's

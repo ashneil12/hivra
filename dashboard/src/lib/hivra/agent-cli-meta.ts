@@ -3,8 +3,8 @@ import "server-only";
 // Reads an agent's software state from its computer, on the server: the
 // connection service's public /api/meta first, and only when that proves a
 // current Hivra connection service of the right kind, the same endpoint again
-// with the computer's bearer (which adds the Claude Code / Codex version and
-// update progress). The bearer never leaves the server for this and is never
+// with the computer's bearer (which adds the Claude Code / Codex version, or
+// the Aeon / OpenClaw / Agent Zero app version, and update progress). The bearer never leaves the server for this and is never
 // returned or logged. The automatic-update sweep also asks, with the bearer,
 // whether a reply is being written or an agent terminal is attached.
 //
@@ -143,14 +143,18 @@ export async function readAgentSoftwareFromBox(target: AgentSoftwareBoxTarget, f
     if (publicMeta.surfaceAuth !== "post-cookie-v1" || typeof publicMeta.bootId !== "string" || !BOOT_ID.test(publicMeta.bootId)) {
       return { observation: "older_connection_service" };
     }
-    const cli = target.subject.cli;
-    if (!cli) return { observation: "not_reported" };
+    const { cli, app, software } = target.subject;
     if (!apiToken) return { observation: "unreachable" };
     const privateMeta = objectOf(await box.get("/api/meta", true));
     if (!privateMeta || privateMeta.agentKind !== target.subject.gatewayKind) return { observation: "unreachable" };
-    // Left out until the connection service has read the version once after it started.
-    if (privateMeta.agentCli === undefined) return { observation: "checking" };
-    const report = parseAgentCliMeta(privateMeta.agentCli, cli);
+    const field = cli ? privateMeta.agentCli : app ? privateMeta.agentApp : undefined;
+    // A CLI's version is left out until the connection service has read it
+    // once after it started. App agents always get agentApp (checking while
+    // OpenClaw is first asked), so without it the connection service predates
+    // app versions.
+    if (field === undefined) return { observation: cli ? "checking" : "not_reported" };
+    if (app && objectOf(field)?.checking === true) return { observation: "checking" };
+    const report = parseAgentCliMeta(field, software);
     return report ? { observation: "reported", report } : { observation: "version_unreadable" };
   } catch {
     return { observation: "unreachable" };
