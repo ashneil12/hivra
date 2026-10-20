@@ -12,8 +12,13 @@ import {
   type HivraAirdropConfig,
 } from "./hivra-airdrop-config";
 import { NO_CLAIM, readUtcInstant, resolveHivraClaim, type ResolvedHivraClaim } from "./hivra-claim";
+import { normalizeAddress, type AddressCheckState } from "./token-address-check";
 
-const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+// The pasted-address check lives in token-address-check.ts so the client form
+// does not import this file (and, through it, the airdrop config). Re-exported
+// here for the callers that already import it from this file.
+export { checkTokenAddress, normalizeAddress, type AddressCheckState, type TokenAddressCheck } from "./token-address-check";
+
 const ZERO_ADDRESS = /^0x0{40}$/i;
 
 /** $HermesOS exactly as published, for display. */
@@ -87,12 +92,6 @@ export type ConversionState =
       problems: string[];
     };
 
-export function normalizeAddress(value: string): string | null {
-  const trimmed = value.trim();
-  if (!EVM_ADDRESS.test(trimmed)) return null;
-  return trimmed.toLowerCase();
-}
-
 /**
  * Only https links on exactly an allowed host, under that host's path prefix,
  * with no port or credentials, count; anything else is treated as unset. The
@@ -153,6 +152,18 @@ export type AirdropFacts = {
   /** The Sablier claim at `now`; null when no clock was given. */
   claim: ResolvedHivraClaim | null;
   problems: string[];
+};
+
+/**
+ * What /token shows about the airdrop: the published snapshot and the Airdrop
+ * wallet, and nothing else. /token is a client component, so the server resolves
+ * this and passes it down (getTokenPageAirdropFacts in hivra-airdrop-data.ts);
+ * the page never imports the airdrop config, which also holds the Sablier
+ * campaign link and the claim window, and sends them to every viewer.
+ */
+export type TokenPageAirdropFacts = {
+  snapshot: AirdropSnapshot | null;
+  senderAddress: string | null;
 };
 
 /**
@@ -217,26 +228,17 @@ function resolveAccess(phase: HivraTokenPhase, access: ConversionAccessGate, cla
   return { kind: "hivra", graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null };
 }
 
-export type TokenAddressCheck =
-  | { kind: "invalid" }
-  | { kind: "hermesos" }
-  | { kind: "hivra" }
-  | { kind: "airdrop-sender" }
-  | { kind: "hivra-not-launched" }
-  | { kind: "not-official" };
-
 /**
- * Tells a holder whether a pasted address is one of Hivra's tokens, or Hivra's
- * airdrop wallet. The pasted value is only ever compared against the registry
- * and the airdrop config; it is never used as a token, a link target or a swap
- * input.
+ * What the "Check a token address" form is given: the two addresses it compares
+ * with, and nothing else. The form is a client component, so everything passed
+ * to it reaches the browser, including a viewer the token geo-policy blocks and
+ * a viewer before the claim opens. The whole ConversionState would carry the
+ * Sablier campaign link, the claim window, the snapshot link and any config
+ * problems with it; this carries none of them.
+ *
+ * Dormant, the state has no data to leave out, so it is passed as it is.
  */
-export function checkTokenAddress(input: string, state: ConversionState): TokenAddressCheck {
-  const address = normalizeAddress(input);
-  if (!address) return { kind: "invalid" };
-  if (address === HERMESOS_TOKEN.address) return { kind: "hermesos" };
-  if (state.status === "dormant") return { kind: "hivra-not-launched" };
-  if (address === state.hivraAddress) return { kind: "hivra" };
-  if (state.senderAddress && address === state.senderAddress.toLowerCase()) return { kind: "airdrop-sender" };
-  return { kind: "not-official" };
+export function addressCheckStateOf(state: ConversionState): AddressCheckState {
+  if (state.status === "dormant") return state;
+  return { status: "launched", hivraAddress: state.hivraAddress, senderAddress: state.senderAddress };
 }

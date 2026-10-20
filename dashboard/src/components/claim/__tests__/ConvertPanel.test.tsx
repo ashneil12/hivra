@@ -217,6 +217,16 @@ describe("ConvertPanel once $HIVRA is launched", () => {
       }
     });
 
+    it("makes no promise of a later switch while the snapshot is not published, because the switch needs it", () => {
+      // A campaign with a closing time, but no published snapshot: resolveConversionState never offers the switch.
+      const noSnapshot: HivraAirdropConfig = { ...NOT_PUBLISHED, claim: OPEN.claim };
+      renderState({ ...LIVE, airdrop: noSnapshot, access: GRANDFATHERED });
+
+      expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("convert-switch-later")).not.toBeInTheDocument();
+      expect(screen.getByTestId("convert-snapshot-pending")).toHaveTextContent(SNAPSHOT_PENDING_MESSAGE);
+    });
+
     it("stays hidden before the claim opens", () => {
       renderState({ ...LIVE, airdrop: { ...OPEN, claim: { ...OPEN.claim, opensAt: "2026-10-10T00:00:00Z" } }, access: GRANDFATHERED });
 

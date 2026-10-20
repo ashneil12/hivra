@@ -4,11 +4,13 @@ import TokenPageClient from "@/components/token/TokenPageClient";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
-import { hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
+import type { TokenPageAirdropFacts } from "@/lib/claim/conversion-state";
+import { getTokenPageAirdropFacts, hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
 import { hivraMigrationHref } from "@/lib/claim/hivra-migration";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-copy";
-import { getTokenPageEntries } from "@/lib/token-verification-content";
+import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
+import { getTokenPageEntries, tokenPhaseFromEntries, type TokenPageEntry } from "@/lib/token-verification-content";
 
 // The $HIVRA entry changes at its activation instant: re-render at least every
 // minute rather than freezing the build-time phase into static HTML.
@@ -34,25 +36,43 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+/**
+ * What the launched page shows about the airdrop (the published snapshot and the
+ * Airdrop wallet), resolved here on the server at render. TokenPageClient is a
+ * client component, so the page never imports the airdrop config itself: it
+ * also holds the Sablier campaign link and the claim window. Dormant, nothing
+ * is read and no prop is added, so the page and its props are as before.
+ */
+function launchedAirdropProps(entries: readonly TokenPageEntry[]): { airdropFacts?: TokenPageAirdropFacts } {
+  if (tokenPhaseFromEntries(entries) === "dormant") return {};
+  const hivra = entries.find((entry) => entry.key === "hivra");
+  return hivra?.contractAddress ? { airdropFacts: getTokenPageAirdropFacts(hivra.contractAddress) } : {};
+}
+
 export default function TokenVerificationPage() {
+  const entries = getTokenPageEntries();
+  // The switch is server-only; the client header and footer are told its value so they render as the server did.
+  const tokenSurfaces = newTokenSurfacesEnabled();
   // No country is listed (the list is empty, so the policy is dormant): the
   // page renders as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) {
-    return <TokenPageClient entries={getTokenPageEntries()} airdropLookupHref={hivraAirdropLookupHref()} migrationHref={hivraMigrationHref()} />;
+    return <TokenPageClient entries={entries} {...launchedAirdropProps(entries)} airdropLookupHref={hivraAirdropLookupHref()} migrationHref={hivraMigrationHref()} tokenSurfaces={tokenSurfaces} />;
   }
   // A country is listed (GB today): render per request, with the notice for a blocked viewer.
-  return renderForViewer();
+  return renderForViewer(entries, tokenSurfaces);
 }
 
-async function renderForViewer() {
+async function renderForViewer(entries: TokenPageEntry[], tokenSurfaces: boolean) {
   const geo = await resolveTokenGeoBlockForPage();
-  // A blocked viewer gets no link to the airdrop lookup or the migration page.
+  // A blocked viewer gets no airdrop facts and no link to the airdrop lookup or the migration page.
   return (
     <TokenPageClient
-      entries={getTokenPageEntries()}
+      entries={entries}
       geoNotice={geo.blocked ? geo.message : null}
+      {...(geo.blocked ? {} : launchedAirdropProps(entries))}
       airdropLookupHref={geo.blocked ? null : hivraAirdropLookupHref()}
       migrationHref={geo.blocked ? null : hivraMigrationHref()}
+      tokenSurfaces={tokenSurfaces}
     />
   );
 }

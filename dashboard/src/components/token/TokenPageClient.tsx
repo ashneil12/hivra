@@ -4,6 +4,7 @@ import Link from "next/link";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
+import type { TokenPageAirdropFacts } from "@/lib/claim/conversion-state";
 import { DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
 import {
   tokenPhaseFromEntries,
@@ -61,19 +62,29 @@ function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
 export default function TokenPageClient({
   entries,
   geoNotice = null,
+  airdropFacts = null,
   airdropLookupHref = null,
   migrationHref = null,
+  tokenSurfaces,
 }: {
   entries: TokenPageEntry[];
   geoNotice?: string | null;
+  /** The published snapshot and Airdrop wallet, set by the server once $HIVRA is launched and the viewer is not blocked. */
+  airdropFacts?: TokenPageAirdropFacts | null;
   /** /token/airdrop, set by the server only when that lookup is served and the viewer is not blocked. */
   airdropLookupHref?: string | null;
   /** /token/migration, set by the server only when that page is served and the viewer is not blocked. */
   migrationHref?: string | null;
+  /**
+   * HIVRA_NEW_TOKEN_SURFACES as the server read it. The switch is server-only, so
+   * a client render that is left to read it sees "off": the header would drop the
+   * litepaper link the server rendered and React would report a hydration mismatch.
+   */
+  tokenSurfaces?: boolean;
 }) {
   const phase = tokenPhaseFromEntries(entries);
   if (phase !== "dormant" && !geoNotice) {
-    return <TokenLaunchedView entries={entries} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} />;
+    return <TokenLaunchedView entries={entries} airdropFacts={airdropFacts} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} tokenSurfaces={tokenSurfaces} />;
   }
   // Reached only while $HIVRA is dormant, or by a blocked viewer, who reads none of
   // the phase copy below (the restricted copy replaces it and the proposals are dropped).
@@ -83,7 +94,7 @@ export default function TokenPageClient({
   const restricted = geoNotice ? RESTRICTED_TOKEN_PAGE_COPY : null;
   const copy = { ...phaseCopy, heroTitle: restricted?.heroTitle ?? phaseCopy.heroTitle, heroLead: restricted?.heroLead ?? phaseCopy.heroLead };
   const { officialAccounts, noTelegram, lookalikeWarning, riskLine } = tokenVerificationContent;
-  return <PublicSite>
+  return <PublicSite tokenSurfaces={tokenSurfaces}>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
       <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>

@@ -4,8 +4,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
-import { HIVRA_AIRDROP } from "@/lib/claim/hivra-airdrop-config";
-import { resolveAirdropFacts } from "@/lib/claim/conversion-state";
+import type { TokenPageAirdropFacts } from "@/lib/claim/conversion-state";
 import { formatSnapshotDateUtc, tokenVerificationContent, type TokenPageEntry } from "@/lib/token-verification-content";
 import { CopyAddressButton } from "./CopyAddressButton";
 
@@ -20,8 +19,12 @@ import { CopyAddressButton } from "./CopyAddressButton";
  * Every address, date and link target comes from data, never from this file:
  * - contracts: the token registry, via `entries` (hivra-token-launch.ts for $HIVRA);
  * - snapshot date, snapshot block, published snapshot and Airdrop wallet:
- *   HIVRA_AIRDROP, checked by resolveAirdropFacts (the date, block and list show
- *   only once the block and its list are both valid; the date only when set);
+ *   `airdropFacts`, resolved on the server (getTokenPageAirdropFacts) from the
+ *   airdrop config and checked there (the date, block and list show only once
+ *   the block and its list are both valid; the date only when set). This file
+ *   never imports the airdrop config: it also holds the Sablier campaign link
+ *   and the claim window, which must not ship to every viewer in this client
+ *   bundle;
  * - "Check eligibility and claim through the official Sablier flow" and "Read the
  *   migration details": set by the server only when /token/airdrop and
  *   /token/migration are actually served. /token/airdrop is the Hivra-owned page
@@ -55,23 +58,28 @@ function ContractCard({ entry, title, children }: { entry: TokenPageEntry | unde
 
 export default function TokenLaunchedView({
   entries,
+  airdropFacts,
   airdropLookupHref,
   migrationHref,
+  tokenSurfaces,
 }: {
   entries: readonly TokenPageEntry[];
+  /** The published snapshot and the Airdrop wallet, resolved by the server; null when none is published. */
+  airdropFacts: TokenPageAirdropFacts | null;
   /** /token/airdrop (the page that holds the verified Sablier link) when it is served, else null. */
   airdropLookupHref: string | null;
   /** /token/migration when that page is served, else null. */
   migrationHref: string | null;
+  /** HIVRA_NEW_TOKEN_SURFACES as the server read it (not readable in the browser): the header and footer must render the same on both sides. */
+  tokenSurfaces?: boolean;
 }) {
   const hivra = entries.find((entry) => entry.key === "hivra");
   const hermesos = entries.find((entry) => entry.key === "hermesos");
-  const facts = hivra?.contractAddress ? resolveAirdropFacts(HIVRA_AIRDROP, hivra.contractAddress, null) : null;
-  const snapshot = facts?.snapshot ?? null;
-  const senderAddress = facts?.senderAddress ?? null;
+  const snapshot = airdropFacts?.snapshot ?? null;
+  const senderAddress = airdropFacts?.senderAddress ?? null;
   const { officialAccounts } = tokenVerificationContent;
 
-  return <PublicSite>
+  return <PublicSite tokenSurfaces={tokenSurfaces}>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
       <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>

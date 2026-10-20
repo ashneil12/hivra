@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
-import { HERMESOS_CONTRACT_ADDRESS, type ConversionState } from "@/lib/claim/conversion-state";
+import { HERMESOS_CONTRACT_ADDRESS, addressCheckStateOf, type ConversionState } from "@/lib/claim/conversion-state";
 import { formatUtcInstant as formatUtc } from "@/lib/claim/hivra-claim";
 
 import { SwitchAccessStep } from "./SwitchAccessStep";
@@ -136,7 +136,7 @@ function DormantPanel({ state, geoNotice }: { state: Extract<ConversionState, { 
 
       <Section id="convert-check" title="Check a token address">
         <p style={muted}>Paste a contract address to see whether it is one of Hivra&apos;s tokens.</p>
-        <TokenAddressChecker state={state} />
+        <TokenAddressChecker state={addressCheckStateOf(state)} />
       </Section>
     </article>
   );
@@ -230,8 +230,8 @@ function AccessSection({ state, geoNotice }: { state: LaunchedState; geoNotice: 
         Your tier counts the legacy $HermesOS in your verified wallet, and that continues. Moving $HermesOS out of that
         wallet lowers that balance. Billing shows your tier.
       </p>
-      {/* Only with a known closing time: otherwise the switch never opens and the line would promise it. */}
-      {access.kind === "hermesos" && !geoNotice && state.claim.closesAt && state.claim.phase !== "closed" ? (
+      {/* Only with a known closing time and a published snapshot: the switch opens only after both (resolveConversionState), so without them the line would promise a switch that never opens. */}
+      {access.kind === "hermesos" && !geoNotice && state.snapshot && state.claim.closesAt && state.claim.phase !== "closed" ? (
         <p data-testid="convert-switch-later" style={muted}>{SWITCH_AFTER_CLAIM_MESSAGE}</p>
       ) : null}
     </Section>
@@ -317,7 +317,7 @@ function LaunchedPanel({
 
       <Section id="convert-check" title="Check a token address">
         <p style={muted}>Paste a contract address to see whether it is one of Hivra&apos;s tokens.</p>
-        <TokenAddressChecker state={state} />
+        <TokenAddressChecker state={addressCheckStateOf(state)} />
       </Section>
     </article>
   );

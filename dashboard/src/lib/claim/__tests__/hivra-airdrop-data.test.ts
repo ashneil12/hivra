@@ -1,19 +1,20 @@
 /**
  * getServedHivraAirdrop / hivraAirdropLookupHref: the one check /token/airdrop
  * uses for its 404, and the links on /token and /dashboard/convert reuse, so
- * no link points at a 404. getHivraClaimPhase / hivraClaimHref: the Sablier
- * claim link, which exists only while the configured claim window is open.
+ * no link points at a 404. The served list's `claim` plus claimHrefOf: the
+ * Sablier claim link, which exists only while the configured claim window is
+ * open. getTokenPageAirdropFacts: what /token is given about the airdrop.
  */
 import { log } from "@/lib/logger";
 
 import {
   HIVRA_AIRDROP_LOOKUP_PATH,
-  getHivraClaimPhase,
   getServedHivraAirdrop,
+  getTokenPageAirdropFacts,
   hivraAirdropLookupHref,
-  hivraClaimHref,
 } from "../hivra-airdrop-data";
 import { HIVRA_AIRDROP, type HivraAirdropConfig } from "../hivra-airdrop-config";
+import { claimHrefOf } from "../hivra-claim";
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
@@ -78,29 +79,72 @@ describe("the Sablier claim link", () => {
     ...CONFIG,
     claim: { campaignUrl: CAMPAIGN, opensAt: "2026-11-01T00:00:00Z", closesAt: "2026-12-01T00:00:00Z", ...overrides },
   });
+  const served = (config: HivraAirdropConfig, now: Date) => getServedHivraAirdrop({ env: ON, hivraAddress: HIVRA, config, raw: RAW, now });
 
   it("ships with nothing published: no phase beyond unpublished and no link", () => {
     expect(HIVRA_AIRDROP.claim).toEqual({ campaignUrl: null, opensAt: null, closesAt: null });
-    expect(getHivraClaimPhase(NOW)).toBe("unpublished");
-    expect(hivraClaimHref(NOW)).toBeNull();
+    const open = served(CONFIG, NOW);
+    expect(open?.claim.phase).toBe("unpublished");
+    expect(claimHrefOf(open?.claim)).toBeNull();
   });
 
   it("gives the validated link only while the claim is open", () => {
-    expect(getHivraClaimPhase(NOW, claim())).toBe("open");
-    expect(hivraClaimHref(NOW, claim())).toBe(CAMPAIGN);
-    expect(hivraClaimHref(new Date("2026-10-31T23:59:59Z"), claim())).toBeNull();
-    expect(getHivraClaimPhase(new Date("2026-10-31T23:59:59Z"), claim())).toBe("not_open");
-    expect(hivraClaimHref(new Date("2026-12-01T00:00:00Z"), claim())).toBeNull();
-    expect(getHivraClaimPhase(new Date("2026-12-01T00:00:00Z"), claim())).toBe("closed");
+    expect(served(claim(), NOW)?.claim.phase).toBe("open");
+    expect(claimHrefOf(served(claim(), NOW)?.claim)).toBe(CAMPAIGN);
+    const before = new Date("2026-10-31T23:59:59Z");
+    expect(served(claim(), before)?.claim.phase).toBe("not_open");
+    expect(claimHrefOf(served(claim(), before)?.claim)).toBeNull();
+    const after = new Date("2026-12-01T00:00:00Z");
+    expect(served(claim(), after)?.claim.phase).toBe("closed");
+    expect(claimHrefOf(served(claim(), after)?.claim)).toBeNull();
   });
 
   it("stays unpublished, with no link, for an invalid campaign link", () => {
     jest.mocked(log.warn).mockClear();
-    const config = claim({ campaignUrl: "https://app.sablier.com.evil.example/x" });
-    expect(getHivraClaimPhase(NOW, config)).toBe("unpublished");
-    expect(hivraClaimHref(NOW, config)).toBeNull();
+    const open = served(claim({ campaignUrl: "https://app.sablier.com.evil.example/x" }), NOW);
+    expect(open?.claim.phase).toBe("unpublished");
+    expect(claimHrefOf(open?.claim)).toBeNull();
     expect(log.warn).toHaveBeenCalledWith("HIVRA airdrop config rejected", expect.objectContaining({
       problems: "claim.campaignUrl must be a plain https link on app.sablier.com",
     }));
+  });
+});
+
+describe("what /token is given about the airdrop", () => {
+  const NOW = new Date("2026-11-10T12:00:00Z");
+
+  it("is the snapshot and the Airdrop wallet, and never the Sablier link or the claim window", () => {
+    const config: HivraAirdropConfig = {
+      ...CONFIG,
+      snapshotTakenAt: "2026-10-20T16:00:00Z",
+      claim: { campaignUrl: CAMPAIGN, opensAt: "2026-11-01T00:00:00Z", closesAt: "2026-12-01T00:00:00Z" },
+    };
+    const facts = getTokenPageAirdropFacts(HIVRA, { now: NOW, config });
+    expect(facts).toEqual({
+      snapshot: { block: 36_000_000, url: "https://hivra.cloud/token/airdrop-snapshot", takenAt: "2026-10-20T16:00:00.000Z" },
+      senderAddress: "0x3333333333333333333333333333333333333333",
+    });
+    expect(JSON.stringify(facts)).not.toMatch(/sablier|opensAt|closesAt|campaign/i);
+  });
+
+  it("drops a snapshot time that is in the future, as /token/airdrop and /token/migration do, and keeps the block", () => {
+    const config = { ...CONFIG, snapshotTakenAt: "2999-01-01T00:00:00Z" };
+    expect(getTokenPageAirdropFacts(HIVRA, { now: NOW, config }).snapshot?.takenAt).toBeNull();
+    expect(getTokenPageAirdropFacts(HIVRA, { now: NOW, config }).snapshot?.block).toBe(36_000_000);
+  });
+
+  it("reports a snapshot time that is not a UTC instant, once, and shows no date", () => {
+    jest.mocked(log.warn).mockClear();
+    const config = { ...CONFIG, snapshotTakenAt: "last Tuesday" };
+    expect(getTokenPageAirdropFacts(HIVRA, { now: NOW, config }).snapshot?.takenAt).toBeNull();
+    expect(getTokenPageAirdropFacts(HIVRA, { now: NOW, config }).snapshot?.takenAt).toBeNull();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith("HIVRA airdrop config rejected", expect.objectContaining({
+      problems: expect.stringContaining("snapshotTakenAt must be a real UTC instant"),
+    }));
+  });
+
+  it("has no snapshot until the block and the link are both published", () => {
+    expect(getTokenPageAirdropFacts(HIVRA, { now: NOW, config: { ...CONFIG, snapshotUrl: null } }).snapshot).toBeNull();
   });
 });

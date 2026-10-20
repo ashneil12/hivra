@@ -10,6 +10,8 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
 import TokenPageClient from "../TokenPageClient";
+import { resolveAirdropFacts } from "@/lib/claim/conversion-state";
+import type { HivraAirdropConfig } from "@/lib/claim/hivra-airdrop-config";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 
 const mockCopy = jest.fn();
@@ -36,14 +38,9 @@ const PUBLISHED_AIRDROP = {
   snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
   claim: { campaignUrl: null, opensAt: null, closesAt: null },
 };
-// The claim core's config as the page reads it. The getter is read at render, so a test can swap the facts.
-let mockAirdrop: Record<string, unknown> = { ...PUBLISHED_AIRDROP };
-jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
-  ...jest.requireActual("@/lib/claim/hivra-airdrop-config"),
-  get HIVRA_AIRDROP() {
-    return mockAirdrop;
-  },
-}));
+// The claim core's config as the server reads it. The page never sees it: the server resolves the snapshot and
+// the Airdrop wallet (getTokenPageAirdropFacts) and passes just those down, so the test does the same.
+let mockAirdrop: HivraAirdropConfig = { ...PUBLISHED_AIRDROP };
 
 const HIVRA_ADDRESS = "0x1111111111111111111111111111111111111111";
 const HERMESOS_ADDRESS = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
@@ -73,7 +70,9 @@ function renderLaunched(
   entries: readonly TokenPageEntry[] = PHASES.active,
   hrefs: { airdropLookupHref: string | null; migrationHref: string | null } = { airdropLookupHref: "/token/airdrop", migrationHref: "/token/migration" },
 ) {
-  return render(<TokenPageClient entries={[...entries]} {...hrefs} />);
+  const hivra = entries.find((entry) => entry.key === "hivra");
+  const { snapshot, senderAddress } = resolveAirdropFacts(mockAirdrop, hivra?.contractAddress ?? HIVRA_ADDRESS, new Date("2026-11-01T00:00:00Z"));
+  return render(<TokenPageClient entries={[...entries]} airdropFacts={{ snapshot, senderAddress }} {...hrefs} />);
 }
 
 /** Matches an element by its whole text, so a paragraph split by <strong> or <em> still matches. */

@@ -15,8 +15,9 @@
  *   3. the committed list passes every check in hivra-airdrop-lookup.ts;
  *   4. the list was built at that same snapshot block.
  *
- * The Sablier claim link is a separate, later gate (getHivraClaimPhase,
- * hivraClaimHref): it appears only while the configured claim window is open.
+ * The Sablier claim link is a separate, later gate (claimHrefOf in
+ * hivra-claim.ts, applied by /token/airdrop and /token/migration): it appears
+ * only while the configured claim window is open, and nowhere else.
  *
  * Server-only: the full list never reaches a browser bundle.
  */
@@ -28,8 +29,8 @@ import { log } from "@/lib/logger";
 import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 import { HIVRA_AIRDROP, type HivraAirdropConfig } from "./hivra-airdrop-config";
-import { resolveAirdropFacts, type AirdropSnapshot } from "./conversion-state";
-import { NO_CLAIM, claimHrefOf, resolveHivraClaim, type HivraClaimPhase, type ResolvedHivraClaim } from "./hivra-claim";
+import { resolveAirdropFacts, type AirdropSnapshot, type TokenPageAirdropFacts } from "./conversion-state";
+import { NO_CLAIM, type ResolvedHivraClaim } from "./hivra-claim";
 import { parseHivraAirdropData, type ParsedHivraAirdrop } from "./hivra-airdrop-lookup";
 
 export type OpenHivraAirdrop = {
@@ -141,23 +142,19 @@ export function hivraAirdropLookupHref(
   return getServedHivraAirdrop(inputs) ? HIVRA_AIRDROP_LOOKUP_PATH : null;
 }
 
-function readClaim(now: Date, config: HivraAirdropConfig): ResolvedHivraClaim {
-  const { claim, problems } = resolveHivraClaim(config.claim, now);
-  reportConfigOnce(problems);
-  return claim;
-}
-
 /**
- * Where the Sablier claim is: "unpublished" (no valid campaign link),
- * "not_open", "open" or "closed" (hivra-claim.ts). Reads the committed config
- * only; callers still decide whether the viewer may see claim details at all
- * (the token geo-policy) and whether the airdrop page is served.
+ * What /token shows about the airdrop, resolved on the server at `now`: the
+ * published snapshot (block, link, and the time it was taken) and the Airdrop
+ * wallet. /token passes it down as props so the page's client code never
+ * imports the airdrop config, which also holds the Sablier campaign link and
+ * the claim window. A set but invalid config value is left out and reported
+ * once, like every other reader of the config.
  */
-export function getHivraClaimPhase(now: Date = new Date(), config: HivraAirdropConfig = HIVRA_AIRDROP): HivraClaimPhase {
-  return readClaim(now, config).phase;
-}
-
-/** The validated Sablier campaign link, only while the claim is open; otherwise null. */
-export function hivraClaimHref(now: Date = new Date(), config: HivraAirdropConfig = HIVRA_AIRDROP): string | null {
-  return claimHrefOf(readClaim(now, config));
+export function getTokenPageAirdropFacts(
+  hivraAddress: string,
+  { now = new Date(), config = HIVRA_AIRDROP }: { now?: Date; config?: HivraAirdropConfig } = {},
+): TokenPageAirdropFacts {
+  const { snapshot, senderAddress, problems } = resolveAirdropFacts(config, hivraAddress, now);
+  reportConfigOnce(problems);
+  return { snapshot, senderAddress };
 }

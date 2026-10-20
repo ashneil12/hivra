@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 
-import { checkTokenAddress, type ConversionState, type TokenAddressCheck } from "@/lib/claim/conversion-state";
+import { checkTokenAddress, type AddressCheckState, type TokenAddressCheck } from "@/lib/claim/token-address-check";
 
 const RESULT_COPY: Record<TokenAddressCheck["kind"], { tone: "ok" | "warn" | "neutral"; text: string }> = {
   invalid: {
@@ -37,7 +37,12 @@ const TONE_COLOR = {
   neutral: "var(--text-secondary)",
 } as const;
 
-export function TokenAddressChecker({ state }: { state: ConversionState }) {
+/**
+ * `state` is everything this client component receives, so it is only the two
+ * addresses the check compares with (addressCheckStateOf in conversion-state.ts
+ * builds it), never the whole ConversionState.
+ */
+export function TokenAddressChecker({ state }: { state: AddressCheckState }) {
   const inputId = useId();
   const [value, setValue] = useState("");
   const [result, setResult] = useState<TokenAddressCheck | null>(null);
