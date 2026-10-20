@@ -1,4 +1,4 @@
-import { TOKEN_PHASE_COPY, getTokenPhaseCopy, type TokenPhaseCopy } from "../token-phase-copy";
+import { TOKEN_PHASE_COPY, getTokenPhaseCopy, type TokenPagePhaseCopy, type TokenPhaseCopy } from "../token-phase-copy";
 
 /**
  * The dormant copy is the site's copy from before the phase copy existed,
@@ -6,7 +6,7 @@ import { TOKEN_PHASE_COPY, getTokenPhaseCopy, type TokenPhaseCopy } from "../tok
  * hivra-token-launch.ts, so this literal must only change together with a
  * reviewed copy change.
  */
-const DORMANT: TokenPhaseCopy = {
+const DORMANT: TokenPhaseCopy & { tokenPage: TokenPagePhaseCopy } = {
   tokenPage: {
     metadataTitle: "Hivra token: current access and proposals",
     metadataDescription:
@@ -74,11 +74,23 @@ describe("token phase copy", () => {
     expect(getTokenPhaseCopy("dormant")).toEqual(DORMANT);
   });
 
-  it("has the same fields in every phase", () => {
+  it("has the same fields in every phase, except the /token body, which only the dormant page reads", () => {
     const shape = (copy: TokenPhaseCopy) =>
-      Object.fromEntries(Object.entries(copy).map(([surface, fields]) => [surface, Object.keys(fields).sort()]));
+      Object.fromEntries(Object.entries(copy).filter(([surface]) => surface !== "tokenPage").map(([surface, fields]) => [surface, Object.keys(fields).sort()]));
     expect(shape(TOKEN_PHASE_COPY.scheduled)).toEqual(shape(TOKEN_PHASE_COPY.dormant));
     expect(shape(TOKEN_PHASE_COPY.active)).toEqual(shape(TOKEN_PHASE_COPY.dormant));
+    // Launched /token renders Ash's rewrite (TokenLaunchedView.tsx); the phase copy holds only its head.
+    for (const phase of ["scheduled", "active"] as const) {
+      expect(Object.keys(TOKEN_PHASE_COPY[phase].tokenPage).sort()).toEqual(["metadataDescription", "metadataTitle"]);
+    }
+  });
+
+  it.each(["scheduled", "active"] as const)("uses Ash's /token title and search description verbatim (%s)", (phase) => {
+    expect(getTokenPhaseCopy(phase).tokenPage).toEqual({
+      metadataTitle: "Hivra tokens | Official contracts, migration and holder access",
+      metadataDescription:
+        "Verify the official $HIVRA and legacy $HermesOS contracts on Base. Understand the automatic holder airdrop, existing access and proposed token uses.",
+    });
   });
 
   it.each(["scheduled", "active"] as const)("writes factual %s copy: no promotion, no dashes", (phase) => {
@@ -92,10 +104,10 @@ describe("token phase copy", () => {
 
   it.each(["scheduled", "active"] as const)("never calls a launched $HIVRA proposed or missing (%s)", (phase) => {
     for (const text of strings(getTokenPhaseCopy(phase))) {
-      expect(text).not.toMatch(/proposed (new )?token|proposed \$HIVRA|does not exist|not launched|to be launched|once it launches|once \$HIVRA launches/i);
+      // "proposed token uses" (Ash's /token description) names proposed uses, not a proposed token.
+      expect(text).not.toMatch(/proposed (new )?token(?! uses)|proposed \$HIVRA|does not exist|not launched|to be launched|once it launches|once \$HIVRA launches/i);
     }
-    const { tokenPage, evolution, llmsTxt } = getTokenPhaseCopy(phase);
-    expect(tokenPage.heroLead).toContain("$HIVRA is live on Base.");
+    const { evolution, llmsTxt } = getTokenPhaseCopy(phase);
     expect(evolution.hivraDetails).toContain(
       "Holders of legacy $HermesOS keep their existing access. Wallets that held $HermesOS at the snapshot block are sent $HIVRA automatically, with nothing to claim."
     );
@@ -106,22 +118,17 @@ describe("token phase copy", () => {
     const text = strings(getTokenPhaseCopy(phase)).join("\n");
     expect(text).not.toMatch(/Bankr|active claim|ETH proceeds|claims open|conversion terms|Go to conversion/i);
     expect(text).toMatch(/snapshot block/);
-    expect(getTokenPhaseCopy(phase).tokenPage.migrationParagraphs[1]).toMatch(/never asks anyone to connect a wallet/);
     expect(getTokenPhaseCopy(phase).tokenomics.flowSteps).toEqual(["$HermesOS", "Snapshot block", "$HIVRA"]);
   });
 
-  it("calls $HermesOS legacy once $HIVRA is active, and keeps the token access line until then", () => {
+  it("calls $HermesOS legacy once $HIVRA is active", () => {
     const active = getTokenPhaseCopy("active");
     expect(active.evolution.relationship).toBe("$HIVRA is the live token. $HermesOS is the legacy token, and its holders keep their existing access.");
     expect(active.llmsTxt.tokenStatus).toContain("$HermesOS is the legacy token");
-    expect(active.tokenPage.accessParagraph).toMatch(/^Eligible \$HIVRA holdings/);
-    expect(getTokenPhaseCopy("scheduled").tokenPage.accessParagraph).toBe(DORMANT.tokenPage.accessParagraph);
   });
 
   it("tells a scheduled reader when Hivra switches, and an active reader that it has", () => {
     expect(getTokenPhaseCopy("scheduled").tokenomics.headerLead).toContain("Hivra starts using it at the launch time on the token page");
-    expect(getTokenPhaseCopy("scheduled").tokenPage.heroTitle).toBe("$HermesOS and $HIVRA.");
-    expect(getTokenPhaseCopy("active").tokenPage.heroTitle).toBe("$HIVRA and $HermesOS.");
     expect(getTokenPhaseCopy("active").evolution.hivraDetails[0]).toBe("New accounts use $HIVRA for token access and token payment.");
   });
 });

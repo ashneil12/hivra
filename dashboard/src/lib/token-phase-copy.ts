@@ -11,15 +11,24 @@
  *
  * The scheduled and active strings are FACTUAL ONLY: no price, discount,
  * returns, urgency or invitation to buy. They are token-facing copy and need
- * UK financial-promotion / legal review before any Promote.
+ * UK financial-promotion / legal review before any Promote. The launched /token
+ * body is Ash's rewrite v2, applied verbatim in components/token/TokenLaunchedView.tsx.
  *
  * Client-safe: no server imports.
  */
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
 
-export interface TokenPagePhaseCopy {
+/** /token head copy, in every phase. */
+export interface TokenPageMetadataCopy {
   metadataTitle: string;
   metadataDescription: string;
+}
+
+/**
+ * The dormant /token body copy (TokenPageClient). Launched phases render Ash's
+ * rewrite (TokenLaunchedView.tsx) instead, so they carry only the head copy.
+ */
+export interface TokenPagePhaseCopy extends TokenPageMetadataCopy {
   heroTitle: string;
   heroLead: string;
   migrationEyebrow: string;
@@ -66,7 +75,7 @@ export interface LlmsTxtPhaseCopy {
 }
 
 export interface TokenPhaseCopy {
-  tokenPage: TokenPagePhaseCopy;
+  tokenPage: TokenPageMetadataCopy;
   tokenomics: TokenomicsPhaseCopy;
   evolution: EvolutionPhaseCopy;
   llmsTxt: LlmsTxtPhaseCopy;
@@ -84,20 +93,8 @@ const DORMANT_SUPPLY_LINE =
   "No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.";
 const LAUNCHED_SUPPLY_LINE =
   "BaseScan shows the total $HIVRA supply. Check the contract address on the token page.";
-const LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL =
-  "contract addresses on Base and understand current holder access. A wallet is optional.";
 const LAUNCHED_TOKENOMICS_DESCRIPTION =
   "$HIVRA is live on Base. Existing token access, the $HIVRA airdrop to $HermesOS holders, and the proposed uses and treasury. Final terms are published before proposals take effect.";
-// $HermesOS holders get $HIVRA by a push airdrop: no claim, no swap, nothing to
-// connect (lib/claim/hivra-airdrop-config.ts). Factual only.
-const LAUNCHED_TOKEN_PAGE_MIGRATION = {
-  migrationEyebrow: "NOTHING TO CLAIM. NO WALLET TO CONNECT.",
-  migrationHeading: "$HIVRA for $HermesOS holders",
-  migrationParagraphs: [
-    "Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot block, to the same wallet. Wallets Hivra manages for you are listed separately. There is nothing to claim or swap. Holders of legacy $HermesOS keep their existing access.",
-    "Hivra publishes the snapshot block and the full list of wallets on this page. Hivra never asks anyone to connect a wallet, sign a message or pay to receive $HIVRA. Anyone who does is not Hivra.",
-  ],
-} as const;
 const LAUNCHED_TOKENOMICS_MIGRATION = {
   migrationEyebrow: "Holder airdrop",
   migrationHeading: "Nothing to claim. Nothing to swap.",
@@ -113,23 +110,41 @@ const DORMANT_TOKENOMICS_MIGRATION_TERMS =
 const LAUNCHED_TOKENOMICS_MIGRATION_TERMS =
   "Holders of legacy $HermesOS keep their existing access, with no forced conversion and no deadline. The snapshot block and the full list of wallets are published on the token page.";
 
+/**
+ * The /token copy before $HIVRA launches, byte for byte as the site showed it
+ * (token-phase-copy.test.ts pins it). TokenPageClient renders it while $HIVRA
+ * is dormant.
+ */
+export const DORMANT_TOKEN_PAGE_COPY: TokenPagePhaseCopy = {
+  metadataTitle: "Hivra token: current access and proposals",
+  metadataDescription:
+    "Verify the existing $HermesOS contract, understand current holder access, and read the proposed $HIVRA migration. A wallet is optional.",
+  heroTitle: "$HermesOS and Hivra.",
+  heroLead:
+    "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the proposed $HIVRA token.",
+  migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
+  migrationHeading: "The proposed $HIVRA migration",
+  migrationParagraphs: [
+    "The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.",
+    "The proposed claim would sell the old tokens into their existing pool and use the ETH proceeds to buy from the new pool. Conversion terms, fees and price protections must be published with the contract before claims open. No migration action is offered on this page.",
+  ],
+  accessParagraph: DORMANT_ACCESS_PARAGRAPH,
+};
+
+/**
+ * The /token head once $HIVRA is launched (scheduled or active), verbatim from
+ * Ash's rewrite v2 (20 October 2026). The page sets the title as absolute, so
+ * the root layout's "%s | Hivra" template does not add a second "Hivra".
+ */
+const LAUNCHED_TOKEN_PAGE_METADATA: TokenPageMetadataCopy = {
+  metadataTitle: "Hivra tokens | Official contracts, migration and holder access",
+  metadataDescription:
+    "Verify the official $HIVRA and legacy $HermesOS contracts on Base. Understand the automatic holder airdrop, existing access and proposed token uses.",
+};
+
 export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>> = {
   dormant: {
-    tokenPage: {
-      metadataTitle: "Hivra token: current access and proposals",
-      metadataDescription:
-        "Verify the existing $HermesOS contract, understand current holder access, and read the proposed $HIVRA migration. A wallet is optional.",
-      heroTitle: "$HermesOS and Hivra.",
-      heroLead:
-        "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the proposed $HIVRA token.",
-      migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
-      migrationHeading: "The proposed $HIVRA migration",
-      migrationParagraphs: [
-        "The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.",
-        "The proposed claim would sell the old tokens into their existing pool and use the ETH proceeds to buy from the new pool. Conversion terms, fees and price protections must be published with the contract before claims open. No migration action is offered on this page.",
-      ],
-      accessParagraph: DORMANT_ACCESS_PARAGRAPH,
-    },
+    tokenPage: DORMANT_TOKEN_PAGE_COPY,
     tokenomics: {
       metadataTitle: "Proposed $HIVRA tokenomics",
       metadataDescription:
@@ -164,15 +179,7 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
     },
   },
   scheduled: {
-    tokenPage: {
-      metadataTitle: "Hivra token: official contracts and current access",
-      metadataDescription: `Verify the official $HermesOS and $HIVRA ${LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL}`,
-      heroTitle: "$HermesOS and $HIVRA.",
-      heroLead:
-        "Use Hivra and pay by card without connecting a wallet. $HIVRA is live on Base. Its contract address is listed on this page, with the time Hivra starts using it.",
-      ...LAUNCHED_TOKEN_PAGE_MIGRATION,
-      accessParagraph: DORMANT_ACCESS_PARAGRAPH,
-    },
+    tokenPage: LAUNCHED_TOKEN_PAGE_METADATA,
     tokenomics: {
       metadataTitle: "$HIVRA tokenomics",
       metadataDescription: LAUNCHED_TOKENOMICS_DESCRIPTION,
@@ -203,16 +210,7 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
     },
   },
   active: {
-    tokenPage: {
-      metadataTitle: "Hivra token: official contracts and current access",
-      metadataDescription: `Verify the official $HIVRA and $HermesOS ${LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL}`,
-      heroTitle: "$HIVRA and $HermesOS.",
-      heroLead:
-        "Use Hivra and pay by card without connecting a wallet. $HIVRA is live on Base. Its contract address is listed on this page.",
-      ...LAUNCHED_TOKEN_PAGE_MIGRATION,
-      accessParagraph:
-        "Eligible $HIVRA holdings are one way to qualify for compute access. Accounts that used legacy $HermesOS before $HIVRA launched keep that access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.",
-    },
+    tokenPage: LAUNCHED_TOKEN_PAGE_METADATA,
     tokenomics: {
       metadataTitle: "$HIVRA tokenomics",
       metadataDescription: LAUNCHED_TOKENOMICS_DESCRIPTION,

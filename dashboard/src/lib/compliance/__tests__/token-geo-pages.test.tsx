@@ -114,7 +114,8 @@ describe("dormant policy", () => {
     viewerFrom("GB");
     // This file's mocked launch config puts $HIVRA in a live phase, so read the copy for that phase.
     const copy = getTokenPhaseCopy(getHivraTokenPhase());
-    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle });
+    // Launched /token sets its title as absolute, past the root "%s | Hivra" template.
+    expect(await tokenMetadata()).toMatchObject({ title: { absolute: copy.tokenPage.metadataTitle } });
     expect(await tokenomicsMetadata()).toMatchObject({ title: copy.tokenomics.metadataTitle });
     expect(mockHeaders).not.toHaveBeenCalled();
   });
@@ -176,7 +177,7 @@ describe("the committed country list (GB)", () => {
   it("the head of /token and /tokenomics is unchanged for a viewer from elsewhere", async () => {
     viewerFrom("FR");
     const copy = getTokenPhaseCopy(getHivraTokenPhase());
-    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
+    expect(await tokenMetadata()).toMatchObject({ title: { absolute: copy.tokenPage.metadataTitle }, description: copy.tokenPage.metadataDescription });
     expect(await tokenomicsMetadata()).toMatchObject({ title: copy.tokenomics.metadataTitle, description: copy.tokenomics.metadataDescription });
   });
 

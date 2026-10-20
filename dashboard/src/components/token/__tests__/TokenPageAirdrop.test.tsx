@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import TokenPageClient from "../TokenPageClient";
 import type { TokenPageEntry } from "@/lib/token-verification-content";
@@ -40,56 +40,98 @@ const HIVRA_LIVE: TokenPageEntry = {
 };
 const HIVRA_DORMANT: TokenPageEntry = { ...HIVRA_LIVE, status: "not_launched", contractAddress: null, basescanUrl: null, activatesAt: null };
 
-describe("/token airdrop details", () => {
+const SENDER = "0x3333333333333333333333333333333333333333";
+const SNAPSHOT_URL = "https://hivra.cloud/token/airdrop-snapshot";
+
+describe("/token airdrop details once $HIVRA is launched", () => {
   afterEach(() => {
+    mockAirdrop.senderAddress = SENDER;
     mockAirdrop.snapshotBlock = 36000000;
-    mockAirdrop.snapshotUrl = "https://hivra.cloud/token/airdrop-snapshot";
+    mockAirdrop.snapshotUrl = SNAPSHOT_URL;
   });
 
-  it("shows the published snapshot block, list and sender once $HIVRA is launched", () => {
+  it("shows the published snapshot block, the snapshot link and the airdrop wallet with its BaseScan link", () => {
     render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
 
-    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent("Snapshot block: 36000000.");
-    expect(screen.getByRole("link", { name: "Open the published snapshot" })).toHaveAttribute(
-      "href",
-      "https://hivra.cloud/token/airdrop-snapshot",
-    );
-    expect(screen.getByText("0x3333333333333333333333333333333333333333")).toBeInTheDocument();
+    const details = within(screen.getByTestId("token-airdrop-details"));
+    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent(`Snapshot block: 36000000Airdrop wallet: ${SENDER}View on BaseScan`);
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toHaveAttribute("href", SNAPSHOT_URL);
+    expect(details.getByRole("link", { name: "View on BaseScan" })).toHaveAttribute("href", `https://basescan.org/address/${SENDER}`);
   });
 
   it("shows nothing about the airdrop while $HIVRA is dormant", () => {
     const { container } = render(<TokenPageClient entries={[HERMESOS, HIVRA_DORMANT]} />);
 
     expect(screen.queryByTestId("token-airdrop-details")).not.toBeInTheDocument();
-    expect(container.textContent).not.toContain("0x3333333333333333333333333333333333333333");
+    expect(container.textContent).not.toContain(SENDER);
   });
 
-  it("shows no details until the snapshot is published", () => {
+  it.each([
+    ["the snapshot list is not published", () => { mockAirdrop.snapshotUrl = null; }],
+    ["the snapshot block is not published", () => { mockAirdrop.snapshotBlock = null; }],
+    ["the snapshot list is not on an allowed Hivra location", () => { mockAirdrop.snapshotUrl = "https://hivra.example/snapshot"; }],
+  ])("hides the snapshot block and the snapshot link when %s, and keeps the airdrop wallet", (_why, arrange) => {
+    arrange();
+    const { container } = render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
+
+    expect(container.textContent).not.toContain("Snapshot block");
+    expect(screen.queryByRole("link", { name: "View the published snapshot" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent(`Airdrop wallet: ${SENDER}`);
+    expect(container.textContent).not.toMatch(/\[|CONFIRM|PLACEHOLDER/);
+  });
+
+  it("hides the airdrop wallet line and its BaseScan link when no sender is published", () => {
+    mockAirdrop.senderAddress = null;
+    const { container } = render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
+
+    expect(container.textContent).not.toContain("Airdrop wallet");
+    expect(container.querySelector('a[href^="https://basescan.org/address/"]')).toBeNull();
+    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent("Snapshot block: 36000000");
+  });
+
+  it("hides the whole details block when neither the snapshot nor the sender is published", () => {
+    mockAirdrop.senderAddress = null;
     mockAirdrop.snapshotUrl = null;
     render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
 
     expect(screen.queryByTestId("token-airdrop-details")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("token-holder-links")).not.toBeInTheDocument();
   });
 
   it("links to the wallet lookup only when the server says it is served", () => {
     const { rerender } = render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} airdropLookupHref="/token/airdrop" />);
-    expect(screen.getByRole("link", { name: "Check a wallet for the $HIVRA airdrop" })).toHaveAttribute("href", "/token/airdrop");
+    expect(screen.getByRole("link", { name: "Check a wallet" })).toHaveAttribute("href", "/token/airdrop");
 
     rerender(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
     expect(screen.getByTestId("token-airdrop-details")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /check a wallet/i })).not.toBeInTheDocument();
   });
 
-  it("never links a blocked viewer to the lookup, whatever is passed", () => {
+  it("links to the migration details, in both places, only when the server says the page is served", () => {
+    const { container, rerender } = render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} migrationHref="/token/migration" />);
+    const links = screen.getAllByRole("link", { name: "Read the migration details" });
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link).toHaveAttribute("href", "/token/migration");
+    // The second one closes "Avoid fake migration links".
+    expect(within(container.querySelector("#official-accounts") as HTMLElement).getByRole("link", { name: "Read the migration details" })).toBeInTheDocument();
+
+    rerender(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
+    expect(screen.queryByRole("link", { name: "Read the migration details" })).not.toBeInTheDocument();
+    expect(container.querySelector('a[href="/token/migration"]')).toBeNull();
+  });
+
+  it("never links a blocked viewer to the lookup or the migration page, whatever is passed", () => {
     const { container } = render(
-      <TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} geoNotice="Token features aren't available to you." airdropLookupHref="/token/airdrop" />,
+      <TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} geoNotice="Token features aren't available to you." airdropLookupHref="/token/airdrop" migrationHref="/token/migration" />,
     );
     expect(container.querySelector('a[href="/token/airdrop"]')).toBeNull();
+    expect(container.querySelector('a[href="/token/migration"]')).toBeNull();
   });
 
   it("hides the details from a viewer the token geo-policy blocks", () => {
     render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} geoNotice="Token features aren't available to you." />);
 
     expect(screen.queryByTestId("token-airdrop-details")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View the published snapshot" })).not.toBeInTheDocument();
   });
 });

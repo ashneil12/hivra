@@ -1,15 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, Copy } from "lucide-react";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
-import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
-import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
-import { HIVRA_AIRDROP } from "@/lib/claim/hivra-airdrop-config";
-import { resolveAirdropFacts } from "@/lib/claim/conversion-state";
+import { DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
 import {
   formatLaunchInstantUtc,
   tokenPhaseFromEntries,
@@ -17,7 +12,9 @@ import {
   type TokenPageEntry,
   type TokenPageEntryStatus,
 } from "@/lib/token-verification-content";
+import { CopyAddressButton } from "./CopyAddressButton";
 import { TokenGeoNotice } from "./TokenGeoNotice";
+import TokenLaunchedView from "./TokenLaunchedView";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
@@ -55,57 +52,14 @@ function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
 }
 
 /**
- * The published airdrop facts (lib/claim/hivra-airdrop-config.ts): the snapshot
- * block, the link to the full list and the sender wallet. Shown only once the
- * registry names $HIVRA and the snapshot is published; it reads no clock.
- * `lookupHref` is set by the server only when /token/airdrop is served.
- */
-function AirdropDetails({ entries, lookupHref }: { entries: readonly TokenPageEntry[]; lookupHref: string | null }) {
-  const hivraAddress = entries.find((entry) => entry.key === "hivra")?.contractAddress;
-  if (!hivraAddress) return null;
-  const { snapshot, senderAddress } = resolveAirdropFacts(HIVRA_AIRDROP, hivraAddress, null);
-  if (!snapshot) return null;
-  return <div data-testid="token-airdrop-details">
-    <p>
-      Snapshot block:{" "}
-      <a href={`https://basescan.org/block/${snapshot.block}`} target="_blank" rel="noopener noreferrer">{snapshot.block}</a>.{" "}
-      <a href={snapshot.url} target="_blank" rel="noopener noreferrer">Open the published snapshot</a>
-    </p>
-    {lookupHref ? <p>
-      <Link href={lookupHref}>Check a wallet for the $HIVRA airdrop</Link>
-    </p> : null}
-    {senderAddress ? <p>
-      The transfers come from Hivra&apos;s airdrop wallet:{" "}
-      <code style={{ overflowWrap: "anywhere" }}>{senderAddress}</code>{" "}
-      <a href={`https://basescan.org/address/${senderAddress}`} target="_blank" rel="noopener noreferrer">View on BaseScan</a>
-    </p> : null}
-  </div>;
-}
-
-type CopyState = "idle" | "copied" | "failed";
-
-function CopyAddressButton({ value }: { value: string }) {
-  const [state, setState] = useState<CopyState>("idle");
-  useEffect(() => {
-    if (state === "idle") return;
-    const timer = window.setTimeout(() => setState("idle"), 2000);
-    return () => window.clearTimeout(timer);
-  }, [state]);
-  return <>
-    <button type="button" className="mono" onClick={async () => setState(await copyTextToClipboard(value) ? "copied" : "failed")}
-      style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, margin: "12px 0 16px", padding: "0 16px", border: "1px solid var(--public-line)", background: "transparent", color: "var(--public-text)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
-      {state === "copied" ? <Check size={14} aria-hidden="true" style={{ color: "var(--public-accent)" }} /> : <Copy size={14} aria-hidden="true" />}
-      {state === "copied" ? "Address copied" : "Copy address"}
-    </button>
-    <span role="status" className="sr-only">{state === "copied" ? "Contract address copied" : state === "failed" ? "Copy failed. Select the address to copy it." : ""}</span>
-  </>;
-}
-
-/**
  * `entries` are computed on the server at render, so the markup never depends on the viewer's clock;
  * the $HIVRA phase, and with it the phase-dependent copy, is read from them.
  * `geoNotice` is set only when the token geo-policy blocks this viewer: the page then keeps the
  * factual contract, official account and access sections, adds the notice, and drops the proposals.
+ *
+ * Once $HIVRA is launched (scheduled or active), a viewer the geo-policy does not block reads
+ * Ash's rewrite (TokenLaunchedView). The layout below is the dormant page, and the page a
+ * blocked viewer reads in every phase, both unchanged.
  */
 export default function TokenPageClient({
   entries,
@@ -121,7 +75,12 @@ export default function TokenPageClient({
   migrationHref?: string | null;
 }) {
   const phase = tokenPhaseFromEntries(entries);
-  const phaseCopy = getTokenPhaseCopy(phase).tokenPage;
+  if (phase !== "dormant" && !geoNotice) {
+    return <TokenLaunchedView entries={entries} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} />;
+  }
+  // Reached only while $HIVRA is dormant, or by a blocked viewer, who reads none of
+  // the phase copy below (the restricted copy replaces it and the proposals are dropped).
+  const phaseCopy = DORMANT_TOKEN_PAGE_COPY;
   // A blocked viewer reads the contracts and the access they already have, not the
   // status, proposal or qualify-for-compute lines (RESTRICTED_TOKEN_PAGE_COPY).
   const restricted = geoNotice ? RESTRICTED_TOKEN_PAGE_COPY : null;
@@ -195,10 +154,6 @@ export default function TokenPageClient({
         <h2 id="proposals-title">{copy.migrationHeading}</h2>
         <p>{copy.migrationParagraphs[0]}</p>
         <p>{copy.migrationParagraphs[1]}</p>
-        <AirdropDetails entries={entries} lookupHref={geoNotice ? null : airdropLookupHref} />
-        {migrationHref ? <p data-testid="token-migration-link">
-          <Link href={migrationHref}>Read about the $HermesOS to $HIVRA migration</Link>
-        </p> : null}
         <h3>Utility and treasury proposals</h3>
         <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
         <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>

@@ -39,11 +39,14 @@ import TokenVerificationPage from "@/app/token/page";
 import TokenomicsPage from "@/app/tokenomics/page";
 import WhyHivraEvolutionPage from "@/app/why-hivra/evolution/page";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
-import { RESTRICTED_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
+import { DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
 
 const HIVRA_ADDRESS = "0x1111111111111111111111111111111111111111";
 const HERMESOS_ADDRESS = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 const PHASES = ["dormant", "scheduled", "active"] as const;
+// The first line of the launched /token lead (Ash's rewrite v2, TokenLaunchedView.tsx).
+const LAUNCHED_LEAD =
+  "Hivra started as HermesOS. The platform has grown beyond its original name, and $HIVRA is the new token for the wider ecosystem we're building.";
 
 function setPhase(phase: HivraTokenPhase) {
   if (phase === "dormant") {
@@ -106,7 +109,8 @@ describe.each(PHASES)("%s $HIVRA, a viewer in the United Kingdom", (phase) => {
     expect(text).toContain(RESTRICTED_TOKEN_PAGE_COPY.heroLead);
     expect(text).toContain(RESTRICTED_TOKEN_PAGE_COPY.accessParagraph);
     expect(text).not.toContain("OPTIONAL TOKEN");
-    expect(text).not.toContain(copy.tokenPage.heroLead);
+    expect(text).not.toContain(DORMANT_TOKEN_PAGE_COPY.heroLead);
+    expect(text).not.toContain(LAUNCHED_LEAD);
     expect(text).not.toMatch(STATUS_OR_PROPOSAL);
     // The anti-scam controls are untouched.
     expect(screen.getByText(HERMESOS_ADDRESS)).toBeInTheDocument();
@@ -147,9 +151,16 @@ describe.each(PHASES)("%s $HIVRA, a viewer from elsewhere", (phase) => {
     expect(text).toContain(copy.evolution.addressNote);
 
     const token = await renderPage(TokenVerificationPage);
-    expect(token.container.textContent).toContain(copy.tokenPage.heroLead);
-    expect(token.container.textContent).toContain("OPTIONAL TOKEN");
-    expect(token.container.textContent).toContain(copy.tokenPage.accessParagraph);
+    if (phase === "dormant") {
+      expect(token.container.textContent).toContain(DORMANT_TOKEN_PAGE_COPY.heroLead);
+      expect(token.container.textContent).toContain("OPTIONAL TOKEN");
+      expect(token.container.textContent).toContain(DORMANT_TOKEN_PAGE_COPY.accessParagraph);
+    } else {
+      // Launched: Ash's rewrite, with no geo notice.
+      expect(token.container.textContent).toContain(LAUNCHED_LEAD);
+      expect(token.container.textContent).toContain("THE HIVRA TOKEN");
+      expect(token.container.querySelector('[data-testid="token-geo-notice"]')).toBeNull();
+    }
 
     const tokenomics = await renderPage(TokenomicsPage);
     expect(tokenomics.container.textContent).toContain(copy.tokenomics.headerLead);
