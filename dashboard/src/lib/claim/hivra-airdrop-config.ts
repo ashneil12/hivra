@@ -1,10 +1,11 @@
 /**
- * The $HermesOS → $HIVRA holder airdrop.
+ * The $HermesOS → $HIVRA holder claim.
  *
- * There is no claim and no swap. Wallets that held $HermesOS at the snapshot
- * block are sent $HIVRA directly (a push airdrop), one $HIVRA for each
- * $HermesOS. Holders do nothing: they never connect a wallet, sign a message or
- * approve a transaction to receive it.
+ * A snapshot decides who is eligible, and eligible holders then START THE CLAIM
+ * THEMSELVES on Sablier (https://app.sablier.com) and pay the claim fee. It is
+ * not an automatic airdrop and nothing is pushed to a wallet. One $HIVRA is
+ * allocated for each $HermesOS held in an eligible wallet at the snapshot
+ * block, and no burn or surrender of $HermesOS is required.
  *
  * The $HIVRA contract itself is NOT set here: it comes only from the platform
  * token registry (lib/billing/hivra-token-launch.ts via token-registry.ts), the
@@ -14,37 +15,54 @@
  * Hivra name already exist on Base, and none of them is Hivra's.
  *
  * Each field is filled in by a reviewed pull request once it is true, never at
- * runtime (docs/token/HIVRA-ACTIVATION.md, "Holder airdrop"):
+ * runtime (docs/token/HIVRA-ACTIVATION.md, "Holder claim"):
  *
- *   senderAddress  the wallet every airdrop transfer is sent from, EIP-55
- *                  checksummed. Shown so a holder can check that an incoming
- *                  transfer is Hivra's.
- *   snapshotBlock  the Base block whose $HermesOS balances decide the airdrop.
- *   snapshotUrl    the published list of every snapshot wallet and the $HIVRA
- *                  it is sent, on an allowed location below.
- *   sentAt         the UTC instant, to the second, by which every transfer in
- *                  the snapshot was confirmed on Base. Null until then. It opens
- *                  the optional "switch your access" step for grandfathered
- *                  holders, so never set it before the last transfer confirms.
+ *   senderAddress     the Airdrop wallet, EIP-55 checksummed. It creates and funds
+ *                     the Sablier campaign. Shown so a holder can check it.
+ *   snapshotBlock     the Base block whose $HermesOS balances decide eligibility.
+ *   snapshotTakenAt   the UTC instant, to the second, the snapshot was taken, e.g.
+ *                     "2026-10-20T16:00:00Z". Never in the future.
+ *   snapshotUrl       the published list of every snapshot wallet and its $HIVRA
+ *                     allocation, on an allowed location below.
+ *   claim             the Sablier claim. All three stay null until the campaign
+ *                     exists and has been tested:
+ *     campaignUrl     the campaign page: https, exactly app.sablier.com, nothing
+ *                     else (no credentials, port, fragment, encoded escape or
+ *                     path traversal).
+ *     opensAt         the UTC instant the claim window opens, to the second.
+ *     closesAt        the UTC instant the claim window closes, to the second. It is
+ *                     the campaign's expiry. It opens the optional "switch your
+ *                     access" step for grandfathered holders.
  *
  * The snapshot is shown only when snapshotBlock and snapshotUrl are both set and
- * valid, and sentAt counts only once the snapshot is shown. A set but invalid
- * value is reported (conversion-state.ts `problems`) and treated as unset.
+ * valid. The claim link is shown only while the claim is open (hivra-claim.ts).
+ * A set but invalid value is reported (conversion-state.ts `problems`, and a
+ * "HIVRA airdrop config rejected" log) and treated as unset. For the claim
+ * window that means the whole claim stays hidden: a bad opensAt must not open
+ * the claim early.
  *
  * Client-safe: no imports.
  */
+export type HivraClaimConfig = {
+  campaignUrl: string | null;
+  opensAt: string | null;
+  closesAt: string | null;
+};
+
 export type HivraAirdropConfig = {
   senderAddress: string | null;
   snapshotBlock: number | null;
+  snapshotTakenAt: string | null;
   snapshotUrl: string | null;
-  sentAt: string | null;
+  claim: HivraClaimConfig;
 };
 
 export const HIVRA_AIRDROP: HivraAirdropConfig = {
   senderAddress: "0x3B954866d4329E19C1B9165774c88508f2fefA0c",
   snapshotBlock: null,
+  snapshotTakenAt: null,
   snapshotUrl: null,
-  sentAt: null,
+  claim: { campaignUrl: null, opensAt: null, closesAt: null },
 };
 
 /**

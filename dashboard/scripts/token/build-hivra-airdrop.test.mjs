@@ -8,10 +8,13 @@ import { test } from "node:test";
 import {
   HIVRA_TOTAL_SUPPLY_WEI,
   InputError,
+  SABLIER_CSV_HEADER,
   buildAirdrop,
   checkBatchFiles,
+  checkSablierCsv,
   decimalToWei,
   main,
+  parseArgs,
   parseExclusions,
   parseRemap,
   parseSnapshotCsv,
@@ -24,7 +27,6 @@ const POOL = A(0xbeef);
 const MANAGED = A(0xa1);
 const KEPT = A(0xa2);
 const OWNER = A(0xf00d);
-const HASH = `0x${"ab".repeat(32)}`;
 
 const CSV = [
   "address,balance_wei,extra",
@@ -37,7 +39,7 @@ const CSV = [
   `${KEPT},700000000000000000,`,
 ].join("\n");
 
-function fixture({ batchSize = 2, sentTxs = {} } = {}) {
+function fixture({ batchSize = 2, final } = {}) {
   return buildAirdrop({
     rows: parseSnapshotCsv(CSV),
     exclusions: parseExclusions({ [POOL]: "Uniswap pool", [A(99)]: "Not a holder" }),
@@ -47,7 +49,7 @@ function fixture({ batchSize = 2, sentTxs = {} } = {}) {
     }),
     snapshotBlock: 36_000_000,
     batchSize,
-    sentTxs,
+    final,
   });
 }
 
@@ -73,27 +75,66 @@ test("share of supply rounds up to 2 decimals", () => {
   assert.equal(percentOfSupplyCeil(exact + 1n), "1.25");
 });
 
-test("exclusions, zero balances and remaps shape the public document", () => {
+test("exclusions, zero balances and remaps shape the public document, with no batch, sent or destination state", () => {
   const { publicDocument, summary, warnings } = fixture();
-  assert.deepEqual(summary, { holders: 5, recipients: 5, remapped: 1, excluded: 1, zeroBalance: 1, batches: 3, sentBatches: 0 });
+  assert.deepEqual(summary, { holders: 5, recipients: 5, remapped: 1, excluded: 1, zeroBalance: 1, batches: 3 });
+  assert.equal(publicDocument.version, 2);
   assert.deepEqual(publicDocument.excluded, [{ address: POOL, label: "Uniswap pool" }]);
   assert.equal(publicDocument.totals.excludedWei, "5000000000000000000000");
   assert.match(warnings.join("\n"), /exclusion 0x0+63 is not in the snapshot/);
   // Largest first; addresses lower-cased.
   assert.deepEqual(publicDocument.holders.map((h) => h.address), [A(2), MANAGED, A(1), KEPT, A(3)]);
   const managed = publicDocument.holders.find((h) => h.address === MANAGED);
-  assert.deepEqual(managed, { address: MANAGED, amountWei: "2500000000000000000", remapped: true, sent: false });
+  assert.deepEqual(managed, { address: MANAGED, amountWei: "2500000000000000000", remapped: true });
   const kept = publicDocument.holders.find((h) => h.address === KEPT);
-  assert.deepEqual(kept, { address: KEPT, amountWei: "700000000000000000", batch: 2 });
+  assert.deepEqual(kept, { address: KEPT, amountWei: "700000000000000000" });
+  assert.ok(!("batches" in publicDocument), "the push model is gone: no Disperse batches in the public list");
   const text = JSON.stringify(publicDocument);
   assert.ok(!text.includes(OWNER.slice(2)), "the owner's destination is never published");
-  assert.ok(!/user_secret|x@y\.z|remap"|keep"/.test(text), "only send_to and kind are read, and kind is not published");
+  assert.ok(!/user_secret|x@y\.z|remap"|keep"|"sent"|"batch"|"tx"/.test(text), "only send_to and kind are read, and nothing else is published");
   const included = 123456789012345678901n + 2500000000000000000n + 10n ** 18n + 700000000000000000n + 1n;
   assert.equal(publicDocument.totals.includedWei, included.toString());
   assert.equal(publicDocument.totals.percentOfSupply, "0.01");
 });
 
-test("batches split by size, use send_to for managed wallets, and add up exactly", () => {
+test("final is false unless the final flag is given", () => {
+  assert.equal(fixture().publicDocument.final, false);
+  assert.equal(fixture({ final: false }).publicDocument.final, false);
+  assert.equal(fixture({ final: true }).publicDocument.final, true);
+  assert.throws(() => fixture({ final: "yes" }), /final must be true or false/);
+});
+
+test("the Sablier file has the header and one exact line per destination, merged and sorted", () => {
+  const { sablierCsv, sablierLines, includedWei } = fixture();
+  assert.equal(SABLIER_CSV_HEADER, "address,amount");
+  assert.equal(sablierCsv, [
+    "address,amount",
+    `${A(2)},123.456789012345678901`, // the upper-case snapshot address is lower-cased
+    `${OWNER},2.5`, // the managed wallet under its owner's destination
+    `${A(1)},1`,
+    `${KEPT},0.7`, // "keep" stays an ordinary holder
+    `${A(3)},0.000000000000000001`, // one wei, no float
+    "",
+  ].join("\n"));
+  assert.equal(sablierLines, 5);
+  const lines = sablierCsv.trim().split("\n").slice(1);
+  assert.equal(lines.reduce((sum, line) => sum + decimalToWei(line.split(",")[1]), 0n), includedWei);
+  assert.ok(!/e[+-]?\d|[a-df-z]/i.test(lines.map((line) => line.split(",")[1]).join(" ")), "amounts are plain decimals, never exponent notation");
+});
+
+test("the Sablier file adds up exactly beyond what a double can hold", () => {
+  const huge = 99_999_999_999_999_999_999_999_999_999n;
+  const rows = parseSnapshotCsv(`address,balance_wei\n${A(1)},${huge}\n${A(2)},1`);
+  const { sablierCsv, includedWei } = buildAirdrop({ rows, snapshotBlock: 1 });
+  assert.equal(sablierCsv, `address,amount\n${A(1)},99999999999.999999999999999999\n${A(2)},0.000000000000000001\n`);
+  assert.equal(includedWei, huge + 1n);
+});
+
+test("sent transactions are no longer an option", () => {
+  assert.throws(() => parseArgs(["--snapshot", "a", "--snapshot-block", "1", "--public-json", "b", "--batches-dir", "c", "--sent-txs", "d"]), /unknown or incomplete option "--sent-txs"/);
+});
+
+test("optional Disperse batches split by size, use send_to for managed wallets, and add up exactly", () => {
   const { batches, includedWei } = fixture();
   assert.deepEqual(batches.map((b) => b.lines), [
     [`${A(2)} 123.456789012345678901`, `${OWNER} 2.5`],
@@ -102,15 +143,6 @@ test("batches split by size, use send_to for managed wallets, and add up exactly
   ]);
   assert.equal(batches.reduce((sum, b) => sum + b.totalWei, 0n), includedWei);
   assert.equal(fixture({ batchSize: 300 }).batches.length, 1);
-});
-
-test("sent transactions mark batches and managed wallets as sent", () => {
-  const { publicDocument } = fixture({ sentTxs: { 1: HASH.toUpperCase().replace("0X", "0x") } });
-  assert.equal(publicDocument.batches[0].tx, HASH);
-  assert.equal(publicDocument.batches[1].tx, null);
-  assert.equal(publicDocument.holders.find((h) => h.address === MANAGED).sent, true);
-  assert.throws(() => fixture({ sentTxs: { 4: HASH } }), /batch number from 1 to 3/);
-  assert.throws(() => fixture({ sentTxs: { 1: "0x1234" } }), /tx hash/);
 });
 
 test("bad inputs are refused", () => {
@@ -131,7 +163,7 @@ test("bad inputs are refused", () => {
   );
 });
 
-test("main writes the files, passes the totals check, and refuses private files in the repository", () => {
+test("main writes all three files, passes the totals check, and refuses private files in the repository", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "hivra-airdrop-"));
   const snapshot = path.join(dir, "snapshot.csv");
   const exclusions = path.join(dir, "exclusions.json");
@@ -141,24 +173,35 @@ test("main writes the files, passes the totals check, and refuses private files 
   writeFileSync(remap, JSON.stringify({ [MANAGED]: { send_to: OWNER, kind: "remap" } }));
   const publicJson = path.join(dir, "public", "hivra-airdrop.json");
   const batchesDir = path.join(dir, "batches");
+  const sablierCsv = path.join(dir, "private", "sablier.csv");
   const logs = [];
   const io = { log: (line) => logs.push(line), error: (line) => logs.push(line) };
   const base = ["--snapshot", snapshot, "--snapshot-block", "36000000", "--exclusions", exclusions, "--remap", remap, "--public-json", publicJson];
 
+  // The Sablier file alone is enough; the Disperse batches are optional.
+  assert.equal(main([...base, "--sablier-csv", sablierCsv], io, path.join(dir, "repo")), 0);
+  assert.equal(readdirSync(path.dirname(sablierCsv)).length, 1);
+  assert.equal(readFileSync(sablierCsv, "utf8").split("\n")[0], "address,amount");
+  assert.match(logs.join("\n"), /totals check passed/);
+  assert.match(logs.join("\n"), /dry run \(final: false\)/);
+  assert.equal(JSON.parse(readFileSync(publicJson, "utf8")).final, false);
+
   // A first run with small batches, then a re-run with one batch: stale files go.
-  assert.equal(main([...base, "--batches-dir", batchesDir, "--batch-size", "2"], io, path.join(dir, "repo")), 0);
+  assert.equal(main([...base, "--sablier-csv", sablierCsv, "--batches-dir", batchesDir, "--batch-size", "2", "--final"], io, path.join(dir, "repo")), 0);
   assert.equal(readdirSync(batchesDir).length, 3);
+  assert.equal(JSON.parse(readFileSync(publicJson, "utf8")).final, true);
+  assert.match(logs.join("\n"), /public list is FINAL/);
   assert.equal(main([...base, "--batches-dir", batchesDir], io, path.join(dir, "repo")), 0);
   assert.deepEqual(readdirSync(batchesDir), ["hivra-airdrop-batch-001.txt"]);
-  assert.match(logs.join("\n"), /totals check passed/);
   assert.match(logs.join("\n"), /share of the 100B supply: 0\.01% \(rounded up\)/);
   const written = JSON.parse(readFileSync(publicJson, "utf8"));
   assert.equal(written.snapshotBlock, 36000000);
+  assert.equal(written.version, 2);
   assert.ok(!readFileSync(publicJson, "utf8").includes(OWNER.slice(2)));
 
-  // A tampered batch file fails the check.
-  const check = checkBatchFiles(batchesDir, BigInt(written.totals.includedWei) + 1n, written.totals.holders);
-  assert.equal(check.ok, false);
+  // A tampered file fails the check.
+  assert.equal(checkBatchFiles(batchesDir, BigInt(written.totals.includedWei) + 1n, written.totals.holders).ok, false);
+  assert.equal(checkSablierCsv(sablierCsv, BigInt(written.totals.includedWei) + 1n, written.totals.holders).ok, false);
 
   // Private files inside the repository are refused.
   const errors = [];
@@ -167,10 +210,15 @@ test("main writes the files, passes the totals check, and refuses private files 
   assert.match(errors.join("\n"), /--remap must be outside the repository/);
   assert.equal(main(["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson, "--batches-dir", path.join(dir, "b")], quiet, dir), 2);
   assert.match(errors.join("\n"), /--batches-dir must be outside the repository/);
+  assert.equal(main(["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson, "--sablier-csv", path.join(dir, "s.csv")], quiet, dir), 2);
+  assert.match(errors.join("\n"), /--sablier-csv must be outside the repository/);
   assert.equal(main(["--snapshot", snapshot], quiet, dir), 2);
+  // At least one claim output is needed.
+  assert.equal(main(["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson], quiet, path.join(dir, "repo")), 2);
+  assert.match(errors.join("\n"), /give --sablier-csv/);
 });
 
-test("a destination shared by several holders gets one Disperse line with the exact sum", () => {
+test("a destination shared by several holders gets one line with the exact sum", () => {
   const SECOND = A(0xa3);
   const rows = parseSnapshotCsv(
     [
@@ -193,16 +241,16 @@ test("a destination shared by several holders gets one Disperse line with the ex
   });
   assert.equal(result.summary.holders, 4);
   assert.equal(result.summary.recipients, 2);
+  assert.equal(result.sablierCsv, `address,amount\n${A(1)},3.500000000000000001\n${OWNER},0.000000000000000007\n`);
   assert.deepEqual(result.batches.map((b) => b.lines), [[`${A(1)} 3.500000000000000001`], [`${OWNER} 0.000000000000000007`]]);
   assert.equal(result.batches.reduce((sum, b) => sum + b.totalWei, 0n), result.includedWei);
   assert.equal(result.includedWei, 3500000000000000008n);
-  // Every holder still has its own exact public amount, and points at the merged line's batch.
+  // Every holder still has its own exact public amount; the managed wallets are flagged with no destination.
   const holders = Object.fromEntries(result.publicDocument.holders.map((h) => [h.address, h]));
-  assert.deepEqual(holders[A(1)], { address: A(1), amountWei: "1000000000000000001", batch: 1 });
-  assert.equal(holders[MANAGED].remapped, true);
-  assert.deepEqual(result.publicDocument.batches.map((b) => [b.recipients, b.totalWei]), [[1, "3500000000000000001"], [1, "7"]]);
-  const sent = buildAirdrop({ rows, remap: parseRemap({ [MANAGED]: { send_to: A(1) } }), snapshotBlock: 1, batchSize: 1, sentTxs: { 1: HASH } });
-  assert.equal(sent.publicDocument.holders.find((h) => h.address === MANAGED).sent, true);
+  assert.deepEqual(holders[A(1)], { address: A(1), amountWei: "1000000000000000001" });
+  assert.deepEqual(holders[MANAGED], { address: MANAGED, amountWei: "2500000000000000000", remapped: true });
+  assert.deepEqual(holders[SECOND], { address: SECOND, amountWei: "3", remapped: true });
+  assert.deepEqual(holders[KEPT], { address: KEPT, amountWei: "4", remapped: true });
 });
 
 test("the max total guard refuses an airdrop larger than the wallet's allocation", () => {
@@ -214,26 +262,30 @@ test("the max total guard refuses an airdrop larger than the wallet's allocation
   assert.equal(buildAirdrop({ rows, exclusions: parseExclusions({ [A(1)]: "Pool" }), snapshotBlock: 1, maxTotalWei: 400n }).includedWei, 400n);
 });
 
-test("main enforces --max-total-wei and --max-total-tokens before writing anything", () => {
+test("main enforces --max-total-wei and --max-total-tokens before writing anything, with or without --final", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "hivra-airdrop-max-"));
   const snapshot = path.join(dir, "snapshot.csv");
   writeFileSync(snapshot, `address,balance_wei\n${A(1)},1500000000000000000\n${A(2)},1`);
   const publicJson = path.join(dir, "public.json");
-  const batchesDir = path.join(dir, "batches");
-  const base = ["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson, "--batches-dir", batchesDir];
+  const sablierCsv = path.join(dir, "out", "sablier.csv");
+  const base = ["--snapshot", snapshot, "--snapshot-block", "1", "--public-json", publicJson, "--sablier-csv", sablierCsv];
   const errors = [];
   const logs = [];
   const io = { log: (line) => logs.push(line), error: (line) => errors.push(line) };
   const repo = path.join(dir, "repo");
 
-  assert.equal(main([...base, "--max-total-tokens", "1.5"], io, repo), 2);
-  assert.match(errors.join("\n"), /more than the airdrop wallet's allocation 1\.5 HIVRA/);
-  assert.throws(() => readdirSync(batchesDir), /ENOENT/, "nothing is written when the guard refuses");
-  assert.equal(main([...base, "--max-total-wei", "1500000000000000000"], io, repo), 2);
+  for (const extra of [[], ["--final"]]) {
+    assert.equal(main([...base, ...extra, "--max-total-tokens", "1.5"], io, repo), 2);
+    assert.match(errors.join("\n"), /more than the airdrop wallet's allocation 1\.5 HIVRA/);
+    assert.throws(() => readdirSync(path.dirname(sablierCsv)), /ENOENT/, "no Sablier file is written when the guard refuses");
+    assert.throws(() => readFileSync(publicJson, "utf8"), /ENOENT/, "no public list is written when the guard refuses");
+    assert.equal(main([...base, ...extra, "--max-total-wei", "1500000000000000000"], io, repo), 2);
+  }
 
   assert.equal(main([...base, "--max-total-wei", "1500000000000000001"], io, repo), 0);
   assert.equal(main([...base, "--max-total-tokens", "1.500000000000000001"], io, repo), 0);
   assert.match(logs.join("\n"), /within the airdrop wallet's allocation of 1\.500000000000000001 HIVRA/);
+  assert.equal(readFileSync(sablierCsv, "utf8"), `address,amount\n${A(1)},1.5\n${A(2)},0.000000000000000001\n`);
 
   errors.length = 0;
   assert.equal(main([...base, "--max-total-wei", "1", "--max-total-tokens", "1"], io, repo), 2);
@@ -243,11 +295,26 @@ test("main enforces --max-total-wei and --max-total-tokens before writing anythi
   assert.equal(main([...base, "--max-total-tokens", "1e9"], io, repo), 2);
 });
 
-test("the batch check fails when a destination appears on two lines", () => {
+test("the file checks fail when a destination appears on two lines, or the Sablier file is malformed", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "hivra-airdrop-dup-"));
   writeFileSync(path.join(dir, "hivra-airdrop-batch-001.txt"), `${A(1)} 1\n`);
   writeFileSync(path.join(dir, "hivra-airdrop-batch-002.txt"), `${A(1).toUpperCase().replace("0X", "0x")} 1\n`);
-  const check = checkBatchFiles(dir, 2n * 10n ** 18n, 2);
-  assert.equal(check.duplicates, 1);
-  assert.equal(check.ok, false);
+  const batch = checkBatchFiles(dir, 2n * 10n ** 18n, 2);
+  assert.equal(batch.duplicates, 1);
+  assert.equal(batch.ok, false);
+
+  const sablier = path.join(dir, "sablier.csv");
+  writeFileSync(sablier, `address,amount\n${A(1)},1\n${A(1).toUpperCase().replace("0X", "0x")},1\n`);
+  const doubled = checkSablierCsv(sablier, 2n * 10n ** 18n, 2);
+  assert.equal(doubled.duplicates, 1);
+  assert.equal(doubled.ok, false);
+
+  writeFileSync(sablier, `address,amount\n${A(1)},1\n${A(2)},2\n`);
+  assert.equal(checkSablierCsv(sablier, 3n * 10n ** 18n, 2).ok, true);
+  writeFileSync(sablier, `wallet,amount\n${A(1)},1\n`);
+  assert.throws(() => checkSablierCsv(sablier, 10n ** 18n, 1), /header must be exactly "address,amount"/);
+  writeFileSync(sablier, `address,amount\n${A(1)},1e18\n`);
+  assert.throws(() => checkSablierCsv(sablier, 10n ** 18n, 1), /malformed line/);
+  writeFileSync(sablier, `address,amount\n${A(1)},1.0000000000000000001\n`);
+  assert.throws(() => checkSablierCsv(sablier, 10n ** 18n, 1), /malformed line/);
 });

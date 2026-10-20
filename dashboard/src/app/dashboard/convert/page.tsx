@@ -22,8 +22,8 @@ export const dynamic = "force-dynamic";
 export default async function ConvertPage() {
   const now = new Date();
   const { userId } = await auth();
-  // Token geo-policy: a blocked viewer gets the notice and no airdrop details or
-  // switch step; the contracts, the no-claim warning and their access (and any
+  // Token geo-policy: a blocked viewer gets the notice and no claim details or
+  // switch step; the contracts, the claim-safety lines and their access (and any
   // post-switch deadline) still show.
   // With the dormant policy this reads nothing.
   const geo = await resolveTokenGeoBlockForPage(userId ?? null);

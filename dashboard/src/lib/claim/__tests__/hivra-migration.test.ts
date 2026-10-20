@@ -31,8 +31,9 @@ const HASH = (n: number) => `0x${n.toString(16).padStart(64, "0")}`;
 const AIRDROP: HivraAirdropConfig = {
   senderAddress: "0x3333333333333333333333333333333333333333",
   snapshotBlock: 36_000_000,
+  snapshotTakenAt: "2026-10-20T16:30:00Z",
   snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
-  sentAt: null,
+  claim: { campaignUrl: null, opensAt: null, closesAt: null },
 };
 
 function config(overrides: Partial<HivraMigrationConfig> = {}): HivraMigrationConfig {
@@ -189,9 +190,14 @@ describe("getServedHivraMigration / hivraMigrationHref", () => {
     const served = getServedHivraMigration(ready);
     expect(served?.hivraAddress).toBe(HIVRA_ADDRESS);
     expect(served?.hermesosAddress).toBe("0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3");
-    expect(served?.snapshot).toEqual({ block: 36_000_000, url: "https://hivra.cloud/token/airdrop-snapshot" });
+    expect(served?.snapshot).toEqual({ block: 36_000_000, url: "https://hivra.cloud/token/airdrop-snapshot", takenAt: "2026-10-20T16:30:00.000Z" });
     expect(hivraMigrationHref(ready)).toBe(HIVRA_MIGRATION_PATH);
     expect(HIVRA_MIGRATION_PATH).toBe("/token/migration");
+  });
+
+  it("leaves out a snapshot time that is in the future, and keeps the snapshot", () => {
+    const served = getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, snapshotTakenAt: "2026-12-02T00:00:00Z" } });
+    expect(served?.snapshot).toEqual({ block: 36_000_000, url: "https://hivra.cloud/token/airdrop-snapshot", takenAt: null });
   });
 
   it.each([

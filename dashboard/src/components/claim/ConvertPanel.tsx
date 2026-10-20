@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
 import { HERMESOS_CONTRACT_ADDRESS, type ConversionState } from "@/lib/claim/conversion-state";
+import { formatUtcInstant as formatUtc } from "@/lib/claim/hivra-claim";
 
 import { SwitchAccessStep } from "./SwitchAccessStep";
 import { TokenAddressChecker } from "./TokenAddressChecker";
@@ -14,25 +15,25 @@ export const DORMANT_TITLE = "Convert $HermesOS to $HIVRA";
 
 // Launched copy: factual only (no price, returns or invitation to buy). It is
 // token-facing copy and needs UK financial-promotion / legal review before any Promote.
+// Sentences come from Ash's pack (01-token.md, 02-token-migration.md and
+// 03-token-airdrop.md) wherever they exist; only the two lines marked "new
+// copy" are not from it.
 export const LAUNCHED_TITLE = "$HIVRA for $HermesOS holders";
-export const AIRDROP_LABEL = "Sent automatically. There is nothing to claim.";
+export const CLAIM_LABEL = "Claims are not automatic.";
+export const CLAIM_LEAD = "Eligible holders can claim $HIVRA through Sablier based on the snapshot already taken.";
 export const GEO_BLOCKED_LABEL = "Token details are limited for you.";
 export const SNAPSHOT_PENDING_MESSAGE =
   "The snapshot is not published yet. This page shows the snapshot block and links to the full list of wallets once it is.";
-export const NO_CLAIM_WARNING =
-  "Hivra never asks you to connect a wallet, sign a message, approve a transaction or pay anything to receive $HIVRA. Any site, message or account that does is not Hivra.";
-
-function formatUtc(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-    timeZoneName: "short",
-  });
-}
+export const CLAIM_SAFETY_TITLE = "Claim safely";
+export const CLAIM_SAFETY_WALLET =
+  "A legitimate Sablier claim involves connecting a wallet and authorising the necessary claim transaction.";
+export const CLAIM_SAFETY_DM =
+  "Never follow a claim link from a DM. Start from Hivra's official site and check the contract and transaction details before signing.";
+export const CLAIM_SAFETY_LOOKALIKE =
+  "Tokens can share a name or symbol without being connected to Hivra. Always compare the full address before interacting with one.";
+// New copy (not in the pack): why the optional switch is not offered yet.
+export const SWITCH_AFTER_CLAIM_MESSAGE =
+  "After the claim window closes, you can choose to switch your access to $HIVRA on this page.";
 
 const section: CSSProperties = {
   borderTop: "1px solid var(--etched-border)",
@@ -141,13 +142,22 @@ function DormantPanel({ state, geoNotice }: { state: Extract<ConversionState, { 
   );
 }
 
-function AirdropStatus({ state, lookupHref }: { state: LaunchedState; lookupHref: string | null }) {
+/**
+ * The claim, in the pack's own sentences. The Sablier link itself is not here:
+ * it lives on /token/airdrop (linked below when that page is served) so the
+ * official link has one home.
+ */
+function ClaimStatus({ state, lookupHref }: { state: LaunchedState; lookupHref: string | null }) {
+  const { claim } = state;
   return (
     <>
       <p style={body}>
-        Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot
-        block, to the same wallet. Wallets Hivra manages for you are listed separately. There is nothing to claim or
-        swap, and you don&apos;t need to do anything.
+        The allocation is one $HIVRA for each $HermesOS held in an eligible wallet at the snapshot block. You don&apos;t
+        need to burn or surrender your original $HermesOS tokens.
+      </p>
+      <p style={body}>
+        This is a claim, not an automatic transfer. Claiming requires a wallet transaction, and you pay the applicable
+        claim and network fees. You&apos;ll be shown the relevant costs before confirming.
       </p>
       {state.snapshot ? (
         <>
@@ -159,34 +169,26 @@ function AirdropStatus({ state, lookupHref }: { state: LaunchedState; lookupHref
           </p>
           <p style={body}>
             <a href={state.snapshot.url} target="_blank" rel="noopener noreferrer">
-              Open the published snapshot
-            </a>{" "}
-            to find your wallet and the $HIVRA it is sent.
+              View the published snapshot
+            </a>
           </p>
-          {lookupHref ? (
-            <p data-testid="convert-airdrop-lookup" style={body}>
-              <Link href={lookupHref}>Check a wallet for the $HIVRA airdrop</Link>
+          {claim.opensAt && claim.closesAt ? (
+            <p data-testid="convert-claim-window" style={body}>
+              Claim window: {formatUtc(claim.opensAt)} to {formatUtc(claim.closesAt)}
             </p>
           ) : null}
-          {state.sentAt ? (
-            <p data-testid="convert-airdrop-sent" style={body}>
-              Every transfer in the snapshot was confirmed on Base by {formatUtc(state.sentAt)}. Your $HIVRA is in the
-              wallet that held your $HermesOS.
+          {lookupHref ? (
+            <p data-testid="convert-airdrop-lookup" style={body}>
+              <Link href={lookupHref}>Check eligibility and claim through the official Sablier flow</Link>
             </p>
-          ) : (
-            <p data-testid="convert-airdrop-pending" style={body}>
-              The $HIVRA has not been sent yet. This page says when every transfer is confirmed.
-            </p>
-          )}
+          ) : null}
         </>
       ) : (
         <p data-testid="convert-snapshot-pending" style={body}>
           {SNAPSHOT_PENDING_MESSAGE}
         </p>
       )}
-      {state.senderAddress ? (
-        <ContractAddress label="The transfers come from Hivra's airdrop wallet:" address={state.senderAddress} kind="address" />
-      ) : null}
+      {state.senderAddress ? <ContractAddress label="Airdrop wallet:" address={state.senderAddress} kind="address" /> : null}
     </>
   );
 }
@@ -228,8 +230,9 @@ function AccessSection({ state, geoNotice }: { state: LaunchedState; geoNotice: 
         Your tier counts the legacy $HermesOS in your verified wallet, and that continues. Moving $HermesOS out of that
         wallet lowers that balance. Billing shows your tier.
       </p>
-      {access.kind === "hermesos" && !geoNotice ? (
-        <p style={muted}>Once the airdrop is sent, you can choose to switch your access to $HIVRA on this page.</p>
+      {/* Only with a known closing time: otherwise the switch never opens and the line would promise it. */}
+      {access.kind === "hermesos" && !geoNotice && state.claim.closesAt && state.claim.phase !== "closed" ? (
+        <p data-testid="convert-switch-later" style={muted}>{SWITCH_AFTER_CLAIM_MESSAGE}</p>
       ) : null}
     </Section>
   );
@@ -253,45 +256,50 @@ function LaunchedPanel({
           data-testid="convert-proposed-label"
           style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-secondary)", margin: 0 }}
         >
-          {geoNotice ? GEO_BLOCKED_LABEL : AIRDROP_LABEL}
+          {geoNotice ? GEO_BLOCKED_LABEL : CLAIM_LABEL}
         </p>
         <h1 style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", margin: "0.5rem 0 0.75rem" }}>{LAUNCHED_TITLE}</h1>
-        <p style={muted}>There is nothing to claim and nothing to swap.</p>
+        {geoNotice ? null : <p style={muted}>{CLAIM_LEAD}</p>}
       </header>
 
-      <Section id="convert-status" title={geoNotice ? "Status" : "The airdrop"}>
+      <Section id="convert-status" title={geoNotice ? "Status" : "Claim your allocation"}>
         {geoNotice ? (
           <p data-testid="token-geo-notice" style={body}>
             {geoNotice}
           </p>
         ) : (
           <>
-            <AirdropStatus state={state} lookupHref={airdropLookupHref} />
+            <ClaimStatus state={state} lookupHref={airdropLookupHref} />
             {migrationHref ? (
               <p data-testid="convert-migration-link" style={body}>
-                <Link href={migrationHref}>Read about the $HermesOS to $HIVRA migration</Link>
+                <Link href={migrationHref}>Read the migration details</Link>
               </p>
             ) : null}
           </>
         )}
       </Section>
 
-      <Section id="convert-no-claim" title="Never connect a wallet to claim">
-        <p data-testid="convert-no-claim" style={body}>
-          {NO_CLAIM_WARNING}
-        </p>
-        <p style={muted}>
-          Fake airdrops send lookalike tokens and link to claim sites. Check a token&apos;s contract address against the
-          official contract below before you trust it.
-        </p>
+      <Section id="convert-claim-safety" title={CLAIM_SAFETY_TITLE}>
+        <div data-testid="convert-claim-safety">
+          {geoNotice ? null : <p style={body}>{CLAIM_SAFETY_WALLET}</p>}
+          <p style={body}>{CLAIM_SAFETY_DM}</p>
+          <p style={muted}>{CLAIM_SAFETY_LOOKALIKE}</p>
+        </div>
       </Section>
 
       <AccessSection state={state} geoNotice={geoNotice} />
 
       <Section id="convert-platform-wallet" title="Tokens in a Hivra wallet">
         <p style={body}>
-          If your $HermesOS sits in a wallet Hivra manages for you, the published snapshot shows whether that wallet is
-          included. Wallet shows how to move your tokens to a wallet you control.
+          If your $HermesOS sits in a wallet Hivra manages for you, Wallet shows how to move your tokens to a wallet you
+          control.
+          {airdropLookupHref ? (
+            <>
+              {" "}
+              Hivra-managed wallets are handled separately as explained on the{" "}
+              <Link href={airdropLookupHref}>airdrop page</Link>.
+            </>
+          ) : null}
         </p>
         <p style={body}>
           <Link href="/dashboard/wallet">Open Wallet</Link>
@@ -318,9 +326,13 @@ function LaunchedPanel({
 /**
  * The $HermesOS holder page at /dashboard/convert. Before $HIVRA launches it
  * shows the old proposal copy unchanged. Once the registry names $HIVRA it
- * explains the push airdrop: no claim, no swap, nothing to connect. It never
- * builds or sends a transaction and links to no swap. $HIVRA comes from the
- * token registry; the airdrop facts from lib/claim/hivra-airdrop-config.ts.
+ * explains the claim: eligible holders claim $HIVRA through Sablier, one for
+ * one, and pay the claim fee; nothing is pushed to a wallet and no burn or
+ * surrender of $HermesOS is needed. It never builds or sends a transaction and
+ * carries no Sablier link of its own (it points at /token/airdrop, where the
+ * official link lives). $HIVRA comes from the token registry; the claim facts
+ * from lib/claim/hivra-airdrop-config.ts. The optional "switch your access"
+ * step stays hidden until the claim window has closed.
  */
 export function ConvertPanel({
   state,
@@ -330,8 +342,8 @@ export function ConvertPanel({
 }: {
   state: ConversionState;
   /**
-   * Set when the token geo-policy blocks this viewer: no airdrop explanation or
-   * switch step, but the official contracts, the no-claim warning and their
+   * Set when the token geo-policy blocks this viewer: no claim explanation or
+   * switch step, but the official contracts, the claim-safety lines and their
    * current access (and any post-switch deadline) still show.
    */
   geoNotice?: string | null;

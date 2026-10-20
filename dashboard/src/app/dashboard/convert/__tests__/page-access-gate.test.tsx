@@ -9,7 +9,7 @@ import ConvertPage from "../page";
 jest.mock("next/navigation", () => ({ useRouter: () => ({ refresh: jest.fn() }) }));
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn(async () => ({ userId: "user_1" })) }));
 jest.mock("@/lib/claim/conversion-access.server", () => ({ readConversionAccessGate: jest.fn() }));
-// A live $HIVRA and a sent airdrop, so only the per-user access gate decides.
+// A live $HIVRA and a closed claim window, so only the per-user access gate decides.
 jest.mock("@/lib/billing/hivra-token-launch", () => ({
   HIVRA_TOKEN_LAUNCH: {
     contractAddress: "0x1111111111111111111111111111111111111111",
@@ -23,8 +23,13 @@ jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
   HIVRA_AIRDROP: {
     senderAddress: "0x3333333333333333333333333333333333333333",
     snapshotBlock: 36000000,
+    snapshotTakenAt: null,
     snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
-    sentAt: "2026-01-02T00:00:00Z",
+    claim: {
+      campaignUrl: "https://app.sablier.com/airdrops/campaign/0xabc123/",
+      opensAt: "2026-01-01T00:00:00Z",
+      closesAt: "2026-01-02T00:00:00Z",
+    },
   },
 }));
 
@@ -38,11 +43,12 @@ describe("/dashboard/convert access gate", () => {
     expect(gate).toHaveBeenCalledWith("user_1", expect.any(Date));
   });
 
-  it("shows the airdrop but nothing about the tier when the gate can't be read", async () => {
+  it("shows the claim but nothing about the tier when the gate can't be read", async () => {
     gate.mockResolvedValue(null);
     render(await ConvertPage());
 
-    expect(screen.getByTestId("convert-airdrop-sent")).toBeInTheDocument();
+    expect(screen.getByTestId("convert-snapshot-block")).toBeInTheDocument();
+    expect(screen.getByTestId("convert-claim-window")).toHaveTextContent(/^Claim window: 1 January 2026.*00:00 UTC to 2 January 2026.*00:00 UTC$/);
     expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
     expect(screen.getByText(/Billing shows which token your tier counts/)).toBeInTheDocument();
   });
@@ -61,7 +67,7 @@ describe("/dashboard/convert access gate", () => {
     }
   });
 
-  it("offers the switch step to a grandfathered holder who hasn't switched", async () => {
+  it("offers the switch step to a grandfathered holder who hasn't switched, once the claim window has closed", async () => {
     gate.mockResolvedValue({ grandfathered: true, convertedAt: null, conversionGraceEndsAt: null });
     render(await ConvertPage());
 

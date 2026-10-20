@@ -58,15 +58,17 @@ grandfathering, payments, price feed, UI and emails) into `canary`.
    live on each target (the Canary build; for production, the Promote).
    Otherwise a user who arrives between the instant and the deploy sees a
    $HermesOS-only site but is not grandfathered.
-6. **Holder airdrop (separate from activation):** there is no claim and no
-   swap. $HermesOS holders at a snapshot block are sent $HIVRA directly, one
-   for one, by a push airdrop after the launch (section 9). The
-   /dashboard/convert page reads the $HIVRA contract from the same registry,
-   so it needs no address of its own, and it stays on its pre-launch copy
-   until the launch block is filled in. The airdrop facts (sender wallet,
-   snapshot block, snapshot list, sent time) live in
-   `dashboard/src/lib/claim/hivra-airdrop-config.ts` and each goes in by its
-   own reviewed PR. The page and the launched /token, /tokenomics,
+6. **Holder claim (separate from activation):** $HermesOS holders at a
+   snapshot block are eligible, one $HIVRA for each $HermesOS, and they start
+   the claim themselves on Sablier and pay the claim fee (section 9). It is
+   not an automatic airdrop, nothing is pushed to a wallet, and no burn or
+   surrender of $HermesOS is needed. The /dashboard/convert page reads the
+   $HIVRA contract from the same registry, so it needs no address of its own,
+   and it stays on its pre-launch copy until the launch block is filled in.
+   The claim facts (Airdrop wallet, snapshot block, snapshot time, snapshot
+   list, Sablier campaign link and claim window) live in
+   `dashboard/src/lib/claim/hivra-airdrop-config.ts` and each group goes in
+   by its own reviewed PR. The page and the launched /token, /tokenomics,
    /why-hivra/evolution and /llms.txt copy need the UK financial-promotion /
    legal review before any Promote. Activation does not depend on them.
 
@@ -291,8 +293,8 @@ quote fails closed with a 503 "try again later":
    $HermesOS has no ETH-side floor. Until the Doppler pool holds that much
    ETH, these fail closed for $HIVRA: hold-for-tier, yearly and
    managed-Venice $HIVRA quotes, and any new $HIVRA tier qualification (it
-   needs a live threshold). These do not depend on it: receiving the
-   airdrop, holding $HIVRA, and keeping a tier already qualified (breach and
+   needs a live threshold). These do not depend on it: claiming $HIVRA,
+   holding $HIVRA, and keeping a tier already qualified (breach and
    grace compare balances, not prices).
 2. **Median cross-check:** the reference is the median price over the last
    `PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES` (4 hours) of five-minute buckets
@@ -436,20 +438,26 @@ and keep $HermesOS with no deadline. On 2026-09-23 (read-only counts):
 Their yearly subscriptions run to expiry and renew in $HermesOS if they
 choose.
 
-## 9. Holder airdrop ($HermesOS to $HIVRA)
+## 9. Holder claim ($HermesOS to $HIVRA)
 
-The earlier plan (a Bankr launch, then an active claim that sold $HermesOS
-into its pool and bought $HIVRA with the ETH, run by Bankr) is replaced. The
-launch runs on Doppler, and holders get $HIVRA by a **push airdrop**: one
-$HIVRA for each $HermesOS held at a snapshot block, sent to the same wallet.
-The published list excludes pools, launch contracts, burn addresses and Ash's
-own wallet, and lists wallets Hivra manages for users separately (their
-$HIVRA goes to the user's own wallet). Holders do nothing. Hivra never asks anyone to connect a wallet, sign or pay
-to receive it. What changed in this runbook:
+The earlier plans (a Bankr launch with an active claim that sold $HermesOS
+into its pool, and then a push airdrop sent through Disperse) are replaced.
+The launch runs on Doppler. A **snapshot** decides who is eligible: one $HIVRA
+for each $HermesOS held in an eligible wallet at the snapshot block. Eligible
+holders then **claim through Sablier**: they start the claim themselves, connect
+the wallet that was in the snapshot, approve the claim transaction and pay the
+claim fee and the network cost. Nothing is sent to a wallet automatically, and
+nobody has to burn or surrender $HermesOS. The published list excludes pools,
+launch contracts, burn addresses and Ash's own wallet. Wallets Hivra manages for
+users (lock wallets and agent wallets) cannot connect to Sablier, so they are
+flagged in the list and handled separately (their allocation goes under the
+user's own wallet through the private remap, below). What changed in this
+runbook:
 
 - Precondition 6 no longer waits on a `termsUrl` and a `bankr.bot`
   `conversionUrl`. `conversion-links-config.ts` is gone; the page reads
-  `hivra-airdrop-config.ts` and links to no claim or swap site at all.
+  `hivra-airdrop-config.ts`. The only claim link is the Sablier campaign link
+  in that file, shown on /token/airdrop only while the claim is open.
 - The `contractAddress` source is the Doppler launch, checked on BaseScan as
   before. The helper expects name `Hivra`, symbol `HIVRA`, 18 decimals, a
   total supply of exactly 100,000,000,000, a fixed supply (a DopplerERC20V1
@@ -471,55 +479,71 @@ to receive it. What changed in this runbook:
 - The $HIVRA floors are $25,000 total (`HIVRA_MIN_PRICE_LIQUIDITY_USD`) and
   $12,500 of ETH (`HIVRA_MIN_QUOTE_LIQUIDITY_USD`). Until the pool holds both,
   $HIVRA quotes and new $HIVRA tier qualification fail closed (section 5),
-  while receiving the airdrop, holding $HIVRA and keeping an existing tier
+  while claiming $HIVRA, holding $HIVRA and keeping an existing tier
   are unaffected.
 - The conversion rule in section 4 (switch access, 72-hour grace) still
   applies. The convert page offers the switch to a grandfathered holder only
-  once `sentAt` is set, because after the grace only $HIVRA counts.
+  once the Sablier claim window has **closed** (`getHivraClaimPhase()` is
+  `closed`), because after the grace only $HIVRA counts and a holder who can
+  still claim should not be moved onto a $HIVRA-only tier early. This is a
+  conservative gate and Ash's call: it can be relaxed in a reviewed PR.
 
-### The airdrop config
+### The claim config
 
 `dashboard/src/lib/claim/hivra-airdrop-config.ts`:
 
 ```ts
 export const HIVRA_AIRDROP: HivraAirdropConfig = {
-  senderAddress: "0x3B95…",          // the wallet every airdrop transfer comes from (EIP-55)
-  snapshotBlock: null,               // the Base block whose $HermesOS balances decide the airdrop
-  snapshotUrl: null,                 // the published list: every wallet and the $HIVRA it is sent
-  sentAt: null,                      // UTC instant by which every transfer was confirmed
+  senderAddress: "0x3B95…",          // the Airdrop wallet: it creates and funds the Sablier campaign (EIP-55)
+  snapshotBlock: null,               // the Base block whose $HermesOS balances decide eligibility
+  snapshotTakenAt: null,             // UTC instant the snapshot was taken, to the second, never in the future
+  snapshotUrl: null,                 // the published list: every wallet and its $HIVRA allocation
+  claim: {
+    campaignUrl: null,               // https://app.sablier.com/... campaign page, nothing else
+    opensAt: null,                   // UTC instant the claim window opens, to the second
+    closesAt: null,                  // UTC instant it closes: the campaign's expiry
+  },
 };
 ```
 
 Nothing in it shows anywhere until the launch block in section 2 is filled
-in. Then, in order, each by its own reviewed PR:
+in. Then, in order, each group by its own reviewed PR:
 
 1. **With the activation PR (or after):** the sender wallet is already set.
-   The page shows it so holders can check an incoming transfer.
-2. **When the snapshot is taken and published:** `snapshotBlock` and
-   `snapshotUrl` together. The list must be public at that URL first, on
-   `hivra.cloud`, `canary.hermesos.cloud` or under
+   The Airdrop wallet is shown so a holder can check it.
+2. **When the snapshot is taken, verified and published:** `snapshotBlock`,
+   `snapshotTakenAt` and `snapshotUrl` together. The list must be public at that
+   URL first, on `hivra.cloud`, `canary.hermesos.cloud` or under
    `github.com/ashneil12/hivra/`; anything else is rejected and logged
-   (`HIVRA airdrop config rejected`). The snapshot shows only when both are
-   set and valid.
-3. **When the last transfer is confirmed on Base:** `sentAt`. A future
-   instant, or one without a published snapshot, is rejected. Setting it
-   opens the optional "switch your access" step for grandfathered holders.
+   (`HIVRA airdrop config rejected`). The snapshot shows only when the block and
+   the URL are both set and valid. `snapshotTakenAt` is dropped and logged when
+   it is not a real UTC instant to the second or is in the future.
+3. **When the Sablier campaign exists and has been tested:** `claim.campaignUrl`,
+   `claim.opensAt` and `claim.closesAt` together. The link must be https on
+   exactly `app.sablier.com` (no credentials, port, fragment, backslash,
+   percent-encoding or dot segments), and the two instants real UTC instants to
+   the second with `opensAt` before `closesAt`. A bad value is logged and the
+   whole claim stays hidden, so a typo in `opensAt` cannot open the claim early.
+   The phase (`getHivraClaimPhase`) is `unpublished` without a valid link,
+   `not_open` before `opensAt`, `open` between them (a missing `opensAt` or
+   `closesAt` means no limit on that side) and `closed` from `closesAt`. The
+   Sablier link on /token/airdrop (`hivraClaimHref`) exists only while `open`.
 
 Decide and publish, with the snapshot, which wallets it leaves out (for
 example pools, launch contracts and Ash's own wallet). Wallets Hivra manages
-(the legacy `hermesos_lock` wallets) are included but flagged: the generator
-below sends their $HIVRA to the owner's own wallet when a private remap names
-one. A lock wallet that still receives $HIVRA can withdraw it from Wallet once
-$HIVRA is live; one that holds only $HIVRA shows just that withdraw. The page
-tells holders that the published snapshot says whether a Hivra-managed wallet
-is included.
+(the legacy `hermesos_lock` wallets and agent wallets) are included but
+flagged: they cannot connect to Sablier, and the generator below puts their
+$HIVRA under the owner's own wallet when a private remap names one. A lock
+wallet that still receives $HIVRA can withdraw it from Wallet once $HIVRA is
+live; one that holds only $HIVRA shows just that withdraw. The airdrop page
+says these allocations are handled separately and gives no destination.
 
-### Building the airdrop list and the Disperse batches
+### Building the list and the Sablier upload file
 
 `dashboard/scripts/token/build-hivra-airdrop.mjs` turns the snapshot into the
-public list and the send batches. It is offline: it reads and writes local
-files only, signs nothing and sends nothing. The airdrop wallet sends each
-batch by hand on disperse.app. Every amount is whole wei (BigInt, no float).
+public list and the Sablier upload file. It is offline: it reads and writes
+local files only, signs nothing and sends nothing. Every amount is whole wei
+(BigInt, no float).
 
 1. **Snapshot CSV.** One row per $HermesOS holder at `snapshotBlock`, with an
    `address` and a `balance_wei` column. Keep it outside the repository.
@@ -527,40 +551,76 @@ batch by hand on disperse.app. Every amount is whole wei (BigInt, no float).
    The reason is published, so it must not name a person, an email or a user
    id (the generator refuses ones that look like either).
 3. **Remap** (optional, `--remap`, PRIVATE): `{"0xaddress": {"send_to":
-   "0x…", "kind": "…"}}` for Hivra-managed wallets whose $HIVRA goes to the
+   "0x…", "kind": "…"}}` for Hivra-managed wallets whose $HIVRA goes under the
    owner's own wallet. It must sit outside the repository (the generator
    refuses a path inside it) and is never committed.
 4. **Allocation guard** (`--max-total-wei` or `--max-total-tokens`, give one):
-   the airdrop wallet's $HIVRA allocation. The run refuses, writing nothing,
-   when the included total is larger.
+   the Airdrop wallet's $HIVRA allocation. The run refuses, writing nothing,
+   when the included total is larger. Always give it on a final run.
 5. **Run it:**
    ```sh
    cd dashboard
    node scripts/token/build-hivra-airdrop.mjs --snapshot ~/airdrop/snapshot.csv \
      --snapshot-block <block> --exclusions ~/airdrop/exclusions.json \
      --remap ~/airdrop/remap.json --max-total-tokens <allocation> \
-     --public-json src/data/token/hivra-airdrop.json --batches-dir ~/airdrop/batches
+     --public-json src/data/token/hivra-airdrop.json \
+     --sablier-csv ~/airdrop/sablier.csv [--final]
    ```
    It writes the public list to `src/data/token/hivra-airdrop.json` (holders
    and exact amounts, excluded wallets with their reason, managed wallets
-   flagged with no destination and no batch) and one disperse.app text file
-   per batch to `--batches-dir`, which must also be outside the repository
-   (the batches carry the private destinations). Each destination gets one
-   line: when a remap's `send_to` is another holder, or two managed wallets
-   share an owner, their amounts are added together exactly. It then reads
-   the batch files back and exits 1 unless they add up to the included total
-   to the wei, with one line per destination.
-6. **Publish** the snapshot list (precondition for `snapshotUrl`), then commit
-   `hivra-airdrop.json` and set `snapshotBlock` and `snapshotUrl` in reviewed
-   PRs. The /token/airdrop lookup opens only when `HIVRA_NEW_TOKEN_SURFACES` is
-   on, the launch block is filled in, the snapshot is published, and the
-   committed list passes its checks and is for the same block. /token and
-   /dashboard/convert link to it only under that same check, and never for a
-   viewer the token geo-policy blocks.
-7. **After each batch confirms on Base**, add its transaction to a sent file
-   (`{"1": "0x<tx hash>", ...}`) and re-run with `--sent-txs <file>`. The
-   public list then shows that batch as sent; commit it by a reviewed PR.
-   After the last batch, set `sentAt`.
+   flagged with no destination; no batch, transaction or "sent" state) and the
+   Sablier upload file to `--sablier-csv`, which must be outside the repository
+   (it carries the private destinations). The Sablier file has the header
+   `address,amount`, then one line per eligible wallet, the amount in whole
+   $HIVRA token units exact to the wei. Each destination gets one line: when a
+   remap's `send_to` is another holder, or two managed wallets share an owner,
+   their amounts are added together exactly. It then reads the file back and
+   exits 1 unless it adds up to the included total to the wei, with one line
+   per destination.
+6. **`--final`.** Without it the public list says `final: false` and
+   /token/airdrop never shows the eligible-wallet count, the total allocated or
+   the percentage of supply (they are dry-run figures). Run with `--final` only
+   on the verified snapshot, with the allocation guard, and commit that list.
+7. **Optional Disperse batches** (`--batches-dir`, outside the repository): the
+   same recipients as disperse.app text files, a manual tool for any wallet
+   that cannot claim. It is no longer the main path and is not needed for the
+   Sablier campaign.
+8. **Publish** the snapshot list (precondition for `snapshotUrl`), then commit
+   `hivra-airdrop.json` and set `snapshotBlock`, `snapshotTakenAt` and
+   `snapshotUrl` in a reviewed PR. The /token/airdrop lookup opens only when
+   `HIVRA_NEW_TOKEN_SURFACES` is on, the launch block is filled in, the snapshot
+   is published, and the committed list passes its checks and is for the same
+   block. /token and /dashboard/convert link to it only under that same check,
+   and never for a viewer the token geo-policy blocks.
+
+### Creating the Sablier campaign
+
+Done by hand, by the Airdrop wallet, on https://app.sablier.com. Hivra's code
+never signs anything and holds no key.
+
+1. **Wait for the launch and the 1-day vest release.** The Airdrop wallet must
+   hold the $HIVRA it will fund the campaign with.
+2. **Create a tiny test campaign first.** Same steps as below with two or three
+   wallets you control and a few tokens, claimed from those wallets. Check that
+   the upload file is accepted, what the claim screen and the fee look like,
+   how the expiry is set, and that unclaimed tokens can be recovered. Note what
+   Sablier shows for the claim fee: the page copy says only that claimants pay
+   the applicable Sablier claim fee and the network cost, and no fee amount is
+   published anywhere until Ash has seen it.
+3. **Create the real campaign:** an **instant** Sablier airdrop campaign from
+   the Airdrop wallet, uploading `sablier.csv`, with the **expiry date set to the
+   claim window close**, funded with $HIVRA (the included total from the
+   generator run; the Airdrop wallet's allocation must cover it).
+4. **Holders pay the Sablier claim fee** (and the network cost) when they claim.
+   Hivra pays nothing per claim.
+5. **After the expiry** the campaign creator (the Airdrop wallet) can recover the
+   tokens nobody claimed, from the Sablier app.
+6. **Then, in a separate reviewed PR,** fill `claim.campaignUrl`, `claim.opensAt`
+   and `claim.closesAt` (step 3 of the claim config). Check the link in the PR
+   against the campaign the Airdrop wallet created, and check `closesAt` equals
+   the campaign's expiry. The founder's final sale and the burn of the unsold
+   remainder are scheduled against the claim window close; set those dates in the
+   migration config only once `closesAt` is fixed.
 
 ### The migration page (/token/migration)
 

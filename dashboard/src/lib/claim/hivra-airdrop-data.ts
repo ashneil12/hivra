@@ -1,5 +1,6 @@
 /**
- * Whether the /token/airdrop lookup is open, and the list it reads.
+ * Whether the /token/airdrop lookup is open, the list it reads, and the Sablier
+ * claim link.
  *
  * The list is src/data/token/hivra-airdrop.json, written by
  * scripts/token/build-hivra-airdrop.mjs and committed by a reviewed PR. Until
@@ -14,6 +15,9 @@
  *   3. the committed list passes every check in hivra-airdrop-lookup.ts;
  *   4. the list was built at that same snapshot block.
  *
+ * The Sablier claim link is a separate, later gate (getHivraClaimPhase,
+ * hivraClaimHref): it appears only while the configured claim window is open.
+ *
  * Server-only: the full list never reaches a browser bundle.
  */
 import "server-only";
@@ -25,12 +29,16 @@ import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 
 import { HIVRA_AIRDROP, type HivraAirdropConfig } from "./hivra-airdrop-config";
 import { resolveAirdropFacts, type AirdropSnapshot } from "./conversion-state";
+import { NO_CLAIM, claimHrefOf, resolveHivraClaim, type HivraClaimPhase, type ResolvedHivraClaim } from "./hivra-claim";
 import { parseHivraAirdropData, type ParsedHivraAirdrop } from "./hivra-airdrop-lookup";
 
 export type OpenHivraAirdrop = {
   airdrop: ParsedHivraAirdrop;
   snapshot: AirdropSnapshot;
+  /** The Airdrop wallet that funds the Sablier campaign. */
   senderAddress: string | null;
+  /** The Sablier claim at the time of the request (hivra-claim.ts). */
+  claim: ResolvedHivraClaim;
 };
 
 export type HivraAirdropLookupInputs = {
@@ -48,6 +56,22 @@ function reportOnce(raw: unknown, message: string, problems: string[]) {
   if (reportedRaw === raw) return;
   reportedRaw = raw;
   log.error(message, null, { source: LOG_SOURCE, failureType: "hivra_airdrop_list_rejected", problems: problems.slice(0, 10).join("; ") });
+}
+
+const reportedConfig = new Set<string>();
+
+/** A set but invalid config value is a release defect: log it once per distinct problem list, never render it. */
+function reportConfigOnce(problems: string[]) {
+  if (problems.length === 0) return;
+  const key = problems.join("; ");
+  if (reportedConfig.has(key)) return;
+  if (reportedConfig.size > 50) reportedConfig.clear();
+  reportedConfig.add(key);
+  log.warn("HIVRA airdrop config rejected", {
+    source: LOG_SOURCE,
+    failureType: "hivra_airdrop_config_rejected",
+    problems: problems.slice(0, 20).join("; "),
+  });
 }
 
 const parsedCache = new WeakMap<object, ReturnType<typeof parseHivraAirdropData>>();
@@ -70,7 +94,8 @@ export function getOpenHivraAirdrop(inputs: HivraAirdropLookupInputs = {}): Open
     : getHivraTokenPhase(now) === "dormant" ? null : getConfiguredHivraToken()?.address ?? null;
   if (!hivraAddress) return null;
 
-  const { snapshot, senderAddress } = resolveAirdropFacts(inputs.config ?? HIVRA_AIRDROP, hivraAddress, null);
+  const { snapshot, senderAddress, claim, problems } = resolveAirdropFacts(inputs.config ?? HIVRA_AIRDROP, hivraAddress, now);
+  reportConfigOnce(problems);
   if (!snapshot) return null;
 
   const raw = "raw" in inputs ? inputs.raw : (rawAirdropList as unknown);
@@ -87,7 +112,7 @@ export function getOpenHivraAirdrop(inputs: HivraAirdropLookupInputs = {}): Open
     ]);
     return null;
   }
-  return { airdrop: parsed.airdrop, snapshot, senderAddress };
+  return { airdrop: parsed.airdrop, snapshot, senderAddress, claim: claim ?? NO_CLAIM };
 }
 
 /** Where the lookup is served. */
@@ -114,4 +139,25 @@ export function hivraAirdropLookupHref(
   inputs: HivraAirdropLookupInputs & { env?: Record<string, string | undefined> } = {},
 ): string | null {
   return getServedHivraAirdrop(inputs) ? HIVRA_AIRDROP_LOOKUP_PATH : null;
+}
+
+function readClaim(now: Date, config: HivraAirdropConfig): ResolvedHivraClaim {
+  const { claim, problems } = resolveHivraClaim(config.claim, now);
+  reportConfigOnce(problems);
+  return claim;
+}
+
+/**
+ * Where the Sablier claim is: "unpublished" (no valid campaign link),
+ * "not_open", "open" or "closed" (hivra-claim.ts). Reads the committed config
+ * only; callers still decide whether the viewer may see claim details at all
+ * (the token geo-policy) and whether the airdrop page is served.
+ */
+export function getHivraClaimPhase(now: Date = new Date(), config: HivraAirdropConfig = HIVRA_AIRDROP): HivraClaimPhase {
+  return readClaim(now, config).phase;
+}
+
+/** The validated Sablier campaign link, only while the claim is open; otherwise null. */
+export function hivraClaimHref(now: Date = new Date(), config: HivraAirdropConfig = HIVRA_AIRDROP): string | null {
+  return claimHrefOf(readClaim(now, config));
 }

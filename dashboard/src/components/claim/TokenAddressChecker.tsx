@@ -19,7 +19,7 @@ const RESULT_COPY: Record<TokenAddressCheck["kind"], { tone: "ok" | "warn" | "ne
   },
   "airdrop-sender": {
     tone: "ok",
-    text: "This is Hivra's airdrop wallet, not a token contract. Tokens it sends are only Hivra's if their contract matches the official $HIVRA contract.",
+    text: "This is Hivra's airdrop wallet, not a token contract. $HIVRA is only the token whose contract matches the official $HIVRA contract.",
   },
   "hivra-not-launched": {
     tone: "warn",

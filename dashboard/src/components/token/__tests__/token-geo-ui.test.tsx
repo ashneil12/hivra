@@ -203,8 +203,10 @@ describe("convert page panel", () => {
   const airdrop = {
     senderAddress: "0x3333333333333333333333333333333333333333",
     snapshotBlock: 36000000,
+    snapshotTakenAt: null,
     snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
-    sentAt: "2026-10-02T18:00:00Z",
+    // The claim window closed on 2 October, so the optional switch is available (to an unblocked viewer).
+    claim: { campaignUrl: "https://app.sablier.com/airdrops/campaign/0xabc123/", opensAt: "2026-10-01T00:00:00Z", closesAt: "2026-10-02T18:00:00Z" },
   };
   const now = new Date("2026-10-03T12:00:00Z");
   const hivraState = resolveConversionState({
@@ -219,10 +221,10 @@ describe("convert page panel", () => {
     expect(hivraState.status).toBe("launched");
     render(<ConvertPanel state={hivraState} geoNotice={GB_NOTICE} />);
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
-    expect(screen.queryByRole("link", { name: "Open the published snapshot" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View the published snapshot" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("convert-snapshot-block")).not.toBeInTheDocument();
     expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
-    expect(screen.getByTestId("convert-no-claim")).toBeInTheDocument();
+    expect(screen.getByTestId("convert-claim-safety")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Official contracts" })).toBeInTheDocument();
     expect(screen.getByText("0x1111111111111111111111111111111111111111")).toBeInTheDocument();
   });
@@ -257,7 +259,7 @@ describe("convert page panel", () => {
 
   it("is unchanged without a notice", () => {
     render(<ConvertPanel state={hivraState} />);
-    expect(screen.getByRole("link", { name: "Open the published snapshot" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
   });
 });
