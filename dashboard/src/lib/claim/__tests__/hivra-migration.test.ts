@@ -7,6 +7,7 @@ import { log } from "@/lib/logger";
 
 import {
   HIVRA_MIGRATION_PATH,
+  RECEIPT_KINDS,
   formatTokenCount,
   getServedHivraMigration,
   hivraMigrationHref,
@@ -52,8 +53,8 @@ function config(overrides: Partial<HivraMigrationConfig> = {}): HivraMigrationCo
   };
 }
 
-function validate(c: HivraMigrationConfig) {
-  return validateHivraMigrationConfig(c, { hivraAddress: HIVRA.address, now: NOW });
+function validate(c: HivraMigrationConfig, claimClosesAt: string | null = null) {
+  return validateHivraMigrationConfig(c, { hivraAddress: HIVRA.address, now: NOW, claimClosesAt });
 }
 
 describe("committed config", () => {
@@ -85,12 +86,13 @@ describe("validateHivraMigrationConfig", () => {
       receipts: [
         { date: "2026-11-05", kind: "founder-sale", txHash: HASH(1), note: "Week 1 sale" },
         { date: "2026-11-10T12:00:00Z", kind: "liquidity", txHash: HASH(2), note: null },
+        { date: "2026-11-02", kind: "claim", txHash: HASH(3), note: "First claims" },
       ],
     }));
     expect(problems).toEqual([]);
     expect(migration.founder?.saleStart).toEqual({ iso: "2026-11-05T00:00:00.000Z", dateOnly: true });
     expect(migration.founder?.saleDay).toBe("Thursday");
-    expect(migration.receipts.map((receipt) => receipt.kind)).toEqual(["liquidity", "founder-sale"]);
+    expect(migration.receipts.map((receipt) => receipt.kind)).toEqual(["liquidity", "founder-sale", "claim"]);
   });
 
   it.each([
@@ -158,21 +160,85 @@ describe("validateHivraMigrationConfig", () => {
     expect(problems).toContain("founder.burnDate is not after the last sale week");
   });
 
+  describe("the founder's burn date against the claim window", () => {
+    // 13 weekly sales from 5 Nov 2026 end on 28 Jan 2027, the day after the window's last day.
+    const CLOSES = "2027-01-27T23:59:59Z";
+
+    it("keeps a burn date after claim.closesAt", () => {
+      const { migration, problems } = validate(config(), CLOSES);
+      expect(problems).toEqual([]);
+      expect(migration.founder?.burnDate).toEqual({ iso: "2027-02-04T00:00:00.000Z", dateOnly: true });
+    });
+
+    it.each([
+      ["a window that closes after the burn day starts", "2027-02-04T12:00:00Z"],
+      ["a window that closes at the burn instant", "2027-02-04T00:00:00Z"],
+      ["a window that closes well after the burn date", "2027-02-10T16:00:00Z"],
+    ])("drops a burn date that is not after claim.closesAt (%s) and says why", (_why, closesAt) => {
+      const { migration, problems } = validate(config(), closesAt);
+      expect(migration.founder?.burnDate).toBeNull();
+      expect(problems).toContain("founder.burnDate is not after claim.closesAt");
+      // Everything else about the founder is kept.
+      expect(migration.founder?.saleStart).toEqual({ iso: "2026-11-05T00:00:00.000Z", dateOnly: true });
+      expect(migration.founder?.weeks).toBe(13);
+    });
+
+    it("checks nothing when the claim has no closing time, or the value is not a UTC instant to the second", () => {
+      expect(validate(config(), null).migration.founder?.burnDate?.iso).toBe("2027-02-04T00:00:00.000Z");
+      expect(validate(config(), "2027-03-01").migration.founder?.burnDate?.iso).toBe("2027-02-04T00:00:00.000Z");
+      expect(validate(config(), "2027-03-01T00:00:00.000Z").problems).toEqual([]);
+    });
+
+    it("does nothing when there is no burn date to check", () => {
+      const founder = { ...config().founder!, burnDate: null };
+      const { migration, problems } = validate(config({ founder }), "2027-03-01T00:00:00Z");
+      expect(migration.founder?.burnDate).toBeNull();
+      expect(problems).toEqual([]);
+    });
+  });
+
   it("drops bad receipts and logs why, never rendering them", () => {
     const { migration, problems } = validate(config({
       receipts: [
         { date: "2026-11-20", kind: "liquidity", txHash: HASH(1), note: "Week 2" },
         { date: "2026-11-20", kind: "liquidity", txHash: "0x1234", note: null },
         { date: "2026-11-20", kind: "swap" as never, txHash: HASH(2), note: null },
-        { date: "not a date", kind: "burn", txHash: HASH(3), note: null },
+        { date: "not a date", kind: "founder-sale", txHash: HASH(3), note: null },
         { date: "2027-06-01", kind: "liquidity", txHash: HASH(4), note: null },
         { date: "2026-11-04T23:59:59Z", kind: "founder-sale", txHash: HASH(5), note: null },
         { date: "2026-11-21", kind: "liquidity", txHash: HASH(1), note: "again" },
-        { date: "2026-11-22", kind: "airdrop-batch", txHash: HASH(6), note: "" },
+        { date: "2026-11-22", kind: "claim", txHash: HASH(6), note: "" },
       ],
     }));
     expect(migration.receipts).toEqual([{ date: { iso: "2026-11-20T00:00:00.000Z", dateOnly: true }, kind: "liquidity", txHash: HASH(1), note: "Week 2" }]);
     expect(problems).toHaveLength(7);
+  });
+
+  it("no longer takes the burn and airdrop-batch receipt kinds (a burn is recorded as a founder sale)", () => {
+    expect(RECEIPT_KINDS).toEqual(["claim", "liquidity", "founder-sale"]);
+    const { migration, problems } = validate(config({
+      receipts: [
+        { date: "2026-11-20", kind: "burn" as never, txHash: HASH(1), note: null },
+        { date: "2026-11-20", kind: "airdrop-batch" as never, txHash: HASH(2), note: null },
+        { date: "2026-11-20", kind: "founder-sale", txHash: HASH(3), note: "Burn of the remainder" },
+      ],
+    }));
+    expect(migration.receipts.map((receipt) => [receipt.kind, receipt.txHash])).toEqual([["founder-sale", HASH(3)]]);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("kind is not one of claim, liquidity, founder-sale");
+  });
+
+  it("checks a claim receipt like any other: a real hash, not in the future, not repeated", () => {
+    const { migration, problems } = validate(config({
+      receipts: [
+        { date: "2026-11-20", kind: "claim", txHash: HASH(1), note: "Claim transactions" },
+        { date: "2026-11-21", kind: "claim", txHash: HASH(1), note: null },
+        { date: "2027-06-01", kind: "claim", txHash: HASH(2), note: null },
+        { date: "2026-11-22", kind: "claim", txHash: "0xabc", note: null },
+      ],
+    }));
+    expect(migration.receipts).toHaveLength(1);
+    expect(problems).toHaveLength(3);
   });
 });
 
@@ -193,6 +259,33 @@ describe("getServedHivraMigration / hivraMigrationHref", () => {
     expect(served?.snapshot).toEqual({ block: 36_000_000, url: "https://hivra.cloud/token/airdrop-snapshot", takenAt: "2026-10-20T16:30:00.000Z" });
     expect(hivraMigrationHref(ready)).toBe(HIVRA_MIGRATION_PATH);
     expect(HIVRA_MIGRATION_PATH).toBe("/token/migration");
+  });
+
+  it("carries the Sablier claim from the airdrop config, at the clock it was given", () => {
+    expect(getServedHivraMigration(ready)?.claim).toEqual({ phase: "unpublished", campaignUrl: null, opensAt: null, closesAt: null });
+    const claim = { campaignUrl: "https://app.sablier.com/airdrops/campaign/0xabc/", opensAt: "2026-11-01T16:00:00Z", closesAt: "2027-01-27T23:59:59Z" };
+    expect(getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim } })?.claim).toEqual({
+      phase: "open",
+      campaignUrl: claim.campaignUrl,
+      opensAt: "2026-11-01T16:00:00.000Z",
+      closesAt: "2027-01-27T23:59:59.000Z",
+    });
+    expect(getServedHivraMigration({ ...ready, now: new Date("2027-02-01T00:00:00Z"), airdrop: { ...AIRDROP, claim } })?.claim.phase).toBe("closed");
+    // An invalid claim keeps the whole claim hidden.
+    expect(getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim: { ...claim, campaignUrl: "https://evil.example/x" } } })?.claim.phase).toBe("unpublished");
+  });
+
+  it("drops the founder's burn date when it is not after the airdrop config's claim.closesAt, and logs it", () => {
+    const warn = jest.mocked(log.warn);
+    warn.mockClear();
+    const claim = { campaignUrl: "https://app.sablier.com/airdrops/campaign/0xabc/", opensAt: "2026-11-01T16:00:00Z", closesAt: "2027-02-10T16:00:00Z" };
+    const served = getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim } });
+    expect(served?.founder?.burnDate).toBeNull();
+    expect(served?.founder?.saleStart).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith("HIVRA migration config rejected", expect.objectContaining({ problems: expect.stringContaining("founder.burnDate is not after claim.closesAt") }));
+    // With a window that closes earlier, the date stays.
+    const earlier = { ...claim, closesAt: "2027-01-27T23:59:59Z" };
+    expect(getServedHivraMigration({ ...ready, airdrop: { ...AIRDROP, claim: earlier } })?.founder?.burnDate?.iso).toBe("2027-02-04T00:00:00.000Z");
   });
 
   it("leaves out a snapshot time that is in the future, and keeps the snapshot", () => {

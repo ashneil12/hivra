@@ -5,162 +5,223 @@ import PublicSite from "@/components/public-site/PublicSite";
 import type { HivraMigrationReceiptKind } from "@/lib/claim/hivra-migration-config";
 import type { MigrationDate, ServedHivraMigration } from "@/lib/claim/hivra-migration";
 import { RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
-import { formatLaunchInstantUtc, tokenVerificationContent } from "@/lib/token-verification-content";
+import { formatLaunchInstantUtc } from "@/lib/token-verification-content";
 
 import styles from "./TokenFacts.module.css";
 import { TokenGeoNotice } from "./TokenGeoNotice";
 
-// Token-facing copy: plain facts, anything planned labelled as planned. It needs
-// UK financial-promotion / legal review before release.
-
 export type MigrationViewState =
   | { kind: "blocked"; notice: string }
-  | { kind: "open"; migration: ServedHivraMigration; airdropLookupHref: string | null };
+  | {
+      kind: "open";
+      migration: ServedHivraMigration;
+      /** /token/airdrop, set by the server only when that lookup is served. */
+      airdropLookupHref: string | null;
+      /** The validated Sablier campaign link, set by the server only while the claim is open. */
+      claimHref: string | null;
+    };
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const muted: CSSProperties = { color: "var(--public-muted)" };
-const sectionStyle: CSSProperties = { borderTop: "1px solid var(--public-line)", padding: "2rem 0" };
-const addressBox: CSSProperties = { display: "block", overflowWrap: "anywhere", padding: "1rem", border: "1px solid var(--public-line)", margin: "0 0 0.75rem" };
-const eyebrow: CSSProperties = { fontSize: 11 };
+const SECTION: CSSProperties = { borderTop: "1px solid var(--public-line)", padding: "2rem 0" };
+const LINK_LINE: CSSProperties = { margin: "0 0 0.5rem" };
+const ADDRESS: CSSProperties = { overflowWrap: "anywhere" };
+const MUTED: CSSProperties = { color: "var(--public-muted)" };
 
-const RECEIPT_GROUPS: readonly { kind: HivraMigrationReceiptKind; title: string }[] = [
-  { kind: "liquidity", title: "Liquidity added and locked" },
-  { kind: "founder-sale", title: "Founder sales" },
-  { kind: "burn", title: "Burns" },
-  { kind: "airdrop-batch", title: "Airdrop batches" },
-];
-
-const FRACTION_WORDS: Record<number, string> = { 10: "a tenth", 20: "a fifth", 25: "a quarter", 50: "half" };
+const FRACTION_WORDS: Record<number, string> = { 10: "one-tenth", 20: "one-fifth", 25: "one-quarter", 50: "one-half" };
 
 function formatDate(date: MigrationDate): string {
   if (!date.dateOnly) return formatLaunchInstantUtc(date.iso);
   return new Date(date.iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
+/** A percentage without float noise: 100 - 5 is 95, 100 - 1.1 is 98.9. */
 function pct(value: number): string {
-  return `${value}%`;
+  return `${Number(value.toFixed(4))}%`;
 }
 
-function Section({ id, label, title, children }: { id: string; label?: string; title: string; children: ReactNode }) {
-  return <section id={id} aria-labelledby={`${id}-title`} style={sectionStyle}>
-    {label ? <p className="mono" style={eyebrow}>{label}</p> : null}
+function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+}
+
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return <section id={id} aria-labelledby={`${id}-title`} style={SECTION}>
     <h2 id={`${id}-title`}>{title}</h2>
     {children}
   </section>;
 }
 
-function Address({ address, kind, linkText }: { address: string; kind: "token" | "address"; linkText: string }) {
-  return <>
-    <code style={addressBox}>{address}</code>
-    <p><a href={`https://basescan.org/${kind}/${address}`} target="_blank" rel="noopener noreferrer">{linkText}</a></p>
-  </>;
+/** The pack's "**Title** / address / [Link]" block: one paragraph, one line each. */
+function AddressBlock({ testId, title, children }: { testId: string; title: ReactNode; children: ReactNode }) {
+  return <p data-testid={testId}>
+    <strong>{title}</strong>
+    {children}
+  </p>;
 }
 
 function WhatChanged({ migration }: { migration: ServedHivraMigration }) {
-  const { snapshot, announcedAt } = migration;
-  return <Section id="what-changed" title="What changed">
-    <p>$HermesOS moved to $HIVRA, a new token on Base.</p>
-    <p data-testid="migration-one-for-one">
-      {snapshot
-        ? <>Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at Base block{" "}
-            <a href={`https://basescan.org/block/${snapshot.block}`} target="_blank" rel="noopener noreferrer">{snapshot.block}</a>. Pools, launch contracts and the founder&apos;s wallet are not on the list.</>
-        : <>Every holder on the published snapshot list is sent one $HIVRA for each $HermesOS they held at the snapshot block. Pools, launch contracts and the founder&apos;s wallet are not on the list.</>}
-    </p>
-    <p>It is sent automatically. There is nothing to claim.</p>
-    <p>The old $HermesOS contract is now legacy.</p>
-    {snapshot ? <p><a href={snapshot.url} target="_blank" rel="noopener noreferrer">Open the published snapshot</a></p> : null}
-    {announcedAt ? <p data-testid="migration-announced" style={muted}>Announced {formatDate(announcedAt)}.</p> : null}
+  const { snapshot } = migration;
+  return <Section id="what-changed" title="What changed?">
+    <p>The original $HermesOS token remains on Base. It hasn&apos;t been converted or replaced inside your wallet automatically.</p>
+    <p>A snapshot of eligible $HermesOS holdings has <strong>already been taken</strong>. Wallets included in that snapshot are eligible to claim <strong>one $HIVRA for each eligible $HermesOS</strong> recorded at the snapshot block.</p>
+    <p>The new token is claimed through <strong>Sablier</strong>. This isn&apos;t an automatic airdrop: <strong>you initiate the claim and pay the small claim fee</strong>, along with any applicable network transaction costs shown before confirmation.</p>
+    <p>You <strong>do not need to burn or surrender $HermesOS</strong> to make a claim under the current arrangement. The old token remains a separate token on Base.</p>
+    <p>Existing accounts that previously qualified for token-based compute access keep that entitlement under the existing access rules. Claiming $HIVRA is separate from keeping that access.</p>
+    {snapshot ? <p data-testid="migration-snapshot-facts">
+      <strong>Snapshot block:</strong> <code>{snapshot.block}</code>
+      {snapshot.takenAt ? <><br /><strong>Snapshot taken:</strong> <code>{formatLaunchInstantUtc(snapshot.takenAt)}</code></> : null}
+      <br /><ExternalLink href={snapshot.url}>View the published snapshot</ExternalLink>
+    </p> : null}
+  </Section>;
+}
+
+function Eligibility({ airdropLookupHref, claimHref }: { airdropLookupHref: string | null; claimHref: string | null }) {
+  return <Section id="eligibility" title="Check your eligibility and claim">
+    {airdropLookupHref ? <p>Not sure whether your wallet was included? Use the snapshot checker to look up a <strong>public wallet address</strong> and see the eligible allocation.</p> : null}
+    <p>If you&apos;re eligible, follow the <strong>official Sablier claim link published by Hivra</strong>. Check the claim amount and any fees in your wallet before approving a transaction.</p>
+    {airdropLookupHref || claimHref ? <div data-testid="migration-claim-links" style={{ margin: "0 0 1rem" }}>
+      {airdropLookupHref ? <p style={LINK_LINE}><Link href={airdropLookupHref}>Check a wallet</Link></p> : null}
+      {claimHref ? <p style={LINK_LINE}><ExternalLink href={claimHref}>Claim through Sablier</ExternalLink></p> : null}
+    </div> : null}
+    <p><strong>Important:</strong> A legitimate Sablier claim involves connecting a wallet and authorising the necessary claim transaction. Don&apos;t trust a claim link sent through a DM. Start from Hivra&apos;s official token page, and verify the destination before signing.</p>
+  </Section>;
+}
+
+function Contracts({ migration }: { migration: ServedHivraMigration }) {
+  const { hivraAddress, hermesosAddress } = migration;
+  return <Section id="contracts" title="Official token contracts">
+    <AddressBlock testId="migration-hivra-contract" title="$HIVRA · New ecosystem token">
+      <br />Network: Base
+      <br />Contract: <code style={ADDRESS}>{hivraAddress}</code>
+      <br /><ExternalLink href={`https://basescan.org/token/${hivraAddress}`}>View $HIVRA on BaseScan</ExternalLink>
+    </AddressBlock>
+    <AddressBlock testId="migration-hermesos-contract" title="$HermesOS · Legacy token">
+      <br />Network: Base
+      <br />Contract: <code style={ADDRESS}>{hermesosAddress}</code>
+      <br /><ExternalLink href={`https://basescan.org/token/${hermesosAddress}`}>View $HermesOS on BaseScan</ExternalLink>
+    </AddressBlock>
+    <p>Always compare the full contract address with the official <Link href="/token">token page</Link>. A matching name or symbol is not enough.</p>
   </Section>;
 }
 
 function Fees({ migration }: { migration: ServedHivraMigration }) {
   const { fee, treasurySafe } = migration;
   if (!fee && !treasurySafe) return null;
-  return <Section id="fees" title="Where trading fees go">
+  return <Section id="fees" title="How trading fees are handled">
     {fee ? <div data-testid="migration-fee">
-      <p>Each trade in the $HIVRA pool pays a {pct(fee.totalPct)} fee.</p>
-      <p>Doppler, the launch platform, keeps {pct(fee.protocolSharePct)} of the fees. The rest goes to Hivra&apos;s Safe, a shared wallet that needs 2 of 3 signers to move anything.</p>
-      <p>Planned: each week, {FRACTION_WORDS[fee.liquiditySharePct] ?? pct(fee.liquiditySharePct)} of what the Safe received is added to the pool&apos;s liquidity and locked. Each addition is listed under Receipts.</p>
-    </div> : <p>Hivra&apos;s share of the trading fees goes to this Safe.</p>}
-    {treasurySafe ? <div data-testid="migration-safe">
-      <p>The Safe:</p>
-      <Address address={treasurySafe} kind="address" linkText="View the Safe on BaseScan" />
+      <p>The planned $HIVRA pool has a <strong>{pct(fee.totalPct)} trading fee</strong>. Under the documented arrangement, Doppler receives <strong>{pct(fee.protocolSharePct)} of the collected fees</strong>, with the remaining <strong>{pct(100 - fee.protocolSharePct)}</strong> directed to Hivra&apos;s Safe, a multisignature wallet requiring two of three approvals to move funds.</p>
+      <p>The stated liquidity plan is to use <strong>{FRACTION_WORDS[fee.liquiditySharePct] ?? pct(fee.liquiditySharePct)} of the fees received by the Safe each week</strong> to add liquidity to the pool and lock that position. We will publish transaction links when additions happen, so the activity can be checked rather than taken on trust.</p>
     </div> : null}
+    {treasurySafe ? <AddressBlock testId="migration-safe" title="Hivra Safe">
+      <br /><code style={ADDRESS}>{treasurySafe}</code>
+      <br /><ExternalLink href={`https://basescan.org/address/${treasurySafe}`}>View the Safe on BaseScan</ExternalLink>
+    </AddressBlock> : null}
   </Section>;
 }
 
 function Founder({ migration }: { migration: ServedHivraMigration }) {
-  const { founder, announcedAt } = migration;
+  const { founder } = migration;
   if (!founder) return null;
-  const plan: ReactNode[] = [];
+  const plan: { key: string; line: ReactNode }[] = [];
   if (founder.headStartDays !== null) {
-    plan.push(announcedAt
-      ? <>No sales in the first {founder.headStartDays} days after the announcement, so none before {formatLaunchInstantUtc(new Date(Date.parse(announcedAt.iso) + founder.headStartDays * DAY_MS).toISOString())}.</>
-      : <>No sales in the first {founder.headStartDays} days after the announcement.</>);
+    plan.push({ key: "head-start", line: <>Make no sales during the first {founder.headStartDays} days following the confirmed migration announcement.</> });
   }
-  if (founder.weeklyCapTokens) plan.push(<>At most {founder.weeklyCapTokens} $HermesOS sold in any week.</>);
-  if (founder.maxPriceImpactPct !== null) plan.push(<>No single sale may move the $HermesOS pool by more than {pct(founder.maxPriceImpactPct)}.</>);
+  if (founder.weeklyCapTokens) {
+    plan.push({ key: "weekly-cap", line: <>Sell no more than <strong>{founder.weeklyCapTokens} $HermesOS in any week</strong> during the planned sale period.</> });
+  }
+  if (founder.maxPriceImpactPct !== null) {
+    plan.push({ key: "impact", line: <>Limit each planned sale according to a <strong>{pct(founder.maxPriceImpactPct)} legacy-pool price-impact threshold</strong>, while recognising that actual market movements cannot be guaranteed.</> });
+  }
   if (founder.weeks !== null) {
-    plan.push(<>Sales run for {founder.weeks} weeks
-      {founder.saleStart ? <>, starting {formatDate(founder.saleStart)}</> : null}
-      {founder.saleDay ? <>, on {founder.saleDay}s</> : null}.</>);
+    plan.push({ key: "weeks", line: <>Run the sales over <strong>{founder.weeks} weeks</strong>, starting on the final published date.</> });
   }
-  if (founder.burnDate || founder.burnAddress) {
-    plan.push(founder.burnDate
-      ? <>On {formatDate(founder.burnDate)}, any of his $HermesOS not sold are sent to the burn address, where no one can move them.</>
-      : <>Any of his $HermesOS not sold by the end are sent to the burn address, where no one can move them.</>);
+  if (founder.burnAddress) {
+    plan.push({ key: "burn", line: <>Send any remaining founder-held $HermesOS to the stated burn address on the final published date.</> });
   }
-  return <Section id="founder" title="The founder's tokens">
-    <p>There is no team allocation of $HIVRA.</p>
-    <p>The founder holds no $HIVRA.</p>
+  return <Section id="founder" title="What happens to the founder's $HermesOS?">
     <p data-testid="migration-founder-held">
+      There is <strong>no separate team allocation of $HIVRA</strong> in the current migration plan.{" "}
       {founder.heldTokens
-        ? <>He holds {founder.heldTokens} $HermesOS. They are not migrated, so they are sent no $HIVRA.</>
-        : <>His $HermesOS are not migrated, so they are sent no $HIVRA.</>}
+        ? <>The founder&apos;s approximately <strong>{founder.heldTokens} $HermesOS</strong> are excluded from the eligible snapshot allocation, so those holdings do not receive $HIVRA through the migration.</>
+        : <>The founder&apos;s $HermesOS are excluded from the eligible snapshot allocation, so those holdings do not receive $HIVRA through the migration.</>}
     </p>
     {plan.length > 0 ? <>
-      <h3>Planned sales of his $HermesOS</h3>
-      <p style={muted}>These are planned. Each sale and the burn are listed under Receipts when they happen.</p>
-      <ul data-testid="migration-founder-plan">{plan.map((line, index) => <li key={index}>{line}</li>)}</ul>
+      <p>The existing plan for the founder&apos;s legacy tokens is to:</p>
+      <ul data-testid="migration-founder-plan">{plan.map(({ key, line }) => <li key={key}>{line}</li>)}</ul>
+      <p>These are <strong>planned actions</strong>, not transactions that have already happened. Completed transactions will be linked below.</p>
     </> : null}
-    {founder.burnAddress ? <div data-testid="migration-burn-address">
-      <p>The burn address:</p>
-      <Address address={founder.burnAddress} kind="address" linkText="View the burn address on BaseScan" />
-    </div> : null}
-    {founder.wallet ? <div data-testid="migration-founder-wallet">
-      <p>The founder&apos;s wallet:</p>
-      <Address address={founder.wallet} kind="address" linkText="View the founder's wallet on BaseScan" />
-    </div> : null}
+    {founder.wallet ? <AddressBlock testId="migration-founder-wallet" title="Founder wallet">
+      <br /><code style={ADDRESS}>{founder.wallet}</code>
+      <br /><ExternalLink href={`https://basescan.org/address/${founder.wallet}`}>View on BaseScan</ExternalLink>
+    </AddressBlock> : null}
+    {founder.burnAddress ? <AddressBlock testId="migration-burn-address" title="Intended burn address">
+      <br /><code style={ADDRESS}>{founder.burnAddress}</code>
+      <br /><ExternalLink href={`https://basescan.org/address/${founder.burnAddress}`}>View on BaseScan</ExternalLink>
+    </AddressBlock> : null}
+    {founder.saleStart || founder.burnDate ? <p data-testid="migration-founder-dates">
+      {founder.saleStart ? <><strong>Sale start:</strong> <code>{formatDate(founder.saleStart)}</code></> : null}
+      {founder.saleStart && founder.burnDate ? <br /> : null}
+      {founder.burnDate ? <><strong>Final burn date:</strong> <code>{formatDate(founder.burnDate)}</code></> : null}
+    </p> : null}
   </Section>;
 }
 
-function Receipts({ migration }: { migration: ServedHivraMigration }) {
-  if (migration.receipts.length === 0) return null;
-  return <Section id="receipts" title="Receipts">
-    <p>Each line is a transaction on Base.</p>
-    {RECEIPT_GROUPS.map(({ kind, title }) => {
-      const items = migration.receipts.filter((receipt) => receipt.kind === kind);
-      if (items.length === 0) return null;
-      return <div key={kind} data-testid={`migration-receipts-${kind}`}>
-        <h3>{title}</h3>
-        <ul>
-          {items.map((receipt) => <li key={receipt.txHash}>
-            {formatDate(receipt.date)}{receipt.note ? <>: {receipt.note}</> : null}.{" "}
-            <a href={`https://basescan.org/tx/${receipt.txHash}`} target="_blank" rel="noopener noreferrer">View on BaseScan</a>
-          </li>)}
-        </ul>
-      </div>;
-    })}
+/** One transaction per line: its date, the note if there is one, and its BaseScan link. */
+function ReceiptItems({ receipts }: { receipts: readonly ServedHivraMigration["receipts"][number][] }) {
+  return <ul>
+    {receipts.map((receipt) => <li key={receipt.txHash}>
+      {formatDate(receipt.date)}{receipt.note ? <>: {receipt.note}</> : null}.{" "}
+      <ExternalLink href={`https://basescan.org/tx/${receipt.txHash}`}>View on BaseScan</ExternalLink>
+    </li>)}
+  </ul>;
+}
+
+function ReceiptGroup({ migration, kind, testId, title }: { migration: ServedHivraMigration; kind: HivraMigrationReceiptKind; testId: string; title: string }) {
+  const items = migration.receipts.filter((receipt) => receipt.kind === kind);
+  if (items.length === 0) return null;
+  return <div data-testid={testId}>
+    <h3>{title}</h3>
+    <ReceiptItems receipts={items} />
+  </div>;
+}
+
+/**
+ * The pack's three groups. A group with nothing to show prints nothing, not even
+ * its heading, and the pack's bracketed "link completed transactions here"
+ * placeholders are never rendered.
+ */
+function OnChainRecords({ migration }: { migration: ServedHivraMigration }) {
+  const { snapshot, claim } = migration;
+  const claimReceipts = migration.receipts.filter((receipt) => receipt.kind === "claim");
+  const hasSnapshotAndClaims = snapshot !== null || claim.campaignUrl !== null || claimReceipts.length > 0;
+  return <Section id="records" title="On-chain records">
+    <p>The point of publishing addresses and transactions is straightforward: anyone should be able to check what has actually happened.</p>
+    {hasSnapshotAndClaims ? <div data-testid="migration-records-snapshot">
+      <h3>Snapshot and claims</h3>
+      {snapshot ? <p style={LINK_LINE}><ExternalLink href={snapshot.url}>Published eligibility snapshot</ExternalLink></p> : null}
+      {claim.campaignUrl ? <p style={LINK_LINE}><ExternalLink href={claim.campaignUrl}>Official Sablier claim campaign / contract</ExternalLink></p> : null}
+      {claimReceipts.length > 0 ? <ReceiptItems receipts={claimReceipts} /> : null}
+    </div> : null}
+    <ReceiptGroup migration={migration} kind="liquidity" testId="migration-records-liquidity" title="Liquidity added and locked" />
+    <ReceiptGroup migration={migration} kind="founder-sale" testId="migration-records-founder" title="Founder sales and burn" />
+    <p>We won&apos;t present example transactions as completed activity.</p>
   </Section>;
 }
 
 /**
- * /token/migration. Rendered on the server for one request. A viewer the token
- * geo-policy blocks gets the notice and a link to the contracts, and no
- * migration details.
+ * /token/migration. Ash's copy pack page 02-token-migration.md, applied
+ * verbatim: headings, paragraphs, bold and italic runs, and the order of
+ * sections and links. Do not reword it here; a copy change comes from Ash. Token
+ * copy needs UK financial-promotion / legal review before release.
+ *
+ * Every bracketed placeholder in the pack is data here, and the line, value or
+ * link is left out until the data exists and validates: the snapshot block,
+ * time and link (HIVRA_AIRDROP), "Check a wallet" (only when /token/airdrop is
+ * served), "Claim through Sablier" (only while the claim is open), the $HIVRA
+ * contract (the token registry), the Safe, the founder wallet and the burn
+ * address, the sale start and burn dates, and every transaction link. Rendered
+ * on the server for one request: a viewer the token geo-policy blocks gets the
+ * notice and a link to the contracts, and no migration details.
  */
 export default function MigrationView({ state }: { state: MigrationViewState }) {
-  const { riskLine, lookalikeWarning } = tokenVerificationContent;
   return <PublicSite>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/token">Token</Link>
@@ -173,30 +234,30 @@ export default function MigrationView({ state }: { state: MigrationViewState }) 
         <p>The official contract addresses are on the <Link href="/token">token page</Link>.</p>
       </> : <>
         <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>
-          <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>TOKEN MIGRATION</p>
-          <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>$HermesOS moved to $HIVRA</h1>
-          <p style={{ fontSize: "1.2rem", ...muted }}>What changed, where the trading fees go, and what happens to the founder&apos;s tokens. Each address and transaction links to BaseScan.</p>
-          <p data-testid="token-risk-line" style={muted}>{riskLine}</p>
+          <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}><strong>TOKEN TRANSITION</strong></p>
+          <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>From $HermesOS to $HIVRA</h1>
+          <p style={{ fontSize: "1.2rem", ...MUTED }}>HermesOS was the beginning of Hivra. What started as a way to deploy Hermes Agent has grown into a platform for giving different AI agents computers of their own, with a much wider ecosystem planned around them.</p>
+          <p>$HIVRA is the new token for that direction. This page explains what the transition means for existing $HermesOS holders, how to claim if you&apos;re eligible, and how to check the on-chain records.</p>
+          <p data-testid="token-risk-line" style={MUTED}><em>Cryptoassets are high risk and can lose all their value. This page provides information about the transition, not an offer or invitation to buy.</em></p>
         </header>
         <WhatChanged migration={state.migration} />
-        {state.airdropLookupHref ? <Section id="check-wallet" title="Check your wallet">
-          <p>Paste a wallet address to see the $HIVRA it is sent, and whether it was sent.</p>
-          <p data-testid="migration-airdrop-lookup"><Link href={state.airdropLookupHref}>Check a wallet for the $HIVRA airdrop</Link></p>
-        </Section> : null}
-        <Section id="contracts" title="Contracts">
-          <h3>$HIVRA on Base</h3>
-          <Address address={state.migration.hivraAddress} kind="token" linkText="View the $HIVRA contract on BaseScan" />
-          <h3>$HermesOS on Base (legacy)</h3>
-          <Address address={state.migration.hermesosAddress} kind="token" linkText="View the $HermesOS contract on BaseScan" />
-        </Section>
+        <Eligibility airdropLookupHref={state.airdropLookupHref} claimHref={state.claimHref} />
+        <Contracts migration={state.migration} />
         <Fees migration={state.migration} />
         <Founder migration={state.migration} />
-        <Receipts migration={state.migration} />
-        <Section id="stay-safe" title="Stay safe">
-          <p><strong>Never connect a wallet to &quot;claim&quot; $HIVRA.</strong> Hivra never asks you to connect a wallet, sign a message or approve a transaction to receive it. Anyone who asks is not Hivra.</p>
-          <p>Only trust the contract address on this page.</p>
-          <p data-testid="token-lookalike-warning">Fake HIVRA tokens exist. {lookalikeWarning}</p>
-          <p><Link href="/token">Verify the token contracts</Link></p>
+        <OnChainRecords migration={state.migration} />
+        <Section id="remember" title="A few things to remember">
+          <ul>
+            <li>The <strong>snapshot is complete</strong>. Buying or receiving $HermesOS after the snapshot does not add to the recorded allocation.</li>
+            <li><strong>Claims are not automatic</strong>. Eligible holders claim through Sablier and cover the applicable claim fee.</li>
+            <li><strong>No burn of your original $HermesOS is required</strong> by the current claim process.</li>
+            <li><strong>Never follow a claim link from a DM.</strong> Start from Hivra&apos;s official site and check the contract and transaction details before signing.</li>
+            <li>You can still use Hivra through ordinary card billing, or self-host the open-source platform without a token.</li>
+          </ul>
+          <div style={{ margin: "0 0 1rem" }}>
+            <p style={LINK_LINE}><Link href="/token">Verify official contracts</Link></p>
+            <p style={LINK_LINE}><a href="/docs/litepaper">Read the Hivra Litepaper</a></p>
+          </div>
         </Section>
       </>}
     </main>
