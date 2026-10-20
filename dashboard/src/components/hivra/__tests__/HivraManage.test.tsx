@@ -278,7 +278,7 @@ describe("HivraManage lifecycle guidance", () => {
     render(<HivraManage agent={{ ...agent, status: "provisioning", deployment_mode: "self-managed", computer_substrate: "provider-vm" }} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
-    expect(screen.getByText("Wait for the current operation to finish.")).toBeInTheDocument();
+    expect(screen.getAllByText("Wait for the current operation to finish.").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "4" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
     openSection("Advanced");
@@ -352,6 +352,17 @@ describe("HivraManage lifecycle guidance", () => {
 
     expect(await screen.findByText("Update outcome fixture.")).toBeInTheDocument();
     expect(onConnectionServiceRestarted).toHaveBeenCalledTimes(calls);
+  });
+
+  it("offers a My cloud agent its update and says how it is going", () => {
+    const myCloud = { ...agent, type: "codex", deployment_mode: "self-managed" as const, computer_substrate: "provider-vm" as const };
+    const { rerender } = render(<HivraManage agent={myCloud} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    openSection("Updates");
+    expect(screen.getByRole("button", { name: "Update connection service" })).toBeEnabled();
+    rerender(<HivraManage agent={{ ...myCloud, status: "provisioning", operation_kind: "runtime_update", runtime_update_stage: "updating" } as never} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Updating the connection service on this computer.");
+    rerender(<HivraManage agent={{ ...myCloud, runtime_update_stage: "failed", error: "The connection service update didn't finish, so the previous version was put back. Try again." } as never} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getAllByRole("alert").some(node => /previous version was put back/.test(node.textContent ?? ""))).toBe(true);
   });
 
   it("offers a DeepSeek computer its own update and says it restarts DeepSeek", () => {

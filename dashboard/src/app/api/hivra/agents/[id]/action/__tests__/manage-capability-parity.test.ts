@@ -88,6 +88,7 @@ const rows: Record<string, Record<string, unknown>> = {
   preparedStale: { ...base, type: "linux-desktop", computer_profile: "omarchy", managed_provisioner_channel: "canary", cpu: 4, ram: 8 },
   windowsMyServer: { ...base, type: "linux-desktop", computer_profile: "windows", deployment_mode: "self-managed" },
   hetzner: { ...base, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "provider-vm", deployment_mode: "self-managed", vmid: null },
+  hetznerCodex: { ...base, type: "codex", computer_profile: null, computer_substrate: "provider-vm", deployment_mode: "self-managed", vmid: null },
   gvisor: { ...base, type: "linux-desktop", computer_profile: "linux-terminal", computer_substrate: "gvisor", deployment_mode: "self-managed", vmid: null },
   digitalocean: { ...base, type: "codex", computer_substrate: "do-managed-session", deployment_mode: "self-managed", vmid: null },
 };

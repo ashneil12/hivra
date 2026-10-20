@@ -19,14 +19,15 @@ import { gzipSync } from "node:zlib";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { loadPortableProvisionerBundle, type PortableProvisionerBundleAsset } from "@/lib/infrastructure/connection-preparation";
+import { PROVIDER_RUNTIME_UPDATE_TYPES } from "./lifecycle-support";
+import { PROVIDER_RUNTIME_UPDATE_FAILED, PROVIDER_RUNTIME_UPDATE_LOST, PROVIDER_RUNTIME_UPDATE_NOT_STARTED,
+  type ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import { providerAgentGuestContext, runProviderAgentGuestScript, ScopeRow, type ProviderGuestSeedRef } from "./provider-guest-seed";
 
 const Uuid = z.string().uuid();
 const Operation = z.object({ userId: z.string().min(1).max(256), agentId: Uuid, operationId: Uuid }).strict();
 export type ProviderRuntimeUpdateOperation = z.infer<typeof Operation>;
 
-/** Agents whose runtime probe is not bound to the release they were installed from. */
-export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero"] as const;
 
 /** The gateway assets and terminal files the guest half expects, as the Proxmox host half archives them. */
 const GATEWAY_ASSETS = ["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "chat-runs.cjs", "index.html", "app.js"] as const;
@@ -235,11 +236,8 @@ export async function dispatchProviderRuntimeUpdate(raw: ProviderRuntimeUpdateOp
     ? "dispatched" : "uncertain";
 }
 
-export type ProviderRuntimeUpdateStage = "updating" | "updated" | "failed" | "verification_unavailable";
-
-export const PROVIDER_RUNTIME_UPDATE_FAILED = "The connection service update didn't finish, so the previous version was put back. Try again.";
-export const PROVIDER_RUNTIME_UPDATE_NOT_STARTED = "The connection service update didn't start. Nothing was changed. Try again.";
-export const PROVIDER_RUNTIME_UPDATE_LOST = "The connection service update stopped without finishing. If the agent isn't working, restart the computer.";
+export { PROVIDER_RUNTIME_UPDATE_FAILED, PROVIDER_RUNTIME_UPDATE_LOST, PROVIDER_RUNTIME_UPDATE_NOT_STARTED };
+export type { ProviderRuntimeUpdateStage };
 
 /**
  * Observe the update from the agent poll and settle the lease once the guest
