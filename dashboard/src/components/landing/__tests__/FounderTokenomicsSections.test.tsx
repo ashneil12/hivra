@@ -66,11 +66,18 @@ test("tokenomics paraphrase stays inside the approved Litepaper wording and drop
   expect(container.textContent).toContain("Token payments are final, except where the law gives you a right to cancel.");
   expect(container.textContent).not.toMatch(/Nibbii|remain to be settled|fixed at deposit|own wallet|market quote/);
 });
-test.each(["scheduled", "active"] as const)("a launched (%s) section describes the push airdrop, not a Bankr claim", (phase) => {
-  const { container } = render(<TokenomicsSection phase={phase} />);
-  expect(screen.getByRole("heading", { name: "Nothing to claim. Nothing to swap." })).toBeVisible();
-  expect(screen.getByRole("list", { name: "Airdrop flow" })).toHaveTextContent("Snapshot block");
+test.each(["scheduled", "active"] as const)("a launched (%s) section is Ash's pack page: a holder-paid Sablier claim, no Bankr claim, no automatic airdrop, no token pricing", (phase) => {
+  const { container } = render(<TokenomicsSection phase={phase} headingLevel={1} airdropLookupHref={null} migrationHref={null} />);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("$HIVRA: what it's for");
+  expect(screen.getByRole("heading", { name: "A snapshot has been taken. Eligible holders can claim." })).toBeVisible();
+  expect(container.textContent).toContain("This is not an automatic transfer.");
   expect(container.textContent).not.toMatch(/Bankr|ETH proceeds|active claim|claims open|migration, new uses/);
-  expect(container.textContent).toContain("The new uses and treasury plans are proposals.");
-  expect(container.textContent).toContain("BaseScan shows the total $HIVRA supply.");
+  expect(container.textContent).not.toMatch(/Nothing to claim|Nothing to swap|Airdrop flow|new users hold and pay|\$49|\$79|bonus credits/);
+});
+
+test("a launched section hands the dormant copy nothing: the dormant section is unchanged", () => {
+  const { container } = render(<TokenomicsSection phase="dormant" />);
+  expect(screen.getByRole("heading", { name: "Keeping access and converting tokens are separate decisions." })).toBeVisible();
+  expect(container.textContent).toContain("a year of Pro is $49 in the token against $79 by card");
+  expect(container.textContent).not.toContain("A snapshot has been taken");
 });

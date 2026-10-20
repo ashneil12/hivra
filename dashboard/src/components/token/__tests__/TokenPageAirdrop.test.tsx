@@ -12,8 +12,9 @@ jest.mock("@/components/public-site/PublicSite", () => ({
 const mockAirdrop = {
   senderAddress: "0x3333333333333333333333333333333333333333" as string | null,
   snapshotBlock: 36000000 as number | null,
+  snapshotTakenAt: null as string | null,
   snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot" as string | null,
-  sentAt: null,
+  claim: { campaignUrl: null, opensAt: null, closesAt: null },
 };
 jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
   ...jest.requireActual("@/lib/claim/hivra-airdrop-config"),
@@ -47,7 +48,23 @@ describe("/token airdrop details once $HIVRA is launched", () => {
   afterEach(() => {
     mockAirdrop.senderAddress = SENDER;
     mockAirdrop.snapshotBlock = 36000000;
+    mockAirdrop.snapshotTakenAt = null;
     mockAirdrop.snapshotUrl = SNAPSHOT_URL;
+  });
+
+  it("shows the snapshot date, formatted, only once snapshotTakenAt is set, between the links and the block", () => {
+    mockAirdrop.snapshotTakenAt = "2026-10-20T16:00:00Z";
+    render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
+    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent(
+      `Snapshot date: 20 October 2026Snapshot block: 36000000Airdrop wallet: ${SENDER}View on BaseScan`,
+    );
+  });
+
+  it("never prints a snapshot date it cannot read as a UTC instant", () => {
+    mockAirdrop.snapshotTakenAt = "yesterday";
+    render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
+    expect(screen.getByTestId("token-airdrop-details")).not.toHaveTextContent("Snapshot date");
+    expect(screen.getByTestId("token-airdrop-details")).toHaveTextContent("Snapshot block: 36000000");
   });
 
   it("shows the published snapshot block, the snapshot link and the airdrop wallet with its BaseScan link", () => {
@@ -98,13 +115,13 @@ describe("/token airdrop details once $HIVRA is launched", () => {
     expect(screen.queryByTestId("token-holder-links")).not.toBeInTheDocument();
   });
 
-  it("links to the wallet lookup only when the server says it is served", () => {
+  it("links to the eligibility and claim page only when the server says it is served", () => {
     const { rerender } = render(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} airdropLookupHref="/token/airdrop" />);
-    expect(screen.getByRole("link", { name: "Check a wallet" })).toHaveAttribute("href", "/token/airdrop");
+    expect(screen.getByRole("link", { name: "Check eligibility and claim through the official Sablier flow" })).toHaveAttribute("href", "/token/airdrop");
 
     rerender(<TokenPageClient entries={[HIVRA_LIVE, HERMESOS]} />);
     expect(screen.getByTestId("token-airdrop-details")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /check a wallet/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /check eligibility/i })).not.toBeInTheDocument();
   });
 
   it("links to the migration details, in both places, only when the server says the page is served", () => {

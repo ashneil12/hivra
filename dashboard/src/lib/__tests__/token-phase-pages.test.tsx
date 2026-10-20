@@ -35,7 +35,7 @@ import TokenomicsPage, { generateMetadata as tokenomicsMetadata } from "@/app/to
 import WhyHivraEvolutionPage from "@/app/why-hivra/evolution/page";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
 import { buildLlmsTxt } from "@/lib/llms-txt";
-import { DORMANT_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
+import { DORMANT_TOKENOMICS_COPY, DORMANT_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
 
 const HIVRA_ADDRESS = "0x1111111111111111111111111111111111111111";
 
@@ -80,10 +80,12 @@ describe("dormant $HIVRA: the copy from before", () => {
 
   it("/tokenomics keeps its title, header and migration paragraphs", async () => {
     setPhase("dormant");
-    expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: copy.tokenomics.metadataDescription });
+    expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: DORMANT_TOKENOMICS_COPY.metadataDescription });
     renderPage(TokenomicsPage);
-    expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
+    expect(screen.getByText(DORMANT_TOKENOMICS_COPY.headerLead)).toBeInTheDocument();
+    for (const paragraph of DORMANT_TOKENOMICS_COPY.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
+    // The old token-pricing line stays on the dormant page: only the launched copy drops it.
+    expect(screen.getByText(/a year of Pro is \$49 in the token against \$79 by card/)).toBeInTheDocument();
   });
 
   it("/why-hivra/evolution keeps its $HIVRA lines", () => {
@@ -136,17 +138,30 @@ describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
     expect(container.textContent).not.toMatch(/[–—]/);
   });
 
-  it("/tokenomics and /why-hivra/evolution say $HIVRA is live on Base", async () => {
+  it("/tokenomics renders Ash's pack page, with its head, and none of the old launched or pricing copy", async () => {
     setPhase(phase);
-    expect(await tokenomicsMetadata()).toMatchObject({ title: "$HIVRA tokenomics" });
-    renderPage(TokenomicsPage);
-    expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    expect(screen.getByText(whole(copy.tokenomics.migrationParagraphs[0]))).toBeInTheDocument();
+    expect(await tokenomicsMetadata()).toMatchObject({
+      title: "$HIVRA tokenomics: access, migration and future uses",
+      description: "How Hivra's token access works, how eligible $HermesOS holders claim $HIVRA, and what token-based services Hivra is considering next.",
+    });
+    const { container } = renderPage(TokenomicsPage);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HIVRA: what it's for$/);
+    expect(screen.getByRole("heading", { name: "A snapshot has been taken. Eligible holders can claim." })).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Nothing to claim|Nothing to swap|Airdrop flow|sent one \$HIVRA|new users hold and pay|new Hivra accounts use|Bankr|ETH proceeds/);
+    // The pack drops the token-pricing line and the bonus-credit offer.
+    expect(container.textContent).not.toMatch(/\$49|\$79|bonus credits/);
+    expect(container.textContent).not.toMatch(/[–—]/);
+  });
+
+  it("/why-hivra/evolution says $HIVRA is live on Base and uses Ash's two replacement paragraphs", () => {
+    setPhase(phase);
     const { container } = renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(copy.evolution.hivraStatus)).toBeInTheDocument();
     expect(screen.getByText(copy.evolution.relationship)).toBeInTheDocument();
+    for (const line of copy.evolution.hivraDetails) expect(screen.getByText(line)).toBeInTheDocument();
     expect(container.textContent).toContain("Check contract addresses only on the token page.");
     expect(container.textContent).not.toMatch(/does not exist yet|Under the proposal, paying in the token keeps its discount/);
+    expect(container.textContent).not.toMatch(/New accounts use \$HIVRA|sent \$HIVRA automatically|nothing to claim|Hivra starts using it/i);
   });
 
   it("/llms.txt says $HIVRA is live on Base", () => {

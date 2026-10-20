@@ -125,6 +125,23 @@ describe("buildLlmsTxt", () => {
   });
 });
 
+describe("buildLlmsTxt once $HIVRA is launched", () => {
+  it.each(["scheduled", "active"] as const)(
+    "states the holder-paid Sablier claim and the activation conditions, never an automatic airdrop or new accounts using $HIVRA (%s)",
+    (phase) => {
+      const txt = buildLlmsTxt({ siteUrl: SITE, phase });
+      expect(txt).toContain(
+        "$HIVRA is live on Base. New $HIVRA-based access and payments become available only once the published activation conditions have been met. $HermesOS is the legacy token, and its holders keep their existing access. Eligible snapshot holders can claim $HIVRA through the official Sablier campaign. The claimant pays the applicable claim and network fees; no legacy-token burn is required.",
+      );
+      expect(txt).toContain(
+        `[Tokenomics](${SITE}/TOKENOMICS.md): How Hivra's token access works, how eligible $HermesOS holders claim $HIVRA, and what token-based services Hivra is considering next`,
+      );
+      expect(txt).not.toMatch(/airdrop|automatically|nothing to claim|new accounts use|new Hivra accounts use|new users hold|starts using it|launch time|proposed new token|does not exist yet/i);
+      expect(txt).not.toMatch(/[–—]/);
+    },
+  );
+});
+
 describe("buildLlmsTxt for a viewer the token geo-policy blocks", () => {
   // The project's own token words (docs/litepaper/restrict.py).
   const TOKEN_WORDS = /\$HIVRA|\$HermesOS|tokenomics|\btokens?\b|\bBankr\b/i;
