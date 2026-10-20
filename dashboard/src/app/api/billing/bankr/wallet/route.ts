@@ -51,9 +51,10 @@ interface TokenLockHivraBalance {
 }
 
 /**
- * The lock wallet's live $HIVRA balance, once $HIVRA is live. Some lock
- * wallets receive the holder airdrop at the same address; this is what lets
- * their owners see it and withdraw it. Null while $HIVRA is dormant (nothing
+ * The lock wallet's live $HIVRA balance, once $HIVRA is live. A lock wallet can
+ * end up holding $HIVRA (the holder claim is made on Sablier from a wallet the
+ * holder connects, not pushed to wallets); this is what lets its owner see it
+ * and withdraw it. Null while $HIVRA is dormant (nothing
  * is read), with no lock wallet, or when the read fails (logged; the page
  * still loads).
  */

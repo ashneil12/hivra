@@ -251,9 +251,10 @@ export async function submitBankrTransfer(params: SubmitTransferParams): Promise
 
 /**
  * Which token a lock-wallet withdraw sends. "HERMESOS" is the original (and
- * default) lane. "HIVRA" exists only once $HIVRA is live in the registry: some
- * lock wallets receive the $HIVRA holder airdrop at the same address, and this
- * is how their owners take it out.
+ * default) lane. "HIVRA" exists only once $HIVRA is live in the registry: a lock
+ * wallet can end up holding $HIVRA (the holder claim is made on Sablier from a
+ * wallet the holder connects, not pushed to wallets), and this is how its owner
+ * takes it out.
  */
 export type LockWalletWithdrawAsset = "HERMESOS" | "HIVRA";
 

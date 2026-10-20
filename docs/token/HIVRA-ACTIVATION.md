@@ -493,8 +493,9 @@ runbook:
   are unaffected.
 - The conversion rule in section 4 (switch access, 72-hour grace) still
   applies. The convert page offers the switch to a grandfathered holder only
-  once the Sablier claim window has **closed** (`getHivraClaimPhase()` is
-  `closed`), because after the grace only $HIVRA counts and a holder who can
+  once the Sablier claim window has **closed** (the claim's phase is `closed`
+  and the snapshot is published; `resolveConversionState`), because after the
+  grace only $HIVRA counts and a holder who can
   still claim should not be moved onto a $HIVRA-only tier early. This is a
   conservative gate and Ash's call: it can be relaxed in a reviewed PR.
 
@@ -531,22 +532,37 @@ in. Then, in order, each group by its own reviewed PR:
 3. **When the Sablier campaign exists and has been tested:** `claim.campaignUrl`,
    `claim.opensAt` and `claim.closesAt` together. The link must be https on
    exactly `app.sablier.com` (no credentials, port, fragment, backslash,
-   percent-encoding or dot segments), and the two instants real UTC instants to
+   percent-encoding, dot or empty path segment, or quote, bracket and delimiter
+   character such as `'()*!$,;`), it must name a page (a path or a query, not
+   just the Sablier front page), and the two instants real UTC instants to
    the second with `opensAt` before `closesAt`. A bad value is logged and the
    whole claim stays hidden, so a typo in `opensAt` cannot open the claim early.
-   The phase (`getHivraClaimPhase`) is `unpublished` without a valid link,
-   `not_open` before `opensAt`, `open` between them (a missing `opensAt` or
-   `closesAt` means no limit on that side) and `closed` from `closesAt`. The
-   Sablier link on /token/airdrop (`hivraClaimHref`) exists only while `open`.
+   The phase (`resolveHivraClaim` in `hivra-claim.ts`, read by
+   `getServedHivraAirdrop` and `getServedHivraMigration`) is `unpublished`
+   without a valid link, `not_open` before `opensAt`, `open` between them (a
+   missing `opensAt` or `closesAt` means no limit on that side) and `closed` from
+   `closesAt`. The Sablier link (`claimHrefOf`) exists only while `open`, and
+   only in two places: on /token/airdrop and, as "Claim through Sablier" and
+   "Official Sablier claim campaign / contract", on /token/migration. /token,
+   /dashboard/convert and the "Check a token address" form never carry it, and no
+   client component is given it (the form gets just the two addresses it
+   compares with, /token gets just the snapshot and the Airdrop wallet; a test
+   walks the client import graph and fails if it can reach the airdrop config).
 
 Decide and publish, with the snapshot, which wallets it leaves out (for
 example pools, launch contracts and Ash's own wallet). Wallets Hivra manages
 (the legacy `hermesos_lock` wallets and agent wallets) are included but
-flagged: they cannot connect to Sablier, and the generator below puts their
-$HIVRA under the owner's own wallet when a private remap names one. A lock
+flagged: the working assumption is that they cannot connect to Sablier
+(UNCONFIRMED: check it with the test campaign below, and Ash decides the
+public wording), and the generator below puts their $HIVRA under the owner's
+own wallet when a private remap names one. A lock
 wallet that still receives $HIVRA can withdraw it from Wallet once $HIVRA is
 live; one that holds only $HIVRA shows just that withdraw. The airdrop page
-says these allocations are handled separately and gives no destination.
+says only that these wallets are handled separately, and gives no destination
+and no reason. Because the public list never shows a destination, an owner
+wallet that receives a managed wallet's allocation shows less (or nothing) on
+the lookup than Sablier will show it; the generator prints a warning naming each
+such destination so it can be told to the owner.
 
 ### Building the list and the Sablier upload file
 
@@ -566,7 +582,10 @@ local files only, signs nothing and sends nothing. Every amount is whole wei
    refuses a path inside it) and is never committed.
 4. **Allocation guard** (`--max-total-wei` or `--max-total-tokens`, give one):
    the Airdrop wallet's $HIVRA allocation. The run refuses, writing nothing,
-   when the included total is larger. Always give it on a final run.
+   when the included total is larger. It is **required with `--final`** (the
+   run exits 2 without it), and neither it nor the included total may exceed
+   the 100 billion supply, with or without `--final`. The /token/airdrop list
+   parser rejects a list whose amounts add up to more than the supply as well.
 5. **Run it:**
    ```sh
    cd dashboard
@@ -590,7 +609,8 @@ local files only, signs nothing and sends nothing. Every amount is whole wei
 6. **`--final`.** Without it the public list says `final: false` and
    /token/airdrop never shows the eligible-wallet count, the total allocated or
    the percentage of supply (they are dry-run figures). Run with `--final` only
-   on the verified snapshot, with the allocation guard, and commit that list.
+   on the verified snapshot, with the allocation guard (it refuses to run
+   without one), and commit that list.
 7. **Optional Disperse batches** (`--batches-dir`, outside the repository): the
    same recipients as disperse.app text files, a manual tool for any wallet
    that cannot claim. It is no longer the main path and is not needed for the
@@ -647,7 +667,12 @@ was taken, the published snapshot link and the Sablier claim (it keeps no copy
 of any of them). Every bracketed placeholder in the pack is data: a line or link
 with no valid data is left out, never shown as a placeholder. "Check a wallet"
 appears only when `/token/airdrop` is served, "Claim through Sablier" only while
-the claim is open, and a records group with nothing to show prints nothing.
+the claim is open (so does "Official Sablier claim campaign / contract"), and a
+records group with nothing to show prints nothing. The claim window is printed
+under "Check your eligibility and claim" as "Claim window: ... to ..." once both
+ends are set, so the closing date is on this page as the pack's announcement
+post says (the line is borrowed from the airdrop page, `03-token-airdrop.md`;
+page 02 itself has no such line, so Ash decides whether it stays).
 
 It is a 404, and /token and /dashboard/convert do not link to it, until
 `HIVRA_NEW_TOKEN_SURFACES` is on, the launch block is filled in, and
@@ -660,13 +685,22 @@ Filled in already: `treasurySafe`, `fee`, and the founder's `wallet`,
 `maxPriceImpactPct`, `weeks` and `burnAddress`. Filled in at launch, each by a
 reviewed PR: `announcedAt` (UTC instant), the founder's `saleStart`,
 `saleDay` (the weekday, matching `saleStart`; checked, not shown) and
-`burnDate`, `receipts` as transactions confirm, and `published: true` last. A
+`burnDate`, `receipts` as transactions confirm, and `published: true` last.
+`claimRecordsUrl` is optional: a Sablier claim-dashboard link (the same rules as
+`claim.campaignUrl`) or the campaign contract's BaseScan address page, shown as
+"Verified claim transactions or claim dashboard" once the claim is open or
+closed. A
 receipt's `kind` is `claim`, `liquidity` or `founder-sale` (a founder burn is
 recorded as `founder-sale`). Every value is checked (EIP-55 addresses, 0x + 64
 hex transaction hashes, real UTC dates in order: `saleStart` after the no-sale
-period, `burnDate` after the last sale week and, once the airdrop config's
-`claim.closesAt` is set, after the claim window closes; no receipt in the
-future, no founder sale before `saleStart`). A bad value is dropped and logged
+period and, once `claim.closesAt` is set, the last weekly sale (`saleStart`
+plus `weeks - 1` whole weeks) on the day after the claim window's last day;
+`burnDate` after the last sale week and after the claim window closes; no
+receipt in the future, no founder sale before `saleStart`). Once the published
+airdrop list is open, the founder's `wallet` must be one of its excluded wallets
+(not a holder, a Hivra-managed wallet or missing): if it is not, the whole
+founder section is left out and the reason logged, because the page says his
+$HermesOS get no $HIVRA. A bad value is dropped and logged
 (`HIVRA migration config rejected`), and the page leaves out the section or
 line that needed it. Per the pack's editorial update, the founder's final
 planned sale is the day after the last day of the claim window and the burn
@@ -677,9 +711,21 @@ the UK financial-promotion / legal review before release.
 
 ### Still Bankr-era (not changed here)
 
-- `LITEPAPER.md`, `docs/litepaper/index.html` and `TOKENOMICS.md` still
-  describe the Bankr launch and the active claim. They are Ash's text and
-  need his rewrite and the legal review.
+- `WHITEPAPER.md` (and so the "Read the White Paper" link at the end of the
+  litepaper) still describes the Bankr launch and the active claim (its token
+  appendix, the `$49` token price and the founder-allocation options). It is
+  not part of Ash's website pack, and `docs/litepaper/restrict.py` asserts
+  some of its exact sentences to build the token-free copy, so a rewrite is a
+  coordinated change of both. It needs Ash's rewrite and the legal review
+  before it is linked as current; until then, do not turn
+  `HIVRA_NEW_TOKEN_SURFACES` on without deciding that.
+- `LITEPAPER.md`, `TOKENOMICS.md` and `docs/litepaper/index.html` were
+  rewritten on 20 October 2026 where they described the Bankr launch, the
+  active claim, token-priced plans and bonus credits (three passages in "The
+  economy" and one line in "Rules for the token", re-pinned in
+  `stage-litepaper.mjs`; see `docs/litepaper/INTEGRATION.md`). The new
+  sentences are the pack's own, from `04-tokenomics.md`, `01-token.md` and
+  `02-token-migration.md`. Ash still has to read them and the legal review
+  still applies.
 - The dormant copy (before the launch block is filled in) still describes
   the old proposal on purpose, so nothing visible changes before the launch.
-
