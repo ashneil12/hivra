@@ -8,7 +8,8 @@ import { TOKEN_CONVERSION_GRACE_HOURS } from "@/lib/billing/token-registry";
 const FALLBACK_ERROR = "Couldn't confirm the switch. Reload this page to see whether it went through.";
 
 /**
- * Optional for a grandfathered holder once the $HIVRA airdrop is sent: move
+ * Optional for a grandfathered holder once the claim window has closed (the
+ * conservative gate, resolveAccess in lib/claim/conversion-state.ts): move
  * their tier from $HermesOS to $HIVRA before they move $HermesOS out of their
  * verified wallet, so that can't drop them below it. The switch itself is
  * lib/billing/token-access.ts (POST /api/billing/token-access).

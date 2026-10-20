@@ -22,12 +22,13 @@ jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
   HIVRA_AIRDROP: {
     senderAddress: "0x3333333333333333333333333333333333333333",
     snapshotBlock: 36000000,
+    snapshotTakenAt: null,
     snapshotUrl: "https://hivra-lookalike.example/snapshot",
-    sentAt: null,
+    claim: { campaignUrl: "https://app.sablier.com.evil.example/campaign", opensAt: null, closesAt: null },
   },
 }));
 
-describe("/dashboard/convert with a live $HIVRA and a rejected snapshot link", () => {
+describe("/dashboard/convert with a live $HIVRA, a rejected snapshot link and a rejected claim link", () => {
   it("hides the snapshot and logs why", async () => {
     render(await ConvertPage());
 
@@ -36,7 +37,7 @@ describe("/dashboard/convert with a live $HIVRA and a rejected snapshot link", (
     expect(screen.getByTestId("convert-snapshot-pending")).toBeInTheDocument();
     expect(jest.mocked(log.warn)).toHaveBeenCalledWith("HIVRA airdrop config rejected", {
       source: "dashboard/convert",
-      problems: "snapshotUrl must be https on an allowed Hivra location",
+      problems: "snapshotUrl must be https on an allowed Hivra location; claim.campaignUrl must be a plain https link on app.sablier.com",
     });
   });
 });

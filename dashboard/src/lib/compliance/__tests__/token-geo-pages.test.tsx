@@ -60,8 +60,9 @@ jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
   HIVRA_AIRDROP: {
     senderAddress: "0x3333333333333333333333333333333333333333",
     snapshotBlock: 36000000,
+    snapshotTakenAt: null,
     snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
-    sentAt: null,
+    claim: { campaignUrl: null, opensAt: null, closesAt: null },
   },
 }));
 
@@ -127,7 +128,7 @@ describe("dormant policy", () => {
     await renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
     await renderPage(ConvertPage);
-    expect(screen.getByRole("link", { name: "Open the published snapshot" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
     expect(mockHeaders).not.toHaveBeenCalled();
   });
@@ -197,8 +198,8 @@ describe("the committed country list (GB)", () => {
     });
     await renderPage(ConvertPage);
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
-    expect(screen.queryByRole("link", { name: "Open the published snapshot" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("convert-no-claim")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View the published snapshot" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("convert-claim-safety")).toBeInTheDocument();
     expect(screen.getByText("0x1111111111111111111111111111111111111111")).toBeInTheDocument();
     expect(screen.getByText(/holding either token keeps your tier/)).toBeInTheDocument();
     expect(gate).toHaveBeenCalledWith(null, expect.any(Date));
@@ -225,7 +226,7 @@ describe("the committed country list (GB)", () => {
       await renderPage(WhyHivraEvolutionPage);
       expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
       await renderPage(ConvertPage);
-      expect(screen.getByRole("link", { name: "Open the published snapshot" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
       expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
     });
 
@@ -242,7 +243,7 @@ describe("the committed country list (GB)", () => {
     await renderPage(TokenomicsPage);
     expect(screen.getByText(/a year of Pro is \$49 in the token/)).toBeInTheDocument();
     await renderPage(ConvertPage);
-    expect(screen.getByRole("link", { name: "Open the published snapshot" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
   });
 });

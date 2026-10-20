@@ -311,7 +311,8 @@ export function getServedHivraMigration(inputs: HivraMigrationInputs = {}): Serv
   if (config.published !== true) return null;
 
   const { migration, problems } = validateHivraMigrationConfig(config, { hivraAddress: hivra.address, now });
-  const { snapshot } = resolveAirdropFacts(inputs.airdrop ?? HIVRA_AIRDROP, hivra.address, null);
+  // `now` is passed so a snapshotTakenAt in the future is dropped; this page renders on the server.
+  const { snapshot } = resolveAirdropFacts(inputs.airdrop ?? HIVRA_AIRDROP, hivra.address, now);
   if (problems.length > 0) reportOnce(problems);
   return {
     ...migration,

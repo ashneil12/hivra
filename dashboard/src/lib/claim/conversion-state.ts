@@ -11,11 +11,10 @@ import {
   SNAPSHOT_URL_ALLOWED_LOCATIONS,
   type HivraAirdropConfig,
 } from "./hivra-airdrop-config";
+import { NO_CLAIM, readUtcInstant, resolveHivraClaim, type ResolvedHivraClaim } from "./hivra-claim";
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/i;
-// UTC only, to the second, like hivra-token-launch.ts: "2026-10-01T16:00:00Z".
-const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 /** $HermesOS exactly as published, for display. */
 export const HERMESOS_CONTRACT_ADDRESS = HERMESOS_TOKEN.publishedAddress;
@@ -44,15 +43,19 @@ export type ConversionInputs = {
   now: Date;
 };
 
-export type AirdropSnapshot = { block: number; url: string };
+/**
+ * The published snapshot. `takenAt` is the UTC instant it was taken (ISO 8601),
+ * or null when it is not set, invalid, or (with a clock) in the future.
+ */
+export type AirdropSnapshot = { block: number; url: string; takenAt: string | null };
 
 /**
  * What the page may say about this user's tier:
  * - unknown: $HIVRA is not live yet, or the access engine can't be read.
  * - hermesos: grandfathered, not switched, and switching is not offered yet
- *   because the airdrop has not been sent. Their $HermesOS access continues.
- * - switch-available: grandfathered, not switched, and the airdrop has been
- *   sent, so they may choose to switch their tier to $HIVRA.
+ *   because the claim window has not closed. Their $HermesOS access continues.
+ * - switch-available: grandfathered, not switched, and the claim window has
+ *   closed, so they may choose to switch their tier to $HIVRA.
  * - hivra: their tier counts $HIVRA. graceEndsAt is set for a holder who
  *   switched: either token keeps the tier until then.
  */
@@ -65,9 +68,9 @@ export type ConversionAccess =
 /**
  * - dormant: $HIVRA is not in the token registry. No contract and nothing about
  *   the airdrop is shown.
- * - launched: the registry names $HIVRA (scheduled or live). The airdrop facts
- *   that are published (sender, snapshot, sent time) are shown; the rest stay
- *   hidden until a reviewed PR fills them in.
+ * - launched: the registry names $HIVRA (scheduled or live). The claim facts
+ *   that are published (Airdrop wallet, snapshot, claim window) are shown; the
+ *   rest stay hidden until a reviewed PR fills them in.
  */
 export type ConversionState =
   | { status: "dormant"; problems: string[] }
@@ -75,11 +78,11 @@ export type ConversionState =
       status: "launched";
       hivraAddress: string;
       hivraPublishedAddress: string;
-      /** The airdrop sender exactly as configured, or null. */
+      /** The Airdrop wallet (it funds the Sablier campaign) exactly as configured, or null. */
       senderAddress: string | null;
       snapshot: AirdropSnapshot | null;
-      /** Set once every airdrop transfer is confirmed; never without a snapshot. */
-      sentAt: string | null;
+      /** The Sablier claim: its phase at `now`, and the validated link and window (hivra-claim.ts). */
+      claim: ResolvedHivraClaim;
       access: ConversionAccess;
       problems: string[];
     };
@@ -112,14 +115,6 @@ export function readAllowedUrl(
   return url.toString();
 }
 
-function readUtcInstant(value: string): number | null {
-  if (!UTC_INSTANT.test(value)) return null;
-  const ms = Date.parse(value);
-  // Date.parse rolls impossible dates over (2026-02-30 → 2026-03-02); refuse them.
-  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 19) !== value.slice(0, 19)) return null;
-  return ms;
-}
-
 /** Reads the registry and airdrop config at `now`. The access gate is per user, so the caller supplies it. */
 export function readConversionInputs(access: ConversionAccessGate, now: Date = new Date()): ConversionInputs {
   return {
@@ -145,8 +140,9 @@ export function resolveConversionState({ hivra, phase, airdrop, access, now }: C
     hivraPublishedAddress: hivra.publishedAddress,
     senderAddress: facts.senderAddress,
     snapshot: facts.snapshot,
-    sentAt: facts.sentAt,
-    access: resolveAccess(phase, access, facts.sentAt),
+    claim: facts.claim ?? NO_CLAIM,
+    // The claim only counts as closed once the snapshot it belongs to is published.
+    access: resolveAccess(phase, access, facts.snapshot !== null && facts.claim?.phase === "closed"),
     problems: facts.problems,
   };
 }
@@ -154,14 +150,17 @@ export function resolveConversionState({ hivra, phase, airdrop, access, now }: C
 export type AirdropFacts = {
   senderAddress: string | null;
   snapshot: AirdropSnapshot | null;
-  sentAt: string | null;
+  /** The Sablier claim at `now`; null when no clock was given. */
+  claim: ResolvedHivraClaim | null;
   problems: string[];
 };
 
 /**
  * The airdrop facts that may be shown once $HIVRA (`hivraAddress`, lower-cased)
- * is in the registry. Pass `now: null` to skip sentAt (a client render must not
- * depend on the viewer's clock). Invalid values are left out and reported.
+ * is in the registry. Pass `now: null` to skip everything that depends on the
+ * clock (the claim phase, and the check that snapshotTakenAt is not in the
+ * future): a client render must not depend on the viewer's clock. Invalid
+ * values are left out and reported.
  */
 export function resolveAirdropFacts(airdrop: HivraAirdropConfig, hivraAddress: string, now: Date | null): AirdropFacts {
   const problems: string[] = [];
@@ -178,35 +177,42 @@ export function resolveAirdropFacts(airdrop: HivraAirdropConfig, hivraAddress: s
     }
   }
 
+  let takenAt: string | null = null;
+  const taken = airdrop.snapshotTakenAt?.trim() ?? "";
+  if (taken) {
+    const takenMs = readUtcInstant(taken);
+    if (takenMs === null) problems.push("snapshotTakenAt must be a real UTC instant to the second, e.g. 2026-10-20T16:00:00Z");
+    else if (now && takenMs > now.getTime()) problems.push("snapshotTakenAt is in the future");
+    else takenAt = new Date(takenMs).toISOString();
+  }
+
   let snapshot: AirdropSnapshot | null = null;
   const block = airdrop.snapshotBlock;
   const blockValid = block !== null && Number.isSafeInteger(block) && block > 0;
   if (block !== null && !blockValid) problems.push("snapshotBlock must be a positive whole block number");
   const snapshotUrl = readAllowedUrl(airdrop.snapshotUrl, SNAPSHOT_URL_ALLOWED_LOCATIONS);
   if (airdrop.snapshotUrl && !snapshotUrl) problems.push("snapshotUrl must be https on an allowed Hivra location");
-  if (blockValid && snapshotUrl) snapshot = { block: block as number, url: snapshotUrl };
+  if (blockValid && snapshotUrl) snapshot = { block: block as number, url: snapshotUrl, takenAt };
 
-  let sentAt: string | null = null;
-  const sent = airdrop.sentAt?.trim() ?? "";
-  if (sent && now) {
-    const sentMs = readUtcInstant(sent);
-    if (sentMs === null) problems.push("sentAt must be a real UTC instant to the second, e.g. 2026-10-02T16:00:00Z");
-    else if (!snapshot) problems.push("sentAt is set but the snapshot is not published");
-    else if (sentMs > now.getTime()) problems.push("sentAt is in the future");
-    else sentAt = new Date(sentMs).toISOString();
+  let claim: ResolvedHivraClaim | null = null;
+  if (now) {
+    const resolved = resolveHivraClaim(airdrop.claim, now);
+    claim = resolved.claim;
+    problems.push(...resolved.problems);
   }
 
-  return { senderAddress, snapshot, sentAt, problems };
+  return { senderAddress, snapshot, claim, problems };
 }
 
-function resolveAccess(phase: HivraTokenPhase, access: ConversionAccessGate, sentAt: string | null): ConversionAccess {
+function resolveAccess(phase: HivraTokenPhase, access: ConversionAccessGate, claimClosed: boolean): ConversionAccess {
   // The switch (POST /api/billing/token-access) needs $HIVRA live, and the
   // user's access must be readable, or the page could cost them their tier.
   if (phase !== "active" || !access) return { kind: "unknown" };
   if (access.grandfathered && !access.convertedAt) {
-    // Offer the switch only once the airdrop is in wallets: after the switch's
-    // grace only $HIVRA counts, so switching before it arrives could drop the tier.
-    return sentAt ? { kind: "switch-available" } : { kind: "hermesos" };
+    // Offer the switch only once the claim window has closed (the conservative
+    // gate): after the switch's grace only $HIVRA counts, so switching while
+    // holders can still claim could drop a tier.
+    return claimClosed ? { kind: "switch-available" } : { kind: "hermesos" };
   }
   return { kind: "hivra", graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null };
 }
