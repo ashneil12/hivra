@@ -81,7 +81,6 @@ export function isProxmoxAction(action: string): action is ProxmoxAction {
  * separate provider-resize flow instead.
  */
 export const PROVIDER_REFUSED_ACTIONS = {
-  update_runtime: "Runtime updates for allocated provider computers are not supported yet. Your computer and data are unchanged.",
   resize: "Resizing an allocated Hetzner computer is not supported yet. Its original size and data are retained.",
   snapshot: "Restore points for allocated provider computers are not supported yet. The original computer and data are unchanged.",
   restore: "Restore points for allocated provider computers are not supported yet. The original computer and data are unchanged.",
@@ -184,16 +183,24 @@ export function folderRecoveryEligible(row: LifecycleSupportRow): boolean {
 export type RuntimeUpdateRefusal = "digitalocean" | "prepared" | "my-cloud";
 
 /**
+ * Agents on a My cloud computer whose runtime the provider lane updates
+ * (provider-runtime-update.ts). A My cloud desktop or DeepSeek computer is
+ * left out: its runtime probe is bound to the release it was installed from,
+ * so an in-place update would fail its next Start or Restart.
+ */
+export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero"] as const;
+
+/**
  * Why update_runtime is refused for this row, before any lease or host call,
  * or null when the route accepts it. The order is the route's: DigitalOcean
  * first (a Linux Sandbox's update is its adapter's own), then the prepared
  * and My cloud branches. A DeepSeek computer on Proxmox gets its own owned
- * update in the guest (deepseek-harness/update-guest.py); on My cloud it is
- * refused with the rest.
+ * update in the guest (deepseek-harness/update-guest.py).
  */
 export function runtimeUpdateRefusal(row: LifecycleSupportRow): RuntimeUpdateRefusal | null {
   if (row.computer_substrate === "do-managed-session") return "digitalocean";
   if (isPreparedProfile(row)) return "prepared";
-  if (row.computer_substrate === "provider-vm") return "my-cloud";
+  if (row.computer_substrate === "provider-vm"
+    && !(PROVIDER_RUNTIME_UPDATE_TYPES as readonly unknown[]).includes(row.type)) return "my-cloud";
   return null;
 }

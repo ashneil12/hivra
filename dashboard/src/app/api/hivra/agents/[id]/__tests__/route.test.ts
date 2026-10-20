@@ -40,6 +40,8 @@ jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
   reconcileBankrEnvAfterHivraBoot: (...args: unknown[]) => mockReconcileWalletEnv(...args),
 }));
 jest.mock("@/lib/hivra/provider-agent-power", () => ({ advanceProviderAgentPower: (...args: unknown[]) => mockProviderPower(...args) }));
+const mockObserveProviderUpdate = jest.fn();
+jest.mock("@/lib/hivra/provider-runtime-update", () => ({ observeProviderRuntimeUpdate: (...args: unknown[]) => mockObserveProviderUpdate(...args) }));
 jest.mock("@/lib/hivra/provider-agent-resize", () => ({ advanceProviderResize: (...args: unknown[]) => mockProviderResize(...args) }));
 jest.mock("@/lib/hivra/tailscale-private-access", () => ({
   ...jest.requireActual("@/lib/hivra/tailscale-private-access"),
@@ -386,6 +388,28 @@ describe("DELETE /api/hivra/agents/[id]", () => {
       expect(mockProviderReadiness).not.toHaveBeenCalled();
       expect(mockProviderNativeReadiness).not.toHaveBeenCalled();
       expect(mockSeedAgentBox).not.toHaveBeenCalled();
+    });
+    it("observes a My cloud runtime update and records it once the guest committed it", async () => {
+      mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_kind: "runtime_update", operation_id: "provider-update-operation" };
+      mockObserveProviderUpdate.mockImplementation(async () => {
+        mockAgentRow = { ...mockAgentRow, status: "running", operation_kind: null, operation_id: null };
+        return { stage: "updated", agentCli: null };
+      });
+      const response = await GET(makeGetRequest() as never, params);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(await response.json()).toMatchObject({ data: { agent: { status: "running", runtime_update_stage: "updated" } } });
+      expect(mockObserveProviderUpdate).toHaveBeenCalledWith({ userId: "user-free", agentId: "agent-1", operationId: "provider-update-operation" });
+      expect(mockLogHivraAgentEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "runtime_updated", agentId: "agent-1" }));
+      expect(mockProviderPower).not.toHaveBeenCalled();
+      expect(mockSeedAgentBox).not.toHaveBeenCalled();
+    });
+    it("keeps a My cloud runtime update it can't check, without discarding the operation", async () => {
+      mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_kind: "runtime_update", operation_id: "provider-update-operation" };
+      mockObserveProviderUpdate.mockRejectedValue(new Error("PRIVATE_PROVIDER_KEY"));
+      const body = await (await GET(makeGetRequest() as never, params)).json();
+      expect(body.data.agent).toMatchObject({ status: "provisioning", runtime_update_stage: "verification_unavailable" });
+      expect(JSON.stringify(body)).not.toContain("PRIVATE_PROVIDER_KEY");
+      expect(mockLogHivraAgentEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event: "runtime_updated" }));
     });
     it("returns failed power observation as unverified without discarding the operation", async () => {
       mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_kind: "stop", operation_id: "provider-power-operation" };

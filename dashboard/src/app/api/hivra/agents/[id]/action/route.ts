@@ -22,6 +22,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
 import { claimProviderAgentPowerOperation } from "@/lib/hivra/provider-agent-power-store";
+import { claimProviderRuntimeUpdate, dispatchProviderRuntimeUpdate } from "@/lib/hivra/provider-runtime-update";
 import type { ProviderAgentPowerStage } from "@/lib/hivra/provider-power-contract";
 
 import { supabaseAdmin } from "@/lib/supabase";
@@ -91,6 +92,7 @@ import {
   isProxmoxAction,
   isWindowsOnMyServer,
   providerRefusalFor,
+  runtimeUpdateRefusal,
 } from "@/lib/hivra/lifecycle-support";
 import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
@@ -463,6 +465,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (agent.computer_substrate === "provider-vm") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      if (action === "update_runtime") {
+        // The update runs detached in the computer; the agent poll observes it
+        // and releases the lease (provider-runtime-update.ts).
+        if (runtimeUpdateRefusal(agent)) {
+          return apiError("Hivra can’t update the connection service on this My cloud computer yet. Nothing was changed.", 409, undefined, { code: "unsupported" });
+        }
+        if (agent.status !== "running" || agent.operation_id != null || agent.operation_kind != null) {
+          return apiError("Start this computer and wait for it to settle before updating its connection service.", 409, undefined, { code: "not_running" });
+        }
+        const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_power", userId, limit: 30, windowMs: 5 * 60_000 });
+        if (limited) return limited;
+        const operation = { userId, agentId: String(agent.id), operationId: randomUUID() };
+        if (!await claimProviderRuntimeUpdate(operation)) {
+          return apiError("This computer can’t start an update in its current state. Refresh its status before trying again.", 409, undefined, { code: "busy" });
+        }
+        let dispatched: "dispatched" | "uncertain" = "uncertain";
+        try { dispatched = await dispatchProviderRuntimeUpdate(operation); }
+        catch { dispatched = "uncertain"; }
+        if (dispatched !== "dispatched") {
+          log.warn("provider runtime update dispatch is unverified", { source: "hivra/agents/[id]/action",
+            failureType: "provider_runtime_update_unverified", userId, agentId: agent.id });
+        }
+        const { data: current, error: reloadError } = await supabaseAdmin.from("hivra_agents").select("*")
+          .eq("id", agent.id).eq("user_id", userId).eq("computer_substrate", "provider-vm").single();
+        if (reloadError || !current) return apiError("The update was sent, but this computer’s status could not be refreshed. Check its status before sending another action.", 503);
+        const response = apiSuccess({ status: "provisioning", agent: { ...sanitizeHivraAgentRow(current),
+          ...(current.operation_id === operation.operationId ? { runtime_update_stage: dispatched === "dispatched" ? "updating" : "verification_unavailable" } : {}) } }, 202);
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
       const refusal = providerRefusalFor(action);
       if (refusal) return apiError(refusal, 400);
       const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_power", userId, limit: 30, windowMs: 5 * 60_000 });

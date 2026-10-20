@@ -4,6 +4,7 @@
 // store). Agents are real rows in hivra_agents, provisioned through the
 // Proxmox allocator.
 
+import type { ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import type { AgentId } from "./agent-catalog";
 import type { ComputerTemplateId } from "./computer-catalog";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
@@ -47,6 +48,8 @@ export interface HivraAgent {
   readiness_stage?: ProviderAgentReadinessStage;
   power_stage?: ProviderAgentPowerStage;
   resize_stage?: ProviderResizeStage | "verification_unavailable";
+  /** A My cloud runtime update the poll is observing, or its outcome. */
+  runtime_update_stage?: ProviderRuntimeUpdateStage;
   cpu: number;
   ram: number;
   cpu_max?: number | null;
