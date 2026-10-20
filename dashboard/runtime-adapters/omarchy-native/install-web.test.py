@@ -104,5 +104,54 @@ class ImagePreparationTests(unittest.TestCase):
         self.assertIn('from selkies.display_utils import wayland_output_id', source)
 
 
+class SupersededImageTests(unittest.TestCase):
+    # On the Canary Omarchy computer (2026-10-20) an image from an earlier pin
+    # (7.9 GB) was never removed, and with it the owner's disk sat below the
+    # 10 GiB Omarchy's updater requires, so Update > Omarchy refused to run.
+    PINNED = 'sha256:' + 'a' * 64
+    OLD = 'sha256:' + 'b' * 64
+
+    def fake_docker(self, listed, rm_ok=True):
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[1:3] == ['image', 'inspect']:
+                return SimpleNamespace(returncode=0, stdout=(self.PINNED + '\n').encode())
+            if argv[1:3] == ['image', 'ls']:
+                return SimpleNamespace(returncode=0, stdout=('\n'.join(listed) + '\n').encode())
+            if argv[1:3] == ['image', 'rm']:
+                return SimpleNamespace(returncode=0 if rm_ok else 1, stdout=b'')
+            raise AssertionError(argv)
+        return run, calls
+
+    def test_removes_only_superseded_streamer_images_without_force(self):
+        run, calls = self.fake_docker([self.PINNED, self.OLD, self.OLD])
+        with patch.object(installer.subprocess, 'run', side_effect=run):
+            removed = installer.prune_superseded_streamer_images()
+        self.assertEqual(removed, [self.OLD])
+        listed = [argv for argv in calls if argv[1:3] == ['image', 'ls']][0]
+        self.assertEqual(listed[-1], 'ghcr.io/selkies-project/selkies/desktop')
+        removals = [argv for argv in calls if argv[1:3] == ['image', 'rm']]
+        self.assertEqual(removals, [['/usr/bin/docker', 'image', 'rm', self.OLD]])
+        self.assertTrue(all('-f' not in argv and '--force' not in argv for argv in calls))
+
+    def test_keeps_an_image_a_container_still_uses(self):
+        run, _ = self.fake_docker([self.PINNED, self.OLD], rm_ok=False)
+        with patch.object(installer.subprocess, 'run', side_effect=run):
+            self.assertEqual(installer.prune_superseded_streamer_images(), [])
+
+    def test_does_nothing_without_the_pinned_image(self):
+        def run(argv, **kwargs):
+            return SimpleNamespace(returncode=1, stdout=b'')
+        with patch.object(installer.subprocess, 'run', side_effect=run) as mocked:
+            self.assertEqual(installer.prune_superseded_streamer_images(), [])
+        self.assertEqual(mocked.call_count, 1)
+
+    def test_prunes_only_after_the_stream_serves(self):
+        source = SCRIPT.read_text()
+        self.assertLess(source.index('raise RuntimeError("broker_unready")'),
+                        source.index('    prune_superseded_streamer_images()'))
+
+
 if __name__ == '__main__':
     unittest.main()

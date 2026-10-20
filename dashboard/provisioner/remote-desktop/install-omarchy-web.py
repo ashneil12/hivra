@@ -263,6 +263,30 @@ def ensure_image(image):
     run(["/usr/bin/docker", "pull", image], timeout=300)
 
 
+def prune_superseded_streamer_images():
+    """Drop old-pin streamer images (~8 GB each; Omarchy updates need 10 GiB free).
+    Never the pinned one, never forced, best effort."""
+    env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
+    pinned = subprocess.run(["/usr/bin/docker", "image", "inspect", SELKIES_IMAGE, "--format", "{{.Id}}"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+    pinned_id = pinned.stdout.decode().strip() if pinned.returncode == 0 else ""
+    if not pinned_id.startswith("sha256:"):
+        return []
+    listed = subprocess.run(["/usr/bin/docker", "image", "ls", "--no-trunc", "--format", "{{.ID}}",
+                             SELKIES_IMAGE.split("@", 1)[0]],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+    if listed.returncode != 0:
+        return []
+    removed = []
+    for image_id in dict.fromkeys(listed.stdout.decode().split()):
+        if not image_id.startswith("sha256:") or image_id == pinned_id:
+            continue
+        if subprocess.run(["/usr/bin/docker", "image", "rm", image_id],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env).returncode == 0:
+            removed.append(image_id)
+    return removed
+
+
 def write(path, data, mode, uid=0, gid=0):
     temporary = path.with_name(path.name + ".new")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, mode)
@@ -352,16 +376,10 @@ def main():
     # Allow exactly that one port; the Sunshine rules carry their own scopes.
     subprocess.run(["/usr/bin/ufw", "allow", "8090/tcp"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    # The owner administers their own Omarchy computer and updates it from
-    # inside (Update > Omarchy), whenever they like. Omarchy's updater runs as
-    # the desktop user and calls sudo itself for a changing set of commands
-    # (pacman, pacman-key, paccache, snapshots, systemd-inhibit, sudo -v), so a
-    # list of commands broke on the first update tried. The previous list
-    # already allowed pacman -S*, which is root, so this changes no boundary:
-    # root on the owner's own computer still can't reach the control plane,
-    # other computers or platform credentials (docs/SECURITY-MODEL.md).
-    # verifypw=any lets `sudo -v` (the updater's keep-alive) pass without a
-    # password. Omarchy only; the file is validated before it is installed.
+    # The owner administers their own computer: Omarchy's updater calls sudo
+    # for a changing set of commands, and pacman -S* was already root. Root here
+    # can't reach the control plane (docs/SECURITY-MODEL.md). verifypw=any
+    # covers `sudo -v`. Omarchy only; validated before install.
     sudoers = ROOT / 'desktop-update.sudoers'
     write(sudoers, (
         f"Defaults:{owner.pw_name} verifypw=any\n"
@@ -398,6 +416,7 @@ def main():
         time.sleep(1)
     else:
         raise RuntimeError("broker_unready")
+    prune_superseded_streamer_images()
     print(json.dumps({"protocol": "hivra-omarchy-web-prepared-v1", "browserReady": True,
                       "brokerOrigin": request["publicOrigin"], "selkiesImage": SELKIES_IMAGE,
                       "nodeImage": NODE_IMAGE}, sort_keys=True, separators=(",", ":")))

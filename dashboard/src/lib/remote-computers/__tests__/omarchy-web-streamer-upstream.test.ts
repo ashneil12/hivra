@@ -75,6 +75,20 @@ describe("Omarchy desktop stream reachability", () => {
     expect(grant).not.toMatch(/pacman|yay|omarchy-update/);
   });
 
+  // An old-pin streamer image (7.9 GB) left on the Canary Omarchy computer kept
+  // its disk under the 10 GiB Omarchy's updater requires (2026-10-20).
+  // Preparation removes superseded images of Hivra's streamer repository only,
+  // without force, once the pinned stream serves (behaviour: install-web.test.py).
+  it("removes superseded streamer images after the pinned stream serves", () => {
+    const installer = read("install-omarchy-web.py");
+    const body = installer.slice(installer.indexOf("def prune_superseded_streamer_images"), installer.indexOf("def write("));
+    expect(body).toContain('SELKIES_IMAGE.split("@", 1)[0]');
+    expect(body).toContain('["/usr/bin/docker", "image", "rm", image_id]');
+    expect(body).not.toMatch(/"-f"|--force/);
+    expect(installer.indexOf('raise RuntimeError("broker_unready")'))
+      .toBeLessThan(installer.indexOf("    prune_superseded_streamer_images()"));
+  });
+
   // General sudo is the Omarchy owner's only. No other runtime Hivra installs
   // (Ubuntu desktop, agent boxes, Windows) grants it.
   it("grants general passwordless sudo only on Omarchy computers", () => {
