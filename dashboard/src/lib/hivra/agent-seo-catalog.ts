@@ -55,6 +55,11 @@ export interface AgentSeoEntry {
   vsSelfHosted: string[];
   /** Explicit non-affiliation line naming only this page's vendor. */
   affiliation: string;
+  /**
+   * Heading of the closing call to action. Left out, the page says
+   * "Run {agent} 24/7."; Claude Code and Codex use Ash's website-pack wording.
+   */
+  ctaHeading?: string;
   /** Blog slugs to cross-link. Each must exist in lib/blog-data.ts. */
   relatedBlogSlugs: string[];
 }
@@ -160,6 +165,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       "Same official CLI, same Anthropic sign-in, same usage billing either way. The difference is who does the ops.",
     ],
     affiliation: "Hivra is independent and is not affiliated with Anthropic.",
+    ctaHeading: "Give Claude Code a computer that stays on",
     relatedBlogSlugs: ["keep-claude-code-running-24-7", "byo-api-key-explained", "cost-of-running-ai-agent"],
   },
   {
@@ -230,6 +236,7 @@ export const AGENT_SEO_ENTRIES: AgentSeoEntry[] = [
       "Same official CLI and the same ChatGPT billing either way. You're paying Hivra to skip the ops.",
     ],
     affiliation: "Hivra is independent and is not affiliated with OpenAI.",
+    ctaHeading: "Give Codex a computer that stays on",
     relatedBlogSlugs: ["run-codex-24-7-in-the-cloud", "byo-api-key-explained", "ai-agent-automation-examples"],
   },
   {

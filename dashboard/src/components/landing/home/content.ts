@@ -104,7 +104,7 @@ export const FIT = {
     { label: "You can read the code", cells: ["Depends", "No", "No", "Yes"] },
     { label: "You can run it on your own computer or server", cells: ["Yes", "No", "No", "Yes"] },
   ],
-  verdict: "Hivra is the one you can check.",
+  verdict: "Hivra makes the platform available to inspect, adapt and run yourself.",
   more: "How Hivra compares",
   moreHref: "/docs/litepaper/index.html#fit",
   note: "How these services described themselves in September 2026. They change quickly, so check the current details before you rely on them.",

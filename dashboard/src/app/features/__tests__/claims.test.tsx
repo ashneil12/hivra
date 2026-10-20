@@ -61,6 +61,17 @@ describe("feature page claims", () => {
     expect(findBannedClaims(`/features/${slug}`, copy)).toEqual([]);
   });
 
+  it("closes every feature page with the website pack's heading, not the shared default", async () => {
+    expect(SLUGS).toHaveLength(6);
+    for (const slug of SLUGS) {
+      const { container } = await renderFeature(slug);
+      const price = [...container.querySelectorAll("h2")].filter((h2) => h2.nextElementSibling?.textContent?.startsWith("From $9.99/mo."));
+      expect(price.map((h2) => h2.textContent)).toEqual(["Keep your agent running on a computer of its own"]);
+      expect(container.textContent).not.toContain("Give your agent a computer that stays on.");
+      cleanup();
+    }
+  });
+
   it.each(SLUGS)("links /features/%s to the pricing page", async (slug) => {
     const { container } = await renderFeature(slug);
     expect(container.querySelector('a[href="/pricing"]')).not.toBeNull();

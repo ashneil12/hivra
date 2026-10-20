@@ -25,7 +25,7 @@ const features = [
   {
     slug: "persistent-memory",
     title: "Persistent Memory",
-    tagline: "Your agent remembers from one session to the next.",
+    tagline: "Keep context between sessions",
     description:
       "Most AI tools forget everything when a chat ends. Hermes agents keep their context from one session to the next: your projects, your preferences and what they have learned, all building up over time.",
   },
@@ -78,7 +78,7 @@ const breadcrumbSchema = {
 const quickSummary = [
   {
     title: "Persistent memory",
-    body: "Your agent remembers what you told it from one session to the next, so you never have to start over.",
+    body: "Your agent can keep its saved memory across sessions, so you can carry on from earlier work instead of setting everything up again.",
   },
   {
     title: "Browser automation",
