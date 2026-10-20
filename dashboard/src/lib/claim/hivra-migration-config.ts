@@ -12,8 +12,10 @@
  *
  * Reused, not repeated here:
  *   - the $HIVRA contract comes only from the token registry;
- *   - the snapshot block (and published list) comes from HIVRA_AIRDROP in
- *     hivra-airdrop-config.ts.
+ *   - the snapshot block, the time it was taken and the published list come from
+ *     HIVRA_AIRDROP in hivra-airdrop-config.ts;
+ *   - the Sablier claim campaign link and the claim window (its close date is the
+ *     bound for the founder's burn date below) come from HIVRA_AIRDROP.claim.
  *
  * Fields:
  *   published     false hides the page and every link to it.
@@ -38,27 +40,37 @@
  *                   weeks              how many weeks the sales run;
  *                   saleStart          UTC date ("2026-11-04") or instant of the first sale;
  *                   saleDay            the weekday sales happen, e.g. "Wednesday";
- *                                      must match saleStart's weekday;
- *                   burnDate           UTC date or instant the unsold rest is burned;
+ *                                      must match saleStart's weekday. Checked, but
+ *                                      the page has no wording for it;
+ *                   burnDate           UTC date or instant the unsold rest is burned.
+ *                                      It must be after the last sale week and, once
+ *                                      claim.closesAt is set, after the claim window
+ *                                      closes (the final planned sale is the day after
+ *                                      the window's last day, and the burn follows it);
  *                   burnAddress        where the unsold rest is sent.
  *   receipts      on-chain proof, one entry per transaction:
  *                   date    UTC date or instant of the transaction;
- *                   kind    liquidity | founder-sale | burn | airdrop-batch;
+ *                   kind    claim | liquidity | founder-sale. A founder burn is
+ *                           recorded as founder-sale (the page groups them as
+ *                           "Founder sales and burn");
  *                   txHash  0x + 64 hex;
  *                   note    a short plain-English line, or null.
+ *                 A group with no receipts shows nothing on the page.
  *
  * A set but invalid value is dropped and logged ("HIVRA migration config
  * rejected"), never rendered: a bad address, tx hash or date, or dates in the
  * wrong order (saleStart before the no-sale period ends, burnDate before the
- * last sale week, a receipt in the future or a founder sale or burn before
- * saleStart). The page shows only the sections whose data is valid.
+ * last sale week or not after the claim window closes, a receipt in the future
+ * or a founder sale before saleStart). The page shows only the sections and
+ * lines whose data is valid.
  *
- * The page copy is token-facing and needs UK financial-promotion / legal
- * review before release.
+ * The page copy is Ash's pack page 02-token-migration.md, applied verbatim in
+ * components/token/MigrationView.tsx. It is token-facing and needs UK
+ * financial-promotion / legal review before release.
  *
  * Client-safe: type-only imports.
  */
-export type HivraMigrationReceiptKind = "liquidity" | "founder-sale" | "burn" | "airdrop-batch";
+export type HivraMigrationReceiptKind = "claim" | "liquidity" | "founder-sale";
 
 export type HivraMigrationReceipt = {
   date: string;

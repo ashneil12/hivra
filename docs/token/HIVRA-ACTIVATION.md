@@ -624,12 +624,20 @@ never signs anything and holds no key.
 
 ### The migration page (/token/migration)
 
-A public page that explains the move: what changed, the contracts, where the
-$HIVRA pool's trading fees go, the founder's legacy $HermesOS and the planned
-rules for them, on-chain receipts, and how to stay safe. It reads
+A public page that explains the move: what changed, how to check eligibility
+and claim, the contracts, how the $HIVRA pool's trading fees are handled, the
+founder's legacy $HermesOS and the planned rules for them, the on-chain
+records, and a few things to remember. Its words are Ash's pack page
+`02-token-migration.md`, applied verbatim (title, search description, headings,
+paragraphs, bold runs, order of sections and links); a copy change comes from
+Ash, not from the code. It reads
 `dashboard/src/lib/claim/hivra-migration-config.ts`, plus the $HIVRA contract
-from the registry and the snapshot block from the airdrop config (it keeps no
-copy of either).
+from the registry and, from the airdrop config, the snapshot block, the time it
+was taken, the published snapshot link and the Sablier claim (it keeps no copy
+of any of them). Every bracketed placeholder in the pack is data: a line or link
+with no valid data is left out, never shown as a placeholder. "Check a wallet"
+appears only when `/token/airdrop` is served, "Claim through Sablier" only while
+the claim is open, and a records group with nothing to show prints nothing.
 
 It is a 404, and /token and /dashboard/convert do not link to it, until
 `HIVRA_NEW_TOKEN_SURFACES` is on, the launch block is filled in, and
@@ -641,14 +649,21 @@ Filled in already: `treasurySafe`, `fee`, and the founder's `wallet`,
 `heldTokens`, `migrated: false`, `headStartDays`, `weeklyCapTokens`,
 `maxPriceImpactPct`, `weeks` and `burnAddress`. Filled in at launch, each by a
 reviewed PR: `announcedAt` (UTC instant), the founder's `saleStart`,
-`saleDay` (the weekday, matching `saleStart`) and `burnDate`, `receipts` as
-transactions confirm, and `published: true` last. Every value is checked
-(EIP-55 addresses, 0x + 64 hex transaction hashes, real UTC dates in order:
-`saleStart` after the no-sale period, `burnDate` after the last sale week, no
-receipt in the future, no founder sale or burn before `saleStart`). A bad
-value is dropped and logged (`HIVRA migration config rejected`), and the page
-leaves out the section that needed it. The page copy needs the UK
-financial-promotion / legal review before release.
+`saleDay` (the weekday, matching `saleStart`; checked, not shown) and
+`burnDate`, `receipts` as transactions confirm, and `published: true` last. A
+receipt's `kind` is `claim`, `liquidity` or `founder-sale` (a founder burn is
+recorded as `founder-sale`). Every value is checked (EIP-55 addresses, 0x + 64
+hex transaction hashes, real UTC dates in order: `saleStart` after the no-sale
+period, `burnDate` after the last sale week and, once the airdrop config's
+`claim.closesAt` is set, after the claim window closes; no receipt in the
+future, no founder sale before `saleStart`). A bad value is dropped and logged
+(`HIVRA migration config rejected`), and the page leaves out the section or
+line that needed it. Per the pack's editorial update, the founder's final
+planned sale is the day after the last day of the claim window and the burn
+follows it, so set `saleStart`, `weeks` and `burnDate` against `claim.closesAt`
+once it is fixed. Publish the page after `/token/airdrop` is served, or the
+sentence that points to the snapshot checker stays hidden. The page copy needs
+the UK financial-promotion / legal review before release.
 
 ### Still Bankr-era (not changed here)
 

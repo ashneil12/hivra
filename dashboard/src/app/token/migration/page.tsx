@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import MigrationView, { type MigrationViewState } from "@/components/token/MigrationView";
 import { hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
+import { claimHrefOf } from "@/lib/claim/hivra-claim";
 import { getServedHivraMigration } from "@/lib/claim/hivra-migration";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { buildWebsiteMetadata } from "@/lib/metadata";
@@ -11,14 +12,20 @@ import { RESTRICTED_TOKEN_METADATA } from "@/lib/token-phase-copy";
 // Per request: the page reads the geo decision, the $HIVRA phase and the clock.
 export const dynamic = "force-dynamic";
 
-const TITLE = "$HermesOS to $HIVRA migration";
-const DESCRIPTION = "What changed when $HermesOS moved to $HIVRA, where the trading fees go, the founder's tokens, and the on-chain receipts.";
+// Ash's pack, 02-token-migration.md: browser title and search description, verbatim.
+const TITLE = "$HermesOS to $HIVRA | Migration, claims and on-chain records | Hivra";
+const DESCRIPTION = "How the $HermesOS to $HIVRA transition works, who can claim through Sablier, what happens to existing access, and where to verify the contracts and transactions.";
 
 export async function generateMetadata(): Promise<Metadata> {
   if (!getServedHivraMigration()) return { robots: { index: false, follow: false } };
   const restricted = (await resolveTokenGeoBlockForPage()).blocked;
   const { title, description } = restricted ? RESTRICTED_TOKEN_METADATA : { title: TITLE, description: DESCRIPTION };
-  return { title, description, ...buildWebsiteMetadata({ path: "/token/migration", title, description }) };
+  return {
+    // The pack's title already ends in "| Hivra", so it skips the root layout's "%s | Hivra" template.
+    title: restricted ? title : { absolute: title },
+    description,
+    ...buildWebsiteMetadata({ path: "/token/migration", title, description }),
+  };
 }
 
 /**
@@ -38,6 +45,12 @@ export default async function HivraMigrationPage() {
   const geo = await resolveTokenGeoBlockForPage();
   const state: MigrationViewState = geo.blocked
     ? { kind: "blocked", notice: geo.message }
-    : { kind: "open", migration, airdropLookupHref: hivraAirdropLookupHref({ now }) };
+    : {
+        kind: "open",
+        migration,
+        airdropLookupHref: hivraAirdropLookupHref({ now }),
+        // The Sablier link exists only while the claim is open (claimHrefOf, the rule behind hivraClaimHref).
+        claimHref: claimHrefOf(migration.claim),
+      };
   return <MigrationView state={state} />;
 }

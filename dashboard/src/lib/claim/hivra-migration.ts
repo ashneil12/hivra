@@ -12,7 +12,7 @@
  *
  * Every other field is checked here (validateHivraMigrationConfig). An invalid
  * value is dropped and logged, never rendered, and the page leaves out the
- * section that needed it.
+ * section or line that needed it.
  */
 import "server-only";
 
@@ -28,6 +28,7 @@ import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
 import { readEip55Address } from "./eip55";
 import { HIVRA_AIRDROP, type HivraAirdropConfig } from "./hivra-airdrop-config";
 import { resolveAirdropFacts, type AirdropSnapshot } from "./conversion-state";
+import { NO_CLAIM, readUtcInstant, type ResolvedHivraClaim } from "./hivra-claim";
 import {
   HIVRA_MIGRATION,
   type HivraMigrationConfig,
@@ -37,7 +38,7 @@ import {
 
 export const HIVRA_MIGRATION_PATH = "/token/migration";
 
-export const RECEIPT_KINDS: readonly HivraMigrationReceiptKind[] = ["liquidity", "founder-sale", "burn", "airdrop-batch"];
+export const RECEIPT_KINDS: readonly HivraMigrationReceiptKind[] = ["claim", "liquidity", "founder-sale"];
 export const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -92,6 +93,8 @@ export type ServedHivraMigration = ValidatedHivraMigration & {
   hermesosAddress: string;
   /** From the airdrop config: shown only once block and list are both published. */
   snapshot: AirdropSnapshot | null;
+  /** The Sablier claim at the time of the request (hivra-claim.ts); phase "unpublished" when there is no valid campaign link. */
+  claim: ResolvedHivraClaim;
 };
 
 function readDate(value: string | null | undefined): (MigrationDate & { ms: number }) | null {
@@ -146,10 +149,16 @@ function isWholeInRange(value: unknown, max: number): value is number {
  */
 export function validateHivraMigrationConfig(
   config: HivraMigrationConfig,
-  { hivraAddress, now }: { hivraAddress: string | null; now: Date },
+  { hivraAddress, now, claimClosesAt = null }: {
+    hivraAddress: string | null;
+    now: Date;
+    /** HIVRA_AIRDROP.claim.closesAt as configured (a UTC instant to the second), or null. A value that is not one is ignored here; the airdrop config reports it. */
+    claimClosesAt?: string | null;
+  },
 ): { migration: ValidatedHivraMigration; problems: string[] } {
   const problems: string[] = [];
   const nowMs = now.getTime();
+  const claimClosesMs = typeof claimClosesAt === "string" ? readUtcInstant(claimClosesAt) : null;
 
   let announced = config.announcedAt ? readDate(config.announcedAt) : null;
   if (config.announcedAt && (!announced || announced.dateOnly)) {
@@ -216,6 +225,11 @@ export function validateHivraMigrationConfig(
         burnDate = null;
       }
     }
+    // The final planned sale is the day after the claim window's last day, and the burn follows it.
+    if (burnDate && claimClosesMs !== null && burnDate.ms <= claimClosesMs) {
+      problems.push("founder.burnDate is not after claim.closesAt");
+      burnDate = null;
+    }
 
     saleStartMs = saleStart?.ms ?? null;
     founder = {
@@ -244,8 +258,7 @@ export function validateHivraMigrationConfig(
     }
     if (date.ms > nowMs) return void problems.push(`${where}.date is in the future`);
     // Compared by UTC day, so a day-only receipt on the first sale day counts.
-    if ((receipt.kind === "founder-sale" || receipt.kind === "burn") && saleStartMs !== null
-      && date.ms < saleStartMs - (saleStartMs % DAY_MS)) {
+    if (receipt.kind === "founder-sale" && saleStartMs !== null && date.ms < saleStartMs - (saleStartMs % DAY_MS)) {
       return void problems.push(`${where} is a ${receipt.kind} dated before founder.saleStart`);
     }
     const note = receipt.note === null || receipt.note === undefined ? null : String(receipt.note).trim();
@@ -310,15 +323,21 @@ export function getServedHivraMigration(inputs: HivraMigrationInputs = {}): Serv
   const config = inputs.config ?? HIVRA_MIGRATION;
   if (config.published !== true) return null;
 
-  const { migration, problems } = validateHivraMigrationConfig(config, { hivraAddress: hivra.address, now });
-  // `now` is passed so a snapshotTakenAt in the future is dropped; this page renders on the server.
-  const { snapshot } = resolveAirdropFacts(inputs.airdrop ?? HIVRA_AIRDROP, hivra.address, now);
+  const airdrop = inputs.airdrop ?? HIVRA_AIRDROP;
+  const { migration, problems } = validateHivraMigrationConfig(config, {
+    hivraAddress: hivra.address,
+    now,
+    claimClosesAt: airdrop.claim?.closesAt ?? null,
+  });
+  // `now` is passed so a snapshotTakenAt in the future is dropped and the claim phase is read; this page renders on the server.
+  const { snapshot, claim } = resolveAirdropFacts(airdrop, hivra.address, now);
   if (problems.length > 0) reportOnce(problems);
   return {
     ...migration,
     hivraAddress: hivra.publishedAddress,
     hermesosAddress: HERMESOS_TOKEN.publishedAddress,
     snapshot,
+    claim: claim ?? NO_CLAIM,
   };
 }
 
