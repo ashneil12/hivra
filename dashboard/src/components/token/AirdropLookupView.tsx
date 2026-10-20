@@ -92,7 +92,7 @@ export default function AirdropLookupView({ state }: { state: AirdropLookupViewS
           <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>HOLDER AIRDROP</p>
           <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>Check a wallet</h1>
           <p style={{ fontSize: "1.2rem", ...muted }}>
-            Wallets that held $HermesOS at Base block {state.snapshot.block} are sent $HIVRA one for one. There is nothing to claim and nothing to connect. Paste a wallet address to see what it is sent.
+            Holders on the published snapshot list at Base block {state.snapshot.block} are sent $HIVRA one for one. There is nothing to claim and nothing to connect. Paste a wallet address to see what it is sent.
           </p>
           <p data-testid="token-risk-line" style={muted}>{riskLine}</p>
         </header>
