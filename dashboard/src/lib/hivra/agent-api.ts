@@ -13,7 +13,7 @@ import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import type { HivraAgentActivity } from "./agent-authority";
 import type { ManageCapabilities } from "./manage-sections";
 import type { ComputerHistoryEvent } from "./computer-history";
-import type { AgentCliUpdateReport, AgentSoftwareSummary } from "./agent-cli-status";
+import type { AgentAppUpdateReport, AgentCliUpdateReport, AgentSoftwareSummary } from "./agent-cli-status";
 import { ComputerUsageViewSchema, type ComputerUsageView } from "./computer-usage-contract";
 import type { ProviderAgentReadinessStage } from "./provider-readiness-contract";
 import type { ProviderAgentPowerStage } from "./provider-power-contract";
@@ -603,13 +603,15 @@ export const forceStopAgent = (id: string) => agentAction(id, "force_stop");
 export const forceRestartAgent = (id: string) => agentAction(id, "force_restart");
 /**
  * The in-place connection-service update. For Claude Code and Codex it also
- * reports what it did about moving the CLI to Hivra's tested version.
+ * reports what it did about moving the CLI to Hivra's tested version, and for
+ * the Aeon dashboard, OpenClaw and Agent Zero about moving the app.
  */
-export const updateAgentRuntime = async (id: string): Promise<{ status: string; agentCli?: AgentCliUpdateReport }> => {
+export const updateAgentRuntime = async (id: string): Promise<{ status: string; agentCli?: AgentCliUpdateReport; agentApp?: AgentAppUpdateReport }> => {
   const data = await agentActionData(id, "update_runtime");
   return {
     status: typeof data.status === "string" ? data.status : "running",
     ...(data.agentCli && typeof data.agentCli === "object" ? { agentCli: data.agentCli as AgentCliUpdateReport } : {}),
+    ...(data.agentApp && typeof data.agentApp === "object" ? { agentApp: data.agentApp as AgentAppUpdateReport } : {}),
   };
 };
 export const resizeAgent = async (

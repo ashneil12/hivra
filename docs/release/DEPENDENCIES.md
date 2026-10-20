@@ -431,6 +431,11 @@ copyright, source-offer and exact image-layer review remain open.
 | Proxmox guest base | Download and SHA-256 verify dated Ubuntu image | Jammy `release-20260807` |
 | Guest system packages | Install from Ubuntu package repositories | Installed package/version receipt still required |
 
+The Aeon, OpenClaw and Agent Zero identities are read from
+`dashboard/provisioner/agent-app-versions.json` by the installer and by
+`hivra-agent-app-update.sh`, which moves an existing computer to them with the
+same download, pull or build.
+
 Important coverage limits:
 
 - The pinned bux installer has its own downloads/builds, including Node, ttyd and

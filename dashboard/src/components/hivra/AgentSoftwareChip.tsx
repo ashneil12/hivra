@@ -4,6 +4,7 @@ import { ArrowUpCircle, Loader2, AlertTriangle } from "lucide-react";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import { agentSoftwareBadge, agentSoftwareSubject, type AgentSoftwareBadge, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
+import { agentSoftwareDisplayName, agentSoftwareVersionName } from "@/lib/hivra/agent-software-names";
 import { useAgentSoftware } from "./useAgentSoftware";
 import styles from "./AgentSoftwareChip.module.css";
 
@@ -30,9 +31,11 @@ export function agentSoftwareCovered(agent: HivraAgent): boolean {
 }
 
 function describe(view: AgentSoftwareView, badge: AgentSoftwareBadge, name: string, tested: string | null): string {
+  const v = agentSoftwareVersionName;
   if (view.kind === "older_connection_service") return `${CHIP_TEXT[badge]}: this agent's connection service is older than Hivra's current one. Open Updates.`;
-  if (view.kind === "behind" && tested) return `${CHIP_TEXT[badge]}: ${name} ${view.installed} is installed and Hivra has tested ${tested}. Open Updates.`;
-  if (view.kind === "ahead_hivra" && tested) return `${CHIP_TEXT[badge]}: Hivra now tests ${name} ${tested}. Open Updates.`;
+  if (view.kind === "behind" && tested) return `${CHIP_TEXT[badge]}: ${name} ${v(view.installed)} is installed and Hivra has tested ${v(tested)}. Open Updates.`;
+  if (view.kind === "ahead_hivra" && tested) return `${CHIP_TEXT[badge]}: Hivra now tests ${name} ${v(tested)}. Open Updates.`;
+  if (view.kind === "other_version" && tested) return `${CHIP_TEXT[badge]}: Hivra has tested ${name} ${v(tested)}. Open Updates.`;
   if (badge === "updating") return `Updating ${name}. Open Updates to follow it.`;
   if (badge === "update_failed") return `The ${name} update didn't finish. Open Updates.`;
   return `${CHIP_TEXT[badge]}. Open Updates.`;
@@ -40,7 +43,8 @@ function describe(view: AgentSoftwareView, badge: AgentSoftwareBadge, name: stri
 
 /**
  * "Update available" (or "Updating…", "Update didn't finish") for an agent
- * whose Claude Code or Codex is behind the version Hivra has tested, or whose
+ * whose Claude Code, Codex or hosted app is behind the version Hivra has
+ * tested (or, for an app, on a version Hivra didn't record or test), or whose
  * connection service is older than Hivra's current one. Never shown for a
  * version newer than tested. Pressing it opens Manage › Updates.
  */
@@ -52,9 +56,9 @@ export function AgentSoftwareChip({ agent, onOpen, className }: {
   const enabled = agent.status === "running" && agentSoftwareCovered(agent);
   const { state } = useAgentSoftware(agent.id, enabled);
   if (!enabled || !state?.supported) return null;
-  const badge = agentSoftwareBadge(state.view);
+  const badge = agentSoftwareBadge(state.view, state.app != null);
   if (!badge) return null;
-  const name = catalogAgent(agent.type)?.name ?? "The agent";
+  const name = agentSoftwareDisplayName(state.app ?? null, catalogAgent(agent.type)?.name ?? "The agent");
   const Icon = badge === "updating" ? Loader2 : badge === "update_failed" ? AlertTriangle : ArrowUpCircle;
   return (
     <button

@@ -149,8 +149,9 @@ describe("readAgentSoftwareRecordsForAgents", () => {
 
 describe("requests and choices", () => {
   it("maps the update's outcome to what is recorded, counting an unconfirmed CLI step as unverified", () => {
-    expect(requestResultOf({ ok: true, agentCli: { name: "codex", version: "0.149.0", target: "0.149.1", state: "scheduled" } })).toBe("scheduled");
-    expect(requestResultOf({ ok: true, agentCli: null })).toBe("unverified");
+    expect(requestResultOf({ ok: true, report: { name: "codex", version: "0.149.0", target: "0.149.1", state: "scheduled" } })).toBe("scheduled");
+    expect(requestResultOf({ ok: true, report: { name: "agent-zero", version: null, target: `sha256:${"b".repeat(64)}`, state: "running" } })).toBe("running");
+    expect(requestResultOf({ ok: true, report: null })).toBe("unverified");
     expect(requestResultOf({ ok: false, code: "host_not_ready" })).toBe("host_not_ready");
     expect(requestResultOf({ ok: false, code: "busy" })).toBe("busy");
     expect(requestResultOf({ ok: false, code: "superseded" })).toBe("unverified");

@@ -572,7 +572,7 @@ function HivraManageContent({
     try {
       const result = await updateConnectionService();
       onChanged();
-      return { ok: true, report: result?.agentCli ?? null };
+      return { ok: true, report: result?.agentCli ?? result?.agentApp ?? null };
     } catch (error) {
       return {
         ok: false,
@@ -1538,8 +1538,9 @@ function HivraManageContent({
         </ManagePanel>
       ) : null}
 
-      {/* UPDATES — the agent's own software (Claude Code / Codex version, its
-          update and automatic updates), then the connection service. */}
+      {/* UPDATES — the agent's own software (Claude Code / Codex version, or the
+          Aeon / OpenClaw / Agent Zero app version, its update and automatic
+          updates), then the connection service. */}
       {sections.includes("updates") ? (
         <ManagePanel id="updates" selected={selected}>
           <div style={{ display: "grid", gap: 20 }}>
@@ -1591,6 +1592,7 @@ function HivraManageContent({
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
                         {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}
+                        {manage?.agentApp ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
                       </div>
                     </>
                   )}

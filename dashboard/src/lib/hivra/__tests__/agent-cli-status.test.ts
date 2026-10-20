@@ -4,8 +4,10 @@ import {
   agentSoftwareBadge,
   agentSoftwareSubject,
   compareCliVersions,
+  compareSoftwareVersions,
   deriveAgentSoftware,
   effectiveAgentCliAutoUpdate,
+  parseAgentAppReport,
   parseAgentCliMeta,
   parseAgentCliReport,
   summarizeAgentSoftware,
@@ -74,10 +76,11 @@ describe("compareCliVersions", () => {
 
 describe("agentSoftwareSubject", () => {
   it("covers Claude Code and Codex with their CLI, and the dashboard agents without one", () => {
-    expect(agentSoftwareSubject({ type: "claude-code" })).toEqual({ type: "claude-code", cli: "claude-code", gatewayKind: "claude" });
-    expect(codex).toEqual({ type: "codex", cli: "codex", gatewayKind: "codex" });
-    expect(agentSoftwareSubject({ type: "aeon", computer_substrate: "proxmox-kvm" })).toEqual({ type: "aeon", cli: null, gatewayKind: "aeon" });
-    expect(agentSoftwareSubject({ type: "agent-zero" })?.gatewayKind).toBe("agent-zero");
+    expect(agentSoftwareSubject({ type: "claude-code" })).toEqual({ type: "claude-code", cli: "claude-code", app: null, software: "claude-code", gatewayKind: "claude" });
+    expect(codex).toEqual({ type: "codex", cli: "codex", app: null, software: "codex", gatewayKind: "codex" });
+    expect(agentSoftwareSubject({ type: "aeon", computer_substrate: "proxmox-kvm" })).toEqual({ type: "aeon", cli: null, app: "aeon", software: "aeon", gatewayKind: "aeon" });
+    expect(agentSoftwareSubject({ type: "agent-zero" })).toMatchObject({ app: "agent-zero", software: "agent-zero", gatewayKind: "agent-zero" });
+    expect(agentSoftwareSubject({ type: "openclaw" })).toMatchObject({ cli: null, app: "openclaw", software: "openclaw" });
   });
   it.each([
     ["DeepSeek, whose update is refused", { type: "deepseek-harness" }],
@@ -212,7 +215,83 @@ describe("badges and summaries", () => {
   });
   it("summarizes for the agents list without anything but versions", () => {
     expect(summarizeAgentSoftware({ kind: "behind", installed: "0.149.0" }, codex, TESTED))
-      .toEqual({ badge: "update_available", cli: "codex", installed: "0.149.0", tested: TESTED });
+      .toEqual({ badge: "update_available", cli: "codex", app: null, installed: "0.149.0", tested: TESTED });
+  });
+});
+
+// ── Agent apps (Aeon dashboard, OpenClaw, Agent Zero) ───────────────────────
+
+const OLD_IMAGE = `sha256:${"d".repeat(64)}`;
+const IMAGE = `sha256:${"b".repeat(64)}`;
+const zero = agentSoftwareSubject({ type: "agent-zero", computer_substrate: "proxmox-kvm" }) as AgentSoftwareSubject;
+const openclaw = agentSoftwareSubject({ type: "openclaw" }) as AgentSoftwareSubject;
+function appView(subject: AgentSoftwareSubject, tested: string, record: AgentSoftwareRecord | null, previous: string[] = []) {
+  return deriveAgentSoftware({ subject, status: "running", tested, previous, record, now: NOW });
+}
+
+describe("agent app versions", () => {
+  it("orders x.y.z versions by number and places a commit or digest only by the pins Hivra moved off", () => {
+    expect(compareSoftwareVersions("2026.6.10", "2026.9.33")).toBe(-1);
+    expect(compareSoftwareVersions("2026.10.1", "2026.9.33")).toBe(1);
+    expect(compareSoftwareVersions(IMAGE, IMAGE)).toBe(0);
+    expect(compareSoftwareVersions(OLD_IMAGE, IMAGE, [OLD_IMAGE])).toBe(-1);
+    expect(compareSoftwareVersions(OLD_IMAGE, IMAGE)).toBeNull();
+  });
+
+  it("reads the runtime updater's app line, each version in its app's own form", () => {
+    expect(parseAgentAppReport(`noise\nHIVRA_AGENT_APP name=agent-zero version=${OLD_IMAGE} target=${IMAGE} state=scheduled\n`))
+      .toEqual({ name: "agent-zero", version: OLD_IMAGE, target: IMAGE, state: "scheduled" });
+    expect(parseAgentAppReport(`HIVRA_AGENT_APP name=aeon version=unknown target=${"e".repeat(40)} state=running`))
+      .toEqual({ name: "aeon", version: null, target: "e".repeat(40), state: "running" });
+    expect(parseAgentAppReport(`HIVRA_AGENT_APP name=aeon version=unknown target=${IMAGE} state=running`)).toBeNull();
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled")).toBeNull();
+    expect(parseAgentAppReport("HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled")).toBeNull();
+  });
+
+  it("reads the gateway's agentApp strictly", () => {
+    expect(parseAgentCliMeta({ name: "agent-zero", version: OLD_IMAGE, update: { state: "downloading", target: IMAGE, updatedAt: null }, activity: {} }, "agent-zero"))
+      .toEqual({ name: "agent-zero", version: OLD_IMAGE, update: { state: "downloading", target: IMAGE, updatedAt: null, reason: null } });
+    expect(parseAgentCliMeta({ name: "agent-zero", version: "v2.2" }, "agent-zero")).toBeNull();
+    expect(parseAgentCliMeta({ name: "aeon", version: OLD_IMAGE }, "aeon")).toBeNull();
+    expect(parseAgentCliMeta({ name: "openclaw", version: "2026.6.10", update: { state: "done", target: IMAGE } }, "openclaw")).toBeNull();
+  });
+
+  it("calls an earlier tested image behind, an unknown one another version, and an unrecorded one unreadable", () => {
+    const reportedImage = (installed: string | null) => ({ observation: installed ? "reported" : "version_unreadable", installed_version: installed, observed_at: ago(MIN) });
+    expect(appView(zero, IMAGE, reportedImage(IMAGE), [OLD_IMAGE])).toEqual({ kind: "current", installed: IMAGE });
+    expect(appView(zero, IMAGE, reportedImage(OLD_IMAGE), [OLD_IMAGE])).toEqual({ kind: "behind", installed: OLD_IMAGE });
+    expect(appView(zero, IMAGE, reportedImage(`sha256:${"9".repeat(64)}`), [OLD_IMAGE])).toEqual({ kind: "other_version", installed: `sha256:${"9".repeat(64)}` });
+    expect(appView(zero, IMAGE, reportedImage(null), [OLD_IMAGE])).toEqual({ kind: "version_unreadable" });
+    // An x.y.z app is ordered like a CLI.
+    expect(appView(openclaw, "2026.9.33", reportedImage("2026.6.10"))).toEqual({ kind: "behind", installed: "2026.6.10" });
+    expect(appView(openclaw, "2026.9.33", reportedImage("2026.10.5"))).toEqual({ kind: "ahead_custom", installed: "2026.10.5" });
+  });
+
+  it("says not reported when the connection service predates app versions", () => {
+    expect(appView(zero, IMAGE, { observation: "not_reported", observed_at: ago(MIN) })).toEqual({ kind: "not_reported" });
+  });
+
+  it("follows an app update and reads why it stopped", () => {
+    const at = { update_updated_at: ago(MIN), installed_version: OLD_IMAGE, observation: "reported", observed_at: ago(MIN) } as const;
+    expect(appView(zero, IMAGE, { ...at, update_state: "waiting", update_target: IMAGE }, [OLD_IMAGE]))
+      .toEqual({ kind: "updating", phase: "waiting", target: IMAGE, installed: OLD_IMAGE });
+    expect(appView(zero, IMAGE, { ...at, update_state: "failed", update_target: IMAGE, update_reason: "no_space" }, [OLD_IMAGE]))
+      .toEqual({ kind: "update_failed", reason: "no_space", target: IMAGE, installed: OLD_IMAGE });
+    expect(appView(zero, IMAGE, { ...at, update_state: "failed", update_target: IMAGE, update_reason: "not_installed" }, [OLD_IMAGE]))
+      .toMatchObject({ kind: "update_failed", reason: "could_not_start" });
+    expect(appView(zero, IMAGE, { ...at, update_state: "rolled_back", update_target: IMAGE, update_reason: "install_failed" }, [OLD_IMAGE]))
+      .toEqual({ kind: "update_rolled_back", target: IMAGE, installed: OLD_IMAGE });
+    // An Aeon build or an image pull may take over an hour: still downloading, not stuck.
+    const longAgo = { ...at, update_state: "downloading", update_target: IMAGE, update_updated_at: ago(70 * MIN) };
+    expect(appView(zero, IMAGE, longAgo, [OLD_IMAGE])).toMatchObject({ kind: "updating", phase: "downloading" });
+  });
+
+  it("badges an app on an untested version, but not one whose version was never recorded, and never a CLI", () => {
+    expect(agentSoftwareBadge({ kind: "version_unreadable" }, true)).toBeNull();
+    expect(agentSoftwareBadge({ kind: "other_version", installed: OLD_IMAGE }, true)).toBe("update_available");
+    expect(agentSoftwareBadge({ kind: "version_unreadable" })).toBeNull();
+    expect(summarizeAgentSoftware({ kind: "behind", installed: OLD_IMAGE }, zero, IMAGE))
+      .toEqual({ badge: "update_available", cli: null, app: "agent-zero", installed: OLD_IMAGE, tested: IMAGE });
   });
 });
 

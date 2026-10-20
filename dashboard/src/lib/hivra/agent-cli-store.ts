@@ -1,8 +1,10 @@
 import "server-only";
 
 // public.hivra_agent_cli_updates: what Hivra last read about an agent's
-// Claude Code / Codex version, its update requests and the owner's
-// automatic-update choice (migration 20260925140000). Service role only.
+// Claude Code / Codex version or Aeon / OpenClaw / Agent Zero app version, its
+// update requests and the owner's automatic-update choice (migrations
+// 20260925140000 and 20261020121500; cli_name holds the CLI or app name).
+// Service role only.
 //
 // Every write here is best effort: a failed write is logged and the caller
 // carries on with what it read, so the owner still sees the computer's current
@@ -14,7 +16,7 @@ import { logHivraAgentEvent } from "./agent-events";
 import {
   isAgentCliUpdateInProgress,
   type AgentCliRequestResult,
-  type AgentCliUpdateReport,
+  type AgentSoftwareUpdateReport,
   type AgentSoftwareObservation,
   type AgentSoftwareRecord,
   type AgentSoftwareSubject,
@@ -131,7 +133,7 @@ export async function saveAgentSoftwareObservation(input: {
   const { agent, subject, tested, reading, previous, now } = input;
   const at = now.toISOString();
   const patch: Record<string, unknown> = {
-    cli_name: subject.cli,
+    cli_name: subject.software,
     observation: observationOf(reading),
     tested_version: tested,
     observed_at: at,
@@ -201,7 +203,7 @@ export async function saveAgentSoftwareObservation(input: {
       agentId: agent.id,
       agentType: agent.type,
       detail: {
-        cli: subject.cli,
+        ...(subject.app ? { app: subject.app } : { cli: subject.cli }),
         target: ending.target,
         ...(ending.state === "done" ? { from: previous?.installed_version ?? null } : { state: ending.state, reason: ending.reason }),
         trigger,
@@ -219,8 +221,8 @@ export async function saveAgentSoftwareObservation(input: {
  * every run. Only host_not_ready and busy, which clear by themselves, leave it
  * open (claim_hivra_agent_cli_update_request).
  */
-export function requestResultOf(outcome: { ok: true; agentCli: AgentCliUpdateReport | null } | { ok: false; code: string }): AgentCliRequestResult {
-  if (outcome.ok) return outcome.agentCli ? outcome.agentCli.state : "unverified";
+export function requestResultOf(outcome: { ok: true; report: AgentSoftwareUpdateReport | null } | { ok: false; code: string }): AgentCliRequestResult {
+  if (outcome.ok) return outcome.report ? outcome.report.state : "unverified";
   if (outcome.code === "host_not_ready" || outcome.code === "busy" || outcome.code === "unverified") return outcome.code;
   if (outcome.code === "superseded") return "unverified";
   return "refused";
@@ -239,7 +241,7 @@ export async function recordOwnerAgentSoftwareRequest(input: {
   target: string;
   requestedAt: Date;
   result: AgentCliRequestResult;
-  report: AgentCliUpdateReport | null;
+  report: AgentSoftwareUpdateReport | null;
   previous: StoredAgentSoftware | null;
 }): Promise<void> {
   const { agent, subject, target, requestedAt, result, report, previous } = input;
@@ -248,7 +250,7 @@ export async function recordOwnerAgentSoftwareRequest(input: {
   const row: Record<string, unknown> = {
     agent_id: agent.id,
     user_id: agent.user_id,
-    cli_name: subject.cli,
+    cli_name: subject.software,
     requested_at: requestedAt.toISOString(),
     requested_target: target,
     requested_by: "owner",
@@ -298,7 +300,7 @@ export async function claimAutomaticAgentSoftwareUpdate(agent: AgentSoftwareAgen
 }
 
 /** The result of an automatic update this sweep claimed. */
-export async function recordAutomaticAgentSoftwareResult(agent: AgentSoftwareAgentRef, target: string, result: AgentCliRequestResult | null, report: AgentCliUpdateReport | null): Promise<void> {
+export async function recordAutomaticAgentSoftwareResult(agent: AgentSoftwareAgentRef, target: string, result: AgentCliRequestResult | null, report: AgentSoftwareUpdateReport | null): Promise<void> {
   if (!supabaseAdmin) return;
   const patch: Record<string, unknown> = { request_result: result, updated_at: new Date().toISOString() };
   if (report?.state === "current" && report.version === report.target) {
@@ -324,7 +326,7 @@ export async function saveAgentSoftwareAutoUpdate(agent: AgentSoftwareAgentRef, 
     const { error } = await supabaseAdmin.from(TABLE).upsert({
       agent_id: agent.id,
       user_id: agent.user_id,
-      cli_name: subject.cli,
+      cli_name: subject.software,
       auto_update: enabled,
       auto_update_changed_at: now,
       ...(enabled ? { auto_paused_target: null, auto_paused_reason: null } : {}),

@@ -166,6 +166,17 @@ async function main() {
     });
     await db.exec(OWNED_UPDATE_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedOwnedUpdate, "re-applying the 2026.10.20.1 admission changes nothing");
+    // 2026.10.20.2 anchors on the 2026.10.20.1 entry; idempotent too.
+    const APP_UPDATE_ADMISSION = migration("20261020130000_provider_release_admission_2026_10_20_2.sql");
+    await db.exec(APP_UPDATE_ADMISSION);
+    const admittedAppUpdate = await admissionDefinitions();
+    admittedAppUpdate.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(APP_UPDATE_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedAppUpdate, "re-applying the 2026.10.20.2 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

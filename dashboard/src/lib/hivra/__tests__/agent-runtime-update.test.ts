@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { runHivraAgentRuntimeUpdate } from "../agent-runtime-update";
-import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
+import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 
 // The shared in-place update as the automatic-update sweep runs it. The
 // owner's path through the lifecycle route keeps its own full suite
@@ -70,7 +70,7 @@ it("runs the same in-place update for the sweep and says so only in its event", 
   mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_AGENT_CLI name=codex version=0.140.0 target=${TESTED} state=scheduled\n${RECEIPT}\n`, stderr: "" });
   const outcome = await runHivraAgentRuntimeUpdate({ userId: "owner", agent, trigger: "auto", source: "cron/update-hivra-agent-clis" });
 
-  expect(outcome).toEqual({ ok: true, agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } });
+  expect(outcome).toEqual({ ok: true, agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" }, agentApp: null });
   expect(mockResolveTarget).toHaveBeenCalledWith({ userId: "owner", agent, action: "update_runtime", source: "cron/update-hivra-agent-clis" });
   // The same lease as the owner's update, and the same bound, in-place helper.
   expect(mockClaim).toHaveBeenCalledWith(expect.objectContaining({ operationKind: "restart", desiredState: "running", operationPayload: null }));
@@ -146,16 +146,29 @@ it.each([
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
-it("records nothing for an agent without a CLI Hivra updates", async () => {
-  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `${RECEIPT}\n`, stderr: "" });
-  expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "aeon" }, trigger: "owner" })).toEqual({ ok: true, agentCli: null });
-  expect(mockRecordOwner).not.toHaveBeenCalled();
+it("records an owner's update of an app agent against its tested app version", async () => {
+  const target = AGENT_APP_VERSIONS["agent-zero"].version;
+  const line = `HIVRA_AGENT_APP name=agent-zero version=sha256:${"d".repeat(64)} target=${target} state=scheduled`;
+  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `${line}\n${RECEIPT}\n`, stderr: "" });
+  const outcome = await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "agent-zero" }, trigger: "owner" });
+  expect(outcome).toEqual({ ok: true, agentCli: null, agentApp: { name: "agent-zero", version: `sha256:${"d".repeat(64)}`, target, state: "scheduled" } });
+  expect(mockRecordOwner).toHaveBeenCalledWith(expect.objectContaining({
+    target, result: "scheduled",
+    subject: expect.objectContaining({ app: "agent-zero", software: "agent-zero" }),
+  }));
   expect(mockRecordAuto).not.toHaveBeenCalled();
 });
 
 it("updates DeepSeek when its owner asks, through the same helper", async () => {
   mockRunHostScript.mockResolvedValue({ ok: true, stdout: `${RECEIPT}\n`, stderr: "" });
   expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "deepseek-harness" }, trigger: "owner" }))
-    .toEqual({ ok: true, agentCli: null });
+    .toEqual({ ok: true, agentCli: null, agentApp: null });
   expect(mockResolveTarget).toHaveBeenCalled();
+  expect(mockRecordOwner).not.toHaveBeenCalled();
+});
+
+it("records an app update whose app step can't be confirmed as unverified", async () => {
+  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `${RECEIPT}\n`, stderr: "" });
+  expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "aeon" }, trigger: "owner" })).toEqual({ ok: true, agentCli: null, agentApp: null });
+  expect(mockRecordOwner).toHaveBeenCalledWith(expect.objectContaining({ target: AGENT_APP_VERSIONS.aeon.version, result: "unverified", report: null }));
 });

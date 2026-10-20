@@ -544,6 +544,31 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.10.20.2` builds on `2026.10.20.1` and lets owners update the
+hosted app of an Aeon, OpenClaw or Agent Zero computer the way Claude Code and
+Codex computers already update their CLI. The tested Aeon dashboard commit,
+OpenClaw version and Agent Zero image digest move out of
+`provision-claude-code-box.sh` into `agent-app-versions.json` (unchanged:
+`8b8d7197`, `2026.6.10`, `v2.2`), which the installer, the runtime updater and
+the dashboard all read. The installer records the version it put on the
+computer in a root-owned `/var/lib/hivra/agent-app.json` and installs the
+root-only `hivra-agent-app-update.sh`. The runtime update's guest half reports
+the installed and tested versions (`HIVRA_AGENT_APP` line, re-validated by the
+host half in each app's own version form) and, when they differ, starts the
+helper as a transient unit. The helper prepares the new version next to the
+running one (an npm download for OpenClaw as the agent's user, an image pull by
+digest for Agent Zero, a separate dashboard build for Aeon that leaves the
+owner's fork clone untouched and is served through a unit drop-in with
+`AEON_REPO_ROOT`), waits until nobody has used the app through Hivra for five
+minutes and the app has no work in flight, holds the app's surface while it
+swaps, restarts only the app's own service, and puts the previous version
+(and, for Agent Zero, its data as it was) back when the new one does not answer
+on its loopback port. The gateway reports the version, the update's progress
+and when the app was last used as `agentApp` on authenticated `GET /api/meta`.
+Remote-desktop assets are unchanged, so the remote-desktop bundle revision and
+every session revision are preserved. This source release does not deploy,
+install, or update any existing computer.
+
 Release `2026.10.20.1` builds on `2026.10.07.1` and gives a DeepSeek computer
 an owned in-place runtime update. The runtime updater's guest half moves out of
 `hivra-update-guest-runtime.sh` into its own file,

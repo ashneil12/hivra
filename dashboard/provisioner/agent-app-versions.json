@@ -1,0 +1,17 @@
+{
+  "aeon": {
+    "version": "8b8d719715ec9bb68fb858a1e334d23209047d82",
+    "label": "8b8d719",
+    "previous": []
+  },
+  "openclaw": {
+    "version": "2026.6.10",
+    "label": "2026.6.10",
+    "previous": []
+  },
+  "agent-zero": {
+    "version": "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",
+    "label": "v2.2",
+    "previous": []
+  }
+}

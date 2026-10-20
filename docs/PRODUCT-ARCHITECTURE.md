@@ -509,14 +509,9 @@ new one doesn't install. What an owner sees:
   offered as an update. An agent whose connection service predates version
   reporting (no `bootId` in its public meta, a proxy tied to release
   2026.09.24.2 until the gateway reports its release) is asked to update the
-  connection service instead. Aeon, OpenClaw and Agent Zero get only that
-  older-connection-service line: their own versions are not reported anywhere
-  a dashboard can read, and nothing updates them. Each is pinned once at
-  provision (`provision-claude-code-box.sh`: Aeon a git commit, `AEON_REF`;
-  OpenClaw an npm version, `OPENCLAW_VERSION`; Agent Zero an image digest,
-  `AGENT_ZERO_IMAGE_DIGEST`), and the connection-service update refreshes only
-  Hivra's own chat service on the computer, not these apps. DeepSeek, computers, attached Codex, DigitalOcean
-  sessions, My cloud and Linux Sandboxes are not covered.
+  connection service instead. Aeon, OpenClaw and Agent Zero are covered the
+  same way (see the next paragraph). DeepSeek, computers, attached Codex,
+  DigitalOcean sessions, My cloud and Linux Sandboxes are not covered.
 - *Update now* is the lifecycle route's `update_runtime`, now one shared
   function (`lib/hivra/agent-runtime-update.ts`) with the same host readiness,
   binding tag, operation lease and receipt; refusals carry a code
@@ -543,12 +538,42 @@ new one doesn't install. What an owner sees:
   the 20-hour cooldown open; any other refusal holds it. No update is claimed
   after 25 s into a run, so its host readiness check and 240 s host script
   end inside the function's 300 s.
-- *Target / not built.* A `release` field and per-kind software versions in
-  authenticated meta (box side), updaters for Aeon, OpenClaw and Agent Zero, a
+- *Target / not built.* A `release` field in authenticated meta (box side), a
   Home card, and a separate operation kind so an automatic update doesn't hold
   the owner's Stop/Restart with "another action is running". Flipping the
   switch to `on` is a fleet rollout decision: canary first, then production
   after the migration, Promote and env.
+
+**Aeon, OpenClaw and Agent Zero updates (built 2026-10-20 in release
+2026.10.20.2; not yet on any existing computer).** The same pattern for the
+hosted apps. The release pins a tested version per app
+(`provisioner/agent-app-versions.json`, `AGENT_APP_VERSIONS`): the Aeon
+dashboard's upstream commit, OpenClaw's npm version and Agent Zero's image
+digest, each with the name owners see ("v2.2", never the digest) and the
+earlier pins Hivra moved off (a commit or a digest is "behind" only when it is
+one of those; an x.y.z version is ordered by number). The installer reads the
+same file and records what it installed on the computer; the connection-service
+update reports the installed version (`HIVRA_AGENT_APP`) and, when it differs,
+starts `hivra-agent-app-update.sh`, which prepares the new version beside the
+running one, waits until nobody has used the app through Hivra for 5 minutes
+and the app has no work in flight, swaps, restarts only the app's own service,
+and puts the previous version back when the new one does not answer
+(`provisioner/README.md`, Agent app versions). Hivra updates only the Aeon
+dashboard it hosts; the owner's skills and workflows live in their GitHub fork,
+which Hivra never changes. The computer reports the version and the update's
+progress as `agentApp` on authenticated `/api/meta`; the owner API, header chip,
+agents list and Manage › Updates read it through the same interpretation as the
+CLIs, so an owner sees the installed and tested version and Update now. An app
+whose version Hivra never recorded (Aeon computers provisioned before the
+release; Agent Zero records itself on its first connection-service update) is
+offered the tested version in Manage, without a header badge. Readings and requests share `hivra_agent_cli_updates`
+(migration 20261020121500 widens its names and version forms). Not built:
+automatic updates for the apps (the sweep stays CLI-only), and moving any app
+pin. The pins are unchanged in this release; a pin moves only after that version
+passes a live check on a disposable computer (Agent Zero after v2.2 also needs the
+gateway's native editor adapter, which targets v2.2's exact files). Existing
+computers get the updater with their next connection-service update once their
+host holds release 2026.10.20.2.
 
 Updates says how every kind of computer is kept up to date (2026-10-19). Where
 Hivra's connection service runs, it offers Update connection service. Where it

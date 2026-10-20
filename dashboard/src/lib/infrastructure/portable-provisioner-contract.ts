@@ -6,8 +6,9 @@
  * contract cannot accidentally pull server secrets into a client bundle.
  */
 import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
+import agentAppVersions from "../../../provisioner/agent-app-versions.json";
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.10.20.1";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.10.20.2";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -67,6 +68,7 @@ export const PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS = [
   "2026.09.24.3",
   "2026.09.24.4",
   "2026.10.07.1",
+  "2026.10.20.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function isCompatibleProxmoxProvisionerVersion(version: unknown): version is string {
@@ -137,6 +139,7 @@ const PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS = [
   "2026.09.24.3",
   "2026.09.24.4",
   "2026.10.07.1",
+  "2026.10.20.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 
@@ -158,6 +161,7 @@ const PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS = [
   "2026.09.24.3",
   "2026.09.24.4",
   "2026.10.07.1",
+  "2026.10.20.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
@@ -180,12 +184,12 @@ export function providerProvisionerSupportsCatalogRuntime(version: unknown, runt
     ? version === PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION
     : (PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).includes(runtime));
 }
-export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
 
 /** Native launch compatibility is not model-key delivery capability. Only the
  * reviewed atomic model-settings release can opt into launch-time custody.
  * Actual guest capability and receipt checks still run before key delivery. */
-export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
 export function supportsModelSettingsProvisionerVersion(version: unknown): version is string {
   return (PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -193,7 +197,7 @@ export function supportsModelSettingsProvisionerVersion(version: unknown): versi
 /** Releases whose host script and guest installer carry the agent-run
  * reporter (launch document v4). A predecessor ignores the credential, so the
  * control plane does not issue one to a host known to run an older bundle. */
-export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1"] as const;
+export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2"] as const;
 export function provisionerSupportsActivityTelemetry(version: unknown): version is string {
   return (PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -274,6 +278,28 @@ export const AGENT_CLI_VERSIONS: Readonly<Record<"claude-code" | "codex", string
   codex: agentCliVersions.codex,
 });
 
+/** One tested agent app version and the name owners see for it. */
+export interface AgentAppPin {
+  /** Aeon: the upstream commit its dashboard is built from; OpenClaw: the npm version; Agent Zero: the image digest. */
+  version: string;
+  label: string;
+}
+
+/**
+ * The Aeon dashboard commit, OpenClaw version and Agent Zero image this release
+ * installs and updates to (provisioner/agent-app-versions.json, read by the
+ * guest installer and hivra-agent-app-update.sh), with the earlier pins Hivra
+ * moved off, newest first: a computer still on one of those is behind. Their
+ * own self-updaters are not how Hivra computers change version, so a computer
+ * reporting a different version (GET /api/meta agentApp) is behind the tested
+ * release, or on a version Hivra didn't install, until update_runtime moves it.
+ */
+export const AGENT_APP_VERSIONS: Readonly<Record<"aeon" | "openclaw" | "agent-zero", AgentAppPin & { previous: readonly AgentAppPin[] }>> = Object.freeze({
+  aeon: agentAppVersions.aeon,
+  openclaw: agentAppVersions.openclaw,
+  "agent-zero": agentAppVersions["agent-zero"],
+});
+
 /**
  * Explicit allowlist of files streamed to a user-owned Proxmox host. New
  * runtime files must be intentionally added here; directory traversal and
@@ -284,6 +310,7 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "PROVENANCE.md",
   "README.md",
   "VERSION",
+  "agent-app-versions.json",
   "agent-cli-versions.json",
   "bux-hivra-chat.service",
   "bux-local-browser.service",
@@ -300,6 +327,7 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "deepseek-harness/install-guest.py",
   "deepseek-harness/update-guest.py",
   "deepseek-harness/bux-hivra-chat.service",
+  "hivra-agent-app-update.sh",
   "hivra-agent-cli-update.sh",
   "hivra-agent-shell",
   "hivra-agent-trace.py",

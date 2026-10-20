@@ -59,7 +59,7 @@ NODE_VERSION="${NODE_VERSION:-22.23.2}"
 NODE_LINUX_X64_SHA256="${NODE_LINUX_X64_SHA256:-d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307}"
 TTYD_VERSION="${TTYD_VERSION:-1.7.7}"
 TTYD_LINUX_X64_SHA256="${TTYD_LINUX_X64_SHA256:-8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55}"
-AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0}"
+AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: agent-app-versions.json
 CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging port
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
@@ -142,6 +142,33 @@ fi
 if [ -z "${CODEX_CLI_VERSION:-}" ]; then
   CODEX_CLI_VERSION="$(read_agent_cli_pin codex)" || die "agent-cli-versions.json has no valid codex pin"
 fi
+# The tested Aeon commit, OpenClaw version and Agent Zero image ship the same
+# way (agent-app-versions.json), so the app updater (hivra-agent-app-update.sh)
+# and the dashboard read the pins this installer uses.
+read_agent_app_pin() {
+  python3 -I -c 'import json, re, sys
+pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
+entry = json.load(open(sys.argv[1])).get(sys.argv[2])
+value = entry.get("version") if isinstance(entry, dict) else None
+if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
+print(value)' "$SRC_DIR/agent-app-versions.json" "$1" 2>/dev/null
+}
+case "$AGENT_KIND" in
+  aeon) [ -n "${AEON_REF:-}" ] || AEON_REF="$(read_agent_app_pin aeon)" || die "agent-app-versions.json has no valid aeon pin" ;;
+  openclaw) [ -n "${OPENCLAW_VERSION:-}" ] || OPENCLAW_VERSION="$(read_agent_app_pin openclaw)" || die "agent-app-versions.json has no valid openclaw pin" ;;
+esac
+if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
+  AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)" || die "agent-app-versions.json has no valid agent-zero pin"
+fi
+# Records the app version this installer put on the computer (root-owned; the
+# gateway reports it) and installs the root-only app updater.
+record_agent_app() {
+  install -d -o root -g root -m 0755 /var/lib/hivra
+  printf '{"name":"%s","version":"%s"}\n' "$1" "$2" > /var/lib/hivra/agent-app.json.next
+  chmod 0644 /var/lib/hivra/agent-app.json.next
+  mv -f -- /var/lib/hivra/agent-app.json.next /var/lib/hivra/agent-app.json
+  install -o root -g root -m 0700 "$SRC_DIR/hivra-agent-app-update.sh" /usr/local/sbin/hivra-agent-app-update
+}
 
 [ "$(id -u)" -eq 0 ] || die 'must run as root (use sudo)'
 [ -f /etc/debian_version ] || die 'only debian/ubuntu is supported'
@@ -174,6 +201,7 @@ say "agent kind: ${c_bold}${AGENT_KIND}${c_reset} (browser overlay: $([ "$WANT_B
 
 # Chat + prompt artifacts are always required; browser artifacts only for claude.
 for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent-cli-versions.json hivra-codex-config-pin.py \
+         agent-app-versions.json hivra-agent-app-update.sh \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
          hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
@@ -763,7 +791,6 @@ AEON_DIR="${AGENT_HOME}/aeon"
 AEON_DASH="${AEON_DIR}/apps/dashboard"     # the Next.js dashboard lives here
 AEON_PORT="${AEON_DASHBOARD_PORT:-5555}"
 AEON_REPO_URL="${AEON_REPO_URL:-https://github.com/aaronjmars/aeon.git}"
-AEON_REF="${AEON_REF:-8b8d719715ec9bb68fb858a1e334d23209047d82}"
 [[ "$AEON_REF" =~ ^[0-9a-f]{40}$ ]] || die "AEON_REF must be a full 40-character commit SHA"
 # Clone the Aeon template. The user repoints it at their own fork (and sets the
 # default repo) from inside Aeon's dashboard after connecting GitHub. Idempotent.
@@ -803,6 +830,7 @@ sudo -iu "${AGENT_USER}" bash -lc "cd '${AEON_DASH}' && npm ci" \
 sudo -iu "${AGENT_USER}" bash -lc "cd '${AEON_DASH}' && AEON_BASE_PATH=/aeon npm run build" \
   || die "aeon production build failed"
 ok "aeon dashboard prepared (${AEON_DASH})"
+record_agent_app aeon "$AEON_REF"
 
 # Dashboard service: production Next.js server on :${AEON_PORT}, mounted at /aeon.
 # It serves the UI immediately; its /api calls (which shell out to `gh`) start
@@ -875,7 +903,7 @@ fi
 # config-schema/auth-mode semantics drift between releases (e.g. auth.mode=none is
 # accepted on 2026.6.10, the version validated live on a spike box 2026-06-24). Bump
 # deliberately + re-validate on a spike box before raising this.
-OPENCLAW_VERSION="${OPENCLAW_VERSION:-2026.6.10}"
+[[ "$OPENCLAW_VERSION" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || die "OPENCLAW_VERSION must be an x.y.z version"
 say "installing openclaw@${OPENCLAW_VERSION} for ${AGENT_USER} (Node $(/usr/bin/node -v 2>/dev/null || echo '?'))"
 sudo -iu "${AGENT_USER}" bash -lc "npm i -g openclaw@${OPENCLAW_VERSION}" \
   || die "openclaw npm install failed"
@@ -884,6 +912,7 @@ if [ -x "${OPENCLAW_BIN}" ] || sudo -iu "${AGENT_USER}" command -v openclaw >/de
 else
   die "openclaw binary not found after install"
 fi
+record_agent_app openclaw "$OPENCLAW_VERSION"
 
 # Gateway auth shared-secret. The Control UI sits behind our token-proxy, but
 # OpenClaw rejects non-loopback binds without auth and the Control UI may require
@@ -1089,6 +1118,7 @@ docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
   || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
 docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
   || die "Agent Zero image digest is unavailable after pull"
+record_agent_app agent-zero "$AGENT_ZERO_IMAGE_DIGEST"
 
 # --- systemd unit: run the pinned image loopback-bound, env + state mounted ---
 # Stop grace: `docker stop` defaults to 10 s before SIGKILL; give Agent Zero 25 s

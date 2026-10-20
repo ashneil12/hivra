@@ -9,13 +9,15 @@ import "server-only";
 // can't be updated here) and answers with this outcome.
 //
 // For Claude Code and Codex the same update also schedules the move to the
-// version Hivra has tested (AGENT_CLI_VERSIONS); the helper's report of that
-// comes back as agentCli, and is recorded for the Updates section.
+// version Hivra has tested (AGENT_CLI_VERSIONS), and for the Aeon dashboard,
+// OpenClaw and Agent Zero the move to the tested app version
+// (AGENT_APP_VERSIONS); the helper's report of that comes back as agentCli or
+// agentApp, and is recorded for the Updates section.
 
 import { randomUUID } from "node:crypto";
 import { log } from "@/lib/logger";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
-import { AGENT_CLI_VERSIONS, PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
+import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS, PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
 import { logHivraAgentEvent } from "./agent-events";
 import { shellQuote } from "./proxmox-target";
 import { lifecycleMutationPrelude } from "./agent-power-scripts";
@@ -32,7 +34,13 @@ import {
   resolveHivraLifecycleTarget,
   type HivraLifecycleAgentRow,
 } from "./agent-lifecycle-host";
-import { agentSoftwareSubject, parseAgentCliReport, type AgentCliUpdateReport } from "./agent-cli-status";
+import {
+  agentSoftwareSubject,
+  parseAgentAppReport,
+  parseAgentCliReport,
+  type AgentAppUpdateReport,
+  type AgentCliUpdateReport,
+} from "./agent-cli-status";
 import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "./lifecycle-timeouts";
 import {
   readAgentSoftwareRecord,
@@ -65,7 +73,7 @@ export type HivraAgentRuntimeUpdateFailureCode =
   | "superseded";
 
 export type HivraAgentRuntimeUpdateOutcome =
-  | { ok: true; agentCli: AgentCliUpdateReport | null }
+  | { ok: true; agentCli: AgentCliUpdateReport | null; agentApp: AgentAppUpdateReport | null }
   | { ok: false; code: HivraAgentRuntimeUpdateFailureCode; status: number; message: string };
 
 const failure = (code: HivraAgentRuntimeUpdateFailureCode, status: number, message: string): HivraAgentRuntimeUpdateOutcome =>
@@ -84,24 +92,28 @@ type RuntimeUpdateInput = {
  * VM. The caller has already loaded `agent` scoped to `userId`. Returns why it
  * didn't run instead of throwing, except for unexpected errors.
  *
- * For a Claude Code or Codex agent it then records the request against the
- * version Hivra has tested: an owner's request here; an automatic one's result
- * against the claim the sweep made before calling.
+ * For a Claude Code or Codex agent, and an Aeon, OpenClaw or Agent Zero agent,
+ * it then records the request against the version Hivra has tested: an owner's
+ * request here; an automatic one's result (CLIs only) against the claim the
+ * sweep made before calling.
  */
 export async function runHivraAgentRuntimeUpdate(input: RuntimeUpdateInput): Promise<HivraAgentRuntimeUpdateOutcome> {
   const requestedAt = new Date();
   const outcome = await updateInPlace(input);
   const subject = agentSoftwareSubject(input.agent);
-  if (subject?.cli && typeof input.agent.id === "string" && typeof input.agent.user_id === "string") {
+  if (subject && typeof input.agent.id === "string" && typeof input.agent.user_id === "string") {
     const ref = { id: input.agent.id, user_id: input.agent.user_id, type: subject.type };
-    const report = outcome.ok ? outcome.agentCli : null;
-    const target = report?.target ?? AGENT_CLI_VERSIONS[subject.cli];
-    const result = requestResultOf(outcome);
+    const report = !outcome.ok ? null : subject.cli
+      ? (outcome.agentCli?.name === subject.cli ? outcome.agentCli : null)
+      : (outcome.agentApp?.name === subject.app ? outcome.agentApp : null);
+    const tested = subject.cli ? AGENT_CLI_VERSIONS[subject.cli] : AGENT_APP_VERSIONS[subject.app!].version;
+    const target = report?.target ?? tested;
+    const result = requestResultOf(outcome.ok ? { ok: true, report } : outcome);
     // An owner's request is recorded once it reached the host (or found it
     // not ready or busy); the sweep's claim always gets its result.
     const reached = outcome.ok || outcome.code === "host_not_ready" || outcome.code === "busy" || outcome.code === "unverified";
     if (input.trigger === "auto") {
-      await recordAutomaticAgentSoftwareResult(ref, AGENT_CLI_VERSIONS[subject.cli], result, report);
+      if (subject.cli) await recordAutomaticAgentSoftwareResult(ref, tested, result, report);
     } else if (reached) {
       await recordOwnerAgentSoftwareRequest({
         agent: ref, subject, target, requestedAt, result, report,
@@ -239,13 +251,14 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
     return failure("superseded", 409, "The connection service was updated, but a newer lifecycle request superseded it. Refresh before retrying.");
   }
   const agentCli = parseAgentCliReport(r.stdout || "");
+  const agentApp = parseAgentAppReport(r.stdout || "");
   await logHivraAgentEvent({
     userId,
     event: "runtime_updated",
     agentId: String(agent.id),
     agentType: typeof agent.type === "string" ? agent.type : null,
     // An owner's update is recorded exactly as before; only the sweep's says so.
-    detail: { inPlace: true, ...(agentCli ? { agentCli } : {}), ...(trigger === "auto" ? { trigger } : {}) },
+    detail: { inPlace: true, ...(agentCli ? { agentCli } : {}), ...(agentApp ? { agentApp } : {}), ...(trigger === "auto" ? { trigger } : {}) },
   });
-  return { ok: true, agentCli };
+  return { ok: true, agentCli, agentApp };
 }

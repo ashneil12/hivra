@@ -3586,8 +3586,8 @@ describe("GET /api/hivra/agents", () => {
 
     const body = await (await GET(makeGetRequest() as never)).json();
     const byId = Object.fromEntries(body.data.agents.map((agent: { id: string }) => [agent.id, agent]));
-    expect(byId["agent-behind"].agent_software).toEqual({ badge: "update_available", cli: "codex", installed: "0.100.0", tested: AGENT_CLI_VERSIONS.codex });
-    expect(byId["agent-current"].agent_software).toEqual({ badge: null, cli: "codex", installed: AGENT_CLI_VERSIONS.codex, tested: AGENT_CLI_VERSIONS.codex });
+    expect(byId["agent-behind"].agent_software).toEqual({ badge: "update_available", cli: "codex", app: null, installed: "0.100.0", tested: AGENT_CLI_VERSIONS.codex });
+    expect(byId["agent-current"].agent_software).toEqual({ badge: null, cli: "codex", app: null, installed: AGENT_CLI_VERSIONS.codex, tested: AGENT_CLI_VERSIONS.codex });
     expect(byId["computer-1"]).not.toHaveProperty("agent_software");
     expect(softwareReads).toEqual([{ eq: [["user_id", "user-free"]], in: ["agent_id", ["agent-behind", "agent-current"]] }]);
     expect(fetchSpy).not.toHaveBeenCalled();

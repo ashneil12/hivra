@@ -58,11 +58,20 @@ describe("readAgentSoftwareFromBox", () => {
     expect(sentBearer(fetcher)).toBe(false);
   });
 
-  it("reads nothing private from an agent that reports no version of its own", async () => {
-    const fetcher = fakeBox({ ...CURRENT_META, agentKind: "aeon" });
-    expect(await readAgentSoftwareFromBox(target(aeon), fetcher)).toEqual({ observation: "not_reported" });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+  it("reads an app agent's version from agentApp with the bearer", async () => {
+    const commit = "8".repeat(40);
+    const fetcher = fakeBox({ ...CURRENT_META, agentKind: "aeon" }, { ...CURRENT_META, agentKind: "aeon", agentApp: { name: "aeon", version: commit, activity: { lastUsedAt: "2026-10-20T10:00:00.000Z", openConnections: 0 } } });
+    expect(await readAgentSoftwareFromBox(target(aeon), fetcher)).toEqual({ observation: "reported", report: { name: "aeon", version: commit, update: null } });
+    expect(sentBearer(fetcher)).toBe(true);
     expect(await readAgentSoftwareFromBox(target(aeon), fakeBox({ agentKind: "aeon" }))).toEqual({ observation: "older_connection_service" });
+  });
+
+  it("says not reported when an app agent's connection service predates app versions, and checking while OpenClaw is first asked", async () => {
+    expect(await readAgentSoftwareFromBox(target(aeon), fakeBox({ ...CURRENT_META, agentKind: "aeon" }))).toEqual({ observation: "not_reported" });
+    const openclaw = agentSoftwareSubject({ type: "openclaw" }) as AgentSoftwareSubject;
+    const meta = { ...CURRENT_META, agentKind: "openclaw" };
+    expect(await readAgentSoftwareFromBox(target(openclaw), fakeBox(meta, { ...meta, agentApp: { name: "openclaw", checking: true, activity: {} } }))).toEqual({ observation: "checking" });
+    expect(await readAgentSoftwareFromBox(target(openclaw), fakeBox(meta, { ...meta, agentApp: { name: "openclaw", version: "latest" } }))).toEqual({ observation: "version_unreadable" });
   });
 
   it("is still checking until the connection service has read its version once", async () => {

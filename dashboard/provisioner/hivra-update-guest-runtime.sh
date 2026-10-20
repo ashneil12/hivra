@@ -14,8 +14,9 @@
 # release_lifecycle_lock). It never powers the VM on/off and never touches agent
 # files, native CLI credentials, model credentials, or the box API token.
 #
-# Stdout carries only host-authored lines: at most one HIVRA_AGENT_CLI line (the
-# guest's report, re-validated here), at most one HIVRA_ACTIVITY_COLLECTOR line,
+# Stdout carries only host-authored lines: at most one HIVRA_AGENT_CLI or
+# HIVRA_AGENT_APP line (the guest's report, re-validated here), at most one
+# HIVRA_ACTIVITY_COLLECTOR line,
 # then the final `HIVRA_GUEST_RUNTIME_UPDATED vmid=<VMID>` receipt, which is
 # printed only after the guest committed the update.
 set -euo pipefail
@@ -128,7 +129,8 @@ done
 # Terminal entrypoint and units, plus the agent CLI pins and their helpers.
 TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service
   agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply
-  hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json)
+  hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json
+  agent-app-versions.json hivra-agent-app-update.sh)
 for asset in "${TERMINAL_ASSETS[@]}"; do
   [ -f "$PROVISIONER_DIR/$asset" ] && [ ! -L "$PROVISIONER_DIR/$asset" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
@@ -173,6 +175,8 @@ grep -Fxq HIVRA_GUEST_RUNTIME_UPDATED "$GUEST_RESULT" \
   || { echo "guest runtime update ended without its commit receipt" >&2; exit 1; }
 # The guest's agent CLI report reaches stdout only in this exact shape.
 AGENT_CLI_LINE="$(grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6} state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
+# The agent app report likewise, each version in its app's own form.
+AGENT_APP_LINE="$(grep -m1 -xE 'HIVRA_AGENT_APP (name=aeon version=([0-9a-f]{40}|unknown) target=[0-9a-f]{40}|name=openclaw version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|name=agent-zero version=(sha256:[0-9a-f]{64}|unknown) target=sha256:[0-9a-f]{64}) state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
 
 # (Re)install the agent-run reporter with the fresh credential, as the start
 # helper does after a boot. The gateway update above is already committed; every
@@ -247,6 +251,9 @@ if [ -n "$ACTIVITY_CREDENTIAL_JSON" ]; then
 fi
 if [ -n "$AGENT_CLI_LINE" ]; then
   printf '%s\n' "$AGENT_CLI_LINE"
+fi
+if [ -n "$AGENT_APP_LINE" ]; then
+  printf '%s\n' "$AGENT_APP_LINE"
 fi
 if [ -n "$ACTIVITY_COLLECTOR_STATUS" ]; then
   printf 'HIVRA_ACTIVITY_COLLECTOR %s\n' "$ACTIVITY_COLLECTOR_STATUS"

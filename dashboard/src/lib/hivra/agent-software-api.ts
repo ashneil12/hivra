@@ -1,11 +1,13 @@
 "use client";
 
 // Client for GET/PATCH /api/hivra/agents/[id]/agent-software: an agent's
-// Claude Code / Codex version next to Hivra's tested version, its update
-// state, and the owner's automatic-update choice. The server reads the
+// Claude Code / Codex version, or Aeon / OpenClaw / Agent Zero app version,
+// next to Hivra's tested version, its update state, and the owner's
+// automatic-update choice (CLIs only). The server reads the
 // computer; nothing here talks to it directly.
 
 import type {
+  AgentAppName,
   AgentCliAutoUpdateMode,
   AgentCliName,
   AgentCliRequestResult,
@@ -25,6 +27,7 @@ export type AgentSoftwareState =
   | {
       supported: true;
       cli: AgentCliName | null;
+      app: AgentAppName | null;
       view: AgentSoftwareView;
       tested: string | null;
       observedAt: string | null;

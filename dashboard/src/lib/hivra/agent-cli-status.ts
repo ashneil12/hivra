@@ -1,5 +1,7 @@
-// Claude Code and Codex versions on Hivra agents: what the agent's computer
-// reports, which version Hivra has tested, and what that means for its owner.
+// The agent software Hivra updates on Hivra agents (the Claude Code and Codex
+// CLIs, and the Aeon dashboard, OpenClaw and Agent Zero apps): what the
+// agent's computer reports, which version Hivra has tested, and what that means
+// for its owner.
 //
 // One interpretation for every surface: the owner API and the agents list
 // (server), the automatic-update sweep (cron), and the agent header, list tag
@@ -7,17 +9,53 @@
 // own, and no user copy (copy lives in the .tsx files so the vocabulary
 // ratchet reads it).
 //
-// "Behind" always means behind Hivra's tested version (AGENT_CLI_VERSIONS in
-// the release), never behind the vendor's newest release.
+// "Behind" always means behind Hivra's tested version (AGENT_CLI_VERSIONS and
+// AGENT_APP_VERSIONS in the release), never behind the vendor's newest release.
 
 export const AGENT_CLI_NAMES = ["claude-code", "codex"] as const;
 export type AgentCliName = (typeof AGENT_CLI_NAMES)[number];
+export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero"] as const;
+export type AgentAppName = (typeof AGENT_APP_NAMES)[number];
+/** What Hivra updates on the agent: its CLI or its hosted app. */
+export type AgentSoftwareName = AgentCliName | AgentAppName;
 
 const CLI_VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 const REASON = /^[a-z_]{1,40}$/;
+/**
+ * How each one names a version: an x.y.z release (the CLIs, OpenClaw), the
+ * upstream commit Aeon's dashboard is built from, or Agent Zero's image digest.
+ */
+const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
+  "claude-code": CLI_VERSION,
+  codex: CLI_VERSION,
+  openclaw: CLI_VERSION,
+  aeon: /^[0-9a-f]{40}$/,
+  "agent-zero": /^sha256:[0-9a-f]{64}$/,
+};
 
 export function isAgentCliVersion(value: unknown): value is string {
   return typeof value === "string" && CLI_VERSION.test(value);
+}
+
+export function isAgentSoftwareName(value: unknown): value is AgentSoftwareName {
+  return typeof value === "string" && Object.hasOwn(SOFTWARE_VERSION, value);
+}
+
+/** A version in the form this software names its versions. */
+export function isAgentSoftwareVersion(name: AgentSoftwareName, value: unknown): value is string {
+  return typeof value === "string" && SOFTWARE_VERSION[name].test(value);
+}
+
+/**
+ * Where `installed` stands against `tested`: negative when older, 0 when the
+ * same, positive when newer, null when Hivra can't tell. x.y.z versions are
+ * ordered by number; a commit or an image digest is older only when it is one
+ * of the tested versions Hivra moved off (`previous`).
+ */
+export function compareSoftwareVersions(installed: string, tested: string, previous: readonly string[] = []): number | null {
+  if (installed === tested) return 0;
+  if (CLI_VERSION.test(installed) && CLI_VERSION.test(tested)) return compareCliVersions(installed, tested);
+  return previous.includes(installed) ? -1 : null;
 }
 
 /** Numeric x.y.z order: negative when a is older than b, 0 when equal. */
@@ -47,6 +85,15 @@ export type AgentCliUpdateReport = {
   state: "current" | "scheduled" | "running" | "failed";
 };
 
+/** The same report for an agent app (HIVRA_AGENT_APP line). */
+export type AgentAppUpdateReport = {
+  name: AgentAppName;
+  version: string | null;
+  target: string;
+  state: AgentCliUpdateReport["state"];
+};
+export type AgentSoftwareUpdateReport = AgentCliUpdateReport | AgentAppUpdateReport;
+
 export const AGENT_CLI_LINE = /^HIVRA_AGENT_CLI name=(claude-code|codex) version=(\d{1,6}\.\d{1,6}\.\d{1,6}|unknown) target=(\d{1,6}\.\d{1,6}\.\d{1,6}) state=(current|scheduled|running|failed)$/;
 
 export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null {
@@ -64,7 +111,23 @@ export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null
   return null;
 }
 
-// ── GET /api/meta agentCli (read with the computer's bearer) ───────────────
+export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
+
+/** The runtime updater's host-validated agent app line, each version in its app's own form. */
+export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null {
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = AGENT_APP_LINE.exec(line);
+    if (!match) continue;
+    const name = match[1] as AgentAppName;
+    const version = match[2] === "unknown" ? null : match[2];
+    if (version !== null && !isAgentSoftwareVersion(name, version)) return null;
+    if (!isAgentSoftwareVersion(name, match[3])) return null;
+    return { name, version, target: match[3], state: match[4] as AgentAppUpdateReport["state"] };
+  }
+  return null;
+}
+
+// ── GET /api/meta agentCli / agentApp (read with the computer's bearer) ────
 
 export const AGENT_CLI_UPDATE_STATES = ["downloading", "waiting", "installing", "done", "deferred", "rolled_back", "failed"] as const;
 export type AgentCliUpdateState = (typeof AGENT_CLI_UPDATE_STATES)[number];
@@ -82,8 +145,8 @@ export interface AgentCliUpdateProgress {
 }
 
 export interface AgentCliMetaReport {
-  name: AgentCliName;
-  /** null: the computer couldn't read its own CLI version. */
+  name: AgentSoftwareName;
+  /** null: the computer couldn't read (or, for an app, hasn't recorded) its version. */
   version: string | null;
   update: AgentCliUpdateProgress | null;
 }
@@ -93,22 +156,23 @@ function isoOrNull(value: unknown): string | null {
 }
 
 /**
- * The agentCli object from an authenticated GET /api/meta, strictly: an
- * unknown name, a version that isn't x.y.z, or a malformed update is refused
- * (null) rather than guessed at. `expected` is the CLI this agent runs.
+ * The agentCli (or agentApp) object from an authenticated GET /api/meta,
+ * strictly: an unknown name, a version not in the software's own form, or a
+ * malformed update is refused (null) rather than guessed at. `expected` is the
+ * CLI or app this agent runs.
  */
-export function parseAgentCliMeta(value: unknown, expected: AgentCliName): AgentCliMetaReport | null {
+export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): AgentCliMetaReport | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   if (raw.name !== expected) return null;
-  if (raw.version !== null && !isAgentCliVersion(raw.version)) return null;
+  if (raw.version !== null && !isAgentSoftwareVersion(expected, raw.version)) return null;
   let update: AgentCliUpdateProgress | null = null;
   if (raw.update !== undefined) {
     const candidate = raw.update;
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
     const progress = candidate as Record<string, unknown>;
     if (!(AGENT_CLI_UPDATE_STATES as readonly string[]).includes(String(progress.state))) return null;
-    if (!isAgentCliVersion(progress.target)) return null;
+    if (!isAgentSoftwareVersion(expected, progress.target)) return null;
     if (progress.reason !== undefined && !(typeof progress.reason === "string" && REASON.test(progress.reason))) return null;
     update = {
       state: progress.state as AgentCliUpdateState,
@@ -123,10 +187,11 @@ export function parseAgentCliMeta(value: unknown, expected: AgentCliName): Agent
 // ── Which agents this covers ───────────────────────────────────────────────
 
 /**
- * Agents whose connection service Hivra can check here: Claude Code and Codex
- * (which also report their CLI version), and the dashboard agents whose
- * connection service Hivra updates the same way. DeepSeek (whose update is
- * refused), computers and every other kind of computer are not covered.
+ * Agents whose software Hivra checks and updates here: Claude Code and Codex
+ * (their CLI) and the Aeon, OpenClaw and Agent Zero agents (their hosted app),
+ * each through the same in-place connection-service update. DeepSeek (whose
+ * update is refused), computers and every other kind of computer are not
+ * covered.
  */
 export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero"] as const;
 export type AgentSoftwareType = (typeof AGENT_SOFTWARE_TYPES)[number];
@@ -142,8 +207,12 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
 
 export interface AgentSoftwareSubject {
   type: AgentSoftwareType;
-  /** Claude Code or Codex; null for agents that report no version of their own. */
+  /** Claude Code or Codex; null for the app agents. */
   cli: AgentCliName | null;
+  /** The Aeon dashboard, OpenClaw or Agent Zero; null for the CLI agents. */
+  app: AgentAppName | null;
+  /** Whichever of the two this agent runs. */
+  software: AgentSoftwareName;
   gatewayKind: string;
 }
 
@@ -157,9 +226,13 @@ export function agentSoftwareSubject(row: {
   if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
+  const cli = type === "claude-code" || type === "codex" ? type : null;
+  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" ? type : null;
   return {
     type,
-    cli: type === "claude-code" || type === "codex" ? type : null,
+    cli,
+    app,
+    software: (cli ?? app) as AgentSoftwareName,
     gatewayKind: GATEWAY_KIND[type],
   };
 }
@@ -168,11 +241,13 @@ export function agentSoftwareSubject(row: {
 
 /**
  * What Hivra last saw on the computer:
- * - reported: the CLI version was read (it may be null: version_unreadable);
- * - checking: the connection service is current but hasn't read its CLI
- *   version yet (a few seconds after it starts);
+ * - reported: the CLI or app version was read (it may be null:
+ *   version_unreadable);
+ * - checking: the connection service is current but hasn't read the version
+ *   yet (a few seconds after it starts);
  * - older_connection_service: it predates version reporting;
- * - not_reported: current, and this kind of agent reports no version;
+ * - not_reported: current, but it reports no version for this kind of agent
+ *   (a connection service from before app versions were reported);
  * - unreachable: the computer couldn't be read.
  */
 export const AGENT_SOFTWARE_OBSERVATIONS = [
@@ -211,7 +286,7 @@ export interface AgentSoftwareRecord {
 // ── The view ───────────────────────────────────────────────────────────────
 
 export type AgentSoftwareUpdatePhase = "starting" | "downloading" | "waiting" | "installing" | "finishing";
-export type AgentSoftwareFailure = "download_failed" | "install_failed" | "could_not_start";
+export type AgentSoftwareFailure = "download_failed" | "install_failed" | "could_not_start" | "no_space";
 
 export type AgentSoftwareView =
   | { kind: "not_running" }
@@ -226,6 +301,8 @@ export type AgentSoftwareView =
   | { kind: "ahead_custom"; installed: string }
   /** Newer than tested because Hivra lowered its tested version after installing it. */
   | { kind: "ahead_hivra"; installed: string }
+  /** An app version Hivra can't place against the tested one (not a version it tested). */
+  | { kind: "other_version"; installed: string }
   | { kind: "updating"; phase: AgentSoftwareUpdatePhase; target: string; installed: string | null }
   | { kind: "update_done"; target: string; installed: string }
   | { kind: "update_deferred"; target: string; installed: string | null }
@@ -253,6 +330,17 @@ export const AGENT_CLI_PHASE_LIMIT_MS: Readonly<Record<"downloading" | "waiting"
   waiting: 6 * 60 * 60_000 + 15 * 60_000,
   installing: 15 * 60_000,
 };
+/**
+ * The same for an app (hivra-agent-app-update.sh): an Aeon dashboard build
+ * (10-minute fetch, 30-minute install, 30-minute build) or an Agent Zero image
+ * pull of up to an hour; an install that may copy Agent Zero's data aside and
+ * waits up to 3 minutes for the app to answer.
+ */
+export const AGENT_APP_PHASE_LIMIT_MS: Readonly<Record<"downloading" | "waiting" | "installing", number>> = {
+  downloading: 95 * 60_000,
+  waiting: 6 * 60 * 60_000 + 15 * 60_000,
+  installing: 60 * 60_000,
+};
 /** Request results after which the computer may have changed. */
 const REQUEST_MAY_HAVE_RUN = new Set(["scheduled", "running", "unverified"]);
 
@@ -262,23 +350,22 @@ function time(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function versionOrNull(value: unknown): string | null {
-  return isAgentCliVersion(value) ? value : null;
-}
-
 export interface DeriveAgentSoftwareInput {
   subject: AgentSoftwareSubject;
   /** hivra_agents.status */
   status: string;
-  /** Hivra's tested version for this CLI (AGENT_CLI_VERSIONS); null for agents without one. */
+  /** Hivra's tested version (AGENT_CLI_VERSIONS / AGENT_APP_VERSIONS); null for agents without one. */
   tested: string | null;
+  /** Tested versions Hivra moved off (apps whose versions aren't numbered). */
+  previous?: readonly string[];
   record: AgentSoftwareRecord | null;
   now: number;
 }
 
-function versionView(installed: string | null, tested: string, hivraInstalled: string | null): AgentSoftwareView {
+function versionView(installed: string | null, tested: string, hivraInstalled: string | null, previous: readonly string[]): AgentSoftwareView {
   if (installed === null) return { kind: "version_unreadable" };
-  const order = compareCliVersions(installed, tested);
+  const order = compareSoftwareVersions(installed, tested, previous);
+  if (order === null) return { kind: "other_version", installed };
   if (order === 0) return { kind: "current", installed };
   if (order < 0) return { kind: "behind", installed };
   return installed === hivraInstalled ? { kind: "ahead_hivra", installed } : { kind: "ahead_custom", installed };
@@ -287,13 +374,17 @@ function versionView(installed: string | null, tested: string, hivraInstalled: s
 /** What the owner should see about this agent's software right now. */
 export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
   const { subject, status, tested, record, now } = input;
+  const previous = input.previous ?? [];
   if (status !== "running") return { kind: "not_running" };
   const observation = record?.observation ?? null;
   if (!observation) return { kind: "checking" };
   if (observation === "unreachable") return { kind: "unreachable" };
   if (observation === "older_connection_service") return { kind: "older_connection_service" };
-  if (!subject.cli || !tested) return observation === "not_reported" ? { kind: "not_reported" } : { kind: "checking" };
+  if (observation === "not_reported") return { kind: "not_reported" };
+  if (!tested) return { kind: "checking" };
   if (observation !== "reported" && observation !== "version_unreadable") return { kind: "checking" };
+  const versionOrNull = (value: unknown): string | null => isAgentSoftwareVersion(subject.software, value) ? value : null;
+  const order = (installed: string, target: string) => compareSoftwareVersions(installed, target, previous);
 
   const installed = observation === "reported" ? versionOrNull(record?.installed_version) : null;
   const updateAt = time(record?.update_updated_at);
@@ -331,12 +422,13 @@ export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftw
     // computer has an older version (or none it can read). Once it reports
     // a newer one, the owner installed it after the update stopped: the
     // version decides, so automatic updates never move it back down.
-    const stillBelowTarget = installed === null || compareCliVersions(installed, update.target) < 0;
+    const placed = installed === null ? null : order(installed, update.target);
+    const stillBelowTarget = installed === null || placed === null || placed < 0;
     switch (update.state) {
       case "downloading":
       case "waiting":
       case "installing": {
-        const limit = AGENT_CLI_PHASE_LIMIT_MS[update.state] + CLOCK_SKEW_MS;
+        const limit = (subject.app ? AGENT_APP_PHASE_LIMIT_MS : AGENT_CLI_PHASE_LIMIT_MS)[update.state] + CLOCK_SKEW_MS;
         const since = update.at ?? observedAt;
         if (since === null || now - since <= limit) {
           return { kind: "updating", phase: update.state, target: update.target, installed };
@@ -367,24 +459,38 @@ export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftw
         break;
       case "failed":
         if (stillBelowTarget) {
-          return { kind: "update_failed", reason: update.reason === "download_failed" ? "download_failed" : "install_failed", target: update.target, installed };
+          // An app update can also stop before changing anything: no disk
+          // space for the new version, or no app service to update.
+          const reason: AgentSoftwareFailure = update.reason === "download_failed" ? "download_failed"
+            : update.reason === "no_space" ? "no_space"
+            : update.reason === "not_installed" ? "could_not_start"
+            : "install_failed";
+          return { kind: "update_failed", reason, target: update.target, installed };
         }
         break;
     }
   }
-  return versionView(installed, tested, versionOrNull(record?.hivra_installed_version));
+  return versionView(installed, tested, versionOrNull(record?.hivra_installed_version), previous);
 }
 
 export type AgentSoftwareBadge = "update_available" | "updating" | "update_failed";
 
-/** The one-word attention state the agent header and the agents list show. */
-export function agentSoftwareBadge(view: AgentSoftwareView): AgentSoftwareBadge | null {
+/**
+ * The one-word attention state the agent header and the agents list show. An
+ * app on a version Hivra can't place is offered the tested version too (only
+ * Hivra changes it). One whose version Hivra never recorded (an Aeon computer
+ * from before the record existed, most likely already on the tested build)
+ * gets no badge: Manage › Updates still offers the update.
+ */
+export function agentSoftwareBadge(view: AgentSoftwareView, app = false): AgentSoftwareBadge | null {
   switch (view.kind) {
     case "behind":
     case "ahead_hivra":
     case "older_connection_service":
     case "update_deferred":
       return "update_available";
+    case "other_version":
+      return app ? "update_available" : null;
     case "updating":
       return "updating";
     case "update_rolled_back":
@@ -399,13 +505,14 @@ export function agentSoftwareBadge(view: AgentSoftwareView): AgentSoftwareBadge 
 export interface AgentSoftwareSummary {
   badge: AgentSoftwareBadge | null;
   cli: AgentCliName | null;
+  app: AgentAppName | null;
   installed: string | null;
   tested: string | null;
 }
 
 export function summarizeAgentSoftware(view: AgentSoftwareView, subject: AgentSoftwareSubject, tested: string | null): AgentSoftwareSummary {
   const installed = "installed" in view ? view.installed : null;
-  return { badge: agentSoftwareBadge(view), cli: subject.cli, installed, tested };
+  return { badge: agentSoftwareBadge(view, subject.app !== null), cli: subject.cli, app: subject.app, installed, tested };
 }
 
 // ── Automatic updates ──────────────────────────────────────────────────────
@@ -466,6 +573,8 @@ export function agentCliAutoUpdateGate(view: AgentSoftwareView, record: AgentSof
     case "current":
     case "update_done":
       return { ok: false, skip: "not_behind" };
+    case "other_version":
+      return { ok: false, skip: "owner_version" };
     default:
       return { ok: false, skip: "not_reported" };
   }

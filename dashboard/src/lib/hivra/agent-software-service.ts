@@ -5,7 +5,7 @@ import "server-only";
 // section, the agent header and the automatic-update sweep all share. The
 // computer's address and bearer are used here and never leave the server.
 
-import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
+import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import { readAgentSoftwareFromBox } from "./agent-cli-meta";
 import { saveAgentSoftwareObservation, type StoredAgentSoftware } from "./agent-cli-store";
 import {
@@ -13,7 +13,7 @@ import {
   agentSoftwareSubject,
   deriveAgentSoftware,
   effectiveAgentCliAutoUpdate,
-  isAgentCliVersion,
+  isAgentSoftwareVersion,
   summarizeAgentSoftware,
   type AgentCliAutoUpdateMode,
   type AgentCliRequestResult,
@@ -42,8 +42,15 @@ export interface AgentSoftwareAgentRow {
 }
 
 export function testedVersionFor(subject: AgentSoftwareSubject): string | null {
-  return subject.cli ? AGENT_CLI_VERSIONS[subject.cli] : null;
+  if (subject.cli) return AGENT_CLI_VERSIONS[subject.cli];
+  return subject.app ? AGENT_APP_VERSIONS[subject.app].version : null;
 }
+
+/** The app's tested versions Hivra moved off, newest first (empty for the CLIs). */
+export function previousVersionsFor(subject: AgentSoftwareSubject): string[] {
+  return subject.app ? AGENT_APP_VERSIONS[subject.app].previous.map((pin) => pin.version) : [];
+}
+
 
 /** The rollout switch for automatic updates (unset means off). */
 export function configuredAgentCliAutoUpdateMode(env: Record<string, string | undefined> = process.env): AgentCliAutoUpdateMode {
@@ -89,7 +96,7 @@ export function observeAgentSoftware(agent: AgentSoftwareAgentRow, subject: Agen
 export function agentSoftwareViewFor(agent: AgentSoftwareAgentRow, record: AgentSoftwareRecord | null, now: number): AgentSoftwareView | null {
   const subject = agentSoftwareSubject(agent);
   if (!subject) return null;
-  return deriveAgentSoftware({ subject, status: agent.status, tested: testedVersionFor(subject), record, now });
+  return deriveAgentSoftware({ subject, status: agent.status, tested: testedVersionFor(subject), previous: previousVersionsFor(subject), record, now });
 }
 
 /** The agents list's per-agent summary (no computer is read for it). */
@@ -97,7 +104,7 @@ export function agentSoftwareSummaryFor(agent: AgentSoftwareAgentRow, record: Ag
   const subject = agentSoftwareSubject(agent);
   if (!subject) return null;
   const tested = testedVersionFor(subject);
-  return summarizeAgentSoftware(deriveAgentSoftware({ subject, status: agent.status, tested, record, now }), subject, tested);
+  return summarizeAgentSoftware(deriveAgentSoftware({ subject, status: agent.status, tested, previous: previousVersionsFor(subject), record, now }), subject, tested);
 }
 
 export type AgentSoftwareResponse =
@@ -105,6 +112,7 @@ export type AgentSoftwareResponse =
   | {
       supported: true;
       cli: AgentSoftwareSubject["cli"];
+      app: AgentSoftwareSubject["app"];
       view: AgentSoftwareView;
       tested: string | null;
       observedAt: string | null;
@@ -124,19 +132,21 @@ export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: Agen
   const subject = agentSoftwareSubject(agent);
   if (!subject) return { supported: false };
   const tested = testedVersionFor(subject);
-  const view = deriveAgentSoftware({ subject, status: agent.status, tested, record, now });
+  const view = deriveAgentSoftware({ subject, status: agent.status, tested, previous: previousVersionsFor(subject), record, now });
   const auto = effectiveAgentCliAutoUpdate(record, agent.deployment_mode);
   const updateState = record?.update_state as AgentCliUpdateState | null | undefined;
+  const isVersion = (value: unknown): value is string => isAgentSoftwareVersion(subject.software, value);
   return {
     supported: true,
     cli: subject.cli,
+    app: subject.app,
     view,
     tested,
     observedAt: record?.observed_at ?? null,
-    update: updateState && isAgentCliVersion(record?.update_target)
+    update: updateState && isVersion(record?.update_target)
       ? { state: updateState, target: record.update_target, reason: record.update_reason ?? null, updatedAt: record.update_updated_at ?? null }
       : null,
-    lastRequest: record?.requested_at && isAgentCliVersion(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
+    lastRequest: record?.requested_at && isVersion(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
       ? { by: record.requested_by, at: record.requested_at, target: record.requested_target, result: (record.request_result ?? null) as AgentCliRequestResult | null }
       : null,
     autoUpdate: subject.cli
@@ -144,7 +154,7 @@ export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: Agen
           mode,
           enabled: auto.enabled,
           source: auto.source,
-          pausedFor: isAgentCliVersion(record?.auto_paused_target) && (record.auto_paused_reason === "rolled_back" || record.auto_paused_reason === "failed")
+          pausedFor: isVersion(record?.auto_paused_target) && (record.auto_paused_reason === "rolled_back" || record.auto_paused_reason === "failed")
             ? { target: record.auto_paused_target, reason: record.auto_paused_reason }
             : null,
         }

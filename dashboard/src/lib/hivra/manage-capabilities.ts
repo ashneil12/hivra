@@ -16,7 +16,7 @@ import {
   COMPUTER_PLACEMENT_LABEL,
   computerPlacementFor,
 } from "@/lib/agent-computers/agent-surfaces";
-import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
+import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
   folderRecoveryEligible,
   hasOwnershipBinding,
@@ -288,6 +288,15 @@ function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): Manage
   return null;
 }
 
+function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentApp"] {
+  if (variant !== "dashboard-agent") return null;
+  if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
+  if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero") {
+    return { name: row.type, vetted: AGENT_APP_VERSIONS[row.type].label };
+  }
+  return null;
+}
+
 /** Model & tools applies to agents whose gateway serves a model, tools or a browser. */
 function hasModelSection(row: ManageCapabilitiesRow, variant: ManageVariant): boolean {
   if (variant !== "chat-agent" && variant !== "dashboard-agent" && variant !== "my-cloud-agent") return false;
@@ -356,6 +365,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
   const connectionServiceUpdate = connectionServiceCap(row, variant);
   const selfUpdate = selfUpdateFor(row, variant);
   const agentCli = agentCliFor(row, variant);
+  const agentApp = agentAppFor(row, variant);
   const attachAgents = isComputer && variant === "ubuntu-proxmox" && ctx.attachAgents === true;
   const kind = isComputer ? "computer" : "agent";
 
@@ -381,7 +391,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     resources: true,
     recovery: capShown(restorePoints) || capShown(folderRecovery),
     network: capShown(privateNetwork),
-    updates: capShown(connectionServiceUpdate) || agentCli !== null || selfUpdate !== null,
+    updates: capShown(connectionServiceUpdate) || agentCli !== null || agentApp !== null || selfUpdate !== null,
     command: variant === "linux-sandbox",
     advanced: true,
   };
@@ -403,6 +413,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     connectionServiceUpdate,
     selfUpdate,
     agentCli,
+    agentApp,
     attachAgents,
     // Every agent is told about its computer; a computer on its own is not.
     contract: kind === "agent",

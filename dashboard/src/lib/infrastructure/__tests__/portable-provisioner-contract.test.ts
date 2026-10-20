@@ -553,7 +553,19 @@ describe("portable provisioner source contract", () => {
     expect(installerSource).not.toMatch(/(?:^|\s)--branch\s+(?:main|latest)(?:\s|$)/i);
     expect(installerSource).not.toMatch(/(?:@|\/releases\/)(?:main|latest)(?:[\s/"']|$)/i);
     expect(installerSource).toContain("BUX_REF=\"${BUX_REF:-f17c1b31d6688dd92e745ade650e00d46b4dc4da}\"");
-    expect(installerSource).toContain("AEON_REF=\"${AEON_REF:-8b8d719715ec9bb68fb858a1e334d23209047d82}\"");
+    // The Aeon commit, OpenClaw version and Agent Zero image come from the
+    // release's pins file, each in a form that can't move.
+    expect(installerSource).toContain('AEON_REF="$(read_agent_app_pin aeon)"');
+    expect(installerSource).toContain('OPENCLAW_VERSION="$(read_agent_app_pin openclaw)"');
+    expect(installerSource).toContain('AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)"');
+    const pins = JSON.parse(source("agent-app-versions.json"));
+    expect(pins.aeon.version).toMatch(/^[0-9a-f]{40}$/);
+    expect(pins.openclaw.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(pins["agent-zero"].version).toMatch(/^sha256:[0-9a-f]{64}$/);
+    for (const pin of [pins.aeon, pins.openclaw, pins["agent-zero"]].flatMap((entry) => [entry, ...entry.previous])) {
+      expect(pin.version).toMatch(/^([0-9a-f]{40}|\d+\.\d+\.\d+|sha256:[0-9a-f]{64})$/);
+      expect(typeof pin.label).toBe("string");
+    }
   });
 
   it("keeps the plain Linux computer independent from the Bux agent checkout", () => {
