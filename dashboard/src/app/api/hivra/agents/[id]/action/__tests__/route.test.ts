@@ -1086,15 +1086,16 @@ describe("POST /api/hivra/agents/[id]/action", () => {
       expect(await response.json()).toMatchObject({ success: false, code });
     });
 
-    it("refuses a DeepSeek computer before any host call or lease, so nothing is locked", async () => {
+    it("updates a DeepSeek computer through the same helper, whose guest half runs its owned update", async () => {
+      // The regression: the route refused every DeepSeek computer.
       mockAgent = { ...mockAgent, type: "deepseek-harness" };
+      mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: RECEIPT, stderr: "" });
       const response = await POST(updateRequest(), params());
 
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/DeepSeek computers can’t update their connection service/) });
-      expect(mockCheckManagedHivraHostReadiness).not.toHaveBeenCalled();
-      expect(mockSupabaseRpc).not.toHaveBeenCalled();
-      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ success: true, data: { status: "running" } });
+      expect(mockCheckManagedHivraHostReadiness).toHaveBeenCalledWith(expect.objectContaining({ purpose: "runtime-update" }));
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("hivra-update-guest-runtime.sh"), expect.anything(), expect.anything());
     });
   });
 

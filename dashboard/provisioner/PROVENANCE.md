@@ -544,6 +544,24 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.10.20.1` builds on `2026.10.07.1` and gives a DeepSeek computer
+an owned in-place runtime update. The runtime updater's guest half moves out of
+`hivra-update-guest-runtime.sh` into its own file,
+`hivra-guest-runtime-update.sh`, sent to the guest on stdin as before, so other
+transports can run the same reviewed bytes. On a DeepSeek computer it no longer
+refuses: it stages the archive root-only and runs
+`deepseek-harness/update-guest.py`, which first proves the computer is exactly
+the generation its reference bundle installed (gateway tree, pinned package
+receipt, service unit and the running owned service), then stages the new
+gateway (and a new package beside the live one when its pins move), stops the
+old generation through the service-owner checks, swaps by rename, and requires
+the same readiness a fresh install proves. Any failure stops the new generation,
+puts the previous one back and starts it. The configuration and intent files
+launch wrote, the agent's files and its private home are left as they are. The
+generic gateway update is unchanged. Remote-desktop assets are unchanged, so the
+remote-desktop bundle revision and every session revision are preserved. This
+source release does not deploy, install, or establish Canary acceptance.
+
 Release `2026.10.07.1` builds on `2026.09.24.4` and adds an optional Claude app
 for Ubuntu Desktop computers, plus the vetted Claude Code CLI pin move from
 `2.1.246` to `2.1.292`. A root helper (`hivra-claude-app.py`), an inert

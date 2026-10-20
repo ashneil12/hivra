@@ -58,7 +58,7 @@ jobs:
         run: node --test --test-timeout=15000 dashboard/runtime-adapters/deepseek-harness/native-broker.test.cjs dashboard/runtime-adapters/deepseek-harness/gateway-policy.test.cjs dashboard/runtime-adapters/deepseek-harness/guarded-files.test.cjs dashboard/runtime-adapters/deepseek-harness/guest-file-access.test.cjs dashboard/runtime-adapters/deepseek-harness/recipe.test.cjs dashboard/scripts/test-deepseek-native-runtime.test.mjs
 
       - name: Guard staged native package publication with owned filesystem fixtures
-        run: sudo python3 -I -B dashboard/scripts/test-deepseek-package-install.py && sudo python3 -I -B dashboard/scripts/test-deepseek-service-owner.py && sudo python3 -I -B dashboard/scripts/test-deepseek-guest-install.py && python3 -I -B dashboard/scripts/test-guest-install.py
+        run: sudo python3 -I -B dashboard/scripts/test-deepseek-package-install.py && sudo python3 -I -B dashboard/scripts/test-deepseek-service-owner.py && sudo python3 -I -B dashboard/scripts/test-deepseek-guest-install.py && sudo python3 -I -B dashboard/scripts/test-deepseek-guest-update.py && python3 -I -B dashboard/scripts/test-guest-install.py
 
       - name: Guard offline native systemd fixture boundaries
         run: python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py

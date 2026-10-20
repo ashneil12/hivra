@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,6 +12,8 @@ import path from "node:path";
 
 const bundleRoot = path.join(process.cwd(), "provisioner");
 const UPDATE_SOURCE = readFileSync(path.join(bundleRoot, "hivra-update-guest-runtime.sh"), "utf8");
+// The guest half, sent to the guest on stdin.
+const GUEST_SOURCE = readFileSync(path.join(bundleRoot, "hivra-guest-runtime-update.sh"), "utf8");
 const START_SOURCE = readFileSync(path.join(bundleRoot, "hivra-start-on-host.sh"), "utf8");
 const GUEST_STAGE_DIR = "/run/hivra-agent-trace-install.AbCd1234";
 const CREDENTIAL = {
@@ -42,6 +44,7 @@ esac
 `,
   scp: `#!/usr/bin/env bash
 printf '%s\\0' "$@" > "$FAKE_DIR/scp.argv"
+cp "\${@: -2:1}" "$FAKE_DIR/archive.tar.gz"
 exit "\${FAKE_SCP_EXIT:-0}"
 `,
   ssh: `#!/usr/bin/env bash
@@ -92,6 +95,8 @@ interface HelperRun {
   kinds: string[];
   qm: string[];
   credentialFileLeft: boolean;
+  /** `tar -tvzf` of the archive the helper sent, or null if none was sent. */
+  archiveListing: string | null;
   /** FD8 releases and guest calls, in order. */
   events: string[];
   sshCall: (index: number) => { argv: string[]; env: string; stdin: string };
@@ -123,9 +128,10 @@ function runHelper(options: {
     for (const asset of RUNTIME_ASSETS) copyFileSync(path.join(bundleRoot, "hivra-chat", asset), path.join(bundle, "hivra-chat", asset));
     for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
       "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json",
-      "hivra-agent-trace.py", "hivra-agent-trace.service"]) {
+      "hivra-agent-trace.py", "hivra-agent-trace.service", "hivra-guest-runtime-update.sh"]) {
       copyFileSync(path.join(bundleRoot, file), path.join(bundle, file));
     }
+    cpSync(path.join(bundleRoot, "deepseek-harness"), path.join(bundle, "deepseek-harness"), { recursive: true });
     // The real helper, with only its fixed root paths moved under the sandbox.
     const helper = path.join(bundle, "hivra-update-guest-runtime.sh");
     writeFileSync(helper, UPDATE_SOURCE
@@ -183,6 +189,8 @@ function runHelper(options: {
       kinds: read("ssh.kinds").trim().split("\n").filter(Boolean),
       qm: read("qm.log").trim().split("\n").filter(Boolean),
       credentialFileLeft: existsSync(credentialFile),
+      archiveListing: existsSync(path.join(fakeDir, "archive.tar.gz"))
+        ? spawnSync("tar", ["-tvzf", path.join(fakeDir, "archive.tar.gz")], { encoding: "utf8" }).stdout : null,
       events: read("events").trim().split("\n").filter(Boolean),
       sshCall: (index) => {
         const call = calls.get(index);
@@ -215,7 +223,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     const receiptAt = UPDATE_SOURCE.indexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED vmid=%s\\n' \"$VMID\"");
     expect(consumeAt).toBeGreaterThan(UPDATE_SOURCE.indexOf('[[ "$VMID" =~ ^[0-9]+$ ]]'));
     expect(consumeAt).toBeLessThan(firstHostCommandAt);
-    expect(commitCheckAt).toBeGreaterThan(UPDATE_SOURCE.indexOf("\nGUEST\n"));
+    expect(commitCheckAt).toBeGreaterThan(UPDATE_SOURCE.indexOf('<"$GUEST_UPDATER" >"$GUEST_RESULT"'));
     expect(installAt).toBeGreaterThan(commitCheckAt);
     expect(markerAt).toBeGreaterThan(installAt);
     expect(receiptAt).toBeGreaterThan(markerAt);
@@ -262,6 +270,52 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     }
   });
 
+  it("sends the reviewed guest half on stdin with what is left of the request deadline", () => {
+    const syntax = spawnSync("bash", ["-n", path.join(bundleRoot, "hivra-guest-runtime-update.sh")], { encoding: "utf8" });
+    expect({ status: syntax.status, stderr: syntax.stderr }).toEqual({ status: 0, stderr: "" });
+    const run = runHelper({ deadline: 200 });
+    expect(run.status).toBe(0);
+    const gateway = run.sshCall(1);
+    expect(gateway.stdin).toBe(GUEST_SOURCE);
+    const seconds = Number(/HIVRA_RUNTIME_UPDATE_SECONDS='([0-9]+)'/.exec(gateway.argv.join(" "))?.[1]);
+    expect(seconds).toBeGreaterThan(150);
+    expect(seconds).toBeLessThanOrEqual(185);
+  });
+
+  it("gives a DeepSeek computer its own owned update and never the generic gateway swap", () => {
+    // The regression: the guest half refused every DeepSeek computer, so it had no update at all.
+    expect(GUEST_SOURCE).not.toContain("DeepSeek requires a complete owned runtime update");
+    const native = GUEST_SOURCE.indexOf('= deepseek-harness ]; then');
+    expect(native).toBeGreaterThan(0);
+    expect(native).toBeLessThan(GUEST_SOURCE.indexOf('WORK="$(mktemp -d /opt/bux/.hivra-runtime-update.XXXXXX)"'));
+    const branch = GUEST_SOURCE.slice(native, GUEST_SOURCE.indexOf("\nfi\n", native));
+    expect(branch).toContain('"$NATIVE_WORK/source/deepseek-harness/update-guest.py" "$NATIVE_WORK/source" "$INSTALLED"');
+    expect(branch).toMatch(/sha256sum "\$NATIVE_WORK\/runtime\.tar\.gz"[\s\S]*ARCHIVE_SHA256/);
+    expect(branch.indexOf("grep -qE '^HIVRA_DEEPSEEK_UPDATE_V1 [{]'")).toBeLessThan(branch.indexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
+    expect(branch).toContain("exit 0");
+    expect(branch).not.toMatch(/systemctl restart|\/opt\/bux\/hivra-chat/);
+    // The archive carries the DeepSeek package directory and the gateway in bundle layout.
+    expect(UPDATE_SOURCE).toContain('NATIVE_ASSETS=(deepseek-harness)');
+    expect(UPDATE_SOURCE).toContain('"${TERMINAL_ASSETS[@]}" "${NATIVE_ASSETS[@]}"');
+  });
+
+  it("archives every file once, so nothing reaches the guest as a hard link", () => {
+    // The regression: the gateway assets were archived a second time in their
+    // bundle layout; tar stored that copy as a hard link, and the DeepSeek
+    // updater (which accepts only single-link files) refused it on a real guest.
+    const run = runHelper();
+    expect(run.status).toBe(0);
+    const listing = run.archiveListing ?? "";
+    const entries = listing.trim().split("\n");
+    expect(entries.length).toBeGreaterThan(10);
+    expect(entries.filter(line => line.startsWith("h") || / link to /.test(line))).toEqual([]);
+    expect(listing).toContain("deepseek-harness/update-guest.py");
+    // Each gateway asset is archived once (GNU tar turns a second copy of the same file into a link).
+    for (const asset of RUNTIME_ASSETS) {
+      expect(entries.filter(line => line.endsWith(` ${asset}`) || line.endsWith(`/${asset}`))).toHaveLength(1);
+    }
+  });
+
   it("ships the agent CLI pins and helpers, and schedules the swap only after the gateway commit", () => {
     const run = runHelper();
     const guest = run.sshCall(1).stdin;
@@ -278,7 +332,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
   // The idle check decides whether a terminal restart could end someone's
   // shell. It runs the real function from the updater against a fake ss.
   describe("terminal idle check", () => {
-    const fn = block(UPDATE_SOURCE, /^terminal_idle\(\) \{[\s\S]*?\n\}\n/m);
+    const fn = block(GUEST_SOURCE, /^terminal_idle\(\) \{[\s\S]*?\n\}\n/m);
     function idle(opts: { tcp?: string; unix?: string; ssFails?: "tcp" | "unix"; socket?: boolean }) {
       const dir = mkdtempSync(path.join(tmpdir(), "hivra-terminal-idle-"));
       try {

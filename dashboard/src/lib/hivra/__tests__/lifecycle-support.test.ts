@@ -109,9 +109,10 @@ describe("restore points, folder recovery and the in-place update", () => {
 
   it("refuses the in-place update in the route's order", () => {
     expect(runtimeUpdateRefusal({ ...ubuntu, type: "codex" })).toBeNull();
-    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness" })).toBe("deepseek");
-    // A DeepSeek computer in the owner's own cloud gets the DeepSeek refusal first, as the route answers.
-    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness", computer_substrate: "provider-vm" })).toBe("deepseek");
+    // A DeepSeek computer on Proxmox gets its own owned update in the guest;
+    // in the owner's own cloud it is refused with every My cloud computer.
+    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness" })).toBeNull();
+    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness", computer_substrate: "provider-vm" })).toBe("my-cloud");
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_profile: "windows" })).toBe("prepared");
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "provider-vm" })).toBe("my-cloud");
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "gvisor" })).toBe("linux-sandbox");
