@@ -9,7 +9,7 @@ export default function Faq() {
     <section id="faq" className={styles.faq} aria-labelledby="faq-heading">
       <header className={styles.faqHead}>
         <span className={styles.eyebrow}>Questions</span>
-        <h2 id="faq-heading" className={styles.sectionTitle}>Straight answers.</h2>
+        <h2 id="faq-heading" className={styles.sectionTitle}>Common questions</h2>
       </header>
       <div className={styles.faqList}>
         {HOMEPAGE_FAQ.map(({ q, a }, index) => (

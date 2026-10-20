@@ -39,6 +39,18 @@ test("every answer is in the server HTML, with the first one open", () => {
   for (const { a } of HOMEPAGE_FAQ) expect(readable(markup)).toContain(a);
 });
 
+test("the question list is titled as the website pack titles it", () => {
+  const markup = renderToStaticMarkup(<Faq />);
+  expect(markup).toContain(">Common questions</h2>");
+  expect(markup).not.toContain("Straight answers");
+});
+
+test("the comparison closes with the website pack's line", () => {
+  const markup = renderToStaticMarkup(<Fit />);
+  expect(readable(markup)).toContain("Hivra makes the platform available to inspect, adapt and run yourself.");
+  expect(readable(markup)).not.toContain("Hivra is the one you can check.");
+});
+
 test("the comparison ships complete in server HTML, with words behind every mark", () => {
   const markup = renderToStaticMarkup(<Fit />);
   expect(markup.match(/<tbody>[\s\S]*<\/tbody>/)?.[0].match(/<tr\b/g)).toHaveLength(FIT.rows.length);

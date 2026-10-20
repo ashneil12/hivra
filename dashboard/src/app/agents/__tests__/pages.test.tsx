@@ -255,6 +255,22 @@ describe("/agents/[slug]", () => {
     expectInternalLinksResolve(main);
   });
 
+  // Ash's website pack words the closing heading for Claude Code and Codex; the
+  // other four agent pages keep "Run {agent} 24/7." until the pack changes them.
+  it.each([
+    ["claude-code", "Give Claude Code a computer that stays on"],
+    ["codex", "Give Codex a computer that stays on"],
+    ["hermes", "Run Hermes 24/7."],
+    ["aeon", "Run Aeon 24/7."],
+    ["openclaw", "Run OpenClaw 24/7."],
+    ["agent-zero", "Run Agent Zero 24/7."],
+  ])("%s: the closing call to action is headed %p", async (slug, heading) => {
+    const { container } = render(await AgentPage({ params: Promise.resolve({ slug }) }));
+    // The closing call to action is the only heading followed by the price line.
+    const cta = [...container.querySelectorAll("main h2")].filter((h2) => h2.nextElementSibling?.textContent?.startsWith("From $9.99/mo"));
+    expect(cta.map((h2) => h2.textContent)).toEqual([heading]);
+  });
+
   it.each(AGENT_SEO_ENTRIES)("$slug: makes none of the banned claims and keeps the non-affiliation line", async (entry) => {
     const meta = await generateMetadata({ params: Promise.resolve({ slug: entry.slug }) });
     const { container } = render(await AgentPage({ params: Promise.resolve({ slug: entry.slug }) }));

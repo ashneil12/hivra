@@ -47,6 +47,13 @@ describe("/pricing page", () => {
     }
   });
 
+  it("titles the sizes section as the website pack does", () => {
+    render(<PricingPage />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "Choose how you run Hivra" })).toBeInTheDocument();
+    expect(screen.queryByText(/What you can buy today/)).not.toBeInTheDocument();
+  });
+
   // The proposed ladder's perks (snapshots and clones, two months free,
   // unlimited computers, Windows) are not shipped. It stays a labelled preview
   // on the homepage and is never repeated on this indexed page.

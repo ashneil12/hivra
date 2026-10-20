@@ -86,7 +86,7 @@ export default function PricingPage() {
         <div className={homeStyles.pricingWrap}>
           <section className={`${cardStyles.pricing} ${pageStyles.section}`} aria-labelledby="pricing-today-heading">
             <header className={cardStyles.heading}>
-              <h2 id="pricing-today-heading">What you can buy today.</h2>
+              <h2 id="pricing-today-heading">Choose how you run Hivra</h2>
               <p>Prices are in US dollars, per month. Each plan is a pool of CPU and memory for your agents&apos; computers.</p>
             </header>
             <div className={`${cardStyles.ladder} ${pageStyles.sizes}`}>

@@ -59,6 +59,14 @@ describe("comparison page claims", () => {
     expect(container.querySelector('a[href="/pricing"]')).not.toBeNull();
   });
 
+  it.each(SLUGS)("/compare/%s closes with the website pack's heading", async (slug) => {
+    expect(SLUGS).toHaveLength(9);
+    const { container } = await renderComparison(slug);
+    const price = [...container.querySelectorAll("h2")].filter((h2) => h2.nextElementSibling?.textContent?.startsWith("From $9.99/mo."));
+    expect(price.map((h2) => h2.textContent)).toEqual(["Ready to leave server maintenance behind?"]);
+    expect(container.textContent).not.toContain("stop managing infra");
+  });
+
   // Competitor numbers re-checked on each vendor's own page on 2026-09-24.
   // Update these with the copy when a vendor changes its prices.
   it("quotes the competitor prices that were verified, not the stale ones", async () => {

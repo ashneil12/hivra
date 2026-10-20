@@ -135,8 +135,15 @@ describe("homepage copy", () => {
     const [header, , ...rows] = table.map(line => line.split("|").slice(1, -1).map(cell => cell.trim()));
     expect(header.slice(1)).toEqual([...FIT.columns]);
     expect(rows.map(([label, ...cells]) => ({ label, cells }))).toEqual(FIT.rows.map(row => ({ label: row.label, cells: [...row.cells] })));
-    for (const line of [FIT.lead, FIT.verdict, FIT.note, `${FIT.title} ${FIT.titleTail}`]) expect(litepaperText).toContain(line);
+    for (const line of [FIT.lead, FIT.note, `${FIT.title} ${FIT.titleTail}`]) expect(litepaperText).toContain(line);
   });
+
+  it("closes the comparison with the website pack's line, not the litepaper's older one", () => {
+    // Ash's website pack (home.md, 20 Oct 2026) words the verdict for the site;
+    // the litepaper's own sentence is a separate document and is not changed here.
+    expect(FIT.verdict).toBe("Hivra makes the platform available to inspect, adapt and run yourself.");
+  });
+
 
   it("sends each agent card to Launch with that agent chosen", () => {
     expect(HOME_AGENTS.map(agent => agent.id)).toEqual(["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon"]);

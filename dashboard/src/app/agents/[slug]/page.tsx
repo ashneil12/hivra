@@ -197,7 +197,7 @@ export default async function AgentPage({ params }: AgentPageParams) {
         </div>
         <section className={styles.cta}>
           <div>
-            <h2>Run {agent.name} <strong>24/7.</strong></h2>
+            {entry.ctaHeading ? <h2>{entry.ctaHeading}</h2> : <h2>Run {agent.name} <strong>24/7.</strong></h2>}
             <p>From $9.99/mo for 2 vCPU and 4 GB RAM. Paid plans are never paused for inactivity. 7-day money-back guarantee on card payments.</p>
           </div>
           <div className={agentStyles.actions}>
