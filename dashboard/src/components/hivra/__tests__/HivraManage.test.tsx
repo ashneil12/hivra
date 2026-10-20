@@ -355,7 +355,7 @@ describe("HivraManage lifecycle guidance", () => {
   });
 
   it("offers a My cloud agent its update and says how it is going", () => {
-    const myCloud = { ...agent, type: "codex", deployment_mode: "self-managed" as const, computer_substrate: "provider-vm" as const };
+    const myCloud = { ...agent, type: "codex" as const, deployment_mode: "self-managed" as const, computer_substrate: "provider-vm" as const };
     const { rerender } = render(<HivraManage agent={myCloud} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
     openSection("Updates");
     expect(screen.getByRole("button", { name: "Update connection service" })).toBeEnabled();
