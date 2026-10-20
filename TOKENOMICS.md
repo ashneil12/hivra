@@ -1,6 +1,6 @@
 # Hivra tokenomics
 
-**The migration, new uses and treasury plans in this section are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.**
+**The new uses and treasury plans in this section are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.**
 
 Hivra gives an AI agent a computer of its own, so it does its work there and stays off yours. You pick the agent, it gets a machine, and you decide what it can reach. All of that runs today, and all of it is open source.
 
@@ -14,19 +14,21 @@ $HermesOS launched with the original platform, before Hivra had a name. Hold it 
 
 People backed that platform early. Whatever comes next has to respect that.
 
-Holding is one way to qualify for compute. You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final. Self-hosting Hivra requires neither the token nor a Hivra account.
+Holding is one way to qualify for compute. You can also subscribe by card without a wallet. If you self-host Hivra, neither a Hivra subscription nor a token is required; you provide your own infrastructure and pay any underlying costs.
 
 ## The migration
 
-$HIVRA is the proposed new token. It would live on Base and launch through Bankr.
+$HIVRA is the new token for the wider ecosystem we're building, and it lives on Base.
 
-The proposed route is an active claim, which means you choose to convert. New tokens aren't sent automatically to every wallet that holds the old one.
+The $HermesOS holder snapshot was completed before or by **20 October 2026**. Wallets included in the published eligibility list are allocated $HIVRA at a **1:1 ratio**, based on the amount of $HermesOS they held at the snapshot block.
 
-The claim would sell your old tokens into their existing trading pool and use the ETH it gets to buy $HIVRA from the new pool. That way the value moves across instead of being left behind. Bankr would run the conversion. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.
+This is **not an automatic transfer**. Eligible holders must claim through the official **Sablier** process. Claiming requires a wallet transaction and a small fee paid by the claimant, including applicable network costs. Hivra is not sponsoring those fees.
 
-**Existing holders keep their access.** No forced conversion, no claim deadline, no requalifying because the name changed. Old and new amounts run side by side for people who already have access, and the final terms will set out exactly who is covered and how it carries over. Once $HIVRA launches, new users hold and pay with $HIVRA.
+The current claim arrangement does **not** require holders to burn or surrender their original $HermesOS. Existing holder access and the right to claim a snapshot allocation are separate matters.
 
-Keeping your access and converting your tokens are separate decisions.
+The migration claim window is time-limited. The definitive deadline, snapshot block, fee details and official claim destination will be published through Hivra's token and migration pages. Do not rely on links sent in private messages.
+
+**Existing holders keep their access.** Eligible existing holders keep their established compute access under the applicable rules. $HIVRA-based access and payment options are **not necessarily active just because the token exists**. They will become available only when their separately defined activation conditions have been met.
 
 ## What it's for
 
@@ -34,7 +36,7 @@ Think about what needs paying for on Hivra. A computer has to run all night. A r
 
 One token means one balance that works across all of it. Each use still has to earn its place, and where a card or a stablecoin does the job better, we use a card or a stablecoin.
 
-Of the uses below, only the first is live today, with $HermesOS, alongside the token payments described above. The rest are proposals. Here's the list, and where in Hivra you'd meet each one.
+Of the uses below, only the first is live today, with $HermesOS. The rest are proposals. Here's the list, and where in Hivra you'd meet each one.
 
 **Access to compute.** Hold for a tier of computing power, fixed when you first qualify. This is what runs Agent Computers, and it's live today with $HermesOS.
 
@@ -90,7 +92,7 @@ A token is easy to bolt on and hard to trust. So here is what this one can't do,
 
 **No buying extra authority.** A balance can't get you wider logins, another person's computer, or an exemption from the response to a security incident. A token vote can't weaken those controls either.
 
-**No presale or private round.** The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.
+**No presale or private round.** The supply is fixed at 100 billion. There is no separate team allocation of $HIVRA in the current migration plan.
 
 **No company ownership.** Holding the token isn't owning Hivra.
 
