@@ -114,7 +114,8 @@ describe("restore points, folder recovery and the in-place update", () => {
     expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness", computer_substrate: "provider-vm" })).toBe("deepseek");
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_profile: "windows" })).toBe("prepared");
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "provider-vm" })).toBe("my-cloud");
-    expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "gvisor" })).toBe("linux-sandbox");
+    // A Linux Sandbox's update is its adapter's own (recreate on the pinned image).
+    expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "gvisor" })).toBeNull();
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "do-managed-session" })).toBe("digitalocean");
   });
 

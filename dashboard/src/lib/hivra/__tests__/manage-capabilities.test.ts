@@ -302,7 +302,6 @@ describe("manageCapabilitiesFor", () => {
       ["preparedWindows", /Windows Update/, true],
       ["windowsMyServer", /from your server's own console/, false],
       ["digitalocean", /DigitalOcean runs this session's agent software/, false],
-      ["gvisor", /fixed, read-only system image/, false],
     ] as const)("says how %s is updated instead of offering a connection service", (name, text, openDesktop) => {
       const manage = map(name);
       expect(manage.connectionServiceUpdate).toBeNull();
@@ -310,6 +309,19 @@ describe("manageCapabilitiesFor", () => {
       expect(manage.selfUpdate?.lines.join(" ")).toMatch(text);
       expect(manage.selfUpdate?.openDesktop).toBe(openDesktop);
       expect(manage.notAvailable.map((item) => item.capability)).not.toContain("Connection service updates");
+    });
+
+    it("offers a Linux Sandbox its Update, saying it keeps the workspace", () => {
+      // The regression: Manage said updating a sandbox's image "isn't available yet".
+      const manage = map("gvisor");
+      expect(manage.connectionServiceUpdate).toEqual({ state: "available" });
+      expect(manage.sections).toContain("updates");
+      expect(manage.selfUpdate?.lines.join(" ")).toMatch(/keeps your workspace/);
+      expect(manage.selfUpdate?.lines.join(" ")).not.toMatch(/isn't available yet/);
+      const stopped = manageCapabilitiesFor({ ...rows.gvisor, status: "stopped", desired_state: "stopped" }, { preparedMatch: true });
+      expect(stopped.connectionServiceUpdate).toEqual({ state: "available" });
+      const busy = manageCapabilitiesFor({ ...rows.gvisor, status: "provisioning", operation_id: "op", operation_kind: "runtime_update" }, { preparedMatch: true });
+      expect(busy.connectionServiceUpdate).toMatchObject({ state: "blocked", code: "operation_in_progress" });
     });
 
     it("tells an Omarchy owner the desktop connection updates itself", () => {

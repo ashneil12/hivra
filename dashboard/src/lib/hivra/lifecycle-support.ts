@@ -32,8 +32,12 @@ export function doSessionActionFor(action: string): (typeof DO_SESSION_ACTIONS)[
     : null;
 }
 
-/** Linux Sandbox (gVisor): no restart, restore points or in-place update. */
-export const GVISOR_ACTIONS = ["start", "stop", "resize", "delete"] as const;
+/**
+ * Linux Sandbox (gVisor): no restart or restore points. update_runtime is
+ * the adapter's Update: the sandbox recreated on the pinned image, keeping
+ * /workspace.
+ */
+export const GVISOR_ACTIONS = ["start", "stop", "resize", "delete", "update_runtime"] as const;
 export type GvisorAction = (typeof GVISOR_ACTIONS)[number];
 
 export function isGvisorAction(action: string): action is GvisorAction {
@@ -177,18 +181,17 @@ export function folderRecoveryEligible(row: LifecycleSupportRow): boolean {
 
 // ── In-place connection-service update ─────────────────────────────────────
 
-export type RuntimeUpdateRefusal = "digitalocean" | "linux-sandbox" | "prepared" | "my-cloud" | "deepseek";
+export type RuntimeUpdateRefusal = "digitalocean" | "prepared" | "my-cloud" | "deepseek";
 
 /**
  * Why update_runtime is refused for this row, before any lease or host call,
  * or null when the route accepts it. The order is the route's: DigitalOcean
- * and gVisor branches first, then the DeepSeek refusal (a DeepSeek guest also
+ * first (a Linux Sandbox's update is its adapter's own), then the DeepSeek refusal (a DeepSeek guest also
  * runs a native service the gateway-only updater cannot replace), then the
  * prepared and My cloud branches.
  */
 export function runtimeUpdateRefusal(row: LifecycleSupportRow): RuntimeUpdateRefusal | null {
   if (row.computer_substrate === "do-managed-session") return "digitalocean";
-  if (row.computer_substrate === "gvisor") return "linux-sandbox";
   if (row.type === "deepseek-harness") return "deepseek";
   if (isPreparedProfile(row)) return "prepared";
   if (row.computer_substrate === "provider-vm") return "my-cloud";

@@ -116,7 +116,8 @@ async function updateInPlace(input: RuntimeUpdateInput): Promise<HivraAgentRunti
   const { userId, agent, trigger } = input;
   const source = input.source ?? "hivra/agents/[id]/action";
   // The route refuses these before calling; the sweep never selects them.
-  if (runtimeUpdateRefusal(agent) || isPreparedProfile(agent)) {
+  // A Linux Sandbox updates through its adapter (mutateGvisorComputer), never this Proxmox helper.
+  if (runtimeUpdateRefusal(agent) || isPreparedProfile(agent) || agent.computer_substrate === "gvisor") {
     return failure("unsupported", 409, "This computer can't update its connection service here. Nothing was changed.");
   }
 

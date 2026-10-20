@@ -185,8 +185,19 @@ describe("progress where the owner is", () => {
   });
 });
 
-it("says plainly in Updates that a Linux Sandbox's system image can't be updated yet", async () => {
-  render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+it("updates a Linux Sandbox from Updates after asking, keeping the workspace", async () => {
+  // The regression: Updates only said the sandbox's image couldn't be updated.
+  const onChanged = jest.fn();
+  render(<GvisorComputerManage agent={agent} onChanged={onChanged} onDestroyed={jest.fn()} />);
   fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-  expect(await screen.findByTestId("manage-self-update")).toHaveTextContent("runs a fixed, read-only system image");
+  const panel = await screen.findByTestId("manage-self-update");
+  expect(panel).toHaveTextContent("runs a fixed, read-only system image");
+  expect(panel).toHaveTextContent("keeps your workspace");
+  fireEvent.click(within(panel).getByRole("button", { name: "Update sandbox" }));
+  const confirm = within(panel).getByRole("group", { name: "Confirm sandbox update" });
+  expect(confirm).toHaveTextContent("Files in /workspace stay.");
+  expect(actionCalls("update_runtime")).toHaveLength(0);
+  fireEvent.click(within(confirm).getByRole("button", { name: "Update" }));
+  await waitFor(() => expect(actionCalls("update_runtime")).toHaveLength(1));
+  await waitFor(() => expect(onChanged).toHaveBeenCalled());
 });

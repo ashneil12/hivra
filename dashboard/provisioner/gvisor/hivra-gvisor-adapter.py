@@ -13,8 +13,13 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "2026.09.15.1"
+VERSION = "2026.10.20.1"
 IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
+# Sandboxes this adapter manages, by the adapter release that created each
+# resource (a volume or network keeps the label it was created with) and the
+# image its container runs. Update moves a container to this release's IMAGE.
+ADMITTED_VERSIONS = ("2026.09.15.1", VERSION)
+ADMITTED_IMAGES = (IMAGE,)
 PREFIX = "hivra-gvisor-"
 LABEL = "cloud.hivra"
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
@@ -139,7 +144,7 @@ def valid_input(document):
     }:
         fail("Invalid gVisor computer request")
     operation = document.get("operation")
-    if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete"}:
+    if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update"}:
         fail("Invalid gVisor computer operation")
     for key in ("computerId", "sandboxId"):
         if not isinstance(document.get(key), str) or not UUID.fullmatch(document[key]):
@@ -153,7 +158,7 @@ def valid_input(document):
             fail("Invalid gVisor CPU limit")
         if not isinstance(memory, int) or isinstance(memory, bool) or memory < 512 or memory > 131072:
             fail("Invalid gVisor memory limit")
-    if operation in {"create", "start", "resize"}:
+    if operation in {"create", "start", "resize", "update"}:
         reserve = document.get("hostMemoryReserveMb")
         if not isinstance(reserve, int) or isinstance(reserve, bool) or reserve < 512 or reserve > 1048576:
             fail("Invalid gVisor host memory reserve")
@@ -186,6 +191,17 @@ def helper_name(request):
 
 def expected_helper_labels(request):
     return {**expected_labels(request), f"{LABEL}.role": "workspace-init"}
+
+
+def owned_labels(labels, request):
+    """This sandbox's identity, created by any admitted adapter release."""
+    expected = expected_labels(request)
+    return (labels.get(f"{LABEL}.adapter") in ADMITTED_VERSIONS
+            and all(labels.get(key) == value for key, value in expected.items() if key != f"{LABEL}.adapter"))
+
+
+def previous_name(request):
+    return names(request)[0] + "-previous"
 
 
 def capability_set(values):
@@ -227,7 +243,7 @@ def inspect_container(name, request, *, required=True):
     try:
         item = json.loads(result.stdout)[0]
         labels = item["Config"]["Labels"] or {}
-        if any(labels.get(key) != value for key, value in expected_labels(request).items()):
+        if not owned_labels(labels, request):
             fail("The gVisor computer identity did not match")
         host = item["HostConfig"]
         _, volume, network = names(request)
@@ -241,7 +257,7 @@ def inspect_container(name, request, *, required=True):
                 or host.get("PidMode") not in {"", None} or host.get("UsernsMode") not in {"", None}
                 or host.get("IpcMode") not in {"", "private", None} or host.get("UTSMode") not in {"", None}
                 or host.get("CgroupnsMode") not in {"", "private", None}
-                or item["Config"].get("User") != "65534:65534" or item["Config"].get("Image") != IMAGE
+                or item["Config"].get("User") != "65534:65534" or item["Config"].get("Image") not in ADMITTED_IMAGES
                 or float(host.get("NanoCpus", 0)) <= 0 or int(host.get("Memory", 0)) <= 0
                 or int(host.get("MemorySwap", 0)) != int(host.get("Memory", 0))
                 or int(host.get("PidsLimit", 0)) != 256
@@ -274,7 +290,9 @@ def inspect_helper(request, *, required=False):
         host = item["HostConfig"]
         _, volume, _ = names(request)
         mounts = item.get("Mounts") or []
-        if (labels != expected_helper_labels(request)
+        expected = expected_helper_labels(request)
+        if (set(labels) != set(expected) or not owned_labels(labels, request)
+                or labels.get(f"{LABEL}.role") != expected[f"{LABEL}.role"]
                 or host.get("Runtime") != "runsc" or host.get("Privileged") is not False
                 or host.get("ReadonlyRootfs") is not True or host.get("NetworkMode") != "none"
                 or (host.get("Binds") or []) or (host.get("Devices") or [])
@@ -314,7 +332,7 @@ def inspect_resource(kind, name, request, *, required=False):
     try:
         item = json.loads(result.stdout)[0]
         labels = item.get("Labels") or item.get("Config", {}).get("Labels") or {}
-        if any(labels.get(key) != value for key, value in expected_labels(request).items()):
+        if not owned_labels(labels, request):
             fail("The gVisor computer resource identity did not match")
         return True
     except (IndexError, TypeError, json.JSONDecodeError):
@@ -379,6 +397,74 @@ def initialize_workspace(request, volume):
     require_helper_absent(request)
 
 
+def create_container(request, cpu, memory, name=None):
+    """The sandbox container: this release's labels and IMAGE, the owned
+    network and the existing workspace volume, never copied into."""
+    default_name, volume, network = names(request)
+    labels = expected_labels(request)
+    label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
+    docker("create", "--name", name or default_name, "--runtime=runsc", "--init", "--read-only",
+           "--user", "65534:65534", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+           "--pids-limit", "256", "--cpus", str(cpu), "--memory", f"{memory}m",
+           "--memory-swap", f"{memory}m", "--network", network,
+           "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=128m",
+           "--mount", f"type=volume,src={volume},dst=/workspace,volume-nocopy",
+           "--workdir", "/workspace", *label_args, IMAGE,
+           "/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done")
+
+
+def recover_update(request):
+    """Settle an update that was interrupted between its two renames: keep a
+    complete new container, or put the previous one back. Nothing else may
+    run on a sandbox while a previous container is still set aside."""
+    name = names(request)[0]
+    previous = inspect_container(previous_name(request), request, required=False)
+    if previous is None:
+        return
+    current = docker("inspect", name, check=False)
+    if current.returncode == 0:
+        inspect_container(name, request)
+        docker("rm", "-f", previous_name(request))
+    else:
+        docker("rename", previous_name(request), name)
+    if inspect_container(previous_name(request), request, required=False) is not None:
+        fail("An interrupted gVisor update could not be settled")
+
+
+def update(request):
+    """Recreate the sandbox container on this release's IMAGE, keeping its
+    /workspace volume, network, limits and running state. The previous
+    container is set aside, not removed, until the new one passes the same
+    isolation checks; any failure puts it back as it was."""
+    name, volume, network = names(request)
+    require_helper_absent(request)
+    item = inspect_container(name, request)
+    inspect_resource("volume", volume, request, required=True)
+    inspect_resource("network", network, request, required=True)
+    running = bool(item["State"].get("Running"))
+    cpu = float(item["HostConfig"]["NanoCpus"]) / 1_000_000_000
+    memory = int(item["HostConfig"]["Memory"]) // (1024 * 1024)
+    if running:
+        admit(name, cpu, memory, int(request["hostMemoryReserveMb"]))
+    docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+    if running:
+        docker("stop", "--time", "20", name)
+    docker("rename", name, previous_name(request))
+    try:
+        create_container(request, cpu, memory)
+        if running:
+            docker("start", name)
+        inspect_container(name, request)
+    except BaseException:
+        docker("rm", "-f", name, check=False)
+        docker("rename", previous_name(request), name)
+        if running:
+            docker("start", name, check=False)
+        raise
+    docker("rm", "-f", previous_name(request))
+    return status(request)
+
+
 def create(request):
     name, volume, network = names(request)
     if inspect_container(name, request, required=False):
@@ -402,14 +488,7 @@ def create(request):
             docker("network", "create", "--driver", "bridge", *label_args, network)
             created_network = True
         initialize_workspace(request, volume)
-        docker("create", "--name", name, "--runtime=runsc", "--init", "--read-only",
-               "--user", "65534:65534", "--cap-drop=ALL", "--security-opt=no-new-privileges",
-               "--pids-limit", "256", "--cpus", str(cpu), "--memory", f"{memory}m",
-               "--memory-swap", f"{memory}m", "--network", network,
-               "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=128m",
-               "--mount", f"type=volume,src={volume},dst=/workspace,volume-nocopy",
-               "--workdir", "/workspace", *label_args, IMAGE,
-               "/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done")
+        create_container(request, cpu, memory)
         docker("start", name)
         return status(request)
     except BaseException:
@@ -494,6 +573,8 @@ def execute(request):
 
 def delete(request):
     name, volume, network = names(request)
+    if inspect_container(previous_name(request), request, required=False) is not None:
+        docker("rm", "-f", previous_name(request))
     item = inspect_container(name, request, required=False)
     helper = inspect_helper(request, required=False)
     volume_exists = inspect_resource("volume", volume, request)
@@ -529,6 +610,8 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         name, volume, network = names(request)
         operation = request["operation"]
+        if operation != "delete":
+            recover_update(request)
         if operation == "create":
             create(request)
         elif operation == "status":
@@ -553,6 +636,8 @@ def main():
             execute(request)
         elif operation == "delete":
             delete(request)
+        elif operation == "update":
+            update(request)
 
 
 if __name__ == "__main__":

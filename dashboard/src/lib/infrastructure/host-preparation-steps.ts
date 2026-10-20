@@ -58,7 +58,7 @@ const GVISOR_STAGE_NEXT: Record<keyof typeof GVISOR_STAGE_STEP, string> = {
   "bundle-download": "The server couldn't download gVisor from GitHub. Check that it can reach github.com over HTTPS, then try again.",
   "bundle-checksum": "The download didn't match the checksum of Hivra's pinned gVisor release, so nothing was installed from it. Try again. If it happens again, check for a proxy or firewall that changes downloads.",
   "bundle-validation": "Hivra's pinned gVisor release didn't contain the files Hivra expects, so nothing was installed from it. Your server isn't the cause. Try again later.",
-  "installed-adapter-check": "This server has Linux Sandbox setup from another Hivra release. Hivra leaves it in place so Linux Sandbox computers made with it keep working, and reinstalling won't replace it. Use another server, or delete those computers and remove the old setup first.",
+  "installed-adapter-check": "This server has a Linux Sandbox setup Hivra doesn't recognize. Hivra leaves it in place, and reinstalling won't replace it. Use another server, or remove that setup first.",
   "installed-identity-check": "This server already has gVisor, installed another way or at a different release, and Hivra left it in place. Reinstalling won't replace it. If nothing on the server uses it, remove it, then try again. Otherwise, use another server.",
   "asset-installation": "Check the server's free disk space, then try again.",
   "runtime-registration": "Docker didn't pick up gVisor after its settings reloaded. Restart Docker on the server, then try again.",

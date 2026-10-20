@@ -235,7 +235,14 @@ function privateNetworkCap(row: ManageCapabilitiesRow, isComputer: boolean): Man
 function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCap | null {
   // These run no Hivra connection service, so there is none to update; Updates
   // says how their own software is updated instead (selfUpdateFor).
-  if (variant === "linux-sandbox" || variant === "digitalocean" || variant === "windows-my-server" || variant === "prepared") return null;
+  if (variant === "digitalocean" || variant === "windows-my-server" || variant === "prepared") return null;
+  // A Linux Sandbox's Update is its adapter's: the sandbox recreated on the
+  // current image, running or stopped as it was, /workspace kept.
+  if (variant === "linux-sandbox") {
+    if (operationInProgress(row)) return blocked("operation_in_progress", WAIT);
+    if (row.status !== "running" && row.status !== "stopped") return blocked("not_ready", "Wait until this sandbox is running or stopped.");
+    return available;
+  }
   switch (runtimeUpdateRefusal(row)) {
     case "deepseek": return unavailable("deepseek", "DeepSeek computers can't update their connection service here yet.");
     // An Omarchy or Windows profile anywhere else still runs no connection service.
@@ -256,7 +263,7 @@ const WINDOWS_SELF_UPDATE = "Windows keeps itself up to date with Windows Update
 const WINDOWS_MY_SERVER_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, from your server's own console.";
 const WINDOWS_DESKTOP_UPDATE = "Hivra connects to Windows from outside it, so there's nothing of Hivra's inside Windows to update. When Windows renews its remote desktop certificate, opening Desktop checks the computer again and reconnects.";
 const DIGITALOCEAN_UPDATE = "DigitalOcean runs this session's agent software, so there's nothing for Hivra or you to update in it.";
-const SANDBOX_UPDATE = "This Linux Sandbox runs a fixed, read-only system image, and only its workspace folder changes. Updating that image isn't available yet.";
+const SANDBOX_UPDATE = "This Linux Sandbox runs a fixed, read-only system image, and only its workspace folder changes. Update recreates it on Hivra's current image and keeps your workspace; anything running in it stops.";
 
 /** How the computer's own software is updated where no connection service runs. */
 function selfUpdateFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["selfUpdate"] {
