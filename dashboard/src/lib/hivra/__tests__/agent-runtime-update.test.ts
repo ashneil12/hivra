@@ -134,6 +134,7 @@ it("refuses a stopped computer before any lease", async () => {
 });
 
 it.each([
+  // An owner may update DeepSeek (its own owned update restarts it); the sweep never does.
   ["DeepSeek", { type: "deepseek-harness" }],
   ["a prepared computer", { type: "linux-desktop", computer_profile: "omarchy" }],
   ["My cloud", { computer_substrate: "provider-vm" }],
@@ -150,4 +151,11 @@ it("records nothing for an agent without a CLI Hivra updates", async () => {
   expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "aeon" }, trigger: "owner" })).toEqual({ ok: true, agentCli: null });
   expect(mockRecordOwner).not.toHaveBeenCalled();
   expect(mockRecordAuto).not.toHaveBeenCalled();
+});
+
+it("updates DeepSeek when its owner asks, through the same helper", async () => {
+  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `${RECEIPT}\n`, stderr: "" });
+  expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "deepseek-harness" }, trigger: "owner" }))
+    .toEqual({ ok: true, agentCli: null });
+  expect(mockResolveTarget).toHaveBeenCalled();
 });

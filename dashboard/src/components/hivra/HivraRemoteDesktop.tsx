@@ -1399,6 +1399,16 @@ export function HivraRemoteDesktop({
         setMessage("Repairing desktop runtime…");
       }
       if (!preparedOk) {
+        if (payload?.code === "provider_desktop_refresh_required" || payload?.code === "provider_desktop_unverified") {
+          // A My cloud desktop is set up at launch and can only be re-checked,
+          // never reinstalled by prepare. Update, Repair and Retry re-check it
+          // and reconnect instead; sending prepare again would get the same
+          // refusal on every Retry.
+          autoPrepareAttemptedRef.current = true;
+          repairableUnavailableRef.current = false;
+          await connect({ allowPrepare: false });
+          return;
+        }
         if (isLifecycleBlocked(payload?.code)) {
           setState("blocked");
         } else if (payload?.code === "legacy_identity_unbound" || payload?.code === "unsupported_computer"
