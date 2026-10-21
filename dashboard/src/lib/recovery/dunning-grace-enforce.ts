@@ -9,6 +9,7 @@ import {
   shutdownProxmoxInstance,
   type ProxmoxInfrastructure,
 } from "@/lib/services/proxmox-instance-service";
+import { rotatingContainmentBatch } from "@/lib/recovery/orphaned-instances";
 import {
   hasTokenTierInGrace,
   resolveEffectiveSubscription,
@@ -42,7 +43,8 @@ import {
  * grace cutoff), then hard-stop here. Callers: the existing
  * `reconcile-subscription-grace` cron once per grace-expired past_due row, and
  * `handleSubscriptionDeleted` right after it suspends a cancelled owner's
- * instances. No new cron (Vercel is near its schedule cap).
+ * instances, plus `sweepBillingSuspendedCompute` from the same cron for rows
+ * already suspended. No new cron (Vercel is near its schedule cap).
  *
  * Safety
  * ------
@@ -60,10 +62,12 @@ import {
  *  - FAIL OPEN: the entitlement read throws on a database error
  *    (`throwOnQueryError`), and a thrown read stops nothing. A failed read must
  *    never look like "no plan" and power off a paying customer.
- *  - RETRY: only the past_due path is retried, because the grace cron keeps
- *    scanning past_due rows. A cancelled owner is stopped when
- *    `handleSubscriptionDeleted` runs; if that stop fails (or the read above
- *    fails) nothing re-runs it until Stripe redelivers the event. Known gap.
+ *  - RETRY: `sweepBillingSuspendedCompute` (below) revisits up to 5 users with a
+ *    suspended cancelled or unpaid row per reconcile tick, rotating through the
+ *    backlog, so a stop that failed once (host unreachable, a read error) is
+ *    retried, and so are customers who were suspended before this stopped
+ *    computers at all. Rows whose subscription is still `past_due` belong to the
+ *    grace reconciler, which checks Stripe first.
  *  - IDEMPOTENT: only rows still at `subscription_past_due` or
  *    `subscription_canceled` are eligible; a stopped row is flipped to
  *    `subscription_grace_expired` and drops out of the next scan.
@@ -75,8 +79,16 @@ const DUNNING_ENFORCE_LOG_SOURCE = "dunning-grace-enforce";
 /** Terminal-for-now reason set once compute is actually stopped post-grace. */
 export const GRACE_EXPIRED_ENTITLEMENT_REASON = "subscription_grace_expired";
 
-/** The reasons a billing suspend leaves on the row; our eligibility marker. */
+/**
+ * The reasons a billing suspend leaves on the row; our eligibility marker.
+ * Stripe's "unpaid" status is written as `subscription_past_due` (see
+ * `handleSubscriptionChange`), so this one list covers cancelled, unpaid and
+ * grace-expired past_due.
+ */
 const STOPPABLE_ENTITLEMENT_REASONS = ["subscription_past_due", "subscription_canceled"];
+
+/** A hung host must not hold a cron run: give up on one shutdown after this long. */
+const SHUTDOWN_CALL_TIMEOUT_MS = 90_000;
 
 /** Lifecycle states that mean the slot is gone — never re-touch these. */
 const TERMINAL_LIFECYCLE_STATES = ["deleted", "deleting", "cold_archived"];
@@ -222,23 +234,42 @@ export async function enforceGraceExpiredComputeStop(
         continue;
       }
 
-      const result = await shutdownProxmoxInstance(infra, {
-        expectedInstanceId: candidate.id,
-        hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
-          host_id: candidate.host_id,
+      // The user may have paid while earlier computers in this batch were going
+      // down (the resume flips the reason and starts the computer). Re-read this
+      // row right before powering it off and leave it alone if it moved on.
+      const { data: stillEligible, error: recheckError } = await db
+        .from("hermes_instances")
+        .select("id")
+        .eq("id", candidate.id)
+        .in("entitlement_reason", STOPPABLE_ENTITLEMENT_REASONS);
+      if (recheckError) throw new Error(recheckError.message || "eligibility re-check failed");
+      if (!stillEligible || stillEligible.length === 0) continue;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        shutdownProxmoxInstance(infra, {
+          expectedInstanceId: candidate.id,
+          hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
+            host_id: candidate.host_id,
+          }),
+          // onboot:0 so a host reboot doesn't silently resurrect a lapsed box.
+          setOnboot: 0,
+          // This runs inside the webhook and the reconcilers' loops: keep the
+          // graceful window short (the script hard-stops after it), as the
+          // orphan shutdown does.
+          shutdownTimeoutSeconds: 30,
         }),
-        // onboot:0 so a host reboot doesn't silently resurrect a lapsed box.
-        setOnboot: 0,
-        // This runs inside the webhook and the reconcilers' loops: keep the
-        // graceful window short (the script hard-stops after it), as the
-        // orphan shutdown does.
-        shutdownTimeoutSeconds: 30,
-      });
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("qm shutdown timed out")),
+            SHUTDOWN_CALL_TIMEOUT_MS
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
 
       // A missing VM is already "not running" — still pin the reason so it
       // stops matching. A non-zero shutdown that isn't "missing" is a real
-      // failure: leave the row as-is (a past_due row is retried by the grace
-      // cron; a cancelled row is not, see RETRY above).
+      // failure: leave the row as-is; the sweep retries it on the next tick.
       if (!result.ok && !isProxmoxVmMissingResult(result)) {
         throw new Error(
           result.error || result.stderr || "qm shutdown returned non-zero"
@@ -288,4 +319,102 @@ export async function enforceGraceExpiredComputeStop(
     affected: stopped,
     detail: stopped < candidates.length ? `${stopped}/${candidates.length} stopped` : undefined,
   };
+}
+
+/** Users the sweep takes per run, so one box that can never be stopped cannot starve the rest. */
+export const BILLING_SWEEP_MAX_USERS_PER_RUN = 5;
+
+/** The sweep stops starting new users after this long, so it cannot starve the lapse sweep in the same cron run. */
+export const BILLING_SWEEP_BUDGET_MS = 60_000;
+
+export interface BillingSweepResult {
+  live: boolean;
+  /** Users visited this run (at most BILLING_SWEEP_MAX_USERS_PER_RUN). */
+  picked: number;
+  stopped: number;
+  /** Users whose enforcer call threw or ended in "error" (host unreachable, non-Proxmox box). */
+  failed: number;
+}
+
+/**
+ * Revisit computers whose owner was cancelled or left unpaid and whose row is
+ * already suspended in the database. Those rows are the ones nothing else
+ * reaches: customers suspended before the cancel handler powered computers off,
+ * and any stop that failed once. Each picked user goes through
+ * `enforceGraceExpiredComputeStop`, so every guard above applies: an entitled
+ * user (including one who re-subscribed) is skipped, a failed entitlement read
+ * stops nothing, and nothing is stopped or written unless
+ * DUNNING_GRACE_ENFORCE_LIVE is "true".
+ *
+ * Owners whose hermes_subscriptions row is still `past_due` are left to the grace
+ * reconciler: it asks Stripe before stopping anything, so a customer who paid
+ * but whose webhook was lost is not stopped here. Stripe "unpaid" is stored as
+ * status `inactive`, so those owners are swept.
+ */
+export async function sweepBillingSuspendedCompute(
+  now: Date = new Date(),
+  budgetMs: number = BILLING_SWEEP_BUDGET_MS
+): Promise<BillingSweepResult> {
+  const live = isDunningGraceEnforceLive();
+  const result: BillingSweepResult = { live, picked: 0, stopped: 0, failed: 0 };
+  const db = supabaseAdmin;
+  if (!db) return result;
+
+  // lifecycle_state = suspended already excludes the terminal states.
+  const { data, error } = await db
+    .from("hermes_instances")
+    .select("user_id")
+    .eq("lifecycle_state", "suspended")
+    .in("entitlement_reason", STOPPABLE_ENTITLEMENT_REASONS)
+    .is("deleted_at", null)
+    .order("user_id");
+  if (error) {
+    log.error("billing-suspended compute sweep could not list suspended rows", error, {
+      source: DUNNING_ENFORCE_LOG_SOURCE,
+      failureType: "billing_sweep_query_failed",
+    });
+    return result;
+  }
+
+  const { data: pastDueRows, error: pastDueError } = await db
+    .from("hermes_subscriptions")
+    .select("user_id")
+    .eq("status", "past_due");
+  if (pastDueError) {
+    // Cannot tell which owners the reconciler owns: stop nothing this run.
+    log.error("billing-suspended compute sweep could not list past_due subscriptions", pastDueError, {
+      source: DUNNING_ENFORCE_LOG_SOURCE,
+      failureType: "billing_sweep_query_failed",
+    });
+    return result;
+  }
+  const reconcilerOwned = new Set(
+    ((pastDueRows as Array<{ user_id: string }> | null) ?? []).map((r) => r.user_id)
+  );
+
+  const userIds = Array.from(
+    new Set(((data as Array<{ user_id: string }> | null) ?? []).map((r) => r.user_id))
+  )
+    .filter((id) => !reconcilerOwned.has(id))
+    .sort();
+  const picked = rotatingContainmentBatch(userIds, BILLING_SWEEP_MAX_USERS_PER_RUN, now);
+
+  const startedAt = Date.now();
+  for (const userId of picked) {
+    if (result.picked > 0 && Date.now() - startedAt >= budgetMs) break;
+    result.picked += 1;
+    try {
+      const outcome = await enforceGraceExpiredComputeStop(userId);
+      if (outcome.outcome === "stopped") result.stopped += outcome.affected;
+      if (outcome.outcome === "error") result.failed += 1;
+    } catch (err) {
+      result.failed += 1;
+      log.error("billing-suspended compute sweep failed for a user", err, {
+        source: DUNNING_ENFORCE_LOG_SOURCE,
+        failureType: "billing_sweep_user_failed",
+        userId,
+      });
+    }
+  }
+  return result;
 }
