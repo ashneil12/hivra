@@ -109,6 +109,15 @@ describe("CookieConsentBanner", () => {
     expect(screen.getAllByRole("switch")).toHaveLength(1);
   });
 
+  it("reserves page space equal to the bar so the footer can scroll clear of it", async () => {
+    mockGeo(true);
+    render(<CookieConsentBanner />);
+    expect(await screen.findByRole("dialog", { name: "Cookie consent" })).toBeInTheDocument();
+    await waitFor(() => expect(document.body.style.paddingBottom).not.toBe(""));
+    fireEvent.click(screen.getByText("Accept all"));
+    await waitFor(() => expect(document.body.style.paddingBottom).toBe(""));
+  });
+
   it("does not render or grant when a stored choice already exists", async () => {
     window.localStorage.setItem(
       CONSENT_STORAGE_KEY,

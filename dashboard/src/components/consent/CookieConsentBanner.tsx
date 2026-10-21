@@ -27,7 +27,7 @@
 // never trusts a client-derived country.
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   grantAnalyticsConsent,
@@ -47,6 +47,8 @@ type BannerMode = 'hidden' | 'required' | 'notice';
 export const OPEN_COOKIE_PREFERENCES_EVENT = 'hivra:open-cookie-preferences';
 
 export function CookieConsentBanner() {
+  const barRef = useRef<HTMLDivElement>(null);
+  const padObserver = useRef<ResizeObserver | null>(null);
   const [mode, setMode] = useState<BannerMode>('hidden');
   const [showPrefs, setShowPrefs] = useState(false);
   // The single non-essential category toggle (product analytics + session
@@ -114,6 +116,37 @@ export function CookieConsentBanner() {
     return () => window.removeEventListener(OPEN_COOKIE_PREFERENCES_EVENT, open);
   }, []);
 
+  // The bar is fixed to the bottom of the screen. Reserve its height in the
+  // page so the footer wordmark scrolls clear of it instead of sitting under it.
+  useEffect(() => {
+    padObserver.current?.disconnect();
+    padObserver.current = null;
+    if (mode === 'hidden') {
+      document.body.style.removeProperty('padding-bottom');
+      return;
+    }
+    const el = barRef.current;
+    if (!el) return;
+    let cancelled = false;
+    const apply = () => {
+      if (cancelled) return;
+      const height = Math.ceil(el.getBoundingClientRect().height);
+      document.body.style.paddingBottom = `${height + 16}px`;
+    };
+    apply();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(apply);
+      padObserver.current = observer;
+      observer.observe(el);
+    }
+    return () => {
+      cancelled = true;
+      padObserver.current?.disconnect();
+      padObserver.current = null;
+      document.body.style.removeProperty('padding-bottom');
+    };
+  }, [mode, showPrefs]);
+
   if (mode === 'hidden') return null;
 
   // Persist + apply a decision, then close. analytics === false means the
@@ -164,6 +197,7 @@ export function CookieConsentBanner() {
       aria-label="Cookie consent"
       aria-live="polite"
       className="hivra-cookie-consent"
+      ref={barRef}
       style={{
         position: 'fixed',
         left: '1rem',
