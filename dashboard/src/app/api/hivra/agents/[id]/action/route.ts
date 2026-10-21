@@ -98,6 +98,8 @@ import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-br
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
+import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
@@ -343,6 +345,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if ((["update_runtime", "snapshot", "restore"].includes(action) || isForcePowerAction(action)) && !isSameOriginMutationRequest(req)) {
       return apiError("Same-origin request required.", 403);
+    }
+    // A Hivra Cloud computer needs a paid plan. Refuse to bring one up for an owner
+    // without one, before any capacity check, lease or host call. Stop, snapshot,
+    // export and delete stay open. Decided live, so it clears when payment resumes.
+    if (await isStartBlockedForLapse(agent, action)) {
+      return apiError(
+        `${HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE} This computer's files are kept; press Start once you have a plan.`,
+        402,
+        undefined,
+        { code: "instance_entitlement_suspended" },
+      );
     }
     const invalidateDesktopBeforePower = async (operationId: string) => {
       // Fence the previous boot's attestation under the claimed power operation.
@@ -607,7 +620,9 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
     const recordActivityCredentialIssued = activityCredential.recordIssued;
     const startKickoff = (operationId: string) => {
       const activity = activityTelemetryKickoff(startHelper);
-      return `umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; ${activity.stage}nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}${activity.env}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
+      // A computer stopped for billing has autostart off (verifiedStopVmScript); every
+      // power-on turns it back on so a host reboot brings a paying owner's computer back.
+      return `qm set ${vmid} --onboot 1 >/dev/null 2>&1 || true; umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; ${activity.stage}nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}${activity.env}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
     };
 
     const claimProviderOperation = async (

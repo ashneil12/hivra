@@ -95,8 +95,6 @@ export const PLANS = {
       "Everything in Pro",
       "Burst CPU when capacity allows",
       "Priority scheduling",
-      "Future marketplace access",
-      "Email support (48 hr)",
     ],
     specs: {
       cpu: "4 vCPU total",
@@ -119,13 +117,12 @@ export const PLANS = {
     features: [
       "Everything in Power",
       "1-click deploy from prompt library",
-      "Future marketplace access",
       "Priority infrastructure support (24 hr)",
       "1:1 dedicated support (first 14 days)",
     ],
     specs: {
-      cpu: "10 vCPU total",
-      ram: "56GB total",
+      cpu: "8 vCPU total",
+      ram: "16GB total",
       agents: "8 agents",
     },
   },
@@ -268,9 +265,10 @@ export const BACKUP_ADDON = {
 } as const;
 
 /**
- * Grace period (in hours) after cancellation or payment failure before
- * the server is scheduled for deletion. Kept short because we're running
- * real Hetzner infrastructure that costs money every hour.
+ * Grace period (in hours) after the first failed card payment. The plan keeps
+ * working for this long while the card is retried; if it is still unpaid then,
+ * the computer is stopped (its files are kept). Kept short because every
+ * running computer costs money every hour.
  */
 export const PAYMENT_GRACE_HOURS = 48;
 

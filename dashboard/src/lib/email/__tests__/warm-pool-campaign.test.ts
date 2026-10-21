@@ -3,7 +3,7 @@
  *   - subject, complete text/html, and the ?from=warm_pool billing CTA
  *   - the voice rules (no exclamation points, no hype words, signed
  *     "— Ash / Founder, Hivra")
- *   - the three Pro capabilities each carry a concrete example
+ *   - the three paid-plan capabilities each carry a concrete example
  *   - real prices and the honest close
  *   - send() fails soft when Resend isn't configured
  */
@@ -41,7 +41,7 @@ describe("buildWarmPoolEmail", () => {
     expect(text).toContain("Founder, Hivra");
   });
 
-  it("pitches the three Pro capabilities with concrete examples", () => {
+  it("pitches the three paid-plan capabilities with concrete examples", () => {
     const { text } = buildWarmPoolEmail({});
     expect(text).toMatch(/web browsing/i);
     expect(text).toMatch(/persistent memory/i);
@@ -52,11 +52,14 @@ describe("buildWarmPoolEmail", () => {
     expect(text).toContain("Every Monday at 9");
   });
 
-  it("states the real prices and the honest close", () => {
-    const { text } = buildWarmPoolEmail({});
+  it("states the real prices and an honest close that promises no free hosted agent", () => {
+    const { text, html } = buildWarmPoolEmail({});
     expect(text).toContain("$9.99/mo");
     expect(text).toContain("$79/yr");
-    expect(text).toContain("If free covers you, ignore this — it stays free.");
+    expect(text).toContain("Here is what changes on a paid plan:");
+    expect(text).toContain("Browsing needs a computer run by Hivra.");
+    expect(text).toContain("If your own computer covers you, ignore this.");
+    expect(`${text}\n${html}`).not.toMatch(/stays free|Free can't|Pro can|on Pro/);
   });
 
   it("personalizes the greeting and falls back cleanly", () => {

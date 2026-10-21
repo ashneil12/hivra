@@ -14,13 +14,14 @@ describe("SleepWakeUpgradePrompt", () => {
     jest.clearAllMocks();
   });
 
-  it("renders the always-on pitch alongside the wake progress", () => {
+  it("renders the paid-plan pitch alongside the wake progress, with no free hosted tier in it", () => {
     render(<SleepWakeUpgradePrompt instanceId="inst-1" instanceName="ATLAS" />);
 
     expect(screen.getByTestId("instance-sleep-wake-upgrade-banner")).toBeInTheDocument();
     expect(screen.getByText(/warming up your agent/i)).toBeInTheDocument();
     expect(screen.getByText(/ATLAS slept after 4 idle days/i)).toBeInTheDocument();
-    expect(screen.getByText(/Pro agents never do/i)).toBeInTheDocument();
+    expect(screen.getByText(/about a minute\. A paid plan keeps the computer running/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Free agents sleep|Pro agents|24\/7/i)).not.toBeInTheDocument();
   });
 
   it("falls back to 'Your agent' when no instance name is given", () => {
@@ -30,7 +31,7 @@ describe("SleepWakeUpgradePrompt", () => {
 
   it("deep-links the CTA to billing with always_on attribution", () => {
     render(<SleepWakeUpgradePrompt instanceId="inst-1" instanceName="ATLAS" />);
-    expect(screen.getByRole("link", { name: /keep it always-on/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /keep it running/i })).toHaveAttribute(
       "href",
       "/dashboard/billing?from=paywall&feature=always_on"
     );
@@ -46,7 +47,7 @@ describe("SleepWakeUpgradePrompt", () => {
       instance_id: "inst-1",
     });
 
-    fireEvent.click(screen.getByRole("link", { name: /keep it always-on/i }));
+    fireEvent.click(screen.getByRole("link", { name: /keep it running/i }));
 
     expect(captureClient).toHaveBeenCalledWith("upgrade_clicked", {
       surface: "sleep_wake_banner",

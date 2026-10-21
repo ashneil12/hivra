@@ -6,9 +6,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * run/tool records described in
  * docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md.
  *
- * Policy (matches the Privacy Policy, section 7):
- * - Activity records are kept for ACTIVITY_RETENTION_DAYS days (default and
- *   maximum 90, minimum 30).
+ * Policy of this job. The Privacy Policy (section 7) does not promise a 90 day
+ * limit: it says activity records are kept for as long as the computer exists
+ * and are deleted with it, so the page does not depend on this job running.
+ * - While the job is on, activity records are kept for
+ *   ACTIVITY_RETENTION_DAYS days (default and maximum 90, minimum 30).
  * - A deleted computer's records are deleted with it by the
  *   delete_hivra_activity_after_agent_delete trigger; this job also removes
  *   leftovers of computers deleted before that trigger existed.
@@ -26,7 +28,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const DEFAULT_ACTIVITY_RETENTION_DAYS = 90;
 // Guards against a mistyped env value ("0", "1") wiping recent history.
 export const MIN_ACTIVITY_RETENTION_DAYS = 30;
-// The Privacy Policy promises "up to 90 days", so the window can't exceed it.
+// The longest window the job supports; an env value above it is clamped.
 export const MAX_ACTIVITY_RETENTION_DAYS = 90;
 export const DEFAULT_ACTIVITY_RETENTION_BATCH_SIZE = 5000;
 export const DEFAULT_ACTIVITY_RETENTION_MAX_BATCHES = 20;

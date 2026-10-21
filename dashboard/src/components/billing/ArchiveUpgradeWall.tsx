@@ -18,6 +18,7 @@
 import { useEffect } from "react";
 import { CalendarClock } from "lucide-react";
 
+import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 
 const BILLING_HREF = "/dashboard/billing?from=paywall&feature=always_on";
@@ -82,9 +83,7 @@ export function ArchiveUpgradeWall({
             {countdownLabel(daysUntilArchive)}
           </span>
           <span style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.82)", lineHeight: 1.45 }}>
-            {name} and everything it remembers get packed away. Its memory, its files, the chats you
-            connected. Free agents get archived after they sleep. Pro agents never do. Keep yours live and
-            always-on for $9.99 a month.
+            {`${name} and everything it remembers get packed away: its memory, its files and the chats you connected. A free account doesn't keep a computer running. A paid plan, from ${ENTRY_PLAN_PRICE} a month, keeps yours live and on.`}
           </span>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { hasTokenTierInGrace, readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { holdsPaidPlan } from "@/lib/billing/subscription-status";
 import { supabaseAdmin } from "@/lib/supabase";
 import { PLANS } from "@/lib/subscription/plans";
@@ -874,5 +874,39 @@ describe("readPlanOnHold", () => {
       maybeSingle: jest.fn().mockResolvedValue({ data: null, error: { code: "08006", message: "down" } }),
     }));
     await expect(readPlanOnHold("user_unreadable")).resolves.toBeNull();
+  });
+});
+
+describe("hasTokenTierInGrace", () => {
+  const NOW = new Date("2026-10-21T12:00:00.000Z");
+
+  function mockGraceRows(result: { data: unknown; error: { message: string } | null }) {
+    const query: Record<string, jest.Mock> & { then?: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise<unknown> } = {};
+    for (const method of ["select", "eq", "is", "gt", "limit"]) query[method] = jest.fn(() => query);
+    query.then = (resolve, reject) => Promise.resolve(result).then(resolve, reject);
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "token_tier_qualifications") return query;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+    return query;
+  }
+
+  it("asks for an unsuspended row whose breach is less than 24 hours old", async () => {
+    const query = mockGraceRows({ data: [{ tier: "pro" }], error: null });
+    await expect(hasTokenTierInGrace("user_breached", NOW)).resolves.toBe(true);
+    expect(query.eq).toHaveBeenCalledWith("user_id", "user_breached");
+    expect(query.is).toHaveBeenCalledWith("last_suspend_at", null);
+    // The evaluator suspends at last_breach_at + 24h, so only a later breach is still in grace.
+    expect(query.gt).toHaveBeenCalledWith("last_breach_at", "2026-10-20T12:00:00.000Z");
+  });
+
+  it("is false when no row is in grace", async () => {
+    mockGraceRows({ data: [], error: null });
+    await expect(hasTokenTierInGrace("user_none", NOW)).resolves.toBe(false);
+  });
+
+  it("throws when the row cannot be read, so the caller can treat it as unknown", async () => {
+    mockGraceRows({ data: null, error: { message: "down" } });
+    await expect(hasTokenTierInGrace("user_unreadable", NOW)).rejects.toThrow("Token tier grace could not be read");
   });
 });

@@ -19,9 +19,11 @@ import {
   resolveFromEmail,
   resolveReplyToEmail,
 } from "@/lib/email/config";
+import { ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { log } from "@/lib/logger";
 import { SITE_URL } from "@/lib/seo-urls";
+import { PLANS, formatPrice } from "@/lib/subscription/plans";
 
 export const LIFECYCLE_EMAIL_KEYS = [
   "day1_idle",
@@ -90,6 +92,8 @@ const DASHBOARD_URL = `${SITE_URL}/dashboard`;
 /** A new launch in the one place agents and computers start from. */
 const LAUNCH_URL = `${SITE_URL}/dashboard/launch?kind=agent&start=1`;
 const BILLING_URL = `${SITE_URL}/dashboard/billing`;
+/** The entry paid plan's prices, from the same table checkout reads. */
+const ENTRY_PRICE_LINE = `${formatPrice(PLANS.operator.price)}/mo, or ${formatPrice(PLANS.operator.yearlyPrice)}/yr`;
 
 function greeting(firstName?: string | null): string {
   return firstName?.trim() ? `Hey ${firstName.trim()},` : "Hey,";
@@ -295,11 +299,9 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
     "",
     `${agent} has been up for a day now. Good start.`,
     "",
-    "Three things it can't do yet on a free account:",
+    "Three things worth trying next:",
     "",
     ...capabilitiesText.map((c) => `  • ${c}`),
-    "",
-    "All three come with Pro. No rush — a free account stays free for as long as you want it.",
     "",
     `Keep going: ${ctaUrl}`,
     "",
@@ -307,17 +309,14 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
-    preheader: "Day one done. Three things your agent can't do yet.",
+    preheader: "Day one done. Three things worth trying next.",
     eyebrow: "Day one",
     title: `${agent} made it through day one.`,
     body: [
       htmlParagraph(greeting(params.firstName)),
       htmlParagraph(`${agent} has been up for a day now. Good start.`),
-      htmlParagraph("Three things it can't do yet on a free account:"),
+      htmlParagraph("Three things worth trying next:"),
       htmlList(capabilities),
-      htmlParagraph(
-        "All three come with Pro. No rush — a free account stays free for as long as you want it."
-      ),
     ].join("\n"),
     ctaText: "Open your agent",
     ctaUrl,
@@ -412,28 +411,28 @@ function buildDay3Usecase(params: LifecycleEmailContentParams): LifecycleEmailCo
 }
 
 function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailContent {
-  const subject = "the honest pitch for Pro";
+  const subject = "what a paid plan adds";
   const ctaUrl = BILLING_URL;
   const changes = [
-    `<strong>Always-on</strong> — your agent is never paused for inactivity (a free agent sleeps after 4 idle days).`,
-    `<strong>2 vCPU / 4 GB RAM</strong> — double the headroom, noticeably faster under load.`,
-    `<strong>Web browsing</strong> — your agent can read live pages, not just what it already knows.`,
-    `<strong>Persistent memory</strong> — context carries across conversations instead of resetting.`,
-    `<strong>Scheduled tasks</strong> — standing jobs that run on a timer, no prompt needed.`,
+    `<strong>A computer that stays on:</strong> Hivra runs it for you and does not pause it for inactivity.`,
+    `<strong>${ENTRY_PLAN_SIZE}:</strong> run by Hivra, so you don't set up or look after a server.`,
+    `<strong>Web browsing:</strong> your agent can read live pages, not just what it already knows.`,
+    `<strong>Persistent memory:</strong> context carries across conversations instead of resetting.`,
+    `<strong>Scheduled tasks:</strong> standing jobs that run on a timer, no prompt needed.`,
   ];
   const changesText = [
-    "Always-on — your agent is never paused for inactivity (a free agent sleeps after 4 idle days).",
-    "2 vCPU / 4 GB RAM — double the headroom, noticeably faster under load.",
-    "Web browsing — your agent can read live pages, not just what it already knows.",
-    "Persistent memory — context carries across conversations instead of resetting.",
-    "Scheduled tasks — standing jobs that run on a timer, no prompt needed.",
+    "A computer that stays on: Hivra runs it for you and does not pause it for inactivity.",
+    `${ENTRY_PLAN_SIZE}: run by Hivra, so you don't set up or look after a server.`,
+    "Web browsing: your agent can read live pages, not just what it already knows.",
+    "Persistent memory: context carries across conversations instead of resetting.",
+    "Scheduled tasks: standing jobs that run on a timer, no prompt needed.",
   ];
   const text = [
     greeting(params.firstName),
     "",
-    "You've had a week with a free account. If you'd like Hivra to run the computer, here's the honest pitch for Pro — and if you're happy on your own computer, skip this email.",
+    "You've had a week with a free account. If you'd like Hivra to run the computer, here is what a paid plan adds. If you're happy on your own computer, skip this email.",
     "",
-    "$9.99/mo, or $79/yr.",
+    `${ENTRY_PRICE_LINE}.`,
     "",
     "What actually changes:",
     "",
@@ -447,15 +446,15 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
-    preheader: "$9.99/mo or $79/yr. Five things change. That's the list.",
+    preheader: `${ENTRY_PRICE_LINE}. Five things change. That's the list.`,
     eyebrow: "Day seven",
-    title: "The honest pitch for Pro.",
+    title: "What a paid plan adds.",
     body: [
       htmlParagraph(greeting(params.firstName)),
       htmlParagraph(
-        "You've had a week with a free account. If you'd like Hivra to run the computer, here's the honest pitch for Pro — and if you're happy on your own computer, skip this email."
+        "You've had a week with a free account. If you'd like Hivra to run the computer, here is what a paid plan adds. If you're happy on your own computer, skip this email."
       ),
-      htmlParagraph("<strong>$9.99/mo, or $79/yr.</strong> What actually changes:"),
+      htmlParagraph(`<strong>${ENTRY_PRICE_LINE}.</strong> What actually changes:`),
       htmlList(changes),
       htmlParagraph("That's the whole list. Cancel any time from the same page."),
     ].join("\n"),

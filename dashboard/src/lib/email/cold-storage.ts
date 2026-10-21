@@ -146,29 +146,31 @@ export async function sendColdArchivedEmail(
     "",
     `Since ${agentLabel(params.agentName, params.agentType)} has been inactive for a while, we've moved its state to cold storage to free up resources. Your data is safe and intact.`,
     "",
-    "When you're ready to use it again, hit Start in your dashboard:",
+    "When you're ready to use it again, press Start in your dashboard:",
     DASHBOARD_URL,
     "",
-    "Restoring takes about 5 minutes the first time — chat history and settings come back intact.",
+    `If no paid plan is active on your account, pay any open invoice or choose a plan in Billing first, because it cannot be started until one is: ${BILLING_URL}`,
     "",
-    `Want it to never pause? Pro agents stay always-on — they're never put to sleep for inactivity. ${BILLING_URL}`,
+    "Restoring takes about 5 minutes the first time, and chat history and settings come back intact.",
     "",
-    "— Ash",
+    `Want it to stay on? A paid plan keeps your computer running and never pauses it for inactivity. ${BILLING_URL}`,
+    "",
+    "Ash",
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
-    preheader: "Your agent is paused in cold storage — restore it any time.",
+    preheader: "Your agent is paused in cold storage and your data is safe.",
     eyebrow: "Paused",
     title: "We've paused your agent.",
     body: `
       <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Since ${agentLabel(params.agentName, params.agentType)} has been inactive, we've moved its state to cold storage to free up resources. Your data is safe and intact.</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">When you're ready, hit Start. Restoring takes about 5 minutes the first time — chat history and settings come back intact.</p>
-      <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#666;">Want it to never pause? <a href="${BILLING_URL}" style="color:#1a1a1a;text-decoration:underline;">Pro agents stay always-on</a> — never put to sleep for inactivity.</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">When you're ready, press Start. If no paid plan is active on your account, pay any open invoice or choose a plan in Billing first, because it cannot be started until one is. Restoring takes about 5 minutes the first time, and chat history and settings come back intact.</p>
+      <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#666;">Want it to stay on? <a href="${BILLING_URL}" style="color:#1a1a1a;text-decoration:underline;">A paid plan keeps your computer running</a> and never pauses it for inactivity.</p>
     `,
     ctaText: "Open the dashboard",
     ctaUrl: DASHBOARD_URL,
-    footerNote: "Reply to this email if anything's unclear. I read every reply. — Ash",
+    footerNote: "Reply to this email if anything's unclear. I read every reply.",
   });
   return send({
     to: params.email,
@@ -188,18 +190,19 @@ export async function sendColdPendingDeletionEmail(
   const subject =
     days <= 2
       ? `Final notice: ${agentLabel(params.agentName, params.agentType)} will be deleted in ${days} day${days === 1 ? "" : "s"}`
-      : `Your agent will be deleted in ${days} days — last chance`;
+      : `Your agent will be deleted in ${days} days: last chance`;
   const text = [
     `${greeting(params.firstName)}`,
     "",
     `${agentLabel(params.agentName, params.agentType)} has been in cold storage and hasn't been used recently. We'll permanently delete it on ${dateLabel} unless you reactivate.`,
     "",
-    `Bring it back by clicking Start in your dashboard:`,
-    DASHBOARD_URL,
+    `To keep it, press Start in your dashboard: ${DASHBOARD_URL}`,
     "",
-    `If you no longer need this agent, no action is required — it'll be removed automatically.`,
+    `If no paid plan is active on your account, pay any open invoice or choose a plan in Billing first, because it cannot be started until one is: ${BILLING_URL}`,
     "",
-    "— Ash",
+    `If you no longer need this agent, no action is required. It will be removed automatically.`,
+    "",
+    "Ash",
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
@@ -212,11 +215,11 @@ export async function sendColdPendingDeletionEmail(
     body: `
       <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${agentLabel(params.agentName, params.agentType)} has been in cold storage and hasn't been used recently. We'll permanently delete it on <strong>${dateLabel}</strong> unless you reactivate.</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Restoring takes about 5 minutes — chat history and settings come back intact.</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">To keep it, press Start in your dashboard. If no paid plan is active on your account, pay any open invoice or choose a plan in Billing first, because it cannot be started until one is. Restoring takes about 5 minutes, and chat history and settings come back intact.</p>
     `,
-    ctaText: "Restore my agent",
-    ctaUrl: DASHBOARD_URL,
-    footerNote: "If you no longer need this agent, no action is required — it'll be removed automatically.",
+    ctaText: "Open Billing",
+    ctaUrl: BILLING_URL,
+    footerNote: "If you no longer need this agent, no action is required. It will be removed automatically.",
   });
   return send({
     to: params.email,
@@ -240,7 +243,7 @@ export async function sendColdDeletedEmail(
     `If you'd like a fresh start, you can create a new agent any time:`,
     DASHBOARD_URL,
     "",
-    "— Ash",
+    "Ash",
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({

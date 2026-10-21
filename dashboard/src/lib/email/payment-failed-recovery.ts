@@ -4,7 +4,9 @@
  * One customer-facing email, triggered by the Stripe invoice.payment_failed
  * webhook (see lib/billing/dunning.ts for the trigger/skip/dedupe logic —
  * this module only knows how to build and send the email). Copy approved by
- * Ash 2026-07-07; treat it as verbatim.
+ * Ash 2026-07-07, reworded 2026-10-21 to match the lapse policy: the plan keeps
+ * working for 48 hours after the first failed payment, then the computer is
+ * stopped and its files are kept. The old copy promised an automatic shutdown.
  *
  * Deliberately NOT the branded card shell the other lifecycle emails use:
  * dunning recovers best as a short personal note from a human, so the HTML
@@ -13,7 +15,7 @@
  *
  * Sender: this email intentionally comes from "Ash at Hivra
  * <info@EMAIL_SEND_DOMAIN>" (the monitored inbox) rather than the shared
- * noreply@ envelope-from — "just reply and tell me" only works if replies
+ * noreply@ envelope-from, because "reply and tell me" only works if replies
  * actually land somewhere Ash reads. Transactional billing notice, so no
  * List-Unsubscribe headers (those are for the marketing-adjacent lifecycle
  * sends).
@@ -28,6 +30,7 @@ import { Resend } from "resend";
 import { EMAIL_SEND_DOMAIN, resolveReplyToEmail } from "@/lib/email/config";
 import { escapeHtml } from "@/lib/email/escape-html";
 import { log } from "@/lib/logger";
+import { PAYMENT_GRACE_HOURS } from "@/lib/subscription/plans";
 
 const LOG_SOURCE = "payment-failed-recovery-email";
 
@@ -72,23 +75,27 @@ export type PaymentFailedRecoveryEmailSendResult =
 
 const PARAGRAPH_STYLE = "margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;";
 
+const FAILED_PAYMENT_LINE = "Quick heads up. Your latest Hivra payment didn't go through.";
+const KEEP_RUNNING_LINE = `Your computer keeps running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment. If it is still unpaid then, we stop it. Its files are kept, and we email you before anything is deleted. Once the payment goes through, you can start it again.`;
+const CANCEL_LINE = "If you meant to cancel, reply and tell me, or cancel in Billing, so the card is not tried again. I read every email.";
+
 /** Exported for tests and previews; sendPaymentFailedRecoveryEmail uses it internally. */
 export function buildPaymentFailedRecoveryEmail(
   params: PaymentFailedRecoveryEmailParams
 ): PaymentFailedRecoveryEmailContent {
-  const subject = "your agent hit a card snag";
+  const subject = "your payment didn't go through";
   const text = [
     `Hey ${params.firstName},`,
     "",
-    "Quick heads up. Your card didn't go through this month, so this cycle's payment failed.",
+    FAILED_PAYMENT_LINE,
     "",
-    "Your agent is still running. Its memory, chats, and everything it's set up for you are safe. But if the card keeps failing, the box gets shut down automatically and all of that goes with it.",
+    KEEP_RUNNING_LINE,
     "",
     "The fix takes 30 seconds, no login needed:",
     "",
     params.hostedInvoiceUrl,
     "",
-    "Money tight or meant to cancel? Just reply and tell me. I read every email.",
+    CANCEL_LINE,
     "",
     "Ash",
     "Founder, Hivra",
@@ -103,11 +110,11 @@ export function buildPaymentFailedRecoveryEmail(
   <body style="margin:0;padding:0;background:#ffffff;font-family:${sans};color:#1a1a1a;-webkit-font-smoothing:antialiased;">
     <div style="max-width:560px;margin:0 auto;padding:32px 20px;">
       ${p(`Hey ${escapeHtml(params.firstName)},`)}
-      ${p("Quick heads up. Your card didn't go through this month, so this cycle's payment failed.")}
-      ${p("Your agent is still running. Its memory, chats, and everything it's set up for you are safe. But if the card keeps failing, the box gets shut down automatically and all of that goes with it.")}
+      ${p(FAILED_PAYMENT_LINE)}
+      ${p(KEEP_RUNNING_LINE)}
       ${p("The fix takes 30 seconds, no login needed:")}
       ${p(`<a href="${safeUrl}" style="color:#b3261e;word-break:break-all;">${safeUrl}</a>`)}
-      ${p("Money tight or meant to cancel? Just reply and tell me. I read every email.")}
+      ${p(CANCEL_LINE)}
       <p style="margin:0;font-size:16px;line-height:1.6;color:#1a1a1a;">Ash<br />Founder, Hivra</p>
     </div>
   </body>

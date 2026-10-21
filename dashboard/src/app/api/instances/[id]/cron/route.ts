@@ -44,7 +44,7 @@ const CRON_REQUEST_ERROR = "Scheduled task request failed";
 // Free includes a single standing task; the 2nd+ requires Pro.
 const FREE_STANDING_TASK_LIMIT = 1;
 const CRON_OVER_LIMIT_ERROR =
-  "Free includes one standing task. Upgrade to Pro to run more.";
+  "The free account includes one standing task. See plans in Billing to run more.";
 
 const PROFILE_SCHEMA = z
   .string()

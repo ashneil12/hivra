@@ -23,13 +23,14 @@ import {
   type TokenPlanMode,
 } from "@/lib/billing/plan-display";
 import { plannedHostedMachines } from "@/lib/subscription/hosted-ladder";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import type { BillingController } from "../useBillingController";
 import { ChoiceGroup } from "./ChoiceGroup";
 import styles from "../Billing.module.css";
 import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
 
 export const PLANS_INTRO =
-  "Every plan runs your agents and computers on Hivra's servers. Bring your own model key and we add nothing to what you spend.";
+  `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. Bring your own model key and we add nothing to what you spend.`;
 
 /**
  * When an in-place change is billed. The route swaps the subscription to the

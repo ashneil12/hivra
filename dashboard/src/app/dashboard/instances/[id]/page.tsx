@@ -1436,7 +1436,7 @@ export default function InstanceDetailPage() {
                   Warming up your agent
                 </span>
                 <span style={{ fontSize: 13, color: 'rgba(17, 24, 39, 0.78)', lineHeight: 1.45 }}>
-                  Free agents sleep after a few idle days — booting {instance.name} back up now (~30s). Upgrade to Pro to keep it always-on.
+                  {instance.name} was paused after a few idle days. Booting it back up now (~30s). A paid plan keeps the computer running, so it is ready the second you are.
                 </span>
               </div>
             </div>
@@ -1470,7 +1470,7 @@ export default function InstanceDetailPage() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                Stay always-on
+                See plans
               </button>
             </div>
           </div>

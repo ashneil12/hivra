@@ -2880,7 +2880,7 @@ export async function POST(
           entitlementSuspendedAt: instance!.entitlement_suspended_at ?? null,
         });
         return apiError(
-          "Compute is suspended until billing or token eligibility is restored.",
+          "This agent is suspended because a payment didn't go through or your plan ended. Pay the open invoice, update your card or choose a plan in Billing, then start it again.",
           402,
           {
             failureType: "instance_entitlement_suspended",

@@ -1,6 +1,8 @@
 /**
  * Payment-failed (dunning) recovery email content tests. Locks in:
- *   - the Ash-approved copy, verbatim (subject, body beats, sign-off)
+ *   - the copy (subject, body beats, sign-off), as reworded 2026-10-21 for the
+ *     lapse policy: 48 hours from the first failed payment, then the computer
+ *     is stopped and its files are kept
  *   - first-name derivation from the Stripe customer name
  *   - the personal "Ash at Hivra" sender + monitored reply-to
  *   - the hosted-invoice link in both text and HTML (escaped in HTML)
@@ -54,20 +56,34 @@ describe("buildPaymentFailedRecoveryEmail", () => {
     hostedInvoiceUrl: URL,
   });
 
-  it("uses the approved copy verbatim", () => {
-    expect(content.subject).toBe("your agent hit a card snag");
+  it("uses the reworded copy verbatim", () => {
+    expect(content.subject).toBe("your payment didn't go through");
     expect(content.text).toContain("Hey John,");
     expect(content.text).toContain(
-      "Quick heads up. Your card didn't go through this month, so this cycle's payment failed."
+      "Quick heads up. Your latest Hivra payment didn't go through."
     );
     expect(content.text).toContain(
-      "Your agent is still running. Its memory, chats, and everything it's set up for you are safe. But if the card keeps failing, the box gets shut down automatically and all of that goes with it."
+      "Your computer keeps running for up to 48 hours after the first failed payment. If it is still unpaid then, we stop it. Its files are kept, and we email you before anything is deleted. Once the payment goes through, you can start it again."
     );
     expect(content.text).toContain("The fix takes 30 seconds, no login needed:");
     expect(content.text).toContain(
-      "Money tight or meant to cancel? Just reply and tell me. I read every email."
+      "If you meant to cancel, reply and tell me, or cancel in Billing, so the card is not tried again. I read every email."
     );
     expect(content.text).toContain("Ash\nFounder, Hivra");
+  });
+
+  it("never tells a payer there is nothing to do: Stripe retries the card for about two weeks unless the plan is cancelled", () => {
+    const all = `${content.text}\n${content.html}`;
+    expect(all).not.toMatch(/nothing more to do|nothing to do/i);
+  });
+
+  it("promises no automatic shutdown or deletion, and does not say 'this month'", () => {
+    const all = `${content.subject}\n${content.text}\n${content.html}`;
+    expect(all).not.toMatch(/shut down|shuts down|goes with it|this month|this cycle|the box/i);
+    expect(all).not.toMatch(/money tight/i);
+    // The html carries the same two beats as the text.
+    expect(content.html).toContain("keeps running for up to 48 hours after the first failed payment");
+    expect(content.html).toContain("Its files are kept");
   });
 
   it("keeps the voice rules (no exclamation points, no hype)", () => {
@@ -136,7 +152,7 @@ describe("sendPaymentFailedRecoveryEmail", () => {
       from: "Ash at Hivra <info@hermesos.cloud>",
       to: "user@example.com",
       replyTo: "info@hermesos.cloud",
-      subject: "your agent hit a card snag",
+      subject: "your payment didn't go through",
     });
     expect(payload.text).toContain(URL);
     expect(options).toEqual({ idempotencyKey: "payment_failed_recovery_in_123" });

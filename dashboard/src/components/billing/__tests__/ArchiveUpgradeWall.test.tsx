@@ -20,8 +20,8 @@ describe("ArchiveUpgradeWall", () => {
     expect(screen.getByTestId("instance-archive-upgrade-wall")).toBeInTheDocument();
     expect(screen.getByText(/archiving in 3 days/i)).toBeInTheDocument();
     expect(screen.getByText(/ATLAS and everything it remembers get packed away/i)).toBeInTheDocument();
-    expect(screen.getByText(/Pro agents never do/i)).toBeInTheDocument();
-    expect(screen.getByText(/\$9\.99 a month/i)).toBeInTheDocument();
+    expect(screen.getByText(/A free account doesn't keep a computer running\. A paid plan, from \$9\.99 a month, keeps yours live and on\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/Free agents get archived|Pro agents/i)).not.toBeInTheDocument();
   });
 
   it("varies the countdown label for tomorrow / today", () => {

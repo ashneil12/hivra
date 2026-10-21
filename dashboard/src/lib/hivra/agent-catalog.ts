@@ -14,7 +14,13 @@ export interface AgentDef {
   name: string;
   vendor: string;
   tagline: string;
-  /** Minimum plan required to launch this agent. */
+  /**
+   * Smallest plan tier this agent's own size needs. It is not a plan floor for
+   * hosted launches: every computer Hivra Cloud runs for you needs a paid plan,
+   * and lib/hivra/resource-gate.ts refuses a Free account whatever this says.
+   * Read "free" as "needs no tier above the entry plan", never as "runs on a
+   * Free account".
+   */
   minPlan: PlanTier;
   /** Relative resource weight — Claude Code is hungry, so it counts double. */
   weight: number;
@@ -159,7 +165,7 @@ const ALL_AGENTS: AgentDef[] = [
     id: "openclaw",
     name: "OpenClaw",
     vendor: "OpenClaw",
-    tagline: "Always-on agent you reach from your messaging apps. Set it once, it runs.",
+    tagline: "An agent you reach from your messaging apps. On a computer that stays on, set it once and it runs.",
     // Runs a persistent agent daemon + heartbeat ON the box (not pool-exempt like
     // Aeon) — so it needs a real footprint and a paid tier.
     minPlan: "pro",
@@ -169,7 +175,7 @@ const ALL_AGENTS: AgentDef[] = [
     // 127.0.0.1:9222), so the user logs into their accounts in the live VNC view
     // and the agent acts in that session. Off → 1/2 (pro); on → +1/2 → 2/4.
     browser: true,
-    badge: "Always-on",
+    badge: "Messaging",
     accent: "#ff7a45",
     available: true,
     // `openclaw gateway` serves its Control UI (chat/config/exec-approvals) on a
@@ -324,6 +330,8 @@ export interface LaunchCheck {
   reason?: string;
 }
 
+// Compares plan tiers only. It does not know that Hivra Cloud needs a paid plan,
+// so it must not decide hosted access; resource-gate.ts does.
 export function canLaunchAgent(agent: AgentDef, plan: PlanTier): LaunchCheck {
   if (!agent.available) {
     return { ok: false, reason: "Coming soon" };

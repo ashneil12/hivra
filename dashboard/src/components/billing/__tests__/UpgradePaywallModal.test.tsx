@@ -22,7 +22,7 @@ describe("UpgradePaywallModal", () => {
     ["memory", /persistent memory/i],
     ["cron", /scheduled tasks/i],
     ["agents", /run a fleet of agents/i],
-    ["generic", /this feature needs pro/i],
+    ["generic", /this feature needs a paid plan/i],
   ] as [PaywallFeature, RegExp][])(
     "renders the %s feature with a plan comparison line and an attributed billing CTA",
     (feature, title) => {
@@ -32,12 +32,17 @@ describe("UpgradePaywallModal", () => {
 
       expect(screen.getByRole("dialog", { name: title })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
-      // Free vs Pro comparison, one row each.
-      expect(screen.getByText("Free").nextElementSibling).toHaveTextContent("Not included");
-      expect(screen.getByText("Pro · $9.99/mo").nextElementSibling).toHaveTextContent(
+      // Free vs paid comparison, one row each.
+      // The free account does include one agent on your own computer, so the
+      // agents row says that instead of "Not included".
+      expect(screen.getByText("Free").nextElementSibling).toHaveTextContent(
+        feature === "agents" ? "1 agent, on your own computer" : "Not included"
+      );
+      expect(screen.getByText("Paid plan · from $9.99/mo").nextElementSibling).toHaveTextContent(
         /included · 2 vCPU total · 3 agents/i
       );
-      expect(screen.getByRole("link", { name: /upgrade to pro, \$9\.99\/mo/i })).toHaveAttribute(
+      expect(screen.getByText("Paid feature")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /see plans, from \$9\.99\/mo/i })).toHaveAttribute(
         "href",
         `/dashboard/billing?from=paywall&feature=${feature}`
       );
@@ -56,7 +61,7 @@ describe("UpgradePaywallModal", () => {
     });
     expect(posthog.capture).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("link", { name: /upgrade to pro/i }));
+    fireEvent.click(screen.getByRole("link", { name: /see plans/i }));
 
     expect(posthog.capture).toHaveBeenCalledWith("upgrade_clicked", {
       surface: "feature_lock",
@@ -79,14 +84,14 @@ describe("UpgradePaywallModal", () => {
     );
 
     expect(screen.getByText(/run a fleet of agents/i)).toBeInTheDocument();
-    expect(screen.getByText(/free includes one agent/i)).toBeInTheDocument();
+    expect(screen.getByText(/the free account includes one agent on your own computer/i)).toBeInTheDocument();
     expect(posthog.capture).toHaveBeenCalledWith("paywall_viewed", {
       surface: "second_agent",
       feature: "agents",
       plan: "free",
     });
 
-    fireEvent.click(screen.getByRole("link", { name: /upgrade to pro/i }));
+    fireEvent.click(screen.getByRole("link", { name: /see plans/i }));
 
     expect(posthog.capture).toHaveBeenCalledWith("upgrade_clicked", {
       surface: "second_agent",
