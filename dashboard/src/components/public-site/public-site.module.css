@@ -18,7 +18,7 @@
 .site :where([id]){scroll-margin-top:110px}
 .site :where(a,button,input,select,textarea,[tabindex]):focus-visible,.header :where(a,button):focus-visible,.footer a:focus-visible{outline:2px solid var(--public-accent);outline-offset:5px}
 .site ::selection{color:var(--public-accent-ink);background:var(--public-accent)}
-.header{position:sticky;top:0;z-index:60;border-bottom:1px solid var(--public-line)}
+.header{position:sticky;top:var(--hivra-cookie-bar, 0px);z-index:60;border-bottom:1px solid var(--public-line)}
 .headerInner{display:flex;align-items:center;gap:26px;width:min(100%,1640px);min-height:80px;margin:auto;padding-inline:var(--public-gutter)}
 .brand{display:inline-flex;align-items:center;gap:10px;font-size:27px;font-weight:750;letter-spacing:-.075em;line-height:1;white-space:nowrap;text-decoration:none;color:var(--public-text);flex-shrink:0;min-height:44px}.brand img{width:32px;height:32px}
 .desktopNav{display:flex;align-items:center;justify-content:flex-end;gap:clamp(17px,1.9vw,30px);margin-left:auto}

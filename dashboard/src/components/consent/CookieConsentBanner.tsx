@@ -116,13 +116,17 @@ export function CookieConsentBanner() {
     return () => window.removeEventListener(OPEN_COOKIE_PREFERENCES_EVENT, open);
   }, []);
 
-  // The bar is fixed to the bottom of the screen. Reserve its height in the
-  // page so the footer wordmark scrolls clear of it instead of sitting under it.
+  // The bar used to be fixed to the bottom, which put it on the footer
+  // wordmark. It sits at the top instead, and the page starts below it.
   useEffect(() => {
-    padObserver.current?.disconnect();
-    padObserver.current = null;
+    const clear = () => {
+      padObserver.current?.disconnect();
+      padObserver.current = null;
+      document.body.style.removeProperty('padding-top');
+      document.documentElement.style.removeProperty('--hivra-cookie-bar');
+    };
     if (mode === 'hidden') {
-      document.body.style.removeProperty('padding-bottom');
+      clear();
       return;
     }
     const el = barRef.current;
@@ -131,7 +135,9 @@ export function CookieConsentBanner() {
     const apply = () => {
       if (cancelled) return;
       const height = Math.ceil(el.getBoundingClientRect().height);
-      document.body.style.paddingBottom = `${height + 16}px`;
+      const space = `${height + 16}px`;
+      document.body.style.paddingTop = space;
+      document.documentElement.style.setProperty('--hivra-cookie-bar', space);
     };
     apply();
     if (typeof ResizeObserver !== 'undefined') {
@@ -141,9 +147,7 @@ export function CookieConsentBanner() {
     }
     return () => {
       cancelled = true;
-      padObserver.current?.disconnect();
-      padObserver.current = null;
-      document.body.style.removeProperty('padding-bottom');
+      clear();
     };
   }, [mode, showPrefs]);
 
@@ -202,8 +206,7 @@ export function CookieConsentBanner() {
         position: 'fixed',
         left: '1rem',
         right: '1rem',
-        // --hivra-bottom-chrome is the phone bottom bar's height when it is shown.
-        bottom: 'calc(var(--hivra-bottom-chrome, 0px) + 1rem + env(safe-area-inset-bottom, 0px))',
+        top: 'calc(1rem + env(safe-area-inset-top, 0px))',
         zIndex: 1000,
         maxWidth: 720,
         maxHeight: 'calc(100dvh - var(--hivra-bottom-chrome, 0px) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
