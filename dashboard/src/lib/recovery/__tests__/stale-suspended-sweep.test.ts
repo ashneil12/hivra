@@ -69,9 +69,9 @@ function buildSupabaseMock(rows: Row[], subs: Sub[], updateMock: jest.Mock) {
   const eqLifecycle = jest.fn().mockReturnValue({ eq: eqInfra });
   const instanceSelect = jest.fn().mockReturnValue({ eq: eqLifecycle });
 
-  // Subscription lookup: from -> select -> .in -> .eq
-  const subEqStatus = jest.fn().mockResolvedValue({ data: subs, error: null });
-  const subInUser = jest.fn().mockReturnValue({ eq: subEqStatus });
+  // Subscription lookup: from -> select -> .in(user_id) -> .in(status)
+  const subInStatus = jest.fn().mockResolvedValue({ data: subs, error: null });
+  const subInUser = jest.fn().mockReturnValue({ in: subInStatus });
   const subSelect = jest.fn().mockReturnValue({ in: subInUser });
 
   // Update query: from -> update -> .eq -> .eq -> .is
@@ -81,6 +81,9 @@ function buildSupabaseMock(rows: Row[], subs: Sub[], updateMock: jest.Mock) {
   updateMock.mockReturnValue({ eq: updateEq1 });
 
   return {
+    // The status filter the sweep applied to the subscription lookup, so a test can
+    // assert which subscription rows count as "this person once paid".
+    subStatusFilter: subInStatus,
     from: jest.fn().mockImplementation((table: string) => {
       if (table === "hermes_subscriptions") {
         return { select: subSelect };
@@ -244,6 +247,74 @@ describe("runStaleSuspendedSweep", () => {
         daysRemaining: 14, // paid grace
       }),
     );
+  });
+
+  it("cancelled customer (paid plan, status canceled) gets the long ladder, not the free one", async () => {
+    const updateMock = jest.fn();
+    const client = buildSupabaseMock(
+      [
+        {
+          id: "inst-cancelled",
+          user_id: "user_cancelled",
+          name: "Delta",
+          proxmox_node: "fixturenode3",
+          proxmox_vmid: 308,
+          last_lifecycle_transition_at: thirtyOneDaysAgoIso,
+          entitlement_state: "suspended",
+        },
+      ],
+      // A cancelled customer keeps the paid plan and subscription id, but the row
+      // is no longer "active": matching only active rows treated them as free.
+      [{ user_id: "user_cancelled", plan: "operator", status: "canceled" }],
+      updateMock,
+    );
+    mockSupabaseAdmin.value = client;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => buildClerkUser("user_cancelled"),
+    }) as unknown as typeof fetch;
+
+    const summary = await runStaleSuspendedSweep(FIXED_DEFAULTS);
+
+    expect(summary.byTier).toEqual({ free: 0, paid_canceled: 1 });
+    expect(sendMock).toHaveBeenCalledWith(expect.objectContaining({ daysRemaining: 14 }));
+
+    // The subscription lookup must include the statuses a former customer ends in...
+    const [column, statuses] = client.subStatusFilter.mock.calls[0];
+    expect(column).toBe("status");
+    expect(statuses).toEqual(
+      expect.arrayContaining(["active", "past_due", "canceled", "unpaid", "inactive"]),
+    );
+    // ...but not a checkout that never paid.
+    expect(statuses).not.toContain("pending");
+  });
+
+  it("cancelled customer suspended only 4 days is not warned: the free 8 day clock does not apply", async () => {
+    const updateMock = jest.fn();
+    mockSupabaseAdmin.value = buildSupabaseMock(
+      [
+        {
+          id: "inst-cancelled-young",
+          user_id: "user_cancelled_young",
+          name: "Echo",
+          proxmox_node: "fixturenode3",
+          proxmox_vmid: 309,
+          last_lifecycle_transition_at: fourDaysAgoIso,
+          entitlement_state: "suspended",
+        },
+      ],
+      [{ user_id: "user_cancelled_young", plan: "fleet", status: "canceled" }],
+      updateMock,
+    );
+    global.fetch = jest.fn() as unknown as typeof fetch;
+
+    const summary = await runStaleSuspendedSweep(FIXED_DEFAULTS);
+
+    expect(summary.skippedNotYetEligible).toBe(1);
+    expect(summary.warnedAndScheduled).toBe(0);
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it("does NOT write the schedule when the email send fails", async () => {
