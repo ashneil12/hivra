@@ -22,8 +22,11 @@ import {
   GRACE_RECONCILER_LOG_SOURCE,
   reconcileSubscriptionGrace,
 } from "@/lib/billing/subscription-grace-reconciler";
+import { runHivraLapseSweep } from "@/lib/recovery/hivra-lapse-enforce";
 
 export const dynamic = "force-dynamic";
+// The lapse sweep may stop up to 5 computers one after another (120 s each).
+export const maxDuration = 800;
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -97,6 +100,18 @@ export async function GET(req: NextRequest) {
           skipped: result.skipped,
           errors: result.errors,
         },
+      });
+    }
+
+    // Stop Hivra Cloud computers whose owner has no paid plan (dark until
+    // HIVRA_LAPSE_ENFORCE_LIVE is "true"). A failure here never breaks this route.
+    try {
+      await runHivraLapseSweep();
+    } catch (err) {
+      log.error("hivra lapse sweep failed", err, {
+        source: "hivra-lapse-enforce",
+        route: "/api/cron/reconcile-subscription-grace",
+        failureType: "hivra_lapse_sweep_failed",
       });
     }
 

@@ -2,8 +2,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 
-
-export async function stopDeletedUserComputer(userId: string, agentId: string): Promise<void> {
+/**
+ * Stop one Hivra Cloud computer under its lifecycle lease, keeping its disk. Shared by the
+ * deleted-owner sweep and the unpaid-owner sweep (hivra-lapse-enforce.ts): both mean "contain
+ * this VM, never delete it". Throws on any doubt, leaving the operation for the reconciler.
+ */
+export async function stopHivraManagedComputer(userId: string, agentId: string): Promise<void> {
   if (!supabaseAdmin) throw new Error("Database not configured");
   const db = supabaseAdmin;
   const { data: agent, error } = await db.from("hivra_agents").select("*").eq("id", agentId).eq("user_id", userId).single();
@@ -43,9 +47,13 @@ export async function stopDeletedUserComputer(userId: string, agentId: string): 
   } catch (failure) {
     // Retain the operation for the existing reconciler rather than allowing a
     // competing Start while an unconfirmed provider action may still run.
-    await recordHivraAgentOperationFailure({ ...operation, error: "Deleted owner containment is incomplete" }).catch(() => false);
+    await recordHivraAgentOperationFailure({ ...operation, error: "Computer containment is incomplete" }).catch(() => false);
     throw failure;
   }
+}
+
+export async function stopDeletedUserComputer(userId: string, agentId: string): Promise<void> {
+  await stopHivraManagedComputer(userId, agentId);
 }
 
 export async function runDeletedOwnerComputerSweep() {
