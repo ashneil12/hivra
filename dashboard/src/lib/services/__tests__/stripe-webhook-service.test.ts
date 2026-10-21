@@ -75,6 +75,16 @@ jest.mock("@/lib/billing/instance-entitlement", () => ({
   resolveEffectiveSubscription: jest.fn().mockResolvedValue(null),
 }));
 
+// A cancelled owner's running computer is powered off by the grace enforcer,
+// which has its own suite. Here it is only a collaborator.
+jest.mock("@/lib/recovery/dunning-grace-enforce", () => ({
+  enforceGraceExpiredComputeStop: jest.fn().mockResolvedValue({
+    userId: "user_1",
+    outcome: "dry_run",
+    affected: 0,
+  }),
+}));
+
 interface MockBuilder {
   select: jest.Mock;
   update: jest.Mock;
@@ -136,6 +146,7 @@ import {
 } from "@/lib/billing/credits";
 import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-wallets";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
+import { enforceGraceExpiredComputeStop } from "@/lib/recovery/dunning-grace-enforce";
 import {
   resolveEffectiveSubscription,
   type EffectiveSubscription,
@@ -1507,6 +1518,60 @@ describe("StripeWebhookService", () => {
       }
     });
 
+    it("powers off the cancelled owner's computers right after the suspend", async () => {
+      const payloads = mockInstanceUpdateCapture();
+      let suspendedBeforeStop = false;
+      (enforceGraceExpiredComputeStop as jest.Mock).mockImplementationOnce(async () => {
+        suspendedBeforeStop = payloads.some(
+          (p) => p.entitlement_reason === "subscription_canceled"
+        );
+        return { userId: "user_1", outcome: "stopped", affected: 1 };
+      });
+
+      await StripeWebhookService.handleSubscriptionDeleted({
+        id: "sub_1",
+        metadata: { user_id: "user_1" },
+      } as unknown as Stripe.Subscription);
+
+      expect(enforceGraceExpiredComputeStop).toHaveBeenCalledTimes(1);
+      expect(enforceGraceExpiredComputeStop).toHaveBeenCalledWith("user_1");
+      expect(suspendedBeforeStop).toBe(true);
+    });
+
+    it("a failing enforcer is logged and never breaks the webhook", async () => {
+      mockInstanceUpdateCapture();
+      (enforceGraceExpiredComputeStop as jest.Mock).mockRejectedValueOnce(
+        new Error("proxmox unreachable")
+      );
+
+      await expect(
+        StripeWebhookService.handleSubscriptionDeleted({
+          id: "sub_1",
+          metadata: { user_id: "user_1" },
+        } as unknown as Stripe.Subscription)
+      ).resolves.toBeUndefined();
+
+      expect(log.error).toHaveBeenCalledWith(
+        expect.stringContaining("power off"),
+        expect.any(Error),
+        expect.objectContaining({ failureType: "subscription_deletion_compute_stop_failed" })
+      );
+    });
+
+    it("does not power anything off when the instances were not suspended (legacy hard-delete flag)", async () => {
+      process.env.HERMES_BILLING_LEGACY_HARD_DELETE = "true";
+      try {
+        mockInstanceUpdateCapture();
+        await StripeWebhookService.handleSubscriptionDeleted({
+          id: "sub_1",
+          metadata: { user_id: "user_1" },
+        } as unknown as Stripe.Subscription);
+        expect(enforceGraceExpiredComputeStop).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.HERMES_BILLING_LEGACY_HARD_DELETE;
+      }
+    });
+
     it("does NOT write the suspend shape when the legacy hard-delete revert flag is set", async () => {
       process.env.HERMES_BILLING_LEGACY_HARD_DELETE = "true";
       try {
@@ -1841,6 +1906,7 @@ describe("StripeWebhookService", () => {
       expect(applyTierChange).toHaveBeenCalledWith(
         expect.objectContaining({ userId: "user_1", newTier: "fleet", source: "stripe" })
       );
+      expect(enforceGraceExpiredComputeStop).not.toHaveBeenCalled();
     });
 
     it("subscription.deleted arms no deletion fuse under the legacy hard-delete flag", async () => {
