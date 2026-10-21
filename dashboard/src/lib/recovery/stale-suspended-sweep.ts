@@ -21,7 +21,7 @@
  *      looser one). The per-row check below re-applies the correct threshold
  *      based on resolved plan, so paid-canceled users older than 30 days get
  *      warned but those between 3 and 30 days get skipped.
- *   2. Looks up active subscriptions in batch to classify free vs paid-canceled.
+ *   2. Looks up subscriptions in batch to classify free vs paid-canceled.
  *   3. Fetches each owner's email from Clerk.
  *   4. Sends a deletion-warning email via Resend.
  *   5. Sets `scheduled_deletion_at = NOW() + <plan>GraceDays` and
@@ -219,9 +219,9 @@ export async function runStaleSuspendedSweep(
   const capHit = rows.length > config.maxPerRun;
   const candidates = capHit ? rows.slice(0, config.maxPerRun) : rows;
 
-  // Batch-load active subscriptions for the candidate users so we can classify
-  // free vs paid-canceled without an N+1 query. Anyone without a row is
-  // treated as free (resolvePlanTier).
+  // Batch-load the candidates' subscription rows (any status that means they
+  // once paid) so we can classify free vs paid-canceled without an N+1 query.
+  // Anyone without such a row is treated as free (resolvePlanTier).
   const subsByUser = new Map<string, SubscriptionRow>();
   if (candidates.length > 0) {
     const userIds = Array.from(new Set(candidates.map((c) => c.user_id)));
@@ -229,7 +229,11 @@ export async function runStaleSuspendedSweep(
       .from("hermes_subscriptions")
       .select("user_id, plan, status")
       .in("user_id", userIds)
-      .eq("status", "active");
+      // Any status that means "this person paid at some point". A cancelled or
+      // unpaid customer keeps their paid plan with status canceled or inactive, so
+      // matching only "active" classed every former customer as free (8 days to
+      // deletion instead of the 44 promised above). A pending checkout never paid.
+      .in("status", ["active", "past_due", "canceled", "unpaid", "inactive"]);
 
     if (subErr) {
       throw new Error(subErr.message || "Failed to load subscriptions for candidates");
