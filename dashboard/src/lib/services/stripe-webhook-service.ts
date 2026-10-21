@@ -1297,6 +1297,24 @@ export class StripeWebhookService {
       await this.scheduleInstancesForDeletion(userId);
     } else {
       await this.suspendInstancesForBilling(userId, "subscription_canceled");
+
+      // The suspend above only flips database flags; power the cancelled
+      // owner's running computers off now rather than days later at purge.
+      // Dry run unless DUNNING_GRACE_ENFORCE_LIVE=true; never breaks the webhook.
+      // A failed stop is logged, not retried (the grace cron only scans past_due).
+      try {
+        const { enforceGraceExpiredComputeStop } = await import(
+          "@/lib/recovery/dunning-grace-enforce"
+        );
+        await enforceGraceExpiredComputeStop(userId);
+      } catch (err) {
+        log.error("failed to power off computers after subscription deletion", err, {
+          source: LOG_SOURCE,
+          failureType: "subscription_deletion_compute_stop_failed",
+          userId,
+          subscriptionId: subscription.id,
+        });
+      }
     }
   }
 
