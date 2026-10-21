@@ -123,6 +123,8 @@ const RUNTIME_UPDATE_TIMEOUT_MS = 240_000;
 // and the result's trip back before RUNTIME_UPDATE_TIMEOUT_MS; the updater
 // skips its optional reporter step rather than run past this deadline.
 const RUNTIME_UPDATE_HOST_BUDGET_SECONDS = RUNTIME_UPDATE_TIMEOUT_MS / 1000 - 20;
+import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
@@ -411,6 +413,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return apiError("DeepSeek computers can’t update their connection service here yet. Nothing was changed.", 409);
     }
 
+    // A Hivra Cloud computer needs a paid plan. Refuse to bring one up for an owner
+    // without one, before any capacity check, lease or host call. Stop, snapshot,
+    // export and delete stay open. Decided live, so it clears when payment resumes.
+    if (await isStartBlockedForLapse(agent, action)) {
+      return apiError(
+        `${HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE} This computer's files are kept; press Start once you have a plan.`,
+        402,
+        undefined,
+        { code: "instance_entitlement_suspended" },
+      );
+    }
     const invalidateDesktopBeforePower = async (operationId: string) => {
       // Fence the previous boot's attestation under the claimed power operation.
       // The existing revocation contract preserves controller release ACKs.
@@ -774,7 +787,9 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
     };
     const startKickoff = (operationId: string) => {
       const activity = activityTelemetryKickoff(startHelper);
-      return `umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; ${activity.stage}nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}${activity.env}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
+      // A computer stopped for billing has autostart off (verifiedStopVmScript); every
+      // power-on turns it back on so a host reboot brings a paying owner's computer back.
+      return `qm set ${vmid} --onboot 1 >/dev/null 2>&1 || true; umask 077; install -m 0600 /dev/null ${shellQuote(provisionLog)}; install -m 0600 /dev/null ${shellQuote(startLog)}; printf 'HIVRA_OPERATION_ID %s\\n' ${shellQuote(operationId)} > ${shellQuote(startLog)}; ${activity.stage}nohup env HIVRA_OPERATION_ID=${shellQuote(operationId)} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_BINDING_TAG=${shellQuote(lifecycleBindingTag ?? "")} HIVRA_BINDING_TAG_ENFORCED=${executionContext.infrastructureBindingTagEnforced ? "1" : "0"} HIVRA_HOST_MEMORY_RESERVE_MB=${capacityPolicy.hostMemoryReserveMb} HIVRA_ENFORCE_CEILING_DENSITY=${capacityPolicy.mode === "enforce" ? "1" : "0"} HIVRA_CPU_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_MEMORY_CEILING_DENSITY_MILLI=${Math.round(capacityPolicy.memoryCeilingDensity * 1000)} ${startEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(subnetPrefix)} ${tunnelEnv}${activity.env}bash ${shellQuote(startHelper)} ${vmid} ${octet} >>${shellQuote(startLog)} 2>&1 < /dev/null & disown; echo kicked`;
     };
 
     const claimProviderOperation = async (
