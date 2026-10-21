@@ -60,6 +60,7 @@ describe("Footer", () => {
 
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute("href", "/changelog");
+    expect(screen.getByRole("link", { name: "This week" })).toHaveAttribute("href", "/week");
   });
 
   it("includes a roadmap link in the footer", () => {

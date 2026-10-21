@@ -24,7 +24,7 @@ describe("seo urls", () => {
   it("includes the live public pages (/changelog, /status, /stats) so crawlers can discover them", () => {
     const urls = getSiteUrls();
 
-    for (const path of ["/changelog", "/status", "/stats"]) {
+    for (const path of ["/changelog", "/week", "/status", "/stats"]) {
       const entry = urls.find((u) => u.url === `${SITE_URL}${path}`);
       expect(entry).toBeDefined();
       // Each new entry carries a valid lastModified date and weekly cadence,
@@ -147,6 +147,7 @@ describe("seo urls", () => {
         ["/why-hivra", PAGE_LAST_MODIFIED.whyHivra, false],
         ["/roadmap", PAGE_LAST_MODIFIED.roadmap, false],
         ["/changelog", PAGE_LAST_MODIFIED.changelog, false],
+        ["/week", PAGE_LAST_MODIFIED.week, false],
         ["/status", PAGE_LAST_MODIFIED.status, false],
         ["/stats", PAGE_LAST_MODIFIED.stats, false],
         ["/terms", PAGE_LAST_MODIFIED.terms, false],

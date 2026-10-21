@@ -47,6 +47,9 @@ export const PAGE_LAST_MODIFIED = {
   roadmap: "2026-09-30",
   // The newest entry in hermes_changelog.md is dated 2026-06-21.
   changelog: "2026-06-21",
+  // Public /week page added 2026-10-21. It reads GitHub at request time; the
+  // page copy itself dates from this day.
+  week: "2026-10-21",
   // The status page's content is from June; 2026-09-23 only removed a dash from
   // its title.
   status: "2026-06-22",
