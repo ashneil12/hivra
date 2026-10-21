@@ -2,12 +2,18 @@
 
 import { ArrowRight, ChevronRight, CreditCard, Loader2, RefreshCw, Shield, ShieldCheck } from "lucide-react";
 import { formatMicroUsd } from "@/components/billing/ManagedVeniceSubsidyBanner";
-import { FREE_IDLE_SLEEP_DAYS, activePlanPriceLine } from "@/lib/billing/plan-display";
-import { interpolateCopy } from "@/lib/billing/format";
+import { activePlanPriceLine } from "@/lib/billing/plan-display";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import type { BillingController } from "../useBillingController";
 import type { BillingTabId } from "./billing-tabs";
 import { EmptyPlate, RatingPlate } from "./RatingPlate";
 import styles from "../Billing.module.css";
+
+/** Shown with no plan at all: never subscribed, or a plan that has ended. */
+const NO_PLAN_TEXT = `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. If a plan has ended, your Hivra Cloud computers are stopped and their files are kept. Choose a plan, then press Start.`;
+
+/** The plate's idle-policy line for a free account that holds a Hivra-run computer. */
+const FREE_HOSTED_COMPUTER_TEXT = "Needs a paid plan";
 
 export interface OverviewCopy {
   plateEyebrow: string;
@@ -42,12 +48,14 @@ export function availableModelCreditsMicroUsd(summary: {
 }
 
 /** Why a paid plan that holds the account runs nothing, and how it is
- * settled. Only what billing observed: the row's status. */
+ * settled. Only what billing observed: the row's status. An overdue payment
+ * has already used its 48 hours, so Hivra Cloud computers are stopped (files
+ * kept) and can be started again once the plan is paid. */
 export function planOnHoldText(hold: { reason: "payment_overdue" | "no_slots"; billingPortal: boolean }): string {
   if (hold.reason === "payment_overdue") {
     return hold.billingPortal
-      ? "A payment didn't go through, so this plan isn't active right now. Pay the open invoice or update your card in the billing portal."
-      : "A payment didn't go through, so this plan isn't active right now. Contact support to settle it.";
+      ? "A payment didn't go through, so this plan is on hold and your Hivra Cloud computers are stopped. Their files are kept. Pay the open invoice or update your card in the billing portal, then press Start on each computer."
+      : "A payment didn't go through, so this plan is on hold and your Hivra Cloud computers are stopped. Their files are kept. Contact support to settle it, then press Start on each computer.";
   }
   return hold.billingPortal
     ? "This plan has no agent slots right now. Check your subscription in the billing portal."
@@ -102,11 +110,9 @@ export function OverviewTab({
             currentPeriodEnd: plan.currentPeriodEnd,
           })}
           specLabels={copy.plate}
-          idlePolicy={
-            plan.key === "free"
-              ? interpolateCopy(copy.plate.sleepsAfterIdle, { days: String(FREE_IDLE_SLEEP_DAYS) })
-              : copy.plate.alwaysOn
-          }
+          // A free account that still holds a Hivra-run computer: Hivra Cloud
+          // computers need a paid plan, so it no longer sleeps after idle days.
+          idlePolicy={plan.key === "free" ? FREE_HOSTED_COMPUTER_TEXT : copy.plate.alwaysOn}
           labels={{ slots: copy.slots, cpu: copy.cpu, memory: copy.memory }}
           actions={
             <>
@@ -172,7 +178,7 @@ export function OverviewTab({
       ) : planOnHold ? (
         <EmptyPlate
           eyebrow={copy.plateEyebrow}
-          title={`${planOnHold.name} plan on hold`}
+          title="Hivra Cloud plan on hold"
           text={planOnHoldText(planOnHold)}
           action={
             <>
@@ -210,7 +216,7 @@ export function OverviewTab({
         <EmptyPlate
           eyebrow={copy.plateEyebrow}
           title={copy.noPlanTitle}
-          text="Pick a plan to run agents and computers on Hivra's servers."
+          text={NO_PLAN_TEXT}
           action={
             <button type="button" className={`${styles.button} ${styles.primary}`} onClick={() => onGoTo("plans")}>
               Choose a plan

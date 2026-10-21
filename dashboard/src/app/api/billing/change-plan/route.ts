@@ -35,14 +35,13 @@ function isSelfServeDowngradeEnabled(): boolean {
 }
 
 /**
- * The exact rejection the route has always returned for downgrades. Kept as a
- * named constant so the flag-off path is byte-for-byte identical to the
- * pre-Batch-6 behavior.
+ * The rejection the route returns for downgrades while the self-serve
+ * downgrade flag is off. A named constant so the flag-off path stays a single
+ * fixed message.
  */
 const DOWNGRADE_UNAVAILABLE_MESSAGE =
-  "Plan downgrades are not available due to dedicated server infrastructure. " +
-  "You can upgrade your plan anytime. To switch to a lower tier, cancel your " +
-  "subscription and re-subscribe — note this will remove your current server.";
+  "Moving to a smaller plan isn't available yet. You can upgrade any time, " +
+  "or email info@hivra.cloud and we'll help.";
 
 const Schema = z.object({
   newPlan: z.enum(["operator", "fleet", "command"]),
@@ -142,8 +141,8 @@ export async function POST(req: NextRequest) {
       // cancellation, not a downgrade — route the user to the cancel flow.
       if (!isPaidPlanDowngrade(currentPlan, newPlan)) {
         return apiError(
-          "To move to the Free plan, cancel your subscription instead — " +
-            "in-place plan changes only switch between paid tiers.",
+          "To move to the free account, cancel your subscription instead. " +
+            "In-place plan changes only switch between paid plans.",
           400,
           { failureType: "change_plan_downgrade_to_free_not_supported" }
         );

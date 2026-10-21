@@ -2,6 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { Zap } from "lucide-react";
+import { PAYMENT_GRACE_HOURS } from "@/lib/subscription/plans";
 import type { BillingUsageData } from "../useBillingController";
 import styles from "../Billing.module.css";
 
@@ -197,6 +198,13 @@ export function RatingPlate({
             {boost && <span className={styles.plus}>Plus</span>}
           </h2>
           <p className={styles.plateLine}>{priceLine}</p>
+          {/* A failed card payment keeps the plan for 48 hours, then the
+              computers are stopped. Apple and token plans have their own grace. */}
+          {plan.status === "past_due" && plan.key !== "free" && (plan.source === "stripe" || !plan.source) && (
+            <p className={styles.plateLine}>
+              {`A payment didn't go through. Your computers keep running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment. If it is still unpaid then, they are stopped. Pay the open invoice or update your card in the billing portal, then press Start on each computer.`}
+            </p>
+          )}
           {boost && (
             <p className={styles.boost}>
               <Zap size={12} aria-hidden="true" />

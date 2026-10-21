@@ -507,11 +507,10 @@ describe("POST /api/billing/change-plan", () => {
     const body = await res.json();
 
     expect(res.status).toBe(403);
-    // Must be byte-for-byte the historical message.
+    // The fixed flag-off message.
     expect(body.error).toBe(
-      "Plan downgrades are not available due to dedicated server infrastructure. " +
-        "You can upgrade your plan anytime. To switch to a lower tier, cancel your " +
-        "subscription and re-subscribe — note this will remove your current server."
+      "Moving to a smaller plan isn't available yet. You can upgrade any time, " +
+        "or email info@hivra.cloud and we'll help."
     );
     // Flag off short-circuits before touching Stripe or the tier apply.
     expect(validateOrRecreateStripeCustomer).not.toHaveBeenCalled();

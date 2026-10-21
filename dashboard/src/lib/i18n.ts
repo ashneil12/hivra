@@ -158,7 +158,7 @@ const BASE_MARKETING_COPY = {
         free:
           "A free account is best if you have your own computer or server to connect. It includes no computer run by Hivra; choose a plan when you want Hivra to run one.",
         operator:
-          "Pro is best for solo builders and daily drivers — your agent stays always-on (never paused for inactivity) with room for three running at once.",
+          "Hivra Cloud is best for solo builders and daily drivers. Hivra runs a computer that stays on and is never paused for inactivity, with room for three agents at once.",
         fleet:
           "Power is best for multi-agent workflows, heavier browsing, and teams that want more compute headroom immediately.",
         command:

@@ -1948,15 +1948,15 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: /upgrade to pro/i })).not.toBeInTheDocument();
   });
 
-  it("tells free-plan users to upgrade to Pro or above when the exposed Browser tab is off", async () => {
+  it("tells free-plan users the live browser needs a paid plan when the exposed Browser tab is off", async () => {
     render(<AgentPage />);
 
     const browserTab = await findSurfaceButton(/^browser$/i);
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
     fireEvent.click(browserTab);
 
-    expect(screen.getByText(/upgrade to pro or above/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /upgrade to pro/i })).toBeInTheDocument();
+    expect(screen.getByText("The live browser needs a paid plan.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^see plans$/i })).toBeInTheDocument();
   });
 
   it("opens the upgrade paywall modal from the free-plan browser lock", async () => {
@@ -1966,10 +1966,10 @@ describe("AgentPage", () => {
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
     fireEvent.click(browserTab);
 
-    fireEvent.click(screen.getByRole("button", { name: /upgrade to pro/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^see plans$/i }));
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /upgrade to pro/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /see plans, from/i })).toHaveAttribute(
       "href",
       "/dashboard/billing?from=paywall&feature=browser",
     );

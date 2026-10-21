@@ -89,6 +89,16 @@ describe("sendWelcomeEmail", () => {
     );
   });
 
+  it("says the Hivra computer stays on, not the agent on any computer", async () => {
+    sendMock.mockResolvedValue({ data: { id: "email_1" }, error: null });
+    await sendWelcomeEmail({ email: "user@example.com", firstName: "Sam" });
+    const payload = sendMock.mock.calls[0][0] as { text: string; html: string };
+    for (const body of [payload.text, payload.html]) {
+      expect(body).toContain("pick a plan and Hivra runs one for you. A Hivra computer stays on, with no Docker and no babysitting.");
+      expect(body).not.toContain("your agent stays up");
+    }
+  });
+
   it("fails soft when RESEND_API_KEY is missing for a real recipient", async () => {
     delete process.env.RESEND_API_KEY;
     const res = await sendWelcomeEmail({ email: "user@example.com" });

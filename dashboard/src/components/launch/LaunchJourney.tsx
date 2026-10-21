@@ -502,7 +502,7 @@ const AGENT_TILES: readonly ChooseTile[] = ([
   { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account after it opens.", icon: Code2 },
   { id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },
   { id: "hermes", name: "Hermes", description: "A general-purpose agent for research and automation.", icon: Bot },
-  { id: "openclaw", name: "OpenClaw", description: "An always-on agent you reach from your messaging apps.", icon: Cpu },
+  { id: "openclaw", name: "OpenClaw", description: "An agent you reach from your messaging apps. On a Hivra Cloud computer it keeps running when your laptop is closed.", icon: Cpu },
   { id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit },
   { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
 ] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
@@ -1314,7 +1314,8 @@ export function LaunchJourney(
       && targetCapacity.cpu >= requiredCapacity.cpu
       && targetCapacity.ramGb >= requiredCapacity.ram,
   );
-  // Ubuntu Desktop, OpenClaw and Agent Zero need a paid plan on Hivra Cloud.
+  // Every computer Hivra Cloud runs needs a paid plan. A Free account is refused
+  // below whatever the agent, so this does not decide who needs one.
   const managedPaidRequired = fitSubject !== null && fitSubject.hivraCloud === "plan" && fitSubject.minPlan !== "free";
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
   const managedFits = planCanFit(plan, draft.resources, poolExempt);

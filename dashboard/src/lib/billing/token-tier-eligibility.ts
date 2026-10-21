@@ -28,7 +28,8 @@
  *        UPDATE currently_eligible = true, clear last_breach_at, do NOT
  *        bump qualifying_quantity (still grandfathered at original).
  *
- *     d. suspended — was breached, grace expired (now > last_breach_at + 48h),
+ *     d. suspended: was breached, grace expired (now >= last_breach_at +
+ *        REQUALIFICATION_GRACE_HOURS, which is 24 hours),
  *        balance still below qualifying_quantity. Set last_suspend_at = now,
  *        cooldown_ends_at = now + 7d.
  *

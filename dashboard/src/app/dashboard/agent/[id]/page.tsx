@@ -608,7 +608,7 @@ function BrowserDisabledView({
   onUpgrade: () => void;
 }) {
   const body = isFreePlan
-    ? "Upgrade to Pro or above to enable the live browser."
+    ? "The live browser needs a paid plan."
     : "Turn it on in Manage to open the live browser.";
   const button = isFreePlan ? (
     <button
@@ -617,7 +617,7 @@ function BrowserDisabledView({
       className="mono"
       style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
     >
-      <Settings2 size={14} /> Upgrade to Pro
+      <Settings2 size={14} /> See plans
     </button>
   ) : (
     <button

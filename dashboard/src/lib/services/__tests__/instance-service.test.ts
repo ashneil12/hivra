@@ -36,6 +36,7 @@ import { resolveCodexDeploymentSecret } from "@/lib/codex-oauth";
 import { fetchFirstReachableGatewayResponse } from "@/lib/agent-gateway";
 import { createManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
+import { PAYMENT_GRACE_HOURS } from "@/lib/subscription/plans";
 
 jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn(),
@@ -1069,6 +1070,51 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
+  it("tells a paid plan whose payment failed past grace that it is on hold, not to choose a plan", async () => {
+    const emptyQuery: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "in", "order", "limit", "not", "is"]) {
+      emptyQuery[method] = jest.fn().mockReturnThis();
+    }
+    emptyQuery.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    emptyQuery.then = (resolve: (value: unknown) => unknown) => resolve({ data: [], error: null });
+    const lapsedSubscription = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: {
+          plan: "operator",
+          status: "past_due",
+          instance_limit: 3,
+          total_cpu_budget: 2,
+          total_ram_budget: 4096,
+          grace_period_ends_at: "2020-01-01T00:00:00.000Z",
+          stripe_subscription_id: "sub_live_lapsed",
+        },
+        error: null,
+      }),
+    };
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((tableName: string) =>
+      tableName === "hermes_subscriptions" ? lapsedSubscription : emptyQuery
+    );
+
+    const result = await InstanceService.createInstance(
+      "user_lapsed_past_grace",
+      CreateInstanceSchema.parse({
+        name: "Lapsed Agent",
+        provider: "openrouter",
+        apiKey: "sk-or-test",
+      })
+    );
+
+    expect(result).toEqual({
+      success: false,
+      status: 403,
+      message:
+        "Your plan is on hold because a payment didn't go through. Update your payment in Billing to launch a computer.",
+    });
+    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+  });
+
   it("refuses a NEW provision on an App Store trialing sub, exactly like a Stripe trialing one", async () => {
     const emptyQuery: Record<string, unknown> = {};
     for (const method of ["select", "eq", "in", "order", "limit", "not", "is"]) {
@@ -1154,6 +1200,10 @@ describe("InstanceService.createInstance free-tier guard", () => {
         message: expect.stringMatching(/payment/i),
       })
     );
+    // The grace window is named, not left as "the grace period".
+    if (!result.success) {
+      expect(result.message).toContain(`${PAYMENT_GRACE_HOURS} hours after the first failed payment`);
+    }
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
