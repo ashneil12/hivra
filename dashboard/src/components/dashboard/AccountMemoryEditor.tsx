@@ -132,6 +132,9 @@ export function AccountMemoryEditor() {
           type="button"
           onClick={save}
           disabled={disabled}
+          aria-busy={status === "saving"}
+          aria-live="polite"
+          aria-atomic="true"
           style={{
             padding: "12px 24px",
             background: "var(--ink-black)",
@@ -146,7 +149,7 @@ export function AccountMemoryEditor() {
             fontWeight: 600,
           }}
         >
-          {status === "saving" ? "Saving…" : "Save"}
+          {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : "Save"}
         </button>
       </div>
 
