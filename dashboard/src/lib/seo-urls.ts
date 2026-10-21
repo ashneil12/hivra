@@ -95,6 +95,13 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       priority: 0.7,
     },
     {
+      // This week's merges and stuck pull requests.
+      url: `${SITE_URL}/week`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.week),
+      changeFrequency: "weekly",
+      priority: 0.6,
+    },
+    {
       // Live platform-health page (public, signed-out accessible).
       url: `${SITE_URL}/status`,
       lastModified: dayToDate(PAGE_LAST_MODIFIED.status),
