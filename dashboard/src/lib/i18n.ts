@@ -592,12 +592,9 @@ const BASE_MARKETING_COPY = {
           intro: "Your account, billing, keys and agent tools, plus how Hivra looks in this browser.",
           groups: {
             account: "Account",
-            billing: "Plan and billing",
-            connections: "Keys and connections",
-            toolkit: "Agent toolkit",
             device: "On this device",
-            apps: "Apps and help",
             reset: "Reset this browser",
+            elsewhere: "Other pages",
           },
           profile: {
             title: "Profile and sign-in",
@@ -1138,12 +1135,9 @@ const BASE_MARKETING_COPY = {
           intro: "你的账户、账单、密钥和 Agent 工具，以及 Hivra 在此浏览器中的外观。",
           groups: {
             account: "账户",
-            billing: "计划与账单",
-            connections: "密钥与连接",
-            toolkit: "Agent 工具箱",
             device: "此设备",
-            apps: "应用与帮助",
             reset: "重置此浏览器",
+            elsewhere: "其他页面",
           },
           profile: {
             title: "个人资料与登录",
@@ -1723,12 +1717,9 @@ const LOCALE_COPY_OVERRIDES = {
           "intro": "Tu cuenta, facturación, claves y herramientas de agentes, además de cómo se ve Hivra en este navegador.",
           "groups": {
             "account": "Cuenta",
-            "billing": "Plan y facturación",
-            "connections": "Claves y conexiones",
-            "toolkit": "Herramientas de agentes",
             "device": "En este dispositivo",
-            "apps": "Apps y ayuda",
-            "reset": "Restablecer este navegador"
+            "reset": "Restablecer este navegador",
+            "elsewhere": "Otras páginas"
           },
           "profile": {
             "title": "Perfil e inicio de sesión",
@@ -2261,12 +2252,9 @@ const LOCALE_COPY_OVERRIDES = {
           "intro": "Sua conta, cobrança, chaves e ferramentas de agentes, além da aparência do Hivra neste navegador.",
           "groups": {
             "account": "Conta",
-            "billing": "Plano e cobrança",
-            "connections": "Chaves e conexões",
-            "toolkit": "Ferramentas de agentes",
             "device": "Neste dispositivo",
-            "apps": "Apps e ajuda",
-            "reset": "Redefinir este navegador"
+            "reset": "Redefinir este navegador",
+            "elsewhere": "Outras páginas"
           },
           "profile": {
             "title": "Perfil e login",
@@ -2799,12 +2787,9 @@ const LOCALE_COPY_OVERRIDES = {
           "intro": "Votre compte, la facturation, les clés et les outils de vos agents, ainsi que l'apparence de Hivra dans ce navigateur.",
           "groups": {
             "account": "Compte",
-            "billing": "Offre et facturation",
-            "connections": "Clés et connexions",
-            "toolkit": "Boîte à outils des agents",
             "device": "Sur cet appareil",
-            "apps": "Applis et aide",
-            "reset": "Réinitialiser ce navigateur"
+            "reset": "Réinitialiser ce navigateur",
+            "elsewhere": "Autres pages"
           },
           "profile": {
             "title": "Profil et connexion",
@@ -3337,12 +3322,9 @@ const LOCALE_COPY_OVERRIDES = {
           "intro": "Dein Konto, Abrechnung, Schlüssel und Agent-Tools – und wie Hivra in diesem Browser aussieht.",
           "groups": {
             "account": "Konto",
-            "billing": "Tarif und Abrechnung",
-            "connections": "Schlüssel und Verbindungen",
-            "toolkit": "Agent-Werkzeuge",
             "device": "Auf diesem Gerät",
-            "apps": "Apps und Hilfe",
-            "reset": "Diesen Browser zurücksetzen"
+            "reset": "Diesen Browser zurücksetzen",
+            "elsewhere": "Weitere Seiten"
           },
           "profile": {
             "title": "Profil und Anmeldung",
@@ -3875,12 +3857,9 @@ const LOCALE_COPY_OVERRIDES = {
           "intro": "アカウント、請求、キー、エージェントのツール、そしてこのブラウザでの Hivra の表示。",
           "groups": {
             "account": "アカウント",
-            "billing": "プランと請求",
-            "connections": "キーと接続",
-            "toolkit": "エージェントツール",
             "device": "このデバイス",
-            "apps": "アプリとヘルプ",
-            "reset": "このブラウザをリセット"
+            "reset": "このブラウザをリセット",
+            "elsewhere": "その他のページ"
           },
           "profile": {
             "title": "プロフィールとサインイン",
@@ -4413,12 +4392,9 @@ const LOCALE_COPY_OVERRIDES = {
           "intro": "계정, 결제, 키, 에이전트 도구, 그리고 이 브라우저에서 Hivra가 보이는 방식.",
           "groups": {
             "account": "계정",
-            "billing": "요금제 및 결제",
-            "connections": "키 및 연결",
-            "toolkit": "에이전트 도구",
             "device": "이 기기",
-            "apps": "앱 및 도움말",
-            "reset": "이 브라우저 초기화"
+            "reset": "이 브라우저 초기화",
+            "elsewhere": "다른 페이지"
           },
           "profile": {
             "title": "프로필 및 로그인",

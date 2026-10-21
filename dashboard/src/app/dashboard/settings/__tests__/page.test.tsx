@@ -79,12 +79,9 @@ jest.mock("framer-motion", () => {
 
 const HOSTED_GROUPS = [
   "Account",
-  "Plan and billing",
-  "Keys and connections",
-  "Agent toolkit",
   "On this device",
-  "Apps and help",
   "Reset this browser",
+  "Other pages",
 ];
 
 function groupHeadings() {
@@ -168,15 +165,15 @@ describe("SettingsPage", () => {
   });
 
   it.each([
-    ["Plan and billing", "Billing", "/dashboard/billing", "Plan, payment methods, credits and invoices"],
-    ["Plan and billing", "Wallets", "/dashboard/wallet", "Agent wallets"],
-    ["Keys and connections", "API keys", "/dashboard/vault", "Provider keys and which agents use them"],
-    ["Agent toolkit", "Shared agent memory", "/dashboard/settings/memory", "What every new agent starts out knowing"],
-    ["Agent toolkit", "Tools and capabilities", "/dashboard/tools", "Add tools to the agents you choose"],
-    ["Agent toolkit", "Prompt library", "/dashboard/library", "Ready-made agent roles with tested prompts"],
-    ["Agent toolkit", "Templates", "/dashboard/templates", "Save a configured agent and launch it again"],
-    ["Apps and help", "Applications", "/dashboard/settings/applications", "Use Hivra in your browser or as a web app"],
-    ["Apps and help", "Help", "/dashboard/settings/help", "Support, community and legal information"],
+    ["Other pages", "Billing", "/dashboard/billing", "Plan, payment methods, credits and invoices"],
+    ["Other pages", "Wallets", "/dashboard/wallet", "Agent wallets"],
+    ["Other pages", "API keys", "/dashboard/vault", "Provider keys and which agents use them"],
+    ["Other pages", "Shared agent memory", "/dashboard/settings/memory", "What every new agent starts out knowing"],
+    ["Other pages", "Tools and capabilities", "/dashboard/tools", "Add tools to the agents you choose"],
+    ["Other pages", "Prompt library", "/dashboard/library", "Ready-made agent roles with tested prompts"],
+    ["Other pages", "Templates", "/dashboard/templates", "Save a configured agent and launch it again"],
+    ["Other pages", "Applications", "/dashboard/settings/applications", "Use Hivra in your browser or as a web app"],
+    ["Other pages", "Help", "/dashboard/settings/help", "Support, community and legal information"],
   ])("lists %s › %s as a named row linking to %s", (groupName, name, href, description) => {
     render(<SettingsPage />);
 
@@ -190,11 +187,17 @@ describe("SettingsPage", () => {
 
     expect(screen.queryByText("More tools")).not.toBeInTheDocument();
     expect(container.querySelector("details")).toBeNull();
-    expect(group("Agent toolkit").getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+    // One list, not a directory per area. Tools stay visible, in their old order.
+    expect(group("Other pages").getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+      "/dashboard/billing",
+      "/dashboard/wallet",
+      "/dashboard/vault",
       "/dashboard/settings/memory",
       "/dashboard/tools",
       "/dashboard/library",
       "/dashboard/templates",
+      "/dashboard/settings/applications",
+      "/dashboard/settings/help",
     ]);
   });
 
@@ -213,7 +216,7 @@ describe("SettingsPage", () => {
 
     process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED = "true";
     render(<SettingsPage />);
-    expect(group("Agent toolkit").getByRole("link", { name: "Invite and earn" })).toHaveAttribute("href", "/dashboard/settings/referral");
+    expect(group("Other pages").getByRole("link", { name: "Invite and earn" })).toHaveAttribute("href", "/dashboard/settings/referral");
   });
 
   it("puts the sign-in provider's own account control in the Account group", () => {
@@ -249,15 +252,16 @@ describe("SettingsPage", () => {
 
     expect(screen.queryByRole("region", { name: "Account" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("mock-user-button")).not.toBeInTheDocument();
-    expect(groupHeadings()).toEqual(HOSTED_GROUPS.slice(1));
+    expect(groupHeadings()).toEqual(HOSTED_GROUPS.filter((name) => name !== "Account"));
   });
 
   it("renders the self-hosted variant without hosted billing or wallets", () => {
     isLocalAuthModeMock.mockReturnValue(true);
     render(<SettingsPage />);
 
-    // Same unnumbered headings as hosted, minus billing: nothing renumbers.
-    expect(groupHeadings()).toEqual(HOSTED_GROUPS.filter((name) => name !== "Plan and billing"));
+    // Billing is a row inside Other pages, not its own heading, so self-host
+    // drops the links and the headings stay put. Nothing is numbered.
+    expect(groupHeadings()).toEqual(HOSTED_GROUPS);
     expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /wallet/i })).not.toBeInTheDocument();
     // The account row keeps a way to sign out (asserted in detail below).
@@ -424,7 +428,7 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("option", { name: "简体中文" }));
 
     expect(screen.getByRole("heading", { level: 1, name: "设置" })).toBeInTheDocument();
-    expect(groupHeadings()).toEqual(["账户", "计划与账单", "密钥与连接", "Agent 工具箱", "此设备", "应用与帮助", "重置此浏览器"]);
+    expect(groupHeadings()).toEqual(["账户", "此设备", "重置此浏览器", "其他页面"]);
     expect(screen.getByRole("link", { name: "账单" })).toHaveAttribute("href", "/dashboard/billing");
     expect(screen.getByText("网站语言")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "清除缓存" })).toBeInTheDocument();

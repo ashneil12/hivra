@@ -64,6 +64,12 @@
 .groupHeading::after { content: ''; flex: 1 1 auto; min-width: 1rem; height: 1px; background: var(--etched-border); }
 .groupNote { margin: 0.65rem 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 
+/* Outbound links sit after the controls, in one list. Same ledger, less voice:
+   a lighter heading and shorter rows. 52px stays above the 44px target. */
+.quietGroup { margin-top: 1.25rem; }
+.quietGroup .groupHeading { font-weight: 400; }
+.quietGroup .linkRow { min-height: 52px; padding-block: 0.5rem; }
+
 .panel { min-width: 0; margin: 0; padding: 0; list-style: none; background: var(--bg-surface); border: 1px solid var(--etched-border); }
 .panel > * + * { border-top: 1px solid var(--etched-border); }
 

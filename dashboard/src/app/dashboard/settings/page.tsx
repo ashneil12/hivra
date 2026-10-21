@@ -54,6 +54,8 @@ type SettingsGroupItem = {
   heading: string;
   content: ReactNode;
   note?: ReactNode;
+  /** Outbound links, rendered after the controls and with less voice. */
+  quiet?: boolean;
 };
 
 function RowIcon({ icon: Icon }: { icon: LucideIcon }) {
@@ -208,15 +210,16 @@ export default function SettingsPage() {
     { id: 'system', label: settingsCopy.theme.system, icon: MonitorSmartphone },
   ];
 
-  const billingRows: LinkRowItem[] = [
-    { id: 'billing', href: '/dashboard/billing', icon: CreditCard, title: copy.dashboard.nav.billing, description: hub.rows.billing.description },
-    // Agent wallets exist whether or not crypto billing is switched on.
-    { id: 'wallets', href: '/dashboard/wallet', icon: Wallet, title: hub.rows.wallets.title, description: hub.rows.wallets.description },
-  ];
-  const connectionRows: LinkRowItem[] = [
+  // Everything below leaves this page. One list, after the controls, so billing,
+  // keys, tools and help don't read as five more settings directories.
+  const elsewhereRows: LinkRowItem[] = [
+    // Hosted only: self-host has no plan billing. Agent wallets exist whether
+    // or not crypto billing is switched on, but only on the hosted account.
+    ...(!selfHosted ? [
+      { id: 'billing', href: '/dashboard/billing', icon: CreditCard, title: copy.dashboard.nav.billing, description: hub.rows.billing.description },
+      { id: 'wallets', href: '/dashboard/wallet', icon: Wallet, title: hub.rows.wallets.title, description: hub.rows.wallets.description },
+    ] : []),
     { id: 'api-keys', href: '/dashboard/vault', icon: KeyRound, title: hub.rows.apiKeys.title, description: hub.rows.apiKeys.description },
-  ];
-  const toolkitRows: LinkRowItem[] = [
     { id: 'memory', href: '/dashboard/settings/memory', icon: BrainCircuit, title: hub.rows.memory.title, description: hub.rows.memory.description },
     { id: 'tools', href: '/dashboard/tools', icon: Wrench, title: hub.rows.tools.title, description: hub.rows.tools.description },
     { id: 'library', href: '/dashboard/library', icon: LibraryBig, title: hub.rows.library.title, description: hub.rows.library.description },
@@ -224,8 +227,6 @@ export default function SettingsPage() {
     ...(process.env.NEXT_PUBLIC_HIVRA_REFERRAL_ENABLED === 'true'
       ? [{ id: 'referral', href: '/dashboard/settings/referral', icon: Gift, title: hub.rows.referral.title, description: hub.rows.referral.description }]
       : []),
-  ];
-  const appRows: LinkRowItem[] = [
     { id: 'applications', href: '/dashboard/settings/applications', icon: Download, title: hub.rows.applications.title, description: hub.rows.applications.description },
     { id: 'help', href: '/dashboard/settings/help', icon: CircleHelp, title: hub.rows.help.title, description: hub.rows.help.description },
   ];
@@ -273,9 +274,6 @@ export default function SettingsPage() {
         </div>
       ),
     }]),
-    ...(!selfHosted ? [{ id: 'billing', heading: hub.groups.billing, content: <LinkRows items={billingRows} /> }] : []),
-    { id: 'connections', heading: hub.groups.connections, content: <LinkRows items={connectionRows} /> },
-    { id: 'toolkit', heading: hub.groups.toolkit, content: <LinkRows items={toolkitRows} /> },
     {
       id: 'device',
       heading: hub.groups.device,
@@ -297,7 +295,6 @@ export default function SettingsPage() {
       ),
       note: hub.motionNote,
     },
-    { id: 'apps', heading: hub.groups.apps, content: <LinkRows items={appRows} /> },
     {
       id: 'reset',
       heading: hub.groups.reset,
@@ -319,6 +316,12 @@ export default function SettingsPage() {
         </div>
       ),
     },
+    {
+      id: 'elsewhere',
+      heading: hub.groups.elsewhere,
+      content: <LinkRows items={elsewhereRows} />,
+      quiet: true,
+    },
   ];
 
   return (
@@ -330,8 +333,13 @@ export default function SettingsPage() {
         </header>
 
         <motion.div initial="hidden" animate="visible" variants={sectionGroupVariants} className={styles.sections}>
-          {groups.map(({ id, heading, content, note }) => (
-            <motion.section key={id} variants={sectionVariants} aria-labelledby={`settings-group-${id}`} className={styles.group}>
+          {groups.map(({ id, heading, content, note, quiet }) => (
+            <motion.section
+              key={id}
+              variants={sectionVariants}
+              aria-labelledby={`settings-group-${id}`}
+              className={quiet ? `${styles.group} ${styles.quietGroup}` : styles.group}
+            >
               {/* Unnumbered: these groups are not steps, and the set differs between hosted, self-host and the native shell. */}
               <h2 id={`settings-group-${id}`} className={styles.groupHeading}>{heading}</h2>
               {content}
