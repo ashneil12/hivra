@@ -10,8 +10,11 @@ describe("Claude Code Telegram article", () => {
   it("answers the target query and links the required decision paths", () => {
     const copy = JSON.stringify(article);
 
-    expect(article.metaTitle).toContain("Claude Code From Telegram");
-    expect(article.faqs).toHaveLength(6);
+    expect(article.metaTitle).toContain("Claude Code Channels");
+    expect(article.faqs.length).toBeGreaterThanOrEqual(6);
+    expect(article.faqs.length).toBeLessThanOrEqual(11);
+    expect(copy).toContain("discord@claude-plugins-official");
+    expect(copy).toContain("imessage@claude-plugins-official");
     expect(copy).toContain("telegram@claude-plugins-official");
     expect(copy).toContain("--channels");
     expect(copy).toContain("/telegram:access policy allowlist");
@@ -22,7 +25,7 @@ describe("Claude Code Telegram article", () => {
   it("states the host and product boundaries", () => {
     const copy = JSON.stringify(article);
 
-    expect(copy).toContain("machine and the Claude Code process must stay online");
+    expect(copy).toContain("machine and the Claude Code process have to stay online");
     // A Claude Code agent on Hivra ships its own Telegram connect (the Telegram
     // tab under Manage, HivraTelegram.tsx); the plugin is the self-hosted route.
     expect(copy).toContain("On Hivra, a Claude Code agent also has its own Telegram connect, in its Telegram tab under Manage");
@@ -40,7 +43,7 @@ describe("Claude Code Telegram article", () => {
     // The minimum version is not pinned in the post: Anthropic's page no longer
     // states one, so the post defers to the documentation instead.
     expect(copy).not.toMatch(/2\.1\.80/);
-    expect(copy).toContain("claude.ai authentication or an Anthropic Console API key");
+    expect(copy).toContain("claude.ai login or an Anthropic Console API key");
     expect(copy).toContain("~/.claude/channels/telegram/.env");
     expect(copy).toContain("/plugin marketplace add anthropics/claude-plugins-official");
   });
