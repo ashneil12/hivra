@@ -261,6 +261,6 @@ export const article: BlogArticle = {
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent in 2026" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },
     { slug: "byo-api-key-explained", title: "BYO API key: what it means and why it matters" },
-    { slug: "control-claude-code-from-telegram", title: "How to control Claude Code from Telegram" },
+    { slug: "control-claude-code-from-telegram", title: "Claude Code Channels: Telegram, Discord and iMessage" },
   ],
 };
