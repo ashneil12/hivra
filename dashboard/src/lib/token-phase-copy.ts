@@ -76,11 +76,11 @@ const LAUNCHED_TOKEN_PAGE_MIGRATION = {
   ],
 } as const;
 const LAUNCHED_TOKENOMICS_MIGRATION_INTRO =
-  "$HIVRA is live on Base, launched through Bankr. Under the proposal, an active claim would sell your old tokens into their existing pool and swap the ETH proceeds for $HIVRA in the new pool. Bankr would run the conversion.";
+  "$HIVRA is live on Base, launched through Doppler. Eligible $HermesOS holders can claim $HIVRA 1:1 through Sablier, within a 90-day window. You pay the claim and network fees, and you do not burn or surrender your $HermesOS.";
 const DORMANT_TOKENOMICS_MIGRATION_TERMS =
-  "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps.";
+  "Existing holders keep their access. Claims are not open yet. The claim link, start and end times and the exact steps are published here once verified.";
 const LAUNCHED_TOKENOMICS_MIGRATION_TERMS =
-  "Existing holders keep their access, without forced conversion or a claim deadline. The steps, rate, fees and risks of a conversion get published before claims open.";
+  "Existing holders keep their access. The claim runs for 90 days from its verified opening. The steps, fees and risks are on this page.";
 
 export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>> = {
   dormant: {
@@ -105,15 +105,15 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
       headerLead:
         "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.",
       migrationParagraphs: [
-        "The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.",
+        "The plan is $HIVRA on Base, launched through Doppler. The eligibility snapshot is complete. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, within a 90-day window that starts when claims open. You pay the claim and network fees, and you do not burn or surrender your $HermesOS.",
         `${DORMANT_TOKENOMICS_MIGRATION_TERMS} Once $HIVRA launches, new users hold and pay with $HIVRA.`,
       ],
     },
     evolution: {
-      hivraStatus: "$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.",
+      hivraStatus: "$HIVRA is a planned new token on Base, to be launched through Doppler. Launch is in preparation and it does not exist yet.",
       hivraDetails: [
         "Under the proposal, new users would use $HIVRA once it launches.",
-        "Under the proposal, converting your $HermesOS would be optional, and the terms would be published before claims open.",
+        "Claiming $HIVRA from your $HermesOS snapshot is optional, and claims are not open yet.",
         "Under the proposal, paying in the token keeps its discount.",
       ],
       addressNote: "Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the",
@@ -146,7 +146,7 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
     },
     evolution: {
       hivraStatus:
-        "$HIVRA is live on Base, launched through Bankr. Its contract address is on the token page, and Hivra starts using it at the launch time shown there.",
+        "$HIVRA is live on Base, launched through Doppler. Its contract address is on the token page, and Hivra starts using it at the launch time shown there.",
       hivraDetails: [
         "From the launch time, new accounts use $HIVRA for token access and token payment.",
         HOLDERS_KEEP_ACCESS,
@@ -182,7 +182,7 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
       ],
     },
     evolution: {
-      hivraStatus: "$HIVRA is live on Base, launched through Bankr. Its contract address is on the token page.",
+      hivraStatus: "$HIVRA is live on Base, launched through Doppler. Its contract address is on the token page.",
       hivraDetails: ["New accounts use $HIVRA for token access and token payment.", HOLDERS_KEEP_ACCESS],
       addressNote: "Check contract addresses only on the",
       relationship: "$HIVRA is the live token. $HermesOS is the earlier token, and its holders keep their existing access.",

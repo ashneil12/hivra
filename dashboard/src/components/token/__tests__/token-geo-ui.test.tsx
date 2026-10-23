@@ -269,7 +269,7 @@ describe("/token page content", () => {
   it("has no notice and keeps the proposals for an allowed viewer", () => {
     render(<TokenPageClient entries={getTokenPageEntries()} />);
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
   });
 });
 

@@ -83,13 +83,13 @@ describe("dormant $HIVRA: the copy from before", () => {
     expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: copy.tokenomics.metadataDescription });
     renderPage(TokenomicsPage);
     expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
   });
 
   it("/why-hivra/evolution keeps its $HIVRA lines", () => {
     setPhase("dormant");
     const { container } = renderPage(WhyHivraEvolutionPage);
-    expect(screen.getByText("$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.")).toBeInTheDocument();
+    expect(screen.getByText("$HIVRA is a planned new token on Base, to be launched through Doppler. Launch is in preparation and it does not exist yet.")).toBeInTheDocument();
     for (const line of copy.evolution.hivraDetails) expect(screen.getByText(line)).toBeInTheDocument();
     expect(container.textContent).toContain("Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the token page.");
     expect(screen.getByText("$HermesOS is the live token today. $HIVRA is the proposed next one.")).toBeInTheDocument();

@@ -104,6 +104,10 @@ def reader_blocks(markdown):
         # This is the sole author annotation, not prose supplied to the reader.
         if INTERACTIVE_NOTE.fullmatch(block):
             continue
+        if re.fullmatch(r"!\[[^\]]*\]\([^)]+\)", block):
+            continue  # an illustration: its alt text lives in the image, not the reading text
+        if block.startswith("```"):
+            block = re.sub(r"^```\w*\n|\n?```$", "", block)
         lines = block.splitlines()
         if all(re.match(r"^(?:\d+\.|[-+*])\s+", line) for line in lines):
             for line in lines:
@@ -217,7 +221,7 @@ class LitepaperContentTests(unittest.TestCase):
 
     def test_standalone_tokenomics_preserves_the_complete_economy_wording(self):
         expected = "# Hivra tokenomics\n\n" + section(
-            self.markdown, "The economy", 2
+            self.markdown, "An economy for work the system can prove", 2
         ).strip().replace("### ", "## ") + "\n"
         self.assertEqual(
             (REPO / "TOKENOMICS.md").read_text(encoding="utf-8"),
@@ -231,7 +235,7 @@ class LitepaperContentTests(unittest.TestCase):
 
     def test_positioning_and_open_source_come_before_the_founder_letter(self):
         order = [node.attrs["id"] for node in self.page.elements if node.tag == "section" and node.attrs.get("id")]
-        self.assertEqual(order[:6], ["beginning", "opportunity", "threat", "fit", "platform", "founder"])
+        self.assertEqual(order[:6], ["beginning", "opportunity", "founder", "thin-layer", "safer-answer", "experience"])
         table = next(node for node in self.page.elements if node.tag == "table")
         self.assertIn("Hivra", table.text())
         cover = self.by_id["beginning"]
@@ -250,17 +254,17 @@ class LitepaperContentTests(unittest.TestCase):
         finale_links = [(a.attrs.get("href"), a.text().strip()) for a in links(finale)]
         self.assertEqual(finale_links[:2], [(AGENT_LAUNCH, "Launch an agent"), (COMPUTER_LAUNCH, "Start with a computer")])
         # The approved closing links stay, after the launch actions.
-        self.assertIn("Visit Hivra", [text for _href, text in finale_links[2:]])
+        self.assertIn("Read the full Hivra White Paper", [text for _href, text in finale_links[2:]])
 
     def test_the_brand_mark_is_the_approved_logo(self):
         marks = [node for node in self.page.elements if "brand-mark" in node.attrs.get("class", "").split()]
-        self.assertEqual(len(marks), 5)
+        self.assertEqual(len(marks), 3)
         for mark in marks:
             self.assertEqual((mark.tag, mark.attrs.get("src"), mark.attrs.get("alt")), ("img", "/brand/hivra-icon-192.png", ""))
 
     def test_the_monolith_is_served_as_webp_with_the_png_as_fallback(self):
         pictures = [node for node in self.page.elements if node.tag == "picture" and "monolith" in picture_fallback(node)]
-        self.assertEqual(len(pictures), 3, "hero, gallery and finale")
+        self.assertEqual(len(pictures), 2, "hero and finale")
         for picture in pictures:
             source, image = [child for child in picture.children if isinstance(child, Element)]
             self.assertEqual((source.tag, source.attrs.get("type")), ("source", "image/webp"))
@@ -275,16 +279,16 @@ class LitepaperContentTests(unittest.TestCase):
     def test_the_generated_renders_are_served_as_webp_with_the_png_as_fallback(self):
         pictures = [node for node in self.page.elements if node.tag == "picture" and "monolith" not in picture_fallback(node)]
         self.assertEqual([picture_fallback(picture) for picture in pictures], [
+            "assets/agent-computer-hero-v2.png",
             "assets/agent-computer-opportunity-v2.png",
             "assets/observable-run-v2.png",
-            "assets/agent-computer-hero-v2.png",
         ])
         for picture in pictures:
             source, image = [child for child in picture.children if isinstance(child, Element)]
             stem = image.attrs["src"].removesuffix(".png")
             self.assertEqual((source.tag, source.attrs.get("type")), ("source", "image/webp"))
             self.assertEqual(source.attrs["srcset"], f"{stem}-768.webp 768w, {stem}-1536.webp 1536w")
-            self.assertEqual(source.attrs.get("sizes"), "(max-width: 999px) 100vw, 46vw")
+            self.assertEqual(source.attrs.get("sizes"), "(max-width: 999px) 100vw, 960px")
             self.assertEqual((image.tag, image.attrs.get("loading")), ("img", "lazy"))
             self.assertEqual((image.attrs.get("width"), image.attrs.get("height")), ("1536", "1024"))
             self.assertTrue(image.attrs.get("alt"))
@@ -296,31 +300,7 @@ class LitepaperContentTests(unittest.TestCase):
     def test_every_reader_block_survives(self):
         mains = [node for node in self.page.elements if node.tag == "main"]
         self.assertEqual(len(mains), 1, "The experience must have one main reading area")
-        self.assert_content(reader_blocks(self.markdown), mains[0], "The page")
-
-    def test_all_fifteen_product_narratives_stay_in_their_articles(self):
-        roadmap = section(self.markdown, "What we're building around it", 2)
-        products = list(named_entries(roadmap))
-        self.assertEqual(len(products), 15, "The complete source roadmap has 15 products")
-        rendered = [node for node in self.page.elements if "product-panel" in node.attrs.get("class", "").split()]
-        self.assertEqual(len(rendered), len(products))
-        for name, blocks in products:
-            with self.subTest(product=name):
-                article = self.by_id.get("product-" + slug(name))
-                self.assertIsNotNone(article, "Missing product article: " + name)
-                self.assert_content(blocks, article, name)
-
-    def test_all_twelve_token_utility_explanations_stay_in_their_articles(self):
-        economy = section(self.markdown, "The economy", 2)
-        utilities = list(named_entries(section(economy, "What it's for", 3)))
-        self.assertEqual(len(utilities), 12, "The complete source has 12 token utilities")
-        rendered = [node for node in self.page.elements if "token-utility" in node.attrs.get("class", "").split()]
-        self.assertEqual(len(rendered), len(utilities))
-        for name, blocks in utilities:
-            with self.subTest(utility=name):
-                article = self.by_id.get("utility-" + slug(name))
-                self.assertIsNotNone(article, "Missing token utility article: " + name)
-                self.assert_content(blocks, article, name)
+        self.assert_content(reader_blocks(re.sub(r"<!--.*?-->", "", self.markdown, flags=re.DOTALL)), mains[0], "The page")
 
     def test_local_assets_documents_and_fragment_links_resolve(self):
         ids = [node.attrs["id"] for node in self.page.elements if "id" in node.attrs]

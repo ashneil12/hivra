@@ -5,6 +5,7 @@ import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
 import { glossify } from "@/components/gloss/glossify";
+import PrelaunchSections from "@/components/token/PrelaunchSections";
 
 /** Set only when the token geo-policy blocks this viewer. */
 export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
@@ -59,6 +60,22 @@ export default function FullTokenomicsSection({
   const copy = getTokenPhaseCopy(phase).tokenomics;
   if (geoRestriction) return <RestrictedTokenomicsSection headingLevel={headingLevel} restriction={geoRestriction} />;
   const Heading = headingLevel === 1 ? "h1" : "h2";
+  // Before the launch the page shows the planned facts from token-launch-status.ts, the same as /token.
+  if (phase === "dormant") return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
+    <header className={styles.economyHeading}>
+      <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
+      <div><p>{glossify(PROJECT_LEAD, { token: true })}</p><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full economy section<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+    </header>
+    <div className={styles.accessMigration}>
+      <article className={styles.access}>
+        <span className={styles.eyebrow}>Existing access</span>
+        <h3>A fixed quantity.<br />{" "}A choice to keep.</h3>
+        <p>Existing $HermesOS holders can qualify for compute. The amount you need is fixed when your holding first qualifies. A price fall doesn&apos;t take away access you already have, as long as you keep holding it. Self-hosting Hivra requires neither the token nor a Hivra account.</p>
+      </article>
+    </div>
+    <PrelaunchSections />
+    <div className={styles.economyEnding}><p>No presale or private round. No founder allocation of new $HIVRA is planned. The final supply and contract are published once verified.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+  </section>;
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
       <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
