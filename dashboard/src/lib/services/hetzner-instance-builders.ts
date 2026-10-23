@@ -1051,7 +1051,11 @@ ufw --force enable
 systemctl enable fail2ban && systemctl start fail2ban
 
 set -euo pipefail
-curl -fsSL https://get.docker.com | sh
+# Download-then-run, not "curl | sh": the shell executes a piped body
+# line-by-line, so a truncated or intercepted script still runs. -o plus
+# && keeps a failed/partial download from ever reaching sh.
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+sh /tmp/get-docker.sh
 docker network create hermes_net || true
 
 mkdir -p /opt/hermes/instances

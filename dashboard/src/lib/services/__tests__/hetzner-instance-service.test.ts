@@ -20,7 +20,9 @@ describe('hetzner-instance-service', () => {
     const userData = renderHostUserData();
     
     expect(userData).toContain('#!/usr/bin/env bash');
-    expect(userData).toContain('curl -fsSL https://get.docker.com | sh');
+    expect(userData).toContain('curl -fsSL https://get.docker.com -o /tmp/get-docker.sh');
+    expect(userData).toContain('sh /tmp/get-docker.sh');
+    expect(userData).not.toContain('curl -fsSL https://get.docker.com | sh');
     expect(userData).toContain('docker network create hermes_net || true');
     expect(userData).toContain('cat > docker-compose.yml << \'COMPOSEEOF\'');
   });

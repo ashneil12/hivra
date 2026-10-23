@@ -3891,7 +3891,11 @@ function tsSpawn(args, timeoutMs) {
 async function ensureTs() {
   const c = await execCommand('command -v tailscale', 5000);
   if (!c.ok) {
-    const i = await execCommand('curl -fsSL https://tailscale.com/install.sh | sh', 180000);
+    // Download-then-run, never "curl | sh": a piped install executes
+    // line-by-line, so a truncated/intercepted body still runs. Landing the
+    // script in a file first means a curl failure or a partial body
+    // never reaches the shell.
+    const i = await execCommand('curl -fsSL https://tailscale.com/install.sh -o /tmp/tailscale-install.sh && sh /tmp/tailscale-install.sh', 180000);
     if (!i.ok) return { ok: false, stdout: i.stdout, stderr: i.stderr, error: 'tailscale install failed' };
   }
   const systemd = await execCommand('command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]', 5000);
