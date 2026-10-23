@@ -104,6 +104,7 @@ HERO_TITLE = "Your agent needs a computer. It does not need yours."
 FOUNDER_TITLE = "I am building the product I need"
 ECONOMY_TITLE = "An economy for work the system can prove"
 FINALE_TITLE = "Somewhere better to work"
+THIN_LAYER_TITLE = "The thin layer between an agent and your life"
 SECTIONS = (
     (HERO_TITLE, "opportunity", "The beginning"),
     (FOUNDER_TITLE, "founder", "Why I\u2019m building it"),
@@ -357,6 +358,9 @@ def build_page():
             continue
         else:
             content = subsections(body)
+            if title == THIN_LAYER_TITLE:
+                # The interactive boundary lab: the reader sees what a permission prompt does and does not protect.
+                content += '<div class="problem-layout">{}</div>'.format((OUTPUT.parent / "boundary.html").read_text(encoding="utf-8"))
         klass = "economy chapter shell" if title == ECONOMY_TITLE else "lp-chapter chapter shell"
         chapters += ('<section class="{}" id="{}" data-chapter="{}"><div class="chapter-heading"><h2>{}</h2></div>{}</section>').format(
             klass, anchor, escape(label), escape(title), content)
