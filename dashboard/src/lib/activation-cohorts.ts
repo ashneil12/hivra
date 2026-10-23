@@ -298,39 +298,40 @@ async function fetchSubscriptionsForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<ActivationSubscriptionRow[]> {
-  const rows: ActivationSubscriptionRow[] = [];
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    rows.push(
-      ...(await fetchAllPages<ActivationSubscriptionRow>("activation cohort subscriptions", (from, to) =>
+  const groups = await Promise.all(
+    chunk(userIds, IN_CHUNK_SIZE).map((ids) =>
+      fetchAllPages<ActivationSubscriptionRow>("activation cohort subscriptions", (from, to) =>
         client
           .from("hermes_subscriptions")
           .select("user_id, plan, status, current_period_end")
           .in("user_id", ids)
           .order("user_id")
           .range(from, to)
-      ))
-    );
-  }
-  return rows;
+      )
+    )
+  );
+  return groups.flat();
 }
 
 async function fetchDigestUserIds(
   client: AdminClient,
   userIds: string[]
 ): Promise<Set<string>> {
+  const groups = await Promise.all(
+    chunk(userIds, IN_CHUNK_SIZE).map((ids) =>
+      fetchAllPages<ActivationDigestRow>("activation digest sends", (from, to) =>
+        client
+          .from("lifecycle_email_sends")
+          .select("user_id")
+          .like("email_key", "activity_digest%")
+          .in("user_id", ids)
+          .order("user_id")
+          .range(from, to)
+      )
+    )
+  );
   const out = new Set<string>();
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    const rows = await fetchAllPages<ActivationDigestRow>("activation digest sends", (from, to) =>
-      client
-        .from("lifecycle_email_sends")
-        .select("user_id")
-        .like("email_key", "activity_digest%")
-        .in("user_id", ids)
-        .order("user_id")
-        .range(from, to)
-    );
-    for (const r of rows) if (r.user_id) out.add(r.user_id);
-  }
+  for (const rows of groups) for (const r of rows) if (r.user_id) out.add(r.user_id);
   return out;
 }
 

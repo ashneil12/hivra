@@ -68,7 +68,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       "stat_date, total_tokens, sessions, api_calls, tool_calls, estimated_cost_usd, by_model"
     )
     .eq("instance_id", id)
-    .gte("stat_date", sinceIso);
+    .gte("stat_date", sinceIso)
+    // One snapshot per day — the window can't legitimately return more.
+    .limit(days);
   if (error) {
     log.warn("usage-summary snapshot query failed", {
       source: "instance-usage-summary",

@@ -286,20 +286,19 @@ async function fetchInstancesForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<FunnelInstanceRow[]> {
-  const rows: FunnelInstanceRow[] = [];
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    rows.push(
-      ...(await fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
+  const groups = await Promise.all(
+    chunk(userIds, IN_CHUNK_SIZE).map((ids) =>
+      fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
         client
           .from("hermes_instances")
           .select("user_id, created_at, first_active_at, last_activity_at")
           .in("user_id", ids)
           .order("id")
           .range(from, to)
-      ))
-    );
-  }
-  return rows;
+      )
+    )
+  );
+  return groups.flat();
 }
 
 function fetchPayments(
@@ -352,17 +351,19 @@ export async function fetchEngagedFreeUserIds(
   );
   const userIds = [...new Set(liveActive.map((r) => r.user_id).filter((id): id is string => !!id))];
   const engaged = new Set<string>();
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    const { data, error } = await client
-      .from("hermes_subscriptions")
-      .select("user_id")
-      .eq("plan", "free")
-      .in("user_id", ids);
-    if (error) throw queryError("funnel engaged free pool", error);
-    for (const row of data ?? []) {
-      if (row.user_id) engaged.add(row.user_id);
-    }
-  }
+  await Promise.all(
+    chunk(userIds, IN_CHUNK_SIZE).map(async (ids) => {
+      const { data, error } = await client
+        .from("hermes_subscriptions")
+        .select("user_id")
+        .eq("plan", "free")
+        .in("user_id", ids);
+      if (error) throw queryError("funnel engaged free pool", error);
+      for (const row of data ?? []) {
+        if (row.user_id) engaged.add(row.user_id);
+      }
+    })
+  );
   return [...engaged].sort();
 }
 
