@@ -3255,10 +3255,10 @@ esac
   });
 
   it("buildProxmoxResizeScript clamps balloonFloorMb to [64, memoryMb]", () => {
-    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
+    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
     expect(tooLow).toContain("BALLOON_FLOOR_MB='64'");
 
-    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
+    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
     expect(tooHigh).toContain("BALLOON_FLOOR_MB='2048'");
   });
 

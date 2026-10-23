@@ -9,6 +9,7 @@ import {
   assertSupportedProxmoxGatewayHost,
   buildProxmoxGatewayCaddySite,
   isCoveredByProxmoxStaticOriginCert,
+  isSafeGatewayHostname,
 } from "@/lib/services/proxmox-gateway-caddy-site";
 import {
   buildHermesBrowserSidecarCacheCleanupFunction,
@@ -57,6 +58,33 @@ export function resolveProxmoxBalloonFloorMb(
 export const DEFAULT_PROXMOX_VM_DISK_GB = 30;
 export function shQuote(value: string | number): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+/**
+ * SEC-03 build-time VMID gate. Every builder that splices a VMID into `qm`
+ * arguments or the `/run/hermes-vm-claims/<vmid>.claim` path asserts here
+ * first: a non-integer or sub-100 VMID is a bug or a hostile DB/env read and
+ * must fail at script-build time rather than reach a host, where it could
+ * address the wrong guest or escape its quoting. Proxmox VMIDs start at 100.
+ */
+export function assertValidProxmoxVmid(vmid: number): void {
+  if (!Number.isSafeInteger(vmid) || vmid < 100) {
+    throw new Error(`Invalid Proxmox VMID: ${String(vmid)}`);
+  }
+}
+/**
+ * SEC-03 build-time hostname gate for builders that turn a gateway host into
+ * a `rm`-able site path (`<caddySitesDir>/<host>.caddy`). shQuote keeps the
+ * path shell-safe but cannot stop `../` traversal or Caddy metacharacters;
+ * the hostname shape can. Cert-policy checks stay in
+ * assertSupportedProxmoxGatewayHost — delete/cleanup must still work for
+ * legacy nested hostnames.
+ */
+export function assertSafeGatewaySiteHost(gatewayHost: string): void {
+  if (!isSafeGatewayHostname(gatewayHost)) {
+    throw new Error(
+      `Refusing to build Proxmox host script for unsafe gateway hostname: ${gatewayHost}`,
+    );
+  }
 }
 export function buildProxmoxGuestBootstrapScript(): string {
   return `#!/usr/bin/env bash
@@ -1226,6 +1254,7 @@ done
 `;
 }
 export function buildProxmoxTemplateAvailabilityScript(params: { templateId: number }): string {
+  assertValidProxmoxVmid(params.templateId);
   return `#!/usr/bin/env bash
 set -euo pipefail
 TEMPLATE_ID=${shQuote(params.templateId)}
@@ -1252,6 +1281,7 @@ echo "HERMES_PROXMOX_TEMPLATE_READY $TEMPLATE_ID"
 `;
 }
 export function buildProxmoxStatusScript(vmid: number): string {
+  assertValidProxmoxVmid(vmid);
   return `#!/usr/bin/env bash
 set -euo pipefail
 if ! qm status ${shQuote(vmid)} >/dev/null 2>&1; then
@@ -1281,6 +1311,7 @@ export function buildProxmoxMetricsScript(
   vmid: number,
   opts: { vmSshUser?: string; vmSshKeyPath?: string } = {}
 ): string {
+  assertValidProxmoxVmid(vmid);
   // Emit verbose qm status. We grep for the keys we care about and prefix
   // each with METRIC for unambiguous parsing on the orchestrator side.
   return `#!/usr/bin/env bash
@@ -1427,6 +1458,7 @@ export const PROXMOX_VM_IDENTITY_MISMATCH_MARKER = "HERMES_VM_IDENTITY_MISMATCH"
  * both forms are accepted, nothing else is.
  */
 export function buildProxmoxVmOwnedByInstanceCheck(vmid: number, expectedInstanceId: string): string {
+  assertValidProxmoxVmid(vmid);
   if (!INSTANCE_ID_PATTERN.test(expectedInstanceId)) {
     throw new Error("Proxmox lifecycle instance identity is invalid.");
   }
@@ -1459,6 +1491,8 @@ export function buildProxmoxDeleteScript(params: {
   /** Seconds to wait for graceful ACPI/agent shutdown before hard-stop. Default 30. */
   gracefulShutdownTimeoutSeconds?: number;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
+  assertSafeGatewaySiteHost(params.gatewayHost);
   const siteFile = `${params.caddySitesDir.replace(/\/+$/g, "")}/${params.gatewayHost}.caddy`;
   const gracefulTimeout = Math.max(0, Math.floor(params.gracefulShutdownTimeoutSeconds ?? 30));
 
@@ -1551,8 +1585,9 @@ export function buildProxmoxCaddySiteCleanupScript(params: {
     .map((h) => h.trim())
     .filter(Boolean)
     .map((h) => {
+      assertSafeGatewaySiteHost(h);
       const file = `${dir}/${h}.caddy`;
-      return `if [ -f ${shQuote(file)} ]; then rm -f ${shQuote(file)} && echo "HERMES_CADDY_SITE_REMOVED ${h}"; else echo "HERMES_CADDY_SITE_ABSENT ${h}"; fi`;
+      return `if [ -f ${shQuote(file)} ]; then rm -f ${shQuote(file)} && echo ${shQuote(`HERMES_CADDY_SITE_REMOVED ${h}`)}; else echo ${shQuote(`HERMES_CADDY_SITE_ABSENT ${h}`)}; fi`;
     })
     .join("\n");
   return `#!/usr/bin/env bash
@@ -1629,6 +1664,7 @@ export function buildProxmoxPowerScript(params: {
   setOnboot?: 0 | 1;
   verifyOnboot?: boolean;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
   const timeout = Math.max(
     1,
     Math.min(600, Math.floor(params.shutdownTimeoutSeconds ?? 90))
@@ -1727,6 +1763,8 @@ export function buildProxmoxOrphanCleanupScript(params: {
   gatewayHost: string;
   caddySitesDir: string;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
+  assertSafeGatewaySiteHost(params.gatewayHost);
   const siteFile = `${params.caddySitesDir.replace(/\/+$/g, "")}/${params.gatewayHost}.caddy`;
   return `#!/usr/bin/env bash
 set +e
@@ -1755,6 +1793,7 @@ export function buildProxmoxDormantArchiveScript(params: {
   archiveDir: string;
   instanceId: string;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
   return `#!/usr/bin/env bash
 set -euo pipefail
 VMID=${shQuote(params.vmid)}
@@ -1802,6 +1841,7 @@ export function buildProxmoxResizeScript(params: {
    *  semantics. Omit to preserve the legacy fully-pinned allocation. */
   balloonFloorMb?: number;
 }) {
+  assertValidProxmoxVmid(params.vmid);
   const cores = Math.max(1, Math.floor(params.cores));
   const cpuLimit = Math.max(0.1, params.cores);
   const memoryMb = Math.max(1024, Math.floor(params.memoryMb));
