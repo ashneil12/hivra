@@ -71,11 +71,17 @@ export function verifySignedUrl(opts: {
   const tsNum = Number(ts);
   if (!Number.isFinite(tsNum)) return { ok: false, reason: "missing_params" };
 
-  const requestedTtl = Number(ttl);
+  let requestedTtl: number | undefined;
+  if (ttl !== undefined) {
+    requestedTtl = Number(ttl);
+    if (!Number.isFinite(requestedTtl)) return { ok: false, reason: "missing_params" };
+    if (requestedTtl <= 0) return { ok: false, reason: "expired" };
+  }
   const effectiveTtl = Math.min(
-    Number.isFinite(requestedTtl) ? requestedTtl : NOVNC_TTL_MS,
+    requestedTtl ?? NOVNC_TTL_MS,
     opts.maxTtlMs ?? NOVNC_TTL_MS,
   );
+  if (tsNum - Date.now() > 60_000) return { ok: false, reason: "expired" };
   if (Date.now() - tsNum > effectiveTtl) return { ok: false, reason: "expired" };
 
   const expected = sign(opts.path, tsNum, nonce, opts.expectedScope, opts.secret);

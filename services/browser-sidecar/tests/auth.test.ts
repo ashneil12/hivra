@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { mintSignedUrl, verifySignedUrl } from "../src/auth/signed-url.js";
 
@@ -180,5 +181,62 @@ describe("signed-url", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("replay_detected");
+  });
+
+  // `ttl` is NOT covered by the HMAC — it arrives attacker-controlled. A
+  // non-positive or non-numeric ttl used to be silently clamped into a
+  // usable window; it must hard-fail instead.
+  for (const [label, ttl, reason] of [
+    ["ttl=0", "0", "expired"],
+    ["negative ttl", "-5000", "expired"],
+    ["non-numeric ttl", "NaN", "missing_params"],
+  ] as const) {
+    it(`rejects ${label}`, () => {
+      const url = mintSignedUrl({ baseUrl: "https://example.com", path: "/x", scope: "novnc:vex", secret, ttlMs: 60_000 });
+      const q = urlToQuery(url);
+      const result = verifySignedUrl({
+        path: "/x",
+        query: { ...q, ttl },
+        expectedScope: "novnc:vex",
+        secret,
+        maxTtlMs: 60_000,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe(reason);
+    });
+  }
+
+  it("still verifies a url without a ttl param (default applies)", () => {
+    const url = mintSignedUrl({ baseUrl: "https://example.com", path: "/x", scope: "novnc:vex", secret, ttlMs: 60_000 });
+    const q = urlToQuery(url);
+    const result = verifySignedUrl({
+      path: "/x",
+      query: { ...q, ttl: undefined },
+      expectedScope: "novnc:vex",
+      secret,
+      maxTtlMs: 60_000,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  // A far-future `ts` makes `now - ts` negative, so the expiry check never
+  // trips: the URL stays valid until real time catches up to the forged ts.
+  // Signatures cover ts, so craft one with the same formula the module uses.
+  it("rejects a far-future ts even with a valid signature", () => {
+    const tsNum = Date.now() + 10 * 60_000;
+    const nonce = "0123456789abcdef0123456789abcdef";
+    const scope = "novnc:vex";
+    const sig = createHmac("sha256", secret)
+      .update(`/x|${tsNum}|${nonce}|${scope}`)
+      .digest("hex");
+    const result = verifySignedUrl({
+      path: "/x",
+      query: { ts: String(tsNum), nonce, sig, scope, ttl: "60000" },
+      expectedScope: "novnc:vex",
+      secret,
+      maxTtlMs: 60_000,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("expired");
   });
 });
