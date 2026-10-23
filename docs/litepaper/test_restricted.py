@@ -60,11 +60,11 @@ class RestrictedDocumentTests(unittest.TestCase):
     def test_the_page_has_no_economy_chapter_and_no_link_into_it(self):
         for needle in ('id="economy"', "#economy", "TOKENOMICS.md", "hero-token", "$HIVRA", "$HermesOS"):
             self.assertNotIn(needle, PAGE)
-            if needle in ("id=\"economy\"", "TOKENOMICS.md"):
+            if needle == 'id="economy"':
                 self.assertIn(needle, FULL_PAGE, "the full page should still have " + needle)
 
     def test_everything_else_survives(self):
-        for needle in ("The problem is", "Why I", "Where it fits", "Agent Computers", "Read further", "Somewhere", "boundary-lab"):
+        for needle in ("Your agent needs a computer", "I am building the product I need", "Open Hivra. Choose what you want.", "Agent Computers", "A constitution written", "Somewhere"):
             self.assertIn(needle, PAGE)
         self.assertEqual(PAGE.count("<section"), PAGE.count("</section>"))
         self.assertEqual(FULL_PAGE.count("<section") - 1 - FULL_PAGE.count("economy-subsection"), PAGE.count("<section"))
@@ -72,7 +72,7 @@ class RestrictedDocumentTests(unittest.TestCase):
     def test_the_founder_letter_is_untouched(self):
         full = (REPO / "LITEPAPER.md").read_text(encoding="utf-8")
         cut = (RESTRICTED / "LITEPAPER.md").read_text(encoding="utf-8")
-        start, end = "## Why I'm building it", "## Start with an agent."
+        start, end = "## I am building the product I need", "## The thin layer between an agent and your life"
         self.assertEqual(full[full.index(start):full.index(end)], cut[cut.index(start):cut.index(end)])
 
     def test_the_white_paper_keeps_the_architecture_and_drops_the_token_sections(self):

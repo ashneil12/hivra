@@ -2,7 +2,7 @@
 
 ## A computer of its own. A platform built around human control.
 
-**Version 2.1, September 2026.** This paper describes what Hivra does today, what it is building, and what remains research. Status labels are used throughout and they mean what they say. Where evidence is thin, the paper says so.
+**Version 2.2, October 2026.** This paper describes what Hivra does today, what it is building, and what remains research. Status labels are used throughout and they mean what they say. Where evidence is thin, the paper says so.
 
 
 ---
@@ -260,7 +260,7 @@ Agent Computers give the work a place to happen. The products below address what
 
 **Then.** macOS and custom images. Vault, Passport, Seal, Rescue, Challenges, Experience.
 
-**Research.** Missions, Foundry, Colony, Interchange, Ports.
+**Research.** Missions, Foundry, Colony, Interchange, Ports, and the LaunchPad concept.
 
 No dates. Availability is announced after shipping, never before. If a capability is described as available in this paper, it exists.
 
