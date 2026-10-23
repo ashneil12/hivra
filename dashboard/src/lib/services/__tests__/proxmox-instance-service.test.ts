@@ -1488,8 +1488,8 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     // The proactive lock wait runs before the first apt-get update so we
     // don't burn a failed attempt on the obvious first-boot race.
     expect(bootstrap.indexOf("wait_for_apt_locks\nrun_apt_get update -qq")).toBeGreaterThan(-1);
-    expect(bootstrap).toContain("curl -fsSL https://get.docker.com -o /tmp/get-docker.sh");
-    expect(bootstrap).toContain("sh /tmp/get-docker.sh");
+    expect(bootstrap).toContain("curl -fsSLo /tmp/gd.sh https://get.docker.com");
+    expect(bootstrap).toContain("sh /tmp/gd.sh");
     expect(bootstrap).not.toContain("curl -fsSL https://get.docker.com | sh");
     expect(bootstrap).toContain("qemu-guest-agent");
     expect(bootstrap).toContain("hermes_ensure_time_sync()");
@@ -1499,7 +1499,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(bootstrap).toContain("run_apt_get install -y --no-install-recommends systemd-timesyncd");
     expect(bootstrap).toContain("hwclock --systohc --utc");
     expect(bootstrap.indexOf("hermes_ensure_time_sync")).toBeLessThan(
-      bootstrap.indexOf("curl -fsSL https://get.docker.com -o /tmp/get-docker.sh")
+      bootstrap.indexOf("curl -fsSLo /tmp/gd.sh https://get.docker.com")
     );
     expect(bootstrap).toContain("/etc/docker/daemon.json");
     expect(bootstrap).toContain('"max-size": "20m"');

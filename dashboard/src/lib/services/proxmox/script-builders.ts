@@ -231,11 +231,9 @@ systemctl enable --now fstrim.timer >/dev/null 2>&1 || true
 ${buildHermesMemoryGuardProvisioningScript()}
 
 if ! command -v docker >/dev/null 2>&1; then
-  # Download-then-run, not "curl | sh": a piped script executes line-by-line
-  # even when the body is truncated mid-stream. Landing it in a file first
-  # means a failed curl never reaches sh.
-  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-  sh /tmp/get-docker.sh
+  # Download-then-run (not "curl | sh"): a truncated body can't run.
+  curl -fsSLo /tmp/gd.sh https://get.docker.com
+  sh /tmp/gd.sh
 fi
 
 mkdir -p /etc/docker

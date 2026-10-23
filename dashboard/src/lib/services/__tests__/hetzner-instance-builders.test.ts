@@ -549,7 +549,7 @@ describe("hetzner-instance-builders", () => {
     expect(userdata).toContain("hwclock --systohc --utc");
 
     const timeSyncIdx = userdata.indexOf("hermes_ensure_time_sync");
-    const dockerInstallIdx = userdata.indexOf("curl -fsSL https://get.docker.com -o /tmp/get-docker.sh");
+    const dockerInstallIdx = userdata.indexOf("curl -fsSLo /tmp/gd.sh https://get.docker.com");
     expect(timeSyncIdx).toBeGreaterThan(-1);
     expect(dockerInstallIdx).toBeGreaterThan(-1);
     expect(timeSyncIdx).toBeLessThan(dockerInstallIdx);

@@ -3891,10 +3891,7 @@ function tsSpawn(args, timeoutMs) {
 async function ensureTs() {
   const c = await execCommand('command -v tailscale', 5000);
   if (!c.ok) {
-    // Download-then-run, never "curl | sh": a piped install executes
-    // line-by-line, so a truncated/intercepted body still runs. Landing the
-    // script in a file first means a curl failure or a partial body
-    // never reaches the shell.
+    // Download-then-run (never "curl | sh"): a truncated body can't run.
     const i = await execCommand('curl -fsSL https://tailscale.com/install.sh -o /tmp/tailscale-install.sh && sh /tmp/tailscale-install.sh', 180000);
     if (!i.ok) return { ok: false, stdout: i.stdout, stderr: i.stderr, error: 'tailscale install failed' };
   }
@@ -4265,7 +4262,11 @@ export const HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE = [
   // the DASHBOARD_RECOVERY_DEADLINE strip above (Hetzner keeps the simpler form).
   ["DASHBOARD_DNS_LOOKUP", "\nvar dashboardDnsLookup;\n"],
   ["SIDECAR_BODY_CAP_CONST", "\n"],
-  ["SIDECAR_BODY_CAP_READ", "\nfunction readRawBody(req) {\n  return new Promise((resolve, reject) => {\n    const chunks = [];\n\n    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));\n    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));\n    req.on('error', reject);\n  });\n}\n"],
+  // SEC-24: even under the 32KB user_data squeeze the bootstrap sidecar keeps
+  // a body cap — an uncapped read lets any unauthenticated large POST exhaust
+  // the box's memory. Same semantics as the main-lane reader, just inlined
+  // (10 MiB literal instead of the stripped MAX_SIDECAR_BODY_BYTES const).
+  ["SIDECAR_BODY_CAP_READ", "\nfunction readRawBody(req) {\n  return new Promise((resolve, reject) => {\n    const chunks = [];\n    let n = 0;\n    req.on('data', (chunk) => {\n      if ((n += chunk.length) > 10485760) { req.destroy(); reject(createHttpError(413, 'Payload too large')); } else chunks.push(Buffer.from(chunk));\n    });\n    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));\n    req.on('error', reject);\n  });\n}\n"],
   ["SIDECAR_ENV_VALIDATE", "\n  if (Array.isArray(envUpdates)) {\n    lines.push(...envUpdates);\n  }\n"],
 ].reduce(
   (source, [marker, replacement]) => replaceMarkedGeneratedBlock(source, marker, replacement),
