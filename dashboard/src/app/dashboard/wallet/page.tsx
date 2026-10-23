@@ -9,6 +9,7 @@ import { useLocale } from '@/components/i18n/LocaleProvider';
 import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
 import { tokenFeaturesShown, useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
+import { pollWhenVisible } from '@/lib/poll-when-visible';
 import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
 import { LAUNCH_ROUTE } from '@/lib/hivra/launch-navigation';
@@ -872,10 +873,10 @@ export default function WalletPage() {
   // served from cache, only one in twelve actually hits CoinGecko.
   useEffect(() => {
     const intervalMs = 5 * 60 * 1000;
-    const handle = window.setInterval(() => {
+    const handle = window.setInterval(pollWhenVisible(() => {
       void load({ silent: true });
       if (isLegacyCustody || connectedSelfCustodyAddress) void loadQuotes();
-    }, intervalMs);
+    }), intervalMs);
     return () => window.clearInterval(handle);
   }, [connectedSelfCustodyAddress, isLegacyCustody, load, loadQuotes]);
 

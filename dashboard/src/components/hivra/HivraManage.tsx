@@ -585,9 +585,16 @@ function HivraManageContent({
   }, [updateConnectionService, onChanged]);
 
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
   const copyEndpoint = useCallback(async () => {
     if (!agent.chat_url) return;
-    try { await navigator.clipboard.writeText(agent.chat_url); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* ignore */ }
+    try { await navigator.clipboard.writeText(agent.chat_url); setCopied(true); copiedTimerRef.current = setTimeout(() => setCopied(false), 1600); } catch { /* ignore */ }
   }, [agent.chat_url]);
 
   const toggleBrowser = useCallback(async (next: boolean) => {

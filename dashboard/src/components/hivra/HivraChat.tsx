@@ -5,7 +5,7 @@
 // CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
 // box in localStorage; each session resumes its own Claude session_id.
 
-import { Children, isValidElement, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Children, isValidElement, memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -25,6 +25,18 @@ import styles from "./HivraChat.module.css";
 // Fenced code (any <pre>, including one-line blocks with no language) → the
 // shared syntax-highlighted CodeBlock, which scrolls inside its own box.
 // Inline code keeps a lightweight mono chip that wraps anywhere.
+const CHAT_REMARK_PLUGINS = [remarkGfm];
+
+/** Markdown parse is the expensive part of a message row — memoize on the
+ *  rendered text so a poll tick or keystroke doesn't re-parse history. */
+const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
+      {text}
+    </ReactMarkdown>
+  );
+});
+
 export const CHAT_MARKDOWN_COMPONENTS = {
  pre(props: { children?: React.ReactNode }) {
  const child = Children.toArray(props.children)[0];
@@ -1938,7 +1950,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
  <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
  {m.role === "assistant" ? (
- <ReactMarkdown remarkPlugins={[remarkGfm]} components={CHAT_MARKDOWN_COMPONENTS}>{replyMarkdown(m)}</ReactMarkdown>
+ <AssistantMarkdown text={replyMarkdown(m)} />
  ) : (
  <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
  )}

@@ -92,6 +92,34 @@ interface AgentProfile {
   display_name?: string;
 }
 
+// The poll loop below fetches fresh array/object identities every tick even
+// when nothing changed; an unconditional setState then re-renders the whole
+// card list and recomputes every memoized digest. Deep-compare so unchanged
+// data keeps the previous reference and React bails out.
+function sameRowValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function sameRowList(prev: unknown[], next: unknown[]): boolean {
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i] as Record<string, unknown>;
+    const b = next[i] as Record<string, unknown>;
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    for (const k of keys) if (!sameRowValue(a[k], b[k])) return false;
+  }
+  return true;
+}
+
 interface Host {
   id: string;
   name: string;
@@ -1907,19 +1935,25 @@ export function HermesDashboardPage() {
 
       let discoveredInstances: Instance[] = [];
       if (dataInst.success) {
-        setInstances(dataInst.data);
+        setInstances((prev) =>
+          sameRowList(prev, dataInst.data) ? prev : dataInst.data,
+        );
         writeStoredJsonIfChanged(localStorage, `dashboard_instances_${userId}`, dataInst.data);
         discoveredInstances = dataInst.data;
       }
       else setError(dataInst.error);
 
       if (dataHosts.success) {
-         setHosts(dataHosts.data);
+         setHosts((prev) =>
+           sameRowList(prev, dataHosts.data) ? prev : dataHosts.data,
+         );
          writeStoredJsonIfChanged(localStorage, `dashboard_hosts_${userId}`, dataHosts.data);
       }
 
       if (dataUsage.success && dataUsage.data.subscribed) {
-        setUsageData(dataUsage.data);
+        setUsageData((prev) =>
+          prev && sameRowValue(prev, dataUsage.data) ? prev : dataUsage.data,
+        );
         writeStoredJsonIfChanged(localStorage, `dashboard_usage_${userId}`, dataUsage.data);
       }
 
