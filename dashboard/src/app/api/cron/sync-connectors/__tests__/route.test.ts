@@ -78,6 +78,24 @@ describe("POST /api/cron/sync-connectors", () => {
     const json = await res.json();
     expect(json.data.results.find((r: { id: string }) => r.id === "ghost").reason).toBe("not_found");
   });
+
+  it("keeps results in request order under fan-out", async () => {
+    mockInstances([
+      { id: "i1", user_id: "u1", backend: "webui" },
+      { id: "i2", user_id: "u2", backend: "webui" },
+      { id: "i3", user_id: "u3", backend: "webui" },
+    ]);
+    (syncComposioToInstance as jest.Mock).mockImplementation(
+      ({ instanceId }: { instanceId: string }) =>
+        new Promise((resolve) =>
+          // i2 resolves last — proves results are slotted by index, not completion order
+          setTimeout(() => resolve({ applied: true, backend: "webfree" }), instanceId === "i2" ? 20 : 0),
+        ),
+    );
+    const res = await POST(req({ instanceIds: ["i2", "ghost", "i1"] }));
+    const json = await res.json();
+    expect(json.data.results.map((r: { id: string }) => r.id)).toEqual(["i2", "ghost", "i1"]);
+  });
 });
 
 function getReq(url = "https://x/api/cron/sync-connectors"): NextRequest {
@@ -158,5 +176,30 @@ describe("GET /api/cron/sync-connectors (reconcile sweep)", () => {
     const json = await res.json();
     expect(json.data.applied).toBe(1);
     expect(json.data.errored).toBe(1);
+  });
+
+  it("fans out with bounded concurrency instead of one box at a time", async () => {
+    mockActiveInstances(
+      Array.from({ length: 12 }, (_, i) => ({ id: `i${i}`, user_id: `u${i}` })),
+    );
+    let inFlight = 0;
+    let maxInFlight = 0;
+    (syncComposioToInstance as jest.Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          setImmediate(() => {
+            inFlight -= 1;
+            resolve({ applied: true, backend: "webfree", changed: false, restarted: false });
+          });
+        }),
+    );
+    const res = await GET(getReq());
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.data.applied).toBe(12);
+    expect(maxInFlight).toBeGreaterThan(1); // parallel, not one serial sync per box
+    expect(maxInFlight).toBeLessThanOrEqual(8); // SYNC_CONCURRENCY bound
   });
 });
