@@ -68,9 +68,10 @@ const CF_ACCEPTS = [
   "ip6 saddr @cloudflare_ipv6 udp dport 443 accept",
 ];
 
-// pve21-style: no vmbr1 drops at all, unrestricted 8006 and 80/443 accepts,
-// guest DHCP/DNS allows, masquerade NAT, and the VM isolation bridge table.
-const PVE21_NFT = `#!/usr/sbin/nft -f
+// Inline-chain host config: no vmbr1 drops at all, unrestricted 8006 and
+// 80/443 accepts, guest DHCP/DNS allows, masquerade NAT, and the VM isolation
+// bridge table.
+const INLINE_CHAIN_NFT = `#!/usr/sbin/nft -f
 
 flush ruleset
 
@@ -99,7 +100,7 @@ table inet filter {
 table ip nat {
 	chain postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
-		ip saddr 10.70.0.0/16 oifname "vmbr0" masquerade
+		ip saddr 10.250.0.0/16 oifname "vmbr0" masquerade
 	}
 }
 table bridge hermes_vm_isolation {
@@ -109,10 +110,10 @@ table bridge hermes_vm_isolation {
 }
 `;
 
-// pve11-style: older { 22, 8006 } vmbr1 drop, NTP allow already present, and
-// hivra_* guest service chains across inet filter, ip nat, and the bridge
-// isolation table that must all survive the rewrite.
-const PVE11_NFT = `#!/usr/sbin/nft -f
+// Custom-chains host config: older { 22, 8006 } vmbr1 drop, NTP allow already
+// present, and hivra_* guest service chains across inet filter, ip nat, and
+// the bridge isolation table that must all survive the rewrite.
+const CUSTOM_CHAINS_NFT = `#!/usr/sbin/nft -f
 
 flush ruleset
 
@@ -148,7 +149,7 @@ table inet filter {
 		udp dport 68 accept
 	}
 	chain hivra_omarchy_2099 {
-		iifname "vmbr0" ip daddr 10.70.0.99 tcp dport 3389 accept
+		iifname "vmbr0" ip daddr 10.250.20.99 tcp dport 3389 accept
 	}
 	chain output {
 		type filter hook output priority filter; policy accept;
@@ -165,7 +166,7 @@ table ip nat {
 		oifname "vmbr0" masquerade
 	}
 	chain hivra_omarchy_2099 {
-		iifname "vmbr0" tcp dport 3389 dnat to 10.70.0.99
+		iifname "vmbr0" tcp dport 3389 dnat to 10.250.20.99
 	}
 }
 table bridge hermes_vm_isolation {
@@ -223,7 +224,7 @@ describe("proxmox-host-perimeter-guard.sh", () => {
     mkdirSync(binDir);
 
     const nftConf = path.join(dir, "nftables.conf");
-    writeFileSync(nftConf, PVE21_NFT);
+    writeFileSync(nftConf, INLINE_CHAIN_NFT);
     runGuard(["--rewrite-nft-only", nftConf]);
 
     const sshdDropin = path.join(dir, "00-hermes-hardening.conf");
@@ -264,9 +265,9 @@ fi
     expect(output).toContain("done");
   });
 
-  describe("--rewrite-nft-only on a pve21-style config", () => {
+  describe("--rewrite-nft-only on an inline-chain host config", () => {
     it("defines the Cloudflare IPv4/IPv6 sets inside table inet filter", () => {
-      const { output } = rewriteInPlace(PVE21_NFT);
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       const filterTable = output.slice(
         output.indexOf("table inet filter {"),
         output.indexOf("table ip nat {"),
@@ -282,7 +283,7 @@ fi
     });
 
     it("adds the vmbr1 guest-to-host input drops before the WAN accepts", () => {
-      const { output } = rewriteInPlace(PVE21_NFT);
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain(NTP_ACCEPT);
       expect(output).toContain(VMBR1_TCP_DROP);
       expect(output).toMatch(/^\s*iifname "vmbr1" drop$/m);
@@ -298,14 +299,14 @@ fi
     });
 
     it("preserves the guest DHCP and DNS allows on vmbr1", () => {
-      const { output } = rewriteInPlace(PVE21_NFT);
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain('iifname "vmbr1" udp dport 67 accept');
       expect(output).toContain('iifname "vmbr1" udp dport 53 accept');
       expect(output).toContain('iifname "vmbr1" tcp dport 53 accept');
     });
 
     it("restricts 8006 to tailscale0 and 80/443 to the Cloudflare sets", () => {
-      const { output } = rewriteInPlace(PVE21_NFT);
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).not.toMatch(/^\s*tcp dport 8006 accept$/m);
       expect(output).not.toMatch(/^\s*tcp dport \{ 80, 443 \} accept$/m);
       expect(output).toContain(TAILSCALE_8006);
@@ -316,7 +317,7 @@ fi
     });
 
     it("drops vmbr1 forwards to private/link-local space before the WAN accept", () => {
-      const { output } = rewriteInPlace(PVE21_NFT);
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain(RFC1918_FWD_DROP);
       expect(output.indexOf(RFC1918_FWD_DROP)).toBeLessThan(
         output.indexOf('iifname "vmbr1" oifname "vmbr0" accept'),
@@ -324,7 +325,7 @@ fi
     });
 
     it("leaves the output chain, NAT table, and bridge isolation table intact", () => {
-      const { output } = rewriteInPlace(PVE21_NFT);
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain("chain output {");
       expect(output).toContain("table ip nat {");
       expect(output).toContain("masquerade");
@@ -332,15 +333,15 @@ fi
     });
 
     it("is byte-identical on a second run", () => {
-      const { target, output } = rewriteInPlace(PVE21_NFT);
+      const { target, output } = rewriteInPlace(INLINE_CHAIN_NFT);
       runGuard(["--rewrite-nft-only", target]);
       expect(readFileSync(target, "utf8")).toBe(output);
     });
   });
 
-  describe("--rewrite-nft-only on a pve11-style config", () => {
+  describe("--rewrite-nft-only on a custom-chains host config", () => {
     it("replaces the legacy { 22, 8006 } vmbr1 drop with the hardened pair", () => {
-      const { output } = rewriteInPlace(PVE11_NFT);
+      const { output } = rewriteInPlace(CUSTOM_CHAINS_NFT);
       expect(output).not.toContain("{ 22, 8006 } drop");
       expect(output).toContain(VMBR1_TCP_DROP);
       expect(output.indexOf(NTP_ACCEPT)).toBeLessThan(output.indexOf(VMBR1_TCP_DROP));
@@ -348,7 +349,7 @@ fi
     });
 
     it("hardens 8006 and 80/443 while preserving every hivra_* rule", () => {
-      const { output } = rewriteInPlace(PVE11_NFT);
+      const { output } = rewriteInPlace(CUSTOM_CHAINS_NFT);
       expect(output).not.toMatch(/^\s*tcp dport 8006 accept$/m);
       expect(output).not.toMatch(/^\s*tcp dport \{ 80, 443 \} accept$/m);
       expect(output).toContain(TAILSCALE_8006);
@@ -362,7 +363,7 @@ fi
         "chain hivra_omarchy_lab_dhcp {",
         "jump hivra_omarchy_2099",
         "chain hivra_omarchy_2099 {",
-        "dnat to 10.70.0.99",
+        "dnat to 10.250.20.99",
         "jump hivra_guacamole_windows_2097_2098",
         "chain hivra_guacamole_windows_2097_2098 {",
         'iifname "vmtab2097i0" oifname "vmtab2098i0" accept',
@@ -372,7 +373,7 @@ fi
     });
 
     it("keeps earlier guest-to-guest/DNAT accepts ahead of the forward drop", () => {
-      const { output } = rewriteInPlace(PVE11_NFT);
+      const { output } = rewriteInPlace(CUSTOM_CHAINS_NFT);
       expect(output).toContain(RFC1918_FWD_DROP);
       const guestAcceptIdx = output.indexOf('iifname "vmbr1" oifname "vmbr1" accept');
       const dropIdx = output.indexOf(RFC1918_FWD_DROP);
