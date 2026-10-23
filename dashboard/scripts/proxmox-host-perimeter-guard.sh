@@ -26,8 +26,9 @@
 set -euo pipefail
 
 MODE="check"
-NFT_CONF="/etc/nftables.conf"
-SSHD_DROPIN="/etc/ssh/sshd_config.d/99-hermes-hardening.conf"
+NFT_CONF="${PERIMETER_GUARD_NFT_CONF:-/etc/nftables.conf}"
+SSHD_DROPIN="${PERIMETER_GUARD_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-hermes-hardening.conf}"
+SSHD_DROPIN_LEGACY="${PERIMETER_GUARD_SSHD_DROPIN_LEGACY:-/etc/ssh/sshd_config.d/99-hermes-hardening.conf}"
 NFT_TARGET=""
 SSHD_TARGET=""
 
@@ -324,7 +325,7 @@ case "$MODE" in
   *) fatal "invalid mode: $MODE" ;;
 esac
 
-if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
   fatal "run as root on the Proxmox host"
 fi
 
@@ -345,8 +346,7 @@ effective_sshd_hardened() {
   out="$(sshd -T 2>/dev/null)" || return 1
   printf '%s\n' "$out" | grep -Fxq "passwordauthentication no" || return 1
   printf '%s\n' "$out" | grep -Fxq "kbdinteractiveauthentication no" || return 1
-  printf '%s\n' "$out" | grep -Fxq "challengeresponseauthentication no" || return 1
-  printf '%s\n' "$out" | grep -Fxq "permitrootlogin prohibit-password" || return 1
+  printf '%s\n' "$out" | grep -Exq "permitrootlogin (prohibit-password|without-password)" || return 1
   printf '%s\n' "$out" | grep -Fxq "maxauthtries 3" || return 1
   printf '%s\n' "$out" | grep -Fxq "x11forwarding no" || return 1
 }
@@ -356,6 +356,7 @@ write_sshd_dropin() {
     cp "$SSHD_DROPIN" "$SSHD_DROPIN.bak-hermes-$(date -u +%Y%m%dT%H%M%SZ)"
   fi
   write_sshd_dropin_to "$SSHD_DROPIN"
+  rm -f "$SSHD_DROPIN_LEGACY"
 }
 
 reload_sshd() {
@@ -385,15 +386,15 @@ nft_conf_is_hardened() {
 }
 
 nft_ruleset_has_open_wan_rules() {
-  nft list chain inet filter input 2>/dev/null \
-    | grep -Eq '^[[:space:]]*tcp dport (8006|\{ 80, 443 \}) accept([[:space:]]*#.*)?$'
+  grep -Eq '^[[:space:]]*tcp dport (8006|\{ 80, 443 \}) accept([[:space:]]*#.*)?$' <<<"$1"
 }
 
 nft_runtime_is_hardened() {
   command -v nft >/dev/null 2>&1 || return 1
-  local input forward
+  local input forward ruleset
   input="$(nft list chain inet filter input 2>/dev/null)" || return 1
   forward="$(nft list chain inet filter forward 2>/dev/null)" || return 1
+  ruleset="$(nft list ruleset 2>/dev/null)" || return 1
   printf '%s\n' "$input" | grep -Fq 'iifname "vmbr1" udp dport 123 accept' || return 1
   printf '%s\n' "$input" | grep -Fq 'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop' || return 1
   printf '%s\n' "$input" | grep -Eq '^[[:space:]]*iifname "vmbr1" drop$' || return 1
@@ -401,9 +402,9 @@ nft_runtime_is_hardened() {
   printf '%s\n' "$input" | grep -Fq 'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept' || return 1
   printf '%s\n' "$input" | grep -Fq 'ip6 saddr @cloudflare_ipv6 tcp dport { 80, 443 } accept' || return 1
   printf '%s\n' "$forward" | grep -Fq 'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop' || return 1
-  nft list ruleset 2>/dev/null | grep -Fq 'set cloudflare_ipv4' || return 1
-  nft list ruleset 2>/dev/null | grep -Fq 'set cloudflare_ipv6' || return 1
-  ! nft_ruleset_has_open_wan_rules
+  grep -Fq 'set cloudflare_ipv4' <<<"$ruleset" || return 1
+  grep -Fq 'set cloudflare_ipv6' <<<"$ruleset" || return 1
+  ! nft_ruleset_has_open_wan_rules "$input"
 }
 
 if [ "$MODE" = "apply" ]; then

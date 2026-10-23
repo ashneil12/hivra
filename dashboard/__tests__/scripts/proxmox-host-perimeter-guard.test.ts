@@ -1,13 +1,23 @@
 import { execFileSync } from "child_process";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import path from "path";
 
 const scriptPath = path.join(__dirname, "../../scripts/proxmox-host-perimeter-guard.sh");
 const script = readFileSync(scriptPath, "utf8");
 
-const runGuard = (args: string[]) =>
-  execFileSync("bash", [scriptPath, ...args], { encoding: "utf8" });
+const runGuard = (args: string[], env: Record<string, string> = {}) =>
+  execFileSync("bash", [scriptPath, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
 
 const rewriteInPlace = (contents: string) => {
   const dir = mkdtempSync(path.join(tmpdir(), "perimeter-guard-"));
@@ -178,6 +188,7 @@ describe("proxmox-host-perimeter-guard.sh", () => {
   });
 
   it("audits and applies the sshd drop-in plus validated nftables rewrite", () => {
+    expect(script).toContain("/etc/ssh/sshd_config.d/00-hermes-hardening.conf");
     expect(script).toContain("/etc/ssh/sshd_config.d/99-hermes-hardening.conf");
     expect(script).toContain("/etc/nftables.conf");
     expect(script).toContain("sshd -t");
@@ -204,6 +215,53 @@ describe("proxmox-host-perimeter-guard.sh", () => {
     ]) {
       expect(dropin).toContain(directive);
     }
+  });
+
+  it("--check exits 0 on a hardened host (OpenSSH 10 sshd -T output)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "perimeter-guard-check-"));
+    const binDir = path.join(dir, "bin");
+    mkdirSync(binDir);
+
+    const nftConf = path.join(dir, "nftables.conf");
+    writeFileSync(nftConf, PVE21_NFT);
+    runGuard(["--rewrite-nft-only", nftConf]);
+
+    const sshdDropin = path.join(dir, "00-hermes-hardening.conf");
+    runGuard(["--write-sshd-dropin-only", sshdDropin]);
+
+    const stub = (name: string, body: string) => {
+      const target = path.join(binDir, name);
+      writeFileSync(target, body);
+      chmodSync(target, 0o755);
+    };
+
+    stub("id", "#!/usr/bin/env bash\necho 0\n");
+    // OpenSSH 10 on Debian 13 has no challengeresponseauthentication line in
+    // sshd -T output; kbdinteractiveauthentication covers it instead.
+    stub(
+      "sshd",
+      `#!/usr/bin/env bash
+if [ "$*" = "-T" ]; then
+  printf '%s\n' \\
+      "passwordauthentication no" \\
+      "kbdinteractiveauthentication no" \\
+      "permitrootlogin without-password" \\
+      "maxauthtries 3" \\
+      "x11forwarding no"
+fi
+`,
+    );
+    // The rewritten conf carries every required input/forward rule plus the
+    // cloudflare_* sets, so it stands in for both `nft list chain` and
+    // `nft list ruleset` output.
+    stub("nft", '#!/usr/bin/env bash\ncat "$PERIMETER_GUARD_NFT_CONF"\n');
+
+    const output = runGuard(["--check"], {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      PERIMETER_GUARD_NFT_CONF: nftConf,
+      PERIMETER_GUARD_SSHD_DROPIN: sshdDropin,
+    });
+    expect(output).toContain("done");
   });
 
   describe("--rewrite-nft-only on a pve21-style config", () => {
