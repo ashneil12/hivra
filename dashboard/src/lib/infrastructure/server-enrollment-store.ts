@@ -379,12 +379,14 @@ export async function findKnownServer(
   const db = database();
   const canonical = canonicalEd25519HostKey(hostPublicKey);
   const hex = Buffer.from(canonical.fingerprintSha256.slice("SHA256:".length) + "=", "base64").toString("hex");
-  const { data: sshRows, error: sshError } = await db.from("infrastructure_connections")
-    .select("id,name,provider,revision,ssh_user,ssh_host,ssh_privilege")
-    .eq("user_id", userId).in("provider", ["host", "proxmox"]).eq("ssh_host_fingerprint_sha256", hex);
+  const [{ data: sshRows, error: sshError }, { data: bootRows, error: bootError }] = await Promise.all([
+    db.from("infrastructure_connections")
+      .select("id,name,provider,revision,ssh_user,ssh_host,ssh_privilege")
+      .eq("user_id", userId).in("provider", ["host", "proxmox"]).eq("ssh_host_fingerprint_sha256", hex),
+    db.from("infrastructure_first_boot_enrollments")
+      .select("connection_id").eq("user_id", userId).eq("phase", "enrolled").eq("host_public_key", canonical.publicKey),
+  ]);
   if (sshError) throw new ServerEnrollmentStoreError("database_error");
-  const { data: bootRows, error: bootError } = await db.from("infrastructure_first_boot_enrollments")
-    .select("connection_id").eq("user_id", userId).eq("phase", "enrolled").eq("host_public_key", canonical.publicKey);
   if (bootError) throw new ServerEnrollmentStoreError("database_error");
   const matches = new Map<string, MatchedConnection>();
   for (const row of (sshRows ?? []) as MatchedConnection[]) matches.set(row.id, row);
