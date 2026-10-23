@@ -29,8 +29,8 @@ type FeatureData = {
   faqs: Array<{ q: string; a: string }>;
 };
 
-// Hermes' own OpenClaw migration guide (`hermes claw migrate`), checked
-// 2026-09-24. Hivra has no OpenClaw import of its own.
+// Hermes' own OpenClaw migration guide (`hermes claw migrate`).
+// Hivra has no OpenClaw import of its own.
 const HERMES_OPENCLAW_MIGRATION_GUIDE = "https://hermes-agent.nousresearch.com/docs/guides/migrate-from-openclaw";
 
 const FEATURES: Record<string, FeatureData> = {
@@ -391,87 +391,95 @@ const FEATURES: Record<string, FeatureData> = {
   },
 
   "openclaw-alternative": {
-    title: "OpenClaw Alternative: Managed Hermes Agent Hosting",
-    h1: "Everything OpenClaw gives you. None of the maintenance.",
+    title: "OpenClaw alternative: keep it, or change agent",
+    h1: "An OpenClaw alternative is either a managed host or a different agent.",
     metaDescription:
-      "Run OpenClaw on Hivra without self-hosting it, or switch to Hermes. Hivra also hosts Claude Code, Codex and more. From $9.99/mo (2 vCPU, 4 GB).",
-    tagline: "Keep OpenClaw, or move to Hermes. No server to run either way.",
+      "OpenClaw alternative: keep OpenClaw on a $9.99 computer (2 vCPU, 4 GB), or move the setup to Hermes. ZeroClaw and NanoClaw stay self-hosted.",
+    tagline: "Same agent on a computer that stays on. Or a different agent, if that's what you wanted.",
     intro: [
-      "OpenClaw is a powerful open-source personal agent that works with many model providers. But run yourself, it needs a machine that stays on, updates you apply and test, and someone on the team who is comfortable in a terminal.",
-      "Hivra is the managed alternative, in two ways. It can run OpenClaw itself for you on paid plans, or you can move to Hermes, which Hivra also hosts. Either way we handle the server, updates, monitoring, and restarts. Hivra is not affiliated with the OpenClaw project.",
+      "OpenClaw is free MIT software from the OpenClaw Foundation. The bill is the machine it runs on and the model key you pay. If the thing you're tired of is the machine, Hivra runs OpenClaw itself on a paid plan, from $9.99 a month for 2 vCPU and 4 GB. If you wanted a different agent, Hermes, ZeroClaw and NanoClaw are the names that come up. Those two stay software you host yourself.",
+      "Hivra hosts OpenClaw on its own computer, the same way it hosts Hermes, Agent Zero, Claude Code and Codex. Hivra is not affiliated with the OpenClaw project, Nous Research, Anthropic or OpenAI. Paid plans only, with a 7-day money-back guarantee on card payments.",
     ],
     sections: [
       {
-        heading: "What OpenClaw is and who uses it",
+        heading: "When you should stay on OpenClaw",
         paragraphs: [
-          "OpenClaw is an open-source (MIT) personal agent created by Peter Steinberger and its community, with hundreds of thousands of GitHub stars. It runs a gateway on your laptop or a server, works with hosted and local model providers, and you reach it from messaging apps such as Telegram, Discord, Slack and WhatsApp. It has an active community building skills for it.",
-          "The typical OpenClaw user: a technical developer comfortable in a terminal, willing to invest setup time in exchange for control and avoiding subscription fees. The framework is well-built and well-documented. The community is active and productive.",
-          "The operational cost: someone has to keep the machine it runs on awake, apply updates and test them for regressions, and back up its state. OpenClaw has its own memory and a built-in scheduler, but both only work while that machine is running.",
+          "Stay if your setup already does the job and you like owning the machine. OpenClaw's docs describe a gateway you run yourself, on a laptop or a server, with Discord, Google Chat, iMessage, Matrix, Microsoft Teams, Signal, Slack, Telegram, WhatsApp, Zalo and more through channel plugins. Local models and a computer that never leaves your house are easier when you own it. Hivra has no macOS computers, so a Mac mini running OpenClaw is a case Hivra doesn't cover.",
+          "Hostinger's own hosting guide says an OpenClaw VPS you run yourself wants root access and at least 4 GB of RAM, and 8 GB if you plan to use browser automation. Their managed OpenClaw app is listed at $5.99 a month on the current promotional term, renewing at $11.99 a month for two years. Hetzner's shared CX23 is listed there at $4.09 a month for 2 vCPU and 4 GB. Either number is the server only. You still install OpenClaw, apply updates, and pay the model key on top.",
         ],
       },
       {
-        heading: "The core trade OpenClaw users are making",
+        heading: "What people mean by an OpenClaw alternative",
         paragraphs: [
-          "OpenClaw users usually know the trade they are making: they get maximum control and zero subscription fees beyond API costs, in exchange for handling all operations themselves. That trade makes sense for developers who genuinely value the control and have the time.",
-          "The trade breaks down in a few common situations: when the setup time starts competing with the work the agent is supposed to be enabling, when the developer wants the agent available 24/7 without keeping their machine on, or when they want to run multiple agent profiles without managing separate instances.",
-          "Hivra is built for exactly these situations. You bring your API key, the same one you were using with OpenClaw, and get a managed cloud environment that runs the agent for you, whether that agent is OpenClaw or Hermes.",
+          "The lists split in two. Hermes, ZeroClaw and NanoClaw are other agents. Hermes is the one with a documented import of an OpenClaw setup. ZeroClaw and NanoClaw show up as lighter or more locked-down software you still run yourself, and we haven't put either on a Hivra computer.",
+          "Hostinger, xCloud and Hetzner are hosts, not agents. Hostinger's guide puts its managed OpenClaw app next to a VPS you administer yourself, and lists xCloud's managed OpenClaw plan from $24 a month with your own model key. Hivra is in that group: OpenClaw, unmodified, on a private computer, from $9.99 a month for 2 vCPU and 4 GB. The next size is $19.99 a month for 4 vCPU and 8 GB.",
+          "OpenClaw on Hivra needs a paid plan. 1 vCPU and 2 GB is enough for OpenClaw alone, and the live browser adds 1 vCPU and 2 GB, which is why the $9.99 size is the one that fits both. You pick the model provider and connect your messaging channels inside OpenClaw's Control UI. Paid plans aren't paused for sitting idle. Hermes on Hivra runs from Hivra's own image, not the Nous release.",
         ],
       },
       {
-        heading: "What migrates and what does not",
+        heading: "What moves across, and what you set up again",
         paragraphs: [
-          "Hivra does not have a one-click OpenClaw import, so moving is a manual step. If you keep OpenClaw, launch it on Hivra and copy your configuration across yourself. If you move to Hermes, Hermes has its own migration command, `hermes claw migrate`. It reads your OpenClaw setup and imports your persona (SOUL.md), memory, skills, model settings and messaging tokens; API keys come across only if you ask for them. Run it with `--dry-run` first to preview what will change.",
-          "Some things do not come across. Hermes' migration guide lists cron jobs, plugins, webhooks and channel bindings as archived for you to set up again by hand, and WhatsApp needs pairing again. Browser session history and stored cookies for logged-in sites are machine-local by nature. On Hivra, you re-authenticate the first time the agent needs access to a site, and the session is then stored on the cloud server for subsequent runs.",
-          "Your Anthropic API key from your OpenClaw setup works identically on Hivra. You are not changing providers or re-configuring model access. You are moving the execution environment from your machine to persistent cloud infrastructure.",
+          "There's no OpenClaw import on Hivra. To keep OpenClaw, you launch it and copy the configuration over yourself. To move to Hermes, Hermes has its own command, `hermes claw migrate`. Run `--dry-run` first. It shows what would change and writes nothing.",
+          "Nous's migration guide says the command reads `~/.openclaw/` and copies the persona (`SOUL.md`), memory (`MEMORY.md` plus the daily files), the user profile (`USER.md`), skills from four locations, model and provider settings, and messaging tokens for Telegram, Discord, Slack, Signal, Matrix and Mattermost. API keys move only if you pass `--migrate-secrets`. Idle and daily reset timers are left behind on purpose.",
+          "The same guide archives what has no matching Hermes setting, for you to redo by hand: cron jobs (recreate with `hermes cron create`), plugins, hooks and webhooks, channel bindings, and the memory backend. WhatsApp doesn't move as a token. You pair it again with `hermes whatsapp`. Logged-in browser sessions stay on the old machine either way. On Hivra you sign in once in the live view, and that session stays on the agent's computer.",
         ],
       },
       {
-        heading: "Capabilities comparison",
+        heading: "Laptop, rented server, or Hivra",
         paragraphs: [
-          "Browser automation: both can drive a browser. On Hivra the browser runs on the agent's cloud computer, with a persistent Chromium by default and Browserbase or Browser Use cloud if you add a key. Self-hosted OpenClaw browses from whatever machine it runs on.",
-          "Memory: both keep long-term memory in files (OpenClaw and Hermes both use a MEMORY.md). Hermes also keeps USER.md for your profile and Skill Documents in the agentskills.io format for procedural memory. On Hivra, that memory lives on a server that stays on instead of on your laptop.",
-          "Scheduling: both have a built-in scheduler. Scheduled jobs only run while the machine is on, which is the part Hivra takes care of.",
-          "Multiple agents: Hivra lets you run more than one agent from one account on paid plans, each keeping its own memory and tools, and they do not all have to be the same kind of agent.",
-          "Model support: both work with many providers. With Hermes on Hivra you bring your own key for Anthropic, OpenAI or OpenRouter, with no markup.",
+          "Three places OpenClaw actually runs. The rows for Hetzner and Hostinger come from Hostinger's hosting guide. Hivra's rows are the two plans checkout sells.",
+          "Laptop. You pay nothing for the machine and everything for keeping it awake. Close the lid and the gateway stops.",
+          "Rented server you administer. Hetzner CX23, 2 vCPU and 4 GB, listed at $4.09 a month. Hostinger KVM 1, 1 vCPU and 4 GB, listed at $6.49 a month on the promotional term. You install OpenClaw, secure the gateway, and apply updates.",
+          "Hostinger's managed OpenClaw app, listed at $5.99 a month and $11.99 a month on renewal for two years. That's OpenClaw only. You don't get Claude Code, Codex, Hermes or Agent Zero on the same account.",
+          "Hivra, $9.99 a month for 2 vCPU and 4 GB, or $19.99 a month for 4 vCPU and 8 GB. OpenClaw, Hermes, Agent Zero, Claude Code and Codex each get their own computer. OpenClaw and Agent Zero need the $9.99 size or larger. 7-day money-back guarantee on card payments.",
+          "Model keys sit on top of every row, including Hivra. Bring your own key and Hivra adds no markup. Hivra can't cap what that key spends at the provider.",
         ],
       },
     ],
     bullets: [
-      "OpenClaw itself available on paid plans",
-      "Or move to Hermes with its own `hermes claw migrate` command (a manual step)",
-      "Persistent cloud hosting instead of a local process",
-      "Dashboard, monitoring, and restart management included",
-      "Hermes updates tested and applied for you",
-      "Run more than one agent from one account",
+      "OpenClaw on a paid plan, from $9.99 a month (2 vCPU, 4 GB)",
+      "Or Hermes, with `hermes claw migrate` (a manual step, and no Hivra import)",
+      "ZeroClaw and NanoClaw stay software you host yourself",
+      "Claude Code, Codex and Agent Zero on the same account, each on its own computer",
+      "7-day money-back guarantee on card payments",
     ],
     relatedFeatures: [
-      { slug: "persistent-memory", title: "Persistent Memory" },
       { slug: "no-docker-hosting", title: "No Docker Required" },
+      { slug: "scheduled-tasks", title: "Scheduled Tasks" },
       { slug: "multi-agent", title: "Multiple Agents" },
     ],
     relatedBlog: [
-      { slug: "what-is-hermes-agent", title: "What is Hermes Agent?" },
-      { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },
+      { slug: "hermes-vs-openclaw", title: "Hermes Agent vs OpenClaw" },
+      { slug: "is-openclaw-free-what-it-costs-to-run", title: "Is OpenClaw free, and what it costs to run" },
+      { slug: "how-to-self-host-openclaw", title: "How to self-host OpenClaw" },
     ],
     externalRelated: [
       { label: "Hermes docs: Migrate from OpenClaw", href: HERMES_OPENCLAW_MIGRATION_GUIDE },
     ],
     faqs: [
       {
-        q: "How different is Hivra from OpenClaw?",
-        a: "OpenClaw is an open-source agent you normally run yourself. Hivra is a managed place to run agents, and OpenClaw is one of them, alongside Hermes, Claude Code, Codex and others. Hivra takes care of the server, restarts, and updates so OpenClaw keeps running when your laptop is closed.",
+        q: "What's the best OpenClaw alternative?",
+        a: "It depends what you want to stop doing. To stop running the machine, keep OpenClaw and put it on a host (Hivra runs it from $9.99 a month for 2 vCPU and 4 GB). To change the agent, Hermes has a documented import of an OpenClaw setup. ZeroClaw and NanoClaw are lighter agents you still host yourself. We haven't run either on a Hivra computer.",
       },
       {
-        q: "Can I migrate my existing OpenClaw setup to Hivra?",
-        a: "Yes, but it is a manual step: Hivra has no one-click import. To keep OpenClaw, launch it on Hivra and copy your configuration across. To move to Hermes, run Hermes' own `hermes claw migrate` command, which imports your persona, memory, skills, and settings.",
+        q: "Is there a free alternative to OpenClaw?",
+        a: "OpenClaw is already free. The MIT licence puts no charge on the software, and the copyright sits with the OpenClaw Foundation. Hermes, ZeroClaw and NanoClaw are free software too. The costs that remain are the computer and the model key, on every one of them.",
       },
       {
-        q: "Do I lose anything by switching from OpenClaw to Hivra?",
-        a: "You gain managed hosting and an agent that stays on without your laptop. The main trade is that you are no longer running locally, which means your API key is stored on a server rather than your machine. Local browser sessions and stored credentials do not migrate, and if you move to Hermes, cron jobs and plugins need setting up again.",
+        q: "Can I keep OpenClaw and just stop hosting it?",
+        a: "Yes. Hivra runs OpenClaw on its own computer. You still choose the model provider and connect your messaging channels in the Control UI, and you copy your existing configuration over yourself. There's no import button.",
       },
       {
-        q: "I built custom tools for OpenClaw. Will they work on Hivra?",
-        a: "If you run OpenClaw on Hivra, your OpenClaw skills stay OpenClaw skills. If you move to Hermes, `hermes claw migrate` brings skills across, but OpenClaw plugins do not migrate. Tools that depend on local machine resources (local files, running processes on your machine) will need to be adapted to work on a cloud server.",
+        q: "Can I move my OpenClaw setup to Hermes?",
+        a: "By hand. Hivra has no import of its own. Hermes does: `hermes claw migrate`, and `--dry-run` shows the plan first. Persona, memory, skills and model settings copy over. Cron jobs, plugins, webhooks and channel bindings are archived for you to recreate, and WhatsApp needs pairing again.",
+      },
+      {
+        q: "Will my OpenClaw skills still work?",
+        a: "On OpenClaw, yes, because it's the same software. On Hermes, `hermes claw migrate` copies skills from the workspace, from `~/.openclaw/skills/`, from `~/.agents/skills/` and from `workspace/.agents/skills/`. Plugins don't migrate. Anything that needs files or processes on your own machine has to be pointed at the new computer.",
+      },
+      {
+        q: "Is Hivra an official OpenClaw product?",
+        a: "No. Hivra hosts the OpenClaw agent on a private computer and isn't affiliated with the OpenClaw project. Hermes on Hivra is Hivra's own image, not a Nous Research product, and Hivra isn't affiliated with Anthropic or OpenAI either.",
       },
     ],
   },
