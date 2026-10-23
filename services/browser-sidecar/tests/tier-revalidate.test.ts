@@ -26,6 +26,7 @@ function buildConfig(overrides: Partial<Config>): Config {
     TIER_CHECK_URL: undefined,
     TIER_CHECK_INSTANCE_ID: undefined,
     TIER_CHECK_TOKEN: undefined,
+    SIDECAR_ALLOW_UNAUTHENTICATED: false,
     CLERK_EMAIL: undefined,
     CLERK_PASSWORD: undefined,
     CLERK_LOGIN_URL: undefined,

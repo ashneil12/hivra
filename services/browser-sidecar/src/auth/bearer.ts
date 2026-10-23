@@ -31,23 +31,28 @@ function constantTimeEqual(a: string, b: string): boolean {
  * Build the Fastify `onRequest` preHandler that gates every tool route on
  * SIDECAR_AUTH_TOKEN.
  *
- * Two modes, controlled by whether config.SIDECAR_AUTH_TOKEN is set:
+ * Three modes, controlled by config.SIDECAR_AUTH_TOKEN and
+ * config.SIDECAR_ALLOW_UNAUTHENTICATED:
  *
  *  - **Strict** (token configured) — every request to a non-public path
  *    must carry `Authorization: Bearer <token>`. Wrong / missing token
  *    returns 401 + a fail-closed warn log.
  *
- *  - **Migration / warn-only** (token unset) — every request is allowed
- *    through, but each one logs `auth_disabled: true` so operators can
- *    see during the rollout whether any sibling container is still
- *    talking to the sidecar without a bearer. The intent is for
- *    provisioning to seed SIDECAR_AUTH_TOKEN on new VMs and for the
- *    agent's sidecar client (a different repo) to be updated to send
- *    the bearer; once the fleet is migrated this branch can be
- *    deleted and the env var becomes required.
+ *  - **Explicit warn-only** (token unset AND
+ *    SIDECAR_ALLOW_UNAUTHENTICATED=1) — every request is allowed through,
+ *    but each one logs `auth_disabled: true` so operators can see during
+ *    the rollout whether any sibling container is still talking to the
+ *    sidecar without a bearer. Dev / migration escape hatch only.
+ *
+ *  - **Fail-closed** (token unset, no opt-in) — gated routes return 503
+ *    `AUTH_NOT_CONFIGURED`. An unauthenticated tool API is never the
+ *    silent default: a box missing the seeded token degrades loudly
+ *    instead of serving /goto, /screenshot and /cookies to any peer on
+ *    the docker network.
  */
 export function buildBearerAuthPreHandler(config: Config, logger: Logger) {
   const token = config.SIDECAR_AUTH_TOKEN ?? null;
+  const allowUnauthenticated = config.SIDECAR_ALLOW_UNAUTHENTICATED === true;
   return async function bearerAuthPreHandler(
     req: FastifyRequest,
     reply: FastifyReply,
@@ -58,16 +63,30 @@ export function buildBearerAuthPreHandler(config: Config, logger: Logger) {
     const presented = readBearerToken(req);
 
     if (!token) {
-      // Warn-only mode. Do not log the token itself.
-      logger.warn(
+      if (allowUnauthenticated) {
+        // Warn-only mode. Do not log the token itself.
+        logger.warn(
+          {
+            tool: url,
+            method: req.method,
+            auth_disabled: true,
+            bearer_present: presented !== null,
+          },
+          "sidecar bearer auth not configured; allowing request (explicit SIDECAR_ALLOW_UNAUTHENTICATED opt-in)",
+        );
+        return;
+      }
+      logger.error(
         {
           tool: url,
           method: req.method,
           auth_disabled: true,
-          bearer_present: presented !== null,
         },
-        "sidecar bearer auth not configured; allowing request (fleet-migration mode)",
+        "sidecar bearer auth not configured; refusing request (set SIDECAR_AUTH_TOKEN, or SIDECAR_ALLOW_UNAUTHENTICATED=1 to opt in to warn-only mode)",
       );
+      await reply
+        .code(503)
+        .send({ ok: false, error: "AUTH_NOT_CONFIGURED" });
       return;
     }
 
