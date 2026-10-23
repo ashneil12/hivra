@@ -266,6 +266,19 @@ function env(key: string, fallback: string): string {
   return v && v.trim() ? v.trim() : fallback;
 }
 
+// SEC-04: a CR/LF/NUL in a dashboard-provided value (API key, base URL, model,
+// bot name) must never smuggle an extra KEY=value line into a generated .env.
+function sanitizeEnvValue(val: string): string {
+  return String(val).replace(/[\r\n\0]/g, "");
+}
+
+// YAML double-quoted scalar. Byte-identical to `"${val}"` for ordinary values,
+// but quote/newline-safe when val contains `"` or a line break, so a hostile
+// value cannot break out of the scalar and inject extra config.yaml keys.
+function yamlDoubleQuotedScalar(val: unknown): string {
+  return JSON.stringify(String(val).replace(/[\r\n\0]/g, ""));
+}
+
 function isNousAuthProvider(provider: string): boolean {
   return provider === "nous" || provider === "nous-portal";
 }
@@ -908,6 +921,18 @@ export function buildAgentCaddyfile(
   profileRoutes?: { name: string; port: number }[],
   ports: AgentPortMapping = LEGACY_AGENT_PORTS,
 ): string {
+  // SEC-04: profile route names/ports are interpolated verbatim into
+  // `handle_path` and `reverse_proxy` directives below. A malformed name can
+  // inject arbitrary Caddyfile directives, and a non-integer port corrupts the
+  // upstream — reject both before emitting anything.
+  for (const route of profileRoutes || []) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(route.name)) {
+      throw new Error(`Invalid profile route name for Caddyfile: ${route.name}`);
+    }
+    if (!Number.isInteger(route.port) || route.port < 1 || route.port > 65535) {
+      throw new Error(`Invalid profile route port for Caddyfile: ${route.port}`);
+    }
+  }
   const dashboardSessionCookie = "hermes_dashboard_session";
   const publicSiteLabel = fqdn === "localhost" ? ":80" : fqdn;
   const mainBlock = `${publicSiteLabel} {
@@ -1480,7 +1505,7 @@ function buildAgentConfigYaml(params: {
     configYamlProvider = "custom";
   }
   const resolvedBaseUrl = resolveProviderBaseUrl(params.provider, params.agentSettings?.customLlmBaseUrl);
-  const configYamlBaseUrl = resolvedBaseUrl ? `\n  base_url: "${resolvedBaseUrl}"` : "";
+  const configYamlBaseUrl = resolvedBaseUrl ? `\n  base_url: ${yamlDoubleQuotedScalar(resolvedBaseUrl)}` : "";
 
   const requestedModel = params.model || resolveProviderFallbackModel(params.provider);
   const resolvedModel = normalizeModelValue(requestedModel, params.provider);
@@ -1517,7 +1542,7 @@ function buildAgentConfigYaml(params: {
 
   const memSys = params.memorySystem;
   const memProviderLine = memSys?.provider && memSys.provider !== "holographic"
-    ? `  provider: "${memSys.provider}"\n`
+    ? `  provider: ${yamlDoubleQuotedScalar(memSys.provider)}\n`
     : memSys?.provider === "holographic" ? `  provider: "holographic"\n` : "";
 
   const holographicPluginYaml = memSys?.provider === "holographic"
@@ -1533,13 +1558,13 @@ function buildAgentConfigYaml(params: {
     const configYamlSubProvider = PROVIDER_ID_MAP[subProvider] ?? subProvider;
     let subApiKeyYaml = "";
     const resolvedSubBaseUrl = resolveProviderBaseUrl(subProvider);
-    const configYamlSubBaseUrl = resolvedSubBaseUrl ? `\n  base_url: "${resolvedSubBaseUrl}"` : "";
+    const configYamlSubBaseUrl = resolvedSubBaseUrl ? `\n  base_url: ${yamlDoubleQuotedScalar(resolvedSubBaseUrl)}` : "";
 
     if (params.agentSettings.subagentApiKey) {
-      subApiKeyYaml = `\n  api_key: "${params.agentSettings.subagentApiKey}"`;
+      subApiKeyYaml = `\n  api_key: ${yamlDoubleQuotedScalar(params.agentSettings.subagentApiKey)}`;
     }
 
-    delegationYaml = `delegation:\n  provider: "${configYamlSubProvider}"\n  model: "${subModelStr}"${configYamlSubBaseUrl}${subApiKeyYaml}\n`;
+    delegationYaml = `delegation:\n  provider: ${yamlDoubleQuotedScalar(configYamlSubProvider)}\n  model: ${yamlDoubleQuotedScalar(subModelStr)}${configYamlSubBaseUrl}${subApiKeyYaml}\n`;
   }
 
   const hasWebKey = !!(params.agentSettings?.tavilyApiKey || params.agentSettings?.exaApiKey || params.agentSettings?.firecrawlApiKey);
@@ -1643,7 +1668,7 @@ memory:
   memory_char_limit: ${params.globalSettings?.memoryContextLimit || 2200}
   user_char_limit: ${params.globalSettings?.userContextLimit || 1375}
 ${memProviderLine}session_reset:
-  mode: "${params.agentSettings?.sessionResetMode || 'both'}"
+  mode: ${yamlDoubleQuotedScalar(params.agentSettings?.sessionResetMode || 'both')}
   idle_minutes: ${params.agentSettings?.gatewayTimeoutMins || ((params.globalSettings?.sessionExpiryHours || 24) * 60)}
 ${webSectionYaml}${browserSectionYaml}${terminalSectionYaml}${imageGenSectionYaml}${ttsSectionYaml}${bankrSectionYaml}${holographicPluginYaml}`;
 }
@@ -2082,12 +2107,17 @@ asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()`;
 }
 
+// SEC-04: the metadata/ifconfig.me response is network-controlled input that
+// flows into `sed -i` below. Fail closed on anything containing a
+// non-[0-9.] byte (or an empty reply) so a poisoned payload can't inject a sed
+// expression or FQDN. Kept terse — this lands in 32 KB-capped cloud-init.
 export function buildSslipPlaceholderResolutionScript(fqdn: string): string {
   return fqdn === "0-0-0-0.sslip.io"
     ? `
 # Dynamic IP resolution for new hosts to fix 0-0-0-0.sslip.io placeholder
 echo "Resolving public IP dynamically for 0-0-0-0.sslip.io placeholder..."
-PUBLIC_IP=$(curl -s http://169.254.169.254/hetzner/v1/metadata/public-ipv4 || curl -s ifconfig.me)
+PUBLIC_IP=$(curl -s http://169.254.169.254/hetzner/v1/metadata/public-ipv4 || curl -s https://ifconfig.me)
+case "$PUBLIC_IP" in *[!0-9.]*|'') PUBLIC_IP="" ;; esac
 if [ -n "$PUBLIC_IP" ]; then
   REAL_FQDN="$(echo $PUBLIC_IP | tr '.' '-').sslip.io"
   echo "Replacing placeholder with actual FQDN: $REAL_FQDN"
@@ -2372,77 +2402,82 @@ ${buildAutoUpdateTimerProvisioningScript({
 }
 
 export function buildProviderEnv(provider: string, apiKey: string, customLlmBaseUrl?: string): string[] {
+  // SEC-04: the key and any user-supplied base URL land verbatim in .env lines
+  // below — strip line breaks/NUL so they can't inject extra assignments.
+  const apiKeySafe = sanitizeEnvValue(apiKey);
+  const customLlmBaseUrlSafe =
+    customLlmBaseUrl === undefined ? undefined : sanitizeEnvValue(customLlmBaseUrl);
   switch (provider) {
     case "openrouter":
-      return [`HERMES_INFERENCE_PROVIDER=openrouter`, `OPENROUTER_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=openrouter`, `OPENROUTER_API_KEY=${apiKeySafe}`];
     case "openai":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "bankr":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "venice": {
-      const baseUrl = resolveProviderBaseUrl(provider, customLlmBaseUrl)!;
+      const baseUrl = resolveProviderBaseUrl(provider, customLlmBaseUrlSafe)!;
       return [
         `HERMES_INFERENCE_PROVIDER=custom`,
-        `OPENAI_API_KEY=${apiKey}`,
+        `OPENAI_API_KEY=${apiKeySafe}`,
         `OPENAI_BASE_URL=${baseUrl}`,
-        `VENICE_API_KEY=${apiKey}`,
+        `VENICE_API_KEY=${apiKeySafe}`,
         `VENICE_BASE_URL=${baseUrl}`,
       ];
     }
     case "cometapi":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "surplus":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "codex":
       return [`HERMES_INFERENCE_PROVIDER=openai-codex`];
     case "anthropic":
-      return [`HERMES_INFERENCE_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=${apiKeySafe}`];
     case "nous":
     case "nous-portal":
-      return apiKey
-        ? [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`]
+      return apiKeySafe
+        ? [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`]
         : [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "crof":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "opengateway":
       return [
         `HERMES_INFERENCE_PROVIDER=custom`,
-        `OPENAI_API_KEY=${apiKey || "gitlawb-open"}`,
+        `OPENAI_API_KEY=${apiKeySafe || "gitlawb-open"}`,
         `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`,
       ];
     case "deepseek":
-      return [`HERMES_INFERENCE_PROVIDER=deepseek`, `DEEPSEEK_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=deepseek`, `DEEPSEEK_API_KEY=${apiKeySafe}`];
     case "minimax":
-      return [`HERMES_INFERENCE_PROVIDER=minimax`, `MINIMAX_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=minimax`, `MINIMAX_API_KEY=${apiKeySafe}`];
     case "groq":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "gemini":
       return [
         `HERMES_INFERENCE_PROVIDER=custom`,
-        `OPENAI_API_KEY=${apiKey}`,
-        `GEMINI_API_KEY=${apiKey}`,
+        `OPENAI_API_KEY=${apiKeySafe}`,
+        `GEMINI_API_KEY=${apiKeySafe}`,
         `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`,
       ];
     case "moonshot":
       return [
         `HERMES_INFERENCE_PROVIDER=kimi-coding`,
-        `KIMI_API_KEY=${apiKey}`,
-        `KIMI_BASE_URL=${resolveKimiBaseUrlForKey(apiKey)}`,
+        `KIMI_API_KEY=${apiKeySafe}`,
+        `KIMI_BASE_URL=${resolveKimiBaseUrlForKey(apiKeySafe)}`,
       ];
     case "xai":
-      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKey}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
+      return [`HERMES_INFERENCE_PROVIDER=custom`, `OPENAI_API_KEY=${apiKeySafe}`, `OPENAI_BASE_URL=${resolveProviderBaseUrl(provider)!}`];
     case "zhipu":
-      return [`HERMES_INFERENCE_PROVIDER=zai`, `GLM_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=zai`, `GLM_API_KEY=${apiKeySafe}`];
     case "alibaba":
       return [
         `HERMES_INFERENCE_PROVIDER=alibaba`,
-        `DASHSCOPE_API_KEY=${apiKey || "sk-dummy"}`,
+        `DASHSCOPE_API_KEY=${apiKeySafe || "sk-dummy"}`,
         `DASHSCOPE_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/v1`,
       ];
     case "xiaomi":
-      return [`HERMES_INFERENCE_PROVIDER=xiaomi`, `XIAOMI_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=xiaomi`, `XIAOMI_API_KEY=${apiKeySafe}`];
     default:
-      return [`HERMES_INFERENCE_PROVIDER=openrouter`, `OPENROUTER_API_KEY=${apiKey}`];
+      return [`HERMES_INFERENCE_PROVIDER=openrouter`, `OPENROUTER_API_KEY=${apiKeySafe}`];
   }
 }
 
@@ -2600,6 +2635,10 @@ export function buildHermesEnvLines(params: {
     }
   }
 
+  // SEC-04: every interpolated value above (apiServerKey, model, agent-settings
+  // keys, memory-system values) lands verbatim in .env — sanitize every emitted
+  // line so a value containing a line break can never inject an extra
+  // KEY=value assignment into the generated env file.
   return [
     `API_SERVER_ENABLED=true`,
     `API_SERVER_HOST=0.0.0.0`,
@@ -2628,7 +2667,7 @@ export function buildHermesEnvLines(params: {
       ...(agentSettings.browserUseApiKey ? [`BROWSER_USE_API_KEY=${agentSettings.browserUseApiKey}`] : []),
     ] : []),
     ...memoryEnvLines,
-  ];
+  ].map(sanitizeEnvValue);
 }
 
 export function buildHonchoConfig(settings?: HonchoSettings): string | null {

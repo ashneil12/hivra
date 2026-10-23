@@ -510,6 +510,9 @@ const SAFE_TERMINAL_SESSION_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const TERMINAL_INACTIVITY_TTL_MS = 30 * 60 * 1000;
 const TERMINAL_MAX_SCROLLBACK = 65536;
 const TERMINAL_WEBSOCKET_MAX_MESSAGE_BYTES = 8192;
+// SIDECAR_BODY_CAP_CONST_START
+const MAX_SIDECAR_BODY_BYTES = 10 * 1024 * 1024;
+// SIDECAR_BODY_CAP_CONST_END
 const TERMINAL_PTY_HELPER_CODE = ${JSON.stringify(TERMINAL_PTY_HELPER_CODE)};
 const TERMINAL_PTY_HELPER_BOOTSTRAP =
   'PYTHON_BIN=$(command -v python3 || command -v python); ' +
@@ -610,15 +613,37 @@ function authenticateRequest(req, rawBody) {
   }
 }
 
+// SIDECAR_BODY_CAP_READ_START
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
+    let receivedBytes = 0;
+    let settled = false;
 
-    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+    req.on('data', (chunk) => {
+      if (settled) return;
+      receivedBytes += chunk.length;
+      if (receivedBytes > MAX_SIDECAR_BODY_BYTES) {
+        settled = true;
+        reject(createHttpError(413, 'Payload too large'));
+        try { req.destroy(); } catch (e) {}
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
   });
 }
+// SIDECAR_BODY_CAP_READ_END
 
 function parseCookies(cookieHeader) {
   const parsed = {};
@@ -2424,9 +2449,15 @@ function writeEnvFile(targetEnvFile, envUpdates, prefixToRemove, keysToRemove) {
     });
   }
 
+  // SIDECAR_ENV_VALIDATE_START
   if (Array.isArray(envUpdates)) {
-    lines.push(...envUpdates);
+    for (const rawUpdate of envUpdates) {
+      const update = String(rawUpdate == null ? '' : rawUpdate).replace(/[\\r\\n\\0]/g, '');
+      if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(update)) continue;
+      lines.push(update);
+    }
   }
+  // SIDECAR_ENV_VALIDATE_END
 
   const newContent = lines.join('\\n').trim() + '\\n';
   fs.mkdirSync(path.dirname(targetEnvFile), { recursive: true });
@@ -4229,6 +4260,9 @@ export const HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE = [
   // exact pre-fix Hetzner behaviour, with no ReferenceError. Same precedent as
   // the DASHBOARD_RECOVERY_DEADLINE strip above (Hetzner keeps the simpler form).
   ["DASHBOARD_DNS_LOOKUP", "\nvar dashboardDnsLookup;\n"],
+  ["SIDECAR_BODY_CAP_CONST", "\n"],
+  ["SIDECAR_BODY_CAP_READ", "\nfunction readRawBody(req) {\n  return new Promise((resolve, reject) => {\n    const chunks = [];\n\n    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));\n    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));\n    req.on('error', reject);\n  });\n}\n"],
+  ["SIDECAR_ENV_VALIDATE", "\n  if (Array.isArray(envUpdates)) {\n    lines.push(...envUpdates);\n  }\n"],
 ].reduce(
   (source, [marker, replacement]) => replaceMarkedGeneratedBlock(source, marker, replacement),
   SIDECAR_SERVER_CODE

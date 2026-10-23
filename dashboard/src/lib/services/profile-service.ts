@@ -642,6 +642,9 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
     honchoSettings?: HonchoSettings;
   }) {
     const normalizedModel = normalizeModelValue(params.model || "", params.provider);
+    // Validate BEFORE the insert: an invalid profile name must throw here, not
+    // after a "creating" row is already committed to the profiles table.
+    const safeName = sanitizeDockerName(params.name);
     // 1. Insert into DB (creating status)
     const { data: profile, error } = await supabaseAdmin!
        .from("profiles")
@@ -663,7 +666,6 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
       const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
       const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
       const containerName = this.buildContainerName(instanceId);
-      const safeName = sanitizeDockerName(params.name);
 
       let cloneFlag = "";
       if (params.cloneFrom && params.cloneFrom !== "default" && params.cloneFrom !== "none") {
@@ -785,15 +787,19 @@ if completed.returncode != 0:
           ? (PROVIDER_ID_MAP[params.provider] ?? params.provider)
           : 'openrouter';
         const modelName = normalizedModel || '';
+        // SEC-04: JSON.stringify keeps `default: "..."` byte-identical for
+        // ordinary values while escaping `"`/newlines that would otherwise
+        // break out of the YAML scalar and inject extra config keys.
+        const yamlQuoted = (v: string) => JSON.stringify(String(v).replace(/[\r\n\0]/g, ""));
         const configLines: string[] = ['model:'];
-        if (modelName) configLines.push(`  default: "${modelName}"`);
-        configLines.push(`  provider: "${hermesProvider}"`);
+        if (modelName) configLines.push(`  default: ${yamlQuoted(modelName)}`);
+        configLines.push(`  provider: ${yamlQuoted(hermesProvider)}`);
 
         // Resolve base_url for providers that need one (e.g. crof, openai, gemini).
         // Without this, "custom" provider doesn't know which API endpoint to hit.
         const resolvedBaseUrl = resolveProviderBaseUrl(dashProvider, params.agentSettings?.customLlmBaseUrl);
         if (resolvedBaseUrl) {
-          configLines.push(`  base_url: "${resolvedBaseUrl}"`);
+          configLines.push(`  base_url: ${yamlQuoted(resolvedBaseUrl)}`);
         }
 
         const configContent = configLines.join('\\n');
@@ -803,7 +809,7 @@ if completed.returncode != 0:
       // Append delegation key to config.yaml if an overriding subagent key exists
       if (params.agentSettings?.subagentApiKey) {
          injectScript += `\ncat << 'EOF' >> "$profile_dir/config.yaml"\ndelegation:
-  api_key: ${params.agentSettings.subagentApiKey}
+  api_key: ${JSON.stringify(String(params.agentSettings.subagentApiKey).replace(/[\r\n\0]/g, ""))}
 EOF\n`;
       }
 
