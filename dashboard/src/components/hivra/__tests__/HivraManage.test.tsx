@@ -904,4 +904,33 @@ describe("HivraManage lifecycle guidance", () => {
       expect(mockAddBoxMcp).not.toHaveBeenCalled();
     });
   });
+
+  describe("connection address link safety (SEC-07)", () => {
+    const renderAdvanced = (chat_url: string) => {
+      render(<HivraManage agent={{ ...agent, chat_url }} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      openSection("Advanced");
+    };
+
+    it.each([
+      "javascript:alert(1)",
+      "data:text/html,<h1>pwned</h1>",
+      "vbscript:msgbox(1)",
+      "file:///etc/passwd",
+      "box.example.com",
+      " https://box.example.com ",
+      "https://box.example.com/?x=1",
+      "https://user:pass@box.example.com",
+    ])("does not render the external link for %s", (chat_url) => {
+      renderAdvanced(chat_url);
+      // The raw value still displays as text — only the href is withheld.
+      expect(screen.getByText("Connection address")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Open endpoint" })).not.toBeInTheDocument();
+    });
+
+    it("renders the external link for a plain https box address", () => {
+      renderAdvanced("https://box.example.com");
+      expect(screen.getByRole("link", { name: "Open endpoint" }))
+        .toHaveAttribute("href", "https://box.example.com");
+    });
+  });
 });
