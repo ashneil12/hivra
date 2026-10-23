@@ -20,8 +20,15 @@ export const HIVRA_SUDO_SENTINEL = "HIVRA_SUDO_V1";
 
 /** Fixed, about 150 bytes, inside single quotes in the command: it must never
  * contain a single quote. */
+/** The script runs via `bash -c`, not `eval`: identical stdin semantics (the
+ * framed data after the script still flows to the script's reads), but the
+ * payload executes in a child process instead of inside the loader's own
+ * shell — a malformed or hostile script can't mutate loader state mid-read,
+ * and `timeout` still signals the whole process group. The Python mirror in
+ * scripts/test-server-enroll-host.py (SUDO_LOADER) must stay byte-identical;
+ * proxmox-sudo-transport.test.ts asserts it. */
 export const HIVRA_SUDO_LOADER =
-  'printf "HIVRA_SUDO_V1\\n" >&2; IFS= read -r n && [[ $n =~ ^[1-9][0-9]{0,5}$ ]] && IFS= read -r -d "" -n "$n" s && [ "${#s}" -eq "$n" ] && eval "$s"';
+  'printf "HIVRA_SUDO_V1\\n" >&2; IFS= read -r n && [[ $n =~ ^[1-9][0-9]{0,5}$ ]] && IFS= read -r -d "" -n "$n" s && [ "${#s}" -eq "$n" ] && /bin/bash --noprofile --norc -c "$s"';
 
 /** The length prefix allows up to 999,999 bytes of script. */
 export const MAX_SUDO_TRANSPORT_SCRIPT_BYTES = 999_999;
