@@ -24,12 +24,22 @@ jest.mock("@/lib/supabase", () => ({
     from: (table: string) => {
       const filters: Record<string, unknown> = {};
       const chain: Record<string, unknown> = {};
-      const rows = () => (mockRows[table] ?? []).filter((row) => row.user_id === filters.user_id);
+      const rows = () => (mockRows[table] ?? []).filter((row) => {
+        if (filters.user_id !== undefined && row.user_id !== filters.user_id) return false;
+        const inIds = filters["in:id"] as unknown[] | undefined;
+        if (inIds && !inIds.includes(row.id)) return false;
+        return true;
+      });
       chain.select = jest.fn(() => chain);
       chain.eq = jest.fn((column: string, value: unknown) => { filters[column] = value; return chain; });
+      chain.in = jest.fn((column: string, values: unknown[]) => { filters[`in:${column}`] = values; return chain; });
       chain.neq = jest.fn(() => chain);
       chain.order = jest.fn(async () => ({ data: rows(), error: null }));
       chain.single = jest.fn(async () => ({ data: rows().find((row) => row.id === filters.id) ?? null, error: null }));
+      // Awaiting the builder itself (no terminal call) resolves the row set,
+      // same as the real PostgrestBuilder thenable.
+      chain.then = (resolve: (v: { data: unknown[]; error: null }) => void) =>
+        resolve({ data: rows(), error: null });
       return chain;
     },
   },
