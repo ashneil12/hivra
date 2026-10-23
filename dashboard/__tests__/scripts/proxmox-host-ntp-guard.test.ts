@@ -17,7 +17,9 @@ describe("proxmox-host-ntp-guard.sh", () => {
     expect(script).toContain("server ntp1.hetzner.de iburst");
     expect(script).toContain("server ntp2.hetzner.de iburst");
     expect(script).toContain("server ntp3.hetzner.de iburst");
+    expect(script).toContain("allow 10.70.0.0/16");
     expect(script).toContain("allow 10.250.0.0/16");
+    expect(script).toContain("allow 10.251.0.0/16");
     expect(script).toContain("pool[[:space:]]+2\\.debian\\.pool\\.ntp\\.org");
   });
 
