@@ -9,6 +9,8 @@
 import {
   archiveInstance,
   buildRestoreCloneTeardownScript,
+  isValidColdArchiveUri,
+  isValidColdTimestampCompact,
   manifestPathFromArchiveUri,
   purgeArchive,
   restoreInstance,
@@ -221,6 +223,66 @@ describe("manifestPathFromArchiveUri", () => {
   it("returns null for an unrecognized path shape", () => {
     expect(manifestPathFromArchiveUri("free/abc/notarchive.txt")).toBeNull();
     expect(manifestPathFromArchiveUri("foo/bar/baz")).toBeNull();
+  });
+
+  it("SEC-02: rejects shell metacharacters and traversal in id/ts segments", () => {
+    // A poisoned archive_uri must fail closed to null — the derived path is
+    // interpolated into `ssh cold "cat <path>"` on the PVE host.
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/data-x$(id).tar.zst`)
+    ).toBeNull();
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/data-${VALID_TS}$(id).tar.zst`)
+    ).toBeNull();
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/data-${VALID_TS};id.tar.zst`)
+    ).toBeNull();
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/data-\`id\`.tar.zst`)
+    ).toBeNull();
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/data-${VALID_TS}' OR '1'='1.tar.zst`)
+    ).toBeNull();
+    // Traversal: '..', extra slashes, and non-UUID id segments all rejected.
+    expect(manifestPathFromArchiveUri(`free/../data-${VALID_TS}.tar.zst`)).toBeNull();
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/data-../../etc/passwd.tar.zst`)
+    ).toBeNull();
+    expect(
+      manifestPathFromArchiveUri(`free/${VALID_INSTANCE_ID}/sub/data-${VALID_TS}.tar.zst`)
+    ).toBeNull();
+    expect(manifestPathFromArchiveUri(`free/not-a-uuid/data-${VALID_TS}.tar.zst`)).toBeNull();
+    // Tier must be free|paid; anything else is not a cold archive path.
+    expect(
+      manifestPathFromArchiveUri(`other/${VALID_INSTANCE_ID}/data-${VALID_TS}.tar.zst`)
+    ).toBeNull();
+  });
+
+  it("SEC-02: isValidColdArchiveUri accepts canonical uris and rejects tampered ones", () => {
+    expect(isValidColdArchiveUri(VALID_ARCHIVE_URI)).toBe(true);
+    expect(
+      isValidColdArchiveUri(`paid/${VALID_INSTANCE_ID}/data-${VALID_TS}.tar.zst`)
+    ).toBe(true);
+    expect(
+      isValidColdArchiveUri(`free/${VALID_INSTANCE_ID}/data-x$(id).tar.zst`)
+    ).toBe(false);
+    expect(isValidColdArchiveUri(`free/${VALID_INSTANCE_ID}/data-${VALID_TS}`)).toBe(false);
+    expect(isValidColdArchiveUri(` free/${VALID_INSTANCE_ID}/data-${VALID_TS}.tar.zst`)).toBe(false);
+    expect(
+      isValidColdArchiveUri(`free/${VALID_INSTANCE_ID}/data-${VALID_TS}.tar.zst `)
+    ).toBe(false);
+    expect(isValidColdArchiveUri("")).toBe(false);
+  });
+
+  it("SEC-02: isValidColdTimestampCompact pins the ts token charset", () => {
+    expect(isValidColdTimestampCompact(VALID_TS)).toBe(true);
+    expect(isValidColdTimestampCompact("20260501T000000Z$(id)")).toBe(false);
+    expect(isValidColdTimestampCompact("2026 05 01")).toBe(false);
+    expect(isValidColdTimestampCompact("a;b")).toBe(false);
+    expect(isValidColdTimestampCompact("..")).toBe(false);
+    expect(isValidColdTimestampCompact("short")).toBe(false);
+    expect(isValidColdTimestampCompact("a".repeat(33))).toBe(false);
+    expect(isValidColdTimestampCompact("")).toBe(false);
   });
 });
 
@@ -549,6 +611,90 @@ describe("archiveInstance", () => {
     expect(runHostScript).toHaveBeenCalledTimes(3);
   });
 
+  it("SEC-02: rejects a poisoned MANIFEST ts token without ever invoking ssh cold", async () => {
+    // Host stdout is not trusted input: a compromised or MITM'd archive run
+    // could emit `ts=...$(id)`, which would land in archive_uri on the row and
+    // in the `ssh cold` manifest path — injecting into every later remote
+    // command. The service must fail closed after the archive script, before
+    // the manifest fetch.
+    let revertedPayload: Record<string, unknown> | undefined;
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: baseRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } }, // CAS
+      {
+        table: "hermes_instances",
+        op: "update",
+        result: { data: null, error: null },
+        capture: (payload) => { revertedPayload = payload; },
+      }, // revert to paused
+    ]);
+    const { deps, runHostScript } = makeDeps([
+      archiveScriptOk({ ts: "20260501T000000Z$(id)" }),
+    ]);
+
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "manifest_verify_failed",
+      retryable: false,
+    });
+    expect(revertedPayload).toMatchObject({ lifecycle_state: "paused" });
+    // Only the archive script itself ran — the poisoned token never reached a
+    // second remote call (`ssh cold "cat meta/..."`).
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+    expect(runHostScript.mock.calls[0][0]).toContain("archive-vm-cold.sh");
+  });
+
+  it("SEC-02: rejects a malformed MANIFEST sha256 token without invoking ssh cold", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: baseRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: null } }, // revert
+    ]);
+    const { deps, runHostScript } = makeDeps([
+      archiveScriptOk({ sha: "nothex$(id)" }),
+    ]);
+
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps);
+    expect(result).toMatchObject({ ok: false, reason: "manifest_verify_failed", retryable: false });
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+  });
+
+  it("SEC-02: quotes the storage-box manifest path in the ssh cold fetch", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: baseRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([archiveScriptOk(), manifestJson(), destroyOk(), caddyCleanupOk()]);
+
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps);
+    expect(result.ok).toBe(true);
+    const manifestFetchCmd = runHostScript.mock.calls[1][0] as string;
+    expect(manifestFetchCmd).toContain(
+      `ssh cold "cat 'meta/${VALID_INSTANCE_ID}/${VALID_TS}.json'"`
+    );
+  });
+
+  it("SEC-02: refuses to archive a non-UUID instance id (no DB write, no remote call)", async () => {
+    const supabase = makeSupabase([]);
+    const { deps, runHostScript } = makeDeps([]);
+
+    const result = await archiveInstance(
+      supabase as never,
+      `${VALID_INSTANCE_ID}'; rm -rf /`,
+      deps
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "instance_not_archivable",
+      retryable: false,
+    });
+    expect(runHostScript).not.toHaveBeenCalled();
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
   it("forwards a null subdomain to the helper (helper short-circuits)", async () => {
     // sslip-only instances have no subdomain. The helper's contract is to
     // no-op on null/undefined; cold-storage trusts that contract rather
@@ -712,6 +858,50 @@ describe("restoreInstance", () => {
     const { deps } = makeDeps([]);
     const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
     expect(result).toMatchObject({ ok: false, reason: "missing_archive_metadata" });
+  });
+
+  it("SEC-02: refuses a poisoned archive_uri before the CAS lock (no remote command built)", async () => {
+    // archive_uri is DB-stored host output; a tampered value must never be
+    // interpolated into the restore-vm-cold.sh argv. Fails pre-lock, so the
+    // row is untouched and no host call is made.
+    const poisonedRow = {
+      ...coldRow,
+      archive_uri: `free/${VALID_INSTANCE_ID}/data-x$(id).tar.zst`,
+    };
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: poisonedRow, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "missing_archive_metadata",
+      retryable: false,
+    });
+    expect(runHostScript).not.toHaveBeenCalled();
+    // Exactly one DB read — the row was never CAS'd to restoring.
+    expect(supabase.__queue).toHaveLength(1);
+  });
+
+  it("SEC-02: refuses a non-UUID instance id before the CAS lock", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+
+    const result = await restoreInstance(
+      supabase as never,
+      `${VALID_INSTANCE_ID}$(reboot)`,
+      restoreOptions,
+      deps
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "missing_archive_metadata",
+      retryable: false,
+    });
+    expect(runHostScript).not.toHaveBeenCalled();
   });
 
   it("reverts to previous state when restore-vm-cold.sh fails AND tears down the clone it may have created", async () => {
@@ -1122,6 +1312,29 @@ describe("verifyArchiveIntegrity", () => {
     const result = await verifyArchiveIntegrity(supabase as never, VALID_INSTANCE_ID, {}, deps);
     expect(result).toMatchObject({ ok: false, reason: "missing_archive_metadata" });
   });
+
+  it("SEC-02: fails closed on a poisoned archive_uri without invoking runHostScript", async () => {
+    // A tampered archive_uri would be interpolated into the `ssh cold`
+    // manifest fetch, the slice probe and the full-mode rsync. Both modes
+    // must refuse before the first remote call.
+    const poisonedRow = {
+      ...coldRow,
+      archive_uri: `free/${VALID_INSTANCE_ID}/data-x$(id).tar.zst`,
+    };
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: poisonedRow, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+
+    const result = await verifyArchiveIntegrity(
+      supabase as never,
+      VALID_INSTANCE_ID,
+      { mode: "full" },
+      deps
+    );
+    expect(result).toMatchObject({ ok: false, reason: "missing_archive_metadata" });
+    expect(runHostScript).not.toHaveBeenCalled();
+  });
 });
 
 describe("purgeArchive", () => {
@@ -1190,5 +1403,25 @@ describe("purgeArchive", () => {
     expect(result).toMatchObject({ ok: true, trashUri: "" });
     expect(invokedCmd).toContain("rm -rf");
     expect(invokedCmd).not.toContain("trash/");
+  });
+
+  it("SEC-02: fails closed on a poisoned archive_uri without invoking runHostScript", async () => {
+    // The purge command runs `rm -rf`/`mv` against the archive path on the
+    // Storage Box — the worst place for a shell-metacharacter archive_uri to
+    // land. A tampered value must be refused before the remote call.
+    const poisonedRow = {
+      ...coldRow,
+      archive_uri: `free/${VALID_INSTANCE_ID}/data-x$(id).tar.zst`,
+    };
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: poisonedRow, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+
+    const result = await purgeArchive(supabase as never, VALID_INSTANCE_ID, {}, deps);
+    expect(result).toMatchObject({ ok: false, reason: "missing_archive_metadata" });
+    expect(runHostScript).not.toHaveBeenCalled();
+    // And the row must not be flagged deleted — no update was attempted.
+    expect(supabase.__queue).toHaveLength(1);
   });
 });
