@@ -30,7 +30,7 @@ import {
 } from "@/lib/hivra/tool-install";
 import { listToolTargets, type ToolTarget } from "@/lib/hivra/tool-targets";
 import { applyToolsToHermesInstance } from "@/lib/hivra/hermes-tool-apply";
-import { readInstalledHermesToolNames, type HermesToolServerEntry } from "@/lib/hivra/hermes-tool-config";
+import { readInstalledHermesToolEntries, type HermesToolServerEntry } from "@/lib/hivra/hermes-tool-config";
 import { getToolById } from "@/data/curated-tools";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
@@ -119,21 +119,32 @@ async function reconcileHermesTarget(params: {
     .single();
   if (!instance) return { ok: false, error: "Instance not found" };
 
-  // Current desired set: read the live config's hivra_ entries, then rebuild each
-  // from the catalog (so we never have to store install state ourselves).
-  const cfgNames = readInstalledHermesToolNames(
-    (instance.config as Record<string, unknown>) || {},
+  // Desired set = every currently-installed hivra_ tool, plus/minus this one.
+  // entries must be COMPLETE: buildHermesConfigWithTools strips all managed
+  // keys before writing, so any tool missing here is silently uninstalled.
+  // Kept tools pass through verbatim from the stored config — their env was
+  // resolved at install time and this request only carries env for `tool`.
+  // The tool itself is re-resolved from the catalog so re-install can update it.
+  const stored = new Map(
+    readInstalledHermesToolEntries(
+      (instance.config as Record<string, unknown>) || {},
+    ).map((e) => [e.name, e]),
   );
-  const keep = new Set(cfgNames);
   const tool = getToolById(params.toolId);
   if (!tool) return { ok: false, error: "Unknown tool" };
+  const keep = new Set(stored.keys());
   if (params.remove) keep.delete(tool.mcp.name);
   else keep.add(tool.mcp.name);
 
   const entries: HermesToolServerEntry[] = [];
-  for (const t of [tool]) {
-    if (!keep.has(t.mcp.name)) continue;
-    const resolved = resolveToolMcpSpec({ id: t.id, env: params.env }, "claude");
+  for (const name of keep) {
+    if (name !== tool.mcp.name) {
+      const existing = stored.get(name);
+      if (existing) entries.push(existing);
+      continue;
+    }
+    if (params.remove) continue;
+    const resolved = resolveToolMcpSpec({ id: tool.id, env: params.env }, "claude");
     if ("skip" in resolved) return { ok: false, error: `cannot resolve tool: ${resolved.skip}` };
     entries.push({
       name: resolved.spec.name,
