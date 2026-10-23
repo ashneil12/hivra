@@ -1,6 +1,11 @@
 /**
  * @jest-environment node
  */
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   buildConfigSnapshotStagingScript,
   buildMetadataFile,
@@ -168,6 +173,84 @@ describe("buildConfigSnapshotStagingScript", () => {
     // an unquoted token. The runtime regex guard then rejects the non-uuid id.
     expect(script).toContain(`'"'"'`);
     expect(script).toContain('[[ "$INSTANCE_ID" =~ ^[0-9a-f-]{36}$ ]]');
+  });
+
+  it("guards per-profile names with a strict allowlist before interpolating them (SEC-05)", () => {
+    const script = buildConfigSnapshotStagingScript({
+      instanceId: "00000000-0000-4000-8000-000000001056",
+      vmid: 200,
+      guestIp: "10.250.20.50",
+    });
+    expect(script).toContain('[[ "$p" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || continue');
+    // The guard must sit inside the profiles loop, BEFORE $p reaches mkdir or any
+    // g "sudo ..." string that a guest shell will re-parse.
+    const loopIdx = script.indexOf('for p in $(g "sudo ls $V/profiles');
+    const guardIdx = script.indexOf('[[ "$p" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]');
+    const mkdirIdx = script.indexOf('mkdir -p "$STAGE/hermes/profiles/$p"');
+    expect(loopIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(loopIdx);
+    expect(mkdirIdx).toBeGreaterThan(guardIdx);
+  });
+
+  it("skips hostile profile names end-to-end: they never reach a guest command or host path (SEC-05)", () => {
+    const script = buildConfigSnapshotStagingScript({
+      instanceId: "00000000-0000-4000-8000-000000001056",
+      vmid: 200,
+      guestIp: "10.250.20.50",
+    });
+    // Pull the real `if g "sudo test -d $V/profiles" ... fi` block out of the generated
+    // script and run it under bash with a stubbed `g` (the guest-ssh helper). The stub
+    // logs every remote-command arg and answers the `ls` with tenant-controlled names.
+    const block = script.match(/if g "sudo test -d \$V\/profiles"[\s\S]*?\nfi\n/);
+    expect(block).not.toBeNull();
+
+    const sq = (s: string) => `'${s.replace(/'/g, `'"'"'`)}'`;
+    const hostileNames = [
+      "..",
+      "../escape",
+      "evil;touch",
+      "$(id)",
+      "`id`",
+      "a/b",
+      "'quoted'",
+      'x"quote',
+      "name$(touch${IFS}x)",
+      "*",
+    ];
+    const tmp = mkdtempSync(join(tmpdir(), "sec05-profiles-"));
+    try {
+      const callsPath = join(tmp, "calls.log");
+      const runDir = join(tmp, "rundir");
+      mkdirSync(runDir); // empty cwd: a bare `*` cannot glob into real filenames
+      const harness = [
+        "set -u",
+        `STAGE=${sq(join(tmp, "stage"))}`,
+        "V=/fake/vol",
+        `CALLS=${sq(callsPath)}`,
+        `cd ${sq(runDir)}`,
+        `g() { printf 'G\\t%s\\n' "$*" >> "$CALLS"; case "$*" in *"ls $V/profiles"*) printf '%s\\n' ${["good-name", "legit_123", ...hostileNames].map(sq).join(" ")} ;; *" cat "*) printf 'x\\n' ;; esac; return 0; }`,
+        block![0],
+      ].join("\n");
+      execFileSync("bash", ["-c", harness], { stdio: "pipe" });
+
+      const calls = readFileSync(callsPath, "utf8");
+      // Allowlisted profile names are still snapshotted.
+      expect(calls).toContain("/fake/vol/profiles/good-name/config.yaml");
+      expect(calls).toContain("/fake/vol/profiles/legit_123/config.yaml");
+      // No hostile fragment ever reached a guest-command argument.
+      expect(calls).not.toMatch(/\$\(/);
+      expect(calls).not.toContain("`");
+      expect(calls).not.toContain(";");
+      expect(calls).not.toMatch(/\.\./);
+      expect(calls).not.toMatch(/profiles\/\*/);
+      // And no hostile/traversal directory was created on the host staging tree.
+      expect(readdirSync(join(tmp, "stage", "hermes", "profiles")).sort()).toEqual([
+        "good-name",
+        "legit_123",
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
