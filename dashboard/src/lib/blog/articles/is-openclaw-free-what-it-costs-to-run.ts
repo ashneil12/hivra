@@ -69,7 +69,7 @@ export const article: BlogArticle = {
           `| Hivra | ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} | OpenClaw needs a paid plan at that size |`,
         ].join("\n"),
         "On every row except a local model, the model bill sits on top and goes to your provider, not to the host.",
-        "A rented server is the cheapest ongoing route if you like running Linux. It is the wrong pick if you don't want a second machine to babysit, because updates and odd failures land on you. The [OpenClaw self-hosting guide](/blog/how-to-self-host-openclaw) covers the install itself.",
+        "A rented server is the cheapest ongoing route if you like running Linux. It is the wrong pick if you don't want a second machine to babysit, because updates and odd failures land on you. The [OpenClaw self-hosting guide](/blog/how-to-self-host-openclaw) covers the install itself, and the [OpenClaw alternative page](/features/openclaw-alternative) puts the hosted route next to switching the agent.",
       ],
     },
     {

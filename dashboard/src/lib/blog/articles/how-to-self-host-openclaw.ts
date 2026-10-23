@@ -105,7 +105,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a way to get OpenClaw-equivalent functionality without the maintenance overhead?",
-      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra on paid plans. Hivra also hosts Hermes Agent, which has its own `hermes claw migrate` command to import your existing data. You run it yourself, because Hivra has no import tool of its own. Hivra runs the server and container for it, and the agent's memory stays on its own VM.",
+      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra on paid plans. Hivra also hosts Hermes Agent, which has its own `hermes claw migrate` command to import your existing data. You run it yourself, because Hivra has no import tool of its own. The [OpenClaw alternative page](/features/openclaw-alternative) sets out when to keep OpenClaw and when a different agent is the actual ask.",
     },
   ],
   relatedArticles: [
