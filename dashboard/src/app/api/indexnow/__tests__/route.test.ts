@@ -181,4 +181,76 @@ describe("POST /api/indexnow", () => {
     expect(body.error).not.toContain("dns lookup to indexnow timed out");
     expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("dns lookup to indexnow timed out");
   });
+
+  // The trigger secret is accepted from headers first so it stays out of URLs
+  // (access logs, browser history, Referer). ?secret= remains for backwards
+  // compatibility with the existing cron caller.
+  it("accepts the trigger secret as an Authorization bearer", async () => {
+    process.env.INDEXNOW_KEY = "indexnow-public-key";
+    process.env.INDEXNOW_TRIGGER_SECRET = "trigger-secret";
+    mockedAuth.mockResolvedValue({ userId: null } as Awaited<ReturnType<typeof auth>>);
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200 });
+
+    const response = await POST(new Request("https://hivra.cloud/api/indexnow", {
+      method: "POST",
+      headers: { authorization: "Bearer trigger-secret" },
+    }));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("accepts the trigger secret via the x-indexnow-secret header", async () => {
+    process.env.INDEXNOW_KEY = "indexnow-public-key";
+    process.env.INDEXNOW_TRIGGER_SECRET = "trigger-secret";
+    mockedAuth.mockResolvedValue({ userId: null } as Awaited<ReturnType<typeof auth>>);
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200 });
+
+    const response = await POST(new Request("https://hivra.cloud/api/indexnow", {
+      method: "POST",
+      headers: { "x-indexnow-secret": "trigger-secret" },
+    }));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("still accepts the legacy ?secret= query param", async () => {
+    process.env.INDEXNOW_KEY = "indexnow-public-key";
+    process.env.INDEXNOW_TRIGGER_SECRET = "trigger-secret";
+    mockedAuth.mockResolvedValue({ userId: null } as Awaited<ReturnType<typeof auth>>);
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200 });
+
+    const response = await POST(
+      new Request("https://hivra.cloud/api/indexnow?secret=trigger-secret", { method: "POST" })
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("prefers a valid header secret over a wrong query param", async () => {
+    process.env.INDEXNOW_KEY = "indexnow-public-key";
+    process.env.INDEXNOW_TRIGGER_SECRET = "trigger-secret";
+    mockedAuth.mockResolvedValue({ userId: null } as Awaited<ReturnType<typeof auth>>);
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200 });
+
+    const response = await POST(new Request("https://hivra.cloud/api/indexnow?secret=wrong-secret", {
+      method: "POST",
+      headers: { "x-indexnow-secret": "trigger-secret" },
+    }));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects a wrong bearer secret", async () => {
+    process.env.INDEXNOW_KEY = "indexnow-public-key";
+    process.env.INDEXNOW_TRIGGER_SECRET = "trigger-secret";
+    mockedAuth.mockResolvedValue({ userId: null } as Awaited<ReturnType<typeof auth>>);
+
+    const response = await POST(new Request("https://hivra.cloud/api/indexnow", {
+      method: "POST",
+      headers: { authorization: "Bearer wrong-secret" },
+    }));
+
+    expect(response.status).toBe(401);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
