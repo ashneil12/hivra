@@ -10,15 +10,15 @@ const DORMANT: TokenPhaseCopy = {
   tokenPage: {
     metadataTitle: "Hivra token: current access and proposals",
     metadataDescription:
-      "Verify the existing $HermesOS contract, understand current holder access, and read the proposed $HIVRA migration. A wallet is optional.",
+      "Verify the existing $HermesOS contract, understand current holder access, and read the plan for $HIVRA and the $HermesOS migration. A wallet is optional.",
     heroTitle: "$HermesOS and Hivra.",
     heroLead:
-      "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the proposed $HIVRA token.",
+      "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the planned $HIVRA token. The launch is in preparation and nothing is trading yet.",
     migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
-    migrationHeading: "The proposed $HIVRA migration",
+    migrationHeading: "The planned $HIVRA migration",
     migrationParagraphs: [
-      "The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.",
-      "The proposed claim would sell the old tokens into their existing pool and use the ETH proceeds to buy from the new pool. Conversion terms, fees and price protections must be published with the contract before claims open. No migration action is offered on this page.",
+      "$HIVRA is planned for Base, launched through Doppler. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, without burning anything. Keeping access and claiming are separate decisions.",
+      "The eligibility snapshot is complete. Claims are not open yet, and the contract, claim link and times are published here once verified. No migration action is offered on this page.",
     ],
   },
   tokenomics: {

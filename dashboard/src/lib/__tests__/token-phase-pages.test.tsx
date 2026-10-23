@@ -73,9 +73,9 @@ describe("dormant $HIVRA: the copy from before", () => {
     renderPage(TokenVerificationPage);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HermesOS and Hivra\.$/);
     expect(screen.getByText(copy.tokenPage.heroLead)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Token launch in preparation" })).toBeInTheDocument();
     expect(screen.getByText("The existing $HermesOS contract. $HIVRA has not launched.")).toBeInTheDocument();
-    for (const paragraph of copy.tokenPage.migrationParagraphs) expect(screen.getByText(paragraph)).toBeInTheDocument();
   });
 
   it("/tokenomics keeps its title, header and migration paragraphs", async () => {

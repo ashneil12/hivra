@@ -16,6 +16,7 @@ import {
   type TokenPageEntryStatus,
 } from "@/lib/token-verification-content";
 import { TokenGeoNotice } from "./TokenGeoNotice";
+import PrelaunchSections from "./PrelaunchSections";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
@@ -154,7 +155,8 @@ export default function TokenPageClient({
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
-      {geoNotice ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
+      {geoNotice || phase !== "dormant" ? null : <PrelaunchSections />}
+      {geoNotice || phase === "dormant" ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
         <p className="mono" style={{ fontSize: 11 }}>{copy.migrationEyebrow}</p>
         <h2 id="proposals-title">{copy.migrationHeading}</h2>
         <p>{copy.migrationParagraphs[0]}</p>
