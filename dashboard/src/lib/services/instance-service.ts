@@ -1694,7 +1694,17 @@ export const CreateInstanceSchema = z.object({
   vaultKeyId: z.string().optional(),
   honchoVaultKeyId: z.string().optional(),
   model: z.string().optional().default(""),
-  migrationPath: z.string().optional(),
+  // Storage object key for a migration archive. Traversal segments and
+  // control bytes are rejected here; ownership against the authenticated
+  // user is enforced in createInstance via isOwnedMigrationStoragePath (the
+  // schema can't see the userId).
+  migrationPath: z
+    .string()
+    .refine((value) => !value.includes("..") && !/[\n\r\0]/.test(value), {
+      message:
+        "migrationPath must not contain traversal segments or control characters",
+    })
+    .optional(),
   hostId: z.string().optional(), // If provided, deploy on existing host
   // Product lane. 'workspace_cloud' pins placement to the dedicated wrk1 lane
   // (separate from Hivra auto-placement) and tags the row so the two
@@ -1766,6 +1776,33 @@ export const CreateInstanceSchema = z.object({
 });
 
 type CreateInstanceParams = z.infer<typeof CreateInstanceSchema>;
+
+// Matches exactly what /api/upload-migration writes:
+//   migrations/<clerk user id>/<16 random bytes as 32 lowercase hex>.zip
+const MIGRATION_STORAGE_PATH_PATTERN =
+  /^migrations\/[^/]+\/[0-9a-f]{32}\.zip$/;
+
+/**
+ * True only when `migrationPath` is a migration archive object key owned by
+ * `userId` — i.e. the exact `migrations/<userId>/<32 hex>.zip` shape the
+ * upload route produces. createInstance signs this key with the service-role
+ * client, so anything broader (or belonging to another user) would hand the
+ * caller a signed download URL for someone else's archive — or any other
+ * object in the bucket.
+ */
+export function isOwnedMigrationStoragePath(
+  migrationPath: string,
+  userId: string
+): boolean {
+  if (!userId) return false;
+  if (migrationPath.includes("..")) return false;
+  for (const char of migrationPath) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  if (!migrationPath.startsWith(`migrations/${userId}/`)) return false;
+  return MIGRATION_STORAGE_PATH_PATTERN.test(migrationPath);
+}
 
 type ServiceResponse<T> =
   | { success: true; data: T }
@@ -2221,6 +2258,22 @@ export class InstanceService {
     userId: string,
     params: CreateInstanceParams
   ): Promise<ServiceResponse<Record<string, unknown>>> {
+    // SEC-01: migrationPath is a client-supplied storage object key that gets
+    // signed with the service-role client below. Without an ownership check a
+    // caller could name another user's archive (or any bucket key) and
+    // receive a working download URL for it. Fail closed before any DB write
+    // or provisioning work.
+    if (
+      params.migrationPath &&
+      !isOwnedMigrationStoragePath(params.migrationPath, userId)
+    ) {
+      return {
+        success: false,
+        status: 403,
+        message: "Invalid or unauthorized migration archive path.",
+      };
+    }
+
     const infraProvider = resolveInfrastructureProviderForUser(userId);
 
     if (infraProvider === "hetzner" && !process.env.HETZNER_API_TOKEN) {
@@ -3060,6 +3113,16 @@ export class InstanceService {
     // Generate signed URL for Hetzner cloud-init if migration path exists
     let migrationUrl: string | undefined = undefined;
     if (migrationPath) {
+      // Defense in depth: the top-of-function check already rejected unowned
+      // paths; re-validate at the signing site so a future refactor can't
+      // turn this into a sign-anything oracle for other tenants' objects.
+      if (!isOwnedMigrationStoragePath(migrationPath, userId)) {
+        return {
+          success: false,
+          status: 403,
+          message: "Invalid or unauthorized migration archive path.",
+        };
+      }
       const { data: signData, error: signError } = await supabaseAdmin.storage
         .from("hermes-attachments")
         .createSignedUrl(migrationPath, 60 * 60); // 1 hour expiry
