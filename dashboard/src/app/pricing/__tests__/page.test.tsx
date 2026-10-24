@@ -115,7 +115,7 @@ describe("/pricing page", () => {
 
     const h1s = screen.getAllByRole("heading", { level: 1 });
     expect(h1s).toHaveLength(1);
-    expect(squash(h1s[0].textContent)).toBe("A computer for your agent. Without the server setup.");
+    expect(squash(h1s[0].textContent)).toBe("Start free. Connect your own server.");
     expect(main.getAllByRole("heading", { level: 2 }).map((heading) => squash(heading.textContent))).toEqual([
       "Choose how you want to run it",
       "Compare your options",
@@ -127,10 +127,10 @@ describe("/pricing page", () => {
     ]);
     expect(PRICING_FAQ_HEADING).toBe("Questions people usually ask");
     expect(main.getAllByRole("heading", { level: 3 }).map((heading) => squash(heading.textContent))).toEqual([
+      "Start free: connect your own server",
       "Self-host Hivra",
       "Hivra Cloud",
       "Hivra Cloud, more room",
-      "Already rent a server?",
     ]);
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Home/Pricing");
   });
