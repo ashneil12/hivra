@@ -16,7 +16,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-host Hermes Agent on Ubuntu: install script, Docker image, Telegram gateway, systemd. Or skip all that and run it on a Hivra computer.",
   publishedDate: "2026-04-11",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 16,
   author: "Hivra team",
   tagline: "Docker can mean two different things here. Pick the one that matches the isolation you want.",
@@ -50,7 +50,7 @@ export const article: BlogArticle = {
     {
       heading: "Server requirements",
       paragraphs: [
-        "Minimum: 2 vCPU, 4 GB RAM, 20 GB SSD. That runs Hermes with Docker available for sandboxed commands. Hetzner's CX23 at €5.49/month excluding VAT is the community budget option many people quote. DigitalOcean's 4 GB Basic Droplet is dearer for the same floor. Hostinger KVM 2 with 8 GB RAM shows up in setup threads when people want more RAM on one server.",
+        "Minimum: 2 vCPU, 4 GB RAM, 20 GB SSD. That runs Hermes with Docker available for sandboxed commands. Hetzner's CX23 at €5.49/month excluding VAT and IPv4 is the community budget option many people quote, though Hetzner showed it as unavailable in October 2026, so check stock. DigitalOcean's 4 GB Basic Droplet is dearer for the same floor. Hostinger KVM 2 with 8 GB RAM shows up in setup threads when people want more RAM on one server.",
         "Recommended: 4 vCPU, 8 GB RAM, 40 GB SSD. Extra RAM matters if you run Ollama beside the agent, or you turn on the Docker terminal backend and browser tools at once. 4 GB is the hard floor: below it, complex tasks hit OOM. OS: Ubuntu 24.04 LTS. Nous's install docs target that. Debian 12 can work if you are happy fixing the gaps yourself.",
       ],
     },
@@ -112,7 +112,7 @@ export const article: BlogArticle = {
     {
       heading: "The self-hosting calculation",
       paragraphs: [
-        `Server cost: a CX23-class VPS around €5.49/month excluding VAT. LLM API: often $5-50/month depending on how hard you push it. First setup: a few hours when it goes well. Upkeep: under an hour most months. At $50/hour, one painful evening of debugging already covers many months of Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}).`,
+        `Server cost: a CX23-class VPS around €5.49/month excluding VAT and IPv4. LLM API: often $5-50/month depending on how hard you push it. First setup: a few hours when it goes well. Upkeep: under an hour most months. At $50/hour, one painful evening of debugging already covers many months of Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}).`,
         "Self-hosting wins when you like Linux, you will keep the agent for a long stretch, and you care about holding the disk yourself. It loses when updates break at a bad time or when the infrastructure work crowds out the actual tasks. Hivra is the managed alternative: Hermes from Hivra's maintained build, on its own private computer, without a compose file for you to babysit. If you would rather skip the install, that is what it is for.",
       ],
     },
@@ -128,7 +128,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What is the cheapest server that can actually run Hermes Agent?",
-      a: "Community write-ups often cite Hetzner CX23 at €5.49/month excluding VAT (2 vCPU, 4 GB RAM). Below 4 GB RAM you will hit OOM on complex tasks. Re-check the vendor page before you pay.",
+      a: "Community write-ups often cite Hetzner CX23 at €5.49/month excluding VAT and IPv4 (2 vCPU, 4 GB RAM). Below 4 GB RAM you will hit OOM on complex tasks. Re-check the vendor page before you pay: Hetzner showed this plan as unavailable in October 2026.",
     },
     {
       q: "How long does the setup actually take?",

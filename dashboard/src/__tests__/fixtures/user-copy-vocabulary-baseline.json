@@ -1,9 +1,4 @@
 {
-  "app/compare/[slug]/page.tsx": {
-    "the box": 1,
-    "instance": 2,
-    "runtime": 1
-  },
   "app/dashboard/agent/[id]/page.tsx": {
     "runtime": 5
   },
@@ -37,23 +32,12 @@
     "instance": 1,
     "runtime": 1
   },
-  "app/ecosystem/page.tsx": {
-    "runtime": 2
-  },
-  "app/features/[slug]/page.tsx": {
-    "the box": 1,
-    "instance": 2,
-    "runtime": 1
-  },
   "app/privacy/page.tsx": {
-    "instance": 5,
+    "instance": 1,
     "runtime": 2
   },
   "app/providers/OpsTelemetryProvider.tsx": {
     "runtime": 1
-  },
-  "app/terms/page.tsx": {
-    "instance": 1
   },
   "app/workspace-cloud/connect/connect-client.tsx": {
     "instance": 1

@@ -31,7 +31,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Codex pricing by ChatGPT plan: Plus $20, Pro 100/200/500, API keys. October 2026 changes, and why your own computer does not raise Codex limits.",
   publishedDate: "2026-10-05",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 12,
   author: "Hivra team",
   tagline: "Your ChatGPT plan sets Codex limits. Where Codex runs doesn't change them.",
@@ -64,7 +64,7 @@ export const article: BlogArticle = {
         [
           `First, Pro 500 and Astra Ultrafast. OpenAI's [DevDay 2026 notes](${DEVDAY}) (29 September 2026) and [speed docs](${SPEED}) say GPT-6 Astra Ultrafast is available in Codex and ChatGPT Work on the Pro $500 plan and on eligible Enterprise and Edu plans. The [Pro tiers article](${PRO_TIERS}) says Ultrafast is available only on Pro 500 among Pro plans, and that buying credits on Pro 100 or Pro 200 does not add Ultrafast at launch.`,
           `Second, the Pro 200 allowance got smaller for most people. New Pro 200 subscriptions are open again at $200 a month, with a lower included usage allowance than before. Eligible existing Pro 200 subscribers keep the previous allowance through 29 October 2026 while the subscription stays active, then move to the lower allowance at the same $200 price. Eligibility needs an active Pro 200 subscription at any point from 22 September 2026 through 10 a.m. Pacific Time on 29 September 2026 ([Pro tiers article](${PRO_TIERS})). Keeping that allowance does not add Ultrafast or turn the plan into Pro 500.`,
-          `Third, GPT-5.5 retires on 14 October 2026. OpenAI's pricing and speed pages say GPT-5.5 leaves ChatGPT, ChatGPT Work and Codex on all plans that day. The OpenAI API is not affected.`,
+          `Third, the GPT-5.5 retirement date has passed. OpenAI's pricing and speed pages give 14 October 2026, at noon PDT (19:00 UTC), as the date GPT-5.5 retires from Codex with ChatGPT sign-in, so check the model picker for what your plan offers now. The OpenAI API and Codex sessions that use an API key are not affected.`,
         ].join("\n\n"),
         "OpenAI's Pro tiers help article does not publish numeric \"Nx Plus\" multiples for Pro 100, Pro 200 or Pro 500. It only says Pro 200 includes more usage than Pro 100, and Pro 500 offers the highest included usage of the three. So this page doesn't invent multiples either. Check your own usage dashboard.",
       ],
@@ -162,8 +162,8 @@ export const article: BlogArticle = {
       a: "No. Limits follow your ChatGPT plan or API key, not the host. A laptop, a VPS, Codex cloud and a Hivra computer all draw from the same OpenAI allowance for that account.",
     },
     {
-      q: "When does GPT-5.5 leave Codex?",
-      a: "14 October 2026, from ChatGPT, ChatGPT Work and Codex on all plans, according to OpenAI's pricing and speed pages. The OpenAI API is not affected.",
+      q: "When was GPT-5.5 due to leave Codex?",
+      a: "OpenAI's pricing and speed pages give 14 October 2026, at noon PDT (19:00 UTC), as the date GPT-5.5 retires from Codex with ChatGPT sign-in. That date has passed, so check the model picker for what your plan offers now. The OpenAI API and Codex sessions that use an API key are not affected.",
     },
     {
       q: "How much does Hivra cost on top of Codex?",

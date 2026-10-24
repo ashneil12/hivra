@@ -1,0 +1,54 @@
+/* /get-started: the English heading above the sign-up and plan columns, and the closing links under them. */
+
+.intro {
+  position: relative;
+  z-index: 10;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 0 0.5rem;
+}
+
+.intro h1 {
+  max-width: 18ch;
+  margin: 0 0 20px;
+  font-size: clamp(38px, 5.4vw, 72px);
+  font-weight: 500;
+  line-height: 1.06;
+  letter-spacing: -0.06em;
+  color: var(--ink-black);
+  text-wrap: balance;
+}
+
+.intro p {
+  max-width: 62ch;
+  margin: 0 0 14px;
+  font-size: clamp(16px, 1.4vw, 19px);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.intro p:last-child {
+  margin-bottom: 0;
+}
+
+.closing {
+  position: relative;
+  z-index: 10;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding-block: 0.5rem 1.5rem;
+}
+
+.closing > div {
+  margin-top: 8px;
+}
+
+@media (max-width: 840px) {
+  .intro {
+    padding-top: 0.5rem;
+  }
+
+  .intro h1 {
+    max-width: none;
+  }
+}

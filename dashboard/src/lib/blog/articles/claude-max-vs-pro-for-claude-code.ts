@@ -39,6 +39,8 @@ function longDate(iso: string): string {
 // Reader copy carries one plain freshness stamp on prices ("as of September 2026"), never "read on <date>"
 // (Ash's voice rule, 2026-10-06). The exact check date stays in F.lastVerified and lastModified.
 const AS_OF = longDate(F.lastVerified).replace(/^\d+ /, "");
+// The API price table was read again on a later day (F.apiRatesRead), so its freshness stamp follows that day.
+const API_AS_OF = longDate(F.apiRatesRead).replace(/^\d+ /, "");
 const DAY = usd(COST.perActiveDayUsd);
 const P90_DAY = usd(COST.p90PerActiveDayUsd);
 
@@ -140,7 +142,7 @@ export const article: BlogArticle = {
         `If you use Claude Code on more active days a month than the number in the table, the plan costs less than the same tokens at API list price, as long as the plan's limits cover that usage. At Anthropic's enterprise average day, API billing beats Pro only below about ${proDays} active days a month. It beats Max 5x below about ${max5Days}.`,
         `A worked example: ${EXAMPLE_DAYS} active days a month at ${DAY} a day is ${exampleMonth} on the API. That's more than Max 5x's ${usd(MAX5.priceUsd)} and far more than Pro's ${usd(PRO.priceUsd)}, so a plan that covers your sessions costs less than the API. It's less than Max 20x's ${usd(MAX20.priceUsd)}, so Max 20x would cost more than the API for the same ${EXAMPLE_DAYS} days.`,
         `Your own day may cost more or less than the average. The cost figure in \`/usage\` estimates what a session would cost at API list price. Anthropic says it isn't relevant to billing on Pro and Max, but it's a fair number to use as your API cost per active day. For your own hours and model mix, the [Claude Code plan calculator](/tools/claude-code-plan-calculator) prints an estimate, labelled as one, with its assumptions.`,
-        `API list prices per million tokens, as of ${AS_OF} (${link(S.apiPricing, "Claude API pricing")}):`,
+        `API list prices per million tokens, as of ${API_AS_OF} (${link(S.apiPricing, "Claude API pricing")}):`,
         [
           "| Model | Input | Output | Cache read | Cache write (5 minutes) |",
           "|---|---|---|---|---|",
@@ -149,7 +151,7 @@ export const article: BlogArticle = {
             return `| ${m.label} | ${usd(m.input)} | ${usd(m.output)} | ${usd(m.cacheRead)} | ${usd(m.cacheWrite5m)} |`;
           }),
         ].join("\n"),
-        "Anthropic says Haiku 5.5 will join the Claude 5.5 family in the coming weeks, so recheck the Haiku row before you rely on it.",
+        `Haiku 5.5 is priced by prompt length. The Haiku row above is for prompts up to ${API.haiku.longPrompt.overTokens.toLocaleString("en-US")} tokens. Above that it costs ${usd(API.haiku.longPrompt.input)} input, ${usd(API.haiku.longPrompt.output)} output, ${usd(API.haiku.longPrompt.cacheRead)} cache read and ${usd(API.haiku.longPrompt.cacheWrite5m)} cache write.`,
         `Most of a Claude Code bill is cache reads: Anthropic says they make up the majority of the cost of agentic coding work. In its data from March to September 2026, Claude reads ${COST.inputToOutputRatio} input tokens for every output token, up from ${COST.inputToOutputRatioBefore} (${link(S.sessionsBlog, "Anthropic, 24 September 2026")}). On a plan the prompt cache lasts an hour. On an API key it lasts five minutes by default (${link(S.costs, "Claude Code docs")}).`,
         "One trap. If `ANTHROPIC_API_KEY` is set in your environment, Claude Code uses it instead of your plan and bills API usage. Interactive sessions ask once whether to approve the key, and `claude -p` uses it whenever it is set. To go back to your plan:\n\n```bash\n# Is a key set? Prints \"set\" if so.\necho \"${ANTHROPIC_API_KEY:+set}\"\n\n# Remove it for this shell, then check inside Claude Code with /status\nunset ANTHROPIC_API_KEY\n```\n\nTo stop being offered API credits at a limit, sign in with only your plan credentials: `claude auth logout`, then `claude auth login`.",
         "For API bills from agents that aren't coding CLIs, see [The real cost of running a persistent AI agent in 2026](/blog/cost-of-running-ai-agent).",

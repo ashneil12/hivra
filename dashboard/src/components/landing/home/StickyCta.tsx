@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { AnimatePresence, m } from "framer-motion";
-import { EASE_OUT } from "./motion";
+import { EASE_OUT, useMotionPref } from "./motion";
 import styles from "./home.module.css";
 
 /**
@@ -14,6 +14,8 @@ import styles from "./home.module.css";
 export default function StickyCta({ href, label, note }: { href: string; label: string; note: string }) {
   const [heroGone, setHeroGone] = useState(false);
   const [askVisible, setAskVisible] = useState(false);
+  // The slide-in follows the page's motion preference: the OS setting and the Motion switch.
+  const { off } = useMotionPref();
 
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;
@@ -39,10 +41,10 @@ export default function StickyCta({ href, label, note }: { href: string; label: 
       {show ? (
         <m.div
           className={styles.sticky}
-          initial={{ y: 90, opacity: 0 }}
+          initial={off ? { opacity: 0 } : { y: 90, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 90, opacity: 0 }}
-          transition={{ duration: 0.32, ease: EASE_OUT }}
+          exit={off ? { opacity: 0 } : { y: 90, opacity: 0 }}
+          transition={off ? { duration: 0 } : { duration: 0.32, ease: EASE_OUT }}
         >
           <a href={href} className={styles.stickyCta} data-cta="sticky">
             <span>{label}</span>

@@ -7,13 +7,14 @@ import { Breadcrumbs, EditorialQuestions, EditorialRelated } from "@/components/
 import editorial from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
 import AgentSurvivalCheckTool from "@/components/tools/AgentSurvivalCheckTool";
+import FaqAnswer from "@/components/tools/FaqAnswer";
 import HostingCostCalculatorTool from "@/components/tools/HostingCostCalculatorTool";
-import { withInlineCode } from "@/components/tools/InlineCode";
 import KeepMacAwakeTool from "@/components/tools/KeepMacAwakeTool";
 import LimitResetCalculatorTool from "@/components/tools/LimitResetCalculatorTool";
+import Markup from "@/components/tools/Markup";
 import PlanCalculatorTool from "@/components/tools/PlanCalculatorTool";
 import TmuxCheatSheetTool from "@/components/tools/TmuxCheatSheetTool";
-import { buildWebsiteMetadata } from "@/lib/metadata";
+import { buildAbsoluteTitleMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import {
   TOOL_ENTRIES,
@@ -55,16 +56,13 @@ export async function generateMetadata({ params }: ToolPageParams): Promise<Meta
   const entry = getToolEntry(slug);
   if (!entry) return {};
 
-  return {
-    title: entry.metaTitle,
+  // The finished browser title from the copy, so the layout's " | Hivra" template is not added a second time.
+  return buildAbsoluteTitleMetadata({
+    path: toolPath(entry.slug),
+    title: entry.browserTitle,
     description: entry.metaDescription,
-    ...buildWebsiteMetadata({
-      path: toolPath(entry.slug),
-      title: entry.metaTitle,
-      description: entry.metaDescription,
-      images: [toolOgImage(entry.slug)],
-    }),
-  };
+    images: [toolOgImage(entry.slug)],
+  });
 }
 
 export default async function ToolPage({ params }: ToolPageParams) {
@@ -109,6 +107,11 @@ export default async function ToolPage({ params }: ToolPageParams) {
     ],
   };
 
+  // The pages that quote commands set them in code. The answer text is unchanged, so the structured data above
+  // and the page read the same.
+  const faqCode = entry.faqCode;
+  const questions = faqCode ? entry.faqs.map(({ q, a }) => ({ q, a, node: <FaqAnswer text={a} phrases={faqCode} /> })) : entry.faqs;
+
   // The entry's own links first, then the other tools; one link per destination.
   const related = [
     ...entry.relatedLinks,
@@ -119,17 +122,32 @@ export default async function ToolPage({ params }: ToolPageParams) {
     <PublicSite className={editorial.page} data-page="tools-detail">
       <StructuredData schema={schema} />
       <main className={editorial.main} id="main-content">
-        <Breadcrumbs items={[{ label: "Tools", href: TOOLS_HUB.path }, { label: entry.name }]} />
-        <header className={editorial.masthead}>
+        <div className={styles.crumbs}>
+          <Breadcrumbs items={[{ label: "Tools", href: TOOLS_HUB.path }, { label: entry.name }]} />
+        </div>
+        <header className={[editorial.masthead, styles.toolMasthead].join(" ")}>
           <span className={editorial.eyebrow}>Free tool. No signup.</span>
           <h1>{entry.h1}</h1>
-          <p>{entry.subhead}</p>
+          <p>
+            <Markup text={entry.intro.lede} />
+          </p>
         </header>
 
-        <div className={styles.intro}>
-          {entry.longIntro.map((paragraph) => (
-            <p key={paragraph}>{entry.method ? withInlineCode(paragraph) : paragraph}</p>
-          ))}
+        <div className={[styles.intro, entry.intro.note ? styles.introWithNote : null].filter(Boolean).join(" ")}>
+          <div className={styles.introBody}>
+            {entry.intro.body.map((paragraph) => (
+              <p key={paragraph}>
+                <Markup text={paragraph} />
+              </p>
+            ))}
+          </div>
+          {entry.intro.note && (
+            <aside className={styles.introNote} role="note">
+              <p>
+                <Markup text={entry.intro.note} />
+              </p>
+            </aside>
+          )}
         </div>
 
         <section className={styles.toolSection} aria-label={entry.name} id="tool">
@@ -140,13 +158,13 @@ export default async function ToolPage({ params }: ToolPageParams) {
 
         {/* Tools that quote commands keep ligatures off in the FAQ, where flags are plain text. */}
         <div className={[styles.narrow, entry.method ? styles.noLigatures : null].filter(Boolean).join(" ")}>
-          <EditorialQuestions questions={entry.faqs} />
+          <EditorialQuestions questions={questions} />
         </div>
 
         <ToolsCta
           title={
             <>
-              Put your agent on a computer that <strong>stays on.</strong>
+              When you need a computer that <strong>stays on</strong>
             </>
           }
         />

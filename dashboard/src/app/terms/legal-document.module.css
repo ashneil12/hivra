@@ -1,0 +1,352 @@
+/* The shell for the two legal documents (/terms and /privacy): a contents rail beside one reading
+   column. secondary-site.module.css is not touched; it keeps the older ".legal" rules that nothing
+   uses any more. Colours come from the public site tokens, so dark mode follows the theme. */
+
+.shell {
+  width: min(100% - 2 * var(--public-gutter, 24px), 1120px);
+  margin-inline: auto;
+  padding-block: 72px 120px;
+  display: grid;
+  /* A 640px column at 18px holds about 75 characters a line. */
+  grid-template-columns: 232px minmax(0, 640px);
+  justify-content: center;
+  column-gap: clamp(48px, 7vw, 104px);
+  align-items: start;
+}
+
+.rail {
+  position: sticky;
+  top: 110px;
+  align-self: start;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* Hidden until it has keyboard focus, then drawn above the site header. It is the first stop after
+   the header and jumps over the contents list to the document. */
+.skip {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip:focus-visible {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 1000;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  padding: 12px 16px;
+  background: var(--ink-black);
+  color: var(--vellum-bg);
+  font: 13px/1.4 var(--public-mono, monospace);
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  outline: 2px solid var(--gold-leaf);
+  outline-offset: 2px;
+}
+
+.document {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 18px;
+  line-height: 1.75;
+  overflow-wrap: break-word;
+}
+
+/* Contents ----------------------------------------------------------------------------------- */
+
+.contents summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--etched-border);
+  cursor: pointer;
+  list-style: none;
+  font: 12px/1.7 var(--public-mono, monospace);
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.contents summary::-webkit-details-marker {
+  display: none;
+}
+
+.contents summary::after {
+  content: "+";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--gold-leaf);
+  font: 16px/1 var(--public-mono, monospace);
+}
+
+.contents[open] summary::after {
+  content: "\2212";
+}
+
+.contents ul {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+}
+
+.contents li {
+  margin: 0;
+}
+
+.contents a {
+  display: block;
+  padding: 9px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-decoration: none;
+  text-wrap: balance;
+}
+
+.contents a:hover,
+.contents a:focus-visible {
+  color: var(--gold-leaf);
+}
+
+/* Document head ------------------------------------------------------------------------------ */
+
+.document h1 {
+  margin: 0;
+  padding-bottom: 40px;
+  border-bottom: 1px solid var(--etched-border);
+  font-size: clamp(40px, 6vw, 72px);
+  font-weight: 500;
+  line-height: 1.04;
+  letter-spacing: -0.06em;
+  text-wrap: balance;
+  color: var(--ink-black);
+}
+
+.lead {
+  padding-top: 40px;
+}
+
+.lead p {
+  margin: 0 0 18px;
+  font-size: clamp(18px, 1.5vw, 20px);
+  line-height: 1.7;
+  color: var(--ink-black);
+}
+
+.lead p:last-child {
+  margin-bottom: 0;
+}
+
+.updated {
+  margin: 32px 0 0;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--etched-border);
+  font: 13px/1.7 var(--public-mono, monospace);
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+/* Sections ----------------------------------------------------------------------------------- */
+
+.section {
+  padding-block: 48px;
+  scroll-margin-top: 110px;
+}
+
+.section + .section {
+  border-top: 1px solid var(--etched-border);
+}
+
+.section h2 {
+  margin: 0 0 24px;
+  font-size: clamp(24px, 2.4vw, 28px);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+  color: var(--ink-black);
+}
+
+/* A hyphenated word in a heading or a contents entry ("Sub-processors") stays on one line. */
+.whole {
+  white-space: nowrap;
+}
+
+.section p {
+  margin: 0 0 22px;
+}
+
+.section p:last-child {
+  margin-bottom: 0;
+}
+
+.section strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.section a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.section a:hover {
+  color: var(--gold-leaf);
+}
+
+.section button {
+  text-underline-offset: 4px;
+}
+
+/* Lists. The global reset removes markers; these lists are rows divided by hairlines. The default
+   keeps the bold lead-in inline. "stacked" puts each lead-in over its text, for items that run to
+   several sentences; "columns" sets the lead-in in a left column, for a schedule. */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--etched-border);
+}
+
+.list > li {
+  margin: 0;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+/* A list that closes its section hands over to the section's own rule instead of doubling it. */
+.section > .list:last-child > li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.stacked > li {
+  padding-block: 20px;
+}
+
+.stacked > li > strong:first-child {
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* The text after the label is one run of plain text, which a grid lays out as a single cell, so a
+   row is as tall as its label or its text, whichever is longer. */
+.columns > li {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  column-gap: 28px;
+  padding-block: 20px;
+}
+
+/* A row with a long text keeps label-over-text on a wide screen too (LegalItem stacked). */
+.columns > li[data-stacked] {
+  display: block;
+}
+
+.columns > li[data-stacked] > strong:first-child {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.section .list + p {
+  margin-top: 28px;
+}
+
+/* Phones and narrow windows ------------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .shell {
+    display: block;
+    padding-block: 48px 72px;
+  }
+
+  .rail {
+    position: static;
+    margin-bottom: 40px;
+  }
+
+  .contents {
+    padding: 4px 16px 8px;
+    border: 1px solid var(--etched-border);
+  }
+
+  .contents summary {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .contents[open] summary {
+    border-bottom: 1px solid var(--etched-border);
+    padding-bottom: 8px;
+  }
+
+  /* Server HTML ships the list open for the wide layout; hide it until the script has decided
+     whether to collapse it, so phones never paint it above the document. */
+  .contents:not([data-ready]) > nav {
+    display: none;
+  }
+
+  .contents a {
+    padding-block: 12px;
+  }
+
+  .document {
+    font-size: 17px;
+  }
+
+  .section {
+    padding-block: 36px;
+  }
+
+  /* A schedule of two columns stacks on a narrow screen: label over text. */
+  .columns > li {
+    display: block;
+  }
+
+  .columns > li > strong:first-child {
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .section h2 {
+    font-size: 24px;
+  }
+}
+
+@media print {
+  .rail {
+    display: none;
+  }
+
+  .shell {
+    display: block;
+    padding-block: 0;
+  }
+
+  .document {
+    font-size: 11pt;
+  }
+
+  .section {
+    break-inside: avoid;
+  }
+}

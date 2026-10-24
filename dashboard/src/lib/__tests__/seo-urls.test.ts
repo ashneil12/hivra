@@ -2,11 +2,35 @@ import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
-import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "../seo-lastmod";
+import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED, type PageLastModifiedKey } from "../seo-lastmod";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { CUTOVER_LAST_MODIFIED, getSiteUrls, SITE_URL } from "../seo-urls";
 
 const day = (value: Date | string | number | undefined) => new Date(value as Date).toISOString().slice(0, 10);
+
+/** A registry day as the sitemap shows it: the cutover date is a floor for the pages the cutover rewrote. */
+function withFloor(registryDay: string, floored: boolean): Date {
+  const real = dayToDate(registryDay);
+  return floored && real < CUTOVER_LAST_MODIFIED ? CUTOVER_LAST_MODIFIED : real;
+}
+
+/** The sitemap as seo-urls.ts builds it from a registry with some days replaced. */
+async function sitemapWithRegistry(overrides: Partial<Record<PageLastModifiedKey, string>>) {
+  let urls: ReturnType<typeof getSiteUrls> = [];
+  await jest.isolateModulesAsync(async () => {
+    jest.doMock("@/lib/seo-lastmod", () => {
+      const actual = jest.requireActual<typeof import("../seo-lastmod")>("@/lib/seo-lastmod");
+      return { ...actual, PAGE_LAST_MODIFIED: { ...actual.PAGE_LAST_MODIFIED, ...overrides } };
+    });
+    const isolated = await import("../seo-urls");
+    urls = isolated.getSiteUrls();
+  });
+  jest.dontMock("@/lib/seo-lastmod");
+  return new Map(urls.map((entry) => [entry.url.slice(SITE_URL.length) || "/", entry]));
+}
+
+// The day the copy of the whole public site was rewritten (the website copy overhaul).
+const OVERHAUL_DAY = "2026-10-20";
 
 describe("seo urls", () => {
   it("includes the token verification page in the sitemap", () => {
@@ -40,6 +64,15 @@ describe("seo urls", () => {
     const entry = urls.find((u) => u.url === `${SITE_URL}/roadmap`);
     expect(entry).toBeDefined();
     expect(entry?.lastModified).toBeInstanceOf(Date);
+  });
+
+  it("lists the ecosystem map, with its registry date, whether or not the token surfaces are on", () => {
+    for (const tokenSurfaces of [true, false]) {
+      const entry = getSiteUrls({ tokenSurfaces }).find((u) => u.url === `${SITE_URL}/ecosystem`);
+      expect({ tokenSurfaces, present: Boolean(entry) }).toEqual({ tokenSurfaces, present: true });
+      expect(day(entry!.lastModified)).toBe(PAGE_LAST_MODIFIED.ecosystem);
+      expect(entry?.changeFrequency).toBe("monthly");
+    }
   });
 
   it("reports honest, non-stale lastmod dates on the key marketing pages", () => {
@@ -83,14 +116,15 @@ describe("seo urls", () => {
 
   it("lists the trust pages: /about (the entity home) and /security", () => {
     const urls = getSiteUrls();
-    for (const path of ["/about", "/security"]) {
+    const registryDay = { "/about": PAGE_LAST_MODIFIED.about, "/security": PAGE_LAST_MODIFIED.security };
+    for (const path of ["/about", "/security"] as const) {
       const entry = urls.find((u) => u.url === `${SITE_URL}${path}`);
       expect({ path, present: Boolean(entry) }).toEqual({ path, present: true });
-      expect(day(entry!.lastModified)).toBe("2026-09-30");
+      expect(day(entry!.lastModified)).toBe(registryDay[path]);
     }
   });
 
-  it("dates the /features and /compare detail pages to the 2026-09-24 truth pass and the hubs to their later rewrite", () => {
+  it("dates the /features and /compare pages from the registry, and the host comparisons from the day their competitor numbers were read", () => {
     const urls = getSiteUrls();
     const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
     // 2 hubs + 6 feature pages + 9 comparison pages.
@@ -115,49 +149,60 @@ describe("seo urls", () => {
         "/features/scheduled-tasks",
       ].sort(),
     );
-    // The hub and the four host comparisons carry the date their competitor
-    // numbers were read (competitor-facts.ts); everything else the truth pass.
-    const factsPages = new Set(["/compare", "/compare/vs-agent-37", "/compare/vs-hostinger", "/compare/vs-xcloud", "/compare/vs-nous-hermes-cloud"]);
+    // The four host comparisons carry the later of the date their competitor
+    // numbers were read (competitor-facts.ts) and the detail date, because their
+    // text changed with the copy overhaul; everything else follows the registry's
+    // hub and detail dates (lib/seo-lastmod.ts).
+    const factsPages = new Set(["/compare/vs-agent-37", "/compare/vs-hostinger", "/compare/vs-xcloud", "/compare/vs-nous-hermes-cloud"]);
     for (const entry of rewritten) {
-      const isHub = entry.url === `${SITE_URL}/features` || entry.url === `${SITE_URL}/compare`;
-      // The hubs were rewritten again in plain English on 2026-09-30, and the
-      // host comparisons carry the date their competitor numbers were read
-      // (competitor-facts.ts); the other detail pages share a template last
-      // changed in the 2026-09-24 truth pass.
       const path = entry.url.slice(SITE_URL.length);
-      const expected = isHub ? "2026-09-30" : factsPages.has(path) ? COMPETITOR_FACTS_CHECKED : "2026-09-24";
-      expect([entry.url, day(entry.lastModified)]).toEqual([entry.url, expected]);
+      const registryDay =
+        path === "/features" ? PAGE_LAST_MODIFIED.featuresHub
+        : path === "/compare" ? PAGE_LAST_MODIFIED.compareHub
+        : factsPages.has(path) ? (COMPETITOR_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? COMPETITOR_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail)
+        : path.startsWith("/features/") ? PAGE_LAST_MODIFIED.featureDetail
+        : PAGE_LAST_MODIFIED.compareDetail;
+      expect([entry.url, day(entry.lastModified)]).toEqual([entry.url, day(withFloor(registryDay, true))]);
     }
   });
 
   describe("lastmod is each page's real change date, not a release date", () => {
     const urls = () => new Map(getSiteUrls().map((entry) => [entry.url.slice(SITE_URL.length) || "/", entry]));
 
+    // One route per registry key. Every key must appear: a key no route reads would never move a sitemap date.
+    const REGISTRY_ROUTES: Array<[path: string, key: PageLastModifiedKey, floored: boolean]> = [
+      ["/", "home", true],
+      ["/pricing", "pricing", true],
+      ["/features", "featuresHub", true],
+      ["/features/persistent-memory", "featureDetail", true],
+      ["/compare", "compareHub", true],
+      ["/compare/vs-self-hosted", "compareDetail", true],
+      ["/tools", "tools", true],
+      ["/privacy", "privacy", true],
+      ["/token", "token", false],
+      ["/why-hivra", "whyHivra", false],
+      ["/ecosystem", "ecosystem", false],
+      ["/roadmap", "roadmap", false],
+      ["/changelog", "changelog", false],
+      ["/week", "week", false],
+      ["/status", "status", false],
+      ["/stats", "stats", false],
+      ["/terms", "terms", false],
+      ["/about", "about", false],
+      ["/security", "security", false],
+    ];
+
     it("takes every registry date from lib/seo-lastmod.ts, with the cutover as a floor only for the pages it rewrote", () => {
       const byPath = urls();
-      const expectations: Array<[string, string, boolean]> = [
-        ["/", PAGE_LAST_MODIFIED.home, true],
-        ["/pricing", PAGE_LAST_MODIFIED.pricing, true],
-        ["/features", PAGE_LAST_MODIFIED.featuresHub, true],
-        ["/compare", PAGE_LAST_MODIFIED.compareHub, true],
-        ["/tools", PAGE_LAST_MODIFIED.tools, true],
-        ["/privacy", PAGE_LAST_MODIFIED.privacy, true],
-        ["/agents", AGENT_PAGES_LAST_MODIFIED, true],
-        ["/token", PAGE_LAST_MODIFIED.token, false],
-        ["/why-hivra", PAGE_LAST_MODIFIED.whyHivra, false],
-        ["/roadmap", PAGE_LAST_MODIFIED.roadmap, false],
-        ["/changelog", PAGE_LAST_MODIFIED.changelog, false],
-        ["/week", PAGE_LAST_MODIFIED.week, false],
-        ["/status", PAGE_LAST_MODIFIED.status, false],
-        ["/stats", PAGE_LAST_MODIFIED.stats, false],
-        ["/terms", PAGE_LAST_MODIFIED.terms, false],
-        ["/about", PAGE_LAST_MODIFIED.about, false],
-        ["/security", PAGE_LAST_MODIFIED.security, false],
-      ];
-      for (const [path, registryDay, floored] of expectations) {
-        const expected = floored && dayToDate(registryDay) < CUTOVER_LAST_MODIFIED ? CUTOVER_LAST_MODIFIED : dayToDate(registryDay);
-        expect([path, day(byPath.get(path)?.lastModified)]).toEqual([path, day(expected)]);
+      for (const [path, key, floored] of REGISTRY_ROUTES) {
+        expect([path, day(byPath.get(path)?.lastModified)]).toEqual([path, day(withFloor(PAGE_LAST_MODIFIED[key], floored))]);
       }
+      // The agent pages carry their date in the agent catalog.
+      expect(["/agents", day(byPath.get("/agents")?.lastModified)]).toEqual(["/agents", day(withFloor(AGENT_PAGES_LAST_MODIFIED, true))]);
+    });
+
+    it("reads every key of the registry through some route", () => {
+      expect(new Set(REGISTRY_ROUTES.map(([, key]) => key))).toEqual(new Set(Object.keys(PAGE_LAST_MODIFIED)));
     });
 
     it("dates each tool page by its own content, and the hub by the list of tools it shows", () => {
@@ -165,31 +210,62 @@ describe("seo urls", () => {
       // A key for every tool, and no key for a tool that is gone.
       expect(Object.keys(TOOL_PAGE_LAST_MODIFIED).sort()).toEqual(TOOL_ENTRIES.map((entry) => entry.slug).sort());
       for (const entry of TOOL_ENTRIES) {
-        const real = dayToDate(TOOL_PAGE_LAST_MODIFIED[entry.slug]);
-        const expected = real < CUTOVER_LAST_MODIFIED ? CUTOVER_LAST_MODIFIED : real;
+        const expected = withFloor(TOOL_PAGE_LAST_MODIFIED[entry.slug], true);
         expect([entry.slug, day(byPath.get(`/tools/${entry.slug}`)?.lastModified)]).toEqual([entry.slug, day(expected)]);
         // No tool page is newer than the hub that lists it.
         expect(TOOL_PAGE_LAST_MODIFIED[entry.slug] <= PAGE_LAST_MODIFIED.tools).toBe(true);
       }
-      // The three older tools did not change their own content on 2026-09-30.
-      for (const slug of ["agent-survival-check", "ai-agent-hosting-cost-calculator", "claude-code-limit-reset-calculator"]) {
-        expect([slug, day(byPath.get(`/tools/${slug}`)?.lastModified)]).toEqual([slug, "2026-09-24"]);
-      }
-      // The plan calculator was rewritten, and the two new tools were added, on 2026-09-30.
-      for (const slug of ["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]) {
-        expect([slug, day(byPath.get(`/tools/${slug}`)?.lastModified)]).toEqual([slug, "2026-09-30"]);
-      }
-      expect(day(byPath.get("/tools")?.lastModified)).toBe("2026-09-30");
+      expect(day(byPath.get("/tools")?.lastModified)).toBe(day(withFloor(PAGE_LAST_MODIFIED.tools, true)));
     });
 
-    it("does not stamp older pages with the cutover date: /terms, /status and /changelog keep their real dates", () => {
+    it("dates every page of the website copy overhaul no earlier than the day its copy was rewritten", () => {
       const byPath = urls();
-      for (const path of ["/terms", "/status", "/changelog"]) {
+      const toolRoutes = TOOL_ENTRIES.map((entry) => `/tools/${entry.slug}`);
+      const featureRoutes = [...byPath.keys()].filter((path) => path.startsWith("/features"));
+      const compareRoutes = [...byPath.keys()].filter((path) => path.startsWith("/compare"));
+      // The agent pages and the four host comparisons take their dates from lib/hivra/agent-seo-catalog.ts
+      // and lib/compare/competitor-facts.ts, which the page work owns, so they are not listed here.
+      const factsPages = new Set(["/compare/vs-agent-37", "/compare/vs-hostinger", "/compare/vs-xcloud", "/compare/vs-nous-hermes-cloud"]);
+      const routes = [
+        "/", "/about", "/why-hivra", "/pricing", "/ecosystem", "/tools", "/security", "/roadmap", "/changelog", "/terms", "/privacy", "/stats", "/status",
+        ...toolRoutes,
+        ...featureRoutes,
+        ...compareRoutes.filter((path) => !factsPages.has(path)),
+      ];
+      expect(routes.length).toBeGreaterThanOrEqual(13 + 6 + 7 + 6);
+      for (const path of routes) {
         const entry = byPath.get(path);
         expect({ path, present: Boolean(entry) }).toEqual({ path, present: true });
-        expect(new Date(entry!.lastModified as Date).getTime()).toBeLessThan(CUTOVER_LAST_MODIFIED.getTime());
+        expect({ path, onOrAfter: day(entry!.lastModified) >= OVERHAUL_DAY }).toEqual({ path, onOrAfter: true });
       }
+    });
+
+    it("keeps the utility pages that carry no copy of their own out of the sitemap", () => {
+      const listed = new Set(urls().keys());
+      for (const path of ["/download", "/get-started", "/get-started/activate", "/reserve", "/reserved", "/checkout/canceled", "/newupdate", "/offline"]) {
+        expect({ path, listed: listed.has(path) }).toEqual({ path, listed: false });
+      }
+    });
+
+    it("keeps a page's own earlier date when it is older than the cutover, except for the pages the cutover floored", async () => {
+      // The registry holds the copy overhaul day today. These are the dates /terms, /status and /changelog
+      // held before it: a registry that still has an old day must not be stamped with the cutover date.
+      const byPath = await sitemapWithRegistry({ terms: "2026-03-01", status: "2026-06-22", changelog: "2026-06-21", whyHivra: "2026-09-30" });
       expect(day(byPath.get("/terms")?.lastModified)).toBe("2026-03-01");
+      expect(day(byPath.get("/status")?.lastModified)).toBe("2026-06-22");
+      expect(day(byPath.get("/changelog")?.lastModified)).toBe("2026-06-21");
+      expect(day(byPath.get("/why-hivra")?.lastModified)).toBe("2026-09-30");
+      for (const path of ["/terms", "/status", "/changelog"]) {
+        expect(new Date(byPath.get(path)!.lastModified as Date).getTime()).toBeLessThan(CUTOVER_LAST_MODIFIED.getTime());
+      }
+    });
+
+    it("floors the pages the cutover rewrote at the cutover date, and lets a later real date through", async () => {
+      const byPath = await sitemapWithRegistry({ home: "2026-09-01", pricing: "2026-09-03", privacy: "2026-09-02", tools: "2026-10-02" });
+      for (const path of ["/", "/pricing", "/privacy"]) {
+        expect([path, day(byPath.get(path)?.lastModified)]).toEqual([path, day(CUTOVER_LAST_MODIFIED)]);
+      }
+      expect(day(byPath.get("/tools")?.lastModified)).toBe("2026-10-02");
     });
 
     it("follows each blog article's own lastModified, and the blog index follows the newest of them", () => {
@@ -222,19 +298,19 @@ describe("seo urls", () => {
     });
 
     it("uses more than one date, because pages changed on different days", () => {
-      // 36 blog posts and the pages built this week were all revised on
-      // 2026-09-30, so dates cluster; a site-wide bump would collapse them to one.
+      // The blog posts keep the day each was last revised, so dates still differ even
+      // though the rewritten pages share the copy overhaul day; a site-wide bump of
+      // everything, blog included, would collapse them to one.
       const distinct = new Set(getSiteUrls().map((entry) => day(entry.lastModified)));
       expect(distinct.size).toBeGreaterThanOrEqual(4);
     });
 
-    it("has a valid ISO day for every registry entry, and every entry is used by a sitemap URL", () => {
+    it("has a valid ISO day for every registry entry", () => {
       for (const [key, value] of Object.entries(PAGE_LAST_MODIFIED)) {
         expect({ key, valid: /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(dayToDate(value).getTime()) }).toEqual({ key, valid: true });
       }
-      const used = new Set(getSiteUrls().map((entry) => day(entry.lastModified)));
-      for (const key of ["home", "pricing", "featuresHub", "compareHub", "whyHivra", "roadmap", "changelog", "status", "stats", "terms"] as const) {
-        expect({ key, used: used.has(PAGE_LAST_MODIFIED[key]) }).toEqual({ key, used: true });
+      for (const [slug, value] of Object.entries(TOOL_PAGE_LAST_MODIFIED)) {
+        expect({ slug, valid: /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(dayToDate(value).getTime()) }).toEqual({ slug, valid: true });
       }
     });
   });

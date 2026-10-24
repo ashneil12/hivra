@@ -11,7 +11,7 @@ export const contentType = OG_CONTENT_TYPE;
 export default async function ChangelogOpengraphImage() {
   return renderOgCard({
     eyebrow: "Changelog",
-    title: "What shipped on Hivra",
-    subtitle: "Every notable ship: features, fixes, upstream syncs, and infrastructure.",
+    title: "What we've been building.",
+    subtitle: "A record of the practical changes we've made to Hivra.",
   });
 }

@@ -1,0 +1,84 @@
+/* /changelog: the masthead's second paragraph and the list head. The entries keep the shared
+   .changeEntry rhythm from secondary-site.module.css (date rail left, notes right). */
+
+.masthead > p + p {
+  margin-top: 18px;
+}
+
+/* "What we have shipped": the same 280px / 1fr grid as an entry, so the heading, the lede, the
+   last-updated line and the links line up with the notes below them. */
+.listHead {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 64px;
+  padding-block: 8px 48px;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.listHead > header {
+  position: sticky;
+  top: 110px;
+  align-self: start;
+}
+
+.listHead h2 {
+  margin: 18px 0 0;
+  font-size: clamp(27px, 2.6vw, 34px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+
+.lede {
+  max-width: 62ch;
+  margin: 0 0 24px;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1.75;
+}
+
+.listMeta {
+  margin: 0;
+}
+
+/* The page ends 72px under its last entry, not 120px. */
+main.end {
+  padding-bottom: 72px;
+}
+
+/* The three links under the lede: readable ink, underlined like the links in the notes, not the
+   grey of a disabled control. The shared hover colour still applies. */
+div.links a {
+  color: var(--ink-black);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 5px;
+}
+
+/* A note reads at about 70 characters a line: 68ch of this light face runs to 80 and more. */
+article.entry p,
+article.entry ul {
+  max-width: 60ch;
+}
+
+/* Phone: the mono labels that carry the scanning (date chip, eyebrow, last updated) get 13px. */
+@media (max-width: 700px) {
+  article.entry > header > a,
+  .listHead > header > span,
+  p.listMeta {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 800px) {
+  .listHead {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding-bottom: 36px;
+  }
+
+  .listHead > header {
+    position: static;
+  }
+}

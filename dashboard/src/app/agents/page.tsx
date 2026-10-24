@@ -1,30 +1,30 @@
 import PublicSite from "@/components/public-site/PublicSite";
-import { Breadcrumbs, EditorialRelated } from "@/components/public-editorial/Editorial";
+import { Breadcrumbs } from "@/components/public-editorial/Editorial";
+import ActionLinks from "@/components/public-editorial/ActionLinks";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import agentStyles from "./agents.module.css";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import StructuredData from "@/components/StructuredData";
-import { buildWebsiteMetadata } from "@/lib/metadata";
+import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
-import {
-  AGENTS_HUB_AFFILIATION,
-  AGENTS_HUB_DEPLOY_HREF,
-  AGENT_SEO_ENTRIES,
-  PRICING_HREF,
-} from "@/lib/hivra/agent-seo-catalog";
+import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
-import { BLOG_ARTICLES } from "@/lib/blog-data";
-import { glossify } from "@/components/gloss/glossify";
+import { HeadingLines, Inline } from "./AgentProse";
+import { TermRows } from "./AgentBlocks";
+import { HUB_CONTENT } from "./content";
+import { resolveLinks } from "./content/links";
+import { slugifyHeading } from "./content/markup";
 
-// The root layout's title template appends " | Hivra".
-const PAGE_TITLE = "Deploy AI Agents: Claude Code, Codex, Hermes and More";
+// Ash's finished browser title, brand included: published as an absolute title so the root layout's
+// " | Hivra" template does not add the brand a second time.
+const PAGE_TITLE = "Deploy AI Agents: Claude Code, Codex, Hermes and More | Hivra";
 const PAGE_DESCRIPTION =
-  "Run Claude Code, Codex, Hermes, Aeon, OpenClaw and Agent Zero on managed cloud VMs with your own sign-ins. Paid plans stay on. From $9.99/mo.";
+  "Give Claude Code, Codex, Hermes, Aeon, OpenClaw or Agent Zero a cloud computer. Keep your own accounts and choose managed hosting from $9.99/mo.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE,
+  title: absoluteTitle(PAGE_TITLE),
   description: PAGE_DESCRIPTION,
   ...buildWebsiteMetadata({
     path: "/agents",
@@ -35,31 +35,12 @@ export const metadata: Metadata = {
   }),
 };
 
-const SUMMARY = [
-  {
-    title: "Your own sign-ins",
-    body: "Claude Code uses your Anthropic account. Codex uses your ChatGPT account or OpenAI key. Hermes runs on the AI key you already pay for.",
-  },
-  {
-    title: "Stays on when you log off",
-    body: "Every agent gets its own private computer in the cloud, and paid plans are never paused for inactivity. Hermes, OpenClaw and Agent Zero run on that computer, and Aeon's tasks run on your own GitHub Actions, so none of them needs an open browser. A Claude Code or Codex run you start inside tmux in the computer's Terminal tab keeps going after you close the laptop.",
-  },
-  {
-    title: "From $9.99 a month",
-    body: "2 vCPU and 4 GB RAM to start, or 4 vCPU and 8 GB for $19.99. Card payments come with a 7-day money-back guarantee.",
-  },
-  {
-    title: "Public source",
-    body: "Hivra is open source, and you can run it yourself.",
-  },
-] as const;
-
-const HUB_RELATED_BLOG_SLUGS = ["byo-api-key-explained", "cost-of-running-ai-agent"] as const;
-
 export default function AgentsIndexPage() {
-  const agents = AGENT_SEO_ENTRIES.flatMap((entry) => {
-    const def = getAgent(entry.slug);
-    return def ? [{ entry, def }] : [];
+  const content = HUB_CONTENT;
+  const agents = content.directory.cards.flatMap((card) => {
+    const entry = AGENT_SEO_ENTRIES.find((candidate) => candidate.slug === card.slug);
+    const def = getAgent(card.slug);
+    return entry && def ? [{ card, entry, def }] : [];
   });
 
   const schema = {
@@ -91,79 +72,95 @@ export default function AgentsIndexPage() {
       <main className={styles.main} id="main-content">
         <Breadcrumbs items={[{ label: "Agents" }]} />
         <header className={styles.masthead}>
-          <span className={styles.eyebrow}>Agents on Hivra</span>
-          <h1>Agents you can deploy <strong>today.</strong></h1>
-          <p>
-            Every agent below runs on a private computer of its own in the cloud. You sign in with your own
-            accounts, and Hivra sets the computer up. On a paid plan it stays on after you log off.
-          </p>
+          <h1>
+            <HeadingLines text={content.h1} />
+          </h1>
+          <div className={agentStyles.hubLead}>
+            {content.lead.map((paragraph) => (
+              <p key={paragraph}>
+                <Inline text={paragraph} />
+              </p>
+            ))}
+          </div>
+          <ActionLinks items={resolveLinks(content.heroLinks, undefined, "agents-hero")} />
         </header>
 
-        <div className={styles.introGrid}>
-          {SUMMARY.map(({ title, body }) => (
-            <div key={title}>
-              <h2>{title}</h2>
-              <p>{glossify(body)}</p>
-            </div>
-          ))}
-        </div>
-        <div className={`${styles.directoryAction} ${agentStyles.actions}`}>
-          <Link href={AGENTS_HUB_DEPLOY_HREF} className={styles.button}>
-            Start now <ArrowUpRight size={20} aria-hidden="true" />
-          </Link>
-          <Link href={PRICING_HREF} className={agentStyles.textLink}>
-            See pricing <ArrowUpRight size={16} aria-hidden="true" />
-          </Link>
-        </div>
-
-        <div className={styles.indexHead}>
-          <h2>Every agent gets its own computer</h2>
-        </div>
-        <div className={`${styles.directory} ${agentStyles.agentDirectory}`}>
-          {agents.map(({ entry, def }, index) => (
-            <Link key={entry.slug} href={`/agents/${entry.slug}`}>
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <h2>{def.name}</h2>
-              <div>
-                <h3>{entry.cardSummary}</h3>
-                <div className={agentStyles.cardFooter}>
-                  <span className={agentStyles.vendor}>{def.vendor}</span>
-                  <span className={styles.readLink}>
-                    Run {def.name} in the cloud <ArrowUpRight size={20} aria-hidden="true" />
-                  </span>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-
-        <section className={styles.cta}>
-          <div>
-            <h2>Pick an agent. <strong>Give it a computer.</strong></h2>
-            <p>From $9.99/mo for 2 vCPU and 4 GB RAM. 7-day money-back guarantee on card payments.</p>
+        <section className={agentStyles.hubIntro}>
+          <div className={`${agentStyles.hubIntroLead} ${agentStyles.hubProse}`}>
+            <h2>
+              <HeadingLines text={content.intro.heading} />
+            </h2>
+            {content.intro.paragraphs.map((paragraph) => (
+              <p key={paragraph}>
+                <Inline text={paragraph} />
+              </p>
+            ))}
           </div>
-          <div className={agentStyles.actions}>
-            <Link href={AGENTS_HUB_DEPLOY_HREF} className={styles.button}>
-              Start now <ArrowUpRight size={20} aria-hidden="true" />
-            </Link>
-            <Link href={PRICING_HREF} className={agentStyles.textLink}>
-              See pricing <ArrowUpRight size={16} aria-hidden="true" />
-            </Link>
+          <div className={agentStyles.topics}>
+            {content.intro.topics.map((topic) => (
+              <div className={`${agentStyles.topic} ${agentStyles.hubProse}`} key={topic.heading}>
+                <h3>{topic.heading}</h3>
+                {topic.paragraphs.map((paragraph) => (
+                  <p key={paragraph}>
+                    <Inline text={paragraph} />
+                  </p>
+                ))}
+              </div>
+            ))}
           </div>
         </section>
 
-        <p className={agentStyles.note}>{AGENTS_HUB_AFFILIATION}</p>
+        <section id={slugifyHeading(content.directory.heading)} className={agentStyles.directorySection}>
+          <h2 className={agentStyles.hubHeading}>{content.directory.heading}</h2>
+          <ol className={agentStyles.agentList}>
+            {agents.map(({ card }, index) => (
+              <li className={agentStyles.agentRow} key={card.slug}>
+                <span className={agentStyles.agentNumber} aria-hidden="true">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <h3>{card.name}</h3>
+                <div className={`${agentStyles.agentBody} ${agentStyles.hubProse}`}>
+                  <p className={agentStyles.tagline}>{card.tagline}</p>
+                  <p>
+                    <Inline text={card.body} />
+                  </p>
+                  <p>
+                    <strong>Good fit:</strong> {card.goodFit}
+                  </p>
+                  <Link href={`/agents/${card.slug}`} className={agentStyles.textLink}>
+                    {card.linkLabel} <ArrowUpRight size={16} aria-hidden="true" />
+                  </Link>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
 
-        <EditorialRelated
-          title="See also"
-          links={[
-            { label: "Every Hivra feature", href: "/features" },
-            { label: "Hivra vs Self-Hosted", href: "/compare/vs-self-hosted" },
-            ...HUB_RELATED_BLOG_SLUGS.flatMap((slug) =>
-              BLOG_ARTICLES[slug] ? [{ label: `Blog: ${BLOG_ARTICLES[slug].title}`, href: `/blog/${slug}` }] : [],
-            ),
-          ]}
-        />
+        <section className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
+          <h2 className={agentStyles.hubHeading}>{content.choose.heading}</h2>
+          {content.choose.paragraphs.map((paragraph) => (
+            <p key={paragraph}>
+              <Inline text={paragraph} />
+            </p>
+          ))}
+        </section>
+
+        <section className={`${agentStyles.boundaries} ${agentStyles.hubProse}`}>
+          <h2 className={agentStyles.hubHeading}>{content.boundaries.heading}</h2>
+          <TermRows items={content.boundaries.items} />
+        </section>
+
+        <section className={agentStyles.closing}>
+          <div>
+            <h2>
+              <HeadingLines text={content.closing.heading} />
+            </h2>
+            <p>{content.closing.paragraph}</p>
+          </div>
+          <ActionLinks items={resolveLinks(content.closing.links, undefined, "agents-closing")} />
+        </section>
+
+        <p className={agentStyles.note}>{content.affiliation}</p>
       </main>
     </PublicSite>
   );

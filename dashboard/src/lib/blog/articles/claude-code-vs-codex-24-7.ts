@@ -9,7 +9,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Claude Code suits long multi-hour sessions and Codex suits many small headless tasks. Compared on compaction, resume, subscription cost and server needs.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-10-06",
+  lastModified: "2026-10-21",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "The 20-minute benchmark tells you nothing about hour 9.",
@@ -55,13 +55,13 @@ export const article: BlogArticle = {
     {
       heading: "Verdict by workload type",
       paragraphs: [
-        "There's no overall winner, but each workload has one:\n\n- **Long multi-hour tasks on one big codebase** (deep refactors, migrations, \"work through this 40-item checklist\"): **Claude Code.** Compaction plus session resume is what lets a run finish instead of starting over.\n- **High volume of small scoped tasks** (nightly test-fix runs, dependency bumps, triage): **Codex.** `codex exec` plus a scheduler makes a clean, predictable pipeline, which is what you want at 3 a.m.\n- **You already pay for Claude Pro or Max:** Claude Code. Your marginal AI cost is zero.\n- **You already pay for ChatGPT Plus or Pro:** Codex, for the same reason.\n- **One self-contained change to a GitHub repo, and Codex was your pick:** OpenAI's own Codex cloud, if your ChatGPT plan lists it. The [Codex cloud guide](/blog/run-codex-24-7-in-the-cloud) covers when a computer that stays on wins instead.\n- **Web-heavy tasks that need a real browser:** either CLI works. What decides it is a machine with browser automation, and that comes from the host (included with paid plans on Hivra), whichever CLI you run.\n- **You can't decide:** run both for a month on one plan and let your own backlog pick the winner.\n- **You want Cursor's IDE loop, not a terminal CLI:** that's a different question. [Cursor vs Claude Code](/blog/cursor-vs-claude-code) sorts it by job, and [Cursor Cloud Agents](/blog/cursor-cloud-agents) covers what Cursor does when you close the laptop.",
+        "There's no overall winner, but each workload has one:\n\n- **Long multi-hour tasks on one big codebase** (deep refactors, migrations, \"work through this 40-item checklist\"): **Claude Code.** Compaction plus session resume is what lets a run finish instead of starting over.\n- **High volume of small scoped tasks** (nightly test-fix runs, dependency bumps, triage): **Codex.** `codex exec` plus a scheduler makes a clean, predictable pipeline, which is what you want at 3 a.m.\n- **You already pay for Claude Pro or Max:** Claude Code. Your marginal AI cost is zero.\n- **You already pay for ChatGPT Plus or Pro:** Codex, for the same reason.\n- **One self-contained change to a GitHub repo, and Codex was your pick:** OpenAI's own Codex cloud, if your ChatGPT plan lists it. The [Codex cloud guide](/blog/run-codex-24-7-in-the-cloud) covers when a computer that stays on wins instead.\n- **Web-heavy tasks that need a real browser:** either CLI works. What decides it is a machine with browser automation, and that comes from the host (included on every Hivra Cloud computer), whichever CLI you run.\n- **You can't decide:** run both for a month on one plan and let your own backlog pick the winner.\n- **You want Cursor's IDE loop, not a terminal CLI:** that's a different question. [Cursor vs Claude Code](/blog/cursor-vs-claude-code) sorts it by job, and [Cursor Cloud Agents](/blog/cursor-cloud-agents) covers what Cursor does when you close the laptop.",
       ],
     },
     {
-      heading: "Try the comparison on your own backlog",
+      heading: "Run the comparison on your own backlog",
       paragraphs: [
-        `Launch a [Claude Code agent](/agents/claude-code) or a [Codex agent](/agents/codex) on Hivra, sign in with the subscription you already have, and hand it a real task from this week's list. Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} (see [pricing](/pricing)), paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Start the task inside tmux in the computer's Terminal tab (or, on Claude Code, send it through Telegram) and it keeps going after you close the laptop. [The plan calculator](/tools/claude-code-plan-calculator) tells you which Claude plan the workload needs. Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
+        `Launch a [Claude Code agent](/agents/claude-code) or a [Codex agent](/agents/codex) on Hivra, sign in with the subscription you already have, and give it a task from this week's list. Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} (see [pricing](/pricing)), paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Start the task inside tmux in the computer's Terminal tab (or, on Claude Code, send it through Telegram) and it keeps going after you close the laptop. [The plan calculator](/tools/claude-code-plan-calculator) tells you which Claude plan the workload needs. Hivra is independent and is not affiliated with Anthropic or OpenAI.`,
       ],
     },
   ],

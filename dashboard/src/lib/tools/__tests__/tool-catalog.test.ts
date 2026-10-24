@@ -136,7 +136,8 @@ describe("tools catalog", () => {
     expect(entry.h1.trim().length).toBeGreaterThan(0);
     expect(entry.subhead.trim().length).toBeGreaterThan(0);
     expect(entry.primaryKeyword.trim().length).toBeGreaterThan(0);
-    expect(entry.longIntro).toHaveLength(2);
+    expect(entry.intro.lede.trim().length).toBeGreaterThan(0);
+    expect(entry.intro.body.length).toBeGreaterThanOrEqual(1);
     expect(entry.vendors.length).toBeGreaterThan(0);
   });
 
@@ -206,9 +207,10 @@ describe("tools catalog", () => {
   });
 
   it("does not imply the Hivra side of the cost calculator includes backups", () => {
-    const intro = getToolEntry("ai-agent-hosting-cost-calculator")!.longIntro.join(" ");
+    const { lede, body, note } = getToolEntry("ai-agent-hosting-cost-calculator")!.intro;
+    const intro = [lede, ...body, note ?? ""].join(" ");
     expect(intro).not.toMatch(/the server, backups, setup time/);
-    expect(intro).toMatch(/Hivra's price doesn't include backups/);
+    expect(intro).toMatch(/Hivra's price doesn't include backups|bundle backups into Hivra's entry-level price when they are not included/);
   });
 
   it("names the vendors each page discusses in its non-affiliation line", () => {
@@ -267,12 +269,19 @@ describe("tools catalog", () => {
     });
 
     it("targets the head queries the pipeline names, without the brand in the title", () => {
+      // The H1s are the owner's wording (copy overhaul, 2026-10-20) and no longer repeat the head
+      // query, so the title, the description and the first words of the page carry it instead.
       const awake = getToolEntry("keep-mac-awake")!;
       expect(awake.primaryKeyword).toBe("caffeinate mac");
-      expect(awake.h1).toMatch(/^Caffeinate on Mac/);
+      expect(awake.h1).toBe("Keep your Mac awake while an agent works");
+      expect(awake.metaTitle).toMatch(/^Caffeinate Mac/);
+      expect(awake.metaDescription).toMatch(/caffeinate command/);
+      expect(awake.intro.lede).toMatch(/`caffeinate`/);
       const tmux = getToolEntry("tmux-cheat-sheet")!;
       expect(tmux.primaryKeyword).toBe("tmux cheat sheet");
-      expect(tmux.h1).toBe("tmux cheat sheet");
+      expect(tmux.h1).toBe("tmux commands worth keeping nearby");
+      expect(tmux.metaTitle).toMatch(/^tmux Cheat Sheet/);
+      expect(tmux.metaDescription).toMatch(/^A tmux cheat sheet/);
     });
 
     it("never names the operating system the public copy rules ban, in any catalog string", () => {

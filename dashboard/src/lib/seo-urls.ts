@@ -81,6 +81,14 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       priority: 0.6,
     },
     {
+      // The ecosystem map: what is available now, next, later and still research.
+      // Always listed: the page itself renders without any token content.
+      url: `${SITE_URL}/ecosystem`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.ecosystem),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       // Public roadmap page.
       url: `${SITE_URL}/roadmap`,
       lastModified: dayToDate(PAGE_LAST_MODIFIED.roadmap),
@@ -177,10 +185,14 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       priority: 0.75,
     })),
     // The host comparisons carry the date their competitor numbers were read
-    // (lib/compare/competitor-facts.ts), so a refreshed check moves them.
+    // (lib/compare/competitor-facts.ts), so a refreshed check moves them, or the
+    // day their text last changed (PAGE_LAST_MODIFIED.compareDetail) when that is
+    // later. Both are YYYY-MM-DD, so the later one is the greater string.
     ...HOST_COMPARISON_SLUGS.map((slug) => ({
       url: `${SITE_URL}/compare/${slug}`,
-      lastModified: cutoverPage(COMPETITOR_FACTS_CHECKED),
+      lastModified: cutoverPage(
+        COMPETITOR_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? COMPETITOR_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail,
+      ),
       changeFrequency: "monthly" as const,
       priority: 0.75,
     })),

@@ -38,8 +38,12 @@ export interface CheatSection {
   rows: CheatRow[];
 }
 
+/**
+ * How to read the key combinations. Shown above the sheet as the last paragraph of the page
+ * introduction (with the inline marks of lib/tools/markup.ts), so a reader meets it before the keys.
+ */
 export const TMUX_KEYS_NOTE =
-  "Keys written Ctrl-b d mean: press Ctrl and b together, let go, then press d. Ctrl-b is tmux's default prefix key.";
+  "In the key combinations below, `Ctrl-b d` means press Ctrl and b together, release them, then press d. `Ctrl-b` is the default tmux prefix.";
 
 export const TMUX_TARGET_NOTE =
   "A trailing colon, as in claude:, points a command at that session's current window and active pane. tmux's manual says scripts should fully qualify a target, so the pane commands here do.";
@@ -186,6 +190,14 @@ export const TMUX_DIAGRAM = {
   src: "/images/tools/tmux-session-hierarchy.svg",
   width: 720,
   height: 556,
+  /** The same diagram stacked for a phone, drawn at the size it is shown so its labels stay readable. */
+  narrow: {
+    src: "/images/tools/tmux-session-hierarchy-narrow.svg",
+    width: 320,
+    height: 712,
+    /** Viewport width up to which the stacked version is used. */
+    maxWidth: 700,
+  },
 } as const;
 
 // ---- The builder ----------------------------------------------------------

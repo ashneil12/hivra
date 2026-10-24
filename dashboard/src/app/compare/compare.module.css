@@ -1,0 +1,414 @@
+/* The comparison pages. Everything page specific lives here: secondary-site.module.css is shared by
+   about twenty pages and is not touched. Colours come from the site tokens, so light and dark both work.
+   Overrides of rules in the shared file use an element-qualified selector (section.lede p), which is
+   one step more specific than the shared ".articleBody p" and so does not depend on stylesheet order. */
+
+/* A detail page's breadcrumb ends on a link ("Compare"), which the shared small-screen rule would
+   hide as if it were the current page. Keep it. */
+@media (max-width: 700px) {
+  .crumbsKeep nav > span:last-child {
+    display: inline-flex;
+  }
+}
+
+/* The shared page leaves 120px under the last block; the related links sit nearer the footer than that. */
+main.main {
+  padding-bottom: 88px;
+}
+
+.masthead {
+  padding-bottom: 44px;
+  margin-bottom: 64px;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.masthead h1 {
+  max-width: 980px;
+  margin: 0;
+  font-size: clamp(34px, 5.2vw, 72px);
+  line-height: 1.07;
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+/* Reading measure. The shared article rule caps a paragraph at 68ch, which at 17px runs to 85 or 90 characters
+   a line in this column. About 75 is easier to read, so prose, list text and answers stop at 58ch. Tables, the
+   boxes and every hairline keep the full 760px column, so the rules still end on one edge. */
+.body section p {
+  max-width: 58ch;
+}
+
+/* The opening section: one paragraph in larger type, no box. */
+section.lede p {
+  max-width: 62ch;
+  color: var(--ink-black);
+  font-size: clamp(19px, 1.8vw, 22px);
+  line-height: 1.7;
+}
+
+/* "When the alternative is worth choosing": the honesty of the page, so it is the one section with a rule.
+   The rule hangs in the gutter beside the contents, so the heading and text stay on the same left edge as every
+   other section and it reads as a section of the page, not as a quotation set inside the one above. */
+section.callout {
+  margin-left: -30px;
+  padding: 4px 0 2px 28px;
+  border-left: 2px solid var(--gold-leaf);
+}
+
+section.callout p:last-child {
+  margin-bottom: 0;
+}
+
+/* "Things a comparison chart cannot tell you": a quiet block, not a card. */
+section.note {
+  padding: 28px 32px 6px;
+  border: 1px solid var(--etched-border);
+  background: var(--public-surface);
+}
+
+section.note h2 {
+  margin-bottom: 18px;
+  font-size: 22px;
+}
+
+section.note p {
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+/* Bold-lead paragraphs (the "Other categories" block): a field guide, one hairline apart. */
+div.entries {
+  margin-top: 8px;
+  border-top: 1px solid var(--etched-border);
+}
+
+div.entries > div.entry {
+  padding: 22px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+div.entry > p {
+  margin: 0;
+}
+
+div.entry > p > strong {
+  margin-right: 0.3em;
+  color: var(--ink-black);
+}
+
+/* The numbered migration steps. The numerals are drawn by the counter so they can be large and gold;
+   role="list" on the element keeps it a list for assistive technology. */
+section ol.steps {
+  max-width: none;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+ol.steps > li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 0 8px;
+  margin: 0;
+  padding: 22px 0;
+  border-top: 1px solid var(--etched-border);
+  counter-increment: step;
+}
+
+ol.steps > li:last-child {
+  border-bottom: 1px solid var(--etched-border);
+}
+
+ol.steps > li::before {
+  content: counter(step, decimal-leading-zero);
+  padding-top: 5px;
+  color: var(--gold-leaf);
+  font: 500 13px/1.6 var(--public-mono, monospace);
+}
+
+ol.steps > li > p {
+  margin: 0;
+}
+
+ol.steps > li > p > strong {
+  margin-right: 0.3em;
+  color: var(--ink-black);
+}
+
+/* The directory's provider rows. The provider name is the link; its ::after stretches over the row so
+   the whole row is the target while the link's name stays just the provider. */
+section ol.providers {
+  max-width: none;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: provider;
+}
+
+ol.providers > li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 24px;
+  gap: 0 8px;
+  align-items: start;
+  margin: 0;
+  padding: 26px 0;
+  border-top: 1px solid var(--etched-border);
+  counter-increment: provider;
+  transition: background 0.2s;
+}
+
+ol.providers > li:last-child {
+  border-bottom: 1px solid var(--etched-border);
+}
+
+ol.providers > li::before {
+  content: counter(provider, decimal-leading-zero);
+  padding-top: 6px;
+  color: var(--gold-leaf);
+  font: 500 13px/1.6 var(--public-mono, monospace);
+}
+
+ol.providers > li > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+ol.providers a {
+  color: var(--ink-black);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+/* The copy reads "Agent 37: metered raw compute ...". The row sets the name on its own line above the
+   description, so the colon is kept in the text (it is what a screen reader and a copy-paste get) but drawn at
+   no size, and a generated line break (never part of the page text) stands between the two. */
+.colon {
+  font-size: 0;
+}
+
+.colon::before {
+  content: "\A";
+  white-space: pre;
+}
+
+ol.providers a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+ol.providers > li:hover a,
+ol.providers > li:focus-within a {
+  color: var(--gold-leaf);
+}
+
+ol.providers > li:has(a:focus-visible) {
+  outline: 2px solid var(--gold-leaf);
+  outline-offset: 4px;
+}
+
+ol.providers a:focus-visible {
+  outline: none;
+}
+
+ol.providers svg {
+  margin-top: 6px;
+  color: var(--text-muted);
+}
+
+ol.providers > li:hover svg {
+  color: var(--gold-leaf);
+}
+
+/* A short command such as `hermes claw migrate` is one chip, never two. */
+code.code {
+  white-space: nowrap;
+}
+
+/* "Where these numbers come from". */
+section ul.sourceList {
+  max-width: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 40px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+ul.sourceList > li {
+  margin: 0;
+}
+
+ul.sourceList a {
+  display: inline-block;
+  padding: 6px 0;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* The closing row: heading and paragraph on the left, the actions on the right. */
+.closing {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 32px 56px;
+  align-items: center;
+  margin-block: 0;
+  padding: 48px 0;
+  border-block: 1px solid var(--etched-border);
+}
+
+.closing h2 {
+  margin: 0 0 16px;
+  color: var(--ink-black);
+  font-size: clamp(26px, 3vw, 40px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.04em;
+}
+
+.closing p {
+  max-width: 58ch;
+  margin: 0;
+  text-wrap: pretty;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.closing p a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.closing p a:hover {
+  color: var(--gold-leaf);
+}
+
+.closing [data-action-links] {
+  margin: 0;
+}
+
+/* Beside the paragraph the button gets a row of its own and the two text links share the row under it, so the
+   three actions read as one block instead of a row that wraps wherever it runs out of room. */
+@media (min-width: 701px) {
+  .closing [data-action-links] {
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: start;
+    gap: 18px 32px;
+  }
+
+  .closing [data-action-links] > [data-kind="primary"] {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+/* Under the closing row: the space between the questions and the closing rule is the questions' own bottom
+   margin only, and the related links sit a section's distance below the rule. */
+.questions > section {
+  margin-bottom: 56px;
+}
+
+/* The closing row draws its own rule straight below, so the list does not close with a rule of its own
+   a few pixels above it. */
+.questions section details:last-child {
+  border-bottom: 0;
+}
+
+.related > section {
+  margin-top: 56px;
+}
+
+@media (max-width: 900px) {
+  .closing {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .masthead {
+    padding-bottom: 30px;
+    margin-bottom: 34px;
+  }
+
+  .masthead h1 {
+    font-size: 32px;
+    letter-spacing: -0.045em;
+  }
+
+  main.main {
+    padding-bottom: 72px;
+  }
+
+  section.callout {
+    margin-left: 0;
+    padding-left: 20px;
+  }
+
+  section.note {
+    padding: 22px 20px 4px;
+  }
+
+  div.entries > div.entry {
+    padding: 18px 0;
+  }
+
+  ol.steps > li {
+    grid-template-columns: 36px minmax(0, 1fr);
+    padding: 18px 0;
+  }
+
+  ol.providers > li {
+    grid-template-columns: 36px minmax(0, 1fr) 20px;
+    padding: 22px 0;
+  }
+
+  ol.providers a {
+    font-size: 19px;
+  }
+
+  section ul.sourceList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  ul.sourceList a {
+    min-height: 44px;
+    padding: 10px 0;
+  }
+
+  .questions > section {
+    margin-bottom: 40px;
+  }
+
+  .related > section {
+    margin-top: 48px;
+  }
+
+  .closing {
+    padding: 32px 0;
+  }
+
+  /* The price table's column labels are long ("Billing and what it leaves out"). Beside the value they take a third
+     of the width and the value is left a few words a line, so each label sits above its value instead. */
+  .priceTable [data-comparison-table] tbody td {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
+@media print {
+  .closing [data-action-links] {
+    display: none;
+  }
+}

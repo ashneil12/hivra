@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "How to self-host Hermes Agent: the setup steps, what breaks, what it costs in time and money, and when managed hosting makes more sense.",
   publishedDate: "2026-03-13",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "Yes, you can. Some parts fight back.",
@@ -18,7 +18,7 @@ export const article: BlogArticle = {
     {
       heading: "What do I need before I start?",
       paragraphs: [
-        "A Linux VPS with at least 2 vCPU and 4 GB of RAM. Hetzner's CX23 (€5.49/month) works, and the CX33 (€8.49/month, both before VAT) is the one to get if you'll use browser automation. DigitalOcean's 4 GB Droplet is $24/month. Hermes also runs on Modal or Daytona serverless, which costs almost nothing while idle. Good for bursty work. Bad for cron jobs that run every minute, because of cold starts. And skip the 1 GB VPS. Browser automation and subagents crash on it all the time.",
+        "A Linux VPS with at least 2 vCPU and 4 GB of RAM. Hetzner's CX23 (€5.49/month) works, and the CX33 (€8.49/month, both before VAT and IPv4) is the one to get if you'll use browser automation. Hetzner showed both as unavailable in October 2026, so check stock. DigitalOcean's 4 GB Droplet is $24/month. Hermes also runs on Modal or Daytona serverless, which costs almost nothing while idle. Good for bursty work. Bad for cron jobs that run every minute, because of cold starts. And skip the 1 GB VPS. Browser automation and subagents crash on it all the time.",
         "You'll also want Docker and Docker Compose on the server, and a domain pointed at it, because the web interface needs HTTPS (a subdomain like `hermes.yourdomain.com` is fine). Caddy comes with the standard setup and handles free SSL. Then an API key from at least one provider: Anthropic, OpenAI, or OpenRouter if you want lots of models on one key. Set aside 4 to 8 hours the first time.",
       ],
     },
@@ -42,7 +42,7 @@ export const article: BlogArticle = {
     {
       heading: "What does self-hosting cost?",
       paragraphs: [
-        "In cash, not much. Hetzner's CX23 (€5.49/month before VAT) covers light to moderate use, and the CX33 (€8.49/month) handles browser automation and parallel subagents. The DigitalOcean equivalent is $24/month. A domain is $10 to $15 a year. Tokens depend on the work: Claude Haiku 4.5 at $1 in and $5 out per million tokens is cheap for monitoring and summaries, but a browser task that takes 10+ screenshots a run adds 200,000 to 400,000 tokens a month in images alone.",
+        "In cash, not much. Hetzner's CX23 (€5.49/month before VAT and IPv4) covers light to moderate use, and the CX33 (€8.49/month) handles browser automation and parallel subagents. The DigitalOcean equivalent is $24/month. A domain is $10 to $15 a year. Tokens depend on the work: Claude Haiku 5.5 at $0.10 in and $0.50 out per million tokens (for prompts up to 100,000 tokens) is cheap for monitoring and summaries, but a browser task that takes 10+ screenshots a run adds 200,000 to 400,000 tokens a month in images alone.",
         "Time is the real bill. Setup takes 4 to 8 hours. After that, plan on 1 to 2 hours a month for updates, odd failures and log reading, plus whatever an outage or a container that won't restart costs you. Value your time at $50 an hour and that cheap server stops looking so cheap.",
       ],
     },
@@ -64,7 +64,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Can I run Hermes Agent on a $5/month VPS?",
-      a: "It'll install. Then browser tasks will keep crashing for lack of memory. You need at least 4 GB of RAM for stable browser use, which makes Hetzner's CX23 at €5.49/month (before VAT) the realistic minimum.",
+      a: "It'll install. Then browser tasks will keep crashing for lack of memory. You need at least 4 GB of RAM for stable browser use, which makes Hetzner's CX23 at €5.49/month (before VAT and IPv4) the realistic minimum, though Hetzner showed it as unavailable in October 2026, so check stock.",
     },
     {
       q: "Does self-hosting mean my data never leaves my server?",

@@ -6,16 +6,16 @@ export const article: BlogArticle = {
   title: "Best VPS for Hermes Agent in 2026: Hetzner, DigitalOcean, OVH compared",
   metaTitle: "Best VPS for Hermes Agent in 2026 (Specs and Prices)",
   metaDescription:
-    "Hetzner CX33 (4 vCPU, 8GB, €8.49/month ex VAT) is the recommended VPS for Hermes Agent. Specs and prices for Hetzner, OVH, DigitalOcean and Vultr.",
+    "Hetzner CX33 (4 vCPU, 8GB, €8.49/month before VAT and IPv4) is the recommended VPS for Hermes Agent. Specs and prices for four providers.",
   publishedDate: "2026-04-16",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "The community has run Hermes on cheap VPS plans for months, and has opinions.",
   intro:
-    "Hermes Agent runs well on cheap cloud servers, and at €5.49/month you can afford one. Pick a tier that covers your usage, from a provider the community trusts. Go too small and things break.",
+    "Hermes Agent runs well on cheap cloud servers, and from €5.49/month (before VAT and IPv4) you can afford one. Pick a tier that covers your usage, from a provider the community trusts. Go too small and things break.",
   shortAnswer:
-    "Hetzner is the community favourite for running Hermes Agent. The CX33 (4 vCPU, 8GB RAM, 80GB NVMe, €8.49/month excluding VAT) is the recommended tier, and the CX23 (2 vCPU, 4GB RAM, 40GB NVMe) is the minimum. OVH's VPS-2 undercuts the CX33 slightly. DigitalOcean and Vultr cost far more.",
+    "Hetzner is the community favourite for running Hermes Agent. The CX33 (4 vCPU, 8GB RAM, €8.49/month excluding VAT and IPv4) is the recommended tier and the CX23 (2 vCPU, 4GB RAM) the minimum, but Hetzner showed both as unavailable in October 2026, so check stock. OVH's VPS-2 undercuts the CX33 slightly. DigitalOcean and Vultr cost far more.",
   sections: [
     {
       heading: "Minimum specs and what happens below them",
@@ -28,16 +28,16 @@ export const article: BlogArticle = {
     {
       heading: "Hetzner (community favourite, not close)",
       paragraphs: [
-        "Hetzner is the near-universal community recommendation for Hermes hosting. The price-to-spec ratio beats DigitalOcean or AWS Lightsail significantly for equivalent hardware.\n\n| Model | vCPU | RAM | NVMe | Price/mo |\n|-------|------|-----|------|----------|\n| CX23  | 2 | 4 GB | 40 GB | €5.49 |\n| CX33  | 4 | 8 GB | 80 GB | €8.49 |\n| CX43  | 8 | 16 GB | 160 GB | €15.99 |\n\n*Prices as of September 2026 for Hetzner's Germany and Finland locations, excluding VAT. Hetzner raised CX prices again on 15 June 2026, so older guides quoting €3.99 for the CX23 are out of date.*",
-        "The CX23 is the minimum viable spec: adequate for a single-user instance with external API inference, Telegram gateway, and moderate task volume. The CX33 at €8.49/month is the recommended tier. The 8GB RAM headroom handles Docker backend, browser automation tasks, and occasional heavy workloads without OOM pressure. Two light Hermes instances on one CX33 is feasible with careful resource limits.",
+        "Hetzner is the near-universal community recommendation for Hermes hosting. The price-to-spec ratio beats DigitalOcean or AWS Lightsail significantly for equivalent hardware.\n\n| Model | vCPU | RAM | NVMe | Price/mo |\n|-------|------|-----|------|----------|\n| CX23  | 2 | 4 GB | 40 GB | €5.49 |\n| CX33  | 4 | 8 GB | 80 GB | €8.49 |\n| CX43  | 8 | 16 GB | 160 GB | €15.99 |\n\n*Prices as of October 2026 for Hetzner's Germany and Finland locations, excluding VAT and IPv4. Hetzner raised CX prices again on 15 June 2026, so older guides quoting €3.99 for the CX23 are out of date. An IPv4 address adds to the bill: Hetzner's cost-optimised page shows €5.99 for the CX23 and €8.99 for the CX33 with one.*",
+        "The CX23 is the minimum viable spec: adequate for a single-user instance with external API inference, Telegram gateway, and moderate task volume. The CX33 at €8.49/month (excluding VAT and IPv4) is the recommended tier. The 8GB RAM headroom handles Docker backend, browser automation tasks, and occasional heavy workloads without OOM pressure. Two light Hermes instances on one CX33 is feasible with careful resource limits. Hetzner says the number of servers in this range is limited, and its cost-optimised page showed both the CX23 and the CX33 as unavailable in October 2026, so check stock before you plan around them.",
         "Datacenter locations: Nuremberg, Falkenstein and Helsinki in the EU. Hetzner also has US locations in Hillsboro and Ashburn, but the server lines and prices there differ from the table above, so check its current price list. EU datacenters suit most European users. A US location reduces round-trip for North American users on Telegram gateway, though the difference is modest since Telegram's own servers are distributed.",
       ],
     },
     {
       heading: "DigitalOcean, OVH, Vultr, and Hostinger",
       paragraphs: [
-        "**DigitalOcean** is the default in most tutorials because of good documentation and a polished UI. The pricing does not compete:\n\n| Droplet | vCPU | RAM | Price/mo |\n|---------|------|-----|-----------|\n| Basic | 2 | 4 GB | $24 |\n| Basic | 4 | 8 GB | $48 |\n\nAt $48/month for 8GB RAM versus Hetzner's €8.49, the gap is hard to justify unless you are already running DigitalOcean infrastructure and want to co-locate.",
-        "**OVH** is the more interesting alternative. The current lineup: VPS-1 (2 vCPU, 4GB RAM, 40GB SSD) at about $4.54/month and VPS-2 (4 vCPU, 8GB RAM, 75GB NVMe, unlimited traffic) at about $8.50/month, both on annual billing. VPS-2 undercuts the Hetzner CX33 slightly and adds unmetered bandwidth, useful if your instance does heavy data retrieval. Support quality is lower than Hetzner in community reports, though most self-hosters rarely need support.\n\n**Vultr** pricing lands close to DigitalOcean: its regular 2 vCPU, 4GB plan is $20/month. The High Frequency line is faster and dearer (3 vCPU and 8GB for $48/month), which works for multi-instance setups but has the same pricing problem as DigitalOcean.\n\n**Hostinger KVM 2**: 2 vCPU, 8GB RAM, $8.99/month on a two-year promotional term, renewing at $14.99/month. More RAM per dollar than the Hetzner CX23 at a comparable price. Appears in a few community setup threads. Less established than Hetzner in the self-hosting community.",
+        "**DigitalOcean** is the default in most tutorials because of good documentation and a polished UI. The pricing does not compete:\n\n| Droplet | vCPU | RAM | Price/mo |\n|---------|------|-----|-----------|\n| Basic | 2 | 4 GB | $24 |\n| Basic | 4 | 8 GB | $48 |\n\nAt $48/month for 8GB RAM versus Hetzner's €8.49 (excluding VAT and IPv4), the gap is hard to justify unless you are already running DigitalOcean infrastructure and want to co-locate.",
+        "**OVH** is the more interesting alternative. The current lineup: VPS-1 (2 vCPU, 4GB RAM, 40GB SSD) at about $4.54/month and VPS-2 (4 vCPU, 8GB RAM, 75GB NVMe, unlimited traffic) at about $8.50/month, both on annual billing. VPS-2 undercuts the Hetzner CX33 slightly and adds unmetered bandwidth, useful if your instance does heavy data retrieval. Support quality is lower than Hetzner in community reports, though most self-hosters rarely need support.\n\n**Vultr** pricing lands close to DigitalOcean: its regular 2 vCPU, 4GB plan is $20/month. The High Frequency line is faster and dearer (3 vCPU and 8GB for $48/month), which works for multi-instance setups but has the same pricing problem as DigitalOcean.\n\n**Hostinger KVM 2**: 2 vCPU, 8GB RAM, $8.79/month on a two-year promotional term, renewing at $14.99/month. More RAM per dollar than the Hetzner CX23 at a comparable price. Appears in a few community setup threads. Less established than Hetzner in the self-hosting community.",
       ],
     },
     {
@@ -57,7 +57,7 @@ export const article: BlogArticle = {
       heading: "Multi-instance: several Hermes agents on one server",
       paragraphs: [
         "Hermes supports a profiles system (introduced in v0.6.0) for running multiple isolated instances from a single installation. Each profile gets a separate `~/.hermes-<profile>/` directory, independent memory stores and session database, isolated skill library, distinct gateway services, and separate config files.\n\n```bash\nhermes profile create work\nhermes profile create personal\nhermes profile list\nhermes profile switch work\nhermes -p work -m 'Check my tasks for today'\n```",
-        "For Docker-based multi-instance, give each container a separate volume. Never run two containers against the same data directory:\n\n```bash\n# Profile 1\ndocker run --memory=4g --cpus=2 --shm-size=1g -v hermes1:/app/.hermes ...\n# Profile 2\ndocker run --memory=4g --cpus=2 --shm-size=1g -v hermes2:/app/.hermes ...\n```\n\nResource allocation:\n\n| Instances | Min RAM | Recommended |\n|-----------|---------|-------------|\n| 1 | 4 GB | 8 GB (CX33) |\n| 2 | 8 GB | 16 GB (CX43) |\n| 3-4 | 16 GB | 32 GB |\n\nHetzner CX43 (16GB, €15.99/month) handles two instances comfortably.",
+        "For Docker-based multi-instance, give each container a separate volume. Never run two containers against the same data directory:\n\n```bash\n# Profile 1\ndocker run --memory=4g --cpus=2 --shm-size=1g -v hermes1:/app/.hermes ...\n# Profile 2\ndocker run --memory=4g --cpus=2 --shm-size=1g -v hermes2:/app/.hermes ...\n```\n\nResource allocation:\n\n| Instances | Min RAM | Recommended |\n|-----------|---------|-------------|\n| 1 | 4 GB | 8 GB (CX33) |\n| 2 | 8 GB | 16 GB (CX43) |\n| 3-4 | 16 GB | 32 GB |\n\nHetzner CX43 (16GB, €15.99/month excluding VAT and IPv4) handles two instances comfortably.",
       ],
     },
     {
@@ -70,7 +70,7 @@ export const article: BlogArticle = {
     {
       heading: "Total monthly cost",
       paragraphs: [
-        `Running Hermes Agent on a self-hosted VPS (single user, external API inference, Telegram gateway):\n\n| Component | Monthly cost |\n|-----------|-------------|\n| Hetzner CX23 | €5.49 (excl. VAT) |\n| LLM API (OpenRouter, moderate usage) | $5-20 |\n| Domain (optional, for HTTPS webhook) | ~$1 |\n| **Total** | **~$12-27/month** |\n\nHivra managed hosting starts at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} and includes the server and gateway setup, with no server maintenance on your side. The self-hosted route is $12-27/month plus 2-4 hours of initial setup and 30-60 minutes/month of ongoing maintenance.`,
+        `Running Hermes Agent on a self-hosted VPS (single user, external API inference, Telegram gateway):\n\n| Component | Monthly cost |\n|-----------|-------------|\n| Hetzner CX23 | €5.49 (excl. VAT and IPv4; €5.99 with IPv4) |\n| LLM API (OpenRouter, moderate usage) | $5-20 |\n| Domain (optional, for HTTPS webhook) | ~$1 |\n| **Total** | **~$12-27/month** |\n\nHivra managed hosting starts at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE} and includes the server and gateway setup, with no server maintenance on your side. The self-hosted route is $12-27/month plus 2-4 hours of initial setup and 30-60 minutes/month of ongoing maintenance.`,
         "The math favours self-hosting on cash cost. It does not always favour it on time cost. At $50/hour developer time, a single afternoon debugging an update that broke your gateway costs more than six months of Hivra. That comparison changes in your favour if you run Hermes long-term with rare issues, or genuinely enjoy the infrastructure work.",
       ],
     },
@@ -85,7 +85,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "What is the cheapest server that reliably runs Hermes Agent?",
-      a: "Hetzner CX23 at €5.49/month excluding VAT (2 vCPU, 4GB RAM, 40GB NVMe), or OVH VPS-1 at about $4.54/month on annual billing for the same spec. This is the community-consensus minimum. Below 4GB RAM you see OOM errors on complex tasks; below 40GB storage you risk running out within a year of normal usage.",
+      a: "Hetzner CX23 at €5.49/month excluding VAT and IPv4 (2 vCPU, 4GB RAM, 40GB NVMe), or OVH VPS-1 at about $4.54/month on annual billing for the same spec. This is the community-consensus minimum, though Hetzner showed the CX23 as unavailable in October 2026, so check stock. Below 4GB RAM you see OOM errors on complex tasks; below 40GB storage you risk running out within a year of normal usage.",
     },
     {
       q: "Does Hermes Agent support ARM64 for Raspberry Pi or ARM VPS?",
@@ -101,7 +101,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Should I use Hetzner or DigitalOcean?",
-      a: "Hetzner. The CX33 (4 vCPU, 8GB, €8.49/month) costs about a fifth of a comparable DigitalOcean Droplet ($48/month for 4 vCPU, 8GB). DigitalOcean has better documentation and a more polished UI, but those advantages do not justify the price premium for Hermes hosting.",
+      a: "Hetzner. The CX33 (4 vCPU, 8GB, €8.49/month excluding VAT and IPv4) costs about a fifth of a comparable DigitalOcean Droplet ($48/month for 4 vCPU, 8GB). DigitalOcean has better documentation and a more polished UI, but those advantages do not justify the price premium for Hermes hosting.",
     },
     {
       q: "What if I don't want to manage a server at all?",

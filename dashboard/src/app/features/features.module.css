@@ -1,0 +1,474 @@
+/* The feature pages. Additions to the shared secondary-site.module.css, which is not edited.
+   Where a rule has to beat a shared `.articleBody` rule it doubles its own class, so the order
+   the two stylesheets load in does not matter. */
+
+/* ---- The masthead ---- */
+
+/* The display headings are tracked tight; without a little word-spacing a short word such as "a" runs into its neighbour. */
+.masthead.masthead h1 {
+  word-spacing: 0.1em;
+}
+
+/* The label above the headline takes a fixed line, and a page with no label (the md title has no colon) keeps the same line
+   empty, so every page in the group starts its headline at the same height. */
+.eyebrow.eyebrow {
+  display: block;
+  line-height: 28px;
+}
+
+.mastheadPlain::before {
+  content: "";
+  display: block;
+  height: 28px;
+}
+
+/* ---- The article body ---- */
+
+/* One body colour for long prose across the feature pages (the directory, the articles and the answers). */
+.article,
+.prose,
+.answer {
+  --feature-body: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+}
+
+/* About 70 characters to a line. The shared column is 760px wide and its 68ch cap lets 85 to 90 characters of this typeface
+   fit, so plain paragraphs are capped in em instead. Lists, tables and the opening statement set their own measure. */
+.article.article > section:not(.lead) > p:not([class]) {
+  max-width: 36em;
+}
+
+/* ---- The opening statement of an article page ---- */
+
+.lead.lead {
+  margin-bottom: 72px;
+}
+
+.lead.lead h2 {
+  margin: 0 0 32px;
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 1.14;
+  letter-spacing: -0.045em;
+  word-spacing: 0.06em;
+  text-wrap: balance;
+}
+
+.lead.lead p {
+  max-width: 34em;
+  margin: 0 0 22px;
+  font-size: 19px;
+  line-height: 1.75;
+}
+
+/* ---- Paragraphs that open with a bold lead-in, set as a two-column list ---- */
+
+.terms {
+  margin: 32px 0 40px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.terms .term {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  gap: 6px 32px;
+  max-width: none;
+  margin: 0;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.terms .term strong {
+  color: var(--ink-black);
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.terms .term span {
+  max-width: 58ch;
+}
+
+/* ---- Numbered steps ---- */
+
+.steps.steps {
+  counter-reset: step;
+  max-width: none;
+  margin: 32px 0 40px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+.steps.steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 0 16px;
+  margin: 0;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.steps.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  color: var(--gold-leaf);
+  font: 13px/2 var(--public-mono, monospace);
+  letter-spacing: 0.04em;
+}
+
+.steps.steps li span {
+  max-width: 58ch;
+}
+
+/* ---- A worked example, and a small aside ---- */
+
+.scenario.scenario {
+  max-width: 60ch;
+  margin: 32px 0;
+  padding: 4px 0 4px 26px;
+  border-left: 2px solid var(--gold-leaf);
+  color: var(--ink-black);
+  font-size: 19px;
+  line-height: 1.7;
+}
+
+.note.note {
+  max-width: 60ch;
+  margin: 24px 0 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+/* ---- A small heading and a paragraph for each example ---- */
+
+.workflows {
+  margin: 32px 0 24px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.workflows .workflow {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  gap: 8px 32px;
+  padding: 26px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+/* The label is set like the bold lead-ins of the lists above and below it, not as a second kind of heading. */
+.workflows .workflow h3 {
+  margin: 0;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.5;
+}
+
+.workflows .workflow p {
+  max-width: 58ch;
+  margin: 0;
+}
+
+/* ---- Inline code ---- */
+
+/* A command or file name stays on one line, so its chip never splits in two. */
+.unbroken {
+  white-space: nowrap;
+}
+
+/* ---- Answers in the question list ---- */
+
+.answer.answer p {
+  max-width: 37em;
+  color: var(--feature-body);
+}
+
+.answer a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.answer a:hover {
+  color: var(--gold-leaf);
+}
+
+.answer strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* ---- The closing links of an article page ---- */
+
+.closing {
+  margin-top: -24px;
+}
+
+.closing [data-action-links] {
+  margin-top: 0;
+}
+
+/* ---- The related links of an article page ---- */
+
+/* Set in the article's own column (the shared grid's second column), so the links line up with the article, the
+   questions and the closing links above them. Three links sit in a row of three. */
+.relatedLayout > div {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.relatedLinks > section > div {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 24px;
+}
+
+.relatedLinks a span {
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 4px;
+  transition: text-decoration-color 0.2s;
+}
+
+.relatedLinks a:hover span,
+.relatedLinks a:focus-visible span {
+  text-decoration-color: var(--gold-leaf);
+}
+
+/* ---- The directory page ---- */
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 24px clamp(40px, 7vw, 120px);
+  align-items: start;
+}
+
+.introBand {
+  padding-bottom: 72px;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.introBand h2,
+.panel h2,
+.sectionHead h2 {
+  margin: 0;
+  font-size: clamp(28px, 3.2vw, 44px);
+  font-weight: 500;
+  line-height: 1.14;
+  letter-spacing: -0.045em;
+  word-spacing: 0.06em;
+  text-wrap: balance;
+}
+
+.prose p {
+  max-width: 36em;
+  margin: 0 0 22px;
+  color: var(--feature-body);
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.prose p:last-of-type {
+  margin-bottom: 0;
+}
+
+.prose strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.prose a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.prose a:hover {
+  color: var(--gold-leaf);
+}
+
+.sectionHead {
+  margin: 96px 0 40px;
+}
+
+.index {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+/* The two columns of a row share their first baseline: the number sits in the gutter on the title's baseline, and the
+   first line of the prose is level with the first line of the title. Phones stack them (see the last block). */
+.item.item {
+  align-items: baseline;
+  padding: 52px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.item h3 {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: baseline;
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(25px, 2.6vw, 36px);
+  font-weight: 500;
+  line-height: 1.16;
+  letter-spacing: -0.04em;
+  word-spacing: 0.06em;
+  text-wrap: balance;
+}
+
+.itemNumber {
+  display: block;
+  color: var(--gold-leaf);
+  font: 12px/1.6 var(--public-mono, monospace);
+  letter-spacing: 0.06em;
+  word-spacing: normal;
+}
+
+.item [data-action-links] {
+  margin-top: 26px;
+}
+
+.panel {
+  margin-top: 96px;
+  padding: 48px clamp(24px, 4vw, 56px);
+  background: var(--public-surface);
+  border-left: 2px solid var(--gold-leaf);
+}
+
+.panel [data-action-links] {
+  margin-top: 32px;
+}
+
+.faqSplit {
+  margin-top: 96px;
+}
+
+.faqSplit > section {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 24px clamp(40px, 7vw, 120px);
+  align-items: start;
+  margin: 0;
+}
+
+.faqSplit > section > h2 {
+  position: sticky;
+  top: 120px;
+  margin: 0;
+  font-size: clamp(28px, 3.2vw, 44px);
+  font-weight: 500;
+  line-height: 1.14;
+  letter-spacing: -0.045em;
+  word-spacing: 0.06em;
+  text-wrap: balance;
+}
+
+@media (max-width: 860px) {
+  .relatedLinks > section > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1000px) {
+  .terms .term,
+  .workflows .workflow {
+    grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+    gap: 6px 24px;
+  }
+}
+
+@media (max-width: 700px) {
+  .lead.lead {
+    margin-bottom: 48px;
+  }
+
+  .lead.lead p {
+    font-size: 18px;
+  }
+
+  .terms .term,
+  .workflows .workflow {
+    display: block;
+    padding: 20px 0;
+  }
+
+  .terms .term strong {
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .workflows .workflow h3 {
+    margin-bottom: 8px;
+  }
+
+  .steps.steps li {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 0 10px;
+  }
+
+  .scenario.scenario {
+    padding-left: 20px;
+    font-size: 18px;
+  }
+
+  .split,
+  .faqSplit > section {
+    display: block;
+  }
+
+  .introBand {
+    padding-bottom: 48px;
+  }
+
+  .introBand h2 {
+    margin-bottom: 28px;
+  }
+
+  .prose p {
+    font-size: 17px;
+  }
+
+  .sectionHead {
+    margin: 64px 0 28px;
+  }
+
+  .item {
+    padding: 36px 0;
+  }
+
+  .item.item {
+    align-items: start;
+  }
+
+  .item h3 {
+    display: block;
+    margin-bottom: 20px;
+  }
+
+  .itemNumber {
+    margin-bottom: 14px;
+  }
+
+  .panel {
+    margin-top: 64px;
+    padding: 32px 24px;
+  }
+
+  .panel h2 {
+    margin-bottom: 24px;
+  }
+
+  .faqSplit {
+    margin-top: 64px;
+  }
+
+  .faqSplit > section > h2 {
+    position: static;
+    margin-bottom: 28px;
+  }
+}

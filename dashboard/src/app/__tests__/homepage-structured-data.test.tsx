@@ -11,11 +11,13 @@ jest.mock("@/components/public-site/PublicSite", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
+// The live count is not part of the structured data; these tests do not reach the database.
+jest.mock("@/components/landing/home/agents-deployed", () => ({ getHomeAgentsDeployed: async () => null }));
 
-import LandingPage, { metadata as homeMetadata } from "../page";
+import LandingPage from "../page";
 import StructuredData from "@/components/StructuredData";
 import { officialProfileLinks } from "@/lib/public-project-links";
-import { HOMEPAGE_FAQ } from "@/components/landing/home/content";
+import { homepageFaq } from "@/components/landing/home/content";
 import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { buildLlmsTxt } from "@/lib/llms-txt";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
@@ -109,15 +111,21 @@ describe("homepage identity structured data", () => {
       [/one[- ]click/i, "no unmeasured speed claims"],
       [/licen[sc]e|apache|mit license|public domain/i, "marketing markup never names the licence or says public domain"],
     ];
+    // "a licensed image" is the condition on a Windows computer (your own copy of
+    // Windows), not the licence Hivra's code is under, so it is the one phrase the
+    // licence rule skips. Any other use of the word still fails.
+    const WINDOWS_CONDITION = /\ba licensed image\b/g;
     for (const text of markup) {
       for (const [pattern, why] of FORBIDDEN) {
-        expect({ text, pattern: String(pattern), why, hit: pattern.test(text) }).toEqual({ text, pattern: String(pattern), why, hit: false });
+        const scanned = text.replace(WINDOWS_CONDITION, "a Windows image");
+        expect({ text, pattern: String(pattern), why, hit: pattern.test(scanned) }).toEqual({ text, pattern: String(pattern), why, hit: false });
       }
     }
 
     // The shared public-copy rules (price and size wording, dashes, guarantees)
-    // also apply to structured data. The homepage is the one page where Ash
-    // treats Windows computers as live (2026-09-28), as in home-copy.test.ts.
+    // also apply to structured data. The homepage may name Windows (owner decision
+    // 2026-09-28), only with its condition and never as plainly available, as in
+    // home-copy.test.ts.
     const hits = markup.flatMap((text) =>
       findBannedClaims(text)
         .filter((hit) => !/Windows computers are not generally available/.test(hit.why))
@@ -128,28 +136,50 @@ describe("homepage identity structured data", () => {
 });
 
 describe("availability of Windows and Omarchy computers across surfaces", () => {
-  // The owner's homepage copy (2026-09-28) and the roadmap say a person can launch
-  // an Ubuntu, Windows or Omarchy computer. The JSON-LD feature list, the meta
-  // description and llms.txt are read by crawlers and answer engines, so they
-  // must say the same thing; one surface calling them "private preview" while the
-  // others list them as available is exactly the drift this test stops.
-  it("lists Windows and Omarchy in the JSON-LD feature list, the meta description and llms.txt alike", async () => {
+  // Neither is plainly available: the code runs Omarchy as a prepared computer
+  // and refuses a launch when no prepared slot exists, and Windows runs on the
+  // person's own server from their own licensed image. The JSON-LD feature list
+  // and llms.txt are read by crawlers and answer engines, so they carry the same
+  // two conditions as the homepage and About; one surface calling them
+  // "available" while another qualifies them is exactly the drift this test
+  // stops. The JSON-LD says "a licensed image" because that is the one phrase
+  // the licence rule above skips.
+  it("lists Windows and Omarchy in the JSON-LD feature list and llms.txt alike, each with its condition", async () => {
     const schema = findSchema(await LandingPage({}));
     const app = nodeOf(schema, "SoftwareApplication") as { featureList: string[] };
-    expect(app.featureList).toContain("Ubuntu, Windows or Omarchy");
-    expect(String(homeMetadata.description)).toContain("launch Ubuntu, Windows or Omarchy for yourself");
+    expect(app.featureList).toContain("Ubuntu, Omarchy (prepared computer) or Windows on your own server with a licensed image");
+    expect(app.featureList.filter((feature) => /Windows/.test(feature))).toHaveLength(1);
 
     const llmsTxt = buildLlmsTxt({ siteUrl: "https://hivra.cloud", phase: "dormant" });
-    expect(llmsTxt).toMatch(/Also available: Windows[^.]*and Omarchy\./);
-    expect(llmsTxt).not.toMatch(/private preview/i);
+    expect(llmsTxt).toMatch(/Omarchy \(prepared computer\)[^.]*Windows on your own server with your licensed image/);
+    expect(llmsTxt).not.toMatch(/Also available|private preview/i);
   });
 });
 
 describe("homepage FAQ and offers structured data", () => {
+  const original = process.env.HIVRA_NEW_TOKEN_SURFACES;
+  afterEach(() => {
+    if (original === undefined) delete process.env.HIVRA_NEW_TOKEN_SURFACES;
+    else process.env.HIVRA_NEW_TOKEN_SURFACES = original;
+  });
+
+  type FaqNode = { mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }> };
+  const faqOf = (schema: Graph | null) => schema?.["@graph"].find((entry) => entry["@type"] === "FAQPage") as unknown as FaqNode;
+
   it("publishes the same questions and answers the page shows", async () => {
+    process.env.HIVRA_NEW_TOKEN_SURFACES = "true";
+    const faq = faqOf(findSchema(await LandingPage({})));
+    expect(faq.mainEntity).toHaveLength(7);
+    expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(true).map(({ q, a }) => [q, a]));
+  });
+
+  it("leaves the token sentence out of the structured answers while the token surfaces are off, as it is off the page", async () => {
+    process.env.HIVRA_NEW_TOKEN_SURFACES = "false";
     const schema = findSchema(await LandingPage({}));
-    const faq = schema?.["@graph"].find((entry) => entry["@type"] === "FAQPage") as { mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }> };
-    expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(HOMEPAGE_FAQ.map(({ q, a }) => [q, a]));
+    expect(faqOf(schema).mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(false).map(({ q, a }) => [q, a]));
+    const markup = allStrings(schema).join("\n");
+    expect(markup).not.toMatch(/Token-related access|\$HIVRA|\$HermesOS|airdrop|snapshot|litepaper|tokenomics|launchpad|bankr/i);
+    expect(markup).toMatch(/Do I need a token\?/);
   });
 
   it("says AI key and AI usage in the markup, as the visible page does", async () => {

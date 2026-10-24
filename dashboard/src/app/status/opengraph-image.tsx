@@ -11,7 +11,7 @@ export const contentType = OG_CONTENT_TYPE;
 export default async function StatusOpengraphImage() {
   return renderOgCard({
     eyebrow: "Status",
-    title: "Live platform health",
-    subtitle: "Real-time operational status of Hivra's public surfaces.",
+    title: "Public page status",
+    subtitle: "Live checks of Hivra's public pages, run from your browser.",
   });
 }

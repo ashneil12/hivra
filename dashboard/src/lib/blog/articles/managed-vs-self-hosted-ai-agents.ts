@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-hosting an AI agent costs $5-10/month in rent, plus 4-10 hours of setup and 1-2 hours a month of upkeep. The math, and where self-hosting wins.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The server rent is the smallest number here.",
@@ -77,9 +77,9 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Try the managed side",
+      heading: "What the managed route looks like",
       paragraphs: [
-        `If the hours column in the TCO table is the one that hurts, the managed route is easy to evaluate: [Hivra](/) launches Hermes, Claude Code or Codex on a private VM. Sign in with your own AI accounts, pay no Hivra markup on that usage, and see whether a computer you don't have to administer fits how you work. [Plans start at ${ENTRY_PLAN_PRICE}/month](/pricing), paid plans are not paused for inactivity, they come with a ${MONEY_BACK_GUARANTEE}, and your workspace files come with you if you ever move to your own hardware. For a table of other managed hosts (Fly Sprites, Railway free VM, DigitalOcean Agent Droplets, Orgo, E2B and more), see [AI agent hosting alternatives](/compare/ai-agent-hosting-alternatives).`,
+        `If the hours column in the TCO table is the one that hurts, the managed route is the one to look at: [Hivra](/) launches Hermes, Claude Code or Codex on a private VM. Sign in with your own AI accounts, pay no Hivra markup on that usage, and you have a computer you don't have to administer. [Plans start at ${ENTRY_PLAN_PRICE}/month](/pricing), paid plans are not paused for inactivity, they come with a ${MONEY_BACK_GUARANTEE}, and your workspace files come with you if you ever move to your own hardware. For a table of other managed hosts (Fly Sprites, Railway free VM, DigitalOcean Agent Droplets, Orgo, E2B and more), see [AI agent hosting alternatives](/compare/ai-agent-hosting-alternatives).`,
       ],
     },
   ],

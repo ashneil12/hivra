@@ -21,7 +21,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import styles from "@/app/tools/tools.module.css";
-import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { HETZNER_LIMITED_NOTE, TOOLS_CTA } from "@/lib/tools/tool-catalog";
 import { monthYear } from "@/lib/tools/month-year";
 
 // External facts, checked on 2026-09-24 against each provider's own source:
@@ -33,13 +33,15 @@ import { monthYear } from "@/lib/tools/month-year";
 const RATES = {
   lastVerified: "2026-09-24",
   vps: {
-    hetznerCx23: { label: "Hetzner CX23 (2 vCPU, 4 GB, 40 GB)", monthlyUsd: 7.09, sameSizeAsHivra: true },
-    vultr1gb: { label: "Vultr Cloud Compute (1 vCPU, 1 GB, 25 GB)", monthlyUsd: 5, sameSizeAsHivra: false },
-    vultr4gb: { label: "Vultr Cloud Compute (2 vCPU, 4 GB, 80 GB)", monthlyUsd: 20, sameSizeAsHivra: true },
-    do1gb: { label: "DigitalOcean Basic (1 vCPU, 1 GB, 25 GB)", monthlyUsd: 6, sameSizeAsHivra: false },
-    do4gb: { label: "DigitalOcean Basic (2 vCPU, 4 GB, 80 GB)", monthlyUsd: 24, sameSizeAsHivra: true },
-    lightsail1gb: { label: "AWS Lightsail (2 vCPU, 1 GB, 40 GB)", monthlyUsd: 7, sameSizeAsHivra: false },
-    lightsail4gb: { label: "AWS Lightsail (2 vCPU, 4 GB, 80 GB)", monthlyUsd: 24, sameSizeAsHivra: true },
+    // Hetzner's own page for this range says the number of available servers is limited, so the
+    // default preset may not be orderable on the day (cost-optimized page read 2026-10-20).
+    hetznerCx23: { label: "Hetzner CX23 (2 vCPU, 4 GB, 40 GB)", monthlyUsd: 7.09, sameSizeAsHivra: true, limitedAvailability: true },
+    vultr1gb: { label: "Vultr Cloud Compute (1 vCPU, 1 GB, 25 GB)", monthlyUsd: 5, sameSizeAsHivra: false, limitedAvailability: false },
+    vultr4gb: { label: "Vultr Cloud Compute (2 vCPU, 4 GB, 80 GB)", monthlyUsd: 20, sameSizeAsHivra: true, limitedAvailability: false },
+    do1gb: { label: "DigitalOcean Basic (1 vCPU, 1 GB, 25 GB)", monthlyUsd: 6, sameSizeAsHivra: false, limitedAvailability: false },
+    do4gb: { label: "DigitalOcean Basic (2 vCPU, 4 GB, 80 GB)", monthlyUsd: 24, sameSizeAsHivra: true, limitedAvailability: false },
+    lightsail1gb: { label: "AWS Lightsail (2 vCPU, 1 GB, 40 GB)", monthlyUsd: 7, sameSizeAsHivra: false, limitedAvailability: false },
+    lightsail4gb: { label: "AWS Lightsail (2 vCPU, 4 GB, 80 GB)", monthlyUsd: 24, sameSizeAsHivra: true, limitedAvailability: false },
   },
   extras: {
     // Hetzner bills backups at 20% of the server price; DigitalOcean's weekly
@@ -129,10 +131,12 @@ export default function HostingCostCalculatorTool() {
   }
 
   const segments: BarSegment[] = [
-    { label: "VPS", value: diyInfra12, className: styles.segInk },
-    { label: "Extras", value: diyExtras12, className: styles.segMid },
-    { label: "Setup time", value: setupCost, className: styles.segFaint },
-    { label: "Maintenance time", value: diyTime12, className: styles.segLight },
+    // Your hours are the cost that matters here, so they are the darkest segments (solid for setup, hatched for
+    // the monthly hours); the server and the extras are mid grey. Each keeps 3:1 against the card in both themes.
+    { label: "VPS", value: diyInfra12, className: styles.segVps },
+    { label: "Extras", value: diyExtras12, className: styles.segExtras },
+    { label: "Setup time", value: setupCost, className: styles.segSetup },
+    { label: "Maintenance time", value: diyTime12, className: styles.segMaint },
   ];
 
   const extrasNote = [backups && "backups", otherExtras > 0 && "other extras"].filter(Boolean).join(", ") || "none selected";
@@ -145,7 +149,7 @@ export default function HostingCostCalculatorTool() {
 
   return (
     <div className={styles.tool}>
-      <div className={styles.inputs}>
+      <div className={[styles.inputs, styles.inputsPreset].join(" ")}>
         <div>
           <label className={styles.label} htmlFor="hc-vps">
             VPS preset
@@ -162,6 +166,9 @@ export default function HostingCostCalculatorTool() {
               ? `Same CPU and memory as Hivra's ${hivra.size} computer.`
               : `Smaller than Hivra's ${hivra.size} computer. Compare like for like with a 4 GB preset.`}
           </p>
+          {vps.limitedAvailability && (
+            <p className={styles.hint}>{HETZNER_LIMITED_NOTE}</p>
+          )}
         </div>
         <div>
           <label className={styles.label} htmlFor="hc-rate">
@@ -243,42 +250,46 @@ export default function HostingCostCalculatorTool() {
       <p className={styles.verdict} data-testid="hc-verdict">{verdict}</p>
 
       <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Monthly cost breakdown">
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col">DIY line item</th>
-              <th scope="col" className={styles.num}>Per month</th>
-              <th scope="col">Notes</th>
+        {/* On a phone each row restacks (item and amount on one line, the note under it), so the roles are
+            stated: a table whose rows are laid out as grids can otherwise lose its table meaning. */}
+        <table className={[styles.table, styles.tableStack].join(" ")} role="table">
+          <thead role="rowgroup">
+            <tr role="row">
+              <th scope="col" role="columnheader">DIY line item</th>
+              <th scope="col" role="columnheader" className={styles.num}>Per month</th>
+              <th scope="col" role="columnheader">Notes</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody role="rowgroup">
             {breakdownRows.map((row) => (
-              <tr key={row.item}>
-                <td>{row.item}</td>
-                <td className={styles.num}>{formatUsd(row.monthly)}</td>
-                <td>{row.note}</td>
+              <tr key={row.item} role="row">
+                <td role="cell">{row.item}</td>
+                <td role="cell" className={styles.num}>{formatUsd(row.monthly)}</td>
+                <td role="cell">{row.note}</td>
               </tr>
             ))}
-            <tr className={styles.total}>
-              <td>DIY total</td>
-              <td className={styles.num}>{formatUsd(diyTotal12 / 12)}</td>
-              <td>{formatUsd(diyTotal12)} over 12 months</td>
+            <tr role="row" className={styles.total}>
+              <td role="cell">DIY total</td>
+              <td role="cell" className={styles.num}>{formatUsd(diyTotal12 / 12)}</td>
+              <td role="cell">{formatUsd(diyTotal12)} over 12 months</td>
             </tr>
-            <tr className={styles.hivra}>
-              <td>{hivra.label}</td>
-              <td className={styles.num}>{formatUsd(hivra.monthlyUsd)}</td>
-              <td>{formatUsd(hivraTotal12)} over 12 monthly payments</td>
+            <tr role="row" className={styles.hivra}>
+              <td role="cell">{hivra.label}</td>
+              <td role="cell" className={styles.num}>{formatUsd(hivra.monthlyUsd)}</td>
+              <td role="cell">{formatUsd(hivraTotal12)} over 12 monthly payments</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <p className={styles.note}>
-        Assumptions: one VPS compared with one Hivra computer of {hivra.size}. Several light agents can share one
+        <strong className={styles.noteLead}>Assumptions:</strong> one VPS compared with one Hivra computer of {hivra.size}. Several light agents can share one
         server, which works until they compete for CPU and memory. DIY backups start off because Hivra&apos;s price
         does not include backups. Ticked, they cost 20% of the server, which is Hetzner&apos;s rate and
         DigitalOcean&apos;s weekly rate; other providers price backups differently. Model
-        usage is excluded on both sides: you bring your own Claude or ChatGPT login or API key either way. The
+        usage is excluded on both sides. On a VPS you bring your own Claude or ChatGPT login or API key. On Hivra the
+        plan does not include AI usage either: bring your own account or key where the agent supports it, or pay with
+        Hivra credits. The
         default time estimates (3h setup, 2h monthly maintenance, 1h monthly incident recovery) are our starting
         guesses, not measurements; edit them to match your experience. VPS prices are the providers&apos; list
         prices with a public IPv4 address, before tax. The Hetzner figure is its Germany and Finland price of $6.49
@@ -289,8 +300,9 @@ export default function HostingCostCalculatorTool() {
       <div className={styles.bridge}>
         <p>
           If the hours column is the problem, a managed computer takes the install and the server off your hands. One
-          monthly price, not paused for inactivity, your own model login: $9.99 a month for 2 vCPU and 4 GB, or
-          $19.99 a month for 4 vCPU and 8 GB.
+          monthly price, not paused for inactivity: $9.99 a month for 2 vCPU and 4 GB, or $19.99 a month for 4 vCPU
+          and 8 GB. The plan does not include AI usage. Bring your own account or key where the agent supports it, or
+          pay with Hivra credits.
         </p>
         <Link href={TOOLS_CTA.entryPlanHref} className={styles.bridgeLink}>
           Start on the $9.99 plan

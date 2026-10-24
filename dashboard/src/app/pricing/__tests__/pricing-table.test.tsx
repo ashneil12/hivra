@@ -3,10 +3,18 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
+jest.mock("@/lib/compliance/token-geo-page", () => ({ resolveTokenGeoBlockForPage: jest.fn() }));
+jest.mock("@/lib/compliance/token-surface-view", () => ({
+  ...jest.requireActual("@/lib/compliance/token-surface-view"),
+  getTokenSurfaceView: jest.fn().mockResolvedValue({ tokenSurfaces: false, geoBlocked: false }),
+}));
+
 import PricingPage from "../page";
 import {
   HOSTED_SIZES,
+  PLAN_LABELS,
   PRICES_AS_OF,
+  PRICING_COMPARISON,
   PRICING_ROWS,
   buildPricingOffers,
   formatPricesAsOf,
@@ -33,6 +41,7 @@ function pricingGraph(container: HTMLElement): JsonNode[] {
   return JSON.parse(scripts[0].textContent ?? "{}")["@graph"];
 }
 
+/** The comparison table as the rows a reader sees: the row heading, then one cell per column. */
 function tableRows(): Array<{ header: string; cells: string[] }> {
   const table = screen.getByRole("table");
   return within(table)
@@ -46,12 +55,16 @@ function tableRows(): Array<{ header: string; cells: string[] }> {
     }));
 }
 
-describe("/pricing table", () => {
+async function renderPricing() {
+  return render(await PricingPage());
+}
+
+describe("/pricing prices and sizes", () => {
   it("pins the prices and sizes to the date they were checked", () => {
     // If a price or size in PLANS changes, this fails: update PRICING_ROWS'
     // expectations here and move PRICES_AS_OF to the day it was checked.
-    expect(PRICES_AS_OF).toBe("2026-09-30");
-    expect(formatPricesAsOf()).toBe("30 September 2026");
+    expect(PRICES_AS_OF).toBe("2026-10-20");
+    expect(formatPricesAsOf()).toBe("20 October 2026");
     expect(PRICING_ROWS.map(({ key, option, vcpu, ram, price }) => ({ key, option, vcpu, ram, price }))).toEqual([
       { key: "self-host", option: "Self-host", vcpu: "Your server", ram: "Your server", price: "$0" },
       { key: "operator", option: "Hivra Cloud, 2 vCPU and 4 GB", vcpu: "2", ram: "4 GB", price: "$9.99" },
@@ -72,48 +85,78 @@ describe("/pricing table", () => {
     }
   });
 
-  it("renders a semantic table with column headers, row headers and the as-of date", () => {
-    render(<PricingPage />);
-    const table = screen.getByRole("table", { name: "Hivra sizes and prices, in US dollars" });
+  it("names the options by price and size, never by checkout's plan names", () => {
+    expect(PLAN_LABELS).toEqual({ selfHost: "Self-host", entry: "Hivra Cloud", larger: "Hivra Cloud, more room" });
+    // Offer names in structured data keep their size-based form.
+    expect(PRICING_ROWS.map((row) => row.option)).toEqual(["Self-host", "Hivra Cloud, 2 vCPU and 4 GB", "Hivra Cloud, 4 vCPU and 8 GB"]);
+  });
+});
 
-    expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-      "Size",
-      "vCPU",
-      "RAM",
-      "Price per month",
-      "Billing",
-      "Refund",
-    ]);
-    for (const header of within(table).getAllByRole("columnheader")) expect(header).toHaveAttribute("scope", "col");
+describe("/pricing comparison table", () => {
+  it("is a semantic table: plans as columns, the md's nine criteria as row headings", async () => {
+    await renderPricing();
+    const table = screen.getByRole("table", { name: PRICING_COMPARISON.caption });
+
+    const headers = within(table).getAllByRole("columnheader");
+    for (const header of headers) expect(header).toHaveAttribute("scope", "col");
+    expect(headers.map((header) => header.textContent)).toEqual(["Self-host", "Hivra Cloud", "Hivra Cloud, more room"]);
     for (const header of within(table).getAllByRole("rowheader")) expect(header).toHaveAttribute("scope", "row");
 
-    expect(tableRows()).toEqual(
-      PRICING_ROWS.map((row) => ({
-        header: row.option,
-        cells: [row.vcpu, row.ram, `${row.price} ${row.priceFor}`, row.billing, row.refund],
-      })),
-    );
-
-    const asOf = screen.getByText(/^Prices as of/);
-    expect(asOf).toHaveTextContent("Prices as of 30 September 2026.");
-    expect(asOf.querySelector("time")).toHaveAttribute("datetime", "2026-09-30");
+    expect(tableRows()).toEqual([
+      { header: "Hivra software", cells: ["Free", "Included", "Included"] },
+      { header: "Monthly Hivra Cloud price", cells: ["$0", "$9.99", "$19.99"] },
+      { header: "CPU and memory", cells: ["Your server", "2 vCPU and 4 GB", "4 vCPU and 8 GB"] },
+      { header: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
+      { header: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
+      { header: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },
+      { header: "Inactivity pause on paid cloud computer", cells: ["Not applicable", "No", "No"] },
+      { header: "AI provider usage included", cells: ["No", "No", "No"] },
+      { header: "7-day money-back guarantee on card payments", cells: ["Not applicable", "Yes", "Yes"] },
+    ]);
   });
 
-  it("publishes Offer JSON-LD that matches the table row for row", () => {
-    const { container } = render(<PricingPage />);
+  it("reads its prices and sizes from the plans, so it moves with checkout", async () => {
+    await renderPricing();
+    const rows = tableRows();
+    const price = rows.find((row) => row.header === "Monthly Hivra Cloud price");
+    const size = rows.find((row) => row.header === "CPU and memory");
+
+    HOSTED_SIZES.forEach((hosted, index) => {
+      const plan = PLANS[hosted.planKey];
+      expect(price?.cells[index + 1]).toBe(`$${(plan.price / 100).toFixed(2)}`);
+      expect(size?.cells[index + 1]).toBe(`${plan.totalCpu} vCPU and ${plan.totalRam / 1024} GB`);
+    });
+    // The refund row uses the shared wording, with no "seven-day" or "eligible".
+    expect(rows[rows.length - 1].header).toBe(MONEY_BACK_GUARANTEE);
+  });
+
+  it("sits under the anchor the Offer URLs point to, with the generated as-of line below it", async () => {
+    const { container } = await renderPricing();
+    const anchor = container.querySelector("#pricing-table") as HTMLElement;
+
+    expect(anchor).not.toBeNull();
+    expect(within(anchor).getByRole("heading", { level: 2, name: "Compare your options" })).toBeInTheDocument();
+    expect(within(anchor).getByRole("table")).toBeInTheDocument();
+    const asOf = screen.getByText(/^Prices as of/);
+    expect(asOf).toHaveTextContent("Prices as of 20 October 2026.");
+    expect(asOf.querySelector("time")).toHaveAttribute("datetime", "2026-10-20");
+    expect(anchor).toContainElement(asOf);
+  });
+
+  it("publishes Offer JSON-LD that matches the table's price row", async () => {
+    const { container } = await renderPricing();
     const app = pricingGraph(container).find((node) => node["@type"] === "SoftwareApplication") as JsonNode;
     const offers = app.offers as JsonNode[];
-    const rows = tableRows();
+    const priceRow = tableRows().find((row) => row.header === "Monthly Hivra Cloud price");
 
-    expect(offers).toHaveLength(rows.length);
+    expect(offers).toHaveLength(PRICING_ROWS.length);
     offers.forEach((offer, index) => {
       const row = PRICING_ROWS[index];
-      const shown = rows[index];
       expect(offer["@type"]).toBe("Offer");
-      expect(offer.name).toBe(shown.header);
+      expect(offer.name).toBe(row.option);
       expect(offer.priceCurrency).toBe("USD");
       // The JSON-LD price is the visible price without its dollar sign.
-      expect(`$${offer.price}`).toBe(shown.cells[2].split(" ")[0]);
+      expect(`$${offer.price}`).toBe(priceRow?.cells[index]);
       expect(offer.url).toBe("https://hivra.cloud/pricing#pricing-table");
       if (row.monthly) {
         expect(offer.priceSpecification).toEqual({
@@ -123,7 +166,7 @@ describe("/pricing table", () => {
           billingDuration: "P1M",
         });
         expect(offer.description).toContain(`${row.vcpu} vCPU and ${row.ram.replace(" GB", "")} GB`);
-        expect(offer.description).toContain(shown.cells[4]);
+        expect(offer.description).toContain(MONEY_BACK_GUARANTEE);
       } else {
         expect(offer).not.toHaveProperty("priceSpecification");
         expect(offer.price).toBe("0");
@@ -141,15 +184,21 @@ describe("/pricing table", () => {
     expect(offers.every((offer) => String(offer.url).startsWith("https://example.test/pricing"))).toBe(true);
   });
 
-  it("states the pool, the paid-size and Hermes limits without banned claims in the table, offers or notes", () => {
-    const { container } = render(<PricingPage />);
+  it("states the pool, the paid-computer rule and the Hermes limit without banned claims in the table, offers or notes", async () => {
+    const { container } = await renderPricing();
     const table = screen.getByRole("table");
     const offers = JSON.stringify(buildPricingOffers("https://hivra.cloud"));
     const text = [table.textContent ?? "", offers, container.textContent ?? ""].join("\n");
 
     expect(findBannedClaims(text)).toEqual([]);
     expect(text).not.toMatch(/per computer|each computer|free trial|hosted free|annual|yearly|\/yr/i);
-    expect(screen.getByText("OpenClaw and Agent Zero need a paid size. Hermes runs on Hivra Cloud only.")).toBeInTheDocument();
-    expect(screen.getByText(/Each plan is a pool of CPU and memory for your agents/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Each plan is a pool of CPU and memory for your agents' computers, and each size also sets how many agents can run at once."),
+    ).toBeInTheDocument();
+    // No agent is singled out as the paid one: the rule is about every computer Hivra Cloud runs (21 October 2026).
+    expect(
+      screen.getByText("Every Hivra Cloud computer needs a paid plan, whichever agent you run on it. Hermes runs on Hivra Cloud only."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Require a paid Hivra Cloud size/)).not.toBeInTheDocument();
   });
 });

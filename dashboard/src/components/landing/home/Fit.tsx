@@ -1,67 +1,46 @@
-import type { CSSProperties } from "react";
 import { ArrowRight } from "lucide-react";
-import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
+import ComparisonTable from "@/components/public-editorial/ComparisonTable";
 import { FIT } from "./content";
 import styles from "./home.module.css";
 
+/** A bare Yes or No gets a mark beside the word; longer answers stay as the sentence they are. */
+function Answer({ text }: { text: string }) {
+  if (text === "Yes") return <span className={styles.fitYes}><i aria-hidden="true" />{text}</span>;
+  if (text === "No") return <span className={styles.fitNo}><i aria-hidden="true" />{text}</span>;
+  return <>{text}</>;
+}
+
 /**
- * Where Hivra fits: the three places an agent can live today, and the one you
- * can check. A real table, server rendered; the reveal is CSS scroll-driven, so
- * it needs no script and everything is readable before and without it.
+ * Where Hivra fits: four places an agent can run, compared in a real table
+ * (server rendered, scrollable inside its own frame on mid-width screens and
+ * stacked into label and value blocks on phones). Everything is readable
+ * before and without script.
  */
 export default function Fit() {
-  const last = FIT.columns.length - 1;
   return (
     <section id="fit" className={styles.fit} aria-labelledby="fit-heading">
-      <header className={styles.sectionHead}>
-        <span className={styles.eyebrow}>{FIT.eyebrow}</span>
+      <header className={styles.fitHead}>
+        <span className={styles.eyebrow} aria-hidden="true" />
         <h2 id="fit-heading" className={styles.sectionTitle}>
           {FIT.title} <em>{FIT.titleTail}</em>
         </h2>
         <p className={styles.bodyText}>{FIT.lead}</p>
       </header>
-      <div className={styles.fitTable} role="region" aria-label="Where each option stands" tabIndex={0}>
-        <table>
-          <thead>
-            <tr>
-              <td />
-              {FIT.columns.map((column, index) => (
-                <th key={column} scope="col" className={index === last ? styles.fitHivra : undefined}>
-                  {column}
-                  <small>{FIT.examples[index]}</small>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {FIT.rows.map((row, rowIndex) => (
-              <tr key={row.label} style={{ "--row": rowIndex } as CSSProperties}>
-                <th scope="row">{row.label}</th>
-                {row.cells.map((cell, index) => (
-                  <td key={FIT.columns[index]} className={index === last ? styles.fitHivra : undefined}>
-                    {cell === "Yes" || cell === "No" ? (
-                      <>
-                        <i className={cell === "Yes" ? styles.markYes : styles.markNo} aria-hidden="true" />
-                        <span className={styles.srOnly}>{cell}</span>
-                      </>
-                    ) : (
-                      <span className={styles.fitWord}>{cell}</span>
-                    )}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ComparisonTable
+        variant="home"
+        caption="Where the agent runs: your laptop, a provider-managed agent, a typical hosted machine and Hivra, compared"
+        rowHeading={FIT.rowHeading}
+        columns={FIT.columns}
+        highlight={FIT.columns.length - 1}
+        rows={FIT.rows.map(row => ({ label: row.label, cells: row.cells.map(cell => <Answer key={cell} text={cell} />) }))}
+      />
+      <p className={styles.fitNote}>{FIT.note}</p>
       <div className={styles.fitFoot}>
-        <p className={styles.fitVerdict}>{FIT.verdict}</p>
-        <a href={newTokenSurfacesEnabled() ? FIT.moreHref : "/compare"} className={styles.textCta} data-cta="fit-compare">
+        <a href={FIT.moreHref} className={styles.textCta} data-cta="fit-compare">
           {FIT.more}
           <ArrowRight size={16} aria-hidden="true" />
         </a>
       </div>
-      <p className={styles.fitNote}>{FIT.note}</p>
     </section>
   );
 }

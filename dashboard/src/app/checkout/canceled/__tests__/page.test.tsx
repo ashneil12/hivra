@@ -2,10 +2,16 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import { findBannedClaims } from "@/lib/tools/copy-rules";
 import CheckoutCanceledPage from "../page";
 
 const mockGet = jest.fn();
 const fetchMock = jest.fn();
+const mockUseAuth = jest.fn();
+
+jest.mock("@clerk/nextjs", () => ({
+  useAuth: () => mockUseAuth(),
+}));
 
 jest.mock("next/navigation", () => ({
   useSearchParams: () => ({
@@ -27,6 +33,7 @@ describe("CheckoutCanceledPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: true });
     mockGet.mockImplementation((key: string) => {
       if (key === "plan") return "fleet";
       return null;
@@ -54,8 +61,8 @@ describe("CheckoutCanceledPage", () => {
   it("shows a dedicated canceled-checkout recovery state without auto-starting checkout", () => {
     render(<CheckoutCanceledPage />);
 
-    expect(screen.getByText(/checkout paused/i)).toBeInTheDocument();
-    expect(screen.getByText(/nothing was charged/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Your checkout wasn\u2019t completed." })).toBeInTheDocument();
+    expect(screen.getByText(/^No subscription has been activated through this checkout attempt\./)).toBeInTheDocument();
     // Plans are chosen in Billing, on its Plans tab; there is no separate
     // welcome plan picker.
     expect(screen.getByRole("link", { name: /choose a different plan/i })).toHaveAttribute(
@@ -199,6 +206,116 @@ describe("CheckoutCanceledPage", () => {
   it("ignores a return path that leaves the dashboard", () => {
     mockGet.mockImplementation((key: string) => ({ plan: "operator", returnTo: "//evil.example/dashboard" } as Record<string, string>)[key] ?? null);
     render(<CheckoutCanceledPage />);
-    expect(screen.queryByRole("link", { name: /back/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^\u2190 back/i })).not.toBeInTheDocument();
+  });
+
+  it("carries Ash's words: no activated subscription, a pointer to billing, and the two md links", () => {
+    const { container } = render(<CheckoutCanceledPage />);
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(container).toHaveTextContent(
+      "No subscription has been activated through this checkout attempt. You can return to pricing, review your plan and try again whenever you\u2019re ready.",
+    );
+    expect(container).toHaveTextContent(
+      "If you expected a payment to succeed, check your billing page before trying again to avoid duplicate attempts.",
+    );
+    expect(screen.getByRole("link", { name: "billing page" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(screen.getByRole("link", { name: "Back to pricing" })).toHaveAttribute("href", "/pricing");
+    // The md points this at /get-started, which sends a signed-in visitor straight back into checkout.
+    expect(screen.getByRole("link", { name: "Open dashboard" })).toHaveAttribute("href", "/dashboard");
+  });
+
+  it("no longer claims a charge that this page cannot know about, and names no plan", () => {
+    const { container } = render(<CheckoutCanceledPage />);
+    const text = container.textContent ?? "";
+
+    expect(text).not.toMatch(/nothing was charged|checkout paused|need a different fit/i);
+    expect(text).not.toMatch(/\b(?:Pro|Power|Command|Starter)\b/);
+  });
+
+  it("names the plan being retried by its price and size", () => {
+    render(<CheckoutCanceledPage />);
+    expect(screen.getByRole("button", { name: /try again/i })).toHaveTextContent("Try again$19.99/month, 4 vCPU and 8 GB RAM");
+
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+    render(<CheckoutCanceledPage />);
+    expect(screen.getAllByRole("button", { name: /try again/i })[1]).toHaveTextContent("Try again$9.99/month, 2 vCPU and 4 GB RAM");
+  });
+
+  // A link with no plan, or one the site does not sell, used to retry the larger and dearer size. Nobody chose it.
+  it.each([null, "not-a-plan"])("retries the entry size, never the dearer one, when the link names no usable plan (%p)", async (planParam) => {
+    mockGet.mockImplementation((key: string) => (key === "plan" ? planParam : null));
+    fetchMock.mockResolvedValue({
+      json: async () => ({ success: true, data: { url: "https://checkout.stripe.test/session" } }),
+    } as Response);
+
+    render(<CheckoutCanceledPage />);
+    expect(screen.getByRole("button", { name: /try again/i })).toHaveTextContent("Try again$9.99/month, 2 vCPU and 4 GB RAM");
+    expect(screen.getByRole("button", { name: /try again/i })).not.toHaveTextContent(/\$19\.99|4 vCPU/);
+
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/billing/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: "operator", cadence: "monthly" }),
+      });
+    });
+  });
+
+  it("sends a visitor who is not signed in and has no plan in the link to the entry size", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation(() => null);
+    render(<CheckoutCanceledPage />);
+
+    expect(screen.getByRole("link", { name: /sign up/i })).toHaveAttribute("href", "/get-started?plan=operator");
+  });
+
+  it("shows a failed restart as an alert under the same heading, with the md words still there", async () => {
+    fetchMock.mockResolvedValue({
+      json: async () => ({ success: false, error: "Card declined", reason: "SOMETHING_ELSE" }),
+    } as Response);
+
+    const { container } = render(<CheckoutCanceledPage />);
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Card declined");
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your checkout wasn\u2019t completed.");
+    expect(container).toHaveTextContent("No subscription has been activated through this checkout attempt.");
+  });
+
+  it("gives a visitor who is not signed in the way back to pricing the lead sentence points at", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    const { container } = render(<CheckoutCanceledPage />);
+
+    expect(screen.getByRole("heading", { level: 1, name: "Your checkout wasn\u2019t completed." })).toBeInTheDocument();
+    expect(container).toHaveTextContent("You can return to pricing, review your plan and try again whenever you\u2019re ready.");
+    expect(screen.getByRole("link", { name: "Back to pricing" })).toHaveAttribute("href", "/pricing");
+    expect(screen.getByRole("link", { name: /sign up/i })).toHaveAttribute("href", "/get-started?plan=fleet");
+    expect(screen.getByRole("main")).toContainElement(screen.getByRole("heading", { level: 1 }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sits in one main landmark and keeps decorative glyphs and arrows out of link names", () => {
+    mockGet.mockImplementation((key: string) => ({
+      plan: "operator",
+      returnTo: "/dashboard/launch?draft=33333333-3333-4333-8333-333333333333",
+    } as Record<string, string>)[key] ?? null);
+    render(<CheckoutCanceledPage />);
+
+    expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
+    expect(screen.getByRole("main")).toContainElement(screen.getByRole("heading", { level: 1 }));
+    expect(screen.getByRole("link", { name: "Back to your launch" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Choose a different plan" })).toBeInTheDocument();
+  });
+
+  it("writes no dash, no plan name and no banned claim", () => {
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+    const { container } = render(<CheckoutCanceledPage />);
+    const text = container.textContent ?? "";
+
+    expect(text).not.toMatch(new RegExp(`${String.fromCharCode(0x2013)}|${String.fromCharCode(0x2014)}`));
+    expect(findBannedClaims(text)).toEqual([]);
   });
 });
