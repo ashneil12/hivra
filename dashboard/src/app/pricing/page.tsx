@@ -103,7 +103,7 @@ export default async function PricingPage() {
 
         <header className={styles.masthead}>
           <h1>
-            A computer for your agent. <strong className={page.headlineTail}>Without the server setup.</strong>
+            Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
           </h1>
           {PRICING_INTRO.map((paragraph) => (
             <p key={paragraph} className={page.introLine}>
@@ -116,6 +116,17 @@ export default async function PricingPage() {
           <div className={page.sectionHead}>
             <h2 id="pricing-options-heading">{options.heading}</h2>
             <p>{options.pool}</p>
+          </div>
+
+          <div className={page.ownServer}>
+            <div>
+              <h3>{options.ownServer.title}</h3>
+              <p>{options.ownServer.body}</p>
+            </div>
+            <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
+              {PRICING_ACTIONS.connectServer.label}
+              <ArrowRight size={18} aria-hidden="true" />
+            </Link>
           </div>
 
           <div className={page.offers}>
@@ -183,16 +194,6 @@ export default async function PricingPage() {
             </article>
           </div>
 
-          <div className={page.ownServer}>
-            <div>
-              <h3>{options.ownServer.title}</h3>
-              <p>{options.ownServer.body}</p>
-            </div>
-            <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
-              {PRICING_ACTIONS.connectServer.label}
-              <ArrowRight size={18} aria-hidden="true" />
-            </Link>
-          </div>
         </section>
 
         <section className={page.section} id="pricing-table" aria-labelledby="pricing-compare-heading">
