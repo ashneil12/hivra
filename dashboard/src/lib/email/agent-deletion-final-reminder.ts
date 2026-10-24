@@ -20,8 +20,8 @@ interface SendResult {
   resendId?: string;
 }
 
-const SUBJECT = "Last chance — your Hivra agent gets deleted tomorrow";
-const DASHBOARD_URL = `${SITE_URL}/dashboard`;
+const SUBJECT = "Last chance: your Hivra agent gets deleted tomorrow unless a plan is active";
+const BILLING_URL = `${SITE_URL}/dashboard/billing`;
 
 function greeting(firstName?: string | null) {
   return firstName?.trim() ? `Hey ${firstName.trim()},` : "Hey,";
@@ -33,17 +33,17 @@ export function buildText(params: SendParams): string {
     "",
     greeting(params.firstName),
     "",
-    `Quick heads-up — your Hivra agent will be permanently deleted in roughly ${params.hoursRemaining} hours, on ${params.deletionDate}. This is the last reminder.`,
+    `Quick heads-up: your Hivra agent will be permanently deleted in roughly ${params.hoursRemaining} hours, on ${params.deletionDate}, because no paid plan is active on your account. This is the last reminder.`,
     "",
-    "If you want to keep it, log in and resume any time before then. That cancels the deletion.",
+    "To keep it, pay any open invoice or choose a plan in Billing before then, then start the agent again. It cannot be started until a plan is active.",
     "",
-    `Open the dashboard → ${DASHBOARD_URL}`,
+    `Open Billing → ${BILLING_URL}`,
     "",
-    "If not, no action needed — the agent and its VM will be removed.",
+    "If not, no action needed: the agent and its VM will be removed.",
     "",
     "Reply if you have questions.",
     "",
-    "— Ash",
+    "Ash",
     "Founder, Hivra",
   ].join("\n");
 }
@@ -66,7 +66,7 @@ export function buildHtml(params: SendParams): string {
     <title>${SUBJECT}</title>
   </head>
   <body style="margin:0;padding:0;background:#f5f1e8;font-family:${sansStack};color:#1a1a1a;-webkit-font-smoothing:antialiased;">
-    <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">Final reminder — your idle agent gets deleted tomorrow.</span>
+    <span style="display:none !important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">Final reminder: your agent gets deleted tomorrow unless a plan is active.</span>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f1e8;">
       <tr>
         <td align="center" style="padding:40px 16px;">
@@ -76,23 +76,23 @@ export function buildHtml(params: SendParams): string {
                 <p style="margin:0 0 18px;font-family:${monoStack};font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#b3261e;font-weight:700;">Final reminder</p>
                 <h1 style="margin:0 0 20px;font-family:${serifStack};font-size:30px;line-height:1.15;font-weight:700;color:#1a1a1a;">Your agent gets deleted tomorrow.</h1>
                 <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${safeGreeting}</p>
-                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">Quick heads-up — your Hivra agent will be permanently deleted in roughly <strong>${safeHours} hours</strong>, on <strong>${safeDate}</strong>. This is the last reminder.</p>
-                <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">If you want to keep it, log in and resume any time before then. That cancels the deletion automatically.</p>
+                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">Quick heads-up: your Hivra agent will be permanently deleted in roughly <strong>${safeHours} hours</strong>, on <strong>${safeDate}</strong>, because no paid plan is active on your account. This is the last reminder.</p>
+                <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">To keep it, pay any open invoice or choose a plan in Billing before then, then start the agent again. It cannot be started until a plan is active.</p>
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 24px;">
                   <tr>
                     <td style="background:#1a1a1a;border-radius:4px;">
-                      <a href="${DASHBOARD_URL}" style="display:inline-block;padding:14px 26px;font-family:${monoStack};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#ffffff;text-decoration:none;font-weight:700;">Open the dashboard &rarr;</a>
+                      <a href="${BILLING_URL}" style="display:inline-block;padding:14px 26px;font-family:${monoStack};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#ffffff;text-decoration:none;font-weight:700;">Open Billing &rarr;</a>
                     </td>
                   </tr>
                 </table>
-                <p style="margin:0 0 8px;font-size:15px;line-height:1.6;color:#444;">If not, no action needed — the agent and its VM will be removed at the time above.</p>
+                <p style="margin:0 0 8px;font-size:15px;line-height:1.6;color:#444;">If not, no action needed: the agent and its VM will be removed at the time above.</p>
               </td>
             </tr>
             <tr>
               <td style="padding:0 36px 36px;border-top:1px solid #ece7da;">
                 <div style="height:24px;line-height:24px;font-size:0;">&nbsp;</div>
-                <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#444;">Reply to this email if you have questions — I read every reply.</p>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#1a1a1a;">— Ash<br /><span style="font-size:13px;color:#888;">Founder, Hivra</span></p>
+                <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#444;">Reply to this email if you have questions. I read every reply.</p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#1a1a1a;">Ash<br /><span style="font-size:13px;color:#888;">Founder, Hivra</span></p>
               </td>
             </tr>
           </table>

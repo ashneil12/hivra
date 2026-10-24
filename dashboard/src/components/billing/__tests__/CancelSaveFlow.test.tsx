@@ -47,7 +47,7 @@ describe("CancelSaveFlow", () => {
 
   it.each([
     ["It's too expensive", /email us to switch to yearly/i, /^mailto:info@hivra\.cloud\?subject=Switch%20my%20Pro%20plan%20to%20yearly%20billing$/],
-    ["I'm not using it", /email us about pausing/i, /^mailto:info@hivra\.cloud/],
+    ["I'm not using it", /email us a question/i, /^mailto:info@hivra\.cloud/],
     ["It's missing a feature I need", /email the founder/i, /^mailto:info@hivra\.cloud/],
     ["Something broke", /email the founder/i, /^mailto:info@hivra\.cloud/],
     ["Something else", /email the founder/i, /^mailto:info@hivra\.cloud/],
@@ -61,6 +61,22 @@ describe("CancelSaveFlow", () => {
     expect(cta.getAttribute("href")).toMatch(hrefPattern);
     // Cancel anyway never disappears.
     expect(screen.getByRole("button", { name: /cancel anyway/i })).toBeInTheDocument();
+  });
+
+  it("says what cancelling does to the computer, and promises no billing pause", () => {
+    renderFlow();
+    expect(
+      screen.getByText(
+        "One question, then you can cancel either way. When your plan ends, Hivra stops running your computers. Their files are kept, and we email you before anything is deleted."
+      )
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("I'm not using it"));
+    const offer = screen.getByTestId("save-offer");
+    expect(offer).toHaveTextContent(
+      "You can cancel now and choose a plan again later. Your files are kept, and we email you before anything is deleted. Once a plan is active, press Start to carry on."
+    );
+    // No open-ended retention promise: files are kept, but not "whenever you like".
+    expect(offer).not.toHaveTextContent(/pause|whenever you like|pick up where you left off/i);
   });
 
   it("states the ~34% yearly saving for too-expensive", () => {

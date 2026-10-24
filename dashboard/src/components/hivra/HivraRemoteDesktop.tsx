@@ -686,7 +686,8 @@ export function HivraRemoteDesktop({
           setState("desktop-upgrade-required");
           setMessage(scrubDesktopUserMessage(refreshPayload.error || "This desktop needs an update to establish its shared-folder identity. This check did not install or change anything."));
           return;
-        } else if (refreshPayload?.code === "legacy_identity_unbound" || refreshPayload?.code === "unsupported_computer") {
+        } else if (refreshPayload?.code === "legacy_identity_unbound" || refreshPayload?.code === "unsupported_computer"
+          || refreshPayload?.code === "omarchy_major_unvalidated") {
           setState("upgrade-required");
           setMessage(scrubDesktopUserMessage(refreshPayload.error || "This computer needs a current launch before Desktop can open."));
           return;
@@ -785,7 +786,8 @@ export function HivraRemoteDesktop({
               fail(preparePayload?.code);
               if (isLifecycleBlocked(preparePayload?.code)) {
                 setState("blocked");
-              } else if (preparePayload?.code === "legacy_identity_unbound" || preparePayload?.code === "unsupported_computer") {
+              } else if (preparePayload?.code === "legacy_identity_unbound" || preparePayload?.code === "unsupported_computer"
+                || preparePayload?.code === "omarchy_major_unvalidated") {
                 setState("upgrade-required");
               } else if (
                 preparePayload?.code === "provider_desktop_refresh_required"
@@ -1397,9 +1399,20 @@ export function HivraRemoteDesktop({
         setMessage("Repairing desktop runtime…");
       }
       if (!preparedOk) {
+        if (payload?.code === "provider_desktop_refresh_required" || payload?.code === "provider_desktop_unverified") {
+          // A My cloud desktop is set up at launch and can only be re-checked,
+          // never reinstalled by prepare. Update, Repair and Retry re-check it
+          // and reconnect instead; sending prepare again would get the same
+          // refusal on every Retry.
+          autoPrepareAttemptedRef.current = true;
+          repairableUnavailableRef.current = false;
+          await connect({ allowPrepare: false });
+          return;
+        }
         if (isLifecycleBlocked(payload?.code)) {
           setState("blocked");
-        } else if (payload?.code === "legacy_identity_unbound" || payload?.code === "unsupported_computer") {
+        } else if (payload?.code === "legacy_identity_unbound" || payload?.code === "unsupported_computer"
+          || payload?.code === "omarchy_major_unvalidated") {
           setState("upgrade-required");
         } else {
           setState(payload?.code === "canary_desktop_prepare_paused" ? "prepare-paused"

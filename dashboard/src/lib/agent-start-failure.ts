@@ -69,7 +69,7 @@ export function describeAgentStartFailure(
       retryable: false,
       recoveryAction: "open_billing",
       userMessage:
-        "Compute is suspended for this agent. Open Billing to restore eligibility before starting it again.",
+        "This computer cannot be started until a paid plan is active. Open Billing to pay or choose a plan, then press Start again.",
     };
   }
 

@@ -39,7 +39,7 @@ function armDestroy() {
 
 it("uses the shared Manage sections for a Linux Sandbox", async () => {
   render(<GvisorComputerManage agent={agent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Resources", "Run a command", "Advanced"]);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Resources", "Updates", "Run a command", "Advanced"]);
   expect(screen.getByText("Linux Sandbox · My server")).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled());
 });
@@ -183,4 +183,21 @@ describe("progress where the owner is", () => {
     finish({ success: true, data: {} });
     await waitFor(() => expect(within(panel).queryByRole("status")).not.toBeInTheDocument());
   });
+});
+
+it("updates a Linux Sandbox from Updates after asking, keeping the workspace", async () => {
+  // The regression: Updates only said the sandbox's image couldn't be updated.
+  const onChanged = jest.fn();
+  render(<GvisorComputerManage agent={agent} onChanged={onChanged} onDestroyed={jest.fn()} />);
+  fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+  const panel = await screen.findByTestId("manage-self-update");
+  expect(panel).toHaveTextContent("runs a fixed, read-only system image");
+  expect(panel).toHaveTextContent("keeps your workspace");
+  fireEvent.click(within(panel).getByRole("button", { name: "Update sandbox" }));
+  const confirm = within(panel).getByRole("group", { name: "Confirm sandbox update" });
+  expect(confirm).toHaveTextContent("Files in /workspace stay.");
+  expect(actionCalls("update_runtime")).toHaveLength(0);
+  fireEvent.click(within(confirm).getByRole("button", { name: "Update" }));
+  await waitFor(() => expect(actionCalls("update_runtime")).toHaveLength(1));
+  await waitFor(() => expect(onChanged).toHaveBeenCalled());
 });

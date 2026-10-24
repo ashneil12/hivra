@@ -278,7 +278,7 @@ describe("HivraManage lifecycle guidance", () => {
     render(<HivraManage agent={{ ...agent, status: "provisioning", deployment_mode: "self-managed", computer_substrate: "provider-vm" }} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
-    expect(screen.getByText("Wait for the current operation to finish.")).toBeInTheDocument();
+    expect(screen.getAllByText("Wait for the current operation to finish.").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "4" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
     openSection("Advanced");
@@ -354,16 +354,24 @@ describe("HivraManage lifecycle guidance", () => {
     expect(onConnectionServiceRestarted).toHaveBeenCalledTimes(calls);
   });
 
-  it("does not offer an in-place update to a DeepSeek computer, which the server refuses", () => {
+  it("offers a My cloud agent its update and says how it is going", () => {
+    const myCloud = { ...agent, type: "codex" as const, deployment_mode: "self-managed" as const, computer_substrate: "provider-vm" as const };
+    const { rerender } = render(<HivraManage agent={myCloud} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    openSection("Updates");
+    expect(screen.getByRole("button", { name: "Update connection service" })).toBeEnabled();
+    rerender(<HivraManage agent={{ ...myCloud, status: "provisioning", operation_kind: "runtime_update", runtime_update_stage: "updating" } as never} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Updating the connection service on this computer.");
+    rerender(<HivraManage agent={{ ...myCloud, runtime_update_stage: "failed", error: "The connection service update didn't finish, so the previous version was put back. Try again." } as never} def={getAgent("codex")} plan={null} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getAllByRole("alert").some(node => /previous version was put back/.test(node.textContent ?? ""))).toBe(true);
+  });
+
+  it("offers a DeepSeek computer its own update and says it restarts DeepSeek", () => {
     render(<HivraManage agent={{ ...agent, type: "deepseek-harness", computer_substrate: "proxmox-kvm" }} def={getAgent("deepseek-harness")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
 
-    expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/brings Hivra’s connection service up to date/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    // Nothing disappears silently: Advanced says why.
-    expect(screen.queryByRole("tab", { name: "Updates" })).not.toBeInTheDocument();
-    openSection("Advanced");
-    expect(screen.getByText("DeepSeek computers can't update their connection service here yet.")).toBeVisible();
+    openSection("Updates");
+    expect(screen.getByRole("button", { name: "Update connection service" })).toBeEnabled();
+    expect(screen.getByText(/It restarts DeepSeek, which ends a task DeepSeek is working on/)).toBeVisible();
+    expect(screen.queryByText("DeepSeek computers can't update their connection service here yet.")).not.toBeInTheDocument();
   });
 
   describe("replies in progress before an action that powers the computer off", () => {
@@ -571,15 +579,19 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByText(`${name} · Hivra Cloud`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Advanced"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Updates", "Advanced"]);
     openSection("Resources");
     expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent(`This ${name} preview has a fixed size of 2 CPU / 4 GB. Hivra can't resize prepared computers yet.`);
     expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create restore point" })).not.toBeInTheDocument();
+    openSection("Updates");
+    const updates = screen.getByTestId("manage-self-update");
+    expect(updates).toHaveTextContent(profile === "omarchy" ? "choose Update, then Omarchy" : "Windows Update");
+    expect(screen.getByRole("link", { name: "Open Desktop" })).toHaveAttribute("href", `/dashboard/agent/${agent.id}?tab=desktop`);
     openSection("Advanced");
     expect(screen.getByText("Prepared Windows and Omarchy computers don't have restore points yet.")).toBeVisible();
-    expect(screen.getByText("Hivra can't update prepared Windows and Omarchy computers yet.")).toBeVisible();
+    expect(screen.queryByText(/can't update prepared Windows and Omarchy/)).not.toBeInTheDocument();
     expect(screen.queryByText(/isolated Linux VM/i)).not.toBeInTheDocument();
   });
   it("creates and refreshes an honestly labelled same-host restore point", async () => {

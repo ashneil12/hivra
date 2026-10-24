@@ -1663,6 +1663,54 @@ describe("HivraRemoteDesktop", () => {
     expect(revokes()).toHaveLength(1);
   });
 
+  it.each(["provider_desktop_refresh_required", "provider_desktop_unverified"])(
+    "re-checks and reconnects a My cloud desktop when Update runtime gets %s, never looping on Retry",
+    async (code) => {
+      // A My cloud desktop is set up at launch: prepare always answers with a
+      // provider code. Before, that left "Desktop couldn't open" with a Retry
+      // that sent the same prepare again, forever.
+      let prepareAttempts = 0, refreshes = 0, issued = 0;
+      fetchMock.mockImplementation((input, init) => {
+        if (init?.method === "DELETE") return response(200, { success: true, data: { inputState: "release-pending" } });
+        if (String(input) === "/api/remote-desktop/sessions" && init?.method === "POST") {
+          issued += 1;
+          return response(201, { success: true, data: session(`018f6d3c-1d91-7c65-9d86-37fc915b837${issued + 6}`) });
+        }
+        if (String(input) === `/api/hivra/agents/${COMPUTER_ID}/remote-desktop` && init?.method === "POST") {
+          const action = JSON.parse(String(init.body)).action;
+          if (action === "prepare") {
+            prepareAttempts += 1;
+            return response(409, { success: false, code, error: "Provider Ubuntu desktops are set up during launch." });
+          }
+          if (action === "refresh") refreshes += 1;
+        }
+        return response(200, { success: true, data: { prepared: true } });
+      });
+      render(<HivraRemoteDesktop computerId={COMPUTER_ID} name="Codex" />);
+      let frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: "018f6d3c-1d91-7c65-9d86-37fc915b8377" });
+      await screen.findByText("Connected");
+      const issuedBefore = issued, refreshesBefore = refreshes;
+
+      const details = screen.getByLabelText("Desktop settings").closest("details")!;
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      fireEvent.click(screen.getByRole("button", { name: /update runtime/i }));
+      fireEvent.click(within(screen.getByRole("group", { name: "Confirm update" })).getByRole("button", { name: "Update" }));
+
+      await waitFor(() => expect(issued).toBe(issuedBefore + 1));
+      frame = await screen.findByTitle("Codex remote desktop") as HTMLIFrameElement;
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.ready.v1" });
+      dispatchBrokerMessage(frame, { type: "hivra.remote-desktop.connected.v1", sessionId: "018f6d3c-1d91-7c65-9d86-37fc915b8378" });
+      await screen.findByText("Connected");
+      expect(prepareAttempts).toBe(1);
+      expect(refreshes).toBeGreaterThan(refreshesBefore);
+      expect(screen.queryByText(/Desktop couldn’t open/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: /^retry$/i })).toBeNull();
+    },
+  );
+
   describe("after the stream drops", () => {
     const SESSION_IDS = [1, 2, 3, 4, 5].map(n => `00000000-0000-4000-8000-00000000000${n}`);
     const advance = (milliseconds: number) => act(async () => { jest.advanceTimersByTime(milliseconds); });

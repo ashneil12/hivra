@@ -340,6 +340,16 @@ const recipes = Object.freeze({
     workerSha256: "b56564d16fcf745ad9ef992f6bef7d5dca2c44a8b91a460789643e5f713b9abc",
     workerSize: 45185,
   }),
+  "2026.10.20.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the owned DeepSeek runtime update and splits the runtime updater's guest half into its own file.
+    workerSha256: "cbc2bd904b93b5d31311bc68a9506775dafeece64a95d6e6205d8425d1e1d4bc",
+    workerSize: 45185,
+  }),
+  "2026.10.20.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the Aeon dashboard, OpenClaw and Agent Zero app updater and moves the Agent Zero image pin.
+    workerSha256: "459b4bebc712be048d5c250ac6ea8a98a355d2c0b3c0dfe3209fe659c5f14c9e",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

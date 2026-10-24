@@ -128,7 +128,7 @@ describe("/why-hivra page", () => {
     );
     expect(hivraStatements.length).toBeGreaterThanOrEqual(4);
     for (const statement of hivraStatements) {
-      expect(statement.textContent).toMatch(/propos/i);
+      expect(statement.textContent).toMatch(/propos|plan|does not exist|not open/i);
     }
 
     // No price, return, scarcity or urgency language on the token.

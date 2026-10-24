@@ -30,7 +30,7 @@ import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 
 const REPO_ROOT = path.resolve(__dirname, "../../../../../..");
-const litepaper = readFileSync(path.join(REPO_ROOT, "LITEPAPER.md"), "utf8");
+const litepaper = readFileSync(path.join(__dirname, "../../__tests__/fixtures/litepaper-2026-09-approved.md"), "utf8");
 /** The litepaper as a reader sees it: no Markdown emphasis markers. */
 const litepaperText = litepaper.replace(/\*\*/g, "").replace(/(^|\s)\*([^*\n]+)\*/g, "$1$2");
 

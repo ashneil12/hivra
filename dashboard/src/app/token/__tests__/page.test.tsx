@@ -101,8 +101,9 @@ describe("/token page", () => {
     expect(main.getByText("0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3")).toBeInTheDocument();
     expect(main.getByRole("link", { name: "View the contract on BaseScan" })).toHaveAttribute("href", "https://basescan.org/token/0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3");
     expect(main.getByRole("heading", { name: "Existing holder access" })).toBeInTheDocument();
-    expect(main.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
-    expect(main.getByText(/No migration action is offered/)).toBeInTheDocument();
+    expect(main.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
+    expect(main.getByRole("heading", { name: "Token launch in preparation" })).toBeInTheDocument();
+    expect(main.getByText(/Migration claims not yet open/)).toBeInTheDocument();
     expect(main.getByText(/Use Hivra and pay by card without connecting a wallet/)).toBeInTheDocument();
     // The dashboard calls this route "Billing" everywhere (nav, Settings row, page eyebrow).
     expect(main.getByRole("link", { name: "Open Billing" })).toHaveAttribute("href", "/dashboard/billing");

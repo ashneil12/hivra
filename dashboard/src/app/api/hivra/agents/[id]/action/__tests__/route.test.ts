@@ -29,6 +29,11 @@ const mockProviderPower = jest.fn(), mockClaimProviderPower = jest.fn(), mockPro
 const mockMutateGvisorComputer = jest.fn();
 jest.mock("@/lib/hivra/provider-agent-power", () => ({ advanceProviderAgentPower: (...args: unknown[]) => mockProviderPower(...args) }));
 jest.mock("@/lib/hivra/provider-agent-power-store", () => ({ claimProviderAgentPowerOperation: (...args: unknown[]) => mockClaimProviderPower(...args) }));
+const mockClaimProviderUpdate = jest.fn(), mockDispatchProviderUpdate = jest.fn();
+jest.mock("@/lib/hivra/provider-runtime-update", () => ({
+  claimProviderRuntimeUpdate: (...args: unknown[]) => mockClaimProviderUpdate(...args),
+  dispatchProviderRuntimeUpdate: (...args: unknown[]) => mockDispatchProviderUpdate(...args),
+}));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockProviderRateLimit(...args) }));
 jest.mock("@/lib/hivra/gvisor-computer-service", () => ({
   ...jest.requireActual("@/lib/hivra/gvisor-computer-service"),
@@ -132,6 +137,10 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     mockClaimProviderPower.mockReset().mockImplementation(async (operation, kind) => {
       mockAgent = { ...mockAgent, operation_id: operation.operationId, operation_kind: kind, status: "provisioning" }; return true;
     });
+    mockClaimProviderUpdate.mockReset().mockImplementation(async (operation) => {
+      mockAgent = { ...mockAgent, operation_id: operation.operationId, operation_kind: "runtime_update", status: "provisioning" }; return true;
+    });
+    mockDispatchProviderUpdate.mockReset().mockResolvedValue("dispatched");
     mockAuth.mockResolvedValue({ userId: "user-free" });
     mockValidateAgentResources.mockResolvedValue({ ok: true });
     mockCheckHostWakeCapacity.mockResolvedValue({ ok: true, freeMb: 32_768 });
@@ -447,11 +456,42 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     it("does not route provider resize to the managed host", async () => {
       expect((await POST(request("resize"), params)).status).toBe(400); expect(mockClaimProviderPower).not.toHaveBeenCalled();
     });
-    it("keeps provider runtime updates fail-closed until their update transport exists", async () => {
+    it("updates a My cloud agent's runtime under its own lease and answers with observed progress", async () => {
+      // The regression: every My cloud update was refused ("not supported yet").
       const response = await POST(request("update_runtime"), params);
-      expect(response.status).toBe(400);
-      expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/not supported yet/i) });
+      expect(response.status).toBe(202);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(await response.json()).toMatchObject({ success: true, data: { status: "provisioning",
+        agent: { status: "provisioning", runtime_update_stage: "updating" } } });
+      const operation = mockClaimProviderUpdate.mock.calls[0][0];
+      expect(operation).toEqual({ userId: "user-free", agentId: "agent-1", operationId: expect.any(String) });
+      expect(mockDispatchProviderUpdate).toHaveBeenCalledWith(operation);
       expect(mockClaimProviderPower).not.toHaveBeenCalled();
+    });
+    it("keeps a My cloud update whose dispatch could not be confirmed for the poll to settle", async () => {
+      mockDispatchProviderUpdate.mockRejectedValue(new Error("unreachable"));
+      const response = await POST(request("update_runtime"), params);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ data: { agent: { runtime_update_stage: "verification_unavailable" } } });
+    });
+    it.each([
+      ["a My cloud desktop", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }, "unsupported"],
+      ["DeepSeek on My cloud", { type: "deepseek-harness" }, "unsupported"],
+      ["a stopped computer", { status: "stopped", desired_state: "stopped" }, "not_running"],
+    ])("refuses %s before any lease or guest call", async (_name, extra, code) => {
+      mockAgent = { ...mockAgent, ...extra };
+      const response = await POST(request("update_runtime"), params);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ success: false, code });
+      expect(mockClaimProviderUpdate).not.toHaveBeenCalled();
+      expect(mockDispatchProviderUpdate).not.toHaveBeenCalled();
+    });
+    it("does not dispatch when another operation holds the computer", async () => {
+      mockClaimProviderUpdate.mockResolvedValue(false);
+      const response = await POST(request("update_runtime"), params);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "busy" });
+      expect(mockDispatchProviderUpdate).not.toHaveBeenCalled();
     });
     it("rate limits before taking lifecycle authority", async () => {
       mockProviderRateLimit.mockReturnValue(new Response("Slow down", { status: 429 }));
@@ -1073,15 +1113,29 @@ describe("POST /api/hivra/agents/[id]/action", () => {
       expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
     });
 
-    it("refuses a DeepSeek computer before any host call or lease, so nothing is locked", async () => {
+    // Manage's Updates section says what happened in the owner's words, by code.
+    it.each([
+      ["not_running", () => { mockAgent = { ...mockAgent, status: "stopped" }; }, 409],
+      ["host_not_ready", () => { mockCheckManagedHivraHostReadiness.mockResolvedValue({ ok: false, status: 503, message: "Host not ready", error: {} }); }, 503],
+      ["busy", () => { mockSupabaseRpc.mockImplementation(async (name: string) => ({ data: name !== "claim_hivra_agent_operation", error: null })); }, 409],
+      ["unverified", () => { mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: "", stderr: "" }); }, 502],
+    ])("answers a refusal with its code: %s", async (code, arrange, status) => {
+      arrange();
+      const response = await POST(updateRequest(), params());
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ success: false, code });
+    });
+
+    it("updates a DeepSeek computer through the same helper, whose guest half runs its owned update", async () => {
+      // The regression: the route refused every DeepSeek computer.
       mockAgent = { ...mockAgent, type: "deepseek-harness" };
+      mockRunProxmoxHostScript.mockResolvedValue({ ok: true, stdout: RECEIPT, stderr: "" });
       const response = await POST(updateRequest(), params());
 
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ success: false, error: expect.stringMatching(/DeepSeek computers can’t update their connection service/) });
-      expect(mockCheckManagedHivraHostReadiness).not.toHaveBeenCalled();
-      expect(mockSupabaseRpc).not.toHaveBeenCalled();
-      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ success: true, data: { status: "running" } });
+      expect(mockCheckManagedHivraHostReadiness).toHaveBeenCalledWith(expect.objectContaining({ purpose: "runtime-update" }));
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledWith(expect.stringContaining("hivra-update-guest-runtime.sh"), expect.anything(), expect.anything());
     });
   });
 

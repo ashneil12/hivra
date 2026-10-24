@@ -177,14 +177,14 @@ describe("a paying customer whose plan is on hold", () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
-    expect(await screen.findByText("Your Pro plan is on hold because a payment didn't go through. Update your payment in Billing to launch on Hivra Cloud.")).toBeInTheDocument();
+    expect(await screen.findByText("Your plan is on hold because a payment didn't go through, so your Hivra Cloud computers are stopped. Update your payment in Billing to launch on Hivra Cloud.")).toBeInTheDocument();
     expect(billingLink("Update payment")).toHaveAttribute("href", expect.stringMatching(/^\/dashboard\/billing\?tab=overview&returnTo=%2Fdashboard%2Flaunch%3Fdraft%3D/));
     expect(screen.getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Pro plan on hold");
     expect(screen.queryByText(/The Free plan runs one agent/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Fits Free/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
-    expect(await screen.findByText("Your Pro plan is on hold because a payment didn't go through. Update your payment in Billing to run Claude Code on Hivra Cloud.")).toBeInTheDocument();
+    expect(await screen.findByText("Your plan is on hold because a payment didn't go through, so your Hivra Cloud computers are stopped. Update your payment in Billing to run Claude Code on Hivra Cloud.")).toBeInTheDocument();
     expect(screen.getByText("Pro plan · on hold")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
     expect(screen.queryByText(/not turned on yet/)).not.toBeInTheDocument();

@@ -28,6 +28,10 @@ import {
 const bundleRoot = path.join(process.cwd(), PORTABLE_HIVRA_PROVISIONER_BUNDLE_DIRECTORY);
 const source = (relativePath: string) =>
   readFileSync(path.join(bundleRoot, relativePath), "utf8");
+// The runtime updater: its host half, then the guest half it sends on stdin
+// (one file until 2026.10.20.1).
+const updaterSource = () =>
+  `${source("hivra-update-guest-runtime.sh")}\n${source("hivra-guest-runtime-update.sh")}`;
 const LEGACY_RUNTIME_IDS = [
   "claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness",
 ];
@@ -351,7 +355,7 @@ describe("portable provisioner source contract", () => {
 
     const identityHelper = source("hivra-guest-ssh-known-hosts");
     const startScript = source("hivra-start-on-host.sh");
-    const updateScript = source("hivra-update-guest-runtime.sh");
+    const updateScript = updaterSource();
     expect(identityHelper).toContain('qm guest exec "$VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub');
     expect(identityHelper).toContain('qm config "$VMID"');
     for (const lifecycleScript of [startScript, updateScript]) {
@@ -395,7 +399,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("ships a bounded guest runtime updater that preserves identity and rolls back failed gateway assets", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-update-guest-runtime.sh");
     expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)");
     expect(updater).toContain('ARCHIVE_SHA256="$(sha256sum "$ARCHIVE"');
@@ -412,7 +416,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("delivers persistent terminal sessions to running computers without ending open shells", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     expect(updater).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\s/);
     expect(updater).toContain('AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf');
     expect(updater).toContain('BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service');
@@ -431,7 +435,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("keeps in-flight chat runs alive across gateway restarts on new and updated guests", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     const installer = source("provision-claude-code-box.sh");
     const dropIn = "/etc/systemd/system/bux-hivra-chat.service.d/10-hivra-detached-runs.conf";
     for (const script of [installer, updater]) expect(script).toContain("'[Service]' 'KillMode=process'");
@@ -447,7 +451,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("refreshes the root-owned Telegram helper on running guests with backup and rollback", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     const installer = source("provision-claude-code-box.sh");
     // New guests and updated guests end up with the same root-owned helper.
     expect(installer).toContain('install -o root -g root -m 0755 "$SRC_DIR/hivra-tg-apply" /usr/local/bin/hivra-tg-apply');
@@ -472,7 +476,7 @@ describe("portable provisioner source contract", () => {
   });
 
   it("installs the optional Claude app helper on Ubuntu Desktop computers only, through both lanes, with rollback and no restart of a running app", () => {
-    const updater = source("hivra-update-guest-runtime.sh");
+    const updater = updaterSource();
     const installer = source("provision-claude-code-box.sh");
     for (const file of ["hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json"]) {
       expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
@@ -549,7 +553,19 @@ describe("portable provisioner source contract", () => {
     expect(installerSource).not.toMatch(/(?:^|\s)--branch\s+(?:main|latest)(?:\s|$)/i);
     expect(installerSource).not.toMatch(/(?:@|\/releases\/)(?:main|latest)(?:[\s/"']|$)/i);
     expect(installerSource).toContain("BUX_REF=\"${BUX_REF:-f17c1b31d6688dd92e745ade650e00d46b4dc4da}\"");
-    expect(installerSource).toContain("AEON_REF=\"${AEON_REF:-8b8d719715ec9bb68fb858a1e334d23209047d82}\"");
+    // The Aeon commit, OpenClaw version and Agent Zero image come from the
+    // release's pins file, each in a form that can't move.
+    expect(installerSource).toContain('AEON_REF="$(read_agent_app_pin aeon)"');
+    expect(installerSource).toContain('OPENCLAW_VERSION="$(read_agent_app_pin openclaw)"');
+    expect(installerSource).toContain('AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)"');
+    const pins = JSON.parse(source("agent-app-versions.json"));
+    expect(pins.aeon.version).toMatch(/^[0-9a-f]{40}$/);
+    expect(pins.openclaw.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(pins["agent-zero"].version).toMatch(/^sha256:[0-9a-f]{64}$/);
+    for (const pin of [pins.aeon, pins.openclaw, pins["agent-zero"]].flatMap((entry) => [entry, ...entry.previous])) {
+      expect(pin.version).toMatch(/^([0-9a-f]{40}|\d+\.\d+\.\d+|sha256:[0-9a-f]{64})$/);
+      expect(typeof pin.label).toBe("string");
+    }
   });
 
   it("keeps the plain Linux computer independent from the Bux agent checkout", () => {

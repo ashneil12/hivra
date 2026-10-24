@@ -8,8 +8,9 @@ import { lifecycleMutationPrelude, lifecycleVmAuthorityBody, verifiedStopVmBody,
 // start helper (qm start + re-establish the box tunnel + rewrite the prov log)
 // and set status=provisioning so the existing [id] poll captures the (new)
 // chat_url. update_runtime: refresh the guest's Hivra runtime in place (no VM
-// power change) and complete as running on the helper's receipt. rename:
-// metadata only (no host call).
+// power change) and complete as running on the helper's receipt
+// (runHivraAgentRuntimeUpdate, which the automatic agent-software sweep runs
+// too). rename: metadata only (no host call).
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -21,6 +22,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
 import { claimProviderAgentPowerOperation } from "@/lib/hivra/provider-agent-power-store";
+import { claimProviderRuntimeUpdate, dispatchProviderRuntimeUpdate } from "@/lib/hivra/provider-runtime-update";
 import type { ProviderAgentPowerStage } from "@/lib/hivra/provider-power-contract";
 
 import { supabaseAdmin } from "@/lib/supabase";
@@ -31,7 +33,6 @@ import {
   resolveProxmoxTargetConfiguration,
   runProxmoxHostScript,
   buildAgentContainerCgroupScript,
-  type HostScriptResult,
 } from "@/lib/services/proxmox-instance-service";
 import { resizeFloor, getAgent, MAX_CPU, MAX_RAM } from "@/lib/hivra/agent-catalog";
 import { validateAgentResources } from "@/lib/hivra/resource-gate";
@@ -44,22 +45,18 @@ import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { buildHostCapacityAdmissionCommand, resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
-import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
 import { buildHivraRestoreIfMissingScript } from "@/lib/hivra/archive-agent";
+import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
-  resolveHivraIpLastOctetStart,
-  resolveHivraSubnetPrefix,
-  resolveHivraVmidStart,
-  shellQuote,
-} from "@/lib/hivra/proxmox-target";
-import {
-  describeHivraAgentExecutionContextError,
   hivraAgentProvisionLogPath,
   hivraAgentStartLogPath,
-  resolveHivraAgentExecutionContext,
-  type HivraAgentExecutionContext,
 } from "@/lib/hivra/agent-execution-context";
-import { checkManagedHivraHostReadiness } from "@/lib/hivra/managed-provisioner-readiness";
+import {
+  lifecycleActivityCredential,
+  providerFailureDetail,
+  resolveHivraLifecycleTarget,
+} from "@/lib/hivra/agent-lifecycle-host";
+import { runHivraAgentRuntimeUpdate } from "@/lib/hivra/agent-runtime-update";
 import {
   buildHivraSnapshotCreateScript,
   buildHivraSnapshotRestoreScript,
@@ -101,28 +98,6 @@ import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-br
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
-import {
-  issueActivityCollectorCredential,
-  parseActivityCollectorMarker,
-  recordActivityCollectorIssued,
-  recordCollectorInstallResult,
-  supportsNativeTracing,
-  type ActivityCollectorCredential,
-} from "@/lib/activity-observability/collectors";
-
-// Printed by the start kickoff only after the reporter credential file was
-// written for a start helper that consumes it.
-const ACTIVITY_CREDENTIAL_STAGED = "HIVRA_ACTIVITY_CREDENTIAL_STAGED";
-
-// The in-place runtime update runs synchronously inside this request. Bound the
-// host script below maxDuration so a stalled guest yields a recorded unknown
-// outcome for the reconciler instead of a killed function with nothing saved.
-const RUNTIME_UPDATE_TIMEOUT_MS = 240_000;
-// The updater's own deadline, counted on the host from the first line of the
-// script (so it includes the FD8 wait). The margin covers the SSH connection
-// and the result's trip back before RUNTIME_UPDATE_TIMEOUT_MS; the updater
-// skips its optional reporter step rather than run past this deadline.
-const RUNTIME_UPDATE_HOST_BUDGET_SECONDS = RUNTIME_UPDATE_TIMEOUT_MS / 1000 - 20;
 import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 
@@ -130,10 +105,6 @@ function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n)) return def;
   return Math.min(max, Math.max(min, n));
-}
-
-function providerFailureDetail(result: HostScriptResult, fallback: string): string {
-  return result.stderr.trim() || result.error?.trim() || fallback;
 }
 
 function clampCpu(v: unknown, def: number, min: number, max: number): number {
@@ -219,35 +190,6 @@ async function probeBoxBrowserEnabled(chatUrl: string | null, token: string | nu
   } catch {
     return true;
   }
-}
-
-/**
- * The runtime updater's host-validated agent CLI line (Claude Code / Codex
- * computers): the installed version, this release's vetted version
- * (AGENT_CLI_VERSIONS) and whether a background swap was scheduled. The swap
- * itself runs on the computer after this request; GET /api/meta agentCli.update
- * reports its progress.
- */
-type AgentCliUpdateReport = {
-  name: "claude-code" | "codex";
-  version: string | null;
-  target: string;
-  state: "current" | "scheduled" | "running" | "failed";
-};
-const AGENT_CLI_LINE = /^HIVRA_AGENT_CLI name=(claude-code|codex) version=(\d{1,6}\.\d{1,6}\.\d{1,6}|unknown) target=(\d{1,6}\.\d{1,6}\.\d{1,6}) state=(current|scheduled|running|failed)$/;
-function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null {
-  for (const line of stdout.split(/\r?\n/)) {
-    const match = AGENT_CLI_LINE.exec(line);
-    if (match) {
-      return {
-        name: match[1] as AgentCliUpdateReport["name"],
-        version: match[2] === "unknown" ? null : match[2],
-        target: match[3],
-        state: match[4] as AgentCliUpdateReport["state"],
-      };
-    }
-  }
-  return null;
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -384,7 +326,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       try {
         const updated = await mutateGvisorComputer(userId, String(agent.id), {
-          action,
+          action: action === "update_runtime" ? "update" : action,
           ...(action === "resize" ? { cpu, ramGb } : {}),
         });
         return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
@@ -404,15 +346,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if ((["update_runtime", "snapshot", "restore"].includes(action) || isForcePowerAction(action)) && !isSameOriginMutationRequest(req)) {
       return apiError("Same-origin request required.", 403);
     }
-    // A DeepSeek guest also runs a native adapter and service generation that
-    // the gateway-only updater cannot replace, so the guest step refuses before
-    // changing anything. Refuse here, before any lease or host call: sent to
-    // the host, that refusal would read as an unverified outcome and hold the
-    // lease (blocking Stop, Restart and Resize) until the reconciler clears it.
-    if (action === "update_runtime" && runtimeUpdateRefusal(agent) === "deepseek") {
-      return apiError("DeepSeek computers can’t update their connection service here yet. Nothing was changed.", 409);
-    }
-
     // A Hivra Cloud computer needs a paid plan. Refuse to bring one up for an owner
     // without one, before any capacity check, lease or host call. Stop, snapshot,
     // export and delete stay open. Decided live, so it clears when payment resumes.
@@ -545,6 +478,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (agent.computer_substrate === "provider-vm") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      if (action === "update_runtime") {
+        // The update runs detached in the computer; the agent poll observes it
+        // and releases the lease (provider-runtime-update.ts).
+        if (runtimeUpdateRefusal(agent)) {
+          return apiError("Hivra can’t update the connection service on this My cloud computer yet. Nothing was changed.", 409, undefined, { code: "unsupported" });
+        }
+        if (agent.status !== "running" || agent.operation_id != null || agent.operation_kind != null) {
+          return apiError("Start this computer and wait for it to settle before updating its connection service.", 409, undefined, { code: "not_running" });
+        }
+        const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_power", userId, limit: 30, windowMs: 5 * 60_000 });
+        if (limited) return limited;
+        const operation = { userId, agentId: String(agent.id), operationId: randomUUID() };
+        if (!await claimProviderRuntimeUpdate(operation)) {
+          return apiError("This computer can’t start an update in its current state. Refresh its status before trying again.", 409, undefined, { code: "busy" });
+        }
+        let dispatched: "dispatched" | "uncertain" = "uncertain";
+        try { dispatched = await dispatchProviderRuntimeUpdate(operation); }
+        catch { dispatched = "uncertain"; }
+        if (dispatched !== "dispatched") {
+          log.warn("provider runtime update dispatch is unverified", { source: "hivra/agents/[id]/action",
+            failureType: "provider_runtime_update_unverified", userId, agentId: agent.id });
+        }
+        const { data: current, error: reloadError } = await supabaseAdmin.from("hivra_agents").select("*")
+          .eq("id", agent.id).eq("user_id", userId).eq("computer_substrate", "provider-vm").single();
+        if (reloadError || !current) return apiError("The update was sent, but this computer’s status could not be refreshed. Check its status before sending another action.", 503);
+        const response = apiSuccess({ status: "provisioning", agent: { ...sanitizeHivraAgentRow(current),
+          ...(current.operation_id === operation.operationId ? { runtime_update_stage: dispatched === "dispatched" ? "updating" : "verification_unavailable" } : {}) } }, 202);
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
       const refusal = providerRefusalFor(action);
       if (refusal) return apiError(refusal, 400);
       const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "provider_agent_power", userId, limit: 30, windowMs: 5 * 60_000 });
@@ -568,89 +531,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
-    if (!agent.vmid) return apiError("Agent has no box yet", 400);
-
-    let executionContext: HivraAgentExecutionContext;
-    try {
-      executionContext = await resolveHivraAgentExecutionContext(userId, agent);
-    } catch (contextError) {
-      const safeError = describeHivraAgentExecutionContextError(contextError);
-      if (safeError) return apiError(safeError.message, safeError.status);
-      throw contextError;
-    }
-    // Self-managed unenforced rows fail during context resolution. Managed
-    // N-1 rows are the one narrow compatibility exception: migration cannot
-    // safely stamp a provider tag without touching live hosts. Every new row is
-    // enforced, and the legacy path remains exact managed host + persisted VMID.
-    const lifecycleBindingTag = executionContext.infrastructureBindingTagEnforced
-      ? executionContext.infrastructureBindingTag
-      : null;
-    const env = executionContext.env;
-
-    // start/restart/resize all invoke the versioned start helper after crossing
-    // a provider mutation boundary. Existing managed agents may still live on
-    // hosts with an older compatible bundle, so prove the exact selected host
-    // and persisted channel have an admitted VERSION, intact manifest, and
-    // exact-result-path capability before claiming an operation lease or issuing
-    // any VM command. Explicit runtime updates require the current version. Stop
-    // and Force off do not call the helper and deliberately remain available for
-    // stale hosts.
-    if (executionContext.kind === "managed" && action !== "stop" && action !== "force_stop") {
-      const readiness = await checkManagedHivraHostReadiness({
-        targetId: executionContext.host,
-        env,
-        channel: executionContext.provisionerChannel,
-        purpose: action === "update_runtime" ? "runtime-update" : "lifecycle",
-      });
-      if (!readiness.ok) {
-        // error, not warn: a blocked start/restart/resize is a customer-visible
-        // outage, and only error level is mirrored into ops_events. Without
-        // this the whole failure surfaced as one anonymous "API 503
-        // Deployment target is temporarily unavailable…" row with no host and
-        // no missing-prerequisite list, which cost a hand probe of every host
-        // to diagnose.
-        log.error("hivra managed lifecycle blocked by stale host provisioner", new Error(readiness.message), {
-          source: "hivra/agents/[id]/action",
-          failureType: "hivra_agent_lifecycle_host_readiness_failed",
-          userId,
-          agentId: agent.id,
-          proxmoxHost: executionContext.host,
-          action,
-          readinessError: readiness.error,
-        });
-        return apiError(readiness.message, readiness.status);
-      }
+    // The in-place connection-service update is shared with the automatic
+    // agent-software sweep; its failures carry a code for Manage's copy.
+    if (action === "update_runtime") {
+      const outcome = await runHivraAgentRuntimeUpdate({ userId, agent, trigger: "owner" });
+      if (!outcome.ok) return apiError(outcome.message, outcome.status, undefined, { code: outcome.code });
+      return apiSuccess({ status: "running", ...(outcome.agentCli ? { agentCli: outcome.agentCli } : {}), ...(outcome.agentApp ? { agentApp: outcome.agentApp } : {}) });
     }
 
-    const vmid = Number(agent.vmid);
-    const vmidStart = resolveHivraVmidStart(env);
-    // The IP we stored at provision time is the source of truth. The octet is no
-    // longer a fixed function of VMID (the allocator now skips in-use IPs to avoid
-    // collisions) and legacy boxes use an older vmid->octet scheme — so recomputing
-    // from VMID would ssh to the wrong guest (or a negative octet for legacy boxes,
-    // 500ing their lifecycle ops). Fall back to the VMID-derived octet only when
-    // the row predates ip persistence.
-    const storedOctet =
-      typeof agent.ip === "string"
-        ? Number.parseInt(String(agent.ip).split(".").pop() ?? "", 10)
-        : NaN;
-    const octet = Number.isInteger(storedOctet)
-      ? storedOctet
-      : resolveHivraIpLastOctetStart(env) + (vmid - vmidStart);
-    if (!Number.isInteger(vmid) || !Number.isInteger(octet) || octet < 2 || octet > 254) {
-      log.error("hivra agent lifecycle IP octet is outside the host range", new Error("Invalid Hivra IP octet"), {
-        source: "hivra/agents/[id]/action",
-        failureType: "hivra_agent_lifecycle_invalid_ip_octet",
-        userId,
-        agentId: agent.id,
-        proxmoxHost: agent.proxmox_host ?? null,
-        vmid,
-        vmidStart,
-        octet,
-      });
-      return apiError("Hivra host IP range is not configured for this box", 500);
-    }
-    const subnetPrefix = resolveHivraSubnetPrefix(env);
+    // The exact owner-bound host, VM and guest address (with the managed host's
+    // provisioner readiness), or why this action can't run.
+    const lifecycleTarget = await resolveHivraLifecycleTarget({ userId, agent, action });
+    if (!lifecycleTarget.ok) return apiError(lifecycleTarget.message, lifecycleTarget.status);
+    const {
+      executionContext,
+      bindingTag: lifecycleBindingTag,
+      env,
+      vmid,
+      octet,
+      subnetPrefix,
+    } = lifecycleTarget.target;
     // Named-tunnel boxes have a stable URL; pass it so the start helper keeps it
     // (reconnects the systemd tunnel) instead of minting a fresh quick-tunnel URL.
     const tunnelEnv = agent.cf_hostname ? `HIVRA_TUNNEL_URL='https://${String(agent.cf_hostname).replace(/[^a-zA-Z0-9.-]/g, "")}' ` : "";
@@ -700,7 +600,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ].filter((value): value is string => Boolean(value)).join(" ") + " ";
     const startHelper = `${executionContext.paths.provisionerDirectory}/hivra-start-on-host.sh`;
     const capacityPolicy = resolveProxmoxHostCapacityPolicy(executionContext.capacityPolicy);
-    const runtimeUpdateHelper = `${executionContext.paths.provisionerDirectory}/hivra-update-guest-runtime.sh`;
     const lifecyclePrelude = lifecycleMutationPrelude(
       vmid,
       lifecycleBindingTag,
@@ -714,77 +613,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ? `${lifecycleMutationPrelude(vmid, lifecycleBindingTag, true)}
 ${restorePrefix}${lifecycleVmAuthorityBody()}`
       : lifecyclePrelude;
-    // Agent-run reporting: every start-helper run (and every in-place runtime
-    // update) of a Claude Code / Codex Proxmox computer re-issues its 7-day
-    // reporter credential, replacing one that expired while stopped and
-    // backfilling computers launched before reporting existed once their host
-    // carries the new helper. The credential reaches the host only inside this
-    // script (stdin to bash -s) and a root-only file the helper consumes and
-    // deletes. Lifecycle readiness admits older helpers that cannot consume it,
-    // so the file is written only after probing the exact helper that will run.
-    // A deployment without an origin or signing secret skips silently; Activity
-    // then shows the computer's coverage as missing.
-    const activityCredentialFile = `/run/hivra-lifecycle/${vmid}.activity.env`;
-    let stagedActivityCredential: ActivityCollectorCredential | null = null;
-    const activityTelemetryKickoff = (helper: string): { stage: string; env: string } => {
-      stagedActivityCredential = supportsNativeTracing(agent)
-        ? issueActivityCollectorCredential({ userId: String(agent.user_id), agentId: String(agent.id) })
-        : null;
-      if (!stagedActivityCredential) return { stage: "", env: "" };
-      const file = shellQuote(activityCredentialFile);
-      const encoded = Buffer.from(JSON.stringify(stagedActivityCredential), "utf8").toString("base64");
-      return {
-        stage: `HIVRA_ACTIVITY_FILE=''; if grep -Fq HIVRA_ACTIVITY_TELEMETRY_FILE ${shellQuote(helper)} 2>/dev/null && install -d -m 0700 /run/hivra-lifecycle && install -m 0600 /dev/null ${file} && printf '%s\\n' ${shellQuote(`HIVRA_ACTIVITY_TELEMETRY_B64=${encoded}`)} > ${file}; then HIVRA_ACTIVITY_FILE=${file}; echo ${ACTIVITY_CREDENTIAL_STAGED}; else rm -f -- ${file} 2>/dev/null || true; fi; `,
-        env: `HIVRA_ACTIVITY_TELEMETRY_FILE="$HIVRA_ACTIVITY_FILE" `,
-      };
-    };
-    // Best effort, and only once the host confirmed the credential file exists:
-    // a failed record never fails the lifecycle operation.
-    const recordActivityCredentialIssued = async (result: HostScriptResult) => {
-      const credential = stagedActivityCredential;
-      if (!credential || !supabaseAdmin) return;
-      if (!(result.stdout || "").split(/\r?\n/).includes(ACTIVITY_CREDENTIAL_STAGED)) return;
-      const recorded = await recordActivityCollectorIssued(supabaseAdmin, {
-        agentId: String(agent.id),
-        userId: String(agent.user_id),
-        expiresAt: credential.expiresAt,
-        reason: "start",
-      });
-      if (!recorded) {
-        log.warn("hivra activity collector issuance could not be recorded", {
-          source: "hivra/agents/[id]/action",
-          failureType: "hivra_activity_collector_issue_record_failed",
-          userId,
-          agentId: agent.id,
-          action,
-        });
-      }
-    };
-    // A synchronous helper (the in-place runtime update) reports the reporter
-    // install outcome on its own stdout instead of the start log the [id] poll
-    // reads. Same closed-enum marker and the same best-effort record.
-    const recordActivityCollectorInstall = async (result: HostScriptResult) => {
-      if (!stagedActivityCredential || !supabaseAdmin) return;
-      const lines = (result.stdout || "").split(/\r?\n/);
-      if (!lines.includes(ACTIVITY_CREDENTIAL_STAGED)) return;
-      const install = parseActivityCollectorMarker(lines);
-      if (!install) return;
-      const recorded = await recordCollectorInstallResult(supabaseAdmin, {
-        agentId: String(agent.id),
-        userId: String(agent.user_id),
-        status: install.status,
-        ...(install.reason ? { reason: install.reason } : {}),
-      });
-      if (!recorded) {
-        log.warn("hivra agent-run reporter install result could not be recorded", {
-          source: "hivra/agents/[id]/action",
-          failureType: "hivra_activity_collector_install_record_failed",
-          userId,
-          agentId: agent.id,
-          action,
-        });
-      }
-    };
+    // Agent-run reporting: every start-helper run re-issues the computer's
+    // reporter credential (lifecycleActivityCredential explains the contract).
+    const activityCredential = lifecycleActivityCredential({ agent, userId, vmid, action });
+    const activityTelemetryKickoff = activityCredential.kickoff;
+    const recordActivityCredentialIssued = activityCredential.recordIssued;
     const startKickoff = (operationId: string) => {
       const activity = activityTelemetryKickoff(startHelper);
       // A computer stopped for billing has autostart off (verifiedStopVmScript); every
@@ -1202,99 +1035,6 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       }
       await logHivraAgentEvent({ userId, event: "force_restarted", agentId: agent.id, agentType: agent.type });
       return apiSuccess({ status: "provisioning", forced: true });
-    }
-
-    if (action === "update_runtime") {
-      if (agent.status !== "running") {
-        return apiError("Start this computer before updating its connection service.", 409);
-      }
-      if (executionContext.kind === "self-managed") {
-        const readiness = await runProxmoxHostScript(
-          `set -euo pipefail
-PROVISIONER_DIR=${shellQuote(executionContext.paths.provisionerDirectory)}
-test "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(PORTABLE_HIVRA_PROVISIONER_VERSION)}
-(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256)
-test -x "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"
-bash -n "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"
-printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
-          env,
-          { timeoutMs: 20_000 },
-        );
-        if (!readiness.ok || !readiness.stdout.includes("HIVRA_RUNTIME_UPDATE_READY")) {
-          return apiError("Prepare this infrastructure target with the current Hivra runtime bundle before updating the computer.", 503);
-        }
-      }
-      // The update is in place: the helper restarts only the guest's chat
-      // gateway (detached runs survive it), so the VM, its agent services,
-      // tmux-backed agent terminals and desktop apps keep running. It still
-      // takes the same operation lease as before (the "restart" kind; a stale
-      // one settles from provider state in the reconciler). FD8 is taken here
-      // for the host-side checks; the helper releases it before its guest
-      // steps, as the start helper does, so a slow guest never holds other
-      // lifecycle work on this host past its own 60 s lock wait.
-      const operationId = await claimProviderOperation("restart", "running");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
-      const guestIp = `${subnetPrefix}.${octet}`;
-      const activity = activityTelemetryKickoff(runtimeUpdateHelper);
-      // The helper consumes and deletes a staged credential itself; the trap
-      // only covers an exit before it ran (for example a refused prelude step).
-      const activityCleanup = activity.stage
-        ? `trap ${shellQuote(`rm -f -- ${shellQuote(activityCredentialFile)}`)} EXIT\n`
-        : "";
-      const updateCommand = `${activity.stage}HIVRA_VM_SSH_KEY_PATH=${shellQuote(executionContext.paths.vmSshKeyPath ?? "")} HIVRA_LIFECYCLE_LOCK_FD=8 HIVRA_RUNTIME_UPDATE_DEADLINE="$HIVRA_RUNTIME_UPDATE_DEADLINE" ${activity.env}bash ${shellQuote(runtimeUpdateHelper)} ${vmid} ${shellQuote(guestIp)}`;
-      // The deadline is set before the prelude so it also counts the FD8 wait.
-      const r = await runProxmoxHostScript(
-        `HIVRA_RUNTIME_UPDATE_DEADLINE="$(( $(date +%s) + ${RUNTIME_UPDATE_HOST_BUDGET_SECONDS} ))"\n${lifecyclePrelude}\n${activityCleanup}${updateCommand}`,
-        env,
-        { timeoutMs: RUNTIME_UPDATE_TIMEOUT_MS },
-      );
-      // Only the helper's host-authored receipt for this exact VM proves the
-      // guest committed the update; its guest output never reaches stdout.
-      const updated = r.ok
-        && (r.stdout || "").split(/\r?\n/).includes(`HIVRA_GUEST_RUNTIME_UPDATED vmid=${vmid}`);
-      if (!updated) {
-        log.warn("hivra runtime update outcome could not be verified", {
-          source: "hivra/agents/[id]/action",
-          failureType: "hivra_agent_runtime_update_unverified",
-          userId,
-          agentId: agent.id,
-          vmid,
-          hostOk: r.ok,
-          errorMessage: r.error ?? null,
-          stderr: r.stderr?.slice(0, 300) ?? null,
-        });
-        await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Runtime update outcome is unknown"));
-        return apiError("The connection service update could not be verified. Refresh this computer before trying again.", 502);
-      }
-      await recordActivityCredentialIssued(r);
-      await recordActivityCollectorInstall(r);
-      const completed = await completeHivraAgentOperation({
-        userId,
-        agentId: String(agent.id),
-        operationId,
-        expectedDesiredState: "running",
-        status: "running",
-      });
-      if (!completed) {
-        await releaseProviderOperation(operationId, "Runtime update completion was superseded.", false);
-        log.error("hivra agent runtime updated but operation completion was superseded", new Error("Operation CAS failed"), {
-          source: "hivra/agents/[id]/action",
-          failureType: "hivra_agent_runtime_update_status_persist_failed",
-          userId,
-          agentId: agent.id,
-          vmid,
-        });
-        return apiError("The connection service was updated, but a newer lifecycle request superseded it. Refresh before retrying.", 409);
-      }
-      const agentCli = parseAgentCliReport(r.stdout || "");
-      await logHivraAgentEvent({
-        userId,
-        event: "runtime_updated",
-        agentId: agent.id,
-        agentType: agent.type,
-        detail: { inPlace: true, ...(agentCli ? { agentCli } : {}) },
-      });
-      return apiSuccess({ status: "running", ...(agentCli ? { agentCli } : {}) });
     }
 
     if (action === "resize") {

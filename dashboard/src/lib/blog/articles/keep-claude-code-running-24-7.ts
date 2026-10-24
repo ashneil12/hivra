@@ -59,7 +59,7 @@ export const article: BlogArticle = {
     {
       heading: "Can I control it from my phone while the laptop is closed?",
       paragraphs: [
-        "Depends which phone option you mean. Remote Control connects your phone or browser to a session that's still running on your computer, so that computer has to stay on and awake. It helps when you walk away from your desk. Shut the lid and leave, and the session sleeps with the laptop. The [Remote Control guide](/blog/claude-code-remote-control) has the commands, the two offline messages you can run into and how to keep the host machine online.\n\nClaude Code on the web runs on Anthropic's infrastructure, so the session keeps going after you close your laptop and you can check on it from any device ([Claude Code docs](https://code.claude.com/docs/en/claude-code-on-the-web)). A machine that stays on works too, reached over SSH or a browser view. On Hivra you can also send Claude Code work from your phone through the Telegram tab. Those runs execute on your Hivra computer.",
+        "Depends which phone option you mean. Remote Control connects your phone or browser to a session that's still running on your computer, so that computer has to stay on and awake. It helps when you walk away from your desk. Shut the lid and leave, and the session sleeps with the laptop. The [Remote Control guide](/blog/claude-code-remote-control) has the commands, the two offline messages you can run into and how to keep the host machine online.\n\nClaude Code on the web runs on Anthropic's infrastructure, so the session keeps going after you close your laptop and you can check on it from any device ([Claude Code docs](https://code.claude.com/docs/en/claude-code-on-the-web)). A machine that stays on works too, reached over SSH or a browser view. On Hivra you can also send Claude Code work from your phone through the Telegram tab. Those runs execute on your Hivra computer. Anthropic's Channels (Telegram, Discord and iMessage) are a separate plugin that only delivers while the session stays open, and the [Channels guide](/blog/control-claude-code-from-telegram) covers the setup.",
       ],
     },
     {
@@ -157,7 +157,7 @@ export const article: BlogArticle = {
   relatedArticles: [
     { slug: "codex-resume-session", title: "How to resume a Codex session (and Claude Code too)" },
     { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on? Where to run it 24/7" },
-    { slug: "control-claude-code-from-telegram", title: "Control Claude Code from Telegram" },
+    { slug: "control-claude-code-from-telegram", title: "Claude Code Channels: Telegram, Discord and iMessage" },
     { slug: "ai-agent-dies-terminal-closes-fixes", title: "Why your AI agent dies when the terminal closes, and the fixes" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for running 24/7" },
     { slug: "cost-of-running-ai-agent", title: "How much does it cost to run an AI agent?" },

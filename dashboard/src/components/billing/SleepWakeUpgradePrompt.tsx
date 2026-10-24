@@ -5,8 +5,8 @@
 // Rendered in place of the plain "Warming up your agent" banner when a FREE
 // agent that was inactivity-paused (paused_reason='inactivity') is re-opened.
 // The agent is still auto-waking underneath (the page fires the start action);
-// this just carries the always-on Pro pitch ALONGSIDE the wake progress instead
-// of a silent boot spinner. Gated by the caller on
+// this just carries the paid-plan pitch (a computer that keeps running) ALONGSIDE
+// the wake progress instead of a silent boot spinner. Gated by the caller on
 // isSleepUpgradePromptEnabled() && isFreePlanInfo(plan), so a paying customer
 // never sees it.
 //
@@ -71,8 +71,8 @@ export function SleepWakeUpgradePrompt({
           </span>
           <span style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.78)", lineHeight: 1.45 }}>
             {instanceName ? `${instanceName} slept` : "Your agent slept"} after 4 idle days. Waking it back
-            up now, about 30 seconds. Free agents sleep. Pro agents never do, so yours stays on 24/7 and is
-            ready the second you are.
+            up now, about a minute. A paid plan keeps the computer running, so it is ready the second you
+            are.
           </span>
         </div>
       </div>
@@ -105,7 +105,7 @@ export function SleepWakeUpgradePrompt({
             whiteSpace: "nowrap",
           }}
         >
-          Keep it always-on
+          Keep it running
         </a>
       </div>
     </div>

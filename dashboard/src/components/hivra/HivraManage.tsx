@@ -9,6 +9,7 @@
 // Sections stay mounted while hidden, so drafts survive switching.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Power, RefreshCw, Trash2, Check, Copy, ExternalLink, Loader2,
   AlertTriangle, Cpu, MemoryStick, Globe, Server, ShieldCheck, KeyRound, Wrench, LogIn,
@@ -21,12 +22,15 @@ import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
 import { ComputerContractPanel } from "./ComputerContractPanel";
 import { ComputerAgentsPanel } from "./ComputerAgentsPanel";
+import { AgentLinksPanel } from "./AgentLinksPanel";
 import { ManageLayout, ManageNotice, ManagePanel, type ManageFeedback } from "./ManageLayout";
 import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
-import { AgentSoftwareSlot, ManageHeaderChipsSlot } from "./manage/ManageExtensionSlots";
+import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome } from "./AgentSoftwarePanel";
+import { AgentSoftwareChip } from "./AgentSoftwareChip";
+import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
 import {
   manageButtonDark as btnDark, manageButtonGhost as btnGhost, manageCard as card, manageError as errorStyle,
@@ -46,6 +50,7 @@ import { PoolMeter } from "./PoolMeter";
 import { resizeBudget } from "@/lib/hivra/resize-budget";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
+import { providerRuntimeUpdateMessage } from "@/lib/hivra/provider-runtime-update-contract";
 import { getComputerTemplate, type ComputerTemplateDefinition } from "@/lib/hivra/computer-catalog";
 import {
   COMPUTER_PLACEMENT_LABEL, agentComputerPairLabel, computerPlacementFor,
@@ -119,6 +124,12 @@ const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; sectio
   "runtime-update": {
     title: "Updating the connection service…",
     detail: "Hivra is updating it in place. The computer keeps running, and this page reconnects to it when the update finishes.",
+    section: "updates",
+  },
+  // Update in Manage › Updates' agent software card: the same in-place update.
+  "cli-update": {
+    title: "Updating the connection service…",
+    detail: "Hivra is updating it in place, then moves the agent to its tested version once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
     section: "updates",
   },
 };
@@ -295,6 +306,16 @@ type HivraManageProps = {
   plan?: PlanInfo | null;
   /** The agent's sign-in state, as the page already knows it. null = unknown. */
   chatReadiness?: ChatReadiness | null;
+  /**
+   * Show "Update available" in Manage's own header. The page shows it beside
+   * the agent's name instead wherever it shows that name.
+   */
+  softwareChipInHeader?: boolean;
+  /**
+   * The page asks an open Manage to show a section (its "Update available"
+   * opens Updates). Each new id is one request.
+   */
+  sectionRequest?: { section: ManageSectionId; id: number } | null;
 };
 
 /** Keyed by the computer: another computer's drafts, secrets and confirmations never carry over. */
@@ -307,6 +328,7 @@ export function HivraManage(props: HivraManageProps) {
 
 function HivraManageContent({
   agent, def, onChanged, onDestroyed, browserOn, onBrowserChange, plan, onConnectionServiceRestarted, chatReadiness = null,
+  softwareChipInHeader = true, sectionRequest = null,
 }: HivraManageProps) {
   const manage = agent.manage;
   const [acting, setActing] = useState<string | null>(null);
@@ -527,15 +549,40 @@ function HivraManageContent({
   // The update restarts only the computer's gateway, which drops the embedded
   // surfaces' sign-ins, so the page signs them in again once it is back. An
   // unverified outcome (502) may also have restarted it, or rolled it back.
+  // For Claude Code and Codex it also reports the move to Hivra's tested version.
   const updateConnectionService = useCallback(async () => {
+    let result: Awaited<ReturnType<typeof updateAgentRuntime>> | undefined;
     try {
-      await updateAgentRuntime(agent.id);
+      result = await updateAgentRuntime(agent.id);
     } catch (error) {
       if (error instanceof AgentActionError && error.status === 502) onConnectionServiceRestarted?.();
       throw error;
     }
     onConnectionServiceRestarted?.();
+    return result;
   }, [agent.id, onConnectionServiceRestarted]);
+
+  // The agent software card's Update: the same in-place update under the same
+  // busy lock and progress, answering the card with the route's outcome and
+  // code so it can say what happened in its own words.
+  const updateAgentSoftware = useCallback(async (): Promise<AgentSoftwareUpdateOutcome> => {
+    setRepliesConfirm(null);
+    setActing("cli-update");
+    setErr(null);
+    try {
+      const result = await updateConnectionService();
+      onChanged();
+      return { ok: true, report: result?.agentCli ?? result?.agentApp ?? null };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : "The update didn't start.",
+        code: error instanceof AgentActionError ? error.code : null,
+      };
+    } finally {
+      setActing(null);
+    }
+  }, [updateConnectionService, onChanged]);
 
   const [copied, setCopied] = useState(false);
   const copyEndpoint = useCallback(async () => {
@@ -651,12 +698,36 @@ function HivraManageContent({
     ?? (providerComputer ? "hetzner-server-type" : preparedComputer ? "fixed" : "proxmox-envelope");
   const connectionUpdate: ManageCap | null = manage
     ? manage.connectionServiceUpdate
-    : !providerComputer && !preparedComputer && agent.type !== "deepseek-harness"
+    : !providerComputer && !preparedComputer
       ? agent.status === "running" ? { state: "available" } : { state: "blocked", code: "not_running", reason: "Start this computer to update it." }
       : null;
+  // Update connection service, with the route's refusals in the same words
+  // the agent software card uses: its own copy for host_not_ready, busy,
+  // not_running and unverified, the route's message otherwise.
+  const updateConnectionServiceNow = () => {
+    setRepliesConfirm(null);
+    void run("runtime-update", async () => {
+      try {
+        await updateConnectionService();
+      } catch (error) {
+        if (error instanceof AgentActionError && error.code) {
+          throw new Error(agentSoftwareUpdateError(error.code, error.message, agent.deployment_mode === "self-managed", isComputerOnly ? "computer" : "agent"));
+        }
+        throw error;
+      }
+      followAgentSoftware(agent.id);
+    });
+  };
   const placementLabel = manage?.placement.label ?? COMPUTER_PLACEMENT_LABEL[computerPlacementFor(agent)];
-  const sections: ManageSectionId[] = manage?.sections ?? ["overview", "resources", "advanced"];
+  const sections: ManageSectionId[] = useMemo(() => manage?.sections ?? ["overview", "resources", "advanced"], [manage?.sections]);
   const { selected, select, openAndFocus } = useManageSection(sections, Boolean(manage));
+  const handledSectionRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (!sectionRequest || handledSectionRequest.current === sectionRequest.id) return;
+    if (!sections.includes(sectionRequest.section)) return;
+    handledSectionRequest.current = sectionRequest.id;
+    openAndFocus(sectionRequest.section);
+  }, [sectionRequest, sections, openAndFocus]);
 
   const maximumCapCpu = budget.selfManaged
     ? MAX_CPU
@@ -835,7 +906,8 @@ function HivraManageContent({
           disabled={busy}
           onRename={(name) => void run("rename", () => renameAgent(agent.id, name))}
           error={errorFor("header")}
-          chips={<ManageHeaderChipsSlot agent={agent} onOpenUpdates={() => openAndFocus("updates")} />}
+          chips={softwareChipInHeader && sections.includes("updates")
+            ? <AgentSoftwareChip agent={agent} onOpen={() => openAndFocus("updates")} /> : null}
         />
       }
     >
@@ -919,6 +991,11 @@ function HivraManageContent({
           {isComputerOnly ? null : (
             <ComputerContractPanel agent={agent} runtimeName={def?.name || "This agent"} />
           )}
+          {/* Which of the owner's computers this agent may use (or, on a
+              computer with no Agents section, which agents may use it). */}
+          {!isComputerOnly || !sections.includes("agents") ? (
+            <AgentLinksPanel subjectId={agent.id} subjectName={agent.name} />
+          ) : null}
         </div>
       </ManagePanel>
 
@@ -927,6 +1004,7 @@ function HivraManageContent({
       {sections.includes("agents") ? (
         <ManagePanel id="agents" selected={selected}>
           <ComputerAgentsPanel computerId={agent.id} computerName={agent.name} autoOpenAdd={addAgentRequested} />
+          <AgentLinksPanel subjectId={agent.id} subjectName={agent.name} />
         </ManagePanel>
       ) : null}
 
@@ -1460,10 +1538,35 @@ function HivraManageContent({
         </ManagePanel>
       ) : null}
 
-      {/* UPDATES — the connection service, and the agent software (PR U slot). */}
+      {/* UPDATES — the agent's own software (Claude Code / Codex version, or the
+          Aeon / OpenClaw / Agent Zero app version, its update and automatic
+          updates), then the connection service. */}
       {sections.includes("updates") ? (
         <ManagePanel id="updates" selected={selected}>
           <div style={{ display: "grid", gap: 20 }}>
+            {manage?.selfUpdate ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div className="mono" style={label}>This computer&apos;s software</div>
+                <div style={card} data-testid="manage-self-update">
+                  {manage.selfUpdate.lines.map((line) => (
+                    <div key={line} style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>{line}</div>
+                  ))}
+                  {manage.selfUpdate.openDesktop ? (
+                    <Link href={`/dashboard/agent/${encodeURIComponent(agent.id)}?tab=desktop`} style={{ color: "var(--ink-black)", fontSize: 14, textDecoration: "underline", display: "inline-flex", alignItems: "center", minHeight: 40, width: "fit-content" }}>Open Desktop</Link>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            {progressFor("updates")}
+            <div id="agent-software">
+              <AgentSoftwarePanel
+                agent={agent}
+                name={def?.name ?? "the agent"}
+                busy={busy}
+                updating={acting === "cli-update"}
+                onUpdate={updateAgentSoftware}
+              />
+            </div>
             {connectionUpdate ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div className="mono" style={label}>Connection service</div>
@@ -1473,27 +1576,30 @@ function HivraManageContent({
                   ) : (
                     <>
                       <div>
-                        <button type="button" disabled={busy || !capAvailable(connectionUpdate)} onClick={() => { setRepliesConfirm(null); void run("runtime-update", updateConnectionService); }} style={{ ...btnGhost, cursor: busy || !capAvailable(connectionUpdate) ? "default" : "pointer", opacity: busy || !capAvailable(connectionUpdate) ? 0.5 : 1 }} title="Refresh the Hivra connection service without restarting the computer">
+                        <button type="button" disabled={busy || !capAvailable(connectionUpdate)} onClick={updateConnectionServiceNow} style={{ ...btnGhost, cursor: busy || !capAvailable(connectionUpdate) ? "default" : "pointer", opacity: busy || !capAvailable(connectionUpdate) ? 0.5 : 1 }} title="Refresh the Hivra connection service without restarting the computer">
                           {acting === "runtime-update" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />} Update connection service
                         </button>
                       </div>
                       <CapReasonLine cap={connectionUpdate} />
+                      {providerComputer && providerRuntimeUpdateMessage(agent.runtime_update_stage, agent.error) ? <p
+                        role={agent.runtime_update_stage === "failed" ? "alert" : "status"}
+                        style={{ margin: 0, fontSize: 13, color: agent.runtime_update_stage === "failed" ? "var(--red)" : "var(--text-secondary)", lineHeight: 1.5 }}
+                      >{providerRuntimeUpdateMessage(agent.runtime_update_stage, agent.error)}</p> : null}
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                        {isComputerOnly
+                        {agent.type === "deepseek-harness"
+                          ? "Update connection service brings Hivra’s DeepSeek service up to date without restarting the computer. It restarts DeepSeek, which ends a task DeepSeek is working on; your files, chats and model settings stay as they are. If the new version doesn’t start cleanly, the previous one comes back. Terminals open on this page reconnect when it finishes."
+                          : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
                         {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}
+                        {manage?.agentApp ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
                       </div>
                     </>
                   )}
                   {errorFor("updates")}
-                  {progressFor("updates")}
                 </div>
               </div>
             ) : null}
-            <div id="agent-software">
-              <AgentSoftwareSlot agent={agent} />
-            </div>
           </div>
         </ManagePanel>
       ) : null}

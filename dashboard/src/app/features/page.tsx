@@ -53,9 +53,9 @@ const features = [
   {
     slug: "openclaw-alternative",
     title: "OpenClaw Alternative",
-    tagline: "Keep OpenClaw, or move to Hermes.",
+    tagline: "Keep OpenClaw, or change the agent.",
     description:
-      "Hivra can run OpenClaw itself on paid plans, next to Hermes and other agents. Moving an existing setup is a manual step; Hermes has its own OpenClaw migration command.",
+      "Hivra runs OpenClaw itself on a paid plan, from $9.99 a month for 2 vCPU and 4 GB. Moving an existing setup to Hermes is a manual step, using Hermes' own migration command.",
   },
   {
     slug: "scheduled-tasks",

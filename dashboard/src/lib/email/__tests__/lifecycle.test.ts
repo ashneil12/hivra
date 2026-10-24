@@ -97,21 +97,31 @@ describe("buildLifecycleEmail", () => {
   });
 
   it("day-7 offer states the real prices and what changes", () => {
-    const { text } = buildLifecycleEmail("day7_offer", PARAMS);
+    const { subject, text, html } = buildLifecycleEmail("day7_offer", PARAMS);
+    expect(subject).toBe("what a paid plan adds");
     expect(text).toContain("$9.99/mo");
     expect(text).toContain("$79/yr");
-    expect(text).toContain("2 vCPU / 4 GB");
+    expect(text).toContain("2 vCPU and 4 GB of RAM: run by Hivra");
     expect(text).toMatch(/web browsing/i);
     expect(text).toMatch(/persistent memory/i);
     expect(text).toMatch(/scheduled tasks/i);
+    expect(html).toContain("What a paid plan adds.");
   });
 
-  it("day-1 active introduces the three Pro capabilities", () => {
-    const { text } = buildLifecycleEmail("day1_active", PARAMS);
+  it("day-7 offer sells a computer Hivra runs, not a free agent that sleeps", () => {
+    const { subject, text, html } = buildLifecycleEmail("day7_offer", PARAMS);
+    const all = `${subject}\n${text}\n${html}`;
+    expect(all).toContain("A computer that stays on");
+    expect(all).not.toMatch(/free agent sleeps|4 idle days|double the headroom|honest pitch|Pro\b/);
+  });
+
+  it("day-1 active introduces the three capabilities and promises nothing about a free account", () => {
+    const { text, html } = buildLifecycleEmail("day1_active", PARAMS);
     expect(text).toMatch(/web browsing/i);
     expect(text).toMatch(/persistent memory/i);
     expect(text).toMatch(/scheduled tasks/i);
     expect(text).toContain("Hermes has been up for a day");
+    expect(`${text}\n${html}`).not.toMatch(/stays free|free account|come with Pro|Pro\b/);
   });
 
   it("personalizes the greeting and falls back cleanly", () => {

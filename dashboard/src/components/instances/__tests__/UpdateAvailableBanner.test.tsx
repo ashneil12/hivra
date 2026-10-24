@@ -88,11 +88,50 @@ describe("UpdateAvailableBanner", () => {
     expect(screen.getByRole("button", { name: "Update" })).toBeInTheDocument();
   });
 
-  it("shows paused without a button when there is nothing to update to", async () => {
+  // A warning used to leave the owner with no way out when nothing newer was
+  // offered: running the update again is what clears a pause or retries a
+  // failure, so the notice always offers it.
+  it("lets the owner try again when updates are paused and nothing newer is offered", async () => {
+    const onUpdate = jest.fn();
     mockFetch({ status: statusOf(status({ updateHealth: "paused", updateAvailable: false, direction: "none", target: null })) });
-    await renderBanner();
+    await renderBanner({ onUpdate });
     expect(screen.getByRole("status")).toHaveTextContent("Automatic updates are paused on this agent.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the owner retry a failed update with no registered release", async () => {
+    mockFetch({ status: statusOf(status({ governed: false, source: "floating", updateHealth: "failed", updateHealthDetail: "Image pull failed.", updateAvailable: false, direction: "none", target: null })) });
+    await renderBanner();
+    expect(screen.getByRole("status")).toHaveTextContent("The last update failed.");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("asks for a running agent instead of offering an update that would fail", async () => {
+    mockFetch({ status: statusOf(status({ running: false, updateHealth: "failed", updateHealthDetail: "Image pull failed." })) });
+    await renderBanner();
+    expect(screen.getByRole("status")).toHaveTextContent("Start this agent to update it.");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // No release is registered yet, so the agent follows its update channel's
+  // floating build. A newer build there is offered without a version name.
+  it("offers a newer build of the agent's update channel without a registered release", async () => {
+    mockFetch({ status: statusOf(status({
+      governed: false, source: "floating", currentVersion: null, direction: "upgrade",
+      target: { version: "stable", digest: "sha256:new" },
+    })) });
+    await renderBanner({ onUpdate: undefined, selfConfirm: true });
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("Update available");
+    expect(notice).toHaveTextContent("The latest Hermes build is ready for this agent.");
+    expect(notice).not.toHaveTextContent("Hermes stable");
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    await waitFor(() => expect(screen.getByTestId("update-result")).toHaveTextContent("Update requested."));
+    expect(global.fetch).toHaveBeenCalledWith("/api/instances/inst_1", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ action: "update" }),
+    }));
   });
 
   it("explains a rolled back update and lets the user retry", async () => {

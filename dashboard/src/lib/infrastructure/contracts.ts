@@ -1397,7 +1397,7 @@ export const GvisorDeploymentTargetDtoSchema = z.object({
     launchReady: z.boolean(),
     hostIdentityDigest: z.string().regex(/^[0-9a-f]{64}$/),
     adapter: z.object({
-      version: z.literal("2026.09.15.1"),
+      version: z.enum(["2026.09.15.1", "2026.10.20.1"]),
       sha256: z.string().regex(/^[0-9a-f]{64}$/),
     }).strict(),
     runtime: z.object({

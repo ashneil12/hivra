@@ -9,7 +9,7 @@
 // gated by its own versioned manifests, so this lane is fixed in its own
 // installer instead of by changing the broker.
 
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
 import path from "node:path";
 
 const read = (name: string) =>
@@ -60,11 +60,50 @@ describe("Omarchy desktop stream reachability", () => {
   });
 
   it("lets the desktop user update the machine from inside it", () => {
-    // Updating is safe now that the platform accepts every validated build, so
-    // the installer grants the update commands (and only those).
+    // The owner administers their own Omarchy computer: Omarchy's updater runs
+    // as the desktop user and calls sudo itself (pacman, pacman-key, paccache,
+    // snapshots, systemd-inhibit, sudo -v). The old command list stalled the
+    // first real update (2026-10-20, Canary) on password prompts the owner
+    // can't answer. The grant is the owner's, validated before install.
     const installer = read("install-omarchy-web.py");
     expect(installer).toContain("/etc/sudoers.d/90-hivra-desktop");
-    expect(installer).toContain("/usr/bin/omarchy-update");
     expect(installer).toContain('"/usr/bin/visudo", "-cf"');
+    const grant = installer.slice(installer.indexOf("write(sudoers, ("), installer.indexOf(").encode(), 0o440)"));
+    expect(grant).toContain('f"Defaults:{owner.pw_name} verifypw=any\\n"');
+    expect(grant).toContain('f"{owner.pw_name} ALL=(ALL) NOPASSWD: ALL\\n"');
+    // Nothing narrower is left beside it (pacman -S* was root anyway).
+    expect(grant).not.toMatch(/pacman|yay|omarchy-update/);
+  });
+
+  // An old-pin streamer image (7.9 GB) left on the Canary Omarchy computer kept
+  // its disk under the 10 GiB Omarchy's updater requires (2026-10-20).
+  // Preparation removes superseded images of Hivra's streamer repository only,
+  // without force, once the pinned stream serves (behaviour: install-web.test.py).
+  it("removes superseded streamer images after the pinned stream serves", () => {
+    const installer = read("install-omarchy-web.py");
+    const body = installer.slice(installer.indexOf("def prune_superseded_streamer_images"), installer.indexOf("def write("));
+    expect(body).toContain('SELKIES_IMAGE.split("@", 1)[0]');
+    expect(body).toContain('["/usr/bin/docker", "image", "rm", image_id]');
+    expect(body).not.toMatch(/"-f"|--force/);
+    expect(installer.indexOf('raise RuntimeError("broker_unready")'))
+      .toBeLessThan(installer.indexOf("    prune_superseded_streamer_images()"));
+  });
+
+  // General sudo is the Omarchy owner's only. No other runtime Hivra installs
+  // (Ubuntu desktop, agent boxes, Windows) grants it.
+  it("grants general passwordless sudo only on Omarchy computers", () => {
+    const root = path.join(process.cwd(), "provisioner");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { if (entry.name !== "node_modules") walk(full); continue; }
+        if (!/\.(py|sh|cjs|js|service|conf|sudoers|txt)$|^[^.]+$/.test(entry.name)) continue;
+        const text = fs.readFileSync(full, "utf8");
+        if (/NOPASSWD:\s*ALL\b/.test(text)) offenders.push(path.relative(root, full));
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual(["remote-desktop/install-omarchy-web.py"]);
   });
 });

@@ -8,6 +8,8 @@ import {
   gatewaySourceCidrForWindowsComputer,
   guacamoleClientIdentifier,
   readWindowsRdpGatewayConfig,
+  windowsDescriptorMatchesGateway,
+  windowsRdpCertificatePin,
 } from "../windows-rdp-gateway";
 
 const COMPUTER_ID = "11111111-1111-4111-8111-111111111111";
@@ -109,4 +111,44 @@ it.each([
   const decoded = Buffer.concat([decipher.update(Buffer.from(token, "base64")), decipher.final()]);
   const payload = JSON.parse(decoded.subarray(32).toString("utf8"));
   expect(payload.connections[config.connectionName].parameters).toMatchObject({ width, height });
+});
+
+describe("per-computer RDP certificate pin", () => {
+  const renewed = `sha256:${"e".repeat(64)}`;
+  const descriptor = {
+    computerId: COMPUTER_ID, guestPrivateIpv4: "10.240.20.98", certificateFingerprint: renewed,
+    rdpServiceState: "running", rdpPort: 3389, nla: true, listenerVerified: true,
+    route: { exclusive: true, sourceCidrs: ["10.240.20.96/32"] },
+  } as never;
+
+  function pinnedParameter(token: string) {
+    const decipher = createDecipheriv("aes-128-cbc", Buffer.from(config.guacamoleSecretHex, "hex"), Buffer.alloc(16));
+    const decoded = Buffer.concat([decipher.update(Buffer.from(token, "base64")), decipher.final()]);
+    return JSON.parse(decoded.subarray(32).toString("utf8")).connections[config.connectionName].parameters["cert-fingerprints"];
+  }
+
+  it("prefers the certificate the computer's last preparation stored", () => {
+    expect(windowsRdpCertificatePin(renewed, config)).toBe(renewed);
+    // Computers prepared before per-computer pins keep the configured one.
+    expect(windowsRdpCertificatePin(null, config)).toBe(config.certificateFingerprint);
+    expect(windowsRdpCertificatePin("sha256:not-a-digest", config)).toBe(config.certificateFingerprint);
+  });
+
+  it("matches a renewed certificate only once it is the computer's pin", () => {
+    // The regression: after Windows renewed its certificate, the fixed
+    // configured pin could never match again, whatever preparation did.
+    expect(windowsDescriptorMatchesGateway(descriptor, config)).toBe(false);
+    expect(windowsDescriptorMatchesGateway(descriptor, config, windowsRdpCertificatePin(renewed, config))).toBe(true);
+    expect(windowsDescriptorMatchesGateway(descriptor, config, "sha256:bad")).toBe(false);
+  });
+
+  it("pins the computer's certificate in the gateway handoff", () => {
+    const token = buildWindowsGatewayToken({ config, certificateFingerprint: renewed, ownerId: "user_fixture",
+      streamingMode: "hq", expires: NOW + 45_000 }, NOW)!;
+    expect(pinnedParameter(token)).toBe(`sha256:${Array(32).fill("ee").join(":")}`);
+    const fallback = buildWindowsGatewayToken({ config, ownerId: "user_fixture", streamingMode: "hq", expires: NOW + 45_000 }, NOW)!;
+    expect(pinnedParameter(fallback)).toBe(`sha256:${Array(32).fill("aa").join(":")}`);
+    expect(buildWindowsGatewayToken({ config, certificateFingerprint: "sha256:bad", ownerId: "user_fixture",
+      streamingMode: "hq", expires: NOW + 45_000 }, NOW)).toBeNull();
+  });
 });

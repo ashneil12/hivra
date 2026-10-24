@@ -70,8 +70,8 @@ describe("feature page claims", () => {
     const { container } = await renderFeature("openclaw-alternative");
     const text = container.textContent ?? "";
     // Hivra hosts OpenClaw itself (agent catalog, paid plans).
-    expect(text).toMatch(/run OpenClaw itself/);
-    expect(text).toMatch(/Claude Code, Codex/);
+    expect(text).toMatch(/runs OpenClaw itself/);
+    expect(text).toMatch(/Claude Code and Codex/);
     // The only OpenClaw import is Hermes' own command, and the page says so.
     expect(text).toMatch(/hermes claw migrate/);
     expect(text).toMatch(/manual step/);

@@ -28,10 +28,9 @@ const Uuid = z.string().uuid();
 const Ref = z.object({ userId: z.string().min(1).max(256), agentId: Uuid }).strict();
 export type ProviderGuestSeedRef = z.infer<typeof Ref>;
 
-const Row = z.object({
-  id: Uuid, user_id: z.string(), type: z.enum(["claude-code", "codex"]),
-  status: z.literal("running"), desired_state: z.literal("running"), operation_id: z.null(), operation_kind: z.null(),
-  allocation_operation_id: Uuid, computer_substrate: z.literal("provider-vm"), deployment_mode: z.literal("self-managed"),
+/** The fields that bind a provider agent to its enrollment and access. */
+export const ScopeRow = z.object({
+  id: Uuid, user_id: z.string(), allocation_operation_id: Uuid, computer_substrate: z.literal("provider-vm"), deployment_mode: z.literal("self-managed"),
   proxmox_host: z.literal(SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL), vmid: z.null(),
   infrastructure_connection_id: Uuid, infrastructure_connection_revision: z.number().int().positive().safe(),
   deployment_target_id: Uuid, provider_capacity_order_id: Uuid, provider_enrollment_attempt_id: Uuid, provider_server_id: z.string(),
@@ -39,6 +38,10 @@ const Row = z.object({
   provider_install_stopped_at: z.string().refine(value => Number.isFinite(Date.parse(value))),
   cf_tunnel_id: Uuid.nullable(), cf_hostname: z.string().nullable(), chat_url: z.string().max(2048).nullable(),
   ip: z.string().min(7).max(15),
+});
+const Row = ScopeRow.extend({
+  type: z.enum(["claude-code", "codex"]),
+  status: z.literal("running"), desired_state: z.literal("running"), operation_id: z.null(), operation_kind: z.null(),
 });
 
 export type ProviderGuestSeedOutcome =
@@ -61,7 +64,16 @@ export async function loadProviderAgentSeedContext(raw: ProviderGuestSeedRef) {
       .eq("id", input.agentId).eq("user_id", input.userId).eq("computer_substrate", "provider-vm")
       .eq("status", "running").eq("desired_state", "running").is("operation_id", null).is("operation_kind", null).maybeSingle();
     if (error) throw unavailable();
-    const row = Row.parse(data), identity = parseProviderGuestWorkerIdentity(row.provider_install_identity);
+    return await providerAgentGuestContext(input, Row.parse(data));
+  } catch { throw unavailable(); }
+}
+
+/** The original enrollment scope and access of a provider agent row read by
+ * one of this lane's callers: an installed agent, its scope rebuilt from its
+ * own attempt and capacity order. */
+export async function providerAgentGuestContext(input: ProviderGuestSeedRef, row: z.infer<typeof ScopeRow>) {
+  try {
+    const db = database(), identity = parseProviderGuestWorkerIdentity(row.provider_install_identity);
     if (row.id !== input.agentId || row.user_id !== input.userId || identity.agentId !== row.id
       || identity.operationId !== row.allocation_operation_id) throw unavailable();
     const direct = readAgentProviderDirectAccess(row);

@@ -16,7 +16,7 @@ import {
   COMPUTER_PLACEMENT_LABEL,
   computerPlacementFor,
 } from "@/lib/agent-computers/agent-surfaces";
-import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
+import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
   folderRecoveryEligible,
   hasOwnershipBinding,
@@ -233,12 +233,22 @@ function privateNetworkCap(row: ManageCapabilitiesRow, isComputer: boolean): Man
 }
 
 function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCap | null {
-  if (variant === "linux-sandbox" || variant === "digitalocean") return null;
-  if (variant === "windows-my-server") return unavailable("windows_my_server", "Hivra can't update Windows computers on your own server yet.");
+  // These run no Hivra connection service, so there is none to update; Updates
+  // says how their own software is updated instead (selfUpdateFor).
+  if (variant === "digitalocean" || variant === "windows-my-server" || variant === "prepared") return null;
+  // A Linux Sandbox's Update is its adapter's: the sandbox recreated on the
+  // current image, running or stopped as it was, /workspace kept.
+  if (variant === "linux-sandbox") {
+    if (operationInProgress(row)) return blocked("operation_in_progress", WAIT);
+    if (row.status !== "running" && row.status !== "stopped") return blocked("not_ready", "Wait until this sandbox is running or stopped.");
+    return available;
+  }
   switch (runtimeUpdateRefusal(row)) {
-    case "deepseek": return unavailable("deepseek", "DeepSeek computers can't update their connection service here yet.");
-    case "prepared": return unavailable("prepared", "Hivra can't update prepared Windows and Omarchy computers yet.");
-    case "my-cloud": return unavailable("my_cloud", "Hivra can't update the connection service on My cloud computers yet.");
+    // An Omarchy or Windows profile anywhere else still runs no connection service.
+    case "prepared": return null;
+    case "my-cloud": return unavailable("my_cloud", row.type === "deepseek-harness"
+      ? "Hivra can't update DeepSeek on My cloud computers yet."
+      : "Hivra can't update the desktop's connection service on My cloud computers yet.");
     default: break;
   }
   if (operationInProgress(row)) return blocked("operation_in_progress", WAIT);
@@ -246,11 +256,44 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
   return available;
 }
 
+const OMARCHY_SELF_UPDATE = "Omarchy updates come straight from Omarchy. Open the Omarchy menu on the desktop and choose Update, then Omarchy. You have admin (sudo) on this computer, so it won't ask for a password. Every Omarchy 4 release works here; a new major version needs Hivra to check it first.";
+const OMARCHY_DESKTOP_UPDATE = "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.";
+const WINDOWS_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, on the desktop.";
+// Hivra can't open a Windows computer on the owner's own server yet, so its
+// owner reaches Windows Update through that server's console.
+const WINDOWS_MY_SERVER_SELF_UPDATE = "Windows keeps itself up to date with Windows Update. To check now, open Settings, then Windows Update, from your server's own console.";
+const WINDOWS_DESKTOP_UPDATE = "Hivra connects to Windows from outside it, so there's nothing of Hivra's inside Windows to update. When Windows renews its remote desktop certificate, opening Desktop checks the computer again and reconnects.";
+const DIGITALOCEAN_UPDATE = "DigitalOcean runs this session's agent software, so there's nothing for Hivra or you to update in it.";
+const SANDBOX_UPDATE = "This Linux Sandbox runs a fixed, read-only system image, and only its workspace folder changes. Update recreates it on Hivra's current image and keeps your workspace; anything running in it stops.";
+
+/** How the computer's own software is updated where no connection service runs. */
+function selfUpdateFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["selfUpdate"] {
+  if (variant === "prepared" && row.computer_profile === "omarchy") {
+    return { lines: [OMARCHY_SELF_UPDATE, OMARCHY_DESKTOP_UPDATE], openDesktop: true };
+  }
+  if (variant === "prepared" && row.computer_profile === "windows") {
+    return { lines: [WINDOWS_SELF_UPDATE, WINDOWS_DESKTOP_UPDATE], openDesktop: true };
+  }
+  if (variant === "windows-my-server") return { lines: [WINDOWS_MY_SERVER_SELF_UPDATE], openDesktop: false };
+  if (variant === "digitalocean") return { lines: [DIGITALOCEAN_UPDATE], openDesktop: false };
+  if (variant === "linux-sandbox") return { lines: [SANDBOX_UPDATE], openDesktop: false };
+  return null;
+}
+
 function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentCli"] {
   if (variant !== "chat-agent") return null;
   if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
   if (row.type === "claude-code") return { name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] };
   if (row.type === "codex") return { name: "codex", vetted: AGENT_CLI_VERSIONS.codex };
+  return null;
+}
+
+function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentApp"] {
+  if (variant !== "dashboard-agent") return null;
+  if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
+  if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero") {
+    return { name: row.type, vetted: AGENT_APP_VERSIONS[row.type].label };
+  }
   return null;
 }
 
@@ -320,7 +363,9 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
   const folderRecovery = folderRecoveryCap(row, variant);
   const privateNetwork = privateNetworkCap(row, isComputer);
   const connectionServiceUpdate = connectionServiceCap(row, variant);
+  const selfUpdate = selfUpdateFor(row, variant);
   const agentCli = agentCliFor(row, variant);
+  const agentApp = agentAppFor(row, variant);
   const attachAgents = isComputer && variant === "ubuntu-proxmox" && ctx.attachAgents === true;
   const kind = isComputer ? "computer" : "agent";
 
@@ -346,7 +391,7 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     resources: true,
     recovery: capShown(restorePoints) || capShown(folderRecovery),
     network: capShown(privateNetwork),
-    updates: capShown(connectionServiceUpdate) || agentCli !== null,
+    updates: capShown(connectionServiceUpdate) || agentCli !== null || agentApp !== null || selfUpdate !== null,
     command: variant === "linux-sandbox",
     advanced: true,
   };
@@ -366,7 +411,9 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     folderRecovery,
     privateNetwork,
     connectionServiceUpdate,
+    selfUpdate,
     agentCli,
+    agentApp,
     attachAgents,
     // Every agent is told about its computer; a computer on its own is not.
     contract: kind === "agent",

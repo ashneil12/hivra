@@ -43,7 +43,8 @@ describe("action lists", () => {
   it("refuses My cloud actions with the route's exact messages", () => {
     expect(providerRefusalFor("resize")).toBe("Resizing an allocated Hetzner computer is not supported yet. Its original size and data are retained.");
     expect(providerRefusalFor("snapshot")).toBe(providerRefusalFor("restore"));
-    expect(providerRefusalFor("update_runtime")).toMatch(/not supported yet/);
+    // A My cloud agent's runtime update has its own provider lane now.
+    expect(providerRefusalFor("update_runtime")).toBeNull();
     expect(providerRefusalFor("stop")).toBeNull();
     expect(providerRefusalFor("constructor")).toBeNull();
   });
@@ -109,12 +110,18 @@ describe("restore points, folder recovery and the in-place update", () => {
 
   it("refuses the in-place update in the route's order", () => {
     expect(runtimeUpdateRefusal({ ...ubuntu, type: "codex" })).toBeNull();
-    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness" })).toBe("deepseek");
-    // A DeepSeek computer in the owner's own cloud gets the DeepSeek refusal first, as the route answers.
-    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness", computer_substrate: "provider-vm" })).toBe("deepseek");
+    // A DeepSeek computer on Proxmox gets its own owned update in the guest;
+    // in the owner's own cloud it is refused with every My cloud computer.
+    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness" })).toBeNull();
+    expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness", computer_substrate: "provider-vm" })).toBe("my-cloud");
+    // A My cloud agent updates through the provider lane; a My cloud desktop does not yet.
+    for (const type of ["claude-code", "codex", "aeon", "openclaw", "agent-zero"]) {
+      expect(runtimeUpdateRefusal({ ...ubuntu, type, computer_profile: null, computer_substrate: "provider-vm" })).toBeNull();
+    }
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_profile: "windows" })).toBe("prepared");
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "provider-vm" })).toBe("my-cloud");
-    expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "gvisor" })).toBe("linux-sandbox");
+    // A Linux Sandbox's update is its adapter's own (recreate on the pinned image).
+    expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "gvisor" })).toBeNull();
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_substrate: "do-managed-session" })).toBe("digitalocean");
   });
 

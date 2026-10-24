@@ -193,8 +193,8 @@ describe("gateway agent CLI report", () => {
     expect(fs.existsSync(path.join(box.home, ".hivra", "chat-runs", "00000000-0000-4000-8000-000000000001"))).toBe(false);
   }));
 
-  it("reports nothing for runtimes that are not a coding CLI", () => withBox("openclaw", { error: null, stdout: "" }, async (box) => {
-    expect(box.probes).toEqual([]);
+  it("reports no CLI for runtimes that are not a coding CLI (OpenClaw is asked only for its own app version)", () => withBox("openclaw", { error: null, stdout: "" }, async (box) => {
+    expect(box.probes.map((probe: { bin: string; args: string[] }) => [probe.bin, probe.args])).toEqual([["/home/bux/.npm-global/bin/openclaw", ["--version"]]]);
     expect(await box.meta()).not.toHaveProperty("agentCli");
   }));
 });

@@ -65,6 +65,20 @@ describe('Subscription Plans', () => {
       }
     });
 
+    it('lists no perk that does not exist yet', () => {
+      for (const plan of Object.values(PLANS)) {
+        expect(plan.features.join(' ')).not.toMatch(/marketplace|Email support/i);
+      }
+    });
+
+    it("states each paid plan's specs from its own numbers", () => {
+      for (const plan of Object.values(PLANS)) {
+        if (plan.name === 'Free') continue;
+        expect(plan.specs.cpu).toBe(`${plan.totalCpu} vCPU total`);
+        expect(plan.specs.ram).toBe(`${plan.totalRam / 1024}GB total`);
+      }
+    });
+
     it('names active-agent counts in sellable plan descriptions', () => {
       for (const key of ACTIVE_PLAN_KEYS) {
         const plan = PLANS[key];

@@ -26,12 +26,35 @@ def assert_clean(text, label, allow=()):
         raise ValueError("{} still mentions the token: {}".format(label, ", ".join(hits)))
 
 
+LITEPAPER_EDITS = (
+    ("without requiring a token or Hivra Cloud", "without requiring a Hivra Cloud"),
+    ("connected product or token action cannot", "or connected product cannot"),
+    ("company key, token vote or government", "company key or government"),
+)
+ECONOMY_HEADING = "An economy for work the system can prove"
+ACTIVATE_HEADING = "Activate economics through use"
+
+
+def _apply_edits(text, edits, label):
+    """Each phrase must occur exactly once; a line break inside it counts as a space."""
+    for old, new in edits:
+        pattern = re.compile(r"\s+".join(re.escape(word) for word in old.split()))
+        if len(pattern.findall(text)) != 1:
+            raise ValueError("{} changed under the restricted copy: {}".format(label, old[:60]))
+        text = pattern.sub(lambda _: new, text, count=1)
+    return text
+
+
 def litepaper_md(text):
-    """LITEPAPER.md without the economy section and its one-page link."""
-    start = text.index("\n## The economy\n")
-    end = text.index("\n## Read further\n")
+    """LITEPAPER.md without the economy section, the economics wave and the publication comment."""
+    text = re.sub(r"<!--.*?-->\n?", "", text, flags=re.DOTALL)
+    start = text.index("\n## " + ECONOMY_HEADING + "\n")
+    end = text.index("\n## Move at AI speed.")
     text = text[:start] + text[end:]
-    text = re.sub(r" · \*\*\[Tokenomics in one page\]\(TOKENOMICS\.md\)\*\*", "", text)
+    start = text.index("\n### " + ACTIVATE_HEADING + "\n")
+    end = text.index("\nFast code cannot compress")
+    text = text[:start] + text[end:]
+    text = _apply_edits(text, LITEPAPER_EDITS, "LITEPAPER.md")
     assert_clean(text, "restricted LITEPAPER.md")
     return text
 
@@ -75,7 +98,8 @@ def whitepaper_md(text):
     end = text.index("\n## 9. Build order\n")
     text = text[:start] + text[end:]
     drop_lines = (
-        "Token and migration sections are proposals.",
+        "The migration snapshot is complete.",
+        "Final token supply and auction settings.",
         "7. The economic layer ($HIVRA)",
         "8. The migration from $HermesOS to $HIVRA",
         "Founder allocation (none, or Bankr's standard vesting).",
@@ -88,7 +112,7 @@ def whitepaper_md(text):
         ("connected product or token action cannot", "or connected product cannot"),
         ("company key, token vote or government instruction", "company key or government instruction"),
         (" Token access to compute and token payment, with $HermesOS.", ""),
-        (" $HIVRA access and payment, and the optional conversion from $HermesOS.", ""),
+        (" $HIVRA access and payment, the independent token launch and snapshot-based Sablier claims.", ""),
         (" Availability of any token feature depends on the participant's jurisdiction and applicable rules.", ""),
     ):
         if text.count(old) != 1:
@@ -120,6 +144,8 @@ def litepaper_html(page):
     """The generated litepaper page without the economy chapter and every link into it."""
     start = page.index('<section class="economy chapter shell"')
     page = _cut_element(page, start)
+    page = _cut_element(page, page.index('<div class="problem-prose scene-reveal" id="sub-' + "activate-economics-through-use" + '"'))
+    page = _apply_edits(page, LITEPAPER_EDITS, "litepaper page")
     page = re.sub(r'<a class="hero-open hero-token"[^>]*>.*?</a>', "", page, flags=re.DOTALL)
     page = re.sub(r'\s*·\s*<strong><a [^>]*TOKENOMICS\.md[^>]*>.*?</a></strong>', "", page, flags=re.DOTALL)
     page = re.sub(r'\s*·\s*<a [^>]*TOKENOMICS\.md[^>]*>.*?</a>', "", page, flags=re.DOTALL)

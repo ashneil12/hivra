@@ -51,7 +51,7 @@ function gvisorTarget(overrides: Partial<GvisorDeploymentTargetDto> = {}): Deplo
       kind: "gvisor",
       launchReady: true,
       hostIdentityDigest: "c".repeat(64),
-      adapter: { version: "2026.09.15.1", sha256: "d".repeat(64) },
+      adapter: { version: "2026.10.20.1", sha256: "d".repeat(64) },
       runtime: { path: "/usr/local/bin/runsc", sha256: "e".repeat(64) },
       runtimeCompatibility: { contractVersion: 1, supportedWorkloadKinds: ["linux-terminal"] },
       resourcePolicy: { reservationEqualsMaximum: true, aggregateAdmission: "serialized-host-headroom-v1" },
