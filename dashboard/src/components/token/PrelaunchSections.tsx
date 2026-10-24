@@ -15,6 +15,18 @@ export default function PrelaunchSections() {
   const launching = s.launch === "preparing";
   return (
     <>
+      <section id="start-free" aria-labelledby="start-title" style={rule}>
+        <p className="mono" style={{ fontSize: 11 }}>START HERE</p>
+        <h2 id="start-title">Hivra is free to start</h2>
+        <p>
+          Sign up free, then connect your own cloud or server. Self-hosting is free, and Hivra Cloud computers are on a paid plan.
+          The token is optional and nothing on this page is needed to use Hivra.
+        </p>
+        <p>
+          <Link href={s.start.signUpUrl}>Sign up free</Link> · <Link href={s.start.pricingUrl}>See pricing</Link>
+        </p>
+      </section>
+
       <section id="status" aria-labelledby="status-title" style={rule}>
         <p className="mono" style={{ fontSize: 11 }}>STATUS</p>
         <h2 id="status-title">{launching ? "Token launch in preparation" : "Token launch status"}</h2>

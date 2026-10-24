@@ -399,12 +399,12 @@ export const HOMEPAGE_FAQ = homepageFaq(false);
 export const CLOSING = {
   title: "Start with one computer.",
   body: "Give it a project, see what it can do and keep the rest of your life outside its workspace.",
-  paid: HOSTED_COMPUTE_NEEDS_PLAN,
+  paid: "Sign up free and connect a computer or server you already have, or launch on Hivra Cloud with a paid plan. Or self-host it free from GitHub.",
   primary: "Launch an agent",
   secondary: "Start with a computer",
 } as const;
 
 export const STICKY = {
   cta: "Launch an agent",
-  note: `From ${ENTRY_PLAN_PRICE} a month`,
+  note: "Free to start",
 } as const;

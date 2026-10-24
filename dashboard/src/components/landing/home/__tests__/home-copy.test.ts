@@ -171,7 +171,7 @@ describe("homepage copy", () => {
     expect(PRICING.larger.href).toBe("/get-started?plan=fleet");
     expect(PRICING.server.href).toBe("/sign-up");
     expect(PRICING.selfHost.href).toBe("https://github.com/ashneil12/hivra");
-    expect(STICKY.note).toBe(`From ${ENTRY_PLAN_PRICE} a month`);
+    expect(STICKY.note).toBe("Free to start");
   });
 
   it("states the guarantee in the shared wording and does not claim a trial, a free hosted plan or annual prices", () => {
@@ -262,7 +262,9 @@ describe("homepage copy", () => {
       "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
     expect(HOSTED_COMPUTE_NEEDS_PLAN).toBe(rule);
     expect(AGENTS_SECTION.paid).toBe(rule);
-    expect(CLOSING.paid).toBe(rule);
+    // The closing leads with the free start; the paid-plan rule stays stated in the canonical words elsewhere.
+    expect(CLOSING.paid).toContain("launch on Hivra Cloud with a paid plan");
+    expect(CLOSING.paid).not.toMatch(/\$\d/);
     expect(AGENTS_SECTION.paid).toContain(`from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);
     expect(COMPUTERS.body).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
