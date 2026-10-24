@@ -1253,7 +1253,8 @@ export function LaunchJourney(
     return (
       <main ref={journeyRef} className={styles.page} data-stage="resume" data-testid="launch-journey">
         <header className={styles.header}>
-          <span className={styles.brand}>Launch</span>
+          {/* A desktop app's toolbar already names Launch. */}
+          <span className={styles.brand} data-web-chrome>Launch</span>
           <Stepper current={0} />
         </header>
         <section className={styles.stage} aria-labelledby="launch-resume-heading">
@@ -2204,7 +2205,8 @@ export function LaunchJourney(
   return (
     <main ref={journeyRef} className={styles.page} data-stage={draft.stage} data-testid="launch-journey">
       <header className={styles.header}>
-        <span className={styles.brand}>Launch</span>
+        {/* A desktop app's toolbar already names Launch. */}
+        <span className={styles.brand} data-web-chrome>Launch</span>
         <Stepper current={visibleStep(draft.stage)} />
       </header>
 
