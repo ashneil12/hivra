@@ -150,4 +150,23 @@ describe("SignInPage", () => {
     });
   });
 
+  it("themes the Clerk card from tokens, so it stays legible in dark mode", async () => {
+    render(await SignInPage({ searchParams: Promise.resolve({}) }));
+    const { elements, variables } = mockSignIn.mock.calls[0][0].appearance;
+    expect(variables).toMatchObject({
+      colorBackground: "var(--bg-surface)",
+      colorForeground: "var(--ink-black)",
+      colorPrimaryForeground: "var(--vellum-bg)",
+    });
+    expect(variables).not.toHaveProperty("colorText");
+    expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
+    expect(elements.formButtonPrimary).toMatch(/text-\[var\(--vellum-bg\)\].*text-center flex justify-center/);
+  });
+
+  it("marks the funnel bar as web chrome that a desktop app replaces", async () => {
+    render(await SignInPage({ searchParams: Promise.resolve({}) }));
+    const bar = screen.getByRole("link", { name: "Hivra home" }).closest("header");
+    expect(bar).toHaveAttribute("data-web-chrome");
+  });
+
 });
