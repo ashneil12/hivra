@@ -16,15 +16,16 @@
 // outlives a closed tab depends on the computer's runtime version, so the copy
 // says neither that it stops nor that it keeps going.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import styles from "@/app/tools/tools.module.css";
+import { withInlineCode } from "./InlineCode";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
 import { monthYear } from "@/lib/tools/month-year";
 
-// Commands and behavior checked on 2026-09-24 against first-party docs: the
+// Commands and behaviour checked on 2026-09-24 against first-party docs: the
 // macOS caffeinate(8) manual, Apple's closed-display mode support article,
 // OpenSSH ssh_config(5), tmux(1), the systemd logind.conf and systemd.service
 // manuals, and util-linux swapon(8)/mkswap(8). Update lastVerified only when
@@ -73,7 +74,7 @@ After=network-online.target
 Type=forking
 User=you
 ExecStart=/usr/bin/tmux new-session -d -s agent claude
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
@@ -111,7 +112,8 @@ function buildFailureModes(a: {
         "You close the lid at 11pm. The OS suspends every process mid tool call, network sockets die, and the run makes no progress until morning. There is no error to tell you.",
       fix:
         "Free fix: keep the machine awake while the agent runs. On macOS, caffeinate blocks sleep while it runs, full system sleep only on AC power, and closing a MacBook lid still sleeps it unless you set up closed-display mode with an external display. On Linux, set HandleLidSwitch=ignore in /etc/systemd/logind.conf. Honest tradeoff: battery drain, heat, and a laptop you cannot close or carry.",
-      snippet: "caffeinate -dimsu",
+      // The same flags the keep-awake builder prints when plugged in (-i idle sleep, -s system sleep), so the two tools agree.
+      snippet: "caffeinate -is",
     });
   }
 
@@ -194,7 +196,7 @@ Host *
       scenario:
         "The agent hits an unhandled error at 2am and exits. Nothing notices and nothing restarts it. The server is fine; the process is just gone.",
       fix:
-        "Free fix: a systemd unit that starts the agent in a detached tmux session and restarts it on failure. Replace User=you with your username, then run: sudo systemctl enable --now agent. Honest tradeoff: it restarts a fresh session, not your conversation. Whatever context the run had is gone.",
+        "Free fix: a systemd unit that starts the agent in a detached tmux session and is set to restart it on failure. Replace User=you with your username, then run: sudo systemctl enable --now agent. Test it once: run tmux kill-session -t agent, wait ten seconds, then run tmux ls to check a new session is back. To stop the agent for good, run sudo systemctl stop agent. Honest tradeoff: it restarts a fresh session, not your conversation. Whatever context the run had is gone.",
       snippet: SYSTEMD_SNIPPET,
     });
   }
@@ -235,7 +237,7 @@ Host *
       perWeek: a.network === "flaky" ? 3 : 1,
       scenario:
         "The wifi drops for two minutes mid tool call. The API request times out, and if you were attached over SSH, that session went down with it.",
-      fix: "Free fix: plug into ethernet, or move the run onto a machine with a wired or datacenter connection. Honest answer: there is no config flag that fixes a bad link. tmux limits the damage to the one interrupted call.",
+      fix: "Free fix: plug into ethernet, or move the run onto a machine with a wired or data centre connection. Honest answer: there is no config flag that fixes a bad link. tmux limits the damage to the one interrupted call.",
     });
   }
 
@@ -253,6 +255,27 @@ Host *
   }
 
   return modes.sort((x, y) => y.severity - x.severity);
+}
+
+// The run-in labels at the start of a fix ("Free fix:", "Honest tradeoff:") are set in bold so a long
+// item can be scanned. The words are unchanged; only the label gets an element.
+const FIX_LEAD = /(Free fix:|Honest tradeoff:|Honest answer:)/g;
+
+function FixText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(FIX_LEAD).map((part, index) =>
+        index % 2 === 1 ? (
+          <strong key={index} className={styles.fixLead}>
+            {part}
+          </strong>
+        ) : (
+          // Flags such as --now are set in code: the body font would draw the double hyphen as one en dash.
+          <Fragment key={index}>{withInlineCode(part)}</Fragment>
+        ),
+      )}
+    </>
+  );
 }
 
 function scoreTone(score: number): { text: string | undefined; fill: string | undefined } {
@@ -346,6 +369,16 @@ export default function AgentSurvivalCheckTool() {
 
   return (
     <div className={styles.tool}>
+      {/* On a phone the nine answers stack into a long column before the score card, so the score rides under the
+          header while you change them. It repeats the number only (the card below carries the words), and it is
+          hidden from assistive tech for that reason. CSS shows it at 700px and below. */}
+      <div className={styles.miniScore} aria-hidden="true" data-testid="asc-mini-score">
+        <span className={styles.miniScoreLabel}>Score</span>
+        <span className={[styles.miniScoreValue, tone.text].filter(Boolean).join(" ")}>{score}/100</span>
+        <span className={styles.miniGauge}>
+          <span className={[styles.gaugeFill, tone.fill].filter(Boolean).join(" ")} style={{ width: `${score}%` }} />
+        </span>
+      </div>
       <div className={styles.inputs}>
         <RadioGroup
           name="asc-runs-on"
@@ -373,7 +406,7 @@ export default function AgentSurvivalCheckTool() {
         />
         <RadioGroup
           name="asc-sleep"
-          label="Laptop sleep behavior"
+          label="Laptop sleep behaviour"
           value={sleep}
           onChange={setSleep}
           options={[
@@ -432,7 +465,7 @@ export default function AgentSurvivalCheckTool() {
           value={network}
           onChange={setNetwork}
           options={[
-            { value: "wired", label: "Wired or datacenter" },
+            { value: "wired", label: "Wired or data centre" },
             { value: "wifi_ok", label: "Wifi, mostly solid" },
             { value: "flaky", label: "Wifi with drops, or tethering" },
           ]}
@@ -484,7 +517,9 @@ export default function AgentSurvivalCheckTool() {
                   <span className={[styles.badge, styles.toneBad].filter(Boolean).join(" ")}>-{mode.severity} pts</span>
                 </div>
                 <p>{mode.scenario}</p>
-                <p className={styles.modeFix}>{mode.fix}</p>
+                <p className={styles.modeFix}>
+                  <FixText text={mode.fix} />
+                </p>
                 {mode.snippet && <pre className={styles.pre}>{mode.snippet}</pre>}
               </div>
             ))}
@@ -553,7 +588,7 @@ export default function AgentSurvivalCheckTool() {
       </div>
 
       <p className={styles.note}>
-        Assumptions: severities and interruption counts are rough estimates from common failure reports, not
+        <strong className={styles.noteLead}>Assumptions:</strong> severities and interruption counts are rough estimates from common failure reports, not
         measurements of your machine. The free fixes are real and often enough; a VPS with tmux and a systemd unit
         is a fine setup if you want to run it. Commands and defaults last checked {monthYear(DEFAULTS.lastVerified)} against
         the macOS, OpenSSH, tmux, systemd and util-linux manuals.
@@ -562,7 +597,7 @@ export default function AgentSurvivalCheckTool() {
       <div className={styles.bridge}>
         <p>
           A managed always-on computer takes the lid and the server upkeep off your list. Hivra runs Claude Code on
-          a cloud computer with your own sign-in, and that computer stays on with your files, sessions and login.
+          a cloud computer with your own sign-in (subject to the provider&apos;s terms), and that paid computer stays on with your files, sessions and login.
           Start a run inside tmux in its Terminal tab, or send it from Telegram, and it keeps going after you close
           the laptop. The $9.99 a month plan gives it 2 vCPU and 4 GB, and paid plans are not paused for
           inactivity.

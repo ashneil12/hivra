@@ -225,10 +225,13 @@ describe("the post reads its numbers from the calculator's constants", () => {
     const section = sectionByHeading("API key or subscription").paragraphs.join("\n");
     expect(section).toContain("| Fable 5.1 | $10 | $50 | $0.25 | $12.50 |");
     expect(section).toContain("| Opus 5.5 | $4 | $20 | $0.20 | $5 |");
-    expect(section).toContain("| Sonnet 5.5 | $2 | $10 | $0.20 | $2.50 |");
-    expect(section).toContain("| Haiku 4.5 | $1 | $5 | $0.10 | $1.25 |");
-    expect(section).toContain("as of September 2026");
-    expect(section).toMatch(/Haiku 5\.5 will join the Claude 5\.5 family in the coming weeks/);
+    expect(section).toContain("| Sonnet 5.5 | $2 | $10 | $0.10 | $2.50 |");
+    expect(section).toContain("| Haiku 5.5 | $0.10 | $0.50 | $0.01 | $0.125 |");
+    // The table's stamp follows the day the API rates were last read (F.apiRatesRead), not the plan check day.
+    expect(section).toContain("as of October 2026");
+    expect(section).toContain(
+      "Haiku 5.5 is priced by prompt length. The Haiku row above is for prompts up to 100,000 tokens. Above that it costs $0.50 input, $2.50 output, $0.05 cache read and $0.625 cache write.",
+    );
     expect(section).toContain(`${F.anthropicCost.inputToOutputRatio} input tokens for every output token, up from ${F.anthropicCost.inputToOutputRatioBefore}`);
   });
 
@@ -250,6 +253,12 @@ describe("the post reads its numbers from the calculator's constants", () => {
       add(model.cacheRead);
       add(model.cacheWrite5m);
     }
+    // Haiku 5.5's higher rates for prompts over 100,000 tokens are constants too.
+    const longPrompt = F.api.haiku.longPrompt;
+    add(longPrompt.input);
+    add(longPrompt.output);
+    add(longPrompt.cacheRead);
+    add(longPrompt.cacheWrite5m);
     add(F.anthropicCost.perActiveDayUsd);
     add(F.anthropicCost.p90PerActiveDayUsd);
     add(F.anthropicCost.perMonthLowUsd);

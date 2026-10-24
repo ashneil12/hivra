@@ -152,19 +152,19 @@ export default function PlanCalculatorTool() {
       <p className={styles.verdict} data-testid="pc-verdict">{result.verdict}</p>
 
       <p className={styles.note}>
-        Every number here is an estimate, not a quote. Anthropic states Max 5x and Max 20x as five and twenty times Pro&apos;s
+        <strong className={styles.noteLead}>Every number here is an estimate, not a quote.</strong> Anthropic states Max 5x and Max 20x as five and twenty times Pro&apos;s
         usage per five-hour session and publishes no caps, no weekly multiple and no size for Pro&apos;s allowance, so the
         ratings scale your own Pro reading by those multiples and never rate the weekly limit. The API figure is list price
         for your schedule, built from Anthropic&apos;s published rates and two assumptions of ours: about {normalOutputK}K
         output tokens in a normal hour ({heavyOutputK}K in a heavy one), and {Math.round(F.estimate.cacheReadShare * 100)}%
         of input read from the prompt cache. Method, sources and worked examples are below. Prices and plan facts
-        as of {monthYear(F.lastVerified)}, from Anthropic&apos;s own pages.
+        as of {monthYear(F.lastVerified)} (API rates as of {monthYear(F.apiRatesRead)}), from Anthropic&apos;s own pages.
       </p>
 
       <div className={styles.bridge}>
         <p>
           Whichever plan you pick, it only pays off while the agent is running. Put the same Claude login on an
-          always-on computer, start long runs inside tmux or from Telegram, and the hours you pay for keep working
+          always-on computer (subject to the provider&apos;s terms), start long runs inside tmux or from Telegram, and the hours you pay for keep working
           after you close the laptop.
         </p>
         <Link href={TOOLS_CTA.claudeCodeHref} className={styles.bridgeLink}>

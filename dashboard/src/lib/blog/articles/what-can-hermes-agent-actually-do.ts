@@ -28,7 +28,7 @@ export const article: BlogArticle = {
     {
       heading: "Can it send me a morning briefing?",
       paragraphs: [
-        "Yes, and this is where most people start. Hermes has a built-in scheduler, so you set it up once and it just runs.\n\nPeople send themselves a daily weather and calendar summary, a portfolio snapshot pulled from a finance API, GitHub issues opened overnight, or just headlines filtered to topics they care about. The agent fetches everything, writes a summary, and sends it to Telegram before you're out of bed.",
+        "Yes, and this is where most people start. Hermes has a built-in scheduler, so you set it up once and it just runs.\n\nPeople send themselves a daily weather and calendar summary, your portfolio numbers pulled from a finance API, GitHub issues opened overnight, or just headlines filtered to topics they care about. The agent fetches everything, writes a summary, and sends it to Telegram before you're out of bed.",
         "Setup is a one-time thing. Tell the agent what you want in conversation and ask it to schedule itself. It writes the cron entry and handles the rest. Or use a [skill file](/blog/hermes-agent-skills-guide) if you want something more structured.",
       ],
     },
@@ -73,7 +73,7 @@ export const article: BlogArticle = {
     {
       heading: "Can it track my money?",
       paragraphs: [
-        "If your bank, portfolio tracker or expense tool has an API, yes. Hermes pulls the numbers and sends summaries to Telegram. Friday afternoon spending breakdown. Monthly P&L for freelancers. Morning portfolio snapshot.\n\nWrap the API connection in a [skill](/blog/hermes-agent-skills-guide) once, and the agent calls it on schedule without you explaining it again.",
+        "If your bank, portfolio tracker or expense tool has an API, yes. Hermes pulls the numbers and sends summaries to Telegram. Friday afternoon spending breakdown. Monthly P&L for freelancers. Morning portfolio summary.\n\nWrap the API connection in a [skill](/blog/hermes-agent-skills-guide) once, and the agent calls it on schedule without you explaining it again.",
       ],
     },
     {

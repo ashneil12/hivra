@@ -21,7 +21,6 @@ import {
   TMUX_FACTS,
   TMUX_HIERARCHY_ALT,
   TMUX_HIERARCHY_TEXT,
-  TMUX_KEYS_NOTE,
   TMUX_SECTIONS,
   TMUX_SLEEP_NOTE,
   TMUX_TARGET_NOTE,
@@ -58,9 +57,6 @@ export default function TmuxCheatSheetTool() {
 
   return (
     <div className={styles.tool}>
-      <p className={styles.note} style={{ marginBottom: 16 }}>
-        {TMUX_KEYS_NOTE}
-      </p>
       <nav aria-label="Sections of the cheat sheet" className={styles.jumpNav}>
         <ul>
           {jumpLinks.map((link) => (
@@ -77,7 +73,17 @@ export default function TmuxCheatSheetTool() {
         </h2>
         <p className={styles.sheetIntro}>{TMUX_HIERARCHY_TEXT}</p>
         <figure className={styles.diagram}>
-          <Image src={TMUX_DIAGRAM.src} width={TMUX_DIAGRAM.width} height={TMUX_DIAGRAM.height} alt={TMUX_HIERARCHY_ALT} className={styles.diagramImg} />
+          {/* Art direction: a phone gets the stacked drawing (its labels are 13px or more at that width), everything
+              else the wide one. One <img> either way, so the alternative text and the size are unchanged. */}
+          <picture>
+            <source
+              media={`(max-width: ${TMUX_DIAGRAM.narrow.maxWidth}px)`}
+              srcSet={TMUX_DIAGRAM.narrow.src}
+              width={TMUX_DIAGRAM.narrow.width}
+              height={TMUX_DIAGRAM.narrow.height}
+            />
+            <Image src={TMUX_DIAGRAM.src} width={TMUX_DIAGRAM.width} height={TMUX_DIAGRAM.height} alt={TMUX_HIERARCHY_ALT} className={styles.diagramImg} />
+          </picture>
           <figcaption>
             <a href={TMUX_DIAGRAM.src} target="_blank" rel="noopener">
               Open the diagram on its own

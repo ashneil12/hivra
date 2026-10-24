@@ -7,14 +7,10 @@ import { useMotionPref, useVisible, useWideScreen } from "./motion";
 import styles from "./home.module.css";
 
 export interface ReachCopy {
-  eyebrow: string;
-  titleA: string;
-  bodyA: readonly string[];
-  kicker: string;
   titleB: string;
-  bodyB: string;
+  bodyB: readonly string[];
+  /** The three statements of the interactive, in the order the diagram plays them. */
   states: readonly { id: string; label: string; caption: string }[];
-  shareCaption: string;
   note: string;
   items: readonly { id: string; label: string }[];
   project: string;
@@ -38,7 +34,6 @@ const T = {
   reachStart: 0.08,
   reachEach: 0.06,
   swapA: 0.5,
-  swapB: 0.58,
   moveStart: 0.56,
   moveEnd: 0.74,
   wallStart: 0.62,
@@ -46,8 +41,21 @@ const T = {
   shareStart: 0.8,
   shareEnd: 0.9,
 };
-const SHARED_POINT = 0.44;
-const SEPARATE_POINT = 0.97;
+/**
+ * Where each statement of the interactive sits on the 0..1 progress: the agent
+ * reaching everything on a shared machine, the agent on its own computer with
+ * the wall up, and the one folder shared across.
+ */
+const BEAT_POINTS = [0.44, 0.79, 0.97] as const;
+
+/** Which statement the diagram is showing at this progress. */
+function beatAt(progress: number): number {
+  if (progress < T.swapA + 0.04) return 0;
+  return progress < T.shareStart ? 1 : 2;
+}
+
+/** The scene pins only where the text and the diagram both fit on one screen. */
+const PIN_QUERY = "(min-width: 1000px) and (min-height: 700px)";
 
 function Reach({ p, id, index }: { p: MotionValue<number>; id: string; index: number }) {
   const target = ITEM_POS[id];
@@ -174,17 +182,17 @@ export default function ReachScene({ copy }: { copy: ReachCopy }) {
   const outer = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const { off } = useMotionPref();
-  const wide = useWideScreen();
+  const wide = useWideScreen(PIN_QUERY);
   const pinned = wide && !off;
   const inView = useVisible(stage, { amount: 0.35, once: true });
   const p = useMotionValue(off ? 1 : 0);
-  const [separate, setSeparate] = useState(off);
+  const [beat, setBeat] = useState(off ? copy.states.length - 1 : 0);
 
   const { scrollYProgress } = useScroll({ target: outer, offset: ["start start", "end end"] });
   useMotionValueEvent(scrollYProgress, "change", v => {
     if (pinned) p.set(v);
   });
-  useMotionValueEvent(p, "change", v => setSeparate(v >= T.swapA + 0.04));
+  useMotionValueEvent(p, "change", v => setBeat(beatAt(v)));
 
   useEffect(() => {
     if (off) {
@@ -201,8 +209,8 @@ export default function ReachScene({ copy }: { copy: ReachCopy }) {
     }
   }, [off, pinned, inView, p, scrollYProgress]);
 
-  function show(target: "shared" | "separate") {
-    const point = target === "shared" ? SHARED_POINT : SEPARATE_POINT;
+  function show(index: number) {
+    const point = BEAT_POINTS[Math.min(index, BEAT_POINTS.length - 1)];
     if (pinned && outer.current) {
       const rect = outer.current.getBoundingClientRect();
       const top = window.scrollY + rect.top;
@@ -217,39 +225,28 @@ export default function ReachScene({ copy }: { copy: ReachCopy }) {
     animate(p, point, { duration: 1.2, ease: [0.65, 0, 0.35, 1] });
   }
 
-  const aOpacity = useTransform(p, [T.swapA, T.swapA + 0.05], [1, 0]);
-  const aY = useTransform(p, [T.swapA, T.swapA + 0.06], [0, -40]);
-  const bOpacity = useTransform(p, [T.swapB - 0.02, T.swapB + 0.05], [0, 1]);
-  const bY = useTransform(p, [T.swapB - 0.02, T.swapB + 0.06], [40, 0]);
-  const kicker = useTransform(p, [0.3, 0.4], [0, 1]);
-  const current = separate ? copy.states[1] : copy.states[0];
-
   return (
     <div ref={outer} className={styles.reachOuter} data-pinned={pinned ? "" : undefined}>
       <div ref={stage} className={styles.reachStage}>
+        {/* The long argument sits above the scene, in normal flow. Only this short text stays pinned beside the diagram. */}
         <div className={styles.reachText}>
-          <span className={styles.eyebrow}>{copy.eyebrow}</span>
-          <m.div className={styles.reachBlock} style={pinned ? { opacity: aOpacity, y: aY } : undefined}>
-            <h2 id="why-heading" className={styles.sectionTitle}>{copy.titleA}</h2>
-            {copy.bodyA.map(line => <p key={line} className={styles.bodyText}>{line}</p>)}
-            <m.p className={styles.reachKicker} style={pinned ? { opacity: kicker } : undefined}>{copy.kicker}</m.p>
-          </m.div>
-          <m.div className={`${styles.reachBlock} ${styles.reachBlockB}`} style={pinned ? { opacity: bOpacity, y: bY } : undefined}>
-            <h3 className={styles.sectionTitle}>{copy.titleB}</h3>
-            <p className={styles.bodyText}>{copy.bodyB}</p>
-            <p className={styles.reachShare}><i aria-hidden="true" />{copy.shareCaption}</p>
-          </m.div>
+          <h3 className={styles.reachGuardTitle}>{copy.titleB}</h3>
+          {copy.bodyB.map(line => <p key={line} className={styles.bodyText}>{line}</p>)}
         </div>
         <div className={styles.reachVisual}>
           <Diagram p={p} copy={copy} />
-          <div className={styles.reachControls} role="group" aria-label="Compare the two set-ups">
-            {copy.states.map(state => (
-              <button key={state.id} type="button" aria-pressed={(state.id === "separate") === separate} onClick={() => show(state.id as "shared" | "separate")}>
-                {state.label}
-              </button>
+          <ul className={styles.reachOptions} aria-label="Compare the set-ups">
+            {copy.states.map((state, index) => (
+              <li key={state.id} className={styles.reachOption} data-active={beat === index ? "" : undefined}>
+                <button type="button" aria-pressed={beat === index} aria-describedby={`reach-caption-${state.id}`} onClick={() => show(index)}>
+                  {state.label}
+                </button>
+                <div className={styles.reachCaptionWrap}>
+                  <p id={`reach-caption-${state.id}`} className={styles.reachCaption}>{state.caption}</p>
+                </div>
+              </li>
             ))}
-          </div>
-          <p className={styles.reachCaption} aria-live="polite">{current.caption}</p>
+          </ul>
           <p className={styles.reachNote}>{copy.note}</p>
         </div>
       </div>

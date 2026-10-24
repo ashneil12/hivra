@@ -1,0 +1,622 @@
+/* /ecosystem. Square and etched, public tokens only (so dark mode follows).
+   Four stages, four forms, so the page reads as a map of certainty and not as fifteen identical cards:
+   Available now is a solid panel, Next is a sticky rail beside stacked entries, Then is a two column grid,
+   Research is quiet dashed rows. Status is carried by the words first. The marker shape (solid, half,
+   outline, dashed) repeats it and never replaces it. */
+
+.masthead {
+  padding-bottom: clamp(40px, 5vw, 56px);
+  margin-bottom: clamp(48px, 6vw, 72px);
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.title {
+  max-width: 1050px;
+  margin: 0;
+  font-size: clamp(40px, 6.2vw, 88px);
+  line-height: 1.04;
+  font-weight: 500;
+  letter-spacing: -0.065em;
+  color: var(--ink-black);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.titleTail {
+  display: block;
+  font-style: normal;
+  color: var(--gold-leaf);
+}
+
+/* Intro: the argument on the left, how to read the map on the right. */
+.intro {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: clamp(40px, 7vw, 112px);
+  align-items: start;
+  margin-bottom: clamp(80px, 10vw, 144px);
+}
+
+.introText p {
+  max-width: 64ch;
+  margin: 0 0 24px;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 18px;
+  line-height: 1.8;
+}
+
+.introText .lead {
+  color: var(--ink-black);
+  font-size: clamp(21px, 2.1vw, 28px);
+  line-height: 1.5;
+  letter-spacing: -0.02em;
+}
+
+.introText .pull {
+  margin: 36px 0 0;
+  padding-left: 20px;
+  border-left: 2px solid var(--gold-leaf);
+  color: var(--ink-black);
+  font-size: clamp(20px, 1.9vw, 25px);
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+}
+
+.guide {
+  padding: clamp(24px, 3vw, 36px);
+  background: var(--public-surface);
+  border: 1px solid var(--etched-border);
+  border-top: 3px solid var(--gold-leaf);
+}
+
+.guide > p {
+  margin: 0 0 28px;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.guide strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.key {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+.key a {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--etched-border);
+  color: var(--ink-black);
+  font: 13px/1.5 var(--public-mono, monospace);
+  text-decoration: none;
+  transition: color 0.2s, padding 0.3s;
+}
+
+.key a:hover,
+.key a:focus-visible {
+  padding-left: 6px;
+  color: var(--gold-leaf);
+}
+
+/* Stage markers: solid is available now, half is next, outline is then, dashed is research. */
+.marker {
+  flex: none;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--gold-leaf);
+  background: transparent;
+}
+
+.marker[data-stage="available-now"] {
+  background: var(--gold-leaf);
+}
+
+.marker[data-stage="next"] {
+  background: linear-gradient(90deg, var(--gold-leaf) 50%, transparent 50%);
+}
+
+.marker[data-stage="research"] {
+  border-style: dashed;
+  border-color: var(--text-muted);
+}
+
+/* Stage headings: "Next:" as a small mono label, then the title. */
+.stageHeading {
+  margin: 0;
+  font: inherit;
+  letter-spacing: normal;
+  color: var(--ink-black);
+}
+
+.stageLabel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  color: var(--gold-leaf);
+  font: 500 12px/1.6 var(--public-mono, monospace);
+  letter-spacing: 0.06em;
+}
+
+.stageTitle {
+  display: block;
+  font-size: clamp(28px, 3.2vw, 46px);
+  line-height: 1.12;
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.stageIntro {
+  max-width: 40ch;
+  margin: 24px 0 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.tagline {
+  max-width: 44ch;
+  margin: 0 0 20px;
+  color: var(--ink-black);
+  font-size: clamp(18px, 1.6vw, 22px);
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+
+.tagline strong {
+  font-weight: 600;
+}
+
+.body {
+  max-width: 64ch;
+  margin: 0 0 20px;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.85;
+}
+
+.body:last-child {
+  margin-bottom: 0;
+}
+
+.body strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* Available now: the one stage that is live, so the one solid panel. */
+.live {
+  margin-bottom: clamp(88px, 11vw, 160px);
+  padding: clamp(28px, 4vw, 56px);
+  background: var(--public-surface);
+  border: 1px solid var(--etched-border);
+  border-top: 3px solid var(--gold-leaf);
+}
+
+.live .stageLabel {
+  margin-bottom: 28px;
+}
+
+.liveGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: clamp(32px, 6vw, 96px);
+  align-items: start;
+}
+
+.liveName {
+  margin: 0 0 24px;
+  color: var(--ink-black);
+  font-size: clamp(36px, 4.6vw, 68px);
+  line-height: 1.02;
+  font-weight: 500;
+  letter-spacing: -0.065em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.liveGrid .tagline {
+  margin-bottom: 0;
+  font-size: clamp(19px, 1.8vw, 24px);
+}
+
+.liveCopy .body {
+  max-width: 66ch;
+}
+
+/* Next: planned, in order. A rail that stays with the reader beside stacked entries. */
+.nextStage {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+  gap: clamp(32px, 6vw, 96px);
+  align-items: start;
+  margin-bottom: clamp(88px, 11vw, 160px);
+}
+
+.rail {
+  position: sticky;
+  top: 110px;
+  align-self: start;
+}
+
+.stack {
+  border-top: 1px solid var(--etched-border);
+}
+
+.entry {
+  padding: clamp(28px, 3.5vw, 48px) 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.entryName {
+  margin: 0 0 14px;
+  color: var(--ink-black);
+  font-size: clamp(28px, 3vw, 42px);
+  line-height: 1.1;
+  font-weight: 500;
+  letter-spacing: -0.05em;
+}
+
+/* Then: later, less certain, so a lighter grid. */
+.thenStage {
+  margin-bottom: clamp(88px, 11vw, 160px);
+}
+
+.thenHead {
+  display: grid;
+  /* The same two columns as the grid below, so the intro starts where its right-hand column does. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(32px, 5vw, 80px);
+  align-items: end;
+  margin-bottom: clamp(32px, 4vw, 48px);
+}
+
+.thenHead .stageIntro {
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: clamp(32px, 5vw, 80px);
+  border-top: 1px solid var(--etched-border);
+}
+
+.cell {
+  padding: clamp(24px, 3vw, 36px) 0 clamp(28px, 3.4vw, 40px);
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.cellName {
+  margin: 0 0 10px;
+  color: var(--ink-black);
+  font-size: clamp(22px, 2.2vw, 30px);
+  line-height: 1.15;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+
+.cell .tagline {
+  max-width: none;
+  margin-bottom: 14px;
+  font-size: 17px;
+}
+
+.cell .body {
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+/* Research: explored, not promised. Quiet type and dashed rules. */
+.researchStage {
+  margin-bottom: clamp(88px, 11vw, 160px);
+}
+
+.researchStage .stageTitle {
+  color: var(--text-secondary);
+}
+
+.rows {
+  margin-top: clamp(28px, 3.5vw, 44px);
+  border-top: 1px dashed var(--etched-border);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+  gap: clamp(20px, 6vw, 96px);
+  padding: 28px 0;
+  border-bottom: 1px dashed var(--etched-border);
+}
+
+.rowName {
+  margin: 0 0 8px;
+  color: var(--ink-black);
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+
+.row .tagline {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.row .body {
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+/* The Agent Computers roadmap note. */
+.note {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+  gap: clamp(20px, 6vw, 96px);
+  margin-bottom: clamp(88px, 11vw, 160px);
+  padding: clamp(24px, 3.4vw, 40px);
+  background: var(--public-surface);
+  border: 1px solid var(--etched-border);
+  border-left: 3px solid var(--gold-leaf);
+}
+
+.note h2 {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(26px, 3vw, 38px);
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+}
+
+.note p {
+  max-width: 64ch;
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.note strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* How the pieces fit together: a real ordered list, numbered in mono. */
+.fit {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+  gap: clamp(32px, 6vw, 96px);
+  align-items: start;
+  margin-bottom: clamp(88px, 11vw, 160px);
+}
+
+.fitHead {
+  position: sticky;
+  top: 110px;
+}
+
+.fitHead h2 {
+  margin: 0 0 20px;
+  color: var(--ink-black);
+  font-size: clamp(28px, 3.2vw, 46px);
+  line-height: 1.12;
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+
+.fitHead p {
+  max-width: 34ch;
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  border-top: 1px solid var(--etched-border);
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--etched-border);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  padding-top: 4px;
+  color: var(--gold-leaf);
+  font: 500 13px/1.6 var(--public-mono, monospace);
+}
+
+.steps li > span {
+  max-width: 58ch;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: clamp(17px, 1.5vw, 19px);
+  line-height: 1.65;
+}
+
+.steps strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+.steps a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+  transition: color 0.2s;
+}
+
+.steps a:hover {
+  color: var(--gold-leaf);
+}
+
+.fitOutro {
+  max-width: 58ch;
+  margin: 32px 0 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+/* The token and launchpad notes (shown only behind the token gate). Quieter than the products. */
+.quiet {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+  gap: clamp(20px, 6vw, 96px);
+  margin-bottom: clamp(56px, 7vw, 96px);
+  padding-top: clamp(28px, 3.5vw, 44px);
+  border-top: 1px solid var(--etched-border);
+}
+
+.quietResearch {
+  border-top-style: dashed;
+}
+
+.quiet h2 {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(26px, 3vw, 38px);
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+}
+
+.quiet p {
+  max-width: 64ch;
+  margin: 0 0 20px;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.quiet p:last-of-type {
+  margin-bottom: 0;
+}
+
+.quiet strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* Follow the work: the closing band. */
+.follow {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: clamp(28px, 6vw, 96px);
+  align-items: start;
+  padding-block: clamp(48px, 6vw, 80px);
+  border-block: 1px solid var(--etched-border);
+}
+
+.follow h2 {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(28px, 3.2vw, 46px);
+  line-height: 1.08;
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.follow p {
+  max-width: 58ch;
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 18px;
+  line-height: 1.8;
+}
+
+@media (max-width: 960px) {
+  .intro,
+  .liveGrid,
+  .nextStage,
+  .thenHead,
+  .row,
+  .note,
+  .fit,
+  .quiet,
+  .follow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail,
+  .fitHead {
+    position: static;
+  }
+
+  .thenHead {
+    align-items: start;
+  }
+
+  .thenHead .stageIntro {
+    margin-top: 20px;
+  }
+
+  .stageIntro,
+  .fitHead p {
+    max-width: 58ch;
+  }
+
+  .fitHead h2 {
+    margin-bottom: 16px;
+  }
+}
+
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live {
+    padding: 24px 20px 32px;
+  }
+
+  .guide {
+    padding: 24px 20px;
+  }
+
+  .steps li {
+    grid-template-columns: 40px minmax(0, 1fr);
+    padding: 18px 0;
+  }
+
+  .row {
+    gap: 14px;
+    padding: 24px 0;
+  }
+
+  .introText .pull {
+    margin-top: 28px;
+  }
+}

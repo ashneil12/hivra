@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent is an open-source AI agent from Nous Research. Unlike a chatbot, it runs on a server, keeps memory across sessions and takes actions.",
   publishedDate: "2026-03-10",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "An agent that keeps running after you close the chat.",
@@ -35,7 +35,7 @@ export const article: BlogArticle = {
       heading: "What can Hermes Agent do?",
       paragraphs: [
         "The core capabilities in v0.5.0: web browsing via a real headless browser (Browserbase, Browser Use cloud, local Chrome via CDP, or local Chromium: you pick the backend), sandboxed terminal execution across five environments (local, Docker, SSH, Singularity, Modal), file system read/write, external API calls, voice mode, multimodal vision, image generation, and text-to-speech. Gateway connects to Telegram, Discord, Slack, WhatsApp, Signal, and email through a single process that installs as a systemd service.",
-        "Example: tell Hermes to monitor a competitor's pricing page every Monday, compare it to a stored baseline, and send you a Telegram message if anything changed. You set that up once. The agent runs it every week without you touching it again. v0.5.0 also introduces checkpoint and rollback: before making any file changes, the agent snapshots the working directory, so you can run `/rollback` if something goes wrong.",
+        "Example: tell Hermes to monitor a competitor's pricing page every Monday, compare it to a stored baseline, and send you a Telegram message if anything changed. You set that up once. The agent runs it every week without you touching it again. v0.5.0 also introduces checkpoint and rollback: before making any file changes, the agent saves a checkpoint of the working directory, so you can run `/rollback` if something goes wrong.",
         "The 40+ built-in tools cover most of what a developer or technical operator needs. Custom skills from agentskills.io (searchable markdown files encoding how to approach specific task types) install via a single command and are available community-wide.",
       ],
     },
@@ -49,7 +49,7 @@ export const article: BlogArticle = {
     {
       heading: "Where does it run?",
       paragraphs: [
-        "On a server you look after: a VPS, a dedicated machine, a Docker container, or a cloud VM. The installation requires Linux familiarity, Docker, and some comfort configuring networking. On Hetzner's CX23 at €5.49/month (excluding VAT), it's cheap. It also takes 4-8 hours to set up correctly the first time and requires maintenance when updates break things. That's fair for an open-source tool built for developers.",
+        "On a server you look after: a VPS, a dedicated machine, a Docker container, or a cloud VM. The installation requires Linux familiarity, Docker, and some comfort configuring networking. On Hetzner's CX23 at €5.49/month (excluding VAT and IPv4), it's cheap. It also takes 4-8 hours to set up correctly the first time and requires maintenance when updates break things. That's fair for an open-source tool built for developers.",
         "Hivra fills that gap by handling server provisioning, the container setup, networking, and SSL termination, and it restarts the agent if it crashes; backups are not guaranteed. Launch Hermes from the dashboard, add your AI provider key, and use it from chat and an admin dashboard in the browser, with nothing to install.",
       ],
     },
@@ -70,7 +70,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Is Hermes Agent free?",
-      a: "The Hermes Agent framework is free and open-source (MIT license). You can run it yourself for the cost of the server: Hetzner's cheapest VPS that can run it, the CX23, is €5.49/month excluding VAT. Hosting services like Hivra charge for the managed infrastructure on top of that.",
+      a: "The Hermes Agent framework is free and open-source (MIT license). You can run it yourself for the cost of the server: Hetzner's cheapest VPS that can run it, the CX23, is €5.49/month excluding VAT and IPv4, though Hetzner showed it as unavailable in October 2026, so check stock. Hosting services like Hivra charge for the managed infrastructure on top of that.",
     },
     {
       q: "Do I need coding skills to use Hermes Agent?",

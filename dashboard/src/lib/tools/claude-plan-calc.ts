@@ -12,8 +12,12 @@
 //   published session multiples. The weekly limit is never rated.
 // - The API figure is an ESTIMATE at list price. It uses Anthropic's published
 //   input-to-output ratio and cache-read prices, and two assumptions that are
-//   Hivra's (see CLAUDE_PLAN_FACTS.estimate). The result is held within reach
-//   of Anthropic's own $13-per-active-day average by claude-plan-calc.test.ts.
+//   Hivra's (see CLAUDE_PLAN_FACTS.estimate). With Anthropic's published
+//   prices a normal three-hour day comes to $8.69 on Sonnet 5.5 and $17.39 on
+//   Opus 5.5, either side of Anthropic's own $13-per-active-day average, and a
+//   heavy Opus day stays above its $30 line. claude-plan-calc.test.ts pins
+//   those figures. It does not hold the estimate to $13: the assumptions were
+//   first set against a wrong Sonnet cache-read price and have not been re-tuned.
 
 import {
   CLAUDE_PLAN_FACTS,
