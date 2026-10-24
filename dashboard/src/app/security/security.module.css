@@ -1,0 +1,217 @@
+/* /security: long-form reading rows. Typography and colour come from secondary-site.module.css;
+   this file only adds the row layout and the report parts. Selectors inside the article carry
+   the .rowBody prefix so they win over the shared ".articleBody p / li / h3" rules. */
+
+/* The two paragraphs that frame the page: a statement, not a card. */
+.position {
+  max-width: 760px;
+  margin: 0 0 72px;
+  padding: 8px 0 8px 28px;
+  border-left: 2px solid var(--gold-leaf);
+}
+
+.position p {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(19px, 1.8vw, 22px);
+  line-height: 1.7;
+}
+
+.position p + p {
+  margin-top: 20px;
+  color: var(--text-secondary);
+  font-size: 17px;
+}
+
+.position strong {
+  font-weight: 600;
+}
+
+/* One reading row per section: the heading in a left rail, the prose beside it. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+  gap: 24px clamp(40px, 6vw, 96px);
+  padding-top: 40px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.row > .rowTitle {
+  position: sticky;
+  top: 110px;
+  align-self: start;
+  margin: 0;
+}
+
+.rowBody {
+  min-width: 0;
+}
+
+.rowBody > :last-child {
+  margin-bottom: 0;
+}
+
+/* The measure is 56ch: in this light face that is about 72 characters a line, where the shared
+   68ch ran to 85 and more. */
+div.rowBody p {
+  max-width: 56ch;
+}
+
+.rowBody .subhead {
+  margin: 44px 0 16px;
+}
+
+/* The two ways in: side by side, each with its own action. */
+.rowBody ul.channels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  max-width: none;
+  margin: 0 0 40px;
+  padding: 0;
+  list-style: none;
+}
+
+.rowBody ul.channels > li {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 24px;
+  border: 1px solid var(--etched-border);
+  background: var(--public-surface);
+  font-size: 16px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.rowBody .channelLabel {
+  color: var(--text-muted);
+  font: 11px/1.7 var(--public-mono, monospace);
+  letter-spacing: 0.04em;
+}
+
+.rowBody .channelBody {
+  font-size: 17px;
+}
+
+/* What to put in the report: numbered rows, the bold lead as the term. */
+.rowBody ol.steps {
+  max-width: none;
+  margin: 0 0 32px;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  border-top: 1px solid var(--etched-border);
+}
+
+.rowBody ol.steps > li {
+  position: relative;
+  max-width: 60ch;
+  margin: 0;
+  padding: 18px 0 18px 52px;
+  border-bottom: 1px solid var(--etched-border);
+  counter-increment: step;
+}
+
+.rowBody ol.steps > li::before {
+  content: counter(step, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 22px;
+  color: var(--gold-leaf);
+  font: 12px/1.7 var(--public-mono, monospace);
+}
+
+/* The limits: plain statements with a rule between them. */
+.rowBody ul.limits {
+  max-width: 56ch;
+  margin: 0 0 32px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+.rowBody ul.limits > li {
+  margin: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.rowBody ul.sources {
+  max-width: 56ch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+.rowBody ul.sources > li {
+  margin: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+/* The next section brings its own rule: without this the list's last line and that rule sit
+   side by side and read like an empty row. */
+.rowBody ul.sources > li:last-child {
+  border-bottom: 0;
+}
+
+/* The response-time statement stands apart: it is the one promise the page declines to make. */
+.rowBody .note {
+  max-width: 56ch;
+  margin: 8px 0 0;
+  padding: 4px 0 4px 20px;
+  border-left: 2px solid var(--gold-leaf);
+  color: var(--ink-black);
+}
+
+/* The page ends 64px under its last section, not 120px. */
+main.end {
+  padding-bottom: 64px;
+}
+
+@media (max-width: 1000px) {
+  .row {
+    grid-template-columns: 1fr;
+    padding-top: 32px;
+  }
+
+  .row > .rowTitle {
+    position: static;
+  }
+}
+
+@media (max-width: 700px) {
+  .position {
+    margin-bottom: 48px;
+    padding-left: 20px;
+  }
+
+  .rowBody ul.channels {
+    grid-template-columns: 1fr;
+  }
+
+  .rowBody ul.channels > li {
+    padding: 20px;
+  }
+
+  .rowBody ol.steps > li {
+    padding-left: 44px;
+  }
+
+  /* Phone targets: a link in a list gets a 44px row. */
+  .rowBody ul.sources a,
+  .rowBody .channelBody a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+
+@media print {
+  .row > .rowTitle {
+    position: static;
+  }
+}

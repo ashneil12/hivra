@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Set up Hermes Agent gateways for Telegram, Discord, WhatsApp, Email and Webhooks, then limit who can use the bot with allowlists or DM pairing codes.",
   publishedDate: "2026-04-15",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 13,
   author: "Hivra team",
   tagline: "The README says 12+ platforms. The docs list 15.",
@@ -68,7 +68,7 @@ export const article: BlogArticle = {
       heading: "Running multiple gateways simultaneously",
       paragraphs: [
         "One `hermes gateway` process handles all configured platforms. Set credentials for Telegram and Discord both, and the same agent responds on both channels with shared memory and context. A message from Telegram and a message from Discord reach the same agent: your task history and preferences persist regardless of which platform you are messaging from.",
-        "The built-in cron scheduler runs inside the gateway process and can deliver to any connected platform. A morning briefing goes to Telegram, a work-hours alert to Slack, an end-of-day summary to Email, all from the same scheduled task configuration.\n\nToken usage is higher through messaging gateways than CLI. Telegram adds roughly 15,000-20,000 tokens of overhead per message (versus 6,000-8,000 in CLI) due to AGENTS.md workspace files and additional context. At Sonnet 4.6 pricing, that is approximately $0.03-0.06 per message in overhead alone. Disable unused tool categories with `hermes tools` to reduce the baseline cost.",
+        "The built-in cron scheduler runs inside the gateway process and can deliver to any connected platform. A morning briefing goes to Telegram, a work-hours alert to Slack, an end-of-day summary to Email, all from the same scheduled task configuration.\n\nToken usage is higher through messaging gateways than CLI. Telegram adds roughly 15,000-20,000 tokens of overhead per message (versus 6,000-8,000 in CLI) due to AGENTS.md workspace files and additional context. At Sonnet 5.5 input pricing ($2 per million tokens, as of October 2026), that is roughly $0.03 to $0.04 per message in overhead alone. Disable unused tool categories with `hermes tools` to reduce the baseline cost.",
       ],
     },
     {

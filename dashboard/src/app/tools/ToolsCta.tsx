@@ -3,21 +3,23 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import editorial from "@/components/public-editorial/secondary-site.module.css";
-import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { TOOLS_CLOSING, TOOLS_CTA } from "@/lib/tools/tool-catalog";
 import styles from "./tools.module.css";
 
 // Closing call to action for the /tools pages. EditorialCTA carries a speed
 // claim and a single button; these pages need a secondary /pricing link and
 // describe the plan by price and size, because checkout and the public ladder
-// still use different plan names.
+// still use different plan names. The words are TOOLS_CLOSING, the same on every
+// tools page (see the note there).
 export default function ToolsCta({ title }: { title: ReactNode }) {
   return (
     <section className={editorial.cta} aria-label="Get started">
-      <div>
+      <div className={styles.ctaCopy}>
         <h2>{title}</h2>
         <p>
-          From $9.99/mo for 2 vCPU and 4 GB, not paused for inactivity. Your own Claude or ChatGPT login, or your own
-          AI key. 7-day money-back guarantee on card payments.
+          {TOOLS_CLOSING.offer} {TOOLS_CLOSING.staysOn} {TOOLS_CLOSING.aiUsage} {TOOLS_CLOSING.claudeCodeSignIn}{" "}
+          {TOOLS_CLOSING.guaranteeLead}{" "}
+          <Link href={TOOLS_CLOSING.guaranteeHref}>{TOOLS_CLOSING.guarantee}</Link>.
         </p>
       </div>
       <div className={styles.actions}>

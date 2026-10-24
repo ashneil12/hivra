@@ -1,0 +1,51 @@
+/* /sign-up: the heading and introduction above the account form, and the consent line under it.
+   Ash's words for this page are 11-reserve.md; /reserve and /reserved both land here. */
+
+.intro {
+  margin: 0 0 1.5rem;
+}
+
+.intro h1 {
+  margin: 0 0 12px;
+  font-size: clamp(30px, 4.6vw, 40px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.05em;
+  color: var(--ink-black);
+  text-wrap: balance;
+}
+
+.intro p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.intro p + p {
+  margin-top: 10px;
+}
+
+.legal {
+  margin: 2rem 0 0;
+  padding-inline: 1rem;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.legal a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.legal a:hover {
+  color: var(--gold-leaf);
+}
+
+.legal a:focus-visible {
+  outline: 2px solid var(--gold-leaf);
+  outline-offset: 3px;
+}

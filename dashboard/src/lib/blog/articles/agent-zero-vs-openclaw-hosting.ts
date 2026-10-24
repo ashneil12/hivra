@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Agent Zero recommends 2 vCPU and 4 GB of RAM, and OpenClaw's daemon needs less. What each costs to host, and the security risks of exposing them.",
   publishedDate: "2026-07-16",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "One agent lives in a dashboard. The other lives in your messages. Both need a server.",
@@ -51,9 +51,9 @@ export const article: BlogArticle = {
     {
       heading: "What hosting actually costs",
       paragraphs: [
-        "**DIY on a VPS.** A 1 vCPU, 2 GB box for a browserless OpenClaw runs about $5 to $10 a month. The 2 vCPU, 4 GB box that Agent Zero's guide recommends, or OpenClaw with the browser on, runs from €5.49 a month at Hetzner (excluding VAT) to $20-24 at Vultr, Linode, or DigitalOcean. Add your time: install, reverse proxy, auth, updates, and the occasional 2 a.m. restart. The [cost of running an AI agent](/blog/cost-of-running-ai-agent) breaks this down in detail.",
+        "**DIY on a VPS.** A 1 vCPU, 2 GB box for a browserless OpenClaw runs about $5 to $10 a month. The 2 vCPU, 4 GB box that Agent Zero's guide recommends, or OpenClaw with the browser on, runs from €5.49 a month at Hetzner (excluding VAT and IPv4) to $20-24 at Vultr, Linode, or DigitalOcean. Hetzner showed the CX23 and CX33 as unavailable in October 2026, so check stock. Add your time: install, reverse proxy, auth, updates, and the occasional 2 a.m. restart. The [cost of running an AI agent](/blog/cost-of-running-ai-agent) breaks this down in detail.",
         "**Dedicated agent hosts.** Services that specialize in running OpenClaw for you exist too. They cost more than a raw VPS for a single always-on instance, because the security setup is part of what you pay for. Compare their current price pages before you pick one.",
-        `**Hivra.** Both agents need a paid plan, [from ${ENTRY_PLAN_PRICE} a month](/pricing) for a compute pool of ${ENTRY_PLAN_SIZE}, with the UI kept private and no setup on your side.\n\nModel usage is the one cost hosting never includes, for anyone. Both agents need an LLM to think with, and model spend is often the larger number: a few dollars a month for light use, $50 or more for heavy daily work, depending on the model you pick. On Hivra you can use a managed model option (DeepSeek V4 Pro through Venice), paid from managed Venice credits you top up, or switch to your own provider any time: in the Control UI for OpenClaw, in Settings for Agent Zero. Keys you set there are stored on the agent's VM, and usage on your own key bills through your provider with no Hivra markup.`,
+        `**Hivra.** Every Hivra Cloud computer needs a paid plan, whichever agent runs on it, [from ${ENTRY_PLAN_PRICE} a month](/pricing) for a compute pool of ${ENTRY_PLAN_SIZE}, with the UI kept private and no setup on your side.\n\nModel usage is the one cost hosting never includes, for anyone. Both agents need an LLM to think with, and model spend is often the larger number: a few dollars a month for light use, $50 or more for heavy daily work, depending on the model you pick. On Hivra you can use a managed model option (DeepSeek V4 Pro through Venice), paid from managed Venice credits you top up, or switch to your own provider any time: in the Control UI for OpenClaw, in Settings for Agent Zero. Keys you set there are stored on the agent's VM, and usage on your own key bills through your provider with no Hivra markup.`,
       ],
     },
     {
@@ -65,12 +65,12 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Running both, and the fastest way to try either one",
+      heading: "Running both, and skipping the setup",
       paragraphs: [
-        "Plenty of people end up wanting both: OpenClaw as the standing assistant, Agent Zero for hand-off projects. DIY, that is one 4 vCPU, 8 GB VPS, from €8.49 a month at Hetzner (excluding VAT) to $40-48 at Vultr or DigitalOcean, running the two side by side.",
+        "Plenty of people end up wanting both: OpenClaw as the standing assistant, Agent Zero for hand-off projects. DIY, that is one 4 vCPU, 8 GB VPS, from €8.49 a month at Hetzner (excluding VAT and IPv4) to $40-48 at Vultr or DigitalOcean, running the two side by side.",
         `On Hivra, one plan detail matters before you pick. A plan's compute is a pool shared across everything you run, and the ${ENTRY_PLAN_PRICE} plan's pool is ${ENTRY_PLAN_SIZE}. Both fit on the ${ENTRY_PLAN_PRICE} plan at their minimum size, with OpenClaw's browser off: Agent Zero at 1 vCPU and 2 GB plus OpenClaw at 1 vCPU and 2 GB fill that pool exactly.`,
         `For OpenClaw with its browser on, or for more headroom (Agent Zero's own recommendation is 2 vCPU and 4 GB), take the [${LARGER_PLAN_PRICE} plan](/pricing), whose pool of ${LARGER_PLAN_SIZE} fits Agent Zero plus OpenClaw with its browser on. A stopped computer still counts against the pool; deleting it is what frees its share, so switching between agents is a delete and a relaunch, not a support ticket.`,
-        `If you want to skip the setup entirely, either agent launches on Hivra from its page ([OpenClaw](/agents/openclaw) or [Agent Zero](/agents/agent-zero)): name the agent, pick a model in the agent's own UI, and hand it work. If the agent does not earn its keep, delete its computer. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
+        `If you want to skip the setup entirely, either agent launches on Hivra from its page ([OpenClaw](/agents/openclaw) or [Agent Zero](/agents/agent-zero)): name the agent, pick a model in the agent's own UI, and hand it work. If you stop using an agent, delete its computer to free its share of the plan. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
       ],
     },
   ],

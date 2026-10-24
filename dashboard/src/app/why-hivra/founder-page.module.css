@@ -1,3 +1,147 @@
-.article { max-width:800px; margin:58px auto 0; }
-.article h1 { color:var(--ink-black); font:500 clamp(38px,5.6vw,70px)/1.1 var(--public-font,sans-serif); letter-spacing:-.06em; margin:0 0 48px; text-wrap:balance; }
-.article p { margin-bottom:28px; }
+/* The founder's note: one long essay set as a single reading column. No cards, no boxes.
+   Every colour is a site token, so the light and dark themes both follow. The column holds about
+   70 characters a line at the body size. */
+
+.column {
+  max-width: 660px;
+  margin: 0 auto;
+}
+
+.article {
+  --note-body: color-mix(in srgb, var(--ink-black) 88%, var(--public-bg, transparent));
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.title {
+  margin: 0 0 clamp(32px, 4.4vw, 48px);
+  color: var(--ink-black);
+  font: 500 clamp(38px, 6vw, 60px) / 1.08 var(--public-font, sans-serif);
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.article p {
+  margin: 0 0 1.3em;
+  color: var(--note-body);
+  font-size: 19px;
+  line-height: 1.78;
+  text-wrap: pretty;
+}
+
+/* The opening says what the note is about before any heading does, so it is set a size up. */
+.opening p {
+  color: var(--ink-black);
+  font-size: clamp(20px, 2.2vw, 23px);
+  line-height: 1.62;
+  letter-spacing: -0.006em;
+}
+
+.section {
+  margin-top: clamp(64px, 9vw, 96px);
+  scroll-margin-top: 110px;
+}
+
+.section h2 {
+  position: relative;
+  margin: 0 0 28px;
+  padding-top: 26px;
+  color: var(--ink-black);
+  font-size: clamp(26px, 3.3vw, 34px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.042em;
+  text-wrap: balance;
+  scroll-margin-top: 110px;
+}
+
+/* A short rule above each heading marks the turn of the argument without boxing it. */
+.section h2::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 2px;
+  background: var(--gold-leaf);
+}
+
+.article p a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  transition: color 0.2s;
+}
+
+.article p a:hover {
+  color: var(--gold-leaf);
+}
+
+.article p a:focus-visible {
+  outline: 2px solid var(--gold-leaf);
+  outline-offset: 3px;
+}
+
+/* The one line the argument turns on. It is the author's own sentence, so it is a paragraph, not a quotation. */
+.article p.pull {
+  margin: 44px 0 0;
+  padding-left: 24px;
+  border-left: 2px solid var(--gold-leaf);
+  color: var(--ink-black);
+  font-size: clamp(21px, 2.4vw, 26px);
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: -0.025em;
+}
+
+/* The last line of the note. */
+.article p.signoff {
+  margin: 1.9em 0 0;
+  color: var(--ink-black);
+  font-size: clamp(22px, 2.5vw, 27px);
+  font-weight: 550;
+  line-height: 1.35;
+  letter-spacing: -0.03em;
+}
+
+.closing {
+  margin-top: clamp(48px, 6vw, 72px);
+  padding-top: 4px;
+  border-top: 1px solid var(--etched-border);
+}
+
+@media (max-width: 700px) {
+  .article p {
+    font-size: 17.5px;
+    line-height: 1.72;
+  }
+
+  .opening p {
+    font-size: 19.5px;
+    line-height: 1.6;
+  }
+
+  .section h2 {
+    margin-bottom: 22px;
+    padding-top: 22px;
+    font-size: 26px;
+  }
+
+  .article p.pull {
+    margin-top: 36px;
+    padding-left: 18px;
+    font-size: 21px;
+  }
+
+  .article p.signoff {
+    font-size: 22px;
+  }
+}
+
+@media print {
+  .section h2::before {
+    background: currentColor;
+  }
+}

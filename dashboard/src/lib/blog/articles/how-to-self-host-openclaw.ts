@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-host OpenClaw on a Linux VPS with Docker or the shell installer. Covers Telegram setup, the CVE-2026-25253 patch and what monthly upgrades involve.",
   publishedDate: "2026-04-12",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 15,
   author: "Hivra team",
   tagline: "Keeping a self-hosted OpenClaw running is a second job.",
@@ -21,14 +21,14 @@ export const article: BlogArticle = {
       paragraphs: [
         "OpenClaw ships new releases several times a month and frequently introduces breaking changes. The community estimates $10,000-$20,000 per year in developer operations overhead for self-hosted instances managed at a production quality level, largely the time cost of keeping up with updates, handling schema migrations, and rewriting custom skills when API surfaces change.",
         "For running personal workflows or experimenting: the DIY route is fine. For anything business-critical requiring 24/7 reliability: the upgrade overhead is real. The r/openclaw subreddit has a steady stream of threads about breaking changes that went unannounced.",
-        "There is also a third option: Hermes Agent. The architecture is comparable (persistent AI agent, messaging gateway, skills/tools system), but Hermes ships a built-in migration tool (`hermes claw migrate`) for OpenClaw users and has a more stable release cadence. Hivra hosts both on managed VMs: [OpenClaw itself](/agents/openclaw) on paid plans, and Hermes launched from the dashboard. Check it out before committing 4 hours to a self-hosted OpenClaw setup.",
+        "There is also a third option: Hermes Agent. The architecture is comparable (persistent AI agent, messaging gateway, skills/tools system), but Hermes ships a built-in migration tool (`hermes claw migrate`) for OpenClaw users and has a more stable release cadence. Hivra hosts both on managed VMs, each on a paid plan: [OpenClaw itself](/agents/openclaw), and Hermes launched from the dashboard. Check it out before committing 4 hours to a self-hosted OpenClaw setup.",
       ],
     },
     {
       heading: "System requirements",
       paragraphs: [
         "Minimum for OpenClaw: 2 vCPU, 4GB RAM, 20GB SSD, Ubuntu 22.04 or 24.04. At 2GB RAM, expect OOM errors on complex agent tasks. OpenClaw's install docs currently require Node 24.16+ or 26.1+, and the installer can provision Node for you. pnpm is only needed if you build from source. Docker and Docker Compose are required for the containerized install.",
-        "Recommended: 4 vCPU, 8GB RAM, 40GB SSD on a dedicated VPS. OpenClaw's Docker daemon and multi-container setup compete for memory with other services. Hetzner CX23 (€5.49/month, 4GB RAM) or Hetzner CX33 (€8.49/month, 8GB RAM), both excluding VAT, are the community-recommended budget options.",
+        "Recommended: 4 vCPU, 8GB RAM, 40GB SSD on a dedicated VPS. OpenClaw's Docker daemon and multi-container setup compete for memory with other services. Hetzner CX23 (€5.49/month, 4GB RAM) or Hetzner CX33 (€8.49/month, 8GB RAM), both excluding VAT and IPv4, are the community-recommended budget options. Hetzner showed both as unavailable in October 2026, so check stock first.",
       ],
     },
     {
@@ -82,7 +82,7 @@ export const article: BlogArticle = {
       heading: "When self-hosting stops making sense",
       paragraphs: [
         "Self-hosting OpenClaw makes sense if you want zero monthly software cost, full data sovereignty, or the ability to run entirely local models. It stops making sense if that 20-minute monthly upgrade process (4+ hours per year on updates alone, before breakage) is time you do not have. Still deciding whether OpenClaw is the right agent to host at all? [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting) compares the two on requirements, security exposure, and monthly cost.",
-        "Three managed OpenClaw options:\n\n- **ClawHost:** purpose-built for OpenClaw, handles auto-updates.\n- **Blink Claw:** managed service with automatic update management.\n- **Zeabur:** container deployment platform that works with the Docker image.\n\nThere is also Hermes Agent (MIT licensed, built by Nous Research), with `hermes claw migrate` to migrate your OpenClaw config, memories, skills, and environment variables. Hermes has a more stable release cadence, fewer breaking changes, and managed hosting on Hivra, launched from the dashboard. Hivra also hosts OpenClaw itself on paid plans, if you would rather keep the agent you have. If you have spent three Saturdays debugging OpenClaw upgrades, that migration exists for a reason.",
+        "Three managed OpenClaw options:\n\n- **ClawHost:** purpose-built for OpenClaw, handles auto-updates.\n- **Blink Claw:** managed service with automatic update management.\n- **Zeabur:** container deployment platform that works with the Docker image.\n\nThere is also Hermes Agent (MIT licensed, built by Nous Research), with `hermes claw migrate` to migrate your OpenClaw config, memories, skills, and environment variables. Hermes has a more stable release cadence, fewer breaking changes, and managed hosting on Hivra's paid plans, launched from the dashboard. Hivra also hosts OpenClaw itself on the same paid plans, if you would rather keep the agent you have. If you have spent three Saturdays debugging OpenClaw upgrades, that migration exists for a reason.",
       ],
     },
   ],
@@ -105,7 +105,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a way to get OpenClaw-equivalent functionality without the maintenance overhead?",
-      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra on paid plans. Hivra also hosts Hermes Agent, which has its own `hermes claw migrate` command to import your existing data. You run it yourself, because Hivra has no import tool of its own. The [OpenClaw alternative page](/features/openclaw-alternative) sets out when to keep OpenClaw and when a different agent is the actual ask.",
+      a: "ClawHost and Blink Claw host OpenClaw directly, and so does Hivra, on a paid plan. Hivra also hosts Hermes Agent on the same plans, and Hermes has its own `hermes claw migrate` command to import your existing data. You run it yourself, because Hivra has no import tool of its own. The [OpenClaw alternative page](/features/openclaw-alternative) sets out when to keep OpenClaw and when a different agent is the actual ask.",
     },
   ],
   relatedArticles: [

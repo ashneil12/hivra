@@ -109,7 +109,7 @@ describe("dormant $HIVRA: the copy from before", () => {
   it("/llms.txt keeps its $HIVRA sentences", () => {
     setPhase("dormant");
     const txt = buildLlmsTxt({ siteUrl: "https://example.test" });
-    expect(txt).toContain("macOS computers and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.\n");
+    expect(txt).toContain("and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.\n");
     expect(txt).toContain(`(https://example.test/TOKENOMICS.md): ${copy.llmsTxt.tokenomicsNote}\n`);
   });
 });

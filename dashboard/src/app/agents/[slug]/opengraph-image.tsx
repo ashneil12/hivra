@@ -5,6 +5,7 @@ import { renderOgCard } from "@/lib/og-card";
 import { OG_CONTENT_TYPE, OG_SIZE } from "@/lib/og-meta";
 import { AGENT_SEO_ENTRIES, getAgentSeoEntry } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { HUB_CONTENT } from "../content";
 
 export const alt = "An AI agent you can run in the cloud on Hivra";
 export const size = { width: OG_SIZE.width, height: OG_SIZE.height };
@@ -21,13 +22,15 @@ export default async function AgentOpengraphImage({ params }: { params: Promise<
   const { slug } = await params;
   const entry = getAgentSeoEntry(slug);
   const agent = entry ? getAgent(entry.slug) : undefined;
-  if (!entry || !agent) {
+  const card = entry ? HUB_CONTENT.directory.cards.find((candidate) => candidate.slug === entry.slug) : undefined;
+  if (!entry || !agent || !card) {
     return new Response("Not Found", { status: 404 });
   }
 
   return renderOgCard({
     eyebrow: "Agents",
     title: `${agent.name}, in the cloud`,
-    subtitle: entry.cardSummary,
+    // The directory card's tagline, in Ash's words.
+    subtitle: card.tagline,
   });
 }

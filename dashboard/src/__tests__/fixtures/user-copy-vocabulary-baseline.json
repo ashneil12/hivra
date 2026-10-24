@@ -1,9 +1,4 @@
 {
-  "app/compare/[slug]/page.tsx": {
-    "the box": 1,
-    "instance": 2,
-    "runtime": 1
-  },
   "app/dashboard/agent/[id]/page.tsx": {
     "runtime": 5
   },
@@ -35,14 +30,6 @@
   },
   "app/dashboard/vault/page.tsx": {
     "instance": 1,
-    "runtime": 1
-  },
-  "app/ecosystem/page.tsx": {
-    "runtime": 2
-  },
-  "app/features/[slug]/page.tsx": {
-    "the box": 1,
-    "instance": 2,
     "runtime": 1
   },
   "app/privacy/page.tsx": {

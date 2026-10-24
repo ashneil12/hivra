@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "OpenClaw broken after an update? Run openclaw doctor --fix for config changes, reset tools.profile if permissions vanished, or roll back the release.",
   publishedDate: "2026-07-23",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "After an update, check your config first. It probably moved.",
@@ -68,7 +68,7 @@ export const article: BlogArticle = {
     {
       heading: "If you are tired of fixing this every month",
       paragraphs: [
-        `Some people enjoy the maintenance. If you just want the agent to work, there are two ways to shrink the monthly breakage loop.\n\nThe first is letting someone else run the machine OpenClaw lives on. [Hivra hosts OpenClaw](/agents/openclaw) on a private managed VM: the open-source agent unmodified, its Control UI bound to localhost and reached through Hivra's authenticated gateway, with the server and the install handled for you. You configure your model providers and your Telegram, WhatsApp, or Signal channels inside that UI. It needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Details on [the pricing page](/pricing). Hivra is independent and is not affiliated with the OpenClaw project.`,
+        `Some people enjoy the maintenance. If you just want the agent to work, there are two ways to shrink the monthly breakage loop.\n\nThe first is letting someone else run the machine OpenClaw lives on. [Hivra hosts OpenClaw](/agents/openclaw) on a private managed VM: the open-source agent unmodified, its Control UI bound to localhost and reached through Hivra's authenticated gateway, with the server and the install handled for you. You configure your model providers and your Telegram, WhatsApp, or Signal channels inside that UI. Every Hivra Cloud computer needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Details on [the pricing page](/pricing). Hivra is independent and is not affiliated with the OpenClaw project.`,
         `The second is switching to an agent with a calmer release cadence. Hermes Agent is architecturally comparable (persistent agent, messaging gateway, skills) with fewer breaking changes, and it ships a migration tool (\`hermes claw migrate\`) that imports your OpenClaw config, memories, skills, and environment variables. The full comparison is in [Hermes vs OpenClaw](/blog/hermes-vs-openclaw).\n\nEither way, the fixes above will get today's breakage sorted first.`,
       ],
     },
@@ -96,7 +96,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a way to run OpenClaw without running the server myself?",
-      a: `Yes. Hivra runs the open-source OpenClaw agent on a private managed VM with the server side handled for you, on paid plans from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. The alternative route is migrating to Hermes Agent with hermes claw migrate, which has a more stable release cadence.`,
+      a: `Yes. Hivra runs the open-source OpenClaw agent on a private managed VM with the server side handled for you. Every Hivra Cloud computer needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. The alternative route is migrating to Hermes Agent with hermes claw migrate, which has a more stable release cadence.`,
     },
   ],
   relatedArticles: [

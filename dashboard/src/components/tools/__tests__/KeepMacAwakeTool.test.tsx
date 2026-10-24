@@ -57,7 +57,7 @@ describe("KeepMacAwakeTool default result", () => {
     render(<KeepMacAwakeTool />);
     const cta = screen.getByTestId("kma-cta");
     expect(cta).toHaveAttribute("data-state", "enough");
-    expect(cta).toHaveTextContent(/is enough for a run you can keep an eye on/);
+    expect(cta).toHaveTextContent(/For a run you can supervise, a plugged-in laptop with this command may be enough/);
     expect(within(cta).queryByRole("link", { name: /Hivra/ })).not.toBeInTheDocument();
     expect(within(cta).getByRole("link", { name: /agent survival check/i })).toHaveAttribute("href", "/tools/agent-survival-check");
   });

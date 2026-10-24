@@ -43,6 +43,9 @@ const textOf = (markup: string) => markup.replace(/<script[\s\S]*?<\/script>/g, 
 /** React escapes quotes and apostrophes in text; compare against the escaped form. */
 const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 
+/** An H1 can end in a question mark, which a RegExp would read as a quantifier. */
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 describe("server HTML of /tools/claude-code-plan-calculator", () => {
   let html: string;
   beforeAll(async () => {
@@ -51,7 +54,7 @@ describe("server HTML of /tools/claude-code-plan-calculator", () => {
 
   it("carries the H1, the default verdict and the estimate without any script running", () => {
     const entry = getToolEntry("claude-code-plan-calculator")!;
-    expect(html).toMatch(new RegExp(`<h1[^>]*>${escaped(entry.h1)}</h1>`));
+    expect(html).toMatch(new RegExp(`<h1[^>]*>${literal(escaped(entry.h1))}</h1>`));
     // No Pro reading is preselected: the page a crawler reads rates nothing and says why.
     expect(textOf(html)).toContain(
       escaped("Anthropic does not publish Pro's cap, so tell the calculator where Pro stops you to rate each plan. At API list price this schedule is an estimated $376/month."),
@@ -115,12 +118,12 @@ describe("server HTML of /tools/keep-mac-awake", () => {
 
   it("carries the H1, the default command and its verdict without any script running", () => {
     const entry = getToolEntry("keep-mac-awake")!;
-    expect(html).toMatch(new RegExp(`<h1[^>]*>${escaped(entry.h1)}</h1>`));
+    expect(html).toMatch(new RegExp(`<h1[^>]*>${literal(escaped(entry.h1))}</h1>`));
     expect(html).toContain(">caffeinate -is claude</pre>");
     expect(html).toContain("Keeps this Mac awake while the lid stays open");
     expect(html).toContain("What this will not cover");
     expect(html).toContain("pmset -g assertions");
-    expect(html).toContain("is enough for a run you can keep an eye on");
+    expect(html).toContain("a plugged-in laptop with this command may be enough");
   });
 
   it("prints the checked month as plain contiguous text, so a grep for it matches the raw HTML", () => {
@@ -156,7 +159,7 @@ describe("server HTML of /tools/tmux-cheat-sheet", () => {
   });
 
   it("carries the H1 and the whole cheat sheet in the page source", () => {
-    expect(html).toMatch(/<h1[^>]*>tmux cheat sheet<\/h1>/);
+    expect(html).toMatch(/<h1[^>]*>tmux commands worth keeping nearby<\/h1>/);
     for (const section of TMUX_SECTIONS) {
       expect(html).toContain(`id="${section.id}-heading"`);
       for (const row of section.rows) {

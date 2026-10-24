@@ -48,14 +48,33 @@ describe("Claude plan facts, pinned to what Anthropic's pages said on 2026-09-30
     expect(F.api).toEqual({
       fable: { label: "Fable 5.1", input: 10, output: 50, cacheRead: 0.25, cacheWrite5m: 12.5 },
       opus: { label: "Opus 5.5", input: 4, output: 20, cacheRead: 0.2, cacheWrite5m: 5 },
-      sonnet: { label: "Sonnet 5.5", input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5 },
-      haiku: { label: "Haiku 4.5", input: 1, output: 5, cacheRead: 0.1, cacheWrite5m: 1.25 },
+      sonnet: { label: "Sonnet 5.5", input: 2, output: 10, cacheRead: 0.1, cacheWrite5m: 2.5 },
+      haiku: {
+        label: "Haiku 5.5",
+        input: 0.1,
+        output: 0.5,
+        cacheRead: 0.01,
+        cacheWrite5m: 0.125,
+        longPrompt: { overTokens: 100000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite5m: 0.625 },
+      },
     });
+    expect(F.apiRatesRead).toBe("2026-10-21");
     expect(F.defaultModel).toEqual({ label: "Opus 5.5", since: "2026-09-22" });
-    // Anthropic's cache-read multiples: 0.05x on Opus 5.5, 0.1x on Sonnet 5.5 is
-    // not what the table shows, so the prices are the authority, not a multiple.
+    // Anthropic's table footnote: cache hits on Opus 5.5 and Sonnet 5.5 cost 0.05x the base input price,
+    // and a 5-minute cache write costs 1.25x it. Sonnet 5.5's cache read was once entered as $0.20 (0.1x).
+    expect(F.api.opus.cacheRead / F.api.opus.input).toBeCloseTo(0.05, 10);
+    expect(F.api.sonnet.cacheRead / F.api.sonnet.input).toBeCloseTo(0.05, 10);
     expect(F.api.opus.cacheWrite5m / F.api.opus.input).toBe(1.25);
     expect(F.api.sonnet.cacheWrite5m / F.api.sonnet.input).toBe(1.25);
+    // Haiku 5.5: a cache hit is 0.1x the base input price, a 5-minute write 1.25x, and the longer-prompt
+    // rates are five times the shorter-prompt ones on every line.
+    expect(F.api.haiku.cacheRead / F.api.haiku.input).toBeCloseTo(0.1, 10);
+    expect(F.api.haiku.cacheWrite5m / F.api.haiku.input).toBeCloseTo(1.25, 10);
+    const long = F.api.haiku.longPrompt;
+    expect(long.input / F.api.haiku.input).toBeCloseTo(5, 10);
+    expect(long.output / F.api.haiku.output).toBeCloseTo(5, 10);
+    expect(long.cacheRead / F.api.haiku.cacheRead).toBeCloseTo(5, 10);
+    expect(long.cacheWrite5m / F.api.haiku.cacheWrite5m).toBeCloseTo(5, 10);
   });
 
   it("pins Anthropic's own cost figures and the dates of its limit changes", () => {
@@ -88,6 +107,11 @@ describe("Claude plan facts, pinned to what Anthropic's pages said on 2026-09-30
     expect(usd(20)).toBe("$20");
     expect(usd(0.2)).toBe("$0.20");
     expect(usd(12.5)).toBe("$12.50");
+    // A rate with a third decimal keeps it instead of rounding to a different price.
+    expect(usd(0.125)).toBe("$0.125");
+    expect(usd(0.625)).toBe("$0.625");
+    expect(usd(0.01)).toBe("$0.01");
+    expect(usd(0.1)).toBe("$0.10");
     expect(formatDays(breakEvenDays(F.plans.pro.priceUsd, F.anthropicCost.perActiveDayUsd))).toBe("1.5");
     expect(formatDays(breakEvenDays(F.plans.max5x.priceUsd, F.anthropicCost.perActiveDayUsd))).toBe("7.7");
     expect(formatDays(breakEvenDays(F.plans.max20x.priceUsd, F.anthropicCost.perActiveDayUsd))).toBe("15.4");
