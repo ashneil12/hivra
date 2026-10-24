@@ -691,7 +691,7 @@ observable enough to supervise. Then let people build tools, networks,
 marketplaces and companies on top of a boundary that existed before the power
 arrived.
 
-**Start free.** Sign up for free, then connect your own cloud or server, or launch on Hivra Cloud. [Sign up free](/sign-up) · [See pricing](/pricing)
+**Start free.** Sign up for free, then connect your own cloud or server. Hivra Cloud computers are on a paid plan. [Sign up free](/sign-up) · [See pricing](/pricing)
 
 **Agent Computers is where Hivra starts. The operating layer for accountable
 autonomous systems is where it can go.**

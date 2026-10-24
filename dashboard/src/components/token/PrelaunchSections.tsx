@@ -19,8 +19,8 @@ export default function PrelaunchSections() {
         <p className="mono" style={{ fontSize: 11 }}>START HERE</p>
         <h2 id="start-title">Hivra is free to start</h2>
         <p>
-          Sign up free, then connect your own cloud or server, or launch on Hivra Cloud. Self-hosting is free. The token is
-          optional and nothing on this page is needed to use Hivra.
+          Sign up free, then connect your own cloud or server. Self-hosting is free, and Hivra Cloud computers are on a paid plan.
+          The token is optional and nothing on this page is needed to use Hivra.
         </p>
         <p>
           <Link href={s.start.signUpUrl}>Sign up free</Link> · <Link href={s.start.pricingUrl}>See pricing</Link>
